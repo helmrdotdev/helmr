@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -171,6 +172,51 @@ func (c *Client) GetDeployment(ctx context.Context, deploymentID string, input a
 		return api.DeploymentResponse{}, err
 	}
 	return response, nil
+}
+
+func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string, input api.GetDeploymentRequest, cursor int64, handle func(api.RunEvent) error) error {
+	values := url.Values{}
+	values.Set("follow", "1")
+	if strings.TrimSpace(input.ProjectID) != "" {
+		values.Set("project_id", strings.TrimSpace(input.ProjectID))
+	}
+	if strings.TrimSpace(input.EnvironmentID) != "" {
+		values.Set("environment_id", strings.TrimSpace(input.EnvironmentID))
+	}
+	path := "/api/deployments/" + url.PathEscape(deploymentID) + "/events?" + values.Encode()
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("accept", "text/event-stream")
+	if cursor > 0 {
+		req.Header.Set("Last-Event-ID", strconv.FormatInt(cursor, 10))
+	}
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return decodeError(res)
+	}
+	scanner := bufio.NewScanner(res.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
+		}
+		var event api.RunEvent
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			return err
+		}
+		if err := handle(event); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
 }
 
 func (c *Client) PromoteDeployment(ctx context.Context, deployment string, input api.PromoteDeploymentRequest) (api.DeploymentResponse, error) {
@@ -397,6 +443,45 @@ func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEv
 		return api.RunEventPage{}, err
 	}
 	return response, nil
+}
+
+func (c *Client) FollowRunEvents(ctx context.Context, id string, cursor int64, handle func(api.RunEvent) error) error {
+	values := url.Values{}
+	values.Set("follow", "1")
+	path := "/api/runs/" + url.PathEscape(id) + "/events?" + values.Encode()
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("accept", "text/event-stream")
+	if cursor > 0 {
+		req.Header.Set("Last-Event-ID", strconv.FormatInt(cursor, 10))
+	}
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return decodeError(res)
+	}
+	scanner := bufio.NewScanner(res.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
+		}
+		var event api.RunEvent
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			return err
+		}
+		if err := handle(event); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
 }
 
 func (c *Client) RespondWaitpoint(ctx context.Context, waitpointID string, request api.RespondWaitpointRequest) error {

@@ -84,12 +84,22 @@ released_concurrency_slots AS (
        AND run_queue_concurrency_leases.released_at IS NULL
     RETURNING run_queue_concurrency_leases.id
 ),
+lost_event_seq AS (
+    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+    SELECT $1, 'run', updated_runs.run_id, 1
+      FROM updated_runs
+    ON CONFLICT (org_id, subject_type, subject_id)
+    DO UPDATE SET last_seq = event_subject_cursors.last_seq + 1,
+                  updated_at = now()
+    RETURNING org_id, subject_type, subject_id, last_seq
+),
 lost_events AS (
-    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT $1,
            updated_runs.project_id,
            updated_runs.environment_id,
            updated_runs.run_id,
+           lost_event_seq.last_seq,
            run_execution_sessions.attempt_id,
            updated_runs.session_id,
            updated_runs.attempt_number,
@@ -112,6 +122,16 @@ lost_events AS (
       JOIN run_execution_sessions ON run_execution_sessions.org_id = $1
                                   AND run_execution_sessions.run_id = updated_runs.run_id
                                   AND run_execution_sessions.id = updated_runs.session_id
+      JOIN lost_event_seq ON lost_event_seq.org_id = $1
+                         AND lost_event_seq.subject_type = 'run'
+                         AND lost_event_seq.subject_id = updated_runs.run_id
+    RETURNING *
+),
+lost_event_outbox AS (
+    INSERT INTO event_outbox (event_record_id, stream_key)
+    SELECT lost_events.id,
+           'helmr:events:' || lost_events.org_id::text || ':' || lost_events.subject_type::text || ':' || lost_events.subject_id::text
+      FROM lost_events
     RETURNING id
 ),
 lost_snapshots AS (
@@ -134,7 +154,7 @@ cleanup AS (
         (SELECT count(*) FROM restored_checkpoint) AS restored_checkpoint_count,
         (SELECT count(*) FROM requeued_queue_entries) AS requeued_queue_entry_count,
         (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slot_count,
-        (SELECT count(*) FROM lost_events) AS lost_event_count,
+        (SELECT count(*) FROM lost_event_outbox) AS lost_event_count,
         (SELECT count(*) FROM lost_snapshots) AS lost_snapshot_count
 )
 UPDATE run_execution_sessions
@@ -475,72 +495,6 @@ released_concurrency_slots AS (
        AND run_queue_concurrency_leases.released_at IS NULL
     RETURNING run_queue_concurrency_leases.id
 ),
-terminal_events AS (
-    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
-    SELECT $1,
-           updated_runs.project_id,
-           updated_runs.environment_id,
-           updated_runs.run_id,
-           updated_runs.previous_attempt_id,
-           updated_runs.session_id,
-           updated_runs.previous_attempt_number,
-           run_execution_sessions.trace_id,
-           run_execution_sessions.span_id,
-           run_execution_sessions.parent_span_id,
-           run_execution_sessions.traceparent,
-           'lifecycle',
-           CASE WHEN updated_runs.status = 'cancelled' THEN 'warn' ELSE 'error' END,
-           'lease_sweeper',
-           CASE WHEN updated_runs.status = 'cancelled' THEN 'run.cancelled' ELSE 'run.failed' END,
-           CASE WHEN updated_runs.status = 'cancelled' THEN 'run.cancelled' ELSE 'run.failed' END,
-           CASE
-             WHEN updated_runs.status = 'cancelled'
-             THEN jsonb_build_object('reason', COALESCE(updated_runs.error_message, 'run cancelled'), 'source', 'lease_sweeper')
-             ELSE jsonb_build_object(
-                 'failure_kind', 'worker_lease_expired',
-                 'detail', jsonb_build_object('message', 'worker lease expired')
-             )
-           END,
-           'internal',
-           CASE WHEN retry_plan.run_id IS NOT NULL THEN updated_runs.state_version - 1 ELSE updated_runs.state_version END
-      FROM updated_runs
-      JOIN run_execution_sessions ON run_execution_sessions.org_id = $1
-                                  AND run_execution_sessions.run_id = updated_runs.run_id
-                                  AND run_execution_sessions.id = updated_runs.session_id
-      LEFT JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
-    RETURNING id
-),
-lost_events AS (
-    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
-    SELECT $1,
-           updated_runs.project_id,
-           updated_runs.environment_id,
-           updated_runs.run_id,
-           updated_runs.previous_attempt_id,
-           updated_runs.session_id,
-           updated_runs.previous_attempt_number,
-           run_execution_sessions.trace_id,
-           run_execution_sessions.span_id,
-           run_execution_sessions.parent_span_id,
-           run_execution_sessions.traceparent,
-           'worker',
-           'warn',
-           'lease_sweeper',
-           'run.execution_lost',
-           'run.execution_lost',
-           jsonb_build_object(
-               'reason', 'worker lease expired',
-               'source', 'lease_sweeper'
-           ),
-           'internal',
-           CASE WHEN retry_plan.run_id IS NOT NULL THEN updated_runs.state_version - 1 ELSE updated_runs.state_version END
-      FROM updated_runs
-      JOIN run_execution_sessions ON run_execution_sessions.org_id = $1
-                                  AND run_execution_sessions.run_id = updated_runs.run_id
-                                  AND run_execution_sessions.id = updated_runs.session_id
-      LEFT JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
-    RETURNING id
-),
 failed_snapshots AS (
     INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, session_id, transition, reason)
     SELECT $1,
@@ -606,16 +560,80 @@ retry_snapshot AS (
       JOIN completed_queue_entries ON completed_queue_entries.run_id = updated_runs.run_id
     RETURNING run_snapshots.run_id
 ),
-retry_event AS (
-    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
-    SELECT $1,
+event_inputs AS (
+    SELECT 1 AS event_ordinal,
+           $1 AS org_id,
+           updated_runs.project_id,
+           updated_runs.environment_id,
+           updated_runs.run_id,
+           updated_runs.previous_attempt_id AS attempt_id,
+           updated_runs.session_id,
+           updated_runs.previous_attempt_number AS attempt_number,
+           run_execution_sessions.trace_id,
+           run_execution_sessions.span_id,
+           run_execution_sessions.parent_span_id,
+           run_execution_sessions.traceparent,
+           'lifecycle' AS category,
+           CASE WHEN updated_runs.status = 'cancelled' THEN 'warn' ELSE 'error' END AS severity,
+           'lease_sweeper' AS source,
+           CASE WHEN updated_runs.status = 'cancelled' THEN 'run.cancelled' ELSE 'run.failed' END AS kind,
+           CASE WHEN updated_runs.status = 'cancelled' THEN 'run.cancelled' ELSE 'run.failed' END AS message,
+           CASE
+             WHEN updated_runs.status = 'cancelled'
+             THEN jsonb_build_object('reason', COALESCE(updated_runs.error_message, 'run cancelled'), 'source', 'lease_sweeper')
+             ELSE jsonb_build_object(
+                 'failure_kind', 'worker_lease_expired',
+                 'detail', jsonb_build_object('message', 'worker lease expired')
+             )
+           END AS payload,
+           'internal' AS redaction_class,
+           CASE WHEN retry_plan.run_id IS NOT NULL THEN updated_runs.state_version - 1 ELSE updated_runs.state_version END AS snapshot_version
+      FROM updated_runs
+      JOIN run_execution_sessions ON run_execution_sessions.org_id = $1
+                                  AND run_execution_sessions.run_id = updated_runs.run_id
+                                  AND run_execution_sessions.id = updated_runs.session_id
+      LEFT JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
+    UNION ALL
+    SELECT 2 AS event_ordinal,
+           $1 AS org_id,
+           updated_runs.project_id,
+           updated_runs.environment_id,
+           updated_runs.run_id,
+           updated_runs.previous_attempt_id,
+           updated_runs.session_id,
+           updated_runs.previous_attempt_number,
+           run_execution_sessions.trace_id,
+           run_execution_sessions.span_id,
+           run_execution_sessions.parent_span_id,
+           run_execution_sessions.traceparent,
+           'worker',
+           'warn',
+           'lease_sweeper',
+           'run.execution_lost',
+           'run.execution_lost',
+           jsonb_build_object(
+               'reason', 'worker lease expired',
+               'source', 'lease_sweeper'
+           ),
+           'internal',
+           CASE WHEN retry_plan.run_id IS NOT NULL THEN updated_runs.state_version - 1 ELSE updated_runs.state_version END
+      FROM updated_runs
+      JOIN run_execution_sessions ON run_execution_sessions.org_id = $1
+                                  AND run_execution_sessions.run_id = updated_runs.run_id
+                                  AND run_execution_sessions.id = updated_runs.session_id
+      LEFT JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
+    UNION ALL
+    SELECT 3 AS event_ordinal,
+           $1 AS org_id,
            updated_runs.project_id,
            updated_runs.environment_id,
            updated_runs.run_id,
            updated_runs.current_attempt_id,
+           NULL::uuid,
            updated_runs.current_attempt_number,
            runs.trace_id,
            runs.root_span_id,
+           NULL::text,
            '00-' || runs.trace_id || '-' || runs.root_span_id || '-01',
            'lifecycle',
            'warn',
@@ -638,6 +656,56 @@ retry_event AS (
       JOIN runs ON runs.org_id = $1
                AND runs.id = updated_runs.run_id
       JOIN retry_snapshot ON true
+),
+event_subject_counts AS (
+    SELECT org_id, run_id, count(*)::bigint AS event_count
+      FROM event_inputs
+     GROUP BY org_id, run_id
+),
+event_seq AS (
+    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+    SELECT org_id, 'run', run_id, event_count
+      FROM event_subject_counts
+    ON CONFLICT (org_id, subject_type, subject_id)
+    DO UPDATE SET last_seq = event_subject_cursors.last_seq + EXCLUDED.last_seq,
+                  updated_at = now()
+    RETURNING org_id, subject_type, subject_id, last_seq
+),
+events AS (
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT event_inputs.org_id,
+           event_inputs.project_id,
+           event_inputs.environment_id,
+           event_inputs.run_id,
+           event_seq.last_seq - event_subject_counts.event_count + row_number() OVER (PARTITION BY event_inputs.org_id, event_inputs.run_id ORDER BY event_inputs.event_ordinal),
+           event_inputs.attempt_id,
+           event_inputs.session_id,
+           event_inputs.attempt_number,
+           event_inputs.trace_id,
+           event_inputs.span_id,
+           event_inputs.parent_span_id,
+           event_inputs.traceparent,
+           event_inputs.category,
+           event_inputs.severity,
+           event_inputs.source,
+           event_inputs.kind,
+           event_inputs.message,
+           event_inputs.payload,
+           event_inputs.redaction_class,
+           event_inputs.snapshot_version
+      FROM event_inputs
+      JOIN event_subject_counts ON event_subject_counts.org_id = event_inputs.org_id
+                               AND event_subject_counts.run_id = event_inputs.run_id
+      JOIN event_seq ON event_seq.org_id = event_inputs.org_id
+                    AND event_seq.subject_type = 'run'
+                    AND event_seq.subject_id = event_inputs.run_id
+    RETURNING *
+),
+event_outbox AS (
+    INSERT INTO event_outbox (event_record_id, stream_key)
+    SELECT events.id,
+           'helmr:events:' || events.org_id::text || ':' || events.subject_type::text || ':' || events.subject_id::text
+      FROM events
     RETURNING id
 ),
 cleanup AS (
@@ -647,11 +715,12 @@ cleanup AS (
         (SELECT count(*) FROM failed_restore_checkpoints) AS failed_restore_checkpoints,
         (SELECT count(*) FROM completed_queue_entries) AS completed_queue_entries,
         (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slots,
-        (SELECT count(*) FROM terminal_events) AS terminal_events,
-        (SELECT count(*) FROM lost_events) AS lost_events,
+        (SELECT count(*) FROM events WHERE kind IN ('run.cancelled', 'run.failed')) AS terminal_events,
+        (SELECT count(*) FROM events WHERE kind = 'run.execution_lost') AS lost_events,
         (SELECT count(*) FROM failed_snapshots) AS failed_snapshots,
         (SELECT count(*) FROM retry_decision) AS retry_decisions,
-        (SELECT count(*) FROM retry_event) AS retry_events
+        (SELECT count(*) FROM events WHERE kind = 'run.retry_scheduled') AS retry_events,
+        (SELECT count(*) FROM event_outbox) AS event_outboxes
 )
 UPDATE run_execution_sessions
    SET lost_at = COALESCE(lost_at, now()),
@@ -660,7 +729,7 @@ UPDATE run_execution_sessions
  FROM updated_runs
  WHERE run_execution_sessions.id = updated_runs.session_id
    AND run_execution_sessions.run_id = updated_runs.run_id
-   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + failed_restore_checkpoints + completed_queue_entries + released_concurrency_slots + terminal_events + lost_events + failed_snapshots + retry_decisions + retry_events FROM cleanup) >= 0;
+   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + failed_restore_checkpoints + completed_queue_entries + released_concurrency_slots + terminal_events + lost_events + failed_snapshots + retry_decisions + retry_events + event_outboxes FROM cleanup) >= 0;
 
 -- name: LeaseRunExecutionSession :one
 WITH
@@ -1754,35 +1823,6 @@ retry_decision AS (
     ON CONFLICT DO NOTHING
     RETURNING id
 ),
-terminal_event AS (
-    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
-    SELECT released.org_id,
-           released.project_id,
-           released.environment_id,
-           released.id,
-           released_session.attempt_id,
-           released_session.id,
-           released_attempt.attempt_number,
-           released_session.trace_id,
-           released_session.span_id,
-           released_session.parent_span_id,
-           released_session.traceparent,
-           'lifecycle',
-           CASE WHEN effective_release.run_status = 'succeeded' THEN 'info' ELSE 'error' END,
-           'control',
-           effective_release.terminal_event_kind,
-           effective_release.terminal_event_kind,
-           effective_release.terminal_event_payload,
-           'internal',
-           released_snapshot.version
-      FROM released
-      JOIN released_session ON true
-      JOIN released_attempt ON true
-      JOIN released_snapshot ON true
-      JOIN effective_release ON true
-     WHERE effective_release.run_id = released.id
-    RETURNING id
-),
 retry_snapshot AS (
     INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, attempt_id, previous_version, transition, reason)
     SELECT released.org_id,
@@ -1809,16 +1849,45 @@ retry_snapshot AS (
        AND completed_queue_entry.run_id = released.id
     RETURNING run_snapshots.run_id
 ),
-retry_event AS (
-    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
-    SELECT released.org_id,
+event_inputs AS (
+    SELECT 1 AS event_ordinal,
+           released.org_id,
            released.project_id,
            released.environment_id,
-           released.id,
+           released.id AS run_id,
+           released_session.attempt_id,
+           released_session.id AS session_id,
+           released_attempt.attempt_number,
+           released_session.trace_id,
+           released_session.span_id,
+           released_session.parent_span_id,
+           released_session.traceparent,
+           'lifecycle' AS category,
+           CASE WHEN effective_release.run_status = 'succeeded' THEN 'info' ELSE 'error' END AS severity,
+           'control' AS source,
+           effective_release.terminal_event_kind AS kind,
+           effective_release.terminal_event_kind AS message,
+           effective_release.terminal_event_payload AS payload,
+           'internal' AS redaction_class,
+           released_snapshot.version AS snapshot_version
+      FROM released
+      JOIN released_session ON true
+      JOIN released_attempt ON true
+      JOIN released_snapshot ON true
+      JOIN effective_release ON true
+     WHERE effective_release.run_id = released.id
+    UNION ALL
+    SELECT 2 AS event_ordinal,
+           released.org_id,
+           released.project_id,
+           released.environment_id,
+           released.id AS run_id,
            released.current_attempt_id,
+           NULL::uuid,
            released.current_attempt_number,
            released.trace_id,
            released.root_span_id,
+           NULL::text,
            '00-' || released.trace_id || '-' || released.root_span_id || '-01',
            'lifecycle',
            'warn',
@@ -1840,6 +1909,56 @@ retry_event AS (
       JOIN retry_plan ON true
       JOIN retry_snapshot ON true
      WHERE retry_plan.run_id = released.id
+),
+event_subject_counts AS (
+    SELECT org_id, run_id, count(*)::bigint AS event_count
+      FROM event_inputs
+     GROUP BY org_id, run_id
+),
+event_seq AS (
+    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+    SELECT org_id, 'run', run_id, event_count
+      FROM event_subject_counts
+    ON CONFLICT (org_id, subject_type, subject_id)
+    DO UPDATE SET last_seq = event_subject_cursors.last_seq + EXCLUDED.last_seq,
+                  updated_at = now()
+    RETURNING org_id, subject_type, subject_id, last_seq
+),
+events AS (
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT event_inputs.org_id,
+           event_inputs.project_id,
+           event_inputs.environment_id,
+           event_inputs.run_id,
+           event_seq.last_seq - event_subject_counts.event_count + row_number() OVER (PARTITION BY event_inputs.org_id, event_inputs.run_id ORDER BY event_inputs.event_ordinal),
+           event_inputs.attempt_id,
+           event_inputs.session_id,
+           event_inputs.attempt_number,
+           event_inputs.trace_id,
+           event_inputs.span_id,
+           event_inputs.parent_span_id,
+           event_inputs.traceparent,
+           event_inputs.category,
+           event_inputs.severity,
+           event_inputs.source,
+           event_inputs.kind,
+           event_inputs.message,
+           event_inputs.payload,
+           event_inputs.redaction_class,
+           event_inputs.snapshot_version
+      FROM event_inputs
+      JOIN event_subject_counts ON event_subject_counts.org_id = event_inputs.org_id
+                               AND event_subject_counts.run_id = event_inputs.run_id
+      JOIN event_seq ON event_seq.org_id = event_inputs.org_id
+                    AND event_seq.subject_type = 'run'
+                    AND event_seq.subject_id = event_inputs.run_id
+    RETURNING *
+),
+event_outbox AS (
+    INSERT INTO event_outbox (event_record_id, stream_key)
+    SELECT events.id,
+           'helmr:events:' || events.org_id::text || ':' || events.subject_type::text || ':' || events.subject_id::text
+      FROM events
     RETURNING id
 ),
 cleanup AS (
@@ -1849,9 +1968,10 @@ cleanup AS (
         (SELECT count(*) FROM released_concurrency_slot) AS released_concurrency_slots,
         (SELECT count(*) FROM completed_restore_checkpoint) AS completed_restore_checkpoints,
         (SELECT count(*) FROM resolved_restore_waitpoint) AS resolved_restore_waitpoints,
-        (SELECT count(*) FROM terminal_event) AS terminal_events,
+        (SELECT count(*) FROM events WHERE kind <> 'run.retry_scheduled') AS terminal_events,
         (SELECT count(*) FROM retry_decision) AS retry_decisions,
-        (SELECT count(*) FROM retry_event) AS retry_events,
+        (SELECT count(*) FROM events WHERE kind = 'run.retry_scheduled') AS retry_events,
+        (SELECT count(*) FROM event_outbox) AS event_outboxes,
         (SELECT count(*) FROM active_time_usage_event) AS active_time_usage_events,
         (SELECT count(*) FROM output_usage_event) AS output_usage_events
 ),
@@ -1909,7 +2029,8 @@ SELECT released.*
   JOIN released_session ON true
   JOIN completed_queue_entry ON true
   JOIN released_snapshot ON true
-  JOIN cleanup ON true
+ WHERE (SELECT terminal_events FROM cleanup) > 0
+   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + released_concurrency_slots + completed_restore_checkpoints + resolved_restore_waitpoints + terminal_events + retry_decisions + retry_events + event_outboxes + active_time_usage_events + output_usage_events FROM cleanup) >= 0
 UNION ALL
 SELECT *
   FROM idempotent_released;

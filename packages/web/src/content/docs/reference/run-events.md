@@ -8,7 +8,7 @@ order: 950
 
 # Run events
 
-Run event records are ordered by numeric cursor and exposed through the REST API, CLI, and SDK.
+Run event records are ordered by numeric cursor and exposed through the REST API, CLI, and SDK. The CLI uses the same durable event stream for `helmr events --follow` and `helmr wait`.
 
 Each raw event record includes `run_id`. Events that originate from a worker session also include `session_id` and `attempt_number`. Run-level events that happen before a worker lease, such as queued expiry, can omit session and attempt metadata.
 
@@ -27,4 +27,4 @@ SDK event types:
 
 Raw protocol events include stdout chunks, stderr chunks, log entries, task completion, wait requests, custom emitted events, task output JSON, and platform execution lifecycle events such as `run.execution_lost` when a worker lease expires and the attempt is no longer accepted.
 
-Use event streams for live UI or agents watching progress. Use log snapshots when only the latest stdout/stderr text is needed.
+Use event streams for live UI, agents watching progress, and waiting for terminal run state. `helmr wait` follows the stream, resumes with the last cursor after reconnects, and fetches the final run snapshot after a terminal event. Use log snapshots when only the latest stdout/stderr text is needed.

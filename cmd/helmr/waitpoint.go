@@ -51,7 +51,7 @@ func waitpointListCommand() *cobra.Command {
 			if limit < 1 || limit > 200 {
 				return errors.New("--limit must be an integer between 1 and 200")
 			}
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -73,8 +73,8 @@ func waitpointListCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON waitpoint per line.")
-	cmd.Flags().StringVar(&projectID, "project", "", "Project ID to list.")
-	cmd.Flags().StringVar(&environmentID, "environment", "", "Environment ID to list.")
+	cmd.Flags().StringVarP(&projectID, "project", "p", "", "Project slug or ID to list.")
+	cmd.Flags().StringVarP(&environmentID, "env", "e", "", "Environment slug or ID to list.")
 	cmd.Flags().Int32Var(&limit, "limit", 100, "Maximum waiting runs to inspect.")
 	return cmd
 }
@@ -91,7 +91,7 @@ func waitpointRespondCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}

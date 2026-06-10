@@ -32,7 +32,7 @@ func policyListCommand() *cobra.Command {
 		Short: "List waitpoint policies.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -60,7 +60,7 @@ func policyGetCommand() *cobra.Command {
 		Short: "Show a waitpoint policy.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -98,7 +98,7 @@ func policyApplyCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -127,7 +127,7 @@ func policyDeleteCommand() *cobra.Command {
 		Short: "Delete a waitpoint policy.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}

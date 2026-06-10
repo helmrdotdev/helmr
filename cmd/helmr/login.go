@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -16,18 +15,20 @@ import (
 const defaultControlURL = "https://helmr.dev"
 
 func loginCommand() *cobra.Command {
-	var rawURL string
 	var noBrowser bool
 	cmd := &cobra.Command{
 		Use:   "login [URL]",
 		Short: "Authenticate this CLI with Helmr.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) > 0 && strings.TrimSpace(rawURL) != "" {
-				return errors.New("pass the control URL either as an argument or --url, not both")
-			}
+			rawURL := explicitAPIURL(cmd)
 			if len(args) > 0 {
+				if rawURL != "" {
+					return errors.New("pass the control URL either as an argument or --api-url, not both")
+				}
 				rawURL = args[0]
+			} else {
+				rawURL = cliControlURL(cmd)
 			}
 			baseURL, err := loginURL(rawURL)
 			if err != nil {
@@ -67,23 +68,24 @@ func loginCommand() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&rawURL, "url", "", "Helmr control URL. Defaults to HELMR_URL, saved login, or managed cloud.")
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Print the login URL without opening a browser.")
 	return cmd
 }
 
 func logoutCommand() *cobra.Command {
-	var rawURL string
 	cmd := &cobra.Command{
 		Use:   "logout [URL]",
 		Short: "Log out this CLI from Helmr.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) > 0 && strings.TrimSpace(rawURL) != "" {
-				return errors.New("pass the control URL either as an argument or --url, not both")
-			}
+			rawURL := explicitAPIURL(cmd)
 			if len(args) > 0 {
+				if rawURL != "" {
+					return errors.New("pass the control URL either as an argument or --api-url, not both")
+				}
 				rawURL = args[0]
+			} else {
+				rawURL = cliControlURL(cmd)
 			}
 			state, err := newSessionStore()
 			if err != nil {
@@ -114,15 +116,11 @@ func logoutCommand() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&rawURL, "url", "", "Helmr control URL. Defaults to HELMR_URL or saved login.")
 	return cmd
 }
 
 func loginURL(rawURL string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" {
-		rawURL = strings.TrimSpace(os.Getenv(helmrURLEnv))
-	}
 	if rawURL == "" {
 		state, err := newSessionStore()
 		if err == nil {
@@ -146,9 +144,6 @@ func loginURL(rawURL string) (string, error) {
 
 func savedLoginURL(state *session.Store, rawURL string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" {
-		rawURL = strings.TrimSpace(os.Getenv(helmrURLEnv))
-	}
 	if rawURL == "" {
 		cfg, err := state.Load()
 		if err != nil {

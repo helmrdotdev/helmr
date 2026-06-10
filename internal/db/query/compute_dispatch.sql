@@ -752,12 +752,23 @@ WITH queue_entry AS (
 	      JOIN failed_attempt ON failed_attempt.run_id = failed_run.id
 	    RETURNING run_snapshots.run_id
 	),
+	run_event_seq AS (
+	    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+	    SELECT failed_run.org_id, 'run', failed_run.id, 1
+	      FROM failed_run
+	      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
+	    ON CONFLICT (org_id, subject_type, subject_id)
+	    DO UPDATE SET last_seq = event_subject_cursors.last_seq + 1,
+	                  updated_at = now()
+	    RETURNING org_id, subject_type, subject_id, last_seq
+	),
 	run_event AS (
-	    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+	    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
 	    SELECT failed_run.org_id,
 	           failed_run.project_id,
 	           failed_run.environment_id,
 	           failed_run.id,
+	           run_event_seq.last_seq,
 	           failed_run.current_attempt_id,
 	           failed_run.current_attempt_number,
 	           failed_run.trace_id,
@@ -772,7 +783,16 @@ WITH queue_entry AS (
 	           'internal',
 	           failed_run.state_version
 	      FROM failed_run
-	      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
+	      JOIN run_event_seq ON run_event_seq.org_id = failed_run.org_id
+	                        AND run_event_seq.subject_type = 'run'
+	                        AND run_event_seq.subject_id = failed_run.id
+	    RETURNING *
+	),
+	run_event_outbox AS (
+	    INSERT INTO event_outbox (event_record_id, stream_key)
+	    SELECT run_event.id,
+	           'helmr:events:' || run_event.org_id::text || ':' || run_event.subject_type::text || ':' || run_event.subject_id::text
+	      FROM run_event
 	    RETURNING id
 	),
 existing_dead_letter AS (
@@ -785,6 +805,7 @@ existing_dead_letter AS (
 )
 SELECT queue_entry.*
   FROM queue_entry
+  JOIN run_event_outbox ON true
 UNION ALL
 SELECT existing_dead_letter.*
   FROM existing_dead_letter

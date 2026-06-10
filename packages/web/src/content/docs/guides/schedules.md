@@ -62,7 +62,7 @@ Use the runtime client when a trusted service should create or manage schedules:
 import { HelmrClient } from "@helmr/sdk"
 
 const client = new HelmrClient({
-  url: process.env.HELMR_URL,
+  url: process.env.HELMR_API_URL,
   apiKey: process.env.HELMR_API_KEY,
 })
 

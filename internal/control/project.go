@@ -647,6 +647,7 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 
 type deploymentStore interface {
 	AllocateDeploymentVersion(context.Context, db.AllocateDeploymentVersionParams) (string, error)
+	AppendDeploymentEvent(context.Context, db.AppendDeploymentEventParams) (db.AppendDeploymentEventRow, error)
 	CreateArtifact(context.Context, db.CreateArtifactParams) (db.Artifact, error)
 	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.Deployment, error)
 	GetDefaultWorkerGroup(context.Context) (db.WorkerGroup, error)
@@ -654,6 +655,10 @@ type deploymentStore interface {
 	ListArtifactsByIDs(context.Context, db.ListArtifactsByIDsParams) ([]db.Artifact, error)
 	LockDeploymentReusableBuildKey(context.Context, db.LockDeploymentReusableBuildKeyParams) error
 	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
+}
+
+type deploymentEventAppender interface {
+	AppendDeploymentEvent(context.Context, db.AppendDeploymentEventParams) (db.AppendDeploymentEventRow, error)
 }
 
 type deploymentVersionMetadata struct {
@@ -759,6 +764,139 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 		response.Tasks = taskResponses
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		return
+	}
+	store, ok := s.db.(deploymentStatusStore)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, errors.New("deployment storage is not configured"))
+		return
+	}
+	deploymentID, err := parseUUIDParam(r, "deploymentID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	cursor, err := eventCursor(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	limit, err := eventLimit(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	scope, err := s.requestedRunListScope(r, actor)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) && !actor.HasPermission(auth.PermissionRunsRead, scope) {
+		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		return
+	}
+	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, scope)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("get deployment events"))
+		return
+	}
+	deployment, err := store.GetDeployment(r.Context(), db.GetDeploymentParams{
+		OrgID:         ids.ToPG(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		ID:            ids.ToPG(deploymentID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("deployment not found"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("get deployment"))
+		return
+	}
+	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
+		s.followDeploymentEvents(w, r, actor.OrgID, deploymentID, cursor)
+		return
+	}
+	rows, err := s.db.ListSubjectEvents(r.Context(), db.ListSubjectEventsParams{
+		OrgID:       ids.ToPG(actor.OrgID),
+		SubjectType: db.EventSubjectTypeDeployment,
+		SubjectID:   deployment.ID,
+		Seq:         cursor,
+		RowLimit:    limit + 1,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("list deployment events"))
+		return
+	}
+	hasNext := len(rows) > int(limit)
+	if hasNext {
+		rows = rows[:limit]
+	}
+	events := make([]api.RunEvent, 0, len(rows))
+	for _, row := range rows {
+		events = append(events, eventResponseFromRecord(row))
+	}
+	var nextCursor *int64
+	if hasNext {
+		value := rows[len(rows)-1].Seq
+		nextCursor = &value
+	}
+	writeJSON(w, http.StatusOK, api.RunEventPage{Events: events, Cursor: cursor, NextCursor: nextCursor})
+}
+
+func (s *Server) followDeploymentEvents(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, deploymentID uuid.UUID, cursor int64) {
+	if s.eventStream == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("event stream is not configured"))
+		return
+	}
+	flusher, _ := w.(http.Flusher)
+	w.Header().Set("content-type", "text/event-stream")
+	w.Header().Set("cache-control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	encoder := json.NewEncoder(w)
+	ctx, cancel := context.WithTimeout(r.Context(), runEventsFollowMaxDuration)
+	defer cancel()
+	err := s.eventStream.ReadSubject(ctx, orgID, db.EventSubjectTypeDeployment, deploymentID, cursor, func(event api.RunEvent) error {
+		_, _ = fmt.Fprintf(w, "id: %s\n", event.ID)
+		_, _ = fmt.Fprint(w, "event: deployment_event\n")
+		_, _ = fmt.Fprint(w, "data: ")
+		if err := encoder.Encode(event); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprint(w, "\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		if deploymentEventKindIsTerminal(event.Kind) {
+			cancel()
+		}
+		return nil
+	}, func() error {
+		_, _ = fmt.Fprint(w, ": keep-alive\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		s.log.Warn("follow deployment events failed", "error", err)
+	}
+}
+
+func deploymentEventKindIsTerminal(kind string) bool {
+	switch kind {
+	case "deployment.deployed", "deployment.failed":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
@@ -1293,7 +1431,7 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, orgID uu
 	if err != nil {
 		return db.Deployment{}, err
 	}
-	return store.CreateDeployment(ctx, db.CreateDeploymentParams{
+	deployment, err := store.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                         ids.ToPG(ids.New()),
 		OrgID:                      ids.ToPG(orgID),
 		ProjectID:                  projectID,
@@ -1309,6 +1447,34 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, orgID uu
 		DeploymentSourceArtifactID: sourceArtifact.ID,
 		Status:                     db.DeploymentStatusQueued,
 	})
+	if err != nil {
+		return db.Deployment{}, err
+	}
+	if err := appendDeploymentLifecycleEvent(ctx, store, deployment.OrgID, deployment.ProjectID, deployment.EnvironmentID, deployment.ID, "deployment.queued", "info", "control", "queued", "Deployment queued"); err != nil {
+		return db.Deployment{}, err
+	}
+	return deployment, nil
+}
+
+func appendDeploymentLifecycleEvent(ctx context.Context, store deploymentEventAppender, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, kind string, severity string, source string, status string, message string) error {
+	payload, err := json.Marshal(map[string]string{"status": status})
+	if err != nil {
+		return err
+	}
+	_, err = store.AppendDeploymentEvent(ctx, db.AppendDeploymentEventParams{
+		OrgID:          orgID,
+		ProjectID:      projectID,
+		EnvironmentID:  environmentID,
+		DeploymentID:   deploymentID,
+		Category:       "lifecycle",
+		Severity:       severity,
+		Source:         source,
+		Kind:           kind,
+		Message:        message,
+		Payload:        payload,
+		RedactionClass: "internal",
+	})
+	return err
 }
 
 func nextDeploymentVersion(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (string, error) {

@@ -11,17 +11,18 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cli/session"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/version"
+	"github.com/spf13/cobra"
 )
 
 const (
-	helmrURLEnv    = "HELMR_URL"
+	helmrAPIURLEnv = "HELMR_API_URL"
 	helmrAPIKeyEnv = "HELMR_API_KEY"
 )
 
 var newSessionStore = session.New
 
-func controlClient() (*client.Client, error) {
-	rawURL := strings.TrimSpace(os.Getenv(helmrURLEnv))
+func controlClient(cmd *cobra.Command) (*client.Client, error) {
+	rawURL := cliControlURL(cmd)
 	bearer := strings.TrimSpace(os.Getenv(helmrAPIKeyEnv))
 	var state *session.Store
 	if rawURL == "" || bearer == "" {
@@ -42,7 +43,7 @@ func controlClient() (*client.Client, error) {
 	parsed, err := parseControlURL(rawURL)
 	if err != nil {
 		if rawURL == "" {
-			return nil, fmt.Errorf("helmr API access requires %s=http(s)://... or helmr login", helmrURLEnv)
+			return nil, fmt.Errorf("helmr API access requires %s=http(s)://... or helmr login", helmrAPIURLEnv)
 		}
 		return nil, err
 	}
@@ -61,8 +62,8 @@ func controlClient() (*client.Client, error) {
 	return client.New(baseURL, client.WithBearerToken(bearer), client.WithClientIdentity("cli", version.Version))
 }
 
-func sessionControlClient() (*client.Client, error) {
-	rawURL := strings.TrimSpace(os.Getenv(helmrURLEnv))
+func sessionControlClient(cmd *cobra.Command) (*client.Client, error) {
+	rawURL := cliControlURL(cmd)
 	state, err := newSessionStore()
 	if err != nil {
 		return nil, err
@@ -92,6 +93,32 @@ func sessionControlClient() (*client.Client, error) {
 	return client.New(baseURL, client.WithBearerToken(bearer), client.WithClientIdentity("cli", version.Version))
 }
 
+func cliControlURL(cmd *cobra.Command) string {
+	if rawURL := explicitAPIURL(cmd); rawURL != "" {
+		return rawURL
+	}
+	return strings.TrimSpace(os.Getenv(helmrAPIURLEnv))
+}
+
+func explicitAPIURL(cmd *cobra.Command) string {
+	if cmd == nil {
+		return ""
+	}
+	root := cmd.Root()
+	if root == nil {
+		return ""
+	}
+	flag := root.PersistentFlags().Lookup("api-url")
+	if flag == nil || !flag.Changed {
+		return ""
+	}
+	rawURL, err := root.PersistentFlags().GetString("api-url")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(rawURL)
+}
+
 func parseControlURL(rawURL string) (*url.URL, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
@@ -99,10 +126,10 @@ func parseControlURL(rawURL string) (*url.URL, error) {
 	}
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid %s %q: %w", helmrURLEnv, rawURL, err)
+		return nil, fmt.Errorf("invalid %s %q: %w", helmrAPIURLEnv, rawURL, err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return nil, fmt.Errorf("unsupported %s scheme %q; expected http or https", helmrURLEnv, parsed.Scheme)
+		return nil, fmt.Errorf("unsupported %s scheme %q; expected http or https", helmrAPIURLEnv, parsed.Scheme)
 	}
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, fmt.Errorf("base URL must not include query or fragment")

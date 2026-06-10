@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -27,6 +28,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 const testGitSHA = "0123456789abcdef0123456789abcdef01234567"
@@ -2148,11 +2150,16 @@ func TestWorkerReleaseRejectsUnknownFields(t *testing.T) {
 			UpdatedAt:          testTime(),
 		},
 	}
+	redisServer := miniredis.RunT(t)
+	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+		WithEventStream(eventStream),
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
@@ -2516,11 +2523,16 @@ func TestWorkerRestoreClaimDoesNotRequireWorkspaceSourceBinding(t *testing.T) {
 			Resolution:     []byte(`{"value":{"approved":true}}`),
 		},
 	}
+	redisServer := miniredis.RunT(t)
+	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+		WithEventStream(eventStream),
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 
@@ -2818,11 +2830,16 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 			UpdatedAt:          testTime(),
 		},
 	}
+	redisServer := miniredis.RunT(t)
+	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+		WithEventStream(eventStream),
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
@@ -2891,8 +2908,8 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 		t.Fatalf("next cursor = %v, want nil for final page", *events.NextCursor)
 	}
 
-	store.events = []db.RunEvent{{
-		ID:             1,
+	store.events = []db.Event{{
+		Seq:            1,
 		OrgID:          store.run.OrgID,
 		RunID:          store.run.ID,
 		Kind:           "run.completed",
@@ -2938,8 +2955,8 @@ func TestRunEventsPaginationUsesLookahead(t *testing.T) {
 		},
 	}
 	for i := int64(1); i <= 201; i++ {
-		store.events = append(store.events, db.RunEvent{
-			ID:        i,
+		store.events = append(store.events, db.Event{
+			Seq:       i,
 			OrgID:     ids.ToPG(ids.DefaultOrgID),
 			RunID:     ids.ToPG(runID),
 			Kind:      "run.created",
@@ -3005,6 +3022,40 @@ func TestEventCursorPrefersLastEventID(t *testing.T) {
 	}
 	if cursor != 9 {
 		t.Fatalf("cursor = %d, want 9", cursor)
+	}
+}
+
+func TestEventStreamTreatsTrimmedOlderDuplicateAsPublished(t *testing.T) {
+	runID := ids.New()
+	redisServer := miniredis.RunT(t)
+	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	streamKey := eventStreamKey(ids.DefaultOrgID, db.EventSubjectTypeRun, runID)
+	if err := redisClient.XAdd(context.Background(), &goredis.XAddArgs{
+		Stream: streamKey,
+		ID:     "2-0",
+		Values: map[string]any{"event": `{"id":"2","kind":"run.completed"}`},
+	}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	stream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: &fakeStore{}, redis: redisClient}
+	err := stream.publishOutboxRow(context.Background(), db.ClaimEventOutboxRow{
+		OutboxID:       1,
+		StreamKey:      streamKey,
+		Seq:            1,
+		OrgID:          ids.ToPG(ids.DefaultOrgID),
+		RunID:          ids.ToPG(runID),
+		SubjectType:    db.EventSubjectTypeRun,
+		SubjectID:      ids.ToPG(runID),
+		Kind:           "run.created",
+		Message:        "run.created",
+		Payload:        []byte(`{}`),
+		RedactionClass: "internal",
+		CreatedAt:      testTime(),
+		OccurredAt:     testTime(),
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -3474,10 +3525,11 @@ type fakeStore struct {
 	deploymentPromotions                    []db.PromoteDeploymentParams
 	createDeploymentResult                  *db.Deployment
 	createDeploymentErr                     error
+	deploymentEvents                        []db.Event
 	deploymentTasks                         []db.DeploymentTask
 	artifacts                               []db.Artifact
 	runEvent                                db.AppendRunEventParams
-	events                                  []db.RunEvent
+	events                                  []db.Event
 	stdout                                  []byte
 	stderr                                  []byte
 	runLogSnapshot                          db.GetRunLogSnapshotParams
@@ -4054,8 +4106,8 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		Kind:    "run.created",
 		Payload: arg.EventPayload,
 	}
-	f.events = append(f.events, db.RunEvent{
-		ID:        int64(len(f.events) + 1),
+	f.events = append(f.events, db.Event{
+		Seq:       int64(len(f.events) + 1),
 		OrgID:     arg.OrgID,
 		RunID:     arg.ID,
 		Kind:      "run.created",
@@ -4113,10 +4165,10 @@ func (f *fakeStore) ClearRunIdempotencyKey(_ context.Context, arg db.ClearRunIde
 	return nil
 }
 
-func (f *fakeStore) AppendRunEvent(_ context.Context, arg db.AppendRunEventParams) (db.RunEvent, error) {
+func (f *fakeStore) AppendRunEvent(_ context.Context, arg db.AppendRunEventParams) (db.AppendRunEventRow, error) {
 	f.runEvent = arg
-	event := db.RunEvent{
-		ID:        int64(len(f.events) + 1),
+	event := db.Event{
+		Seq:       int64(len(f.events) + 1),
 		OrgID:     arg.OrgID,
 		RunID:     arg.RunID,
 		Kind:      arg.Kind,
@@ -4124,7 +4176,52 @@ func (f *fakeStore) AppendRunEvent(_ context.Context, arg db.AppendRunEventParam
 		CreatedAt: testTime(),
 	}
 	f.events = append(f.events, event)
-	return event, nil
+	return db.AppendRunEventRow{
+		Seq:       event.Seq,
+		OrgID:     event.OrgID,
+		RunID:     event.RunID,
+		Kind:      event.Kind,
+		Payload:   event.Payload,
+		CreatedAt: event.CreatedAt,
+	}, nil
+}
+
+func (f *fakeStore) AppendDeploymentEvent(_ context.Context, arg db.AppendDeploymentEventParams) (db.AppendDeploymentEventRow, error) {
+	event := db.Event{
+		Seq:             int64(len(f.deploymentEvents) + 1),
+		OrgID:           arg.OrgID,
+		ProjectID:       arg.ProjectID,
+		EnvironmentID:   arg.EnvironmentID,
+		DeploymentID:    arg.DeploymentID,
+		Category:        arg.Category,
+		Severity:        arg.Severity,
+		Source:          arg.Source,
+		Kind:            arg.Kind,
+		Message:         arg.Message,
+		Payload:         arg.Payload,
+		RedactionClass:  arg.RedactionClass,
+		CreatedAt:       testTime(),
+		OccurredAt:      testTime(),
+		SnapshotVersion: pgtype.Int8{},
+	}
+	f.deploymentEvents = append(f.deploymentEvents, event)
+	return db.AppendDeploymentEventRow{
+		Seq:             event.Seq,
+		OrgID:           event.OrgID,
+		ProjectID:       event.ProjectID,
+		EnvironmentID:   event.EnvironmentID,
+		DeploymentID:    event.DeploymentID,
+		Category:        event.Category,
+		Severity:        event.Severity,
+		Source:          event.Source,
+		Kind:            event.Kind,
+		Message:         event.Message,
+		Payload:         event.Payload,
+		RedactionClass:  event.RedactionClass,
+		CreatedAt:       event.CreatedAt,
+		OccurredAt:      event.OccurredAt,
+		SnapshotVersion: event.SnapshotVersion,
+	}, nil
 }
 
 func (f *fakeStore) GetRun(_ context.Context, arg db.GetRunParams) (db.Run, error) {
@@ -4352,15 +4449,20 @@ func addRunStatusCount(counts *db.CountRunsByStatusRow, status db.RunStatus) {
 	}
 }
 
-func (f *fakeStore) ListRunEvents(_ context.Context, arg db.ListRunEventsParams) ([]db.RunEvent, error) {
-	var events []db.RunEvent
+func (f *fakeStore) ListSubjectEvents(_ context.Context, arg db.ListSubjectEventsParams) ([]db.Event, error) {
+	var events []db.Event
 	for _, event := range f.events {
-		if event.RunID == arg.RunID && event.ID > arg.ID {
+		if arg.SubjectType == db.EventSubjectTypeRun && event.RunID == arg.SubjectID && event.Seq > arg.Seq {
 			events = append(events, event)
 		}
 	}
-	if int32(len(events)) > arg.Limit {
-		events = events[:arg.Limit]
+	for _, event := range f.deploymentEvents {
+		if arg.SubjectType == db.EventSubjectTypeDeployment && event.DeploymentID == arg.SubjectID && event.Seq > arg.Seq {
+			events = append(events, event)
+		}
+	}
+	if int32(len(events)) > arg.RowLimit {
+		events = events[:arg.RowLimit]
 	}
 	return events, nil
 }
@@ -4840,8 +4942,8 @@ func (f *fakeStore) ReleaseRunExecutionSession(_ context.Context, arg db.Release
 	f.run.ErrorMessage = arg.ErrorMessage
 	f.run.FinishedAt = testTime()
 	f.run.UpdatedAt = testTime()
-	f.events = append(f.events, db.RunEvent{
-		ID:        int64(len(f.events) + 1),
+	f.events = append(f.events, db.Event{
+		Seq:       int64(len(f.events) + 1),
 		OrgID:     arg.OrgID,
 		RunID:     arg.RunID,
 		Kind:      arg.TerminalEventKind,
@@ -4872,8 +4974,8 @@ func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChun
 	case "stderr":
 		f.stderr = append(f.stderr, arg.Content...)
 	}
-	event := db.RunEvent{
-		ID:             int64(len(f.events) + 1),
+	event := db.Event{
+		Seq:            int64(len(f.events) + 1),
 		OrgID:          arg.OrgID,
 		RunID:          arg.RunID,
 		SessionID:      arg.SessionID,
@@ -4912,12 +5014,12 @@ func (f *fakeStore) GetRunLogSnapshot(_ context.Context, arg db.GetRunLogSnapsho
 	}, nil
 }
 
-func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendRunEventForExecutionParams) (db.RunEvent, error) {
+func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendRunEventForExecutionParams) (db.AppendRunEventForExecutionRow, error) {
 	if f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
-		return db.RunEvent{}, pgx.ErrNoRows
+		return db.AppendRunEventForExecutionRow{}, pgx.ErrNoRows
 	}
-	event := db.RunEvent{
-		ID:             int64(len(f.events) + 1),
+	event := db.Event{
+		Seq:            int64(len(f.events) + 1),
 		OrgID:          arg.OrgID,
 		RunID:          arg.RunID,
 		SessionID:      arg.SessionID,
@@ -4928,7 +5030,18 @@ func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendR
 		CreatedAt:      testTime(),
 	}
 	f.events = append(f.events, event)
-	return event, nil
+	return db.AppendRunEventForExecutionRow{
+		Seq:             event.Seq,
+		OrgID:           event.OrgID,
+		RunID:           event.RunID,
+		SessionID:       event.SessionID,
+		AttemptNumber:   event.AttemptNumber,
+		Kind:            event.Kind,
+		Payload:         event.Payload,
+		RedactionClass:  event.RedactionClass,
+		CreatedAt:       event.CreatedAt,
+		SnapshotVersion: event.SnapshotVersion,
+	}, nil
 }
 
 func fakeEventRedactionClass(kind string) string {
@@ -5030,16 +5143,16 @@ func (f *fakeStore) MarkWaitpointCheckpointDurableReady(_ context.Context, arg d
 	f.run.LatestCheckpointID = arg.CheckpointID
 	f.run.CurrentSessionID = pgtype.UUID{}
 	f.run.UpdatedAt = testTime()
-	f.events = append(f.events, db.RunEvent{
-		ID:        int64(len(f.events) + 1),
+	f.events = append(f.events, db.Event{
+		Seq:       int64(len(f.events) + 1),
 		OrgID:     arg.OrgID,
 		RunID:     arg.RunID,
 		Kind:      "checkpoint.ready",
 		Payload:   arg.CheckpointPayload,
 		CreatedAt: testTime(),
 	})
-	f.events = append(f.events, db.RunEvent{
-		ID:        int64(len(f.events) + 1),
+	f.events = append(f.events, db.Event{
+		Seq:       int64(len(f.events) + 1),
 		OrgID:     arg.OrgID,
 		RunID:     arg.RunID,
 		Kind:      "waitpoint.requested",
@@ -5188,7 +5301,7 @@ func (f *fakeStore) UnblockRunWaitsForWaitpoint(_ context.Context, arg db.Unbloc
 		"resolution_kind": f.waitpoint.ResolutionKind.String,
 		"result":          json.RawMessage(f.waitpoint.Output),
 	})
-	f.events = append(f.events, db.RunEvent{ID: int64(len(f.events) + 1), OrgID: arg.OrgID, RunID: f.waitpoint.RunID, Kind: "waitpoint.resolved", Payload: payload, CreatedAt: testTime()})
+	f.events = append(f.events, db.Event{Seq: int64(len(f.events) + 1), OrgID: arg.OrgID, RunID: f.waitpoint.RunID, Kind: "waitpoint.resolved", Payload: payload, CreatedAt: testTime()})
 	return []db.UnblockRunWaitsForWaitpointRow{{ID: f.waitpoint.ID, RunWaitID: waitpointRunWaitID(f.waitpoint), OrgID: f.waitpoint.OrgID, RunID: f.waitpoint.RunID, Status: f.waitpoint.Status}}, nil
 }
 

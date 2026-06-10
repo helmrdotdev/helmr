@@ -26,7 +26,7 @@ import { HelmrClient } from "@helmr/sdk"
 import { impl } from "./tasks/impl"
 
 const client = new HelmrClient({
-  url: process.env.HELMR_URL,
+  url: process.env.HELMR_API_URL,
   apiKey: process.env.HELMR_API_KEY,
 })
 
@@ -43,7 +43,7 @@ if (pendingWaitpoint !== null && pendingWaitpoint.kind === "human") {
   })
 }
 
-const finished = await client.runs.wait(handle, { timeoutMs: 10 * 60_000, intervalMs: 1_000 })
+const finished = await client.runs.wait(handle, { timeoutMs: 10 * 60_000 })
 const logs = await client.runs.logs.retrieve(handle)
 const events = await client.runs.events.list(handle)
 

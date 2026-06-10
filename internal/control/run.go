@@ -39,7 +39,6 @@ const (
 	maxRunLogSnapshotBytes       = int64(1 << 20)
 	runEventsPageSize            = int32(200)
 	runEventsFollowMaxDuration   = 30 * time.Minute
-	runEventsFollowFallbackEvery = 15 * time.Second
 )
 
 var errIdempotencyKeyConflict = errors.New("idempotency_key was already used with different run parameters")
@@ -1188,7 +1187,7 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
-		s.followRunEvents(w, r, ids.ToPG(actor.OrgID), ids.ToPG(runID), cursor)
+		s.followRunEvents(w, r, actor.OrgID, runID, cursor)
 		return
 	}
 	rows, err := s.listRunEvents(r, ids.ToPG(actor.OrgID), ids.ToPG(runID), cursor, limit)
@@ -1207,18 +1206,19 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	var nextCursor *int64
 	if hasNext {
-		value := rows[len(rows)-1].ID
+		value := rows[len(rows)-1].Seq
 		nextCursor = &value
 	}
 	writeJSON(w, http.StatusOK, api.RunEventPage{Events: events, Cursor: cursor, NextCursor: nextCursor})
 }
 
-func (s *Server) listRunEvents(r *http.Request, orgID pgtype.UUID, runID pgtype.UUID, cursor int64, limit int32) ([]db.RunEvent, error) {
-	return s.db.ListRunEvents(r.Context(), db.ListRunEventsParams{
-		OrgID: orgID,
-		RunID: runID,
-		ID:    cursor,
-		Limit: limit + 1,
+func (s *Server) listRunEvents(r *http.Request, orgID pgtype.UUID, runID pgtype.UUID, cursor int64, limit int32) ([]db.Event, error) {
+	return s.db.ListSubjectEvents(r.Context(), db.ListSubjectEventsParams{
+		OrgID:       orgID,
+		SubjectType: db.EventSubjectTypeRun,
+		SubjectID:   runID,
+		Seq:         cursor,
+		RowLimit:    limit + 1,
 	})
 }
 
@@ -1417,132 +1417,47 @@ func eventLimit(r *http.Request) (int32, error) {
 	return int32(parsed), nil
 }
 
-func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID pgtype.UUID, runID pgtype.UUID, cursor int64) {
+func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, runID uuid.UUID, cursor int64) {
+	if s.eventStream == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("event stream is not configured"))
+		return
+	}
 	flusher, _ := w.(http.Flusher)
 	w.Header().Set("content-type", "text/event-stream")
 	w.Header().Set("cache-control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	encoder := json.NewEncoder(w)
-	var events <-chan struct{} = make(chan struct{})
-	unsubscribe := func() {}
-	if s.runEvents != nil {
-		events, unsubscribe = s.runEvents.SubscribeRunEvents(r.Context(), runID)
-		defer unsubscribe()
-	}
-	fallback := time.NewTicker(runEventsFollowFallbackEvery)
-	defer fallback.Stop()
-	deadline := time.NewTimer(runEventsFollowMaxDuration)
-	defer deadline.Stop()
-	for {
-		rows, err := s.listRunEvents(r, orgID, runID, cursor, runEventsPageSize)
-		if err != nil {
-			s.log.Warn("follow run events failed", "error", err)
-			return
+	ctx, cancel := context.WithTimeout(r.Context(), runEventsFollowMaxDuration)
+	defer cancel()
+	err := s.eventStream.ReadSubject(ctx, orgID, db.EventSubjectTypeRun, runID, cursor, func(event api.RunEvent) error {
+		_, _ = fmt.Fprintf(w, "id: %s\n", event.ID)
+		_, _ = fmt.Fprint(w, "event: run_event\n")
+		_, _ = fmt.Fprint(w, "data: ")
+		if err := encoder.Encode(event); err != nil {
+			return err
 		}
-		hasMore := int32(len(rows)) > runEventsPageSize
-		if hasMore {
-			rows = rows[:runEventsPageSize]
-		}
-		terminal := false
-		for _, row := range rows {
-			event := runEventResponse(row)
-			cursor = row.ID
-			terminal = terminal || runEventKindIsTerminal(row.Kind)
-			_, _ = fmt.Fprintf(w, "id: %s\n", event.ID)
-			_, _ = fmt.Fprint(w, "event: run_event\n")
-			_, _ = fmt.Fprint(w, "data: ")
-			_ = encoder.Encode(event)
-			_, _ = fmt.Fprint(w, "\n")
-		}
+		_, _ = fmt.Fprint(w, "\n")
 		if flusher != nil {
 			flusher.Flush()
 		}
-		if terminal {
-			return
+		if api.RunEventKindIsTerminal(event.Kind) {
+			cancel()
 		}
-		if hasMore {
-			continue
+		return nil
+	}, func() error {
+		_, _ = fmt.Fprint(w, ": keep-alive\n\n")
+		if flusher != nil {
+			flusher.Flush()
 		}
-		select {
-		case <-r.Context().Done():
-			return
-		case <-deadline.C:
-			return
-		case <-events:
-		case <-fallback.C:
-			_, _ = fmt.Fprint(w, ": keep-alive\n\n")
-			if flusher != nil {
-				flusher.Flush()
-			}
-		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		s.log.Warn("follow run events failed", "error", err)
 	}
 }
 
-func runEventKindIsTerminal(kind string) bool {
-	switch kind {
-	case "run.completed", "run.failed", "run.cancelled", "run.expired":
-		return true
-	default:
-		return false
-	}
-}
-
-func runEventResponse(event db.RunEvent) api.RunEvent {
-	runID := ids.MustFromPG(event.RunID).String()
-	var sessionID *string
-	if event.SessionID.Valid {
-		value := ids.MustFromPG(event.SessionID).String()
-		sessionID = &value
-	}
-	var attemptID *string
-	if event.AttemptID.Valid {
-		value := ids.MustFromPG(event.AttemptID).String()
-		attemptID = &value
-	}
-	var attemptNumber *int32
-	if event.AttemptNumber.Valid {
-		attemptNumber = &event.AttemptNumber.Int32
-	}
-	kind := "execution"
-	if strings.HasPrefix(event.Kind, "emit.") {
-		kind = "emit"
-	}
-	spanID := ""
-	if event.SpanID.Valid {
-		spanID = event.SpanID.String
-	}
-	traceparent := ""
-	if event.Traceparent.Valid {
-		traceparent = event.Traceparent.String
-	}
-	attributes := json.RawMessage(event.Payload)
-	if len(attributes) == 0 || !json.Valid(attributes) {
-		attributes = json.RawMessage(`{}`)
-	}
-	if event.RedactionClass == "sensitive" {
-		attributes = json.RawMessage(`{"redacted":true}`)
-	}
-	return api.RunEvent{
-		ID:            strconv.FormatInt(event.ID, 10),
-		RunID:         &runID,
-		SessionID:     sessionID,
-		AttemptID:     attemptID,
-		AttemptNumber: attemptNumber,
-		Trace: api.TraceContext{
-			TraceID:     event.TraceID,
-			SpanID:      spanID,
-			Traceparent: traceparent,
-		},
-		Category:       event.Category,
-		Severity:       event.Severity,
-		Source:         event.Source,
-		Kind:           kind,
-		Message:        firstNonEmptyString(event.Message, event.Kind),
-		At:             pgTime(event.CreatedAt),
-		OccurredAt:     pgTime(event.OccurredAt),
-		RedactionClass: event.RedactionClass,
-		Attributes:     attributes,
-	}
+func runEventResponse(event db.Event) api.RunEvent {
+	return eventResponseFromRecord(event)
 }
 
 func listRunsQuery(r *http.Request) (string, int32, error) {

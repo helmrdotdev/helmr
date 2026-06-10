@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -232,7 +233,7 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
@@ -241,9 +242,9 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
 		"run", "deploy",
-		"-p", "env=prod",
-		"--project", "project-1",
-		"--environment", "env-1",
+		"--payload", "env=prod",
+		"-p", "project-1",
+		"--env", "env-1",
 		"--max-duration-seconds", "60",
 		"--metadata-json", `{"source":"cli"}`,
 		"--tag", "deploy",
@@ -293,7 +294,7 @@ func TestCancelCommandCancelsRun(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
@@ -327,7 +328,7 @@ func TestReplayCommandReplaysRun(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
@@ -337,7 +338,7 @@ func TestReplayCommandReplaysRun(t *testing.T) {
 	cmd.SetArgs([]string{
 		"replay", "run-1",
 		"--version", "latest",
-		"-p", "env=prod",
+		"--payload", "env=prod",
 		"--metadata-json", `{"reason":"manual"}`,
 		"--tag", "manual",
 		"--reason", "retry deploy",
@@ -357,6 +358,17 @@ func TestReplayCommandReplaysRun(t *testing.T) {
 	}
 	if strings.Join(request.Tags, ",") != "manual" {
 		t.Fatalf("tags = %+v", request.Tags)
+	}
+}
+
+func TestReplayCommandDoesNotUseProjectShorthandForPayload(t *testing.T) {
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"replay", "run-1", "-p", "env=prod"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "unknown shorthand flag: 'p'") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -381,7 +393,7 @@ func TestReplayCommandOmitsPayloadMetadataAndTagsWhenNotOverridden(t *testing.T)
 		_ = json.NewEncoder(w).Encode(api.ReplayRunResponse{Run: api.RunResponse{ID: "run-2", Status: "queued"}})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
@@ -397,28 +409,39 @@ func TestReplayCommandOmitsPayloadMetadataAndTagsWhenNotOverridden(t *testing.T)
 	}
 }
 
-func TestWaitCommandPollsUntilTerminal(t *testing.T) {
+func TestWaitCommandFollowsEventsUntilTerminal(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1" {
+		if r.Method != http.MethodGet {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		requests++
-		status := "running"
-		if requests > 1 {
-			status = "succeeded"
+		switch r.URL.Path {
+		case "/api/runs/run-1":
+			requests++
+			status := "running"
+			if requests > 1 {
+				status = "succeeded"
+			}
+			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", Status: status})
+		case "/api/runs/run-1/events":
+			if r.URL.Query().Get("follow") != "1" {
+				t.Fatalf("query = %s", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("id: 1\nevent: run_event\ndata: {\"id\":\"1\",\"kind\":\"run.completed\"}\n\n"))
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", Status: status})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"wait", "run-1", "--interval", "1ms", "--timeout", "1s"})
+	cmd.SetArgs([]string{"wait", "run-1", "--timeout", "1s"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -430,50 +453,156 @@ func TestWaitCommandPollsUntilTerminal(t *testing.T) {
 	}
 }
 
+func TestWaitCommandChecksStatusAfterStreamDisconnect(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/api/runs/run-1":
+			requests++
+			status := "running"
+			if requests > 1 {
+				status = "succeeded"
+			}
+			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", Status: status})
+		case "/api/runs/run-1/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("id: 1\nevent: run_event\ndata: {\"id\":\"1\",\"kind\":\"run.created\"}\n\n"))
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"wait", "run-1", "--timeout", "1s"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "run-1 succeeded" {
+		t.Fatalf("output = %q", out.String())
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d", requests)
+	}
+}
+
+func TestWaitCommandReconnectsAfterTransientEventStreamError(t *testing.T) {
+	oldReconnectDelay := runEventReconnectDelay
+	runEventReconnectDelay = time.Millisecond
+	t.Cleanup(func() { runEventReconnectDelay = oldReconnectDelay })
+
+	runRequests := 0
+	eventRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/api/runs/run-1":
+			runRequests++
+			status := "running"
+			if runRequests > 2 {
+				status = "succeeded"
+			}
+			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", Status: status})
+		case "/api/runs/run-1/events":
+			eventRequests++
+			if eventRequests == 1 {
+				http.Error(w, "temporary", http.StatusBadGateway)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("id: 2\nevent: run_event\ndata: {\"id\":\"2\",\"kind\":\"run.completed\"}\n\n"))
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"wait", "run-1", "--timeout", "1s"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "run-1 succeeded" {
+		t.Fatalf("output = %q", out.String())
+	}
+	if eventRequests != 2 {
+		t.Fatalf("eventRequests = %d", eventRequests)
+	}
+}
+
 func TestEventsCommandFollowsRunEvents(t *testing.T) {
+	oldReconnectDelay := runEventReconnectDelay
+	runEventReconnectDelay = time.Millisecond
+	t.Cleanup(func() { runEventReconnectDelay = oldReconnectDelay })
 	var requests int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/events" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		request := atomic.AddInt32(&requests, 1)
-		if request == 1 {
-			next := int64(10)
-			_ = json.NewEncoder(w).Encode(api.RunEventPage{
-				Events:     []api.RunEvent{{ID: "event-1", Kind: "run.created"}},
-				Cursor:     10,
-				NextCursor: &next,
-			})
-			return
-		}
-		if r.URL.Query().Get("cursor") != "10" {
+		if r.URL.Query().Get("follow") != "1" {
 			t.Fatalf("query = %s", r.URL.RawQuery)
 		}
-		_ = json.NewEncoder(w).Encode(api.RunEventPage{Cursor: 10})
+		w.Header().Set("Content-Type", "text/event-stream")
+		if request == 1 {
+			_, _ = w.Write([]byte("id: 1\nevent: run_event\ndata: {\"id\":\"1\",\"kind\":\"run.created\"}\n\n"))
+			return
+		}
+		if request > 2 {
+			<-r.Context().Done()
+			return
+		}
+		if got := r.Header.Get("Last-Event-ID"); got != "1" {
+			t.Fatalf("last event id = %q", got)
+		}
+		_, _ = w.Write([]byte("id: 2\nevent: run_event\ndata: {\"id\":\"2\",\"kind\":\"run.completed\"}\n\n"))
+		time.AfterFunc(10*time.Millisecond, cancel)
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		for atomic.LoadInt32(&requests) < 2 {
-			time.Sleep(time.Millisecond)
-		}
-		cancel()
-	}()
 	var out bytes.Buffer
 	cmd := newRootCommand()
 	cmd.SetContext(ctx)
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"events", "run-1", "--follow", "--interval", "1ms"})
+	cmd.SetArgs([]string{"events", "run-1", "--follow"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), `"id":"event-1"`) {
+	if !strings.Contains(out.String(), `"id":"1"`) || !strings.Contains(out.String(), `"id":"2"`) {
 		t.Fatalf("output = %q", out.String())
 	}
+	if requests < 2 {
+		t.Fatalf("requests = %d", requests)
+	}
+}
+
+func writeDeploymentEventSSE(t *testing.T, w http.ResponseWriter, r *http.Request, kind string) {
+	t.Helper()
+	if r.URL.Query().Get("follow") != "1" || r.URL.Query().Get("project_id") != "project-resolved" || r.URL.Query().Get("environment_id") != "environment-resolved" {
+		t.Fatalf("events query = %s", r.URL.RawQuery)
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	_, _ = fmt.Fprintf(w, "id: 1\nevent: deployment_event\ndata: {\"id\":\"1\",\"deployment_id\":\"deployment-1\",\"kind\":%q,\"message\":\"Deployment lifecycle changed\"}\n\n", kind)
 }
 
 func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
@@ -575,6 +704,8 @@ esac
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", ProjectID: "project-resolved", EnvironmentID: "environment-resolved", Status: "queued"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1/events":
+			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
 		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
 			if r.URL.Query().Get("project_id") != "project-resolved" || r.URL.Query().Get("environment_id") != "environment-resolved" {
 				t.Fatalf("deployment query = %s", r.URL.RawQuery)
@@ -594,21 +725,21 @@ esac
 		}
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root, "--environment", "prod"})
+	cmd.SetArgs([]string{"deploy", root, "--env", "prod"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	if strings.TrimSpace(out.String()) != "20260101.1" {
 		t.Fatalf("output = %q", out.String())
 	}
-	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/deployment-1,POST /api/deployments/deployment-1/promote" {
+	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/deployment-1/events,GET /api/deployments/deployment-1,POST /api/deployments/deployment-1/promote" {
 		t.Fatalf("requests = %s", got)
 	}
 	if metadata.ProjectID != "agents" || metadata.EnvironmentID != "prod" {
@@ -637,6 +768,8 @@ func TestDeployCommandWaitsWithResolvedConfiguredScope(t *testing.T) {
 				EnvironmentID: "environment-resolved",
 				Status:        "queued",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1/events":
+			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
 		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
 			if r.URL.Query().Get("project_id") != "project-resolved" || r.URL.Query().Get("environment_id") != "environment-resolved" {
 				t.Fatalf("deployment query = %s", r.URL.RawQuery)
@@ -649,7 +782,7 @@ func TestDeployCommandWaitsWithResolvedConfiguredScope(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
@@ -665,6 +798,69 @@ func TestDeployCommandWaitsWithResolvedConfiguredScope(t *testing.T) {
 	}
 }
 
+func TestDeployCommandReconnectsDeploymentEventsUntilTerminal(t *testing.T) {
+	root, _ := deployCommandFixture(t)
+	oldReconnectDelay := deployEventReconnectDelay
+	deployEventReconnectDelay = time.Millisecond
+	t.Cleanup(func() { deployEventReconnectDelay = oldReconnectDelay })
+	eventRequests := 0
+	deploymentRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+				ID:            "deployment-1",
+				ProjectID:     "project-resolved",
+				EnvironmentID: "environment-resolved",
+				Status:        "queued",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1/events":
+			eventRequests++
+			if r.URL.Query().Get("follow") != "1" {
+				t.Fatalf("events query = %s", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			if eventRequests == 1 {
+				_, _ = fmt.Fprint(w, "id: 1\nevent: deployment_event\ndata: {\"id\":\"1\",\"deployment_id\":\"deployment-1\",\"kind\":\"deployment.building\",\"message\":\"Deployment build started\"}\n\n")
+				return
+			}
+			if got := r.Header.Get("Last-Event-ID"); got != "1" {
+				t.Fatalf("last event id = %q", got)
+			}
+			_, _ = fmt.Fprint(w, "id: 2\nevent: deployment_event\ndata: {\"id\":\"2\",\"deployment_id\":\"deployment-1\",\"kind\":\"deployment.deployed\",\"message\":\"Deployment build completed\"}\n\n")
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
+			deploymentRequests++
+			status := "queued"
+			if eventRequests >= 2 {
+				status = "deployed"
+			}
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: status})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments/deployment-1/promote":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: "deployed"})
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"deploy", root})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if eventRequests != 2 {
+		t.Fatalf("event requests = %d", eventRequests)
+	}
+	if deploymentRequests < 2 {
+		t.Fatalf("deployment requests = %d", deploymentRequests)
+	}
+}
+
 func TestDeployCommandDetachReturnsQueuedDeploymentID(t *testing.T) {
 	root, _ := deployCommandFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -674,7 +870,7 @@ func TestDeployCommandDetachReturnsQueuedDeploymentID(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: "queued"})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
@@ -687,6 +883,112 @@ func TestDeployCommandDetachReturnsQueuedDeploymentID(t *testing.T) {
 	}
 	if strings.TrimSpace(out.String()) != "deployment-1" {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestDeployCommandJSONUsesProjectAndEnv(t *testing.T) {
+	root, _ := deployCommandFixture(t)
+	var metadata api.CreateDeploymentRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal([]byte(r.FormValue("metadata")), &metadata); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", ProjectID: "project-override", EnvironmentID: "prod", Status: "queued"})
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"deploy", root, "--project", "project-override", "--env", "prod", "--detach", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.ProjectID != "project-override" || metadata.EnvironmentID != "prod" {
+		t.Fatalf("metadata = %+v", metadata)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) == 0 {
+		t.Fatal("expected JSON output")
+	}
+	for _, line := range lines {
+		var decoded struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(line), &decoded); err != nil {
+			t.Fatalf("decode JSON line %q: %v\n%s", line, err, out.String())
+		}
+		if decoded.Type == "" {
+			t.Fatalf("JSON line missing type: %q", line)
+		}
+	}
+	var result struct {
+		Type       string                 `json:"type"`
+		Phase      string                 `json:"phase"`
+		Deployment api.DeploymentResponse `json:"deployment"`
+	}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &result); err != nil {
+		t.Fatalf("decode result line: %v\n%s", err, out.String())
+	}
+	if result.Type != "deployment_result" || result.Phase != "queued" || result.Deployment.ID != "deployment-1" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestLoadEnvFileDoesNotOverrideExistingEnv(t *testing.T) {
+	t.Setenv("APP_EXISTING", "ambient")
+	path := filepath.Join(t.TempDir(), "deploy.env")
+	if err := os.WriteFile(path, []byte("APP_EXISTING=file\nexport\tAPP_SINGLE='quoted value'\nAPP_DOUBLE=\"line\\nnext\"\nAPP_COMMENT=value # comment\nAPP_HASH=\"value # not comment\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEnvFile(path); err != nil {
+		t.Fatal(err)
+	}
+	if got := os.Getenv("APP_EXISTING"); got != "ambient" {
+		t.Fatalf("APP_EXISTING = %q", got)
+	}
+	if got := os.Getenv("APP_SINGLE"); got != "quoted value" {
+		t.Fatalf("APP_SINGLE = %q", got)
+	}
+	if got := os.Getenv("APP_DOUBLE"); got != "line\nnext" {
+		t.Fatalf("APP_DOUBLE = %q", got)
+	}
+	if got := os.Getenv("APP_COMMENT"); got != "value" {
+		t.Fatalf("APP_COMMENT = %q", got)
+	}
+	if got := os.Getenv("APP_HASH"); got != "value # not comment" {
+		t.Fatalf("APP_HASH = %q", got)
+	}
+}
+
+func TestLoadEnvFileRejectsReservedHelmrNamespace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deploy.env")
+	if err := os.WriteFile(path, []byte("HELMR_ADAPTER_RUNTIME_PATH=/tmp/adapter\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := loadEnvFile(path)
+	if err == nil || !strings.Contains(err.Error(), "HELMR_ADAPTER_RUNTIME_PATH uses the reserved HELMR_ namespace") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadEnvFileRejectsUnterminatedQuotedValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deploy.env")
+	if err := os.WriteFile(path, []byte("APP_VALUE=\"unterminated\\\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := loadEnvFile(path)
+	if err == nil || !strings.Contains(err.Error(), "quoted value is not terminated") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -703,6 +1005,8 @@ func TestDeployCommandSkipPromotionDoesNotPromote(t *testing.T) {
 				EnvironmentID: "environment-resolved",
 				Status:        "queued",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1/events":
+			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
 		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Version: "20260101.1", Status: "deployed"})
 		default:
@@ -710,7 +1014,7 @@ func TestDeployCommandSkipPromotionDoesNotPromote(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
@@ -724,7 +1028,7 @@ func TestDeployCommandSkipPromotionDoesNotPromote(t *testing.T) {
 	if strings.TrimSpace(out.String()) != "20260101.1" {
 		t.Fatalf("output = %q", out.String())
 	}
-	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/deployment-1" {
+	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/deployment-1/events,GET /api/deployments/deployment-1" {
 		t.Fatalf("requests = %s", got)
 	}
 }
@@ -740,6 +1044,8 @@ func TestDeployCommandReturnsFailedDeploymentError(t *testing.T) {
 				EnvironmentID: "environment-resolved",
 				Status:        "queued",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1/events":
+			writeDeploymentEventSSE(t, w, r, "deployment.failed")
 		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
 				ID:     "deployment-1",
@@ -751,7 +1057,7 @@ func TestDeployCommandReturnsFailedDeploymentError(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
@@ -777,7 +1083,7 @@ func TestDeployCommandRequiresResolvedDeploymentScope(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: "queued"})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	cmd := newRootCommand()
@@ -815,18 +1121,6 @@ func TestDeployCommandRequiresHelmrSDKDependency(t *testing.T) {
 
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "package.json must declare @helmr/sdk in dependencies") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestDeployCommandRejectsProjectFlag(t *testing.T) {
-	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", "--project", "agents"})
-
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "unknown flag: --project") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -1108,7 +1402,7 @@ func TestRunCommandReadsPayloadFile(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	payloadPath := filepath.Join(t.TempDir(), "payload.json")
@@ -1137,7 +1431,7 @@ func TestRunCommandRejectsPayloadFileCombinations(t *testing.T) {
 		called = true
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	payloadPath := filepath.Join(t.TempDir(), "payload.json")
@@ -1146,7 +1440,7 @@ func TestRunCommandRejectsPayloadFileCombinations(t *testing.T) {
 	}
 	for _, args := range [][]string{
 		{"run", "deploy", "--payload-file", payloadPath, "--payload-json", `{"env":"prod"}`},
-		{"run", "deploy", "--payload-file", payloadPath, "-p", "env=prod"},
+		{"run", "deploy", "--payload-file", payloadPath, "--payload", "env=prod"},
 	} {
 		cmd := newRootCommand()
 		cmd.SetOut(&bytes.Buffer{})
@@ -1156,6 +1450,28 @@ func TestRunCommandRejectsPayloadFileCombinations(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "--payload-file cannot be combined") {
 			t.Fatalf("args %v err = %v", args, err)
 		}
+	}
+	if called {
+		t.Fatal("server was called")
+	}
+}
+
+func TestRunCommandRejectsProjectFlagThatLooksLikePayload(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "deploy", "-p", "env=prod"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--project must be a project slug or ID") {
+		t.Fatalf("err = %v", err)
 	}
 	if called {
 		t.Fatal("server was called")
@@ -1199,6 +1515,7 @@ func TestLoginCommandStoresDeviceToken(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, "https://ignored.example.test")
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
@@ -1247,12 +1564,13 @@ func TestLogoutCommandRevokesAndDeletesStoredToken(t *testing.T) {
 	if err := state.SaveLogin(server.URL, "session_test"); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv(helmrAPIURLEnv, "https://ignored.example.test")
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"logout"})
+	cmd.SetArgs([]string{"logout", server.URL})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -1295,6 +1613,36 @@ func TestCommandUsesSavedLoginWhenEnvIsUnset(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out.String() != "hello\n" {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestAPIURLFlagOverridesEnvironmentURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/logs" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("authorization"); got != "Bearer env-key" {
+			t.Fatalf("auth = %s", got)
+		}
+		_ = json.NewEncoder(w).Encode(api.LogSnapshotResponse{
+			StdoutBase64: base64.StdEncoding.EncodeToString([]byte("from flag\n")),
+			StderrBase64: "",
+		})
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, "https://ignored.example.test")
+	t.Setenv(helmrAPIKeyEnv, "env-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--api-url", server.URL, "logs", "run-1"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "from flag\n" {
 		t.Fatalf("output = %q", out.String())
 	}
 }
@@ -1345,7 +1693,7 @@ func TestRunCommandRejectsInvalidTaskIDBeforeRequest(t *testing.T) {
 		called = true
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	cmd := newRootCommand()
@@ -1376,7 +1724,7 @@ func TestWaitpointRespondCommand(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	cmd := newRootCommand()
@@ -1403,7 +1751,7 @@ func TestWaitpointRespondCommandReadsValueFile(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 	valuePath := filepath.Join(t.TempDir(), "value.json")
 	if err := os.WriteFile(valuePath, []byte(`{"text":"Use the smaller rollout."}`), 0o600); err != nil {
@@ -1429,7 +1777,7 @@ func TestWaitpointRespondCommandAllowsEmptyValue(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	cmd := newRootCommand()
@@ -1470,14 +1818,14 @@ func TestWaitpointListCommandPrintsOpenWaitpoints(t *testing.T) {
 		}}})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"waitpoint", "list", "--project", "project-1", "--environment", "env-1", "--limit", "25", "--json"})
+	cmd.SetArgs([]string{"waitpoint", "list", "--project", "project-1", "--env", "env-1", "--limit", "25", "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -1522,7 +1870,7 @@ func TestPolicyListCommandPrintsPolicyNames(t *testing.T) {
 		}})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
@@ -1554,7 +1902,7 @@ func TestPolicyGetCommandPrintsPolicyDetails(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
@@ -1614,7 +1962,7 @@ func TestPolicyApplyEmailCreatesWhenMissing(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
@@ -1660,7 +2008,7 @@ func TestPolicyApplyStdinUpdatesPolicy(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
@@ -1706,7 +2054,7 @@ func TestLogsCommandPrintsStreams(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out, stderr bytes.Buffer
@@ -1733,7 +2081,7 @@ func TestEventsCommandPrintsJSONLines(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
@@ -1764,14 +2112,14 @@ func TestSecretSetCommand(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.SecretResponse{Name: "github-token"})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"secret", "set", "github-token", "secret-value", "--project", "project-1", "--environment", "env-1"})
+	cmd.SetArgs([]string{"secret", "set", "github-token", "secret-value", "--project", "project-1", "--env", "env-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -1795,7 +2143,7 @@ func TestSecretSetCommandPreservesStdin(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.SecretResponse{Name: "github-token"})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	cmd := newRootCommand()
@@ -1829,14 +2177,14 @@ func TestSecretListCommand(t *testing.T) {
 		}}})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"secret", "list", "--project", "project-1", "--environment", "env-1"})
+	cmd.SetArgs([]string{"secret", "list", "--project", "project-1", "--env", "env-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -1860,14 +2208,14 @@ func TestSecretGetCommandReturnsMetadataOnly(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"secret", "get", "github-token", "--project", "project-1", "--environment", "env-1"})
+	cmd.SetArgs([]string{"secret", "get", "github-token", "--project", "project-1", "--env", "env-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -1887,14 +2235,14 @@ func TestSecretDeleteCommand(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"secret", "delete", "github-token", "--project", "project-1", "--environment", "env-1", "--yes"})
+	cmd.SetArgs([]string{"secret", "delete", "github-token", "--project", "project-1", "--env", "env-1", "--yes"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -2353,10 +2701,10 @@ func TestEnvDeleteCommandResolvesSlugs(t *testing.T) {
 }
 
 func TestControlClientRejectsPlainHTTPNonLoopback(t *testing.T) {
-	t.Setenv(helmrURLEnv, "http://helmr.example")
+	t.Setenv(helmrAPIURLEnv, "http://helmr.example")
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
-	_, err := controlClient()
+	_, err := controlClient(nil)
 	if err == nil || !strings.Contains(err.Error(), "plaintext non-loopback") {
 		t.Fatalf("err = %v", err)
 	}
@@ -2365,8 +2713,8 @@ func TestControlClientRejectsPlainHTTPNonLoopback(t *testing.T) {
 func TestControlClientRejectsURLQueryAndFragment(t *testing.T) {
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 	for _, raw := range []string{"https://helmr.example?x=1", "https://helmr.example/#fragment"} {
-		t.Setenv(helmrURLEnv, raw)
-		_, err := controlClient()
+		t.Setenv(helmrAPIURLEnv, raw)
+		_, err := controlClient(nil)
 		if err == nil || !strings.Contains(err.Error(), "must not include query or fragment") {
 			t.Fatalf("controlClient(%q) err = %v", raw, err)
 		}

@@ -12,7 +12,7 @@ order: 960
 
 | Variable | Purpose |
 | --- | --- |
-| `HELMR_URL` | Control-plane base URL. |
+| `HELMR_API_URL` | Control-plane base URL. |
 | `HELMR_API_KEY` | Bearer token for CLI or `HelmrClient`. |
 | `HELMR_ADAPTER_RUNTIME_PATH` | Adapter runtime executable used by `helmr deploy`. |
 | `HELMR_ADAPTER_CACHE_DIR` | Directory used to materialize the embedded deploy adapter before invoking the runtime. |

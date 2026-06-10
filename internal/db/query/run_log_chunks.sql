@@ -1,5 +1,9 @@
 -- name: AppendRunLogChunk :one
-WITH current_session AS (
+WITH event_args AS (
+    SELECT sqlc.arg(kind)::text AS event_kind,
+           sqlc.arg(payload)::jsonb AS event_payload
+),
+current_session AS (
     SELECT runs.org_id,
            runs.project_id,
            runs.environment_id,
@@ -80,8 +84,7 @@ selected_chunk AS (
     UNION ALL
     SELECT * FROM existing
 ),
-event AS (
-    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
+event_input AS (
     SELECT current_session.org_id,
            current_session.project_id,
            current_session.environment_id,
@@ -93,17 +96,62 @@ event AS (
            current_session.span_id,
            current_session.parent_span_id,
            current_session.traceparent,
-           'log',
-           'worker',
-           sqlc.arg(kind),
-           sqlc.arg(kind),
-           sqlc.arg(payload),
-           'sensitive',
-           current_session.state_version
+           'log' AS category,
+           'info' AS severity,
+           'worker' AS source,
+           event_args.event_kind AS kind,
+           event_args.event_kind AS message,
+           event_args.event_payload AS payload,
+           'sensitive' AS redaction_class,
+           current_session.state_version AS snapshot_version
       FROM selected_chunk
       JOIN current_session ON current_session.org_id = selected_chunk.org_id
                           AND current_session.id = selected_chunk.run_id
+      CROSS JOIN event_args
      WHERE EXISTS (SELECT 1 FROM inserted)
+),
+event_seq AS (
+    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+    SELECT event_input.org_id, 'run', event_input.run_id, 1
+      FROM event_input
+    ON CONFLICT (org_id, subject_type, subject_id)
+    DO UPDATE SET last_seq = event_subject_cursors.last_seq + 1,
+                  updated_at = now()
+    RETURNING org_id, subject_type, subject_id, last_seq
+),
+event AS (
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT event_input.org_id,
+           event_input.project_id,
+           event_input.environment_id,
+           event_input.run_id,
+           event_seq.last_seq,
+           event_input.attempt_id,
+           event_input.session_id,
+           event_input.attempt_number,
+           event_input.trace_id,
+           event_input.span_id,
+           event_input.parent_span_id,
+           event_input.traceparent,
+           event_input.category,
+           event_input.severity,
+           event_input.source,
+           event_input.kind,
+           event_input.message,
+           event_input.payload,
+           event_input.redaction_class,
+           event_input.snapshot_version
+      FROM event_input
+      JOIN event_seq ON event_seq.org_id = event_input.org_id
+                    AND event_seq.subject_type = 'run'
+                    AND event_seq.subject_id = event_input.run_id
+    RETURNING *
+),
+event_outbox AS (
+    INSERT INTO event_outbox (event_record_id, stream_key)
+    SELECT event.id,
+           'helmr:events:' || event.org_id::text || ':' || event.subject_type::text || ':' || event.subject_id::text
+      FROM event
     RETURNING id
 ),
 usage_event AS (
@@ -142,7 +190,8 @@ SELECT selected_chunk.org_id,
        selected_chunk.size_bytes,
        selected_chunk.created_at
   FROM selected_chunk
-  LEFT JOIN usage_event ON true;
+ WHERE (SELECT count(*) FROM event_outbox) >= 0
+   AND (SELECT count(*) FROM usage_event) >= 0;
 
 -- name: GetRunLogSnapshot :one
 WITH run_scope AS (

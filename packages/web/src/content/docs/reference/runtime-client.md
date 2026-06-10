@@ -14,7 +14,7 @@ order: 920
 import { HelmrClient } from "@helmr/sdk"
 
 const client = new HelmrClient({
-  url: process.env.HELMR_URL,
+  url: process.env.HELMR_API_URL,
   apiKey: process.env.HELMR_API_KEY,
 })
 ```
@@ -30,11 +30,11 @@ Main surfaces:
 | `task.trigger(payload, opts)` | Create a run for an imported task and validate `payload` before posting. |
 | `client.tasks.trigger<typeof task>(id, payload, opts)` | Create a run by task id without importing the task implementation at runtime. |
 | `client.runs.retrieve(run)` | Fetch current run snapshot. |
-| `client.runs.wait(run, opts)` | Poll until terminal status. |
+| `client.runs.wait(run, opts)` | Wait for terminal status using durable run events. |
 | `client.runs.list(opts)` | List run summaries. |
 | `client.runs.logs.retrieve(run)` | Read latest stdout/stderr snapshot. |
 | `client.runs.events.list(run, opts)` | Page through run events. |
-| `client.runs.events.subscribe(run, opts)` | Stream events with SSE. |
+| `client.runs.events.subscribe(run, opts)` | Follow durable run events over SSE with cursor reconnects. |
 | `client.schedules.create(opts)` | Create an imperative cron schedule for a deployed task. |
 | `client.schedules.list(opts)` | List schedules in a project environment. |
 | `client.schedules.retrieve(id, opts)` | Fetch one schedule. |
@@ -48,6 +48,10 @@ Main surfaces:
 | `client.waitpoints.tokens.respond(token, opts)` | Respond using a delegated waitpoint response token. |
 
 Payload is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload.
+
+`client.runs.wait()` follows the durable run-event stream and uses run snapshots as the convergence source of truth. If the event stream disconnects, it reconnects from the last event cursor. If a malformed SSE frame is detected while waiting, the client falls back to snapshots instead of failing the wait.
+
+`client.runs.events.subscribe()` is the event-fidelity API. It reconnects from the last cursor and ends after a terminal run event. If a malformed SSE frame includes a valid event cursor, the client advances past that frame and reconnects; malformed frames without a cursor fail the iterator.
 
 Run snapshots can include deployment and provenance metadata: `version`, `deploymentVersion`, `apiVersion`, `sdkVersion`, and `cliVersion`. Use `deploymentVersion` to reason about which deployed code snapshot ran. Use `apiVersion`, `sdkVersion`, and `cliVersion` for support/debugging rather than application logic.
 

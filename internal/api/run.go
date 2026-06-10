@@ -145,6 +145,39 @@ type RunResponse struct {
 	IdempotencyHit    bool              `json:"idempotency_hit,omitempty"`
 }
 
+const (
+	RunStatusQueued    = "queued"
+	RunStatusRunning   = "running"
+	RunStatusWaiting   = "waiting"
+	RunStatusSucceeded = "succeeded"
+	RunStatusFailed    = "failed"
+	RunStatusCancelled = "cancelled"
+	RunStatusExpired   = "expired"
+
+	RunEventKindCompleted = "run.completed"
+	RunEventKindFailed    = "run.failed"
+	RunEventKindCancelled = "run.cancelled"
+	RunEventKindExpired   = "run.expired"
+)
+
+func RunStatusIsTerminal(status string) bool {
+	switch strings.TrimSpace(status) {
+	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusExpired:
+		return true
+	default:
+		return false
+	}
+}
+
+func RunEventKindIsTerminal(kind string) bool {
+	switch strings.TrimSpace(kind) {
+	case RunEventKindCompleted, RunEventKindFailed, RunEventKindCancelled, RunEventKindExpired:
+		return true
+	default:
+		return false
+	}
+}
+
 type PendingWaitpoint struct {
 	Kind        string                      `json:"kind"`
 	WaitpointID string                      `json:"waitpoint_id"`
@@ -180,6 +213,7 @@ type LogSnapshotResponse struct {
 type RunEvent struct {
 	ID             string          `json:"id"`
 	RunID          *string         `json:"run_id,omitempty"`
+	DeploymentID   *string         `json:"deployment_id,omitempty"`
 	SessionID      *string         `json:"session_id,omitempty"`
 	AttemptID      *string         `json:"attempt_id,omitempty"`
 	AttemptNumber  *int32          `json:"attempt_number,omitempty"`

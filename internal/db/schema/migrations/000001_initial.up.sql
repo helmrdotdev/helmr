@@ -846,16 +846,30 @@ CREATE TABLE run_queue_items (
         ON DELETE SET NULL (reserved_by_worker_instance_id)
 );
 
-CREATE TABLE run_events (
-    id BIGINT GENERATED ALWAYS AS IDENTITY,
+CREATE TYPE event_subject_type AS ENUM (
+    'run',
+    'deployment'
+);
+
+CREATE TABLE events (
+    id BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
+    subject_type event_subject_type GENERATED ALWAYS AS (
+        CASE
+            WHEN run_id IS NOT NULL THEN 'run'::event_subject_type
+            WHEN deployment_id IS NOT NULL THEN 'deployment'::event_subject_type
+        END
+    ) STORED,
+    subject_id UUID GENERATED ALWAYS AS (COALESCE(run_id, deployment_id)) STORED,
+    seq BIGINT NOT NULL CHECK (seq > 0),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    run_id UUID NOT NULL,
+    run_id UUID,
+    deployment_id UUID,
     attempt_id UUID,
     session_id UUID,
     attempt_number INTEGER CHECK (attempt_number IS NULL OR attempt_number > 0),
-    trace_id TEXT NOT NULL CHECK (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000'),
+    trace_id TEXT CHECK (trace_id IS NULL OR (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000')),
     span_id TEXT CHECK (span_id IS NULL OR (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000')),
     parent_span_id TEXT CHECK (parent_span_id IS NULL OR (parent_span_id ~ '^[0-9a-f]{16}$' AND parent_span_id <> '0000000000000000')),
     traceparent TEXT CHECK (
@@ -865,30 +879,64 @@ CREATE TABLE run_events (
             AND traceparent = '00-' || trace_id || '-' || span_id || '-01'
         )
     ),
-    category TEXT NOT NULL DEFAULT 'system' CHECK (category IN ('lifecycle', 'queue', 'worker', 'guest', 'waitpoint', 'checkpoint', 'log', 'system')),
-    severity TEXT NOT NULL DEFAULT 'info' CHECK (severity IN ('debug', 'info', 'warn', 'error')),
-    source TEXT NOT NULL DEFAULT 'control' CHECK (source IN ('control', 'dispatcher', 'worker', 'guest', 'runtime', 'sdk', 'system', 'lease_sweeper')),
+    category TEXT NOT NULL DEFAULT 'system',
+    severity TEXT NOT NULL DEFAULT 'info',
+    source TEXT NOT NULL DEFAULT 'control',
     kind TEXT NOT NULL CHECK (btrim(kind) <> ''),
     message TEXT NOT NULL DEFAULT '',
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-    redaction_class TEXT NOT NULL DEFAULT 'internal' CHECK (redaction_class IN ('public', 'internal', 'sensitive')),
+    redaction_class TEXT NOT NULL DEFAULT 'internal',
     snapshot_version BIGINT CHECK (snapshot_version IS NULL OR snapshot_version > 0),
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (run_id, id),
+    PRIMARY KEY (subject_type, subject_id, seq),
+    CHECK (
+        (run_id IS NOT NULL AND deployment_id IS NULL)
+        OR (deployment_id IS NOT NULL AND run_id IS NULL)
+    ),
     FOREIGN KEY (org_id, project_id, environment_id, run_id)
         REFERENCES runs(org_id, project_id, environment_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, run_id, attempt_id)
         REFERENCES run_attempts(org_id, run_id, id)
         ON DELETE SET NULL (attempt_id)
 );
 
-CREATE INDEX run_events_scope_created_idx
-    ON run_events (org_id, project_id, environment_id, created_at DESC);
+CREATE INDEX events_scope_created_idx
+    ON events (org_id, project_id, environment_id, created_at DESC);
 
-CREATE INDEX run_events_trace_idx
-    ON run_events (trace_id, created_at);
+CREATE INDEX events_trace_idx
+    ON events (trace_id, created_at)
+    WHERE trace_id IS NOT NULL;
+
+CREATE TABLE event_subject_cursors (
+    org_id UUID NOT NULL,
+    subject_type event_subject_type NOT NULL,
+    subject_id UUID NOT NULL,
+    last_seq BIGINT NOT NULL CHECK (last_seq > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, subject_type, subject_id)
+);
+
+CREATE TABLE event_outbox (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    event_record_id BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    stream_key TEXT NOT NULL CHECK (btrim(stream_key) <> ''),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    locked_until TIMESTAMPTZ,
+    published_at TIMESTAMPTZ,
+    last_error TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX event_outbox_event_record_id_idx ON event_outbox(event_record_id);
+CREATE INDEX event_outbox_ready_idx
+    ON event_outbox (created_at, id)
+    WHERE published_at IS NULL;
 
 CREATE TYPE run_log_stream AS ENUM (
     'stdout',
@@ -1043,8 +1091,8 @@ ALTER TABLE run_log_chunks
     REFERENCES run_execution_sessions(org_id, run_id, id)
     ON DELETE CASCADE;
 
-ALTER TABLE run_events
-    ADD CONSTRAINT run_events_session_id_fkey
+ALTER TABLE events
+    ADD CONSTRAINT events_session_id_fkey
     FOREIGN KEY (org_id, run_id, session_id)
     REFERENCES run_execution_sessions(org_id, run_id, id)
     ON DELETE SET NULL (session_id);
@@ -1473,9 +1521,9 @@ CREATE INDEX deployment_tasks_lookup_idx
     ON deployment_tasks(org_id, project_id, environment_id, task_id);
 CREATE UNIQUE INDEX run_log_chunks_observed_idx ON run_log_chunks(org_id, run_id, session_id, stream, observed_seq);
 CREATE INDEX run_log_chunks_attempt_idx ON run_log_chunks(org_id, run_id, attempt_number, stream, seq);
-CREATE INDEX run_events_session_idx ON run_events(org_id, run_id, session_id, id)
+CREATE INDEX events_run_session_idx ON events(org_id, run_id, session_id, seq)
     WHERE session_id IS NOT NULL;
-CREATE INDEX run_events_attempt_idx ON run_events(org_id, run_id, attempt_number, id)
+CREATE INDEX events_run_attempt_idx ON events(org_id, run_id, attempt_number, seq)
     WHERE attempt_number IS NOT NULL;
 CREATE INDEX run_attempts_run_status_idx ON run_attempts(org_id, run_id, status, attempt_number);
 CREATE UNIQUE INDEX run_execution_sessions_one_active_per_run_idx ON run_execution_sessions(run_id)
@@ -1506,26 +1554,6 @@ CREATE UNIQUE INDEX waitpoint_deliveries_email_recipient_idx ON waitpoint_delive
 CREATE INDEX waitpoint_deliveries_due_idx ON waitpoint_deliveries(status, next_attempt_at, created_at)
     WHERE status IN ('queued', 'retrying');
 CREATE INDEX waitpoint_policies_scope_name_idx ON waitpoint_policies(org_id, project_id, environment_id, name);
-
-CREATE OR REPLACE FUNCTION notify_run_event_insert()
-RETURNS trigger AS $$
-BEGIN
-    PERFORM pg_notify(
-        'helmr_run_events',
-        json_build_object(
-            'org_id', NEW.org_id,
-            'run_id', NEW.run_id,
-            'event_id', NEW.id
-        )::text
-    );
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER run_events_notify_insert
-    AFTER INSERT ON run_events
-    FOR EACH ROW
-    EXECUTE FUNCTION notify_run_event_insert();
 
 CREATE TRIGGER organizations_set_updated_at
     BEFORE UPDATE ON organizations

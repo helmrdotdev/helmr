@@ -78,7 +78,6 @@ export interface WaitpointRespondOptions {
 
 export interface RunWaitOptions {
   readonly timeoutMs?: number
-  readonly intervalMs?: number
   readonly signal?: AbortSignal
 }
 

@@ -58,7 +58,7 @@ type Server struct {
 	dispatchQueue       dispatch.Queue
 	scheduleEngine      scheduleRegistrar
 	asyncPublisher      asyncbus.Publisher
-	runEvents           runEventSubscriptionNotifier
+	eventStream         *EventStream
 	workerLeaseScanSeed atomic.Uint64
 	workerTokenSecret   []byte
 	workerTokenTTL      time.Duration
@@ -182,9 +182,9 @@ func WithAsyncBus(queue asyncbus.Publisher) Option {
 	}
 }
 
-func WithRunEventNotifier(notifier runEventSubscriptionNotifier) Option {
+func WithEventStream(stream *EventStream) Option {
 	return func(server *Server) {
-		server.runEvents = notifier
+		server.eventStream = stream
 	}
 }
 
@@ -469,6 +469,7 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Post("/projects/{projectID}/environments/{environmentID}/deployments", s.createDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/current", s.getCurrentDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}", s.getDeployment)
+		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/events", s.getDeploymentEvents)
 		r.Post("/projects/{projectID}/environments/{environmentID}/deployments/{deployment}/promote", s.promoteDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs", s.listRuns)
 		r.Post("/projects/{projectID}/environments/{environmentID}/runs", s.createRun)
@@ -521,6 +522,7 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Use(s.requireActor)
 		r.Get("/deployments/current", s.getCurrentDeployment)
 		r.Get("/deployments/{deploymentID}", s.getDeployment)
+		r.Get("/deployments/{deploymentID}/events", s.getDeploymentEvents)
 		r.Post("/deployments/{deployment}/promote", s.promoteDeployment)
 		r.Post("/deployments", s.createDeployment)
 	})

@@ -36,7 +36,6 @@ if (false) {
   const retrievedFromId: Promise<RunSnapshot> = client.runs.retrieve("run-1")
   const waitedFromHandle: Promise<RunSnapshot> = client.runs.wait(handle, {
     timeoutMs: 30_000,
-    intervalMs: 250,
     signal,
   })
   const waitedFromId: Promise<RunSnapshot> = client.runs.wait("run-1")
@@ -119,6 +118,10 @@ if (false) {
   client.runs.events.list({ id: "run-1" })
   // @ts-expect-error events.subscribe accepts a run id string or RunHandle only.
   client.runs.events.subscribe({ id: "run-1" })
+  client.runs.wait("run-1", {
+    // @ts-expect-error runs.wait is event-backed and does not accept polling intervals.
+    intervalMs: 250,
+  })
   // @ts-expect-error leased is an internal transient status, not a public run filter.
   client.runs.list({ status: "leased" })
   // @ts-expect-error events.list uses pageSize because it follows every page.

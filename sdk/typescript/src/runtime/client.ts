@@ -40,6 +40,8 @@ import {
 } from "./run"
 
 const MAX_SSE_BUFFER_CHARS = 1024 * 1024
+const RUN_EVENT_RECONNECT_DELAY_MS = 1000
+const RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS = 100
 
 export interface HelmrClientOptions {
   readonly url?: string
@@ -189,10 +191,10 @@ export class HelmrClient {
   readonly #apiKey: string | undefined
 
   constructor(options: HelmrClientOptions = {}) {
-    const rawUrl = options.url ?? process.env["HELMR_URL"]
+    const rawUrl = options.url ?? process.env["HELMR_API_URL"]
     if (rawUrl === undefined || rawUrl.trim() === "") {
       throw new UnsupportedTransportError(
-        "HelmrClient requires a url option or HELMR_URL; no default transport is used",
+        "HelmrClient requires a url option or HELMR_API_URL; no default transport is used",
       )
     }
 
@@ -308,20 +310,49 @@ export class HelmrClient {
     ): Promise<RunSnapshot<TOutput>> => {
       const id = runId(idOrHandle)
       const timeoutMs = opts.timeoutMs
-      const intervalMs = opts.intervalMs ?? 1000
-      const started = Date.now()
       const wait = waitSignal(opts.signal, timeoutMs, () => new TimeoutError(`run ${id} did not finish within ${timeoutMs}ms`))
       try {
+        let run = await this.#retrieveRunSnapshotWithRetry<TOutput>(id, wait.signal, RUN_EVENT_RECONNECT_DELAY_MS)
+        if (isTerminalRunStatus(run.status)) {
+          return run
+        }
+        let cursor: number | undefined
         for (;;) {
           throwIfAborted(wait.signal)
-          const run = await this.runs.retrieve<TOutput>(id, retrieveOptions(wait.signal))
+          let terminalEventSeen = false
+          try {
+            for await (const event of this.#streamEventRecordsOnce(id, { cursor, signal: wait.signal })) {
+              cursor = nextRunEventCursor(cursor, event)
+              if (runEventRecordIsTerminal(event)) {
+                terminalEventSeen = true
+                break
+              }
+            }
+          } catch (error) {
+            throwIfAborted(wait.signal)
+            if (error instanceof SseProtocolError && error.cursor !== undefined) {
+              cursor = advanceRunEventCursor(cursor, error.cursor)
+            } else if (runEventWaitStreamErrorIsFatal(error)) {
+              throw error
+            }
+          }
+          if (terminalEventSeen) {
+            return await this.#waitForTerminalSnapshot<TOutput>(id, wait.signal)
+          }
+          try {
+            run = await this.runs.retrieve<TOutput>(id, retrieveOptions(wait.signal))
+          } catch (error) {
+            throwIfAborted(wait.signal)
+            if (runSnapshotErrorIsFatal(error)) {
+              throw error
+            }
+            await delay(RUN_EVENT_RECONNECT_DELAY_MS, wait.signal)
+            continue
+          }
           if (isTerminalRunStatus(run.status)) {
             return run
           }
-          if (timeoutMs !== undefined && Date.now() - started > timeoutMs) {
-            throw new TimeoutError(`run ${id} did not finish within ${timeoutMs}ms`)
-          }
-          await delay(intervalMs, wait.signal)
+          await delay(RUN_EVENT_RECONNECT_DELAY_MS, wait.signal)
         }
       } finally {
         wait.cleanup()
@@ -533,6 +564,66 @@ export class HelmrClient {
   }
 
   async #subscribeEvents(id: string, opts: SubscribeRunEventsOptions): Promise<AsyncIterable<RunEvent>> {
+    const stream = async function* (client: HelmrClient): AsyncIterable<RunEvent> {
+      let cursor = opts.cursor
+      for (;;) {
+        let checkSnapshot = false
+        try {
+          for await (const record of client.#streamEventRecordsOnce(id, { cursor, signal: opts.signal })) {
+            cursor = nextRunEventCursor(cursor, record)
+            const terminal = runEventRecordIsTerminal(record)
+            const event = runEventRecordToRunEvent(record)
+            if (event !== undefined) {
+              yield event
+            }
+            if (terminal) {
+              return
+            }
+          }
+          checkSnapshot = true
+        } catch (error) {
+          throwIfAborted(opts.signal)
+          if (error instanceof SseProtocolError && error.cursor !== undefined) {
+            cursor = advanceRunEventCursor(cursor, error.cursor)
+          } else if (runEventStreamErrorIsFatal(error)) {
+            throw error
+          }
+          checkSnapshot = true
+        }
+        if (checkSnapshot) {
+          try {
+            const run = await client.runs.retrieve(id, retrieveOptions(opts.signal))
+            if (isTerminalRunStatus(run.status)) {
+              for await (const record of client.#listEventRecordsAfter(id, cursor, opts.signal)) {
+                cursor = nextRunEventCursor(cursor, record)
+                const terminal = runEventRecordIsTerminal(record)
+                const event = runEventRecordToRunEvent(record)
+                if (event !== undefined) {
+                  yield event
+                }
+                if (terminal) {
+                  break
+                }
+              }
+              return
+            }
+          } catch (error) {
+            throwIfAborted(opts.signal)
+            if (runSnapshotErrorIsFatal(error)) {
+              throw error
+            }
+          }
+        }
+        await delay(RUN_EVENT_RECONNECT_DELAY_MS, opts.signal)
+      }
+    }
+    return stream(this)
+  }
+
+  async *#streamEventRecordsOnce(
+    id: string,
+    opts: { readonly cursor?: number | undefined; readonly signal?: AbortSignal | undefined },
+  ): AsyncIterable<RunEventRecord> {
     const query = new URLSearchParams()
     query.set("follow", "1")
     if (opts.cursor !== undefined) query.set("cursor", String(opts.cursor))
@@ -540,7 +631,64 @@ export class HelmrClient {
       headers: { accept: "text/event-stream" },
       ...requestSignal(opts.signal),
     })
-    return parseSse(response)
+    yield* parseSse(response)
+  }
+
+  async *#listEventRecordsAfter(
+    id: string,
+    cursor: number | undefined,
+    signal: AbortSignal | undefined,
+  ): AsyncIterable<RunEventRecord> {
+    let nextCursor = cursor
+    for (;;) {
+      const query = new URLSearchParams()
+      if (nextCursor !== undefined) query.set("cursor", String(nextCursor))
+      const suffix = query.size === 0 ? "" : `?${query}`
+      const page = await this.#json<RunEventRecordPage>(
+        `/api/runs/${encodeURIComponent(id)}/events${suffix}`,
+        requestSignal(signal),
+      )
+      for (const event of page.events) {
+        yield event
+      }
+      if (page.next_cursor === undefined || page.next_cursor === null) {
+        return
+      }
+      if (nextCursor !== undefined && page.next_cursor <= nextCursor) {
+        return
+      }
+      nextCursor = page.next_cursor
+    }
+  }
+
+  async #waitForTerminalSnapshot<TOutput>(id: string, signal: AbortSignal | undefined): Promise<RunSnapshot<TOutput>> {
+    let retryDelayMs = RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS
+    for (;;) {
+      const run = await this.#retrieveRunSnapshotWithRetry<TOutput>(id, signal, retryDelayMs)
+      if (isTerminalRunStatus(run.status)) {
+        return run
+      }
+      await delay(retryDelayMs, signal)
+      retryDelayMs = Math.min(retryDelayMs * 2, RUN_EVENT_RECONNECT_DELAY_MS)
+    }
+  }
+
+  async #retrieveRunSnapshotWithRetry<TOutput>(
+    id: string,
+    signal: AbortSignal | undefined,
+    retryDelayMs: number,
+  ): Promise<RunSnapshot<TOutput>> {
+    for (;;) {
+      try {
+        return await this.runs.retrieve<TOutput>(id, retrieveOptions(signal))
+      } catch (error) {
+        throwIfAborted(signal)
+        if (runSnapshotErrorIsFatal(error)) {
+          throw error
+        }
+        await delay(retryDelayMs, signal)
+      }
+    }
   }
 
   async #json<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -563,7 +711,7 @@ export class HelmrClient {
       throw new AuthError("Helmr authentication failed")
     }
     if (!response.ok) {
-      throw new Error(`Helmr API ${response.status}: ${await response.text()}`)
+      throw new HelmrApiError(response.status, await response.text())
     }
     return response
   }
@@ -955,7 +1103,36 @@ function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
   })
 }
 
-async function* parseSse(response: Response): AsyncIterable<RunEvent> {
+class HelmrApiError extends Error {
+  readonly status: number
+
+  constructor(status: number, body: string) {
+    super(`Helmr API ${status}: ${body}`)
+    this.name = "HelmrApiError"
+    this.status = status
+  }
+}
+
+class SseFrameTooLargeError extends Error {
+  constructor() {
+    super("SSE event exceeded the maximum buffer size")
+    this.name = "SseFrameTooLargeError"
+  }
+}
+
+class SseProtocolError extends Error {
+  readonly cursor?: number
+
+  constructor(message: string, cursor?: number) {
+    super(message)
+    this.name = "SseProtocolError"
+    if (cursor !== undefined) {
+      this.cursor = cursor
+    }
+  }
+}
+
+async function* parseSse(response: Response): AsyncIterable<RunEventRecord> {
   const reader = response.body?.getReader()
   if (reader === undefined) {
     return
@@ -986,7 +1163,7 @@ async function* parseSse(response: Response): AsyncIterable<RunEvent> {
         boundary = findSseBoundary(buffer)
       }
       if (buffer.length > MAX_SSE_BUFFER_CHARS) {
-        throw new Error("SSE event exceeded the maximum buffer size")
+        throw new SseFrameTooLargeError()
       }
     }
   } finally {
@@ -994,7 +1171,8 @@ async function* parseSse(response: Response): AsyncIterable<RunEvent> {
   }
 }
 
-function parseSseFrame(raw: string): RunEvent | undefined {
+function parseSseFrame(raw: string): RunEventRecord | undefined {
+  const frameCursor = sseFrameCursor(raw)
   const data = raw
     .split(/\r?\n/)
     .filter((line) => line.startsWith("data:"))
@@ -1003,14 +1181,44 @@ function parseSseFrame(raw: string): RunEvent | undefined {
   if (data === "") {
     return undefined
   }
+  let parsed: unknown
   try {
-    return runEventRecordToRunEvent(JSON.parse(data) as RunEventRecord)
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      return undefined
-    }
-    throw error
+    parsed = JSON.parse(data)
+  } catch {
+    throw new SseProtocolError("SSE event data must be valid JSON", frameCursor)
   }
+  const record = objectRecord(parsed)
+  if (record === undefined) {
+    throw new SseProtocolError("SSE event data must be a JSON object", frameCursor)
+  }
+  const id = stringValue(record["id"])
+  if (id === undefined) {
+    throw new SseProtocolError("SSE event data must include a string id", frameCursor)
+  }
+  const eventCursor = parseRunEventCursor(id)
+  if (eventCursor === undefined) {
+    throw new SseProtocolError("SSE event data id must be a safe numeric string", frameCursor)
+  }
+  if (stringValue(record["kind"]) === undefined) {
+    throw new SseProtocolError("SSE event data must include a string kind", eventCursor)
+  }
+  if (stringValue(record["message"]) === undefined) {
+    throw new SseProtocolError("SSE event data must include a string message", eventCursor)
+  }
+  if (stringValue(record["at"]) === undefined) {
+    throw new SseProtocolError("SSE event data must include a string at", eventCursor)
+  }
+  return parsed as RunEventRecord
+}
+
+function sseFrameCursor(raw: string): number | undefined {
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.startsWith("id:")) {
+      continue
+    }
+    return parseRunEventCursor(line.slice(3).trim())
+  }
+  return undefined
 }
 
 function findSseBoundary(buffer: string): number {
@@ -1019,6 +1227,100 @@ function findSseBoundary(buffer: string): number {
   if (lf === -1) return crlf
   if (crlf === -1) return lf
   return Math.min(lf, crlf)
+}
+
+function nextRunEventCursor(cursor: number | undefined, event: RunEventRecord): number | undefined {
+  const parsed = parseRunEventCursor(event.id)
+  if (parsed === undefined) {
+    return cursor
+  }
+  return advanceRunEventCursor(cursor, parsed)
+}
+
+function advanceRunEventCursor(cursor: number | undefined, parsed: number): number {
+  return cursor === undefined || parsed > cursor ? parsed : cursor
+}
+
+function parseRunEventCursor(value: string): number | undefined {
+  if (!/^\d+$/.test(value)) {
+    return undefined
+  }
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) ? parsed : undefined
+}
+
+function runEventRecordIsTerminal(event: RunEventRecord): boolean {
+  return runEventKindIsTerminal(event.message) || runEventKindIsTerminal(event.kind)
+}
+
+function runEventKindIsTerminal(kind: string | undefined): boolean {
+  return kind === "run.completed" || kind === "run.failed" || kind === "run.cancelled" || kind === "run.expired"
+}
+
+function runEventStreamErrorIsFatal(error: unknown): boolean {
+  if (error instanceof AuthError) {
+    return true
+  }
+  if (error instanceof HelmrApiError) {
+    return helmrApiErrorIsFatal(error)
+  }
+  if (error instanceof SyntaxError) {
+    return true
+  }
+  if (error instanceof SseFrameTooLargeError) {
+    return true
+  }
+  if (error instanceof SseProtocolError) {
+    return true
+  }
+  return !transportErrorIsRetryable(error)
+}
+
+function runEventWaitStreamErrorIsFatal(error: unknown): boolean {
+  // Wait can fall back to snapshots on SSE protocol corruption; subscribe cannot without losing stream fidelity.
+  if (error instanceof SyntaxError) {
+    return false
+  }
+  if (error instanceof SseFrameTooLargeError) {
+    return false
+  }
+  if (error instanceof SseProtocolError) {
+    return false
+  }
+  return runEventStreamErrorIsFatal(error)
+}
+
+function runSnapshotErrorIsFatal(error: unknown): boolean {
+  if (error instanceof AuthError) {
+    return true
+  }
+  if (error instanceof HelmrApiError) {
+    return helmrApiErrorIsFatal(error)
+  }
+  if (error instanceof SyntaxError) {
+    return true
+  }
+  return !transportErrorIsRetryable(error)
+}
+
+function helmrApiErrorIsFatal(error: HelmrApiError): boolean {
+  return error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429
+}
+
+function transportErrorIsRetryable(error: unknown): boolean {
+  if (error instanceof TypeError) {
+    return true
+  }
+  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
+    return error.name === "NetworkError" || error.name === "AbortError" || error.name === "TimeoutError"
+  }
+  const record = objectRecord(error)
+  const cause = objectRecord(record?.["cause"])
+  const code = stringValue(record?.["code"]) ?? stringValue(cause?.["code"])
+  if (code === undefined) {
+    return false
+  }
+  return code === "ECONNRESET" || code === "ECONNREFUSED" || code === "EPIPE" || code === "ETIMEDOUT" || code.startsWith("UND_ERR_")
 }
 
 function runEventRecordToRunEvent(event: unknown): RunEvent | undefined {
