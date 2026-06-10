@@ -2,10 +2,12 @@ package dispatch
 
 import "github.com/jackc/pgx/v5/pgtype"
 
-// QueueScope is the dispatch fairness unit: one queue inside one organization.
+// QueueScope is the dispatch fairness unit: one queue inside one project environment.
 type QueueScope struct {
-	OrgID     pgtype.UUID
-	QueueName string
+	OrgID         pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	QueueName     string
 }
 
 type QueueScopeSelector interface {

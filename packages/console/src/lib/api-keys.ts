@@ -5,14 +5,12 @@ export type ApiKeyStatus = "active" | "expired" | "revoked";
 export type ApiKeyScope =
   | "runs:create"
   | "runs:read"
-  | "waitpoint-policies:manage"
   | "secrets:write"
   | "waitpoints:respond"
+  | "waitpoint-policies:manage"
   | "tasks:deploy";
 
 export type ApiKeyPermissionGrant = {
-  project_id: string;
-  environment_id: string;
   scopes: ApiKeyScope[];
 };
 
@@ -20,6 +18,8 @@ export type ApiKeySummary = {
   id: string;
   name: string;
   key_prefix: string;
+  project_id: string;
+  environment_id: string;
   permissions?: ApiKeyPermissionGrant[];
   status: ApiKeyStatus;
   created_at: string;
@@ -40,21 +40,25 @@ export type IssueInput = {
   permissions: ApiKeyPermissionGrant[];
 };
 
-export async function listApiKeys(filter: ListFilter): Promise<ListResponse> {
-  return request<ListResponse>(`/api/api-keys?filter=${encodeURIComponent(filter)}`);
+export async function listApiKeys(projectID: string, environmentID: string, filter: ListFilter): Promise<ListResponse> {
+  return request<ListResponse>(`${apiKeysPath(projectID, environmentID)}?filter=${encodeURIComponent(filter)}`);
 }
 
-export async function issueApiKey(input: IssueInput): Promise<ApiKeyIssued> {
-  return postJson<IssueInput, ApiKeyIssued>("/api/api-keys", input);
+export async function issueApiKey(projectID: string, environmentID: string, input: IssueInput): Promise<ApiKeyIssued> {
+  return postJson<IssueInput, ApiKeyIssued>(apiKeysPath(projectID, environmentID), input);
 }
 
-export async function revokeApiKey(id: string): Promise<void> {
+export async function revokeApiKey(projectID: string, environmentID: string, id: string): Promise<void> {
   try {
-    await del<Record<string, never>>(`/api/api-keys/${encodeURIComponent(id)}`);
+    await del<Record<string, never>>(`${apiKeysPath(projectID, environmentID)}/${encodeURIComponent(id)}`);
   } catch (error) {
     if (error instanceof ApiError && error.errorKind === "not_found") {
       return;
     }
     throw error;
   }
+}
+
+function apiKeysPath(projectID: string, environmentID: string): string {
+  return `/api/projects/${encodeURIComponent(projectID)}/environments/${encodeURIComponent(environmentID)}/api-keys`;
 }

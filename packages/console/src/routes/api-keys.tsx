@@ -15,7 +15,7 @@ import {
 import { useScope } from "../lib/scope";
 import { ActionMenu } from "../ui/ActionMenu";
 import { Modal } from "../ui/Modal";
-import { statusBadgeClass, ui } from "../ui/styles";
+import { envDotStyle, statusBadgeClass, ui } from "../ui/styles";
 
 const FILTER_OPTIONS: SelectOption<ListFilter>[] = [
   { value: "active", label: "Active" },
@@ -66,11 +66,6 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to read run status, metadata, and logs.",
   },
   {
-    value: "waitpoint-policies:manage",
-    label: "Manage waitpoint policies",
-    description: "Allow automation to create and update named waitpoint policies.",
-  },
-  {
     value: "secrets:write",
     label: "Manage secrets",
     description: "Allow automation to list, create, update, and delete secrets in the selected project and environment.",
@@ -79,6 +74,11 @@ const API_KEY_SCOPE_OPTIONS: {
     value: "waitpoints:respond",
     label: "Respond to waitpoints",
     description: "Allow automation to approve or deny pending waitpoints.",
+  },
+  {
+    value: "waitpoint-policies:manage",
+    label: "Manage waitpoint policies",
+    description: "Allow automation to create, update, and delete waitpoint policies in the selected project and environment.",
   },
   {
     value: "tasks:deploy",
@@ -147,17 +147,17 @@ function validateLabel(value: string): string | null {
 function permissionText(keyItem: ApiKeySummary): string {
   const grants = keyItem.permissions ?? [];
   if (grants.length === 0) return "Not reported";
+  const scope = `${shortScopeID(keyItem.project_id)} / ${shortScopeID(keyItem.environment_id)}`;
   return grants.map((grant) => {
     const labels = API_KEY_SCOPE_OPTIONS
       .filter((option) => grant.scopes.includes(option.value))
       .map((option) => option.label);
-    const scope = `${shortScopeID(grant.project_id)} / ${shortScopeID(grant.environment_id)}`;
     return `${scope}: ${labels.length > 0 ? labels.join(", ") : "Custom permissions"}`;
   }).join("; ");
 }
 
 function shortScopeID(id: string): string {
-  return id === "default" ? "default" : id.slice(0, 8);
+  return id.slice(0, 8);
 }
 
 function ApiKeyStatusBadge(props: { status: ApiKeyStatus }) {
@@ -214,6 +214,7 @@ function IssueApiKeyModal(props: {
   environmentID: string;
   projectName: string;
   environmentName: string;
+  environmentColorHex: string;
   onClose: () => void;
   onIssued: () => Promise<void>;
 }) {
@@ -261,12 +262,10 @@ function IssueApiKeyModal(props: {
 
     setSubmitting(true);
     try {
-      const result = await issueApiKey({
+      const result = await issueApiKey(props.projectID, props.environmentID, {
         name: label().trim(),
         expires_in_days: expiryDays(),
         permissions: [{
-          project_id: props.projectID,
-          environment_id: props.environmentID,
           scopes: selectedScopes(),
         }],
       });
@@ -300,6 +299,17 @@ function IssueApiKeyModal(props: {
       <Show when={issued()} keyed fallback={
         <form onSubmit={submit}>
           <p class={ui.modalIntro}>Create a machine credential for automation. Limit it to the permissions this workflow needs.</p>
+          <div class={ui.scopeTarget} aria-label="API key target environment">
+            <span>Target environment</span>
+            <strong>{props.environmentName}</strong>
+            <div>
+              <Show when={props.environmentColorHex}>
+                <span class={ui.scopeTargetDot} style={envDotStyle(props.environmentColorHex)} aria-hidden="true" />
+              </Show>
+              <span>{props.projectName}</span>
+              <code>{shortScopeID(props.projectID)} / {shortScopeID(props.environmentID)}</code>
+            </div>
+          </div>
           <label class={ui.field}>
             <span>Name</span>
             <input
@@ -322,14 +332,8 @@ function IssueApiKeyModal(props: {
               minWidth="100%"
             />
           </label>
-          <div class={ui.scopeSummary}>
-            <span>Project</span>
-            <strong>{props.projectName}</strong>
-            <span>Environment</span>
-            <strong>{props.environmentName}</strong>
-          </div>
           <fieldset class={ui.fieldSet}>
-            <legend class={ui.fieldLegend}>Permissions for selected scope</legend>
+            <legend class={ui.fieldLegend}>Permissions for this environment</legend>
             <div class={"grid gap-1.5"}>
               <For each={API_KEY_SCOPE_OPTIONS}>
                 {(option) => (
@@ -388,19 +392,19 @@ export function ApiKeys() {
   const [revokeError, setRevokeError] = createSignal<{ id: string; message: string } | null>(null);
 
   const keys = createQuery(() => ({
-    queryKey: ["api-keys", filter()],
-    queryFn: () => listApiKeys(filter()),
+    queryKey: ["api-keys", scope.selectedProjectID(), scope.selectedEnvironmentID(), filter()],
+    queryFn: () => listApiKeys(scope.selectedProjectID(), scope.selectedEnvironmentID(), filter()),
     retry: false,
   }));
 
-  const invalidateApiKeys = () => queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+  const invalidateApiKeys = () => queryClient.invalidateQueries({ queryKey: ["api-keys", scope.selectedProjectID(), scope.selectedEnvironmentID()] });
 
   const revoke = async (keyItem: ApiKeySummary) => {
     if (!window.confirm(`Revoke API key "${keyItem.name}"?`)) return;
     setRevokeError(null);
     setRevokingId(keyItem.id);
     try {
-      await revokeApiKey(keyItem.id);
+      await revokeApiKey(scope.selectedProjectID(), scope.selectedEnvironmentID(), keyItem.id);
       await invalidateApiKeys();
     } catch (error) {
       setRevokeError({ id: keyItem.id, message: apiKeyErrorMessage(error) });
@@ -491,6 +495,7 @@ export function ApiKeys() {
           environmentID={scope.selectedEnvironmentID()}
           projectName={scope.selectedProject()?.name ?? "Project"}
           environmentName={scope.selectedEnvironment()?.name ?? "Environment"}
+          environmentColorHex={scope.selectedEnvironment()?.color_hex ?? ""}
           onClose={() => setModalOpen(false)}
           onIssued={invalidateApiKeys}
         />

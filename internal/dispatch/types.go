@@ -76,19 +76,17 @@ func (m Message) Validate() error {
 	if strings.TrimSpace(m.OrgID) == "" {
 		problems = append(problems, errors.New("org id is required"))
 	}
+	if strings.TrimSpace(m.ProjectID) == "" {
+		problems = append(problems, errors.New("project id is required"))
+	}
+	if strings.TrimSpace(m.EnvironmentID) == "" {
+		problems = append(problems, errors.New("environment id is required"))
+	}
 	if strings.TrimSpace(m.QueueName) == "" {
 		problems = append(problems, errors.New("queue name is required"))
 	}
 	if m.QueueConcurrencyLimit < 0 {
 		problems = append(problems, errors.New("queue concurrency limit must be non-negative"))
-	}
-	if m.QueueConcurrencyLimit > 0 {
-		if strings.TrimSpace(m.ProjectID) == "" {
-			problems = append(problems, errors.New("project id is required when queue concurrency is limited"))
-		}
-		if strings.TrimSpace(m.EnvironmentID) == "" {
-			problems = append(problems, errors.New("environment id is required when queue concurrency is limited"))
-		}
 	}
 	if err := m.Requirements.Validate(); err != nil {
 		problems = append(problems, err)
@@ -108,6 +106,8 @@ type Lease struct {
 
 type DequeueRequest struct {
 	OrgID            string
+	ProjectID        string
+	EnvironmentID    string
 	WorkerInstanceID string
 	QueueName        string
 	Available        compute.ResourceVector

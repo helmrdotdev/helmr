@@ -7,6 +7,8 @@ export type WaitpointPolicyDelivery = {
 
 export type WaitpointPolicy = {
   id: string;
+  project_id: string;
+  environment_id: string;
   name: string;
   label: string;
   config: {
@@ -22,28 +24,33 @@ export type ListWaitpointPoliciesResponse = {
 };
 
 export type SaveWaitpointPolicyInput = {
+  projectID: string;
+  environmentID: string;
   name: string;
   label?: string;
   recipients: string[];
 };
 
-export async function listWaitpointPolicies(): Promise<ListWaitpointPoliciesResponse> {
-  return request<ListWaitpointPoliciesResponse>("/api/waitpoint-policies");
+export async function listWaitpointPolicies(projectID: string, environmentID: string): Promise<ListWaitpointPoliciesResponse> {
+  return request<ListWaitpointPoliciesResponse>(waitpointPoliciesPath(projectID, environmentID));
 }
 
 export async function createWaitpointPolicy(input: SaveWaitpointPolicyInput): Promise<WaitpointPolicy> {
-  return postJson<WaitpointPolicyRequest, WaitpointPolicy>("/api/waitpoint-policies", waitpointPolicyRequest(input, true));
+  return postJson<WaitpointPolicyRequest, WaitpointPolicy>(
+    waitpointPoliciesPath(input.projectID, input.environmentID),
+    waitpointPolicyRequest(input, true),
+  );
 }
 
 export async function updateWaitpointPolicy(name: string, input: Omit<SaveWaitpointPolicyInput, "name">): Promise<WaitpointPolicy> {
-  return request<WaitpointPolicy>(`/api/waitpoint-policies/${encodeURIComponent(name)}`, {
+  return request<WaitpointPolicy>(waitpointPolicyPath(name, input.projectID, input.environmentID), {
     method: "PATCH",
     body: JSON.stringify(waitpointPolicyRequest({ name, ...input }, false)),
   });
 }
 
-export async function deleteWaitpointPolicy(name: string): Promise<void> {
-  return request<void>(`/api/waitpoint-policies/${encodeURIComponent(name)}`, { method: "DELETE" });
+export async function deleteWaitpointPolicy(name: string, projectID: string, environmentID: string): Promise<void> {
+  return request<void>(waitpointPolicyPath(name, projectID, environmentID), { method: "DELETE" });
 }
 
 export function waitpointPolicyRecipients(policy: WaitpointPolicy): string[] {
@@ -70,4 +77,12 @@ function waitpointPolicyRequest(input: SaveWaitpointPolicyInput, includeName: bo
       resolution: { type: "any", count: 1 },
     },
   };
+}
+
+function waitpointPoliciesPath(projectID: string, environmentID: string): string {
+  return `/api/projects/${encodeURIComponent(projectID)}/environments/${encodeURIComponent(environmentID)}/waitpoint-policies`;
+}
+
+function waitpointPolicyPath(name: string, projectID: string, environmentID: string): string {
+  return `${waitpointPoliciesPath(projectID, environmentID)}/${encodeURIComponent(name)}`;
 }

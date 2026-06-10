@@ -15,7 +15,7 @@ func TestDeletedProjectSlugCanBeReused(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
 	projectID := ids.ToPG(ids.New())
 	if _, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
@@ -54,7 +54,7 @@ func TestDeletedEnvironmentSlugCanBeReused(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
 	environmentID := ids.ToPG(ids.New())
 	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
@@ -161,7 +161,7 @@ func TestDeleteEnvironmentProtectsProductionAndStagingInSQL(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
 	_, err := queries.DeleteEnvironment(ctx, db.DeleteEnvironmentParams{OrgID: orgID, ProjectID: scope.ProjectID, ID: scope.EnvironmentID})
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -186,7 +186,7 @@ func TestDeleteProjectCascadesDeploymentAndRunGraph(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	scopedRows := seedScopedDeletionRows(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "project-delete")
 
@@ -207,7 +207,7 @@ func TestDeleteEnvironmentCascadesDeploymentAndRunGraph(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	environmentID := ids.ToPG(ids.New())
 	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
 		ID:        environmentID,
@@ -277,23 +277,23 @@ func seedScopedDeletionRows(t *testing.T, ctx context.Context, queries *db.Queri
 		t.Fatal(err)
 	}
 	apiKey, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
-		ID:        ids.ToPG(ids.New()),
-		OrgID:     orgID,
-		Role:      db.OrgMemberRoleDeveloper,
-		Name:      "delete-" + suffix,
-		KeyPrefix: "helmr_test_" + suffix,
-		TokenHash: []byte("token-" + suffix),
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Role:          db.OrgMemberRoleDeveloper,
+		Name:          "delete-" + suffix,
+		KeyPrefix:     "helmr_test_" + suffix,
+		TokenHash:     []byte("token-" + suffix),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	grant, err := queries.CreateAPIKeyGrant(ctx, db.CreateAPIKeyGrantParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         orgID,
-		ApiKeyID:      apiKey.ID,
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		Permission:    "runs:read",
+		ID:         ids.ToPG(ids.New()),
+		OrgID:      orgID,
+		ApiKeyID:   apiKey.ID,
+		Permission: "runs:read",
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -26,7 +27,7 @@ func TestAPIKeysRequireOwnerSession(t *testing.T) {
 		WithAuthenticator(fakeAuth{}),
 		WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://helmr.example.test"),
 	)
-	req := httptest.NewRequest(http.MethodGet, "/api/api-keys", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -44,24 +45,28 @@ func TestListAPIKeysFiltersAndShapesResponse(t *testing.T) {
 		role: db.OrgMemberRoleOwner,
 		keys: []db.ListAPIKeysRow{
 			{
-				ID:        ids.ToPG(activeID),
-				OrgID:     ids.ToPG(ids.DefaultOrgID),
-				Name:      "active key",
-				KeyPrefix: "hlmr_sk_abcdef12",
-				CreatedAt: testTime(),
+				ID:            ids.ToPG(activeID),
+				OrgID:         ids.ToPG(ids.DefaultOrgID),
+				ProjectID:     testProjectID(),
+				EnvironmentID: testEnvironmentID(),
+				Name:          "active key",
+				KeyPrefix:     "hlmr_sk_abcdef12",
+				CreatedAt:     testTime(),
 			},
 			{
-				ID:        ids.ToPG(revokedID),
-				OrgID:     ids.ToPG(ids.DefaultOrgID),
-				Name:      "revoked key",
-				KeyPrefix: "hlmr_sk_revoked",
-				CreatedAt: testTime(),
-				RevokedAt: testTime(),
+				ID:            ids.ToPG(revokedID),
+				OrgID:         ids.ToPG(ids.DefaultOrgID),
+				ProjectID:     testProjectID(),
+				EnvironmentID: testEnvironmentID(),
+				Name:          "revoked key",
+				KeyPrefix:     "hlmr_sk_revoked",
+				CreatedAt:     testTime(),
+				RevokedAt:     testTime(),
 			},
 		},
 	}
 	server := testAPIKeyServer(store)
-	req := httptest.NewRequest(http.MethodGet, "/api/api-keys?filter=revoked", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys?filter=revoked", nil)
 	addSessionCookie(req)
 	rec := httptest.NewRecorder()
 
@@ -72,6 +77,9 @@ func TestListAPIKeysFiltersAndShapesResponse(t *testing.T) {
 	}
 	if store.listParams.StatusFilter != "revoked" || store.listParams.RowLimit != apiKeyListLimit+1 {
 		t.Fatalf("list params = %+v", store.listParams)
+	}
+	if store.listParams.ProjectID != testProjectID() || store.listParams.EnvironmentID != testEnvironmentID() {
+		t.Fatalf("list scope = %+v", store.listParams)
 	}
 	var response api.ListAPIKeysResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
@@ -89,7 +97,7 @@ func TestListAPIKeysFiltersAndShapesResponse(t *testing.T) {
 func TestIssueAPIKeyReturnsRawKeyOnce(t *testing.T) {
 	store := &apiKeyStore{role: db.OrgMemberRoleOwner}
 	server := testAPIKeyServer(store)
-	req := httptest.NewRequest(http.MethodPost, "/api/api-keys", strings.NewReader(`{"name":"deploy","expires_in_days":30,"permissions":[{"project_id":"default","environment_id":"default","scopes":["runs:create","runs:read"]}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", strings.NewReader(`{"name":"deploy","expires_in_days":30,"permissions":[{"scopes":["runs:create","runs:read"]}]}`))
 	addSessionCookie(req)
 	rec := httptest.NewRecorder()
 
@@ -111,6 +119,12 @@ func TestIssueAPIKeyReturnsRawKeyOnce(t *testing.T) {
 	if issued.KeyPrefix != store.upsert.KeyPrefix || issued.Name != "deploy" || issued.Status != api.APIKeyStatusActive {
 		t.Fatalf("issued = %+v", issued)
 	}
+	if issued.ProjectID != testProjectIDString() || issued.EnvironmentID != testEnvironmentIDString() {
+		t.Fatalf("issued scope = %+v", issued)
+	}
+	if store.upsert.ProjectID != testProjectID() || store.upsert.EnvironmentID != testEnvironmentID() {
+		t.Fatalf("token scope = %+v", store.upsert)
+	}
 	if len(issued.Permissions) != 1 || len(issued.Permissions[0].Scopes) != 2 || issued.Permissions[0].Scopes[0] != api.APIKeyScopeRunsCreate {
 		t.Fatalf("permissions = %+v", issued.Permissions)
 	}
@@ -122,7 +136,7 @@ func TestIssueAPIKeyReturnsRawKeyOnce(t *testing.T) {
 func TestIssueAPIKeySupportsSecretsWrite(t *testing.T) {
 	store := &apiKeyStore{role: db.OrgMemberRoleOwner}
 	server := testAPIKeyServer(store)
-	req := httptest.NewRequest(http.MethodPost, "/api/api-keys", strings.NewReader(`{"name":"secret-sync","expires_in_days":30,"permissions":[{"project_id":"default","environment_id":"default","scopes":["secrets:write"]}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", strings.NewReader(`{"name":"secret-sync","expires_in_days":30,"permissions":[{"scopes":["secrets:write"]}]}`))
 	addSessionCookie(req)
 	rec := httptest.NewRecorder()
 
@@ -141,12 +155,15 @@ func TestIssueAPIKeySupportsSecretsWrite(t *testing.T) {
 	if len(store.grants) != 1 || store.grants[0].Permission != string(auth.PermissionSecretsWrite) {
 		t.Fatalf("grants = %+v", store.grants)
 	}
+	if store.upsert.ProjectID != testProjectID() || store.upsert.EnvironmentID != testEnvironmentID() {
+		t.Fatalf("token scope = %+v", store.upsert)
+	}
 }
 
 func TestIssueAPIKeySupportsTasksDeploy(t *testing.T) {
 	store := &apiKeyStore{role: db.OrgMemberRoleOwner}
 	server := testAPIKeyServer(store)
-	req := httptest.NewRequest(http.MethodPost, "/api/api-keys", strings.NewReader(`{"name":"deploy","expires_in_days":30,"permissions":[{"project_id":"default","environment_id":"default","scopes":["tasks:deploy"]}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", strings.NewReader(`{"name":"deploy","expires_in_days":30,"permissions":[{"scopes":["tasks:deploy"]}]}`))
 	addSessionCookie(req)
 	rec := httptest.NewRecorder()
 
@@ -165,12 +182,15 @@ func TestIssueAPIKeySupportsTasksDeploy(t *testing.T) {
 	if len(store.grants) != 1 || store.grants[0].Permission != string(auth.PermissionTasksDeploy) {
 		t.Fatalf("grants = %+v", store.grants)
 	}
+	if store.upsert.ProjectID != testProjectID() || store.upsert.EnvironmentID != testEnvironmentID() {
+		t.Fatalf("token scope = %+v", store.upsert)
+	}
 }
 
-func TestIssueAPIKeySupportsWaitpointPoliciesManage(t *testing.T) {
+func TestIssueAPIKeySupportsWaitpointPolicyManagement(t *testing.T) {
 	store := &apiKeyStore{role: db.OrgMemberRoleOwner}
 	server := testAPIKeyServer(store)
-	req := httptest.NewRequest(http.MethodPost, "/api/api-keys", strings.NewReader(`{"name":"policy-agent","expires_in_days":30,"permissions":[{"project_id":"project-a","environment_id":"prod","scopes":["waitpoint-policies:manage"]}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", strings.NewReader(`{"name":"policy-agent","expires_in_days":30,"permissions":[{"scopes":["waitpoint-policies:manage"]}]}`))
 	addSessionCookie(req)
 	rec := httptest.NewRecorder()
 
@@ -186,14 +206,11 @@ func TestIssueAPIKeySupportsWaitpointPoliciesManage(t *testing.T) {
 	if len(issued.Permissions) != 1 || len(issued.Permissions[0].Scopes) != 1 || issued.Permissions[0].Scopes[0] != api.APIKeyScopeWaitpointPolicies {
 		t.Fatalf("permissions = %+v", issued.Permissions)
 	}
-	if issued.Permissions[0].ProjectID != auth.DefaultProjectID || issued.Permissions[0].EnvironmentID != auth.DefaultEnvironmentID {
-		t.Fatalf("permission scope = %+v", issued.Permissions[0])
-	}
 	if len(store.grants) != 1 || store.grants[0].Permission != string(auth.PermissionWaitpointPolicies) {
 		t.Fatalf("grants = %+v", store.grants)
 	}
-	if store.grants[0].ProjectID.Valid || store.grants[0].EnvironmentID.Valid {
-		t.Fatalf("org-level grant should not be project scoped: %+v", store.grants[0])
+	if store.upsert.ProjectID != testProjectID() || store.upsert.EnvironmentID != testEnvironmentID() {
+		t.Fatalf("token scope = %+v", store.upsert)
 	}
 }
 
@@ -201,7 +218,7 @@ func TestRevokeAPIKeyReturnsNoContentAndNotFoundEnvelope(t *testing.T) {
 	keyID := ids.New()
 	store := &apiKeyStore{role: db.OrgMemberRoleOwner, revokeRows: 1}
 	server := testAPIKeyServer(store)
-	req := httptest.NewRequest(http.MethodDelete, "/api/api-keys/"+keyID.String(), nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys/"+keyID.String(), nil)
 	addSessionCookie(req)
 	rec := httptest.NewRecorder()
 
@@ -210,12 +227,12 @@ func TestRevokeAPIKeyReturnsNoContentAndNotFoundEnvelope(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.revokeParams.ID != ids.ToPG(keyID) {
+	if store.revokeParams.ID != ids.ToPG(keyID) || store.revokeParams.ProjectID != testProjectID() || store.revokeParams.EnvironmentID != testEnvironmentID() {
 		t.Fatalf("revoke params = %+v", store.revokeParams)
 	}
 
 	store.revokeRows = 0
-	req = httptest.NewRequest(http.MethodDelete, "/api/api-keys/"+ids.New().String(), nil)
+	req = httptest.NewRequest(http.MethodDelete, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys/"+ids.New().String(), nil)
 	addSessionCookie(req)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -263,7 +280,9 @@ func (s *apiKeyStore) ListAPIKeys(_ context.Context, arg db.ListAPIKeysParams) (
 	s.listParams = arg
 	rows := make([]db.ListAPIKeysRow, 0, len(s.keys))
 	for _, key := range s.keys {
-		if arg.StatusFilter == "all" || string(apiKeyStatusForTest(key.ExpiresAt, key.RevokedAt)) == arg.StatusFilter {
+		if key.ProjectID == arg.ProjectID &&
+			key.EnvironmentID == arg.EnvironmentID &&
+			(arg.StatusFilter == "all" || string(apiKeyStatusForTest(key.ExpiresAt, key.RevokedAt)) == arg.StatusFilter) {
 			rows = append(rows, key)
 		}
 	}
@@ -278,6 +297,8 @@ func (s *apiKeyStore) IssueAPIKey(_ context.Context, arg db.IssueAPIKeyParams) (
 	return db.APIKey{
 		ID:              arg.ID,
 		OrgID:           arg.OrgID,
+		ProjectID:       arg.ProjectID,
+		EnvironmentID:   arg.EnvironmentID,
 		CreatedByUserID: arg.CreatedByUserID,
 		Name:            arg.Name,
 		KeyPrefix:       arg.KeyPrefix,
@@ -293,11 +314,63 @@ func (s *apiKeyStore) CreateAPIKeyGrant(_ context.Context, arg db.CreateAPIKeyGr
 		ID:              arg.ID,
 		OrgID:           arg.OrgID,
 		ApiKeyID:        arg.ApiKeyID,
-		ProjectID:       arg.ProjectID,
-		EnvironmentID:   arg.EnvironmentID,
 		Permission:      arg.Permission,
 		CreatedByUserID: arg.CreatedByUserID,
 		CreatedAt:       testTime(),
+	}, nil
+}
+
+func (s *apiKeyStore) GetDefaultProjectEnvironment(context.Context, pgtype.UUID) (db.GetDefaultProjectEnvironmentRow, error) {
+	return db.GetDefaultProjectEnvironmentRow{
+		ProjectID:     testProjectID(),
+		EnvironmentID: testEnvironmentID(),
+	}, nil
+}
+
+func (s *apiKeyStore) GetProject(_ context.Context, arg db.GetProjectParams) (db.Project, error) {
+	if arg.ID != testProjectID() {
+		return db.Project{}, pgx.ErrNoRows
+	}
+	return db.Project{
+		ID:        testProjectID(),
+		OrgID:     ids.ToPG(ids.DefaultOrgID),
+		Slug:      "helmr",
+		Name:      "Helmr",
+		IsDefault: true,
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
+	}, nil
+}
+
+func (s *apiKeyStore) GetDefaultEnvironment(_ context.Context, arg db.GetDefaultEnvironmentParams) (db.Environment, error) {
+	if arg.ProjectID != testProjectID() {
+		return db.Environment{}, pgx.ErrNoRows
+	}
+	return db.Environment{
+		ID:        testEnvironmentID(),
+		OrgID:     ids.ToPG(ids.DefaultOrgID),
+		ProjectID: testProjectID(),
+		Slug:      "production",
+		Name:      "Production",
+		IsDefault: true,
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
+	}, nil
+}
+
+func (s *apiKeyStore) GetEnvironment(_ context.Context, arg db.GetEnvironmentParams) (db.Environment, error) {
+	if arg.ID != testEnvironmentID() || arg.ProjectID != testProjectID() {
+		return db.Environment{}, pgx.ErrNoRows
+	}
+	return db.Environment{
+		ID:        testEnvironmentID(),
+		OrgID:     ids.ToPG(ids.DefaultOrgID),
+		ProjectID: testProjectID(),
+		Slug:      "production",
+		Name:      "Production",
+		IsDefault: true,
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
 	}, nil
 }
 
@@ -309,8 +382,6 @@ func (s *apiKeyStore) ListAPIKeyGrants(_ context.Context, arg db.ListAPIKeyGrant
 				ID:              grant.ID,
 				OrgID:           grant.OrgID,
 				ApiKeyID:        grant.ApiKeyID,
-				ProjectID:       grant.ProjectID,
-				EnvironmentID:   grant.EnvironmentID,
 				Permission:      grant.Permission,
 				CreatedByUserID: grant.CreatedByUserID,
 				CreatedAt:       testTime(),

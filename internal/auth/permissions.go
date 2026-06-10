@@ -7,11 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const (
-	DefaultProjectID     = "default"
-	DefaultEnvironmentID = "default"
-)
-
 type Permission string
 
 const (
@@ -33,28 +28,22 @@ type Scope struct {
 	EnvironmentID string
 }
 
-type PermissionGrant struct {
-	ProjectID     string
-	EnvironmentID string
-	Permissions   []Permission
-}
-
-func DefaultScope(orgID uuid.UUID) Scope {
-	return Scope{
-		OrgID:         orgID,
-		ProjectID:     DefaultProjectID,
-		EnvironmentID: DefaultEnvironmentID,
-	}
-}
-
 func (a Actor) HasPermission(permission Permission, scope Scope) bool {
 	if scope.OrgID != uuid.Nil && a.OrgID != uuid.Nil && scope.OrgID != a.OrgID {
 		return false
 	}
 	if a.Kind == ActorKindAPIKey {
-		return RoleAllows(a.Role, permission) && grantsAllow(a.Permissions, permission, scope)
+		return RoleAllows(a.Role, permission) && a.matchesEnvironmentScope(scope) && slices.Contains(a.Permissions, permission)
 	}
 	return RoleAllows(a.Role, permission)
+}
+
+func (a Actor) matchesEnvironmentScope(scope Scope) bool {
+	if strings.TrimSpace(scope.ProjectID) == "" || strings.TrimSpace(scope.EnvironmentID) == "" {
+		return false
+	}
+	return strings.TrimSpace(a.ProjectID) == strings.TrimSpace(scope.ProjectID) &&
+		strings.TrimSpace(a.EnvironmentID) == strings.TrimSpace(scope.EnvironmentID)
 }
 
 func RoleAllows(role Role, permission Permission) bool {
@@ -73,28 +62,4 @@ func RoleAllows(role Role, permission Permission) bool {
 	default:
 		return false
 	}
-}
-
-func grantsAllow(grants []PermissionGrant, permission Permission, scope Scope) bool {
-	for _, grant := range grants {
-		if !sameScopeValue(grant.ProjectID, scope.ProjectID, DefaultProjectID) || !sameScopeValue(grant.EnvironmentID, scope.EnvironmentID, DefaultEnvironmentID) {
-			continue
-		}
-		if slices.Contains(grant.Permissions, permission) {
-			return true
-		}
-	}
-	return false
-}
-
-func sameScopeValue(grantValue string, scopeValue string, defaultValue string) bool {
-	grantValue = strings.TrimSpace(grantValue)
-	scopeValue = strings.TrimSpace(scopeValue)
-	if grantValue == "" {
-		grantValue = defaultValue
-	}
-	if scopeValue == "" {
-		scopeValue = defaultValue
-	}
-	return grantValue == "*" || grantValue == scopeValue
 }

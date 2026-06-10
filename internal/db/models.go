@@ -1124,6 +1124,8 @@ func (ns NullWorkerInstanceStatus) Value() (driver.Value, error) {
 type APIKey struct {
 	ID              pgtype.UUID        `json:"id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
 	Role            OrgMemberRole      `json:"role"`
 	Name            string             `json:"name"`
@@ -1139,8 +1141,6 @@ type ApiKeyGrant struct {
 	ID              pgtype.UUID        `json:"id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
 	ApiKeyID        pgtype.UUID        `json:"api_key_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	Permission      string             `json:"permission"`
 	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
@@ -1871,13 +1871,15 @@ type WaitpointDelivery struct {
 }
 
 type WaitpointPolicy struct {
-	ID        pgtype.UUID        `json:"id"`
-	OrgID     pgtype.UUID        `json:"org_id"`
-	Name      string             `json:"name"`
-	Label     string             `json:"label"`
-	Config    []byte             `json:"config"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         pgtype.UUID        `json:"org_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	Name          string             `json:"name"`
+	Label         string             `json:"label"`
+	Config        []byte             `json:"config"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WaitpointResponse struct {

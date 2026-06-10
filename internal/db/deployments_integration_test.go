@@ -19,7 +19,7 @@ func TestDeploymentsPromoteCurrentBundleWithoutArchivingHistory(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
 	firstDeploymentID := createTestDeployment(t, ctx, queries, pool, orgID, scope.ProjectID, scope.EnvironmentID, "sha256:"+strings.Repeat("1", 64), "hello-world")
 	if _, err := queries.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
@@ -82,7 +82,7 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	digest := "sha256:" + strings.Repeat("3", 64)
 	sourceArtifact := createTestArtifact(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, digest, db.ArtifactKindDeploymentSource, api.DeploymentSourceArtifactMediaType)
 	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
@@ -146,7 +146,7 @@ func TestCreateDeploymentRejectsCrossEnvironmentArtifact(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	otherEnvironmentID := ids.ToPG(ids.New())
 	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
 		ID:        otherEnvironmentID,
@@ -185,7 +185,7 @@ func TestDeploymentReusableBuildAndLeaseAreScopedByWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	digest := "sha256:" + strings.Repeat("9", 64)
 	sourceArtifact := createTestArtifact(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, digest, db.ArtifactKindDeploymentSource, api.DeploymentSourceArtifactMediaType)
 	defaultGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
@@ -247,7 +247,7 @@ func TestCreateDeploymentRetriesFailedContentHashBuild(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	digest := "sha256:" + strings.Repeat("4", 64)
 	sourceArtifact := createTestArtifact(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, digest, db.ArtifactKindDeploymentSource, api.DeploymentSourceArtifactMediaType)
 	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
@@ -312,7 +312,7 @@ func TestCreateDeploymentDoesNotReuseDeployedContentHashBuild(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	digest := "sha256:" + strings.Repeat("5", 64)
 
 	deployedID := createTestDeployment(t, ctx, queries, pool, orgID, scope.ProjectID, scope.EnvironmentID, digest, "ship")

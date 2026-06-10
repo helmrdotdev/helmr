@@ -144,21 +144,6 @@ func looksLikeSessionBearerToken(token string) bool {
 	return true
 }
 
-func (s *Server) requirePermission(permission auth.Permission, next http.Handler) http.Handler {
-	return s.requireActor(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		actor := actorFromContext(r.Context())
-		if actor.Kind == auth.ActorKindSession && actor.Role == "" {
-			writeError(w, http.StatusForbidden, errors.New("organization is required"))
-			return
-		}
-		if !actor.HasPermission(permission, auth.DefaultScope(actor.OrgID)) {
-			writeError(w, http.StatusForbidden, errors.New("permission is required"))
-			return
-		}
-		next.ServeHTTP(w, r)
-	}))
-}
-
 func (s *Server) requireSessionPermission(permission auth.Permission, next http.Handler) http.Handler {
 	return s.requireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromContext(r.Context())
@@ -166,7 +151,7 @@ func (s *Server) requireSessionPermission(permission auth.Permission, next http.
 			writeError(w, http.StatusForbidden, errors.New("organization is required"))
 			return
 		}
-		if !actor.HasPermission(permission, auth.DefaultScope(actor.OrgID)) {
+		if !actor.HasPermission(permission, auth.Scope{OrgID: actor.OrgID}) {
 			writeError(w, http.StatusForbidden, errors.New("permission is required"))
 			return
 		}

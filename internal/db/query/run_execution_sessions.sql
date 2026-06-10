@@ -1227,6 +1227,8 @@ SELECT renewed_session.id,
 -- name: GetRunExecutionSessionQueueLease :one
 SELECT run_execution_sessions.id,
        run_execution_sessions.run_id,
+       runs.project_id,
+       runs.environment_id,
        run_execution_sessions.worker_instance_id,
        run_execution_sessions.dispatch_message_id,
        run_execution_sessions.dispatch_lease_id,
@@ -1235,6 +1237,8 @@ SELECT run_execution_sessions.id,
        run_execution_sessions.lease_expires_at,
        run_queue_items.queue_name
   FROM run_execution_sessions
+  JOIN runs ON runs.org_id = run_execution_sessions.org_id
+           AND runs.id = run_execution_sessions.run_id
   JOIN run_attempts ON run_attempts.org_id = run_execution_sessions.org_id
                    AND run_attempts.run_id = run_execution_sessions.run_id
                    AND run_attempts.id = run_execution_sessions.attempt_id

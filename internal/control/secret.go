@@ -27,7 +27,7 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, scoped, err := s.requestedSecretScope(r)
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -36,31 +36,15 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
 		return
 	}
-	var rows []db.ListScopedSecretsRow
-	if scoped {
-		rows, err = s.db.ListScopedSecrets(r.Context(), db.ListScopedSecretsParams{
-			OrgID:         ids.ToPG(actor.OrgID),
-			ProjectID:     projectID,
-			EnvironmentID: environmentID,
-			RowLimit:      secretListLimit,
-		})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("list secrets"))
-			return
-		}
-	} else {
-		defaultRows, err := s.db.ListSecrets(r.Context(), db.ListSecretsParams{
-			OrgID:    ids.ToPG(actor.OrgID),
-			RowLimit: secretListLimit,
-		})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("list secrets"))
-			return
-		}
-		rows = make([]db.ListScopedSecretsRow, 0, len(defaultRows))
-		for _, row := range defaultRows {
-			rows = append(rows, db.ListScopedSecretsRow(row))
-		}
+	rows, err := s.db.ListScopedSecrets(r.Context(), db.ListScopedSecretsParams{
+		OrgID:         ids.ToPG(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		RowLimit:      secretListLimit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("list secrets"))
+		return
 	}
 	response := api.ListSecretsResponse{Secrets: make([]api.SecretResponse, 0, len(rows))}
 	for _, row := range rows {
@@ -80,7 +64,7 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestScopeForPermission(r.Context(), actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"), auth.PermissionSecretsWrite, "secret access")
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -124,7 +108,7 @@ func (s *Server) setSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestScopeForPermission(r.Context(), actor, request.ProjectID, request.EnvironmentID, auth.PermissionSecretsWrite, "secret write")
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -153,7 +137,7 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestScopeForPermission(r.Context(), actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"), auth.PermissionSecretsWrite, "secret access")
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -179,26 +163,9 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) requestedSecretScope(r *http.Request) (auth.Scope, pgtype.UUID, pgtype.UUID, bool, error) {
-	actor := actorFromContext(r.Context())
-	projectID := r.URL.Query().Get("project_id")
-	environmentID := r.URL.Query().Get("environment_id")
-	if actor.Kind != auth.ActorKindAPIKey && projectID == "" && environmentID == "" {
-		return auth.DefaultScope(actor.OrgID), pgtype.UUID{}, pgtype.UUID{}, false, nil
-	}
-	scope, scopeProjectID, scopeEnvironmentID, err := s.requestScopeForPermission(r.Context(), actor, projectID, environmentID, auth.PermissionSecretsWrite, "secret list")
-	return scope, scopeProjectID, scopeEnvironmentID, true, err
-}
-
 func (s *Server) secretRequestScope(ctx context.Context, orgID uuid.UUID, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
 	projectID = strings.TrimSpace(projectID)
 	environmentID = strings.TrimSpace(environmentID)
-	if projectID == "" {
-		projectID = auth.DefaultProjectID
-	}
-	if environmentID == "" {
-		environmentID = auth.DefaultEnvironmentID
-	}
 	scope, _, _, err := s.normalizeProjectEnvironmentScope(ctx, orgID, projectID, environmentID)
 	if err != nil {
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err

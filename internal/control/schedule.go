@@ -55,6 +55,13 @@ func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid schedule request JSON: %w", err))
 		return
 	}
+	projectID, environmentID, err := environmentScopeRefsFromRequest(r, actor, request.ProjectID, request.EnvironmentID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	request.ProjectID = projectID
+	request.EnvironmentID = environmentID
 	row, err := s.createScheduleForActor(r.Context(), actor, request)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -90,6 +97,10 @@ func (s *Server) updateSchedule(w http.ResponseWriter, r *http.Request) {
 	var request api.CreateScheduleRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid schedule request JSON: %w", err))
+		return
+	}
+	if _, _, err := environmentScopeRefsFromRequest(r, actor, request.ProjectID, request.EnvironmentID); err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	updated, err := s.updateScheduleForActor(r.Context(), actor, row, request)
@@ -150,8 +161,8 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	runOptions := request.Options.CreateRunOptions()
 	scope := auth.Scope{
 		OrgID:         actor.OrgID,
-		ProjectID:     apiKeyScopeID(current.ProjectID, auth.DefaultProjectID),
-		EnvironmentID: apiKeyScopeID(current.EnvironmentID, auth.DefaultEnvironmentID),
+		ProjectID:     ids.MustFromPG(current.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(current.EnvironmentID).String(),
 	}
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
 		return db.UpdateScheduleRow{}, errPermissionRequired
@@ -221,7 +232,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		return db.CreateScheduleRow{}, err
 	}
 	userDedupKeyParam := pgtype.Text{String: userDedupKey, Valid: true}
-	scope, projectID, environmentID, err := s.createRunRequestScope(ctx, actor, request.ProjectID, request.EnvironmentID)
+	scope, projectID, environmentID, err := s.requestEnvironmentScope(ctx, actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
@@ -286,7 +297,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 
 func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestScopeForPermission(r.Context(), actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"), auth.PermissionRunsRead, "schedule read")
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -438,7 +449,7 @@ func (s *Server) loadScheduleForRequest(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, errors.New("schedule id must be a UUID"))
 		return db.GetScheduleSummaryRow{}, false
 	}
-	scope, projectID, environmentID, err := s.requestScopeForPermission(r.Context(), actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"), permission, "schedule access")
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return db.GetScheduleSummaryRow{}, false
@@ -645,8 +656,8 @@ func scheduleResponse(row scheduleView) api.ScheduleResponse {
 	response := api.ScheduleResponse{
 		ID:               ids.MustFromPG(row.ScheduleID).String(),
 		Type:             string(row.ScheduleType),
-		ProjectID:        apiKeyScopeID(row.ProjectID, auth.DefaultProjectID),
-		EnvironmentID:    apiKeyScopeID(row.EnvironmentID, auth.DefaultEnvironmentID),
+		ProjectID:        ids.MustFromPG(row.ProjectID).String(),
+		EnvironmentID:    ids.MustFromPG(row.EnvironmentID).String(),
 		Task:             row.TaskID,
 		DeduplicationKey: deduplicationKey,
 		ExternalID:       pgTextValue(row.ExternalID),

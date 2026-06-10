@@ -23,6 +23,8 @@ func TestQueueEnqueueDequeueAck(t *testing.T) {
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -40,6 +42,8 @@ func TestQueueEnqueueDequeueAck(t *testing.T) {
 	}
 	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -124,7 +128,7 @@ func TestQueueReadyMessageExistsInvalidatesMessageWithoutRuntimeMetadata(t *test
 	} else if count != 0 {
 		t.Fatal("message without runtime metadata was not deleted")
 	}
-	keys := queue.keys("org-1", "queue-a")
+	keys := queue.keys("org-1", "project-1", "env-1", "queue-a")
 	if score, err := queue.client.ZScore(ctx, keys.ready, result.MessageID).Result(); err == nil {
 		t.Fatalf("message without runtime metadata remained ready with score %f", score)
 	} else if !errors.Is(err, goredis.Nil) {
@@ -152,6 +156,8 @@ func TestQueueDequeueInvalidatesMessageWithoutRuntimeMetadata(t *testing.T) {
 
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -221,6 +227,8 @@ func TestQueueReadyMessageExistsHandlesQueueNamedRun(t *testing.T) {
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "run",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -259,6 +267,8 @@ func TestQueueLeaseConflictNackBacksOff(t *testing.T) {
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-2",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -301,6 +311,8 @@ func TestQueueHonorsQueueConcurrencyLimit(t *testing.T) {
 
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -321,6 +333,8 @@ func TestQueueHonorsQueueConcurrencyLimit(t *testing.T) {
 	}
 	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -357,6 +371,8 @@ func TestQueueConcurrencyLimitSpansRuntimeQueues(t *testing.T) {
 
 	firstLease, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a:rt:arm64",
 		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -371,6 +387,8 @@ func TestQueueConcurrencyLimitSpansRuntimeQueues(t *testing.T) {
 	}
 	blocked, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a:rt:amd64",
 		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -388,6 +406,8 @@ func TestQueueConcurrencyLimitSpansRuntimeQueues(t *testing.T) {
 	}
 	secondLease, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a:rt:amd64",
 		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -430,6 +450,8 @@ func TestQueuePriorityAndCapacity(t *testing.T) {
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 1024, Slots: 1},
@@ -457,6 +479,8 @@ func TestQueueSkipsOversizedHeadForCurrentHost(t *testing.T) {
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 1024, Slots: 1},
@@ -544,6 +568,8 @@ func TestQueueFiltersByRuntimeIdentity(t *testing.T) {
 
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-amd",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -562,6 +588,8 @@ func TestQueueFiltersByRuntimeIdentity(t *testing.T) {
 
 	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-arm",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -602,6 +630,8 @@ func TestQueueFiltersByPlacementCompatibility(t *testing.T) {
 
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-standard",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -622,6 +652,8 @@ func TestQueueFiltersByPlacementCompatibility(t *testing.T) {
 
 	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-special",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -638,7 +670,7 @@ func TestQueueFiltersByPlacementCompatibility(t *testing.T) {
 	}
 }
 
-func TestQueueNamespacesByOrgAndQueue(t *testing.T) {
+func TestQueueNamespacesByScopeAndQueue(t *testing.T) {
 	ctx := context.Background()
 	queue, cleanup := newTestQueue(t)
 	defer cleanup()
@@ -648,6 +680,8 @@ func TestQueueNamespacesByOrgAndQueue(t *testing.T) {
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-2",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -662,6 +696,40 @@ func TestQueueNamespacesByOrgAndQueue(t *testing.T) {
 	}
 	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-2",
+		EnvironmentID:    "env-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
+		MaxMessages:      1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 0 {
+		t.Fatalf("cross-project leases = %+v", leases)
+	}
+	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
+		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-2",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
+		MaxMessages:      1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 0 {
+		t.Fatalf("cross-environment leases = %+v", leases)
+	}
+	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
+		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-b",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -787,6 +855,8 @@ func TestQueueReenqueueFencesOldLeaseAcrossQueues(t *testing.T) {
 	now = now.Add(2 * time.Second)
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-2",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -801,6 +871,8 @@ func TestQueueReenqueueFencesOldLeaseAcrossQueues(t *testing.T) {
 	}
 	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: "host-2",
 		QueueName:        "queue-b",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
@@ -933,6 +1005,8 @@ func mustDequeueOne(t *testing.T, ctx context.Context, queue *Queue, workerInsta
 	t.Helper()
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
 		WorkerInstanceID: workerInstanceID,
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},

@@ -21,7 +21,6 @@ type Querier interface {
 	AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkParams) (AppendRunLogChunkRow, error)
 	ApproveDeviceCode(ctx context.Context, arg ApproveDeviceCodeParams) (DeviceCode, error)
 	AuthenticateWorkerInstanceCredential(ctx context.Context, arg AuthenticateWorkerInstanceCredentialParams) (AuthenticateWorkerInstanceCredentialRow, error)
-	AuthorizeAPIKeyPermission(ctx context.Context, arg AuthorizeAPIKeyPermissionParams) (AuthorizeAPIKeyPermissionRow, error)
 	AuthorizeWorkerInstanceCredential(ctx context.Context, arg AuthorizeWorkerInstanceCredentialParams) (AuthorizeWorkerInstanceCredentialRow, error)
 	CancelRun(ctx context.Context, arg CancelRunParams) (CancelRunRow, error)
 	ClaimWaitpointDeliveryForSend(ctx context.Context, deliveryID pgtype.UUID) (WaitpointDelivery, error)
@@ -163,7 +162,7 @@ type Querier interface {
 	ListSecrets(ctx context.Context, arg ListSecretsParams) ([]ListSecretsRow, error)
 	ListSecretsByKeyIDForRotation(ctx context.Context, arg ListSecretsByKeyIDForRotationParams) ([]Secret, error)
 	ListWaitpointDeliveries(ctx context.Context, arg ListWaitpointDeliveriesParams) ([]WaitpointDelivery, error)
-	ListWaitpointPolicies(ctx context.Context, orgID pgtype.UUID) ([]WaitpointPolicy, error)
+	ListWaitpointPolicies(ctx context.Context, arg ListWaitpointPoliciesParams) ([]WaitpointPolicy, error)
 	ListWorkerGroups(ctx context.Context, rowLimit int32) ([]WorkerGroup, error)
 	ListWorkerInstances(ctx context.Context, arg ListWorkerInstancesParams) ([]WorkerInstance, error)
 	LockDeploymentReusableBuildKey(ctx context.Context, arg LockDeploymentReusableBuildKeyParams) error

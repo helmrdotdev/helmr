@@ -1,4 +1,4 @@
-import { A, useParams } from "@solidjs/router";
+import { A, useParams, useSearchParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { formatRelative, StatusBadge } from "../features/runs/display";
@@ -6,8 +6,8 @@ import { ApiError } from "../lib/api";
 import { formatTaskOutput, hasRunOutput, taskOutputKind, taskOutputRenderMode, taskOutputTable } from "../lib/run-output";
 import {
   createWaitpointResponseToken,
-  getRunEvents,
   getRun,
+  getRunEvents,
   getRunLogs,
   respondWaitpoint,
   type LogSnapshot,
@@ -17,6 +17,7 @@ import {
   type RunEventRecord,
   type WaitpointDelivery,
 } from "../lib/runs";
+import { useScope } from "../lib/scope";
 import { cx, statusBadgeClass, ui } from "../ui/styles";
 
 function runErrorMessage(error: unknown): string {
@@ -442,6 +443,8 @@ function EventTimeline(props: {
 
 function PendingWaitpointPanel(props: {
   runID: string;
+  projectID: string;
+  environmentID: string;
   wait: PendingWaitpoint;
   policy: string | null;
   deliveries: WaitpointDelivery[];
@@ -465,7 +468,7 @@ function PendingWaitpointPanel(props: {
     setError(null);
     setBusy(true);
     try {
-      await respondWaitpoint(props.wait.waitpoint_id, parseCompletionValue(value()));
+      await respondWaitpoint(props.wait.waitpoint_id, props.projectID, props.environmentID, parseCompletionValue(value()));
       await refresh();
     } catch (resolveError) {
       setError(runErrorMessage(resolveError));
@@ -479,7 +482,7 @@ function PendingWaitpointPanel(props: {
     setError(null);
     setLinkBusy(true);
     try {
-      const token = await createWaitpointResponseToken(props.wait.waitpoint_id, props.wait.kind);
+      const token = await createWaitpointResponseToken(props.wait.waitpoint_id, props.wait.kind, props.projectID, props.environmentID);
       setResponseLink(token.url);
     } catch (linkError) {
       setError(runErrorMessage(linkError));
@@ -549,18 +552,22 @@ function PendingWaitpointPanel(props: {
 
 export function RunDetail() {
   const params = useParams();
+  const [searchParams] = useSearchParams();
+  const scope = useScope();
   const runID = createMemo(() => params["id"]?.trim() ?? "");
+  const projectID = createMemo(() => searchParamValue(searchParams["project_id"]) || scope.selectedProjectID());
+  const environmentID = createMemo(() => searchParamValue(searchParams["environment_id"]) || scope.selectedEnvironmentID());
   const hasRunID = createMemo(() => runID() !== "");
   const run = createQuery(() => ({
-    queryKey: ["run", runID()],
-    queryFn: () => getRun(runID()),
-    enabled: hasRunID(),
+    queryKey: ["run", runID(), projectID(), environmentID()],
+    queryFn: () => getRun(runID(), projectID(), environmentID()),
+    enabled: hasRunID() && !!projectID() && !!environmentID(),
     retry: false,
   }));
   const logs = createQuery(() => ({
-    queryKey: ["run-logs", runID()],
-    queryFn: () => getRunLogs(runID()),
-    enabled: hasRunID(),
+    queryKey: ["run-logs", runID(), projectID(), environmentID()],
+    queryFn: () => getRunLogs(runID(), projectID(), environmentID()),
+    enabled: hasRunID() && !!projectID() && !!environmentID(),
     retry: false,
   }));
   const eventPageSize = 200;
@@ -568,9 +575,9 @@ export function RunDetail() {
   const [eventsLoadingMore, setEventsLoadingMore] = createSignal(false);
   const [eventsMoreError, setEventsMoreError] = createSignal<string | null>(null);
   const events = createQuery(() => ({
-    queryKey: ["run-events", runID()],
-    queryFn: () => getRunEvents(runID(), { limit: eventPageSize }),
-    enabled: hasRunID(),
+    queryKey: ["run-events", runID(), projectID(), environmentID()],
+    queryFn: () => getRunEvents(runID(), projectID(), environmentID(), { limit: eventPageSize }),
+    enabled: hasRunID() && !!projectID() && !!environmentID(),
     retry: false,
   }));
   createEffect(() => {
@@ -600,7 +607,7 @@ export function RunDetail() {
     setEventsMoreError(null);
     setEventsLoadingMore(true);
     try {
-      const page = await getRunEvents(requestedRunID, { cursor, limit: eventPageSize });
+      const page = await getRunEvents(requestedRunID, projectID(), environmentID(), { cursor, limit: eventPageSize });
       if (runID() !== requestedRunID) return;
       setExtraEventPages((pages) => [...pages, page]);
     } catch (error) {
@@ -647,6 +654,8 @@ export function RunDetail() {
                     {(wait) => (
                       <PendingWaitpointPanel
                         runID={current().id}
+                        projectID={current().project_id}
+                        environmentID={current().environment_id}
                         wait={wait()}
                         policy={waitpointPolicyLabel(current())}
                         deliveries={waitpointDeliveries(current())}
@@ -717,4 +726,8 @@ export function RunDetail() {
       </Show>
     </section>
   );
+}
+
+function searchParamValue(value: string | string[] | undefined): string {
+  return typeof value === "string" ? value.trim() : "";
 }

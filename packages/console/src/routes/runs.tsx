@@ -28,12 +28,12 @@ function runErrorMessage(error: unknown): string {
 }
 
 function RunRow(props: { run: Run; environmentName: string }) {
-  const rowNavigation = useRunRowNavigation(() => props.run.id);
+  const rowNavigation = useRunRowNavigation(() => props.run);
 
   return (
     <tr class={ui.clickableTableRow} {...rowNavigation}>
       <td>
-        <A href={runHref(props.run.id)} class={"cursor-pointer font-medium text-console-text hover:text-console-accent"}>
+        <A href={runHref(props.run.id, props.run.project_id, props.run.environment_id)} class={"cursor-pointer font-medium text-console-text hover:text-console-accent"}>
           {props.run.task_id}
         </A>
       </td>

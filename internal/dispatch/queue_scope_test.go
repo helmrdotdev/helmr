@@ -11,22 +11,22 @@ func TestRoundRobinQueueScopeSelectorInterleavesOrganizations(t *testing.T) {
 	orgB := ids.ToPG(ids.New())
 	orgC := ids.ToPG(ids.New())
 	input := []QueueScope{
-		{OrgID: orgA, QueueName: "a-1"},
-		{OrgID: orgA, QueueName: "a-2"},
-		{OrgID: orgA, QueueName: "a-3"},
-		{OrgID: orgB, QueueName: "b-1"},
-		{OrgID: orgC, QueueName: "c-1"},
-		{OrgID: orgC, QueueName: "c-2"},
+		testQueueScope(orgA, "a-1"),
+		testQueueScope(orgA, "a-2"),
+		testQueueScope(orgA, "a-3"),
+		testQueueScope(orgB, "b-1"),
+		testQueueScope(orgC, "c-1"),
+		testQueueScope(orgC, "c-2"),
 	}
 
 	got := RoundRobinQueueScopeSelector{}.Order(input)
 	want := []QueueScope{
-		{OrgID: orgA, QueueName: "a-1"},
-		{OrgID: orgB, QueueName: "b-1"},
-		{OrgID: orgC, QueueName: "c-1"},
-		{OrgID: orgA, QueueName: "a-2"},
-		{OrgID: orgC, QueueName: "c-2"},
-		{OrgID: orgA, QueueName: "a-3"},
+		input[0],
+		input[3],
+		input[4],
+		input[1],
+		input[5],
+		input[2],
 	}
 	if !sameQueueScopes(got, want) {
 		t.Fatalf("ordered scopes = %+v, want %+v", got, want)

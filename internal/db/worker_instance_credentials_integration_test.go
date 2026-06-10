@@ -75,7 +75,7 @@ func TestWorkerInstanceResourceIdentifierIsScopedByWorkerGroup(t *testing.T) {
 	firstTokenHash := []byte("first-group-bootstrap-token-hash")
 	secondTokenHash := []byte("second-group-bootstrap-token-hash")
 
-	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	defaultGroup, err := queries.GetDefaultWorkerGroup(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestWorkerBootstrapTokenConflictIsIdempotent(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	tokenHash := []byte("stable-bootstrap-token-hash")
 
-	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	workerGroup, err := queries.GetDefaultWorkerGroup(ctx)
 	if err != nil {
 		t.Fatal(err)

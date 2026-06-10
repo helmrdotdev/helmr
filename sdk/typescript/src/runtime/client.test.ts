@@ -113,8 +113,8 @@ test("schedules ignore response workspace metadata", async () => {
   globalThis.fetch = (async () => {
     return Response.json({
       id: "schedule-1",
-      project_id: "default",
-      environment_id: "default",
+      project_id: "00000000-0000-0000-0000-000000000101",
+      environment_id: "00000000-0000-0000-0000-000000000102",
       task: "inspect",
       deduplication_key: "inspect-main",
       external_id: "customer-1",
@@ -142,8 +142,8 @@ test("schedules create uses public field names", async () => {
     return Response.json({
       id: "schedule-1",
       type: "imperative",
-      project_id: "default",
-      environment_id: "default",
+      project_id: "00000000-0000-0000-0000-000000000101",
+      environment_id: "00000000-0000-0000-0000-000000000102",
       task: "inspect",
       deduplication_key: "inspect-customer-1",
       external_id: "customer-1",
@@ -189,8 +189,8 @@ test("schedules map next fire response fields", async () => {
     return Response.json({
       id: "schedule-1",
       type: "imperative",
-      project_id: "default",
-      environment_id: "default",
+      project_id: "00000000-0000-0000-0000-000000000101",
+      environment_id: "00000000-0000-0000-0000-000000000102",
       task: "inspect",
       deduplication_key: "inspect-main",
       cron: "0 * * * *",

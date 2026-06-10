@@ -236,17 +236,20 @@ func TestTouchActiveAPIKeyUsesStoredKeyRole(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	bootstrapKey, err := auth.GenerateAPIKey()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
-		ID:        ids.ToPG(ids.New()),
-		OrgID:     orgID,
-		Role:      db.OrgMemberRoleOwner,
-		Name:      "bootstrap",
-		KeyPrefix: bootstrapKey.KeyPrefix,
-		TokenHash: bootstrapKey.TokenHash,
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		Role:          db.OrgMemberRoleOwner,
+		Name:          "bootstrap",
+		KeyPrefix:     bootstrapKey.KeyPrefix,
+		TokenHash:     bootstrapKey.TokenHash,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -272,6 +275,8 @@ func TestTouchActiveAPIKeyUsesStoredKeyRole(t *testing.T) {
 	if _, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
 		ID:              ids.ToPG(ids.New()),
 		OrgID:           orgID,
+		ProjectID:       scope.ProjectID,
+		EnvironmentID:   scope.EnvironmentID,
 		CreatedByUserID: userID,
 		Role:            db.OrgMemberRoleViewer,
 		Name:            "cli",
@@ -297,6 +302,166 @@ func TestTouchActiveAPIKeyUsesStoredKeyRole(t *testing.T) {
 	}
 	if row.Role != string(db.OrgMemberRoleViewer) {
 		t.Fatalf("role after creator disabled = %q", row.Role)
+	}
+}
+
+func TestIssueAPIKeyRevokesSameNameOnlyInScope(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	seedPostgresTestOrganization(t, ctx, pool, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
+	siblingEnvironment, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
+		ID:        ids.ToPG(ids.New()),
+		OrgID:     orgID,
+		ProjectID: scope.ProjectID,
+		Slug:      "sibling",
+		Name:      "Sibling",
+		ColorHex:  "#4F46E5",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstToken := []byte("same-name-token-1")
+	if _, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		Role:          db.OrgMemberRoleDeveloper,
+		Name:          "deployer",
+		KeyPrefix:     "key_1",
+		TokenHash:     firstToken,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	siblingToken := []byte("same-name-token-2")
+	if _, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: siblingEnvironment.ID,
+		Role:          db.OrgMemberRoleDeveloper,
+		Name:          "deployer",
+		KeyPrefix:     "key_2",
+		TokenHash:     siblingToken,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	replacementToken := []byte("same-name-token-3")
+	if _, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		Role:          db.OrgMemberRoleDeveloper,
+		Name:          "deployer",
+		KeyPrefix:     "key_3",
+		TokenHash:     replacementToken,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var firstRevoked, siblingRevoked, replacementRevoked bool
+	if err := pool.QueryRow(ctx, `
+SELECT revoked_at IS NOT NULL
+  FROM api_keys
+ WHERE token_hash = $1
+`, firstToken).Scan(&firstRevoked); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `
+SELECT revoked_at IS NOT NULL
+  FROM api_keys
+ WHERE token_hash = $1
+`, siblingToken).Scan(&siblingRevoked); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `
+SELECT revoked_at IS NOT NULL
+  FROM api_keys
+ WHERE token_hash = $1
+`, replacementToken).Scan(&replacementRevoked); err != nil {
+		t.Fatal(err)
+	}
+	if !firstRevoked {
+		t.Fatal("same-scope API key was not revoked")
+	}
+	if siblingRevoked {
+		t.Fatal("sibling environment API key was revoked")
+	}
+	if replacementRevoked {
+		t.Fatal("replacement API key was revoked")
+	}
+}
+
+func TestWaitpointPolicyNameIsScopedToEnvironment(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	seedPostgresTestOrganization(t, ctx, pool, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
+	siblingEnvironment, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
+		ID:        ids.ToPG(ids.New()),
+		OrgID:     orgID,
+		ProjectID: scope.ProjectID,
+		Slug:      "approval-sibling",
+		Name:      "Approval sibling",
+		ColorHex:  "#0891B2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := queries.CreateWaitpointPolicy(ctx, db.CreateWaitpointPolicyParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		Name:          "deploy-approval",
+		Label:         "Production approval",
+		Config:        []byte(`{"deliveries":[{"type":"email","to":["prod@example.test"]}]}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.CreateWaitpointPolicy(ctx, db.CreateWaitpointPolicyParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: siblingEnvironment.ID,
+		Name:          "deploy-approval",
+		Label:         "Staging approval",
+		Config:        []byte(`{"deliveries":[{"type":"email","to":["staging@example.test"]}]}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	productionPolicy, err := queries.GetWaitpointPolicyByName(ctx, db.GetWaitpointPolicyByNameParams{
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		Name:          "deploy-approval",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if productionPolicy.Label != "Production approval" {
+		t.Fatalf("production policy = %+v", productionPolicy)
+	}
+	siblingPolicy, err := queries.GetWaitpointPolicyByName(ctx, db.GetWaitpointPolicyByNameParams{
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: siblingEnvironment.ID,
+		Name:          "deploy-approval",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if siblingPolicy.Label != "Staging approval" {
+		t.Fatalf("sibling policy = %+v", siblingPolicy)
 	}
 }
 

@@ -10,9 +10,10 @@ import {
   type WaitpointPolicy,
   waitpointPolicyRecipients,
 } from "../lib/waitpoint-policies";
+import { useScope } from "../lib/scope";
 import { ActionMenu } from "../ui/ActionMenu";
 import { Modal } from "../ui/Modal";
-import { statusBadgeClass, ui } from "../ui/styles";
+import { envDotStyle, statusBadgeClass, ui } from "../ui/styles";
 
 const POLICY_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -56,8 +57,17 @@ function validateRecipients(recipients: string[]): string | null {
   return null;
 }
 
+function shortScopeID(id: string): string {
+  return id.slice(0, 8);
+}
+
 function PolicyModal(props: {
   policy: WaitpointPolicy | null;
+  projectID: string;
+  environmentID: string;
+  projectName: string;
+  environmentName: string;
+  environmentColorHex: string;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -90,6 +100,8 @@ function PolicyModal(props: {
 
     const trimmedLabel = label().trim();
     const input = {
+      projectID: props.projectID,
+      environmentID: props.environmentID,
       label: trimmedLabel,
       recipients: parsedRecipients,
     };
@@ -120,6 +132,17 @@ function PolicyModal(props: {
         <p class={ui.modalIntro}>
           Policies are referenced by stable name from task code and deliver waitpoint notifications by email.
         </p>
+        <div class={ui.scopeTarget} aria-label="Waitpoint policy target environment">
+          <span>Target environment</span>
+          <strong>{props.environmentName}</strong>
+          <div>
+            <Show when={props.environmentColorHex}>
+              <span class={ui.scopeTargetDot} style={envDotStyle(props.environmentColorHex)} aria-hidden="true" />
+            </Show>
+            <span>{props.projectName}</span>
+            <code>{shortScopeID(props.projectID)} / {shortScopeID(props.environmentID)}</code>
+          </div>
+        </div>
         <label class={ui.field}>
           <span>Name</span>
           <input
@@ -212,23 +235,26 @@ function PolicyRow(props: {
 
 export function WaitpointPolicies() {
   const queryClient = useQueryClient();
+  const scope = useScope();
+  const scopeReady = createMemo(() => !!scope.selectedProjectID() && !!scope.selectedEnvironmentID());
   const [modalPolicy, setModalPolicy] = createSignal<WaitpointPolicy | null | undefined>(undefined);
   const [deletingName, setDeletingName] = createSignal<string | null>(null);
   const [deleteError, setDeleteError] = createSignal<{ name: string; message: string } | null>(null);
   const policies = createQuery(() => ({
-    queryKey: ["waitpoint-policies"],
-    queryFn: listWaitpointPolicies,
+    queryKey: ["waitpoint-policies", scope.selectedProjectID(), scope.selectedEnvironmentID()],
+    queryFn: () => listWaitpointPolicies(scope.selectedProjectID(), scope.selectedEnvironmentID()),
+    enabled: scopeReady(),
     retry: false,
   }));
 
-  const invalidatePolicies = () => queryClient.invalidateQueries({ queryKey: ["waitpoint-policies"] });
+  const invalidatePolicies = () => queryClient.invalidateQueries({ queryKey: ["waitpoint-policies", scope.selectedProjectID(), scope.selectedEnvironmentID()] });
 
   const deletePolicy = async (policy: WaitpointPolicy) => {
     if (!window.confirm(`Delete waitpoint policy "${policy.name}"?`)) return;
     setDeleteError(null);
     setDeletingName(policy.name);
     try {
-      await deleteWaitpointPolicy(policy.name);
+      await deleteWaitpointPolicy(policy.name, scope.selectedProjectID(), scope.selectedEnvironmentID());
       await invalidatePolicies();
     } catch (error) {
       setDeleteError({ name: policy.name, message: policyErrorMessage(error) });
@@ -294,6 +320,11 @@ export function WaitpointPolicies() {
       <Show when={modalPolicy() !== undefined}>
         <PolicyModal
           policy={modalPolicy() ?? null}
+          projectID={scope.selectedProjectID()}
+          environmentID={scope.selectedEnvironmentID()}
+          projectName={scope.selectedProject()?.name ?? "Project"}
+          environmentName={scope.selectedEnvironment()?.name ?? "Environment"}
+          environmentColorHex={scope.selectedEnvironment()?.color_hex ?? ""}
           onClose={() => setModalPolicy(undefined)}
           onSaved={invalidatePolicies}
         />

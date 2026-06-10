@@ -34,13 +34,15 @@ const (
 )
 
 type Actor struct {
-	OrgID       uuid.UUID
-	UserID      uuid.UUID
-	APIKeyID    uuid.UUID
-	SessionID   uuid.UUID
-	Kind        ActorKind
-	Role        Role
-	Permissions []PermissionGrant
+	OrgID         uuid.UUID
+	UserID        uuid.UUID
+	APIKeyID      uuid.UUID
+	SessionID     uuid.UUID
+	ProjectID     string
+	EnvironmentID string
+	Kind          ActorKind
+	Role          Role
+	Permissions   []Permission
 }
 
 type Authenticator interface {
@@ -71,7 +73,15 @@ func (a DBAuthenticator) Authenticate(ctx context.Context, bearerToken string) (
 	if err != nil {
 		return Actor{}, fmt.Errorf("api key org id: %w", err)
 	}
-	grants, err := permissionGrantsFromAPIKey(row.Grants)
+	projectID, err := ids.FromPG(row.ProjectID)
+	if err != nil {
+		return Actor{}, fmt.Errorf("api key project id: %w", err)
+	}
+	environmentID, err := ids.FromPG(row.EnvironmentID)
+	if err != nil {
+		return Actor{}, fmt.Errorf("api key environment id: %w", err)
+	}
+	permissions, err := permissionsFromAPIKey(row.Grants)
 	if err != nil {
 		return Actor{}, fmt.Errorf("api key grants: %w", err)
 	}
@@ -79,7 +89,30 @@ func (a DBAuthenticator) Authenticate(ctx context.Context, bearerToken string) (
 	if err != nil {
 		return Actor{}, fmt.Errorf("api key id: %w", err)
 	}
-	return Actor{OrgID: orgID, APIKeyID: apiKeyID, Kind: ActorKindAPIKey, Role: Role(row.Role), Permissions: grants}, nil
+	return Actor{
+		OrgID:         orgID,
+		APIKeyID:      apiKeyID,
+		ProjectID:     projectID.String(),
+		EnvironmentID: environmentID.String(),
+		Kind:          ActorKindAPIKey,
+		Role:          Role(row.Role),
+		Permissions:   permissions,
+	}, nil
+}
+
+func (a Actor) EnvironmentScope() (Scope, bool) {
+	if a.ProjectID == "" || a.EnvironmentID == "" {
+		return Scope{}, false
+	}
+	projectID, err := uuid.Parse(a.ProjectID)
+	if err != nil || projectID == uuid.Nil {
+		return Scope{}, false
+	}
+	environmentID, err := uuid.Parse(a.EnvironmentID)
+	if err != nil || environmentID == uuid.Nil {
+		return Scope{}, false
+	}
+	return Scope{OrgID: a.OrgID, ProjectID: a.ProjectID, EnvironmentID: a.EnvironmentID}, true
 }
 
 func HashAPIKey(token string) []byte {
@@ -88,12 +121,10 @@ func HashAPIKey(token string) []byte {
 }
 
 type apiKeyGrantRow struct {
-	Permission    string  `json:"permission"`
-	ProjectID     *string `json:"project_id"`
-	EnvironmentID *string `json:"environment_id"`
+	Permission string `json:"permission"`
 }
 
-func permissionGrantsFromAPIKey(rawValue any) ([]PermissionGrant, error) {
+func permissionsFromAPIKey(rawValue any) ([]Permission, error) {
 	raw, err := apiKeyGrantJSON(rawValue)
 	if err != nil {
 		return nil, err
@@ -105,38 +136,18 @@ func permissionGrantsFromAPIKey(rawValue any) ([]PermissionGrant, error) {
 	if err := json.Unmarshal(raw, &rows); err != nil {
 		return nil, err
 	}
-	type grantKey struct {
-		projectID     string
-		environmentID string
-	}
-	byScope := map[grantKey][]Permission{}
-	order := make([]grantKey, 0, len(rows))
+	permissions := make([]Permission, 0, len(rows))
 	for _, row := range rows {
-		key := grantKey{}
-		if row.ProjectID != nil {
-			key.projectID = strings.TrimSpace(*row.ProjectID)
-		}
-		if row.EnvironmentID != nil {
-			key.environmentID = strings.TrimSpace(*row.EnvironmentID)
-		}
-		if _, ok := byScope[key]; !ok {
-			order = append(order, key)
-		}
-		permissions := normalizeAPIKeyGrantPermission(row.Permission)
-		if len(permissions) == 0 {
+		normalized := normalizeAPIKeyGrantPermission(row.Permission)
+		if len(normalized) == 0 {
 			continue
 		}
-		byScope[key] = append(byScope[key], permissions...)
+		permissions = append(permissions, normalized...)
 	}
-	grants := make([]PermissionGrant, 0, len(order))
-	for _, key := range order {
-		grants = append(grants, PermissionGrant{
-			ProjectID:     key.projectID,
-			EnvironmentID: key.environmentID,
-			Permissions:   byScope[key],
-		})
+	if len(permissions) == 0 {
+		return nil, nil
 	}
-	return grants, nil
+	return permissions, nil
 }
 
 func apiKeyGrantJSON(rawValue any) ([]byte, error) {
@@ -156,8 +167,6 @@ func apiKeyGrantJSON(rawValue any) ([]byte, error) {
 
 func normalizeAPIKeyGrantPermission(permission string) []Permission {
 	switch strings.TrimSpace(permission) {
-	case string(PermissionWaitpointPolicies):
-		return []Permission{PermissionWaitpointPolicies}
 	case string(PermissionRunsCreate):
 		return []Permission{PermissionRunsCreate}
 	case string(PermissionRunsRead):
@@ -166,6 +175,8 @@ func normalizeAPIKeyGrantPermission(permission string) []Permission {
 		return []Permission{PermissionRunsManage}
 	case string(PermissionWaitpointsRespond):
 		return []Permission{PermissionWaitpointsRespond}
+	case string(PermissionWaitpointPolicies):
+		return []Permission{PermissionWaitpointPolicies}
 	case string(PermissionSecretsWrite):
 		return []Permission{PermissionSecretsWrite}
 	case string(PermissionTasksDeploy):

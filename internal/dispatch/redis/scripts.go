@@ -4,7 +4,7 @@ const enqueueScript = `
 local ready = KEYS[1]
 local prefix = ARGV[1]
 local scope = ARGV[2]
-local org_run_scope = ARGV[3]
+local run_scope = ARGV[3]
 local run_id = ARGV[4]
 local payload = ARGV[5]
 local score = ARGV[6]
@@ -27,7 +27,7 @@ local generation_ttl_ms = tonumber(ARGV[22])
 local queue_concurrency_limit = tonumber(ARGV[23] or "0")
 local queue_concurrency_active_key = ARGV[24]
 
-local run_generation_key = org_run_scope .. ":run:" .. run_id .. ":generation"
+local run_generation_key = run_scope .. ":run:" .. run_id .. ":generation"
 local generation = redis.call("INCR", run_generation_key)
 local message_id = scope .. ":run:" .. run_id .. ":" .. tostring(generation)
 local message_key = prefix .. ":message:" .. message_id

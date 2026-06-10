@@ -100,9 +100,11 @@ func (e *Enqueuer) ReconcileQueueScope(ctx context.Context, scope QueueScope, li
 		limit = 100
 	}
 	candidates, err := e.store.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
-		OrgID:     scope.OrgID,
-		QueueName: scope.QueueName,
-		RowLimit:  limit,
+		OrgID:         scope.OrgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		QueueName:     scope.QueueName,
+		RowLimit:      limit,
 	})
 	if err != nil {
 		return QueueReconcileStats{}, err

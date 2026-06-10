@@ -1,14 +1,23 @@
 -- name: ListQueueScopes :many
 SELECT run_queue_items.org_id,
+       runs.project_id,
+       runs.environment_id,
        run_queue_items.queue_name
   FROM run_queue_items
+  JOIN runs ON runs.org_id = run_queue_items.org_id
+           AND runs.id = run_queue_items.run_id
   JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_queue_items.org_id
                                AND run_runtime_requirements.run_id = run_queue_items.run_id
  WHERE run_queue_items.status IN ('queued', 'published', 'reserved')
    AND run_runtime_requirements.worker_group_id = sqlc.arg(worker_group_id)
- GROUP BY run_queue_items.org_id, run_queue_items.queue_name
- ORDER BY md5(run_queue_items.org_id::text || ':' || run_queue_items.queue_name || ':' || sqlc.arg(scan_seed)::text),
+ GROUP BY run_queue_items.org_id,
+          runs.project_id,
+          runs.environment_id,
+          run_queue_items.queue_name
+ ORDER BY md5(run_queue_items.org_id::text || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':' || run_queue_items.queue_name || ':' || sqlc.arg(scan_seed)::text),
           run_queue_items.org_id ASC,
+          runs.project_id ASC,
+          runs.environment_id ASC,
           run_queue_items.queue_name ASC
  LIMIT sqlc.arg(row_limit)
 OFFSET sqlc.arg(row_offset);
@@ -486,8 +495,10 @@ SELECT
 -- name: ListQueuedRunCandidateScopes :many
 WITH candidate_scopes AS (
     SELECT runs.org_id,
+           runs.project_id,
+           runs.environment_id,
            COALESCE(run_queue_items.queue_name, runs.queue_name) AS queue_name,
-           md5(runs.org_id::text || ':' || COALESCE(run_queue_items.queue_name, runs.queue_name) || ':' || sqlc.arg(scan_seed)::text) AS sort_key
+           md5(runs.org_id::text || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':' || COALESCE(run_queue_items.queue_name, runs.queue_name) || ':' || sqlc.arg(scan_seed)::text) AS sort_key
       FROM runs
       LEFT JOIN run_queue_items ON run_queue_items.org_id = runs.org_id
                                AND run_queue_items.run_id = runs.id
@@ -515,16 +526,22 @@ WITH candidate_scopes AS (
            )
        )
      GROUP BY runs.org_id,
+              runs.project_id,
+              runs.environment_id,
               COALESCE(run_queue_items.queue_name, runs.queue_name)
 )
 SELECT candidate_scopes.org_id,
+       candidate_scopes.project_id,
+       candidate_scopes.environment_id,
        candidate_scopes.queue_name,
        candidate_scopes.sort_key
   FROM candidate_scopes
  WHERE sqlc.arg(after_sort_key)::text = ''
-    OR (candidate_scopes.sort_key, candidate_scopes.org_id, candidate_scopes.queue_name) > (sqlc.arg(after_sort_key)::text, sqlc.arg(after_org_id)::uuid, sqlc.arg(after_queue_name)::text)
+    OR (candidate_scopes.sort_key, candidate_scopes.org_id, candidate_scopes.project_id, candidate_scopes.environment_id, candidate_scopes.queue_name) > (sqlc.arg(after_sort_key)::text, sqlc.arg(after_org_id)::uuid, sqlc.arg(after_project_id)::uuid, sqlc.arg(after_environment_id)::uuid, sqlc.arg(after_queue_name)::text)
  ORDER BY candidate_scopes.sort_key ASC,
           candidate_scopes.org_id ASC,
+          candidate_scopes.project_id ASC,
+          candidate_scopes.environment_id ASC,
           candidate_scopes.queue_name ASC
  LIMIT sqlc.arg(row_limit);
 
@@ -536,6 +553,8 @@ SELECT runs.org_id,
   LEFT JOIN run_queue_items ON run_queue_items.org_id = runs.org_id
                            AND run_queue_items.run_id = runs.id
  WHERE runs.org_id = sqlc.arg(org_id)
+   AND runs.project_id = sqlc.arg(project_id)
+   AND runs.environment_id = sqlc.arg(environment_id)
    AND COALESCE(run_queue_items.queue_name, runs.queue_name) = sqlc.arg(queue_name)
    AND runs.status = 'queued'
    AND runs.current_session_id IS NULL

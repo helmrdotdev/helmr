@@ -10,15 +10,16 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestQueueReconcilerReconcilesScopesRoundRobinByOrganization(t *testing.T) {
 	ctx := context.Background()
 	orgA := ids.ToPG(ids.New())
 	orgB := ids.ToPG(ids.New())
-	scopeA1 := QueueScope{OrgID: orgA, QueueName: "queue-a"}
-	scopeA2 := QueueScope{OrgID: orgA, QueueName: "queue-b"}
-	scopeB1 := QueueScope{OrgID: orgB, QueueName: "queue-a"}
+	scopeA1 := testQueueScope(orgA, "queue-a")
+	scopeA2 := testQueueScope(orgA, "queue-b")
+	scopeB1 := testQueueScope(orgB, "queue-a")
 	store := &fakeQueueReconcilerStore{scopes: []QueueScope{scopeA1, scopeA2, scopeB1}}
 	enqueuer := &fakeQueueEnqueuer{
 		stats: map[QueueScope]QueueReconcileStats{
@@ -46,9 +47,9 @@ func TestQueueReconcilerReconcilesScopesRoundRobinByOrganization(t *testing.T) {
 
 func TestQueueReconcilerPaginatesScopes(t *testing.T) {
 	ctx := context.Background()
-	scopeA := QueueScope{OrgID: ids.ToPG(ids.New()), QueueName: "queue-a"}
-	scopeB := QueueScope{OrgID: ids.ToPG(ids.New()), QueueName: "queue-b"}
-	scopeC := QueueScope{OrgID: ids.ToPG(ids.New()), QueueName: "queue-c"}
+	scopeA := testQueueScope(ids.ToPG(ids.New()), "queue-a")
+	scopeB := testQueueScope(ids.ToPG(ids.New()), "queue-b")
+	scopeC := testQueueScope(ids.ToPG(ids.New()), "queue-c")
 	store := &fakeQueueReconcilerStore{pages: [][]QueueScope{{scopeA, scopeB}, {scopeC}}}
 	enqueuer := &fakeQueueEnqueuer{}
 	reconciler, err := NewQueueReconciler(
@@ -183,7 +184,13 @@ func (f *fakeQueueReconcilerStore) ListQueuedRunCandidateScopes(ctx context.Cont
 	}
 	rows := make([]db.ListQueuedRunCandidateScopesRow, 0, len(scopes))
 	for index, scope := range scopes {
-		rows = append(rows, db.ListQueuedRunCandidateScopesRow{OrgID: scope.OrgID, QueueName: scope.QueueName, SortKey: "sort-" + string(rune('0'+index))})
+		rows = append(rows, db.ListQueuedRunCandidateScopesRow{
+			OrgID:         scope.OrgID,
+			ProjectID:     scope.ProjectID,
+			EnvironmentID: scope.EnvironmentID,
+			QueueName:     scope.QueueName,
+			SortKey:       "sort-" + string(rune('0'+index)),
+		})
 	}
 	return rows, nil
 }
@@ -211,4 +218,13 @@ func sameScopes(a, b []QueueScope) bool {
 		}
 	}
 	return true
+}
+
+func testQueueScope(orgID pgtype.UUID, queueName string) QueueScope {
+	return QueueScope{
+		OrgID:         orgID,
+		ProjectID:     ids.ToPG(ids.New()),
+		EnvironmentID: ids.ToPG(ids.New()),
+		QueueName:     queueName,
+	}
 }

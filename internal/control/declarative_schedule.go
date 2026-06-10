@@ -193,7 +193,7 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 	}
 	key := strings.TrimSpace(item.ID)
 	if key == "" {
-		key = "default"
+		key = "primary"
 	}
 	if err := api.ValidateScheduleID(key); err != nil {
 		return declarativeScheduleSpec{}, err

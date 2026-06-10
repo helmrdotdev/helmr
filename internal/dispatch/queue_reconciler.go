@@ -182,18 +182,25 @@ func (r *QueueReconciler) ReconcileOnce(ctx context.Context) error {
 	var afterRow db.ListQueuedRunCandidateScopesRow
 	for {
 		rows, err := store.ListQueuedRunCandidateScopes(ctx, db.ListQueuedRunCandidateScopesParams{
-			AfterSortKey:   afterSortKey,
-			AfterOrgID:     afterRow.OrgID,
-			AfterQueueName: afterRow.QueueName,
-			RowLimit:       r.scopeLimit,
-			ScanSeed:       scanSeed,
+			AfterSortKey:       afterSortKey,
+			AfterOrgID:         afterRow.OrgID,
+			AfterProjectID:     afterRow.ProjectID,
+			AfterEnvironmentID: afterRow.EnvironmentID,
+			AfterQueueName:     afterRow.QueueName,
+			RowLimit:           r.scopeLimit,
+			ScanSeed:           scanSeed,
 		})
 		if err != nil {
 			return err
 		}
 		scopes := make([]QueueScope, 0, len(rows))
 		for _, row := range rows {
-			scopes = append(scopes, QueueScope{OrgID: row.OrgID, QueueName: row.QueueName})
+			scopes = append(scopes, QueueScope{
+				OrgID:         row.OrgID,
+				ProjectID:     row.ProjectID,
+				EnvironmentID: row.EnvironmentID,
+				QueueName:     row.QueueName,
+			})
 		}
 		for _, scope := range r.selector.Order(scopes) {
 			stats, err := r.enqueuer.ReconcileQueueScope(ctx, scope, r.runLimit)
@@ -201,7 +208,7 @@ func (r *QueueReconciler) ReconcileOnce(ctx context.Context) error {
 				problems = append(problems, err)
 			}
 			if stats.Scanned > 0 || stats.Failed > 0 {
-				r.log.Info("queue reconcile scope", "org_id", scope.OrgID, "queue_name", scope.QueueName, "scanned", stats.Scanned, "enqueued", stats.Enqueued, "skipped", stats.Skipped, "failed", stats.Failed)
+				r.log.Info("queue reconcile scope", "org_id", scope.OrgID, "project_id", scope.ProjectID, "environment_id", scope.EnvironmentID, "queue_name", scope.QueueName, "scanned", stats.Scanned, "enqueued", stats.Enqueued, "skipped", stats.Skipped, "failed", stats.Failed)
 			}
 		}
 		if len(rows) < int(r.scopeLimit) {

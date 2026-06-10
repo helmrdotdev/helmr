@@ -6,7 +6,7 @@ import { deleteSecret, listSecrets, setSecret, type Secret } from "../lib/secret
 import { useScope } from "../lib/scope";
 import { ActionMenu } from "../ui/ActionMenu";
 import { Modal } from "../ui/Modal";
-import { ui } from "../ui/styles";
+import { envDotStyle, ui } from "../ui/styles";
 
 const SECRET_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to manage secrets.",
@@ -20,10 +20,17 @@ function secretErrorMessage(error: unknown): string {
   return INTERNAL_ERROR_MESSAGE;
 }
 
+function shortScopeID(id: string): string {
+  return id.slice(0, 8);
+}
+
 function SecretModal(props: {
   secretName: string | null;
   projectID: string;
   environmentID: string;
+  projectName: string;
+  environmentName: string;
+  environmentColorHex: string;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -51,6 +58,17 @@ function SecretModal(props: {
   return (
     <Modal title={editing() ? "Update secret" : "Set secret"} onClose={props.onClose} closeDisabled={saving()}>
       <form onSubmit={save}>
+        <div class={ui.scopeTarget} aria-label="Secret target environment">
+          <span>Target environment</span>
+          <strong>{props.environmentName}</strong>
+          <div>
+            <Show when={props.environmentColorHex}>
+              <span class={ui.scopeTargetDot} style={envDotStyle(props.environmentColorHex)} aria-hidden="true" />
+            </Show>
+            <span>{props.projectName}</span>
+            <code>{shortScopeID(props.projectID)} / {shortScopeID(props.environmentID)}</code>
+          </div>
+        </div>
         <label class={ui.field}>
           <span>Name</span>
           <input
@@ -203,6 +221,9 @@ export function Secrets() {
           secretName={modalSecretName() ?? null}
           projectID={scope.selectedProjectID()}
           environmentID={scope.selectedEnvironmentID()}
+          projectName={scope.selectedProject()?.name ?? "Project"}
+          environmentName={scope.selectedEnvironment()?.name ?? "Environment"}
+          environmentColorHex={scope.selectedEnvironment()?.color_hex ?? ""}
           onClose={() => setModalSecretName(undefined)}
           onSaved={invalidateSecrets}
         />

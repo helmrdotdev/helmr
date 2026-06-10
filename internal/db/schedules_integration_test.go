@@ -15,7 +15,7 @@ func TestScheduleRepairEntriesAndCursorAdvance(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	scheduleID := ids.ToPG(ids.New())
 	instanceID := ids.ToPG(ids.New())
 	scheduledAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
@@ -97,7 +97,7 @@ func TestScheduleTriggerFailurePersistsRetryAndExhausts(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	scheduleID := ids.ToPG(ids.New())
 	instanceID := ids.ToPG(ids.New())
 	scheduledAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
@@ -210,7 +210,7 @@ func TestStopScheduleInstanceTriggerClearsCursorAndKeepsError(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	scheduleID := ids.ToPG(ids.New())
 	instanceID := ids.ToPG(ids.New())
 	scheduledAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
@@ -274,7 +274,7 @@ func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	scheduledAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 
 	single, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
@@ -404,7 +404,7 @@ func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstanc
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	environmentID := ids.ToPG(ids.New())
 	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
 		ID:        environmentID,
@@ -502,7 +502,7 @@ func TestScheduleDedupKeysAreNamespacedByScheduleType(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	scheduledAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 
 	declarative, err := queries.CreateDeclarativeSchedule(ctx, db.CreateDeclarativeScheduleParams{
@@ -554,7 +554,7 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	staging, err := queries.GetEnvironmentBySlug(ctx, db.GetEnvironmentBySlugParams{
 		OrgID:     orgID,
 		ProjectID: scope.ProjectID,

@@ -17,7 +17,7 @@ test("lists schedules with project and environment scope", async () => {
 
   await listSchedules({ projectID: "project-1", environmentID: "env-1" });
 
-  expect(requestedUrl).toBe("/api/schedules?project_id=project-1&environment_id=env-1");
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/schedules");
 });
 
 test("creates schedules with current API fields", async () => {
@@ -51,10 +51,8 @@ test("creates schedules with current API fields", async () => {
     active: true,
   });
 
-  expect(requestedUrl).toBe("/api/schedules");
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/schedules");
   expect(requestedBody).toEqual({
-    project_id: "project-1",
-    environment_id: "env-1",
     deduplication_key: "task-hourly",
     task: "task",
     cron: "0 * * * *",
@@ -91,8 +89,6 @@ test("creates schedules without workspace fields", async () => {
   });
 
   expect(requestedBody).toEqual({
-    project_id: "project-1",
-    environment_id: "env-1",
     deduplication_key: "task-hourly",
     task: "task",
     cron: "0 * * * *",
@@ -110,8 +106,8 @@ test("scopes schedule actions and escapes ids", async () => {
   await deleteSchedule("schedule/1", { projectID: "project-1", environmentID: "env-1" });
 
   expect(requestedUrls).toEqual([
-    "/api/schedules/schedule%2F1/activate?project_id=project-1&environment_id=env-1",
-    "/api/schedules/schedule%2F1?project_id=project-1&environment_id=env-1",
+    "/api/projects/project-1/environments/env-1/schedules/schedule%2F1/activate",
+    "/api/projects/project-1/environments/env-1/schedules/schedule%2F1",
   ]);
 });
 
@@ -145,11 +141,9 @@ test("updates schedules with scope query", async () => {
     cron: "*/10 * * * *",
   });
 
-  expect(requestedUrl).toBe("/api/schedules/schedule%2F1?project_id=project-1&environment_id=env-1");
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/schedules/schedule%2F1");
   expect(requestedMethod).toBe("PUT");
   expect(requestedBody).toEqual({
-    project_id: "project-1",
-    environment_id: "env-1",
     task: "task",
     cron: "*/10 * * * *",
   });

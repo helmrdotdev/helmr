@@ -27,12 +27,14 @@ type WaitpointPolicyTimeout struct {
 }
 
 type WaitpointPolicyResponse struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Label     string          `json:"label"`
-	Config    json.RawMessage `json:"config"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID            string          `json:"id"`
+	ProjectID     string          `json:"project_id"`
+	EnvironmentID string          `json:"environment_id"`
+	Name          string          `json:"name"`
+	Label         string          `json:"label"`
+	Config        json.RawMessage `json:"config"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
 }
 
 type ListWaitpointPoliciesResponse struct {

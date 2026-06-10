@@ -13,9 +13,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var waitpointPolicyNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
@@ -33,7 +35,20 @@ func (s *Server) listWaitpointPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	rows, err := s.db.ListWaitpointPolicies(r.Context(), ids.ToPG(actor.OrgID))
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
+		writeError(w, http.StatusForbidden, errPermissionRequired)
+		return
+	}
+	rows, err := s.db.ListWaitpointPolicies(r.Context(), db.ListWaitpointPoliciesParams{
+		OrgID:         ids.ToPG(scope.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("list waitpoint policies"))
 		return
@@ -55,18 +70,29 @@ func (s *Server) createWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid waitpoint policy request JSON: %w", err))
 		return
 	}
+	actor := actorFromContext(r.Context())
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
+		writeError(w, http.StatusForbidden, errPermissionRequired)
+		return
+	}
 	normalized, err := normalizeWaitpointPolicyInput(request.Name, request.Label, request.Config)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	actor := actorFromContext(r.Context())
 	policy, err := s.db.CreateWaitpointPolicy(r.Context(), db.CreateWaitpointPolicyParams{
-		ID:     ids.ToPG(ids.New()),
-		OrgID:  ids.ToPG(actor.OrgID),
-		Name:   normalized.name,
-		Label:  normalized.label,
-		Config: normalized.config,
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         ids.ToPG(scope.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Name:          normalized.name,
+		Label:         normalized.label,
+		Config:        normalized.config,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -90,9 +116,20 @@ func (s *Server) getWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
+		writeError(w, http.StatusForbidden, errPermissionRequired)
+		return
+	}
 	policy, err := s.db.GetWaitpointPolicyByName(r.Context(), db.GetWaitpointPolicyByNameParams{
-		OrgID: ids.ToPG(actor.OrgID),
-		Name:  name,
+		OrgID:         ids.ToPG(scope.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Name:          name,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, errors.New("waitpoint policy not found"))
@@ -115,6 +152,16 @@ func (s *Server) updateWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	actor := actorFromContext(r.Context())
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
+		writeError(w, http.StatusForbidden, errPermissionRequired)
+		return
+	}
 	var request api.UpdateWaitpointPolicyRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid waitpoint policy request JSON: %w", err))
@@ -125,12 +172,13 @@ func (s *Server) updateWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	actor := actorFromContext(r.Context())
 	policy, err := s.db.UpdateWaitpointPolicy(r.Context(), db.UpdateWaitpointPolicyParams{
-		OrgID:  ids.ToPG(actor.OrgID),
-		Name:   name,
-		Label:  normalized.label,
-		Config: normalized.config,
+		OrgID:         ids.ToPG(scope.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Name:          name,
+		Label:         normalized.label,
+		Config:        normalized.config,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, errors.New("waitpoint policy not found"))
@@ -154,9 +202,20 @@ func (s *Server) deleteWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
+		writeError(w, http.StatusForbidden, errPermissionRequired)
+		return
+	}
 	rows, err := s.db.DeleteWaitpointPolicy(r.Context(), db.DeleteWaitpointPolicyParams{
-		OrgID: ids.ToPG(actor.OrgID),
-		Name:  name,
+		OrgID:         ids.ToPG(scope.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Name:          name,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("delete waitpoint policy"))
@@ -247,13 +306,18 @@ func validateWaitpointPolicyConfig(config api.WaitpointPolicyConfig) error {
 	return nil
 }
 
-func (s *Server) resolveWaitpointPolicy(ctx context.Context, orgID uuid.UUID, name string) (*resolvedWaitpointPolicy, error) {
+func (s *Server) resolveWaitpointPolicy(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, name string) (*resolvedWaitpointPolicy, error) {
 	name = strings.TrimSpace(name)
 	if name != "" {
 		if !waitpointPolicyNamePattern.MatchString(name) {
 			return nil, fmt.Errorf("waitpoint policy %q must match %s", name, waitpointPolicyNamePattern.String())
 		}
-		policy, err := s.db.GetWaitpointPolicyByName(ctx, db.GetWaitpointPolicyByNameParams{OrgID: ids.ToPG(orgID), Name: name})
+		policy, err := s.db.GetWaitpointPolicyByName(ctx, db.GetWaitpointPolicyByNameParams{
+			OrgID:         ids.ToPG(orgID),
+			ProjectID:     projectID,
+			EnvironmentID: environmentID,
+			Name:          name,
+		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("waitpoint policy %q was not found", name)
 		}
@@ -292,12 +356,14 @@ func waitpointPolicyNameParam(r *http.Request) (string, error) {
 
 func waitpointPolicyResponse(policy db.WaitpointPolicy) api.WaitpointPolicyResponse {
 	return api.WaitpointPolicyResponse{
-		ID:        ids.MustFromPG(policy.ID).String(),
-		Name:      policy.Name,
-		Label:     policy.Label,
-		Config:    append(json.RawMessage(nil), policy.Config...),
-		CreatedAt: pgTime(policy.CreatedAt),
-		UpdatedAt: pgTime(policy.UpdatedAt),
+		ID:            ids.MustFromPG(policy.ID).String(),
+		ProjectID:     ids.MustFromPG(policy.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(policy.EnvironmentID).String(),
+		Name:          policy.Name,
+		Label:         policy.Label,
+		Config:        append(json.RawMessage(nil), policy.Config...),
+		CreatedAt:     pgTime(policy.CreatedAt),
+		UpdatedAt:     pgTime(policy.UpdatedAt),
 	}
 }
 
