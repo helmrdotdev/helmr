@@ -1456,7 +1456,7 @@ func TestGetRunLogsReportsTruncatedSnapshot(t *testing.T) {
 		},
 		stdout:       []byte("hello\n"),
 		logTruncated: true,
-		stdoutCursor: 42,
+		logCursor:    42,
 	}
 	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
 
@@ -1476,8 +1476,115 @@ func TestGetRunLogsReportsTruncatedSnapshot(t *testing.T) {
 	if !response.Truncated {
 		t.Fatalf("logs = %+v", response)
 	}
-	if response.Cursor != "42:0" {
+	if response.Cursor != "42" {
 		t.Fatalf("cursor = %q", response.Cursor)
+	}
+}
+
+func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
+	runID := ids.New()
+	sessionID := ids.New()
+	store := &fakeStore{
+		run: db.Run{
+			ID:        ids.ToPG(runID),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			TaskID:    "deploy",
+			Status:    db.RunStatusSucceeded,
+			CreatedAt: testTime(),
+			UpdatedAt: testTime(),
+		},
+		logChunks: []db.RunLogChunk{
+			{
+				OrgID:         ids.ToPG(ids.DefaultOrgID),
+				RunID:         ids.ToPG(runID),
+				SessionID:     ids.ToPG(sessionID),
+				AttemptNumber: 1,
+				Stream:        db.RunLogStreamStdout,
+				Seq:           8,
+				ObservedSeq:   2,
+				Content:       []byte("new\n"),
+				SizeBytes:     4,
+				CreatedAt:     testTime(),
+			},
+		},
+	}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs?follow=1&cursor=1", nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	req.Header.Set("accept", "text/event-stream")
+	req.Header.Set("Last-Event-ID", "7")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.firstRunLogChunksAfterSeq != 7 {
+		t.Fatalf("log cursor = %d", store.firstRunLogChunksAfterSeq)
+	}
+	if !strings.Contains(rec.Body.String(), "event: run_log") || !strings.Contains(rec.Body.String(), "id: 8") {
+		t.Fatalf("sse body = %q", rec.Body.String())
+	}
+	var chunk api.RunLogChunk
+	for line := range strings.SplitSeq(rec.Body.String(), "\n") {
+		if data, ok := strings.CutPrefix(line, "data: "); ok {
+			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
+	if chunk.ID != "8" || chunk.Stream != "stdout" || chunk.ContentBase64 != base64.StdEncoding.EncodeToString([]byte("new\n")) {
+		t.Fatalf("chunk = %+v", chunk)
+	}
+}
+
+func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
+	runID := ids.New()
+	sessionID := ids.New()
+	store := &fakeStore{
+		run: db.Run{
+			ID:        ids.ToPG(runID),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			TaskID:    "deploy",
+			Status:    db.RunStatusSucceeded,
+			CreatedAt: testTime(),
+			UpdatedAt: testTime(),
+		},
+		deferLogChunksUntilSecondList: true,
+		logChunks: []db.RunLogChunk{
+			{
+				OrgID:         ids.ToPG(ids.DefaultOrgID),
+				RunID:         ids.ToPG(runID),
+				SessionID:     ids.ToPG(sessionID),
+				AttemptNumber: 1,
+				Stream:        db.RunLogStreamStderr,
+				Seq:           12,
+				ObservedSeq:   4,
+				Content:       []byte("final error\n"),
+				SizeBytes:     int64(len("final error\n")),
+				CreatedAt:     testTime(),
+			},
+		},
+	}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs?follow=1&cursor=11", nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.runLogChunksAfterCalls != 2 {
+		t.Fatalf("list calls = %d, want terminal drain", store.runLogChunksAfterCalls)
+	}
+	if !strings.Contains(rec.Body.String(), "id: 12") || !strings.Contains(rec.Body.String(), base64.StdEncoding.EncodeToString([]byte("final error\n"))) {
+		t.Fatalf("sse body = %q", rec.Body.String())
 	}
 }
 
@@ -3533,6 +3640,11 @@ type fakeStore struct {
 	stdout                                  []byte
 	stderr                                  []byte
 	runLogSnapshot                          db.GetRunLogSnapshotParams
+	runLogChunksAfter                       db.ListRunLogChunksAfterParams
+	runLogChunksAfterCalls                  int
+	firstRunLogChunksAfterSeq               int64
+	deferLogChunksUntilSecondList           bool
+	logChunks                               []db.RunLogChunk
 	logTruncated                            bool
 	secret                                  db.GetScopedSecretMetadataByNameRow
 	secrets                                 []db.ListScopedSecretsRow
@@ -3540,8 +3652,7 @@ type fakeStore struct {
 	deleteSecretRows                        int64
 	defaultProjectID                        pgtype.UUID
 	defaultEnvironmentID                    pgtype.UUID
-	stdoutCursor                            int64
-	stderrCursor                            int64
+	logCursor                               int64
 	casObjects                              []db.UpsertCasObjectParams
 	getCasObjectErr                         error
 	sessionID                               pgtype.UUID
@@ -4998,19 +5109,40 @@ func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChun
 	}, nil
 }
 
+func (f *fakeStore) ListRunLogChunksAfter(_ context.Context, arg db.ListRunLogChunksAfterParams) ([]db.RunLogChunk, error) {
+	f.runLogChunksAfter = arg
+	f.runLogChunksAfterCalls++
+	if f.runLogChunksAfterCalls == 1 {
+		f.firstRunLogChunksAfterSeq = arg.Seq
+	}
+	if f.deferLogChunksUntilSecondList && f.runLogChunksAfterCalls == 1 {
+		return nil, nil
+	}
+	rows := make([]db.RunLogChunk, 0, len(f.logChunks))
+	for _, chunk := range f.logChunks {
+		if chunk.Seq <= arg.Seq {
+			continue
+		}
+		rows = append(rows, chunk)
+		if len(rows) == int(arg.RowLimit) {
+			break
+		}
+	}
+	return rows, nil
+}
+
 func (f *fakeStore) GetRunLogSnapshot(_ context.Context, arg db.GetRunLogSnapshotParams) (db.GetRunLogSnapshotRow, error) {
 	f.runLogSnapshot = arg
 	if f.run.ID != arg.RunID || (len(f.stdout) == 0 && len(f.stderr) == 0) {
 		return db.GetRunLogSnapshotRow{}, pgx.ErrNoRows
 	}
 	return db.GetRunLogSnapshotRow{
-		RunID:        arg.RunID,
-		Stdout:       f.stdout,
-		Stderr:       f.stderr,
-		Truncated:    pgtype.Bool{Bool: f.logTruncated, Valid: true},
-		StdoutCursor: f.stdoutCursor,
-		StderrCursor: f.stderrCursor,
-		UpdatedAt:    testTime(),
+		RunID:     arg.RunID,
+		Stdout:    f.stdout,
+		Stderr:    f.stderr,
+		Truncated: pgtype.Bool{Bool: f.logTruncated, Valid: true},
+		Cursor:    f.logCursor,
+		UpdatedAt: testTime(),
 	}, nil
 }
 

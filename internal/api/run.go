@@ -207,7 +207,21 @@ type LogSnapshotResponse struct {
 	StdoutBase64 string `json:"stdout_base64"`
 	StderrBase64 string `json:"stderr_base64"`
 	Cursor       string `json:"cursor"`
+	StdoutBytes  int64  `json:"stdout_bytes"`
+	StderrBytes  int64  `json:"stderr_bytes"`
 	Truncated    bool   `json:"truncated"`
+}
+
+type RunLogChunk struct {
+	ID            string    `json:"id"`
+	RunID         string    `json:"run_id"`
+	SessionID     string    `json:"session_id"`
+	AttemptNumber int32     `json:"attempt_number"`
+	Stream        string    `json:"stream"`
+	ContentBase64 string    `json:"content_base64"`
+	Bytes         int64     `json:"bytes"`
+	ObservedSeq   int64     `json:"observed_seq"`
+	At            time.Time `json:"at"`
 }
 
 type RunEvent struct {

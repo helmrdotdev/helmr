@@ -420,6 +420,45 @@ func (c *Client) GetRunLogs(ctx context.Context, id string) (api.LogSnapshotResp
 	return response, nil
 }
 
+func (c *Client) FollowRunLogs(ctx context.Context, id string, cursor int64, handle func(api.RunLogChunk) error) error {
+	values := url.Values{}
+	values.Set("follow", "1")
+	path := "/api/runs/" + url.PathEscape(id) + "/logs?" + values.Encode()
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("accept", "text/event-stream")
+	if cursor > 0 {
+		req.Header.Set("Last-Event-ID", strconv.FormatInt(cursor, 10))
+	}
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return decodeError(res)
+	}
+	scanner := bufio.NewScanner(res.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
+		}
+		var chunk api.RunLogChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return err
+		}
+		if err := handle(chunk); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
+}
+
 func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEventsOptions) (api.RunEventPage, error) {
 	path := "/api/runs/" + url.PathEscape(id) + "/events"
 	if len(opts) > 0 {

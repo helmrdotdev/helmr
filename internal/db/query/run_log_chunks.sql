@@ -37,7 +37,6 @@ next_seq AS (
       FROM run_log_chunks
       JOIN current_session ON current_session.org_id = run_log_chunks.org_id
                             AND current_session.id = run_log_chunks.run_id
-     WHERE run_log_chunks.stream = sqlc.arg(stream)::run_log_stream
 ),
 inserted AS (
     INSERT INTO run_log_chunks (org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, size_bytes, source, redaction_class, created_at)
@@ -259,9 +258,32 @@ SELECT run_scope.id AS run_id,
            COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stdout'), 0) > sqlc.arg(stdout_limit)::bigint
            OR COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stderr'), 0) > sqlc.arg(stderr_limit)::bigint
        ) AS truncated,
-       COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stdout'), 0)::bigint AS stdout_cursor,
-       COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stderr'), 0)::bigint AS stderr_cursor,
+       COALESCE(MAX(chunks.seq), 0)::bigint AS cursor,
+       COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stdout'), 0)::bigint AS stdout_bytes,
+       COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stderr'), 0)::bigint AS stderr_bytes,
        now()::timestamptz AS updated_at
   FROM run_scope
-  LEFT JOIN sliced ON true
+  LEFT JOIN chunks ON true
+  LEFT JOIN sliced ON sliced.stream = chunks.stream
+                  AND sliced.seq = chunks.seq
  GROUP BY run_scope.id;
+
+-- name: ListRunLogChunksAfter :many
+SELECT run_log_chunks.org_id,
+       run_log_chunks.run_id,
+       run_log_chunks.session_id,
+       run_log_chunks.attempt_number,
+       run_log_chunks.stream,
+       run_log_chunks.seq,
+       run_log_chunks.observed_seq,
+       run_log_chunks.content,
+       run_log_chunks.size_bytes,
+       run_log_chunks.source,
+       run_log_chunks.redaction_class,
+       run_log_chunks.created_at
+  FROM run_log_chunks
+ WHERE run_log_chunks.org_id = sqlc.arg(org_id)
+   AND run_log_chunks.run_id = sqlc.arg(run_id)
+   AND run_log_chunks.seq > sqlc.arg(seq)
+ ORDER BY run_log_chunks.seq
+ LIMIT sqlc.arg(row_limit);

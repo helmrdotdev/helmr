@@ -428,6 +428,51 @@ func TestListRunsOptionsAndGetRunLogs(t *testing.T) {
 	}
 }
 
+func TestFollowRunLogsSendsCursorAndDecodesChunks(t *testing.T) {
+	var gotLastEventID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/logs" || r.URL.Query().Get("follow") != "1" {
+			t.Fatalf("%s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		gotLastEventID = r.Header.Get("Last-Event-ID")
+		w.Header().Set("content-type", "text/event-stream")
+		_, _ = io.WriteString(w, "id: 9\n")
+		_, _ = io.WriteString(w, "event: run_log\n")
+		_, _ = io.WriteString(w, "data: ")
+		_ = json.NewEncoder(w).Encode(api.RunLogChunk{
+			ID:            "9",
+			RunID:         "run-1",
+			SessionID:     "session-1",
+			AttemptNumber: 1,
+			Stream:        "stdout",
+			ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
+			Bytes:         6,
+			ObservedSeq:   2,
+			At:            time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC),
+		})
+		_, _ = io.WriteString(w, "\n")
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chunks []api.RunLogChunk
+	if err := client.FollowRunLogs(context.Background(), "run-1", 8, func(chunk api.RunLogChunk) error {
+		chunks = append(chunks, chunk)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if gotLastEventID != "8" {
+		t.Fatalf("last event id = %q", gotLastEventID)
+	}
+	if len(chunks) != 1 || chunks[0].ID != "9" || chunks[0].ContentBase64 != base64.StdEncoding.EncodeToString([]byte("hello\n")) {
+		t.Fatalf("chunks = %+v", chunks)
+	}
+}
+
 func TestWorkerLifecycleClient(t *testing.T) {
 	claim := api.WorkerRunLease{
 		ID:                "00000000-0000-0000-0000-000000000001",

@@ -1617,6 +1617,85 @@ func TestCommandUsesSavedLoginWhenEnvIsUnset(t *testing.T) {
 	}
 }
 
+func TestLogsCommandFollowsRunLogs(t *testing.T) {
+	var requests []string
+	var followRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.RequestURI())
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/logs" && r.URL.Query().Get("follow") == "":
+			_ = json.NewEncoder(w).Encode(api.LogSnapshotResponse{
+				StdoutBase64: base64.StdEncoding.EncodeToString([]byte("old\n")),
+				StderrBase64: "",
+				Cursor:       "7",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/logs" && r.URL.Query().Get("follow") == "1":
+			followRequests++
+			wantCursor := "7"
+			if followRequests == 2 {
+				wantCursor = "9"
+			}
+			if got := r.Header.Get("Last-Event-ID"); got != wantCursor {
+				t.Fatalf("last event id = %q", got)
+			}
+			w.Header().Set("content-type", "text/event-stream")
+			if followRequests == 2 {
+				return
+			}
+			_, _ = io.WriteString(w, "id: 8\nevent: run_log\ndata: ")
+			_ = json.NewEncoder(w).Encode(api.RunLogChunk{
+				ID:            "8",
+				RunID:         "run-1",
+				SessionID:     "session-1",
+				AttemptNumber: 1,
+				Stream:        "stdout",
+				ContentBase64: base64.StdEncoding.EncodeToString([]byte("new\n")),
+				Bytes:         4,
+				ObservedSeq:   8,
+			})
+			_, _ = io.WriteString(w, "\n")
+			_, _ = io.WriteString(w, "id: 9\nevent: run_log\ndata: ")
+			_ = json.NewEncoder(w).Encode(api.RunLogChunk{
+				ID:            "9",
+				RunID:         "run-1",
+				SessionID:     "session-1",
+				AttemptNumber: 1,
+				Stream:        "stderr",
+				ContentBase64: base64.StdEncoding.EncodeToString([]byte("warn\n")),
+				Bytes:         5,
+				ObservedSeq:   9,
+			})
+			_, _ = io.WriteString(w, "\n")
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1":
+			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", Status: api.RunStatusSucceeded})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"logs", "run-1", "--follow"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "old\nnew\n" {
+		t.Fatalf("stdout = %q", out.String())
+	}
+	if errOut.String() != "warn\n" {
+		t.Fatalf("stderr = %q", errOut.String())
+	}
+	if got := strings.Join(requests, ","); got != "GET /api/runs/run-1/logs,GET /api/runs/run-1/logs?follow=1,GET /api/runs/run-1,GET /api/runs/run-1/logs?follow=1" {
+		t.Fatalf("requests = %s", got)
+	}
+}
+
 func TestAPIURLFlagOverridesEnvironmentURL(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/logs" {
