@@ -4,9 +4,9 @@ export const SITE = {
   name: "Helmr",
   url: "https://helmr.dev",
   githubUrl: "https://github.com/helmrdotdev/helmr",
-  defaultTitle: "Helmr - Run coding-agent workflows on your infrastructure.",
+  defaultTitle: "Helmr — The durable runtime for AI agents",
   defaultDescription:
-    "Build your own coding agent runtime. Helmr runs agents in isolated writable workspaces with task-scoped credentials and self-hosted infrastructure.",
+    "The durable runtime for AI agents. Each run is a Firecracker microVM checkpointed whole at approval points — pause, resume, schedule, replay in plain TypeScript. On our cloud or in your AWS.",
   defaultImage: "/og/helmr.png",
   locale: "en_US",
 };
@@ -26,7 +26,7 @@ export const organizationJsonLd = (): JsonLdNode => ({
   url: SITE.url,
   logo: absoluteUrl(SITE.defaultImage),
   sameAs: [SITE.githubUrl],
-  description: "Developer infrastructure for building your own coding agent runtime.",
+  description: "The durable runtime for AI agents.",
 });
 
 export const websiteJsonLd = (): JsonLdNode => ({

@@ -9,6 +9,7 @@ import {
   websiteJsonLd,
   type JsonLdNode,
 } from "../lib/seo";
+import { pixelsFromRows } from "../lib/pixels";
 
 type Props = {
   title: string;
@@ -36,7 +37,7 @@ const {
 
 const canonicalUrl = absoluteUrl(path, Astro.site?.toString() ?? SITE.url);
 const imageUrl = absoluteUrl(image, Astro.site?.toString() ?? SITE.url);
-const imageAlt = "Run coding-agent workflows on your infrastructure.";
+const imageAlt = "Helmr — the durable runtime for AI agents.";
 const robots = noindex
   ? "noindex, nofollow"
   : "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1";
@@ -51,6 +52,20 @@ const serializeJsonLd = (data: JsonLdNode): string =>
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029");
 const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
+
+const brandMarkRows = [
+  "....##....",
+  "...####...",
+  "..#....#..",
+  ".#......#.",
+  "##..##..##",
+  "##..##..##",
+  ".#......#.",
+  "..#....#..",
+  "...####...",
+  "....##....",
+] as const;
+const brandMarkPixels = pixelsFromRows(brandMarkRows);
 ---
 
 <!doctype html>
@@ -60,7 +75,7 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content={robots} />
     <meta name="description" content={description} />
-    <meta name="theme-color" content="#f4f4f2" />
+    <meta name="theme-color" content="#ffffff" />
     <title>{title}</title>
     <link rel="canonical" href={canonicalUrl} />
     <link rel="icon" href="/favicon.ico" sizes="any" />
@@ -86,7 +101,7 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=Geist+Mono:wght@400;500&family=Doto:wght@100..900&family=Geist:wght@400..700&display=swap"
       rel="stylesheet"
     />
     {enableClientRouter && <ClientRouter fallback="swap" />}
@@ -96,56 +111,82 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
       <nav class="site-nav">
         <slot name="header-start" />
         <a class="brand" href="/">
+          <svg class="brand-mark" viewBox="0 0 10 10" aria-hidden="true">
+            {brandMarkPixels.map((pixel) => (
+              <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+            ))}
+          </svg>
           Helmr
         </a>
         <div class="nav-links">
-          <a href="/docs/start/quickstart" data-astro-prefetch="viewport">Quickstart</a>
-          <a href="/docs" data-astro-prefetch="viewport">Docs</a>
-          <a href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">GitHub</a>
+          <a href="/docs/start/quickstart" data-astro-prefetch="viewport"><span class="khint">[q]</span>Quickstart</a>
+          <a href="/docs" data-astro-prefetch="viewport"><span class="khint">[d]</span>Docs</a>
+          <a href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener"><span class="khint">[g]</span>GitHub</a>
         </div>
         <div class="nav-actions">
-          <a class="nav-github" href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-            </svg>
-            GitHub
-          </a>
-          <a class="btn btn-primary" href="/docs" data-astro-prefetch="viewport">Read docs</a>
+          <a class="btn btn-dark btn-sm" href="/docs/start/quickstart" data-astro-prefetch="viewport">Start building</a>
         </div>
       </nav>
     </header>
     <main>
       <slot />
     </main>
+    <script is:inline>
+      document.addEventListener("keydown", (event) => {
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+        const target = event.target;
+        if (
+          target instanceof HTMLElement &&
+          (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+        ) {
+          return;
+        }
+        if (event.key === "q") window.location.href = "/docs/start/quickstart";
+        if (event.key === "d") window.location.href = "/docs";
+        if (event.key === "g") window.open("https://github.com/helmrdotdev/helmr", "_blank", "noopener");
+      });
+    </script>
     <footer class="site-footer">
       <div class="footer-inner">
+        <h2 class="headline footer-headline">
+          Bring your harness.<br />
+          <span class="faint">We&rsquo;re the runtime.</span>
+        </h2>
+        <div class="footer-cta">
+          <a class="btn btn-dark" href="/docs/start/quickstart" data-astro-prefetch="viewport">Start building</a>
+        </div>
         <div class="footer-top">
           <div class="footer-brand">
             <a class="brand" href="/">
+              <svg class="brand-mark" viewBox="0 0 10 10" aria-hidden="true">
+                {brandMarkPixels.map((pixel) => (
+                  <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+                ))}
+              </svg>
               Helmr
             </a>
             <p class="footer-tagline">
-              Self-hosted runtime for coding agents.<br/>
-              Built for GitHub-connected engineering workflows.
+              The durable runtime for AI agents.<br />
+              Run it on our cloud or in your own AWS account.
             </p>
           </div>
           <div class="footer-links-group">
             <div class="footer-col">
               <h4>Product</h4>
-              <a href="/#platform">Runtime</a>
+              <a href="/#runtime">Runtime</a>
               <a href="/docs/start/quickstart" data-astro-prefetch="viewport">Quickstart</a>
               <a href="/docs" data-astro-prefetch="viewport">Documentation</a>
             </div>
             <div class="footer-col">
               <h4>Resources</h4>
               <a href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">GitHub</a>
-              <a href="/docs" data-astro-prefetch="viewport">Getting started</a>
-              <a href="/docs" data-astro-prefetch="viewport">SDK reference</a>
+              <a href="/docs/self-hosting/overview" data-astro-prefetch="viewport">Self-hosting</a>
+              <a href="/docs/reference/sdk-authoring" data-astro-prefetch="viewport">SDK reference</a>
             </div>
           </div>
         </div>
         <div class="footer-bottom">
-          <p class="footer-copy">© 2026 Helmr. All rights reserved.</p>
+          <p class="footer-copy">© 2026 Helmr. Apache 2.0, built in the open.</p>
         </div>
       </div>
     </footer>
