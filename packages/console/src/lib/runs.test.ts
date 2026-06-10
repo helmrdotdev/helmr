@@ -25,16 +25,16 @@ function installWindow(): void {
   };
 }
 
-test("defaults to all filter when called with no arguments", async () => {
+test("lists runs under the selected environment", async () => {
   let requestedUrl: string | undefined;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     requestedUrl = String(input);
     return Response.json({ runs: [] });
   }) as typeof fetch;
 
-  await listRuns();
+  await listRuns({ projectID: "project-1", environmentID: "env-1" });
 
-  expect(requestedUrl).toContain("status=all");
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/runs?status=all&limit=100");
 });
 
 test("gets run events with cursor and limit", async () => {
@@ -44,9 +44,9 @@ test("gets run events with cursor and limit", async () => {
     return Response.json({ events: [], cursor: 7, next_cursor: null });
   }) as typeof fetch;
 
-  await getRunEvents("run-1", { cursor: 7, limit: 50 });
+  await getRunEvents("run-1", "project-1", "env-1", { cursor: 7, limit: 50 });
 
-  expect(requestedUrl).toBe("/api/runs/run-1/events?cursor=7&limit=50");
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/runs/run-1/events?cursor=7&limit=50");
 });
 
 test("gets run events without empty params and escapes ids", async () => {
@@ -56,9 +56,9 @@ test("gets run events without empty params and escapes ids", async () => {
     return Response.json({ events: [], cursor: 0, next_cursor: null });
   }) as typeof fetch;
 
-  await getRunEvents("run/1");
+  await getRunEvents("run/1", "project-1", "env-1");
 
-  expect(requestedUrl).toBe("/api/runs/run%2F1/events");
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/runs/run%2F1/events");
 });
 
 test("lists run events across pages", async () => {
@@ -80,11 +80,11 @@ test("lists run events across pages", async () => {
     });
   }) as typeof fetch;
 
-  const page = await listRunEvents("run-1", 100);
+  const page = await listRunEvents("run-1", "project-1", "env-1", 100);
 
   expect(requestedUrls).toEqual([
-    "/api/runs/run-1/events?limit=100",
-    "/api/runs/run-1/events?cursor=2&limit=100",
+    "/api/projects/project-1/environments/env-1/runs/run-1/events?limit=100",
+    "/api/projects/project-1/environments/env-1/runs/run-1/events?cursor=2&limit=100",
   ]);
   expect(page.events.map((event) => event.message)).toEqual(["run.created", "run.completed"]);
 });
@@ -100,9 +100,9 @@ test("stops listing run events when next cursor does not advance", async () => {
     });
   }) as typeof fetch;
 
-  const page = await listRunEvents("run-1", 100);
+  const page = await listRunEvents("run-1", "project-1", "env-1", 100);
 
-  expect(requestedUrls).toEqual(["/api/runs/run-1/events?limit=100"]);
+  expect(requestedUrls).toEqual(["/api/projects/project-1/environments/env-1/runs/run-1/events?limit=100"]);
   expect(page.events).toHaveLength(1);
 });
 
@@ -116,9 +116,9 @@ test("creates human wait confirmation links with respond action", async () => {
     return Response.json({ id: "response-1", token: "secret", expires_at: null });
   }) as typeof fetch;
 
-  const token = await createWaitpointResponseToken("wait-human", "human");
+  const token = await createWaitpointResponseToken("wait-human", "human", "project-1", "env-1");
 
-  expect(requestedUrl).toBe("/api/waitpoints/tokens");
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/waitpoints/tokens");
   expect(requestedBody).toEqual({
     waitpoint_id: "wait-human",
   });
@@ -132,7 +132,7 @@ test("does not create delay wait confirmation links", async () => {
     return Response.json({});
   }) as typeof fetch;
 
-  await expect(createWaitpointResponseToken("wait-delay", "delay")).rejects.toThrow(
+  await expect(createWaitpointResponseToken("wait-delay", "delay", "project-1", "env-1")).rejects.toThrow(
     "Delay waitpoints do not support confirmation links.",
   );
   expect(called).toBe(false);

@@ -92,6 +92,14 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		ProjectID:     ids.MustFromPG(waitpoint.ProjectID).String(),
 		EnvironmentID: ids.MustFromPG(waitpoint.EnvironmentID).String(),
 	}
+	if err := s.requireActorScopeForRecord(r, actor, waitpoint.ProjectID, waitpoint.EnvironmentID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
+			return
+		}
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	if !actor.HasPermission(auth.PermissionWaitpointsRespond, scope) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
 		return

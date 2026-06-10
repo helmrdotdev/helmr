@@ -43,11 +43,10 @@ export async function getCurrentDeployment(options: {
   projectID?: string;
   environmentID?: string;
 } = {}): Promise<GetCurrentDeploymentResponse> {
-  const params = new URLSearchParams();
-  if (options.projectID && options.environmentID) {
-    params.set("project_id", options.projectID);
-    params.set("environment_id", options.environmentID);
+  if (!options.projectID || !options.environmentID) {
+    throw new Error("project and environment are required");
   }
-  const query = params.toString();
-  return request<GetCurrentDeploymentResponse>(`/api/deployments/current${query ? `?${query}` : ""}`);
+  return request<GetCurrentDeploymentResponse>(
+    `/api/projects/${encodeURIComponent(options.projectID)}/environments/${encodeURIComponent(options.environmentID)}/deployments/current`,
+  );
 }

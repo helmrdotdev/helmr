@@ -35,13 +35,13 @@ func (s *Server) listWaitpointPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.waitpointPolicyScope(r.Context(), actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
-	if errors.Is(err, errPermissionRequired) {
-		writeError(w, http.StatusForbidden, errPermissionRequired)
-		return
-	}
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
+		writeError(w, http.StatusForbidden, errPermissionRequired)
 		return
 	}
 	rows, err := s.db.ListWaitpointPolicies(r.Context(), db.ListWaitpointPoliciesParams{
@@ -71,13 +71,13 @@ func (s *Server) createWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.waitpointPolicyScope(r.Context(), actor, request.ProjectID, request.EnvironmentID)
-	if errors.Is(err, errPermissionRequired) {
-		writeError(w, http.StatusForbidden, errPermissionRequired)
-		return
-	}
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
+		writeError(w, http.StatusForbidden, errPermissionRequired)
 		return
 	}
 	normalized, err := normalizeWaitpointPolicyInput(request.Name, request.Label, request.Config)
@@ -116,13 +116,13 @@ func (s *Server) getWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.waitpointPolicyScope(r.Context(), actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
-	if errors.Is(err, errPermissionRequired) {
-		writeError(w, http.StatusForbidden, errPermissionRequired)
-		return
-	}
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
+		writeError(w, http.StatusForbidden, errPermissionRequired)
 		return
 	}
 	policy, err := s.db.GetWaitpointPolicyByName(r.Context(), db.GetWaitpointPolicyByNameParams{
@@ -153,13 +153,13 @@ func (s *Server) updateWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.waitpointPolicyScope(r.Context(), actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
-	if errors.Is(err, errPermissionRequired) {
-		writeError(w, http.StatusForbidden, errPermissionRequired)
-		return
-	}
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
+		writeError(w, http.StatusForbidden, errPermissionRequired)
 		return
 	}
 	var request api.UpdateWaitpointPolicyRequest
@@ -202,13 +202,13 @@ func (s *Server) deleteWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.waitpointPolicyScope(r.Context(), actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
-	if errors.Is(err, errPermissionRequired) {
-		writeError(w, http.StatusForbidden, errPermissionRequired)
-		return
-	}
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
+		writeError(w, http.StatusForbidden, errPermissionRequired)
 		return
 	}
 	rows, err := s.db.DeleteWaitpointPolicy(r.Context(), db.DeleteWaitpointPolicyParams{
@@ -304,17 +304,6 @@ func validateWaitpointPolicyConfig(config api.WaitpointPolicyConfig) error {
 		return fmt.Errorf("unsupported waitpoint policy timeout type %q", config.OnTimeout.Type)
 	}
 	return nil
-}
-
-func (s *Server) waitpointPolicyScope(ctx context.Context, actor auth.Actor, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
-	scope, scopeProjectID, scopeEnvironmentID, err := s.requestScopeForPermission(ctx, actor, projectID, environmentID, auth.PermissionWaitpointPolicies, "waitpoint policy management")
-	if err != nil {
-		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
-	}
-	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
-		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, errPermissionRequired
-	}
-	return scope, scopeProjectID, scopeEnvironmentID, nil
 }
 
 func (s *Server) resolveWaitpointPolicy(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, name string) (*resolvedWaitpointPolicy, error) {

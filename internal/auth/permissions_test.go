@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
@@ -9,14 +10,12 @@ import (
 func TestAPIKeyPermissionIsLimitedByCreatorRole(t *testing.T) {
 	orgID := uuid.New()
 	actor := Actor{
-		OrgID: orgID,
-		Kind:  ActorKindAPIKey,
-		Role:  RoleViewer,
-		Permissions: []PermissionGrant{{
-			ProjectID:     "00000000-0000-0000-0000-000000000101",
-			EnvironmentID: "00000000-0000-0000-0000-000000000102",
-			Permissions:   []Permission{PermissionRunsRead, PermissionSecretsWrite},
-		}},
+		OrgID:         orgID,
+		Kind:          ActorKindAPIKey,
+		Role:          RoleViewer,
+		ProjectID:     "00000000-0000-0000-0000-000000000101",
+		EnvironmentID: "00000000-0000-0000-0000-000000000102",
+		Permissions:   []Permission{PermissionRunsRead, PermissionSecretsWrite},
 	}
 
 	scope := Scope{OrgID: orgID, ProjectID: "00000000-0000-0000-0000-000000000101", EnvironmentID: "00000000-0000-0000-0000-000000000102"}
@@ -28,15 +27,13 @@ func TestAPIKeyPermissionIsLimitedByCreatorRole(t *testing.T) {
 	}
 }
 
-func TestOrgLevelGrantDoesNotMatchEnvironmentScope(t *testing.T) {
+func TestAPIKeyScopeDoesNotMatchOrgScope(t *testing.T) {
 	orgID := uuid.New()
 	actor := Actor{
-		OrgID: orgID,
-		Kind:  ActorKindAPIKey,
-		Role:  RoleOwner,
-		Permissions: []PermissionGrant{{
-			Permissions: []Permission{PermissionRunsRead},
-		}},
+		OrgID:       orgID,
+		Kind:        ActorKindAPIKey,
+		Role:        RoleOwner,
+		Permissions: []Permission{PermissionRunsRead},
 	}
 	scope := Scope{
 		OrgID:         orgID,
@@ -45,23 +42,34 @@ func TestOrgLevelGrantDoesNotMatchEnvironmentScope(t *testing.T) {
 	}
 
 	if actor.HasPermission(PermissionRunsRead, scope) {
-		t.Fatal("org-level grant matched an environment-scoped resource")
+		t.Fatal("api key without environment scope matched an environment-scoped resource")
 	}
-	if !actor.HasPermission(PermissionRunsRead, Scope{OrgID: orgID}) {
-		t.Fatal("org-level grant should match org-level scope")
+	if actor.HasPermission(PermissionRunsRead, Scope{OrgID: orgID}) {
+		t.Fatal("api key matched org-level scope")
 	}
 
 	concreteActor := Actor{
-		OrgID: orgID,
-		Kind:  ActorKindAPIKey,
-		Role:  RoleOwner,
-		Permissions: []PermissionGrant{{
-			ProjectID:     scope.ProjectID,
-			EnvironmentID: scope.EnvironmentID,
-			Permissions:   []Permission{PermissionRunsRead},
-		}},
+		OrgID:         orgID,
+		Kind:          ActorKindAPIKey,
+		Role:          RoleOwner,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		Permissions:   []Permission{PermissionRunsRead},
 	}
 	if concreteActor.HasPermission(PermissionRunsRead, Scope{OrgID: orgID}) {
-		t.Fatal("environment-scoped grant matched an org-level scope")
+		t.Fatal("environment-scoped api key matched an org-level scope")
+	}
+}
+
+func TestPermissionsFromAPIKeyIncludesWaitpointPolicies(t *testing.T) {
+	permissions, err := permissionsFromAPIKey(json.RawMessage(`[{"permission":"waitpoint_policies.manage"}]`))
+	if err != nil {
+		t.Fatalf("permissionsFromAPIKey returned error: %v", err)
+	}
+	if len(permissions) != 1 {
+		t.Fatalf("got %d permissions, want 1", len(permissions))
+	}
+	if permissions[0] != PermissionWaitpointPolicies {
+		t.Fatalf("got permission %q, want %q", permissions[0], PermissionWaitpointPolicies)
 	}
 }

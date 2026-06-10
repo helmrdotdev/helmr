@@ -27,10 +27,17 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
+	_, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	rows, err := s.db.ListAPIKeys(r.Context(), db.ListAPIKeysParams{
-		OrgID:        ids.ToPG(actor.OrgID),
-		StatusFilter: filter,
-		RowLimit:     apiKeyListLimit + 1,
+		OrgID:         ids.ToPG(actor.OrgID),
+		ProjectID:     projectUUID,
+		EnvironmentID: environmentUUID,
+		StatusFilter:  filter,
+		RowLimit:      apiKeyListLimit + 1,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("list api keys"))
@@ -73,12 +80,12 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectUUID, environmentUUID, err := s.normalizeProjectEnvironmentScope(r.Context(), actor.OrgID, input.ProjectID, input.EnvironmentID)
+	scope, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	permissionGrants, err := validateAPIKeyPermissionGrants(input.Permissions)
+	permissionGrants, err := normalizeAPIKeyPermissionGrants(input.Permissions)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -113,7 +120,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, grant := range permissionGrants {
-		for _, scope := range grant.display.Scopes {
+		for _, scope := range grant.Scopes {
 			permission, ok := apiKeyScopePermission(scope)
 			if !ok {
 				writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported permission scope %q", scope))
@@ -138,7 +145,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	summary.ProjectID = scope.ProjectID
 	summary.EnvironmentID = scope.EnvironmentID
-	summary.Permissions = apiKeyPermissionGrantDisplays(permissionGrants)
+	summary.Permissions = permissionGrants
 	writeJSON(w, http.StatusCreated, api.APIKeyIssued{APIKeySummary: summary, RawKey: generated.Raw})
 }
 
@@ -149,9 +156,16 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
+	_, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	rows, err := s.db.RevokeAPIKey(r.Context(), db.RevokeAPIKeyParams{
-		OrgID: ids.ToPG(actor.OrgID),
-		ID:    ids.ToPG(id),
+		OrgID:         ids.ToPG(actor.OrgID),
+		ProjectID:     projectUUID,
+		EnvironmentID: environmentUUID,
+		ID:            ids.ToPG(id),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("revoke api key"))
@@ -188,11 +202,7 @@ func validAPIKeyFilter(filter string) bool {
 	}
 }
 
-type normalizedAPIKeyPermissionGrant struct {
-	display api.APIKeyPermissionGrant
-}
-
-func validateAPIKeyPermissionGrants(grants []api.APIKeyPermissionGrant) ([]normalizedAPIKeyPermissionGrant, error) {
+func normalizeAPIKeyPermissionGrants(grants []api.APIKeyPermissionGrant) ([]api.APIKeyPermissionGrant, error) {
 	if len(grants) == 0 {
 		return nil, errors.New("permissions must include at least one grant")
 	}
@@ -217,15 +227,7 @@ func validateAPIKeyPermissionGrants(grants []api.APIKeyPermissionGrant) ([]norma
 	if len(scopes) == 0 {
 		return nil, errors.New("permissions must include at least one supported scope")
 	}
-	return []normalizedAPIKeyPermissionGrant{{display: api.APIKeyPermissionGrant{Scopes: scopes}}}, nil
-}
-
-func apiKeyPermissionGrantDisplays(grants []normalizedAPIKeyPermissionGrant) []api.APIKeyPermissionGrant {
-	display := make([]api.APIKeyPermissionGrant, 0, len(grants))
-	for _, grant := range grants {
-		display = append(display, grant.display)
-	}
-	return display
+	return []api.APIKeyPermissionGrant{{Scopes: scopes}}, nil
 }
 
 func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {

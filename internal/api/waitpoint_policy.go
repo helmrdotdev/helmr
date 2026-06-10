@@ -42,11 +42,9 @@ type ListWaitpointPoliciesResponse struct {
 }
 
 type CreateWaitpointPolicyRequest struct {
-	ProjectID     string          `json:"project_id,omitempty"`
-	EnvironmentID string          `json:"environment_id,omitempty"`
-	Name          string          `json:"name"`
-	Label         string          `json:"label,omitempty"`
-	Config        json.RawMessage `json:"config"`
+	Name   string          `json:"name"`
+	Label  string          `json:"label,omitempty"`
+	Config json.RawMessage `json:"config"`
 }
 
 type UpdateWaitpointPolicyRequest struct {

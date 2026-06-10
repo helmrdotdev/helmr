@@ -36,8 +36,6 @@ type ListAPIKeysResponse struct {
 
 type IssueAPIKeyRequest struct {
 	Name          string                  `json:"name"`
-	ProjectID     string                  `json:"project_id,omitempty"`
-	EnvironmentID string                  `json:"environment_id,omitempty"`
 	ExpiresInDays *int                    `json:"expires_in_days"`
 	Permissions   []APIKeyPermissionGrant `json:"permissions"`
 }

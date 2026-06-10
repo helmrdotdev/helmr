@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
@@ -63,24 +62,5 @@ func TestWaitpointRequestLinkedIDExtractsStringID(t *testing.T) {
 	}
 	if !ok || id != waitpointID {
 		t.Fatalf("linked id = %s, ok = %v", id, ok)
-	}
-}
-
-func TestInferAPIKeyWaitpointScopeUsesWaitpointGrant(t *testing.T) {
-	projectID := ids.New().String()
-	environmentID := ids.New().String()
-	scope, err := inferAPIKeyPermissionScope(auth.Actor{
-		OrgID: ids.DefaultOrgID,
-		Permissions: []auth.PermissionGrant{{
-			ProjectID:     projectID,
-			EnvironmentID: environmentID,
-			Permissions:   []auth.Permission{auth.PermissionWaitpointsRespond},
-		}},
-	}, auth.PermissionWaitpointsRespond, "waitpoint creation")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if scope.ProjectID != projectID || scope.EnvironmentID != environmentID {
-		t.Fatalf("scope = %+v", scope)
 	}
 }

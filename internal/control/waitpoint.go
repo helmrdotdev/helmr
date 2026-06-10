@@ -516,7 +516,7 @@ func (s *Server) createWaitpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.createWaitpointRequestScope(r.Context(), actor, request.ProjectID, request.EnvironmentID)
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -597,6 +597,14 @@ func (s *Server) respondWaitpoint(w http.ResponseWriter, r *http.Request) {
 		OrgID:         actor.OrgID,
 		ProjectID:     ids.MustFromPG(waitpoint.ProjectID).String(),
 		EnvironmentID: ids.MustFromPG(waitpoint.EnvironmentID).String(),
+	}
+	if err := s.requireActorScopeForRecord(r, actor, waitpoint.ProjectID, waitpoint.EnvironmentID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
+			return
+		}
+		writeError(w, http.StatusBadRequest, err)
+		return
 	}
 	if !actor.HasPermission(auth.PermissionWaitpointsRespond, scope) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
@@ -802,23 +810,6 @@ func waitpointActorResponseIdentity(actor auth.Actor) (string, string, error) {
 	default:
 		return "", "", errors.New("supported actor identity is required")
 	}
-}
-
-func (s *Server) createWaitpointRequestScope(ctx context.Context, actor auth.Actor, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
-	projectID = strings.TrimSpace(projectID)
-	environmentID = strings.TrimSpace(environmentID)
-	if actor.Kind != auth.ActorKindAPIKey || projectID != "" || environmentID != "" {
-		return s.secretRequestScope(ctx, actor.OrgID, projectID, environmentID)
-	}
-	scope, err := inferAPIKeyPermissionScope(actor, auth.PermissionWaitpointsRespond, "waitpoint creation")
-	if err != nil {
-		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
-	}
-	scopeProjectID, scopeEnvironmentID, err := s.runScopeIDs(ctx, actor.OrgID, scope)
-	if err != nil {
-		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
-	}
-	return scope, scopeProjectID, scopeEnvironmentID, nil
 }
 
 func waitpointRequestFields(kind api.WorkerWaitpointKind, request json.RawMessage, displayText string) (db.WaitpointKind, string, error) {

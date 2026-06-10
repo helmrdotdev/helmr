@@ -104,53 +104,42 @@ export type WaitpointResponseToken = {
 export type ListRunsOptions = {
   filter?: RunFilter;
   limit?: number;
-  projectID?: string;
-  environmentID?: string;
+  projectID: string;
+  environmentID: string;
 };
 
-export async function listRuns(options: RunFilter | ListRunsOptions = "all", limit = 100): Promise<ListRunsResponse> {
-  const resolved = typeof options === "string" ? { filter: options, limit } : options;
-  const filter = resolved.filter ?? "all";
-  const rowLimit = resolved.limit ?? 100;
+export async function listRuns(options: ListRunsOptions): Promise<ListRunsResponse> {
+  const filter = options.filter ?? "all";
+  const rowLimit = options.limit ?? 100;
   const params = new URLSearchParams({ status: filter, limit: String(rowLimit) });
-  if (resolved.projectID && resolved.environmentID) {
-    params.set("project_id", resolved.projectID);
-    params.set("environment_id", resolved.environmentID);
-  }
-  return request<ListRunsResponse>(`/api/runs?${params.toString()}`);
+  return request<ListRunsResponse>(`${environmentPath(options.projectID, options.environmentID)}/runs?${params.toString()}`);
 }
 
-export async function countRuns(options: Pick<ListRunsOptions, "projectID" | "environmentID"> = {}): Promise<RunCountsResponse> {
-  const params = new URLSearchParams();
-  if (options.projectID && options.environmentID) {
-    params.set("project_id", options.projectID);
-    params.set("environment_id", options.environmentID);
-  }
-  const query = params.toString();
-  return request<RunCountsResponse>(`/api/runs/counts${query ? `?${query}` : ""}`);
+export async function countRuns(options: Pick<ListRunsOptions, "projectID" | "environmentID">): Promise<RunCountsResponse> {
+  return request<RunCountsResponse>(`${environmentPath(options.projectID, options.environmentID)}/runs/counts`);
 }
 
-export async function getRun(id: string): Promise<Run> {
-  return request<Run>(`/api/runs/${encodeURIComponent(id)}`);
+export async function getRun(id: string, projectID: string, environmentID: string): Promise<Run> {
+  return request<Run>(`${environmentPath(projectID, environmentID)}/runs/${encodeURIComponent(id)}`);
 }
 
-export async function getRunLogs(id: string): Promise<LogSnapshot> {
-  return request<LogSnapshot>(`/api/runs/${encodeURIComponent(id)}/logs`);
+export async function getRunLogs(id: string, projectID: string, environmentID: string): Promise<LogSnapshot> {
+  return request<LogSnapshot>(`${environmentPath(projectID, environmentID)}/runs/${encodeURIComponent(id)}/logs`);
 }
 
-export async function getRunEvents(id: string, options: ListRunEventsOptions = {}): Promise<RunEventPage> {
+export async function getRunEvents(id: string, projectID: string, environmentID: string, options: ListRunEventsOptions = {}): Promise<RunEventPage> {
   const params = new URLSearchParams();
   if (options.cursor !== undefined) params.set("cursor", String(options.cursor));
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   const query = params.toString();
-  return request<RunEventPage>(`/api/runs/${encodeURIComponent(id)}/events${query ? `?${query}` : ""}`);
+  return request<RunEventPage>(`${environmentPath(projectID, environmentID)}/runs/${encodeURIComponent(id)}/events${query ? `?${query}` : ""}`);
 }
 
-export async function listRunEvents(id: string, limit = 200): Promise<RunEventPage> {
+export async function listRunEvents(id: string, projectID: string, environmentID: string, limit = 200): Promise<RunEventPage> {
   const pages: RunEventPage[] = [];
   let cursor = 0;
   for (;;) {
-    const page = await getRunEvents(id, cursor === 0 ? { limit } : { cursor, limit });
+    const page = await getRunEvents(id, projectID, environmentID, cursor === 0 ? { limit } : { cursor, limit });
     pages.push(page);
     if (page.next_cursor == null) break;
     if (page.next_cursor <= cursor) break;
@@ -163,14 +152,14 @@ export async function listRunEvents(id: string, limit = 200): Promise<RunEventPa
   };
 }
 
-export async function respondWaitpoint(waitpointID: string, value?: unknown): Promise<void> {
+export async function respondWaitpoint(waitpointID: string, projectID: string, environmentID: string, value?: unknown): Promise<void> {
   return postJson<{ value?: unknown }, void>(
-    `/api/waitpoints/${encodeURIComponent(waitpointID)}/respond`,
+    `${environmentPath(projectID, environmentID)}/waitpoints/${encodeURIComponent(waitpointID)}/respond`,
     value === undefined ? {} : { value },
   );
 }
 
-export async function createWaitpointResponseToken(waitpointID: string, kind: PendingWaitpoint["kind"]): Promise<WaitpointResponseToken> {
+export async function createWaitpointResponseToken(waitpointID: string, kind: PendingWaitpoint["kind"], projectID: string, environmentID: string): Promise<WaitpointResponseToken> {
   if (kind === "delay") {
     throw new Error("Delay waitpoints do not support confirmation links.");
   }
@@ -178,7 +167,7 @@ export async function createWaitpointResponseToken(waitpointID: string, kind: Pe
     { waitpoint_id: string },
     { id: string; token: string; expires_at: string | null }
   >(
-    "/api/waitpoints/tokens",
+    `${environmentPath(projectID, environmentID)}/waitpoints/tokens`,
     {
       waitpoint_id: waitpointID,
     },
@@ -187,4 +176,11 @@ export async function createWaitpointResponseToken(waitpointID: string, kind: Pe
   url.searchParams.set("id", response.id);
   url.searchParams.set("token", response.token);
   return { ...response, url: url.toString() };
+}
+
+function environmentPath(projectID: string | undefined, environmentID: string | undefined): string {
+  if (!projectID || !environmentID) {
+    throw new Error("project and environment are required");
+  }
+  return `/api/projects/${encodeURIComponent(projectID)}/environments/${encodeURIComponent(environmentID)}`;
 }

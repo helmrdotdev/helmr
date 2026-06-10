@@ -261,10 +261,8 @@ function IssueApiKeyModal(props: {
 
     setSubmitting(true);
     try {
-      const result = await issueApiKey({
+      const result = await issueApiKey(props.projectID, props.environmentID, {
         name: label().trim(),
-        project_id: props.projectID,
-        environment_id: props.environmentID,
         expires_in_days: expiryDays(),
         permissions: [{
           scopes: selectedScopes(),
@@ -388,19 +386,19 @@ export function ApiKeys() {
   const [revokeError, setRevokeError] = createSignal<{ id: string; message: string } | null>(null);
 
   const keys = createQuery(() => ({
-    queryKey: ["api-keys", filter()],
-    queryFn: () => listApiKeys(filter()),
+    queryKey: ["api-keys", scope.selectedProjectID(), scope.selectedEnvironmentID(), filter()],
+    queryFn: () => listApiKeys(scope.selectedProjectID(), scope.selectedEnvironmentID(), filter()),
     retry: false,
   }));
 
-  const invalidateApiKeys = () => queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+  const invalidateApiKeys = () => queryClient.invalidateQueries({ queryKey: ["api-keys", scope.selectedProjectID(), scope.selectedEnvironmentID()] });
 
   const revoke = async (keyItem: ApiKeySummary) => {
     if (!window.confirm(`Revoke API key "${keyItem.name}"?`)) return;
     setRevokeError(null);
     setRevokingId(keyItem.id);
     try {
-      await revokeApiKey(keyItem.id);
+      await revokeApiKey(scope.selectedProjectID(), scope.selectedEnvironmentID(), keyItem.id);
       await invalidateApiKeys();
     } catch (error) {
       setRevokeError({ id: keyItem.id, message: apiKeyErrorMessage(error) });

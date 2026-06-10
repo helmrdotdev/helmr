@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -256,12 +255,10 @@ func TestDeploymentRouteAllowsAPIKeyWithProjectManage(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{
-			kind: auth.ActorKindAPIKey,
-			permissions: []auth.PermissionGrant{{
-				ProjectID:     testProjectIDString(),
-				EnvironmentID: testEnvironmentIDString(),
-				Permissions:   []auth.Permission{auth.PermissionTasksDeploy},
-			}},
+			kind:          auth.ActorKindAPIKey,
+			projectID:     testProjectIDString(),
+			environmentID: testEnvironmentIDString(),
+			permissions:   []auth.Permission{auth.PermissionTasksDeploy},
 		}),
 		WithCAS(&fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("c", 64), MediaType: api.DeploymentSourceArtifactMediaType}}),
 	)
@@ -287,7 +284,11 @@ func TestDeploymentRouteAuthorizesBeforeReadingDeploymentSource(t *testing.T) {
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
-		WithAuthenticator(fakeAuth{kind: auth.ActorKindAPIKey}),
+		WithAuthenticator(fakeAuth{
+			kind:          auth.ActorKindAPIKey,
+			projectID:     testProjectIDString(),
+			environmentID: testEnvironmentIDString(),
+		}),
 		WithCAS(artifactStore),
 	)
 	boundary := "helmr-test-boundary"
@@ -295,7 +296,7 @@ func TestDeploymentRouteAuthorizesBeforeReadingDeploymentSource(t *testing.T) {
 		"--" + boundary,
 		`Content-Disposition: form-data; name="metadata"`,
 		"",
-		`{"project_id":"` + testProjectIDString() + `"}`,
+		`{}`,
 		"--" + boundary,
 		`Content-Disposition: form-data; name="deployment_source"; filename="deployment-source.tar"`,
 		"Content-Type: application/x-tar",
@@ -771,14 +772,18 @@ func TestGetDeploymentAllowsDeployPermission(t *testing.T) {
 		},
 	}
 	server := &Server{db: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	req := deploymentStatusRequest(testDeploymentID())
+	id := ids.MustFromPG(testDeploymentID())
+	req := httptest.NewRequest(http.MethodGet, "/api/deployments/"+id.String(), nil)
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("deploymentID", id.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
 	ctx := context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
-		OrgID: ids.DefaultOrgID,
-		Role:  auth.RoleDeveloper,
-		Kind:  auth.ActorKindAPIKey,
-		Permissions: []auth.PermissionGrant{
-			{ProjectID: testProjectIDString(), EnvironmentID: testEnvironmentIDString(), Permissions: []auth.Permission{auth.PermissionTasksDeploy}},
-		},
+		OrgID:         ids.DefaultOrgID,
+		Role:          auth.RoleDeveloper,
+		Kind:          auth.ActorKindAPIKey,
+		ProjectID:     testProjectIDString(),
+		EnvironmentID: testEnvironmentIDString(),
+		Permissions:   []auth.Permission{auth.PermissionTasksDeploy},
 	})
 	rec := httptest.NewRecorder()
 
@@ -859,8 +864,8 @@ func TestGetDeploymentReturnsTasksWhenDeployed(t *testing.T) {
 	}
 }
 
-func TestPromoteDeploymentResolvesUniqueVersionWithoutScope(t *testing.T) {
-	environmentID := ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000399"))
+func TestPromoteDeploymentResolvesVersionInPathScope(t *testing.T) {
+	environmentID := testEnvironmentID()
 	store := &fakeStore{
 		deployment: db.Deployment{
 			ID:                         testDeploymentID(),
@@ -984,8 +989,12 @@ func deploymentRequest(body []byte, contentType string) *http.Request {
 }
 
 func currentDeploymentRequest() *http.Request {
-	req := httptest.NewRequest(http.MethodGet, "/api/deployments/current?project_id="+testProjectIDString()+"&environment_id="+testEnvironmentIDString(), nil)
-	ctx := context.WithValue(req.Context(), actorContextKey{}, auth.Actor{OrgID: ids.DefaultOrgID, Role: auth.RoleViewer, Kind: auth.ActorKindSession})
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/deployments/current", nil)
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("projectID", testProjectIDString())
+	routeContext.URLParams.Add("environmentID", testEnvironmentIDString())
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
+	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: ids.DefaultOrgID, Role: auth.RoleViewer, Kind: auth.ActorKindSession})
 	return req.WithContext(ctx)
 }
 
@@ -1005,8 +1014,10 @@ func testScopedArtifact(id pgtype.UUID, kind db.ArtifactKind, digest string, med
 
 func deploymentStatusRequest(deploymentID pgtype.UUID) *http.Request {
 	id := ids.MustFromPG(deploymentID)
-	req := httptest.NewRequest(http.MethodGet, "/api/deployments/"+id.String()+"?project_id="+testProjectIDString()+"&environment_id="+testEnvironmentIDString(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/deployments/"+id.String(), nil)
 	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("projectID", testProjectIDString())
+	routeContext.URLParams.Add("environmentID", testEnvironmentIDString())
 	routeContext.URLParams.Add("deploymentID", id.String())
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
 	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: ids.DefaultOrgID, Role: auth.RoleViewer, Kind: auth.ActorKindSession})
@@ -1014,8 +1025,10 @@ func deploymentStatusRequest(deploymentID pgtype.UUID) *http.Request {
 }
 
 func promoteDeploymentRequest(deploymentRef string, body string) *http.Request {
-	req := httptest.NewRequest(http.MethodPost, "/api/deployments/"+deploymentRef+"/promote", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/deployments/"+deploymentRef+"/promote", strings.NewReader(body))
 	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("projectID", testProjectIDString())
+	routeContext.URLParams.Add("environmentID", testEnvironmentIDString())
 	routeContext.URLParams.Add("deployment", deploymentRef)
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
 	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: ids.DefaultOrgID, UserID: ids.New(), Role: auth.RoleOwner, Kind: auth.ActorKindSession})

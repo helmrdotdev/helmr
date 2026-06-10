@@ -13,8 +13,7 @@ export type ListSecretsResponse = {
 };
 
 export async function listSecrets(projectID: string, environmentID: string): Promise<ListSecretsResponse> {
-  const params = new URLSearchParams({ project_id: projectID, environment_id: environmentID });
-  return request<ListSecretsResponse>(`/api/secrets?${params.toString()}`);
+  return request<ListSecretsResponse>(secretsPath(projectID, environmentID));
 }
 
 export async function setSecret(
@@ -23,17 +22,18 @@ export async function setSecret(
   projectID: string,
   environmentID: string,
 ): Promise<Secret> {
-  return request<Secret>(`/api/secrets/${encodeURIComponent(name)}`, {
+  return request<Secret>(`${secretsPath(projectID, environmentID)}/${encodeURIComponent(name)}`, {
     method: "PUT",
     body: JSON.stringify({
-      project_id: projectID,
-      environment_id: environmentID,
       value,
     }),
   });
 }
 
 export async function deleteSecret(name: string, projectID: string, environmentID: string): Promise<void> {
-  const params = new URLSearchParams({ project_id: projectID, environment_id: environmentID });
-  await del<Record<string, never>>(`/api/secrets/${encodeURIComponent(name)}?${params.toString()}`);
+  await del<Record<string, never>>(`${secretsPath(projectID, environmentID)}/${encodeURIComponent(name)}`);
+}
+
+function secretsPath(projectID: string, environmentID: string): string {
+  return `/api/projects/${encodeURIComponent(projectID)}/environments/${encodeURIComponent(environmentID)}/secrets`;
 }

@@ -248,13 +248,6 @@ func TestCreateGetAndListRun(t *testing.T) {
 		t.Fatalf("counts = %+v", counts)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/runs/counts?project_id="+created.ProjectID+"&environment_id="+created.EnvironmentID, nil)
-	req.Header.Set("authorization", "Bearer test-key")
-	rec = httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("scoped counts status = %d body=%s", rec.Code, rec.Body.String())
-	}
 	if store.countScopedRuns.ProjectID != testProjectID() || store.countScopedRuns.EnvironmentID != testEnvironmentID() {
 		t.Fatalf("scoped count params = %+v", store.countScopedRuns)
 	}
@@ -307,7 +300,7 @@ func TestCreateRunWithoutSecretsAllowsDeveloper(t *testing.T) {
 	}
 }
 
-func TestAPIKeyRunCreateRejectsOmittedScopeWithoutEnvironmentGrant(t *testing.T) {
+func TestAPIKeyRunCreateRejectsActorWithoutEnvironmentScope(t *testing.T) {
 	store := &fakeStore{}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -328,7 +321,7 @@ func TestAPIKeyRunCreateRejectsOmittedScopeWithoutEnvironmentGrant(t *testing.T)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "exactly one environment-scoped runs.create grant") {
+	if !strings.Contains(rec.Body.String(), "API key is not bound to an environment") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 	if store.createRun.ID.Valid {
@@ -336,18 +329,16 @@ func TestAPIKeyRunCreateRejectsOmittedScopeWithoutEnvironmentGrant(t *testing.T)
 	}
 }
 
-func TestAPIKeyRunCreateInfersEnvironmentGrant(t *testing.T) {
+func TestAPIKeyRunCreateUsesActorEnvironmentScope(t *testing.T) {
 	store := &fakeStore{}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{
-			kind: auth.ActorKindAPIKey,
-			permissions: []auth.PermissionGrant{{
-				ProjectID:     testProjectIDString(),
-				EnvironmentID: testEnvironmentIDString(),
-				Permissions:   []auth.Permission{auth.PermissionRunsCreate},
-			}},
+			kind:          auth.ActorKindAPIKey,
+			projectID:     testProjectIDString(),
+			environmentID: testEnvironmentIDString(),
+			permissions:   []auth.Permission{auth.PermissionRunsCreate},
 		}),
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
@@ -369,94 +360,16 @@ func TestAPIKeyRunCreateInfersEnvironmentGrant(t *testing.T) {
 	}
 }
 
-func TestAPIKeyRunCreateInfersSingleDefaultGrant(t *testing.T) {
+func TestAPIKeyRunCreateRejectsExplicitScopeOverride(t *testing.T) {
 	store := &fakeStore{}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{
-			kind: auth.ActorKindAPIKey,
-			permissions: []auth.PermissionGrant{{
-				ProjectID:     testProjectIDString(),
-				EnvironmentID: testEnvironmentIDString(),
-				Permissions:   []auth.Permission{auth.PermissionRunsCreate},
-			}},
-		}),
-	)
-	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID: "deploy",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
-	req.Header.Set("authorization", "Bearer machine-key")
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if store.run.ProjectID != testProjectID() || store.run.EnvironmentID != testEnvironmentID() {
-		t.Fatalf("run scope = project %v environment %v", store.run.ProjectID, store.run.EnvironmentID)
-	}
-}
-
-func TestAPIKeyRunCreateRejectsOmittedScopeWithMultipleEnvironmentGrants(t *testing.T) {
-	store := &fakeStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{
-			kind: auth.ActorKindAPIKey,
-			permissions: []auth.PermissionGrant{
-				{
-					ProjectID:     testProjectIDString(),
-					EnvironmentID: testEnvironmentIDString(),
-					Permissions:   []auth.Permission{auth.PermissionRunsCreate},
-				},
-				{
-					ProjectID:     "00000000-0000-0000-0000-000000000401",
-					EnvironmentID: "00000000-0000-0000-0000-000000000402",
-					Permissions:   []auth.Permission{auth.PermissionRunsCreate},
-				},
-			},
-		}),
-	)
-	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID: "deploy",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
-	req.Header.Set("authorization", "Bearer machine-key")
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "exactly one environment-scoped runs.create grant") {
-		t.Fatalf("body = %s", rec.Body.String())
-	}
-	if store.createRun.ID.Valid {
-		t.Fatalf("run was created: %+v", store.createRun)
-	}
-}
-
-func TestAPIKeyRunCreatePreservesExplicitScopePermission(t *testing.T) {
-	store := &fakeStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{
-			kind: auth.ActorKindAPIKey,
-			permissions: []auth.PermissionGrant{{
-				ProjectID:     testProjectIDString(),
-				EnvironmentID: testEnvironmentIDString(),
-				Permissions:   []auth.Permission{auth.PermissionRunsCreate},
-			}},
+			kind:          auth.ActorKindAPIKey,
+			projectID:     testProjectIDString(),
+			environmentID: testEnvironmentIDString(),
+			permissions:   []auth.Permission{auth.PermissionRunsCreate},
 		}),
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
@@ -472,8 +385,11 @@ func TestAPIKeyRunCreatePreservesExplicitScopePermission(t *testing.T) {
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusCreated {
+	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "project_id and environment_id are not accepted with API keys") {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 
@@ -485,12 +401,10 @@ func TestAPIKeyRunCreateAllowsDeclaredTaskSecrets(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{
-			kind: auth.ActorKindAPIKey,
-			permissions: []auth.PermissionGrant{{
-				ProjectID:     testProjectIDString(),
-				EnvironmentID: testEnvironmentIDString(),
-				Permissions:   []auth.Permission{auth.PermissionRunsCreate},
-			}},
+			kind:          auth.ActorKindAPIKey,
+			projectID:     testProjectIDString(),
+			environmentID: testEnvironmentIDString(),
+			permissions:   []auth.Permission{auth.PermissionRunsCreate},
 		}),
 		WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}),
 	)
@@ -1351,18 +1265,16 @@ func TestListRunsQuery(t *testing.T) {
 	}
 }
 
-func TestAPIKeyListRunsInfersEnvironmentGrant(t *testing.T) {
+func TestAPIKeyListRunsUsesActorEnvironmentScope(t *testing.T) {
 	store := &fakeStore{}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{
-			kind: auth.ActorKindAPIKey,
-			permissions: []auth.PermissionGrant{{
-				ProjectID:     testProjectIDString(),
-				EnvironmentID: testEnvironmentIDString(),
-				Permissions:   []auth.Permission{auth.PermissionRunsRead},
-			}},
+			kind:          auth.ActorKindAPIKey,
+			projectID:     testProjectIDString(),
+			environmentID: testEnvironmentIDString(),
+			permissions:   []auth.Permission{auth.PermissionRunsRead},
 		}),
 		WithSecrets(fakeSecrets{}),
 	)
@@ -1408,7 +1320,6 @@ func TestListRunsRunningFilterReturnsLeasedAsPublicRunning(t *testing.T) {
 		path string
 	}{
 		{name: "org", path: "/api/runs?status=running"},
-		{name: "scoped", path: "/api/runs?status=running&project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString()},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			runID := ids.New()
@@ -1828,7 +1739,7 @@ func TestGetSecretReturnsMetadataOnly(t *testing.T) {
 		WithSecrets(fakeSecrets{}),
 	)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/secrets/github-token?project_id="+testProjectIDString()+"&environment_id="+testEnvironmentIDString(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/secrets/github-token", nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -1882,7 +1793,7 @@ func TestDeleteSecret(t *testing.T) {
 		WithSecrets(fakeSecrets{}),
 	)
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/secrets/github-token?project_id="+testProjectIDString()+"&environment_id="+testEnvironmentIDString(), nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/secrets/github-token", nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -1932,13 +1843,11 @@ func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{
-			kind: auth.ActorKindAPIKey,
-			role: auth.RoleOwner,
-			permissions: []auth.PermissionGrant{{
-				ProjectID:     testProjectIDString(),
-				EnvironmentID: testEnvironmentIDString(),
-				Permissions:   []auth.Permission{auth.PermissionSecretsWrite},
-			}},
+			kind:          auth.ActorKindAPIKey,
+			role:          auth.RoleOwner,
+			projectID:     testProjectIDString(),
+			environmentID: testEnvironmentIDString(),
+			permissions:   []auth.Permission{auth.PermissionSecretsWrite},
 		}),
 		WithSecrets(fakeSecrets{}),
 	)
@@ -5370,11 +5279,13 @@ func (r *flushRecorder) Flush() {
 }
 
 type fakeAuth struct {
-	role        auth.Role
-	kind        auth.ActorKind
-	userID      uuid.UUID
-	apiKeyID    uuid.UUID
-	permissions []auth.PermissionGrant
+	role          auth.Role
+	kind          auth.ActorKind
+	userID        uuid.UUID
+	apiKeyID      uuid.UUID
+	projectID     string
+	environmentID string
+	permissions   []auth.Permission
 }
 
 func (f *fakeStore) GetDefaultProjectEnvironment(context.Context, pgtype.UUID) (db.GetDefaultProjectEnvironmentRow, error) {
@@ -5399,7 +5310,7 @@ func (f fakeAuth) Authenticate(context.Context, string) (auth.Actor, error) {
 	}
 	kind := f.kind
 	if kind == "" {
-		kind = auth.ActorKindSession
+		kind = auth.ActorKindAPIKey
 	}
 	userID := f.userID
 	if kind == auth.ActorKindSession && userID == uuid.Nil {
@@ -5409,7 +5320,36 @@ func (f fakeAuth) Authenticate(context.Context, string) (auth.Actor, error) {
 	if kind == auth.ActorKindAPIKey && apiKeyID == uuid.Nil {
 		apiKeyID = uuid.MustParse("00000000-0000-0000-0000-000000000002")
 	}
-	return auth.Actor{OrgID: ids.DefaultOrgID, UserID: userID, APIKeyID: apiKeyID, Role: role, Kind: kind, Permissions: f.permissions}, nil
+	permissions := f.permissions
+	if kind == auth.ActorKindAPIKey && f.kind == "" && permissions == nil {
+		permissions = []auth.Permission{
+			auth.PermissionRunsCreate,
+			auth.PermissionRunsRead,
+			auth.PermissionRunsManage,
+			auth.PermissionSecretsWrite,
+			auth.PermissionWaitpointsRespond,
+			auth.PermissionWaitpointPolicies,
+			auth.PermissionTasksDeploy,
+		}
+	}
+	projectID := f.projectID
+	if kind == auth.ActorKindAPIKey && f.kind == "" && projectID == "" {
+		projectID = testProjectIDString()
+	}
+	environmentID := f.environmentID
+	if kind == auth.ActorKindAPIKey && f.kind == "" && environmentID == "" {
+		environmentID = testEnvironmentIDString()
+	}
+	return auth.Actor{
+		OrgID:         ids.DefaultOrgID,
+		UserID:        userID,
+		APIKeyID:      apiKeyID,
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Role:          role,
+		Kind:          kind,
+		Permissions:   permissions,
+	}, nil
 }
 
 func decodeObject(t *testing.T, raw []byte) map[string]any {

@@ -150,7 +150,9 @@ func TestListQueuedRunQueueItemCandidatesForScopeIsQueueScopedAndDispatchOrdered
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(noisy) != 2 || noisy[0].RunID != highPriorityEarlier || noisy[1].RunID != highPriorityLater {
+	// Keep the lower-priority local item in the page so this test proves ordering
+	// without hiding same-scope candidates behind the row limit.
+	if len(noisy) != 3 || noisy[0].RunID != highPriorityEarlier || noisy[1].RunID != highPriorityLater || noisy[2].RunID != lowPriority {
 		t.Fatalf("noisy candidates = %+v", noisy)
 	}
 	quiet, err := queries.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{

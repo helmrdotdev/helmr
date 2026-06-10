@@ -100,26 +100,41 @@ const issueAPIKey = `-- name: IssueAPIKey :one
 WITH revoked AS (
     UPDATE api_keys
        SET revoked_at = now()
-     WHERE org_id = $2
-       AND project_id = $3
-       AND environment_id = $4
-       AND name = $7
-       AND token_hash <> $9
-       AND revoked_at IS NULL
+     WHERE api_keys.org_id = $1
+       AND api_keys.project_id = $2
+       AND api_keys.environment_id = $3
+       AND api_keys.name = $4
+       AND api_keys.token_hash <> $5
+       AND api_keys.revoked_at IS NULL
+     RETURNING 1
+),
+input AS (
+    SELECT
+        $6::uuid AS id,
+        $1::uuid AS org_id,
+        $2::uuid AS project_id,
+        $3::uuid AS environment_id,
+        $7::uuid AS created_by_user_id,
+        $8::org_member_role AS role,
+        $4::text AS name,
+        $9::text AS key_prefix,
+        $5::bytea AS token_hash,
+        $10::timestamptz AS expires_at
 )
 INSERT INTO api_keys (id, org_id, project_id, environment_id, created_by_user_id, role, name, key_prefix, token_hash, expires_at)
-VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $10
-)
+SELECT input.id,
+       input.org_id,
+       input.project_id,
+       input.environment_id,
+       input.created_by_user_id,
+       input.role,
+       input.name,
+       input.key_prefix,
+       input.token_hash,
+       input.expires_at
+  FROM input
+ -- Force same-scope revocation before insert so the active-name partial unique index cannot race the replacement key.
+ CROSS JOIN (SELECT count(*) FROM revoked) AS revoked_count
 ON CONFLICT (token_hash) DO UPDATE SET
     role = EXCLUDED.role,
     name = EXCLUDED.name,
@@ -132,29 +147,29 @@ RETURNING id, org_id, project_id, environment_id, created_by_user_id, role, name
 `
 
 type IssueAPIKeyParams struct {
-	ID              pgtype.UUID        `json:"id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
 	ProjectID       pgtype.UUID        `json:"project_id"`
 	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	Name            string             `json:"name"`
+	TokenHash       []byte             `json:"token_hash"`
+	ID              pgtype.UUID        `json:"id"`
 	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
 	Role            OrgMemberRole      `json:"role"`
-	Name            string             `json:"name"`
 	KeyPrefix       string             `json:"key_prefix"`
-	TokenHash       []byte             `json:"token_hash"`
 	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
 }
 
 func (q *Queries) IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error) {
 	row := q.db.QueryRow(ctx, issueAPIKey,
-		arg.ID,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
+		arg.Name,
+		arg.TokenHash,
+		arg.ID,
 		arg.CreatedByUserID,
 		arg.Role,
-		arg.Name,
 		arg.KeyPrefix,
-		arg.TokenHash,
 		arg.ExpiresAt,
 	)
 	var i APIKey
@@ -220,32 +235,36 @@ const listAPIKeys = `-- name: ListAPIKeys :many
 SELECT id, org_id, project_id, environment_id, created_by_user_id, name, key_prefix, created_at, last_used_at, expires_at, revoked_at
   FROM api_keys
  WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
    AND (
-       $2::text = 'all'
+       $4::text = 'all'
        OR (
-           $2::text = 'active'
+           $4::text = 'active'
            AND revoked_at IS NULL
            AND (expires_at IS NULL OR expires_at > now())
        )
        OR (
-           $2::text = 'expired'
+           $4::text = 'expired'
            AND revoked_at IS NULL
            AND expires_at IS NOT NULL
            AND expires_at <= now()
        )
        OR (
-           $2::text = 'revoked'
+           $4::text = 'revoked'
            AND revoked_at IS NOT NULL
        )
    )
  ORDER BY created_at DESC
- LIMIT $3
+ LIMIT $5
 `
 
 type ListAPIKeysParams struct {
-	OrgID        pgtype.UUID `json:"org_id"`
-	StatusFilter string      `json:"status_filter"`
-	RowLimit     int32       `json:"row_limit"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	StatusFilter  string      `json:"status_filter"`
+	RowLimit      int32       `json:"row_limit"`
 }
 
 type ListAPIKeysRow struct {
@@ -263,7 +282,13 @@ type ListAPIKeysRow struct {
 }
 
 func (q *Queries) ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]ListAPIKeysRow, error) {
-	rows, err := q.db.Query(ctx, listAPIKeys, arg.OrgID, arg.StatusFilter, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listAPIKeys,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.StatusFilter,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -298,17 +323,26 @@ const revokeAPIKey = `-- name: RevokeAPIKey :execrows
 UPDATE api_keys
    SET revoked_at = now()
  WHERE org_id = $1
-   AND id = $2
+   AND project_id = $2
+   AND environment_id = $3
+   AND id = $4
    AND revoked_at IS NULL
 `
 
 type RevokeAPIKeyParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	ID    pgtype.UUID `json:"id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeAPIKey, arg.OrgID, arg.ID)
+	result, err := q.db.Exec(ctx, revokeAPIKey,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ID,
+	)
 	if err != nil {
 		return 0, err
 	}

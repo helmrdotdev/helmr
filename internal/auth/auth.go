@@ -34,13 +34,15 @@ const (
 )
 
 type Actor struct {
-	OrgID       uuid.UUID
-	UserID      uuid.UUID
-	APIKeyID    uuid.UUID
-	SessionID   uuid.UUID
-	Kind        ActorKind
-	Role        Role
-	Permissions []PermissionGrant
+	OrgID         uuid.UUID
+	UserID        uuid.UUID
+	APIKeyID      uuid.UUID
+	SessionID     uuid.UUID
+	ProjectID     string
+	EnvironmentID string
+	Kind          ActorKind
+	Role          Role
+	Permissions   []Permission
 }
 
 type Authenticator interface {
@@ -79,7 +81,7 @@ func (a DBAuthenticator) Authenticate(ctx context.Context, bearerToken string) (
 	if err != nil {
 		return Actor{}, fmt.Errorf("api key environment id: %w", err)
 	}
-	grants, err := permissionGrantsFromAPIKey(row.Grants, projectID.String(), environmentID.String())
+	permissions, err := permissionsFromAPIKey(row.Grants)
 	if err != nil {
 		return Actor{}, fmt.Errorf("api key grants: %w", err)
 	}
@@ -87,7 +89,30 @@ func (a DBAuthenticator) Authenticate(ctx context.Context, bearerToken string) (
 	if err != nil {
 		return Actor{}, fmt.Errorf("api key id: %w", err)
 	}
-	return Actor{OrgID: orgID, APIKeyID: apiKeyID, Kind: ActorKindAPIKey, Role: Role(row.Role), Permissions: grants}, nil
+	return Actor{
+		OrgID:         orgID,
+		APIKeyID:      apiKeyID,
+		ProjectID:     projectID.String(),
+		EnvironmentID: environmentID.String(),
+		Kind:          ActorKindAPIKey,
+		Role:          Role(row.Role),
+		Permissions:   permissions,
+	}, nil
+}
+
+func (a Actor) EnvironmentScope() (Scope, bool) {
+	if a.ProjectID == "" || a.EnvironmentID == "" {
+		return Scope{}, false
+	}
+	projectID, err := uuid.Parse(a.ProjectID)
+	if err != nil || projectID == uuid.Nil {
+		return Scope{}, false
+	}
+	environmentID, err := uuid.Parse(a.EnvironmentID)
+	if err != nil || environmentID == uuid.Nil {
+		return Scope{}, false
+	}
+	return Scope{OrgID: a.OrgID, ProjectID: a.ProjectID, EnvironmentID: a.EnvironmentID}, true
 }
 
 func HashAPIKey(token string) []byte {
@@ -99,7 +124,7 @@ type apiKeyGrantRow struct {
 	Permission string `json:"permission"`
 }
 
-func permissionGrantsFromAPIKey(rawValue any, projectID string, environmentID string) ([]PermissionGrant, error) {
+func permissionsFromAPIKey(rawValue any) ([]Permission, error) {
 	raw, err := apiKeyGrantJSON(rawValue)
 	if err != nil {
 		return nil, err
@@ -122,11 +147,7 @@ func permissionGrantsFromAPIKey(rawValue any, projectID string, environmentID st
 	if len(permissions) == 0 {
 		return nil, nil
 	}
-	return []PermissionGrant{{
-		ProjectID:     strings.TrimSpace(projectID),
-		EnvironmentID: strings.TrimSpace(environmentID),
-		Permissions:   permissions,
-	}}, nil
+	return permissions, nil
 }
 
 func apiKeyGrantJSON(rawValue any) ([]byte, error) {
@@ -154,6 +175,8 @@ func normalizeAPIKeyGrantPermission(permission string) []Permission {
 		return []Permission{PermissionRunsManage}
 	case string(PermissionWaitpointsRespond):
 		return []Permission{PermissionWaitpointsRespond}
+	case string(PermissionWaitpointPolicies):
+		return []Permission{PermissionWaitpointPolicies}
 	case string(PermissionSecretsWrite):
 		return []Permission{PermissionSecretsWrite}
 	case string(PermissionTasksDeploy):

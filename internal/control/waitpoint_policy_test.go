@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -96,11 +97,11 @@ func TestWaitpointPolicyRoutesRequirePermission(t *testing.T) {
 		path   string
 		body   string
 	}{
-		{name: "list", method: http.MethodGet, path: "/api/waitpoint-policies?project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString()},
-		{name: "get", method: http.MethodGet, path: "/api/waitpoint-policies/deploy-prod?project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString()},
-		{name: "create", method: http.MethodPost, path: "/api/waitpoint-policies", body: `{"project_id":"` + testProjectIDString() + `","environment_id":"` + testEnvironmentIDString() + `","name":"deploy-prod","label":"Deploy","config":{}}`},
-		{name: "update", method: http.MethodPatch, path: "/api/waitpoint-policies/deploy-prod?project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString(), body: `{"label":"Deploy","config":{}}`},
-		{name: "delete", method: http.MethodDelete, path: "/api/waitpoint-policies/deploy-prod?project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString()},
+		{name: "list", method: http.MethodGet, path: "/api/waitpoint-policies"},
+		{name: "get", method: http.MethodGet, path: "/api/waitpoint-policies/deploy-prod"},
+		{name: "create", method: http.MethodPost, path: "/api/waitpoint-policies", body: `{"name":"deploy-prod","label":"Deploy","config":{}}`},
+		{name: "update", method: http.MethodPatch, path: "/api/waitpoint-policies/deploy-prod", body: `{"label":"Deploy","config":{}}`},
+		{name: "delete", method: http.MethodDelete, path: "/api/waitpoint-policies/deploy-prod"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &waitpointPolicyStore{}
@@ -125,6 +126,7 @@ func TestWaitpointPolicyRoutesRequirePermission(t *testing.T) {
 }
 
 func TestWaitpointPolicyRoutesAllowSessionOwner(t *testing.T) {
+	basePath := "/api/projects/" + testProjectIDString() + "/environments/" + testEnvironmentIDString() + "/waitpoint-policies"
 	for _, tt := range []struct {
 		name       string
 		method     string
@@ -132,17 +134,17 @@ func TestWaitpointPolicyRoutesAllowSessionOwner(t *testing.T) {
 		body       string
 		wantStatus int
 	}{
-		{name: "list", method: http.MethodGet, path: "/api/waitpoint-policies?project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString(), wantStatus: http.StatusOK},
-		{name: "get", method: http.MethodGet, path: "/api/waitpoint-policies/deploy-prod?project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString(), wantStatus: http.StatusOK},
-		{name: "create", method: http.MethodPost, path: "/api/waitpoint-policies", body: `{"project_id":"` + testProjectIDString() + `","environment_id":"` + testEnvironmentIDString() + `","name":"deploy-prod","label":"Deploy","config":{}}`, wantStatus: http.StatusCreated},
-		{name: "update", method: http.MethodPatch, path: "/api/waitpoint-policies/deploy-prod?project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString(), body: `{"label":"Deploy","config":{}}`, wantStatus: http.StatusOK},
-		{name: "delete", method: http.MethodDelete, path: "/api/waitpoint-policies/deploy-prod?project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString(), wantStatus: http.StatusNoContent},
+		{name: "list", method: http.MethodGet, path: basePath, wantStatus: http.StatusOK},
+		{name: "get", method: http.MethodGet, path: basePath + "/deploy-prod", wantStatus: http.StatusOK},
+		{name: "create", method: http.MethodPost, path: basePath, body: `{"name":"deploy-prod","label":"Deploy","config":{}}`, wantStatus: http.StatusCreated},
+		{name: "update", method: http.MethodPatch, path: basePath + "/deploy-prod", body: `{"label":"Deploy","config":{}}`, wantStatus: http.StatusOK},
+		{name: "delete", method: http.MethodDelete, path: basePath + "/deploy-prod", wantStatus: http.StatusNoContent},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &waitpointPolicyStore{policy: testWaitpointPolicy()}
 			server := testWaitpointPolicySessionServer(store, auth.RoleOwner)
 			req := httptest.NewRequest(tt.method, tt.path, bytes.NewBufferString(tt.body))
-			req.Header.Set("authorization", "Bearer session-token")
+			addSessionCookie(req)
 			if tt.body != "" {
 				req.Header.Set("content-type", "application/json")
 			}
@@ -160,21 +162,36 @@ func TestWaitpointPolicyRoutesAllowSessionOwner(t *testing.T) {
 	}
 }
 
-func testWaitpointPolicyServer(store *waitpointPolicyStore) http.Handler {
-	return testWaitpointPolicyServerWithPermissions(store, []auth.PermissionGrant{{
-		ProjectID:     testProjectIDString(),
-		EnvironmentID: testEnvironmentIDString(),
-		Permissions:   []auth.Permission{auth.PermissionWaitpointPolicies},
-	}})
+func TestWaitpointPolicyRoutesRejectSessionWithoutPathScope(t *testing.T) {
+	store := &waitpointPolicyStore{}
+	server := testWaitpointPolicySessionServer(store, auth.RoleOwner)
+	req := httptest.NewRequest(http.MethodGet, "/api/waitpoint-policies", nil)
+	addSessionCookie(req)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.called {
+		t.Fatal("store was called")
+	}
 }
 
-func testWaitpointPolicyServerWithPermissions(store *waitpointPolicyStore, permissions []auth.PermissionGrant) http.Handler {
+func testWaitpointPolicyServer(store *waitpointPolicyStore) http.Handler {
+	return testWaitpointPolicyServerWithPermissions(store, []auth.Permission{auth.PermissionWaitpointPolicies})
+}
+
+func testWaitpointPolicyServerWithPermissions(store *waitpointPolicyStore, permissions []auth.Permission) http.Handler {
 	return New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{
-			kind:        auth.ActorKindAPIKey,
-			permissions: permissions,
+			kind:          auth.ActorKindAPIKey,
+			projectID:     testProjectIDString(),
+			environmentID: testEnvironmentIDString(),
+			permissions:   permissions,
 		}),
 	)
 }
@@ -187,6 +204,7 @@ func testWaitpointPolicySessionServer(store *waitpointPolicyStore, role auth.Rol
 			kind: auth.ActorKindSession,
 			role: role,
 		}),
+		WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://helmr.example.test"),
 	)
 }
 
@@ -225,6 +243,20 @@ func (s *waitpointPolicyStore) GetProject(_ context.Context, arg db.GetProjectPa
 		CreatedAt: testTime(),
 		UpdatedAt: testTime(),
 	}, nil
+}
+
+func (s *waitpointPolicyStore) GetSessionByTokenHash(context.Context, []byte) (db.GetSessionByTokenHashRow, error) {
+	return db.GetSessionByTokenHashRow{
+		ID:        ids.ToPG(ids.New()),
+		OrgID:     ids.ToPG(ids.DefaultOrgID),
+		UserID:    ids.ToPG(ids.New()),
+		Role:      string(db.OrgMemberRoleOwner),
+		ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+	}, nil
+}
+
+func (s *waitpointPolicyStore) RefreshSession(context.Context, db.RefreshSessionParams) error {
+	return nil
 }
 
 func (s *waitpointPolicyStore) GetEnvironment(_ context.Context, arg db.GetEnvironmentParams) (db.Environment, error) {

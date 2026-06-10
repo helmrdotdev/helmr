@@ -67,12 +67,12 @@ export function Approvals() {
               <tbody>
                 <For each={runs.data?.runs ?? []}>
                   {(run) => {
-                    const rowNavigation = useRunRowNavigation(() => run.id);
+                    const rowNavigation = useRunRowNavigation(() => run);
                     return (
                       <tr class={ui.clickableTableRow} {...rowNavigation}>
                         <td>
                           <A
-                            href={runHref(run.id)}
+                            href={runHref(run.id, run.project_id, run.environment_id)}
                             class={"cursor-pointer font-medium text-console-text hover:text-console-accent"}
                           >
                             {run.task_id}
