@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -70,6 +71,16 @@ func runCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			projectID = strings.TrimSpace(projectID)
+			if projectID != "" {
+				if err := validateProjectFlag(projectID); err != nil {
+					return err
+				}
+			}
+			scope, err := runScopeForClient(control, projectID, environmentID)
+			if err != nil {
+				return err
+			}
 			options := api.CreateRunOptions{
 				DeploymentID:       strings.TrimSpace(deploymentID),
 				Version:            strings.TrimSpace(version),
@@ -86,15 +97,9 @@ func runCommand() *cobra.Command {
 			if queueName = strings.TrimSpace(queueName); queueName != "" {
 				options.Queue = &api.RunQueueOption{Name: queueName}
 			}
-			projectID = strings.TrimSpace(projectID)
-			if projectID != "" {
-				if err := validateProjectFlag(projectID); err != nil {
-					return err
-				}
-			}
 			run, err := control.CreateRun(cmd.Context(), api.CreateRunRequest{
-				ProjectID:     projectID,
-				EnvironmentID: strings.TrimSpace(environmentID),
+				ProjectID:     scope.ProjectID,
+				EnvironmentID: scope.EnvironmentID,
 				TaskID:        args[0],
 				Payload:       payload,
 				Options:       options,
@@ -149,11 +154,15 @@ func cancelCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			scope, err := resolveRunScope(cmd.Context(), control, args[0])
+			if err != nil {
+				return err
+			}
 			response, err := control.CancelRun(cmd.Context(), args[0], api.CancelRunRequest{
 				Reason:         strings.TrimSpace(reason),
 				Force:          force,
 				IdempotencyKey: strings.TrimSpace(idempotencyKey),
-			})
+			}, scope)
 			if err != nil {
 				return err
 			}
@@ -199,6 +208,10 @@ func replayCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			scope, err := resolveRunScope(cmd.Context(), control, args[0])
+			if err != nil {
+				return err
+			}
 			response, err := control.ReplayRun(cmd.Context(), args[0], api.ReplayRunRequest{
 				Version:        strings.TrimSpace(version),
 				Payload:        payload,
@@ -206,7 +219,7 @@ func replayCommand() *cobra.Command {
 				IdempotencyKey: strings.TrimSpace(idempotencyKey),
 				Metadata:       metadata,
 				Tags:           optionalTags(tags),
-			})
+			}, scope)
 			if err != nil {
 				return err
 			}
@@ -276,7 +289,11 @@ func showCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			run, err := control.GetRun(cmd.Context(), args[0])
+			scope, err := resolveRunScope(cmd.Context(), control, args[0])
+			if err != nil {
+				return err
+			}
+			run, err := control.GetRun(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}
@@ -302,7 +319,11 @@ func logsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logs, err := control.GetRunLogs(cmd.Context(), args[0])
+			scope, err := resolveRunScope(cmd.Context(), control, args[0])
+			if err != nil {
+				return err
+			}
+			logs, err := control.GetRunLogs(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}
@@ -314,7 +335,7 @@ func logsCommand() *cobra.Command {
 				if err != nil && strings.TrimSpace(logs.Cursor) != "" {
 					return fmt.Errorf("parse log cursor: %w", err)
 				}
-				return followRunLogs(cmd, control, args[0], cursor)
+				return followRunLogs(cmd, control, args[0], cursor, scope)
 			}
 			return nil
 		},
@@ -354,14 +375,18 @@ func eventsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			scope, err := resolveRunScope(cmd.Context(), control, args[0])
+			if err != nil {
+				return err
+			}
 			if !follow {
-				page, err := control.ListRunEvents(cmd.Context(), args[0], client.ListRunEventsOptions{Cursor: cursor, Limit: limit})
+				page, err := control.ListRunEvents(cmd.Context(), args[0], client.ListRunEventsOptions{Cursor: cursor, Limit: limit, RunScopeOptions: scope})
 				if err != nil {
 					return err
 				}
 				return format.JSONLines(cmd.OutOrStdout(), page.Events)
 			}
-			return followRunEvents(cmd, control, args[0], cursor)
+			return followRunEvents(cmd, control, args[0], cursor, scope)
 		},
 	}
 	cmd.Flags().Int64Var(&cursor, "cursor", 0, "Return events after this cursor.")
@@ -392,7 +417,11 @@ func waitCommand() *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, waitTimeout)
 				defer cancel()
 			}
-			run, err := waitForRun(ctx, control, args[0])
+			scope, err := resolveRunScope(ctx, control, args[0])
+			if err != nil {
+				return err
+			}
+			run, err := waitForRun(ctx, control, args[0], scope)
 			if err != nil {
 				return err
 			}
@@ -406,6 +435,52 @@ func waitCommand() *cobra.Command {
 	cmd.Flags().StringVar(&timeout, "timeout", "", "Maximum wait duration, for example 10m or 1h.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
+}
+
+func runScopeForClient(control *client.Client, projectID string, environmentID string) (client.RunScopeOptions, error) {
+	scope := client.RunScopeOptions{
+		ProjectID:     strings.TrimSpace(projectID),
+		EnvironmentID: strings.TrimSpace(environmentID),
+	}
+	if !control.UsesSessionScopedRoutes() {
+		if scope.ProjectID != "" || scope.EnvironmentID != "" {
+			return client.RunScopeOptions{}, errors.New("--project and --env require helmr login; API keys are already environment scoped")
+		}
+		return client.RunScopeOptions{}, nil
+	}
+	if scope.ProjectID == "" || scope.EnvironmentID == "" {
+		return client.RunScopeOptions{}, errors.New("--project and --env are required with helmr login")
+	}
+	return scope, nil
+}
+
+func resolveRunScope(ctx context.Context, control *client.Client, runID string) (client.RunScopeOptions, error) {
+	if !control.UsesSessionScopedRoutes() {
+		return client.RunScopeOptions{}, nil
+	}
+	projects, err := control.ListProjects(ctx)
+	if err != nil {
+		return client.RunScopeOptions{}, err
+	}
+	for _, project := range projects.Projects {
+		environments := project.Environments
+		if len(environments) == 0 {
+			detail, err := control.GetProject(ctx, project.ID)
+			if err != nil {
+				return client.RunScopeOptions{}, err
+			}
+			environments = detail.Environments
+		}
+		for _, environment := range environments {
+			scope := client.RunScopeOptions{ProjectID: project.ID, EnvironmentID: environment.ID}
+			if _, err := control.GetRun(ctx, runID, scope); err == nil {
+				return scope, nil
+			} else if !client.IsStatus(err, http.StatusNotFound) {
+				return client.RunScopeOptions{}, err
+			}
+		}
+	}
+	return client.RunScopeOptions{}, fmt.Errorf("run %s was not found in any accessible project environment", runID)
 }
 
 func parsePayload(file string, raw string, pairs []string) (json.RawMessage, error) {
@@ -505,14 +580,14 @@ func optionalTags(tags []string) []string {
 	return cleanTags(tags)
 }
 
-func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, cursor int64) error {
+func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, cursor int64, scope client.RunScopeOptions) error {
 	for {
 		err := control.FollowRunEvents(cmd.Context(), runID, cursor, func(event api.RunEvent) error {
 			if parsed, parseErr := strconv.ParseInt(event.ID, 10, 64); parseErr == nil && parsed > cursor {
 				cursor = parsed
 			}
 			return format.JSONLines(cmd.OutOrStdout(), []api.RunEvent{event})
-		})
+		}, scope)
 		if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {
 			return nil
 		}
@@ -532,7 +607,7 @@ func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, c
 	}
 }
 
-func followRunLogs(cmd *cobra.Command, control *client.Client, runID string, cursor int64) error {
+func followRunLogs(cmd *cobra.Command, control *client.Client, runID string, cursor int64, scope client.RunScopeOptions) error {
 	handleChunk := func(chunk api.RunLogChunk) error {
 		parsedCursor, parseErr := strconv.ParseInt(chunk.ID, 10, 64)
 		if parseErr != nil {
@@ -559,16 +634,16 @@ func followRunLogs(cmd *cobra.Command, control *client.Client, runID string, cur
 		return nil
 	}
 	for {
-		err := control.FollowRunLogs(cmd.Context(), runID, cursor, handleChunk)
+		err := control.FollowRunLogs(cmd.Context(), runID, cursor, handleChunk, scope)
 		if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {
 			return nil
 		}
 		if err != nil && runEventStreamErrorIsFatal(err) {
 			return err
 		}
-		run, snapshotErr := control.GetRun(cmd.Context(), runID)
+		run, snapshotErr := control.GetRun(cmd.Context(), runID, scope)
 		if snapshotErr == nil && isTerminalRunStatus(run.Status) {
-			drainErr := control.FollowRunLogs(cmd.Context(), runID, cursor, handleChunk)
+			drainErr := control.FollowRunLogs(cmd.Context(), runID, cursor, handleChunk, scope)
 			if drainErr != nil && runEventStreamErrorIsFatal(drainErr) {
 				return drainErr
 			}
@@ -590,8 +665,8 @@ func followRunLogs(cmd *cobra.Command, control *client.Client, runID string, cur
 	}
 }
 
-func waitForRun(ctx context.Context, control *client.Client, runID string) (api.RunResponse, error) {
-	run, err := control.GetRun(ctx, runID)
+func waitForRun(ctx context.Context, control *client.Client, runID string, scope client.RunScopeOptions) (api.RunResponse, error) {
+	run, err := control.GetRun(ctx, runID, scope)
 	if err != nil {
 		return api.RunResponse{}, err
 	}
@@ -611,18 +686,18 @@ func waitForRun(ctx context.Context, control *client.Client, runID string) (api.
 				cancel()
 			}
 			return nil
-		})
+		}, scope)
 		cancel()
 		if ctx.Err() != nil {
 			return api.RunResponse{}, ctx.Err()
 		}
 		if terminal {
-			return waitForTerminalRunSnapshot(ctx, control, runID)
+			return waitForTerminalRunSnapshot(ctx, control, runID, scope)
 		}
 		if err != nil && !errors.Is(err, context.Canceled) && runEventStreamErrorIsFatal(err) {
 			return api.RunResponse{}, err
 		}
-		run, err = control.GetRun(ctx, runID)
+		run, err = control.GetRun(ctx, runID, scope)
 		if err != nil {
 			return api.RunResponse{}, err
 		}
@@ -639,12 +714,12 @@ func waitForRun(ctx context.Context, control *client.Client, runID string) (api.
 	}
 }
 
-func waitForTerminalRunSnapshot(ctx context.Context, control *client.Client, runID string) (api.RunResponse, error) {
+func waitForTerminalRunSnapshot(ctx context.Context, control *client.Client, runID string, scope client.RunScopeOptions) (api.RunResponse, error) {
 	convergeCtx, cancel := context.WithTimeout(ctx, runTerminalSnapshotConvergeLimit)
 	defer cancel()
 	var lastErr error
 	for {
-		run, err := control.GetRun(convergeCtx, runID)
+		run, err := control.GetRun(convergeCtx, runID, scope)
 		if err != nil {
 			lastErr = err
 		} else if isTerminalRunStatus(run.Status) {

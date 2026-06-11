@@ -243,8 +243,6 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 	cmd.SetArgs([]string{
 		"run", "deploy",
 		"--payload", "env=prod",
-		"-p", "project-1",
-		"--env", "env-1",
 		"--max-duration-seconds", "60",
 		"--metadata-json", `{"source":"cli"}`,
 		"--tag", "deploy",
@@ -262,7 +260,7 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 	if request.TaskID != "deploy" || request.Options.MaxDurationSeconds != 60 {
 		t.Fatalf("request = %+v", request)
 	}
-	if request.ProjectID != "project-1" || request.EnvironmentID != "env-1" {
+	if request.ProjectID != "" || request.EnvironmentID != "" {
 		t.Fatalf("scope = %s/%s", request.ProjectID, request.EnvironmentID)
 	}
 	if request.Options.IdempotencyKey != "deploy-prod" || request.Options.IdempotencyKeyTTL != "24h" {
@@ -598,7 +596,7 @@ func TestEventsCommandFollowsRunEvents(t *testing.T) {
 
 func writeDeploymentEventSSE(t *testing.T, w http.ResponseWriter, r *http.Request, kind string) {
 	t.Helper()
-	if r.URL.Query().Get("follow") != "1" || r.URL.Query().Get("project_id") != "project-resolved" || r.URL.Query().Get("environment_id") != "environment-resolved" {
+	if r.URL.Query().Get("follow") != "1" {
 		t.Fatalf("events query = %s", r.URL.RawQuery)
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -607,7 +605,7 @@ func writeDeploymentEventSSE(t *testing.T, w http.ResponseWriter, r *http.Reques
 
 func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte(`export default { project: "agents", dirs: ["tasks"] }`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte(`export default { dirs: ["tasks"] }`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"packageManager":"bun@1.3.10","dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
@@ -644,7 +642,7 @@ if [ "$1" = "--import" ]; then
 fi
 case "$2" in
 	inspect-config)
-		printf '%s\n' '{"project":"agents","dirs":["tasks"],"ignorePatterns":["secrets/**"]}'
+			printf '%s\n' '{"dirs":["tasks"],"ignorePatterns":["secrets/**"]}'
 		;;
 	parse)
 		printf '%s\n' '{"tasks":{"deploy":{"modulePath":"tasks/deploy.ts","exportName":"deploy","bundle":{"sandbox":{"resources":{"cpu":3,"memory":"4Gi"}}}}}}'
@@ -707,7 +705,7 @@ esac
 		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1/events":
 			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
 		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
-			if r.URL.Query().Get("project_id") != "project-resolved" || r.URL.Query().Get("environment_id") != "environment-resolved" {
+			if r.URL.RawQuery != "" {
 				t.Fatalf("deployment query = %s", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Version: "20260101.1", Status: "deployed"})
@@ -716,7 +714,7 @@ esac
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.ProjectID != "project-resolved" || request.EnvironmentID != "environment-resolved" || request.Reason != "deploy" {
+			if request.ProjectID != "" || request.EnvironmentID != "" || request.Reason != "deploy" {
 				t.Fatalf("promotion request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Version: "20260101.1", Status: "deployed"})
@@ -732,7 +730,7 @@ esac
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root, "--env", "prod"})
+	cmd.SetArgs([]string{"deploy", root})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -742,7 +740,7 @@ esac
 	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/deployment-1/events,GET /api/deployments/deployment-1,POST /api/deployments/deployment-1/promote" {
 		t.Fatalf("requests = %s", got)
 	}
-	if metadata.ProjectID != "agents" || metadata.EnvironmentID != "prod" {
+	if metadata.ProjectID != "" || metadata.EnvironmentID != "" {
 		t.Fatalf("metadata = %+v", metadata)
 	}
 	if metadata.ContentHash == "" || metadata.ContentHash != cas.DigestBytes(uploaded) {
@@ -771,7 +769,7 @@ func TestDeployCommandWaitsWithResolvedConfiguredScope(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1/events":
 			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
 		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
-			if r.URL.Query().Get("project_id") != "project-resolved" || r.URL.Query().Get("environment_id") != "environment-resolved" {
+			if r.URL.RawQuery != "" {
 				t.Fatalf("deployment query = %s", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: "deployed"})
@@ -887,11 +885,15 @@ func TestDeployCommandDetachReturnsQueuedDeploymentID(t *testing.T) {
 }
 
 func TestDeployCommandJSONUsesProjectAndEnv(t *testing.T) {
+	state, _ := installTestCLIConfig(t)
 	root, _ := deployCommandFixture(t)
 	var metadata api.CreateDeploymentRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-override/environments/prod/deployments" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("authorization"); got != "Bearer session-test" {
+			t.Fatalf("auth = %s", got)
 		}
 		if err := r.ParseMultipartForm(32 << 20); err != nil {
 			t.Fatal(err)
@@ -903,7 +905,9 @@ func TestDeployCommandJSONUsesProjectAndEnv(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
+	if err := state.SaveLogin(server.URL, "session-test"); err != nil {
+		t.Fatal(err)
+	}
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
@@ -913,7 +917,7 @@ func TestDeployCommandJSONUsesProjectAndEnv(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if metadata.ProjectID != "project-override" || metadata.EnvironmentID != "prod" {
+	if metadata.ProjectID != "" || metadata.EnvironmentID != "" {
 		t.Fatalf("metadata = %+v", metadata)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
@@ -1074,22 +1078,25 @@ func TestDeployCommandReturnsFailedDeploymentError(t *testing.T) {
 	}
 }
 
-func TestDeployCommandRequiresResolvedDeploymentScope(t *testing.T) {
+func TestDeployCommandRequiresResolvedDeploymentScopeWithSession(t *testing.T) {
+	state, _ := installTestCLIConfig(t)
 	root, _ := deployCommandFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/agents/environments/prod/deployments" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: "queued"})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
+	if err := state.SaveLogin(server.URL, "session-test"); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root})
+	cmd.SetArgs([]string{"deploy", root, "--env", "prod"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "deployment deployment-1 response did not include resolved project_id and environment_id") {
 		t.Fatalf("err = %v", err)
@@ -1588,16 +1595,28 @@ func TestLogoutCommandRevokesAndDeletesStoredToken(t *testing.T) {
 func TestCommandUsesSavedLoginWhenEnvIsUnset(t *testing.T) {
 	state, _ := installTestCLIConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/logs" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
 		if got := r.Header.Get("authorization"); got != "Bearer stored-key" {
 			t.Fatalf("auth = %s", got)
 		}
-		_ = json.NewEncoder(w).Encode(api.LogSnapshotResponse{
-			StdoutBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
-			StderrBase64: "",
-		})
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects":
+			_ = json.NewEncoder(w).Encode(api.ListProjectsResponse{Projects: []api.ProjectSummary{{
+				ID: "project-1",
+				Environments: []api.EnvironmentSummary{{
+					ID:        "env-1",
+					ProjectID: "project-1",
+				}},
+			}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/project-1/environments/env-1/runs/run-1":
+			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", ProjectID: "project-1", EnvironmentID: "env-1"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/project-1/environments/env-1/runs/run-1/logs":
+			_ = json.NewEncoder(w).Encode(api.LogSnapshotResponse{
+				StdoutBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
+				StderrBase64: "",
+			})
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
 	}))
 	defer server.Close()
 	if err := state.SaveLogin(server.URL, "stored-key"); err != nil {
@@ -1872,15 +1891,16 @@ func TestWaitpointRespondCommandAllowsEmptyValue(t *testing.T) {
 }
 
 func TestWaitpointListCommandPrintsOpenWaitpoints(t *testing.T) {
+	state, _ := installTestCLIConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/projects/project-1/environments/env-1/runs" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		query := r.URL.Query()
-		if query.Get("status") != "waiting" || query.Get("project_id") != "project-1" || query.Get("environment_id") != "env-1" || query.Get("limit") != "25" {
+		if query.Get("status") != "waiting" || query.Get("limit") != "25" {
 			t.Fatalf("query = %s", r.URL.RawQuery)
 		}
-		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
+		if got := r.Header.Get("authorization"); got != "Bearer session-test" {
 			t.Fatalf("auth = %s", got)
 		}
 		_ = json.NewEncoder(w).Encode(api.ListRunsResponse{Runs: []api.RunResponse{{
@@ -1898,7 +1918,9 @@ func TestWaitpointListCommandPrintsOpenWaitpoints(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
+	if err := state.SaveLogin(server.URL, "session-test"); err != nil {
+		t.Fatal(err)
+	}
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
@@ -2177,12 +2199,13 @@ func TestEventsCommandPrintsJSONLines(t *testing.T) {
 }
 
 func TestSecretSetCommand(t *testing.T) {
+	state, _ := installTestCLIConfig(t)
 	var request api.SetSecretRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut || r.URL.Path != "/api/secrets/github-token" {
+		if r.Method != http.MethodPut || r.URL.Path != "/api/projects/project-1/environments/env-1/secrets/github-token" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
+		if got := r.Header.Get("authorization"); got != "Bearer session-test" {
 			t.Fatalf("auth = %s", got)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -2192,7 +2215,9 @@ func TestSecretSetCommand(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
+	if err := state.SaveLogin(server.URL, "session-test"); err != nil {
+		t.Fatal(err)
+	}
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
@@ -2205,7 +2230,7 @@ func TestSecretSetCommand(t *testing.T) {
 	if request.Value != "secret-value" {
 		t.Fatalf("request = %+v", request)
 	}
-	if request.ProjectID != "project-1" || request.EnvironmentID != "env-1" {
+	if request.ProjectID != "" || request.EnvironmentID != "" {
 		t.Fatalf("scope = %+v", request)
 	}
 	if strings.TrimSpace(out.String()) != "github-token" {
@@ -2239,12 +2264,13 @@ func TestSecretSetCommandPreservesStdin(t *testing.T) {
 }
 
 func TestSecretListCommand(t *testing.T) {
+	state, _ := installTestCLIConfig(t)
 	secretTime := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/secrets" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/projects/project-1/environments/env-1/secrets" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		if r.URL.Query().Get("project_id") != "project-1" || r.URL.Query().Get("environment_id") != "env-1" {
+		if r.URL.RawQuery != "" {
 			t.Fatalf("query = %s", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(api.ListSecretsResponse{Secrets: []api.SecretResponse{{
@@ -2257,7 +2283,9 @@ func TestSecretListCommand(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
+	if err := state.SaveLogin(server.URL, "session-test"); err != nil {
+		t.Fatal(err)
+	}
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
@@ -2273,9 +2301,10 @@ func TestSecretListCommand(t *testing.T) {
 }
 
 func TestSecretGetCommandReturnsMetadataOnly(t *testing.T) {
+	state, _ := installTestCLIConfig(t)
 	secretTime := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/secrets/github-token" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/projects/project-1/environments/env-1/secrets/github-token" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(api.SecretResponse{
@@ -2288,7 +2317,9 @@ func TestSecretGetCommandReturnsMetadataOnly(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
+	if err := state.SaveLogin(server.URL, "session-test"); err != nil {
+		t.Fatal(err)
+	}
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
@@ -2304,18 +2335,21 @@ func TestSecretGetCommandReturnsMetadataOnly(t *testing.T) {
 }
 
 func TestSecretDeleteCommand(t *testing.T) {
+	state, _ := installTestCLIConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/api/secrets/github-token" {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/projects/project-1/environments/env-1/secrets/github-token" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		if r.URL.Query().Get("project_id") != "project-1" || r.URL.Query().Get("environment_id") != "env-1" {
+		if r.URL.RawQuery != "" {
 			t.Fatalf("query = %s", r.URL.RawQuery)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
+	if err := state.SaveLogin(server.URL, "session-test"); err != nil {
+		t.Fatal(err)
+	}
 
 	var out bytes.Buffer
 	cmd := newRootCommand()

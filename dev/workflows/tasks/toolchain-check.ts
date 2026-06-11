@@ -92,9 +92,8 @@ export const toolchainCheck = task({
     checks.push(await checkCommand(["git", "--version"]))
     checks.push(await checkCommand(["gh", "--version"]))
     checks.push(await checkCommand(["gh", "repo", "view", repository, "--json", "nameWithOwner,defaultBranchRef,isPrivate"], ghEnv()))
-    checks.push(await checkCommand(["git", "ls-remote", `https://github.com/${repository}.git`, ref], ghEnv()))
-
     await ensureGitCheckout(repository, ref)
+    checks.push(await checkCommand(["git", "rev-parse", "--verify", "HEAD^{commit}"]))
     checks.push(await checkCommand(["git", "status", "--short"]))
     checks.push(await checkCommand(["git", "rev-parse", "--short", "HEAD"]))
     checks.push(await checkCommand(["sh", "-ceu", "test -c /dev/tty && mountpoint -q /dev/pts && mountpoint -q /dev/shm && printf DEV_RUNTIME_OK"]))
@@ -204,19 +203,12 @@ function renderToolchainAgentPrompt(marker: string): string {
 }
 
 async function ensureGitCheckout(repository: string, ref: string): Promise<void> {
-  if (await isGitWorkspace()) return
   const checkoutPath = `${process.cwd()}/.helmr-toolchain-checkout`
-  await checkCommand(["git", "clone", "--depth", "1", "--branch", ref, `https://github.com/${repository}.git`, checkoutPath], ghEnv())
+  await checkCommand(["rm", "-rf", checkoutPath])
+  await checkCommand(["git", "clone", "--filter=blob:none", "--no-checkout", `https://github.com/${repository}.git`, checkoutPath], ghEnv())
   process.chdir(checkoutPath)
-}
-
-async function isGitWorkspace(): Promise<boolean> {
-  try {
-    await checkCommand(["git", "rev-parse", "--is-inside-work-tree"])
-    return true
-  } catch {
-    return false
-  }
+  await checkCommand(["git", "fetch", "--depth", "1", "origin", ref], ghEnv())
+  await checkCommand(["git", "checkout", "--detach", "FETCH_HEAD"])
 }
 
 async function checkCommand(command: readonly string[], env: Record<string, string> = baseEnv()): Promise<CheckResult> {

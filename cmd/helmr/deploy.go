@@ -82,10 +82,6 @@ func deployCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			project, err := configProject(config, projectRef)
-			if err != nil {
-				return err
-			}
 			if err := reporter.Step("Creating archive"); err != nil {
 				return err
 			}
@@ -100,19 +96,32 @@ func deployCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if !control.UsesSessionScopedRoutes() && (cmd.Flags().Changed("project") || cmd.Flags().Changed("env")) {
+				return errors.New("--project and --env require helmr login; API keys are already environment scoped")
+			}
+			project := ""
+			if control.UsesSessionScopedRoutes() {
+				project, err = configProject(config, projectRef)
+				if err != nil {
+					return err
+				}
+			}
 			if err := reporter.Step("Uploading deployment"); err != nil {
 				return err
 			}
-			response, err := control.CreateDeployment(cmd.Context(), api.CreateDeploymentRequest{
-				ProjectID:             project,
-				EnvironmentID:         strings.TrimSpace(envRef),
+			deployRequest := api.CreateDeploymentRequest{
 				ContentHash:           tarArchive.Digest,
 				APIVersion:            api.CurrentAPIVersion,
 				SDKVersion:            sdkVersion,
 				CLIVersion:            version.Version,
 				BundleFormatVersion:   api.CurrentBundleFormatVersion,
 				WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
-			}, tarArchive.Path)
+			}
+			if control.UsesSessionScopedRoutes() {
+				deployRequest.ProjectID = project
+				deployRequest.EnvironmentID = strings.TrimSpace(envRef)
+			}
+			response, err := control.CreateDeployment(cmd.Context(), deployRequest, tarArchive.Path)
 			if err != nil {
 				return err
 			}
@@ -122,7 +131,7 @@ func deployCommand() *cobra.Command {
 			if detach {
 				return reporter.DeploymentResult(response, "queued")
 			}
-			scope, err := deploymentWaitScope(response)
+			scope, err := deploymentWaitScope(response, control.UsesSessionScopedRoutes())
 			if err != nil {
 				return err
 			}
@@ -136,11 +145,12 @@ func deployCommand() *cobra.Command {
 			if err := reporter.Step("Promoting deployment"); err != nil {
 				return err
 			}
-			promoted, err := control.PromoteDeployment(cmd.Context(), deployed.ID, api.PromoteDeploymentRequest{
-				ProjectID:     scope.ProjectID,
-				EnvironmentID: scope.EnvironmentID,
-				Reason:        "deploy",
-			})
+			promoteRequest := api.PromoteDeploymentRequest{Reason: "deploy"}
+			if control.UsesSessionScopedRoutes() {
+				promoteRequest.ProjectID = scope.ProjectID
+				promoteRequest.EnvironmentID = scope.EnvironmentID
+			}
+			promoted, err := control.PromoteDeployment(cmd.Context(), deployed.ID, promoteRequest)
 			if err != nil {
 				return err
 			}
@@ -239,11 +249,15 @@ func promoteCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			deployment, err := control.PromoteDeployment(cmd.Context(), args[0], api.PromoteDeploymentRequest{
-				ProjectID:     strings.TrimSpace(projectID),
-				EnvironmentID: strings.TrimSpace(environmentID),
-				Reason:        strings.TrimSpace(reason),
-			})
+			if !control.UsesSessionScopedRoutes() && (cmd.Flags().Changed("project") || cmd.Flags().Changed("env")) {
+				return errors.New("--project and --env require helmr login; API keys are already environment scoped")
+			}
+			request := api.PromoteDeploymentRequest{Reason: strings.TrimSpace(reason)}
+			if control.UsesSessionScopedRoutes() {
+				request.ProjectID = strings.TrimSpace(projectID)
+				request.EnvironmentID = strings.TrimSpace(environmentID)
+			}
+			deployment, err := control.PromoteDeployment(cmd.Context(), args[0], request)
 			if err != nil {
 				return err
 			}
@@ -264,7 +278,10 @@ func deploymentOutputRef(deployment api.DeploymentResponse) string {
 	return deployment.ID
 }
 
-func deploymentWaitScope(response api.DeploymentResponse) (api.GetDeploymentRequest, error) {
+func deploymentWaitScope(response api.DeploymentResponse, sessionScopedRoutes bool) (api.GetDeploymentRequest, error) {
+	if !sessionScopedRoutes {
+		return api.GetDeploymentRequest{}, nil
+	}
 	projectID := strings.TrimSpace(response.ProjectID)
 	environmentID := strings.TrimSpace(response.EnvironmentID)
 	if projectID == "" || environmentID == "" {
