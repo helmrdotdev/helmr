@@ -71,6 +71,8 @@ html {
   color-scheme: light;
   scroll-behavior: smooth;
   scrollbar-gutter: stable;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
