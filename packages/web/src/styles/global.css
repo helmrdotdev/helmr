@@ -283,8 +283,8 @@ img { max-width: 100%; display: block; }
   align-items: center;
   height: 32px;
   padding: 0 0.7rem;
-  font-family: var(--font-sans);
-  font-size: 0.875rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
   font-weight: 400;
   color: var(--text-muted);
   transition: color 0.12s ease-out;
