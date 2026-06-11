@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -20,7 +21,15 @@ import (
 
 func (c *Client) CreateRun(ctx context.Context, input api.CreateRunRequest) (api.RunResponse, error) {
 	var response api.RunResponse
-	if err := c.postJSON(ctx, "/api/runs", input, &response); err != nil {
+	path, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/runs")
+	if err != nil {
+		return api.RunResponse{}, err
+	}
+	if scoped {
+		input.ProjectID = ""
+		input.EnvironmentID = ""
+	}
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
 		return api.RunResponse{}, err
 	}
 	return response, nil
@@ -114,6 +123,28 @@ func projectEnvironmentPath(projectID string, environmentID string) string {
 	return "/api/projects/" + url.PathEscape(projectID) + "/environments/" + url.PathEscape(environmentID)
 }
 
+func (c *Client) environmentScopedPath(projectID string, environmentID string, suffix string) (string, bool, error) {
+	projectID = strings.TrimSpace(projectID)
+	environmentID = strings.TrimSpace(environmentID)
+	if projectID == "" && environmentID == "" {
+		if c.sessionScopedRoutes {
+			return "", false, fmt.Errorf("project and environment are required for session-scoped API routes")
+		}
+		return "/api" + suffix, false, nil
+	}
+	if !c.sessionScopedRoutes {
+		return "", false, errors.New("project and environment scope is only accepted on session-scoped API routes")
+	}
+	if projectID == "" || environmentID == "" {
+		return "", false, fmt.Errorf("project and environment are required for session-scoped API routes")
+	}
+	return projectEnvironmentPath(projectID, environmentID) + suffix, true, nil
+}
+
+func environmentScopedResourcePath(base string, id string, suffix string) string {
+	return base + "/" + url.PathEscape(id) + suffix
+}
+
 func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymentRequest, sourceTarPath string) (api.DeploymentResponse, error) {
 	file, err := os.Open(sourceTarPath)
 	if err != nil {
@@ -132,13 +163,21 @@ func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymen
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return api.DeploymentResponse{}, fmt.Errorf("rewind deployment source archive: %w", err)
 	}
+	path, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	if scoped {
+		input.ProjectID = ""
+		input.EnvironmentID = ""
+	}
 	reader, pipeWriter := io.Pipe()
 	multipartWriter := multipart.NewWriter(pipeWriter)
 	go func() {
 		err := writeDeploymentMultipart(multipartWriter, input, file)
 		_ = pipeWriter.CloseWithError(err)
 	}()
-	req, err := c.newRequestWithBearer(ctx, http.MethodPost, "/api/deployments", reader, c.bearer)
+	req, err := c.newRequestWithBearer(ctx, http.MethodPost, path, reader, c.bearer)
 	if err != nil {
 		_ = reader.Close()
 		return api.DeploymentResponse{}, err
@@ -152,17 +191,11 @@ func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymen
 }
 
 func (c *Client) GetDeployment(ctx context.Context, deploymentID string, input api.GetDeploymentRequest) (api.DeploymentResponse, error) {
-	values := url.Values{}
-	if strings.TrimSpace(input.ProjectID) != "" {
-		values.Set("project_id", strings.TrimSpace(input.ProjectID))
+	basePath, _, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
+	if err != nil {
+		return api.DeploymentResponse{}, err
 	}
-	if strings.TrimSpace(input.EnvironmentID) != "" {
-		values.Set("environment_id", strings.TrimSpace(input.EnvironmentID))
-	}
-	path := "/api/deployments/" + url.PathEscape(deploymentID)
-	if encoded := values.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	path := environmentScopedResourcePath(basePath, deploymentID, "")
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -175,15 +208,13 @@ func (c *Client) GetDeployment(ctx context.Context, deploymentID string, input a
 }
 
 func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string, input api.GetDeploymentRequest, cursor int64, handle func(api.RunEvent) error) error {
+	basePath, _, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
+	if err != nil {
+		return err
+	}
 	values := url.Values{}
 	values.Set("follow", "1")
-	if strings.TrimSpace(input.ProjectID) != "" {
-		values.Set("project_id", strings.TrimSpace(input.ProjectID))
-	}
-	if strings.TrimSpace(input.EnvironmentID) != "" {
-		values.Set("environment_id", strings.TrimSpace(input.EnvironmentID))
-	}
-	path := "/api/deployments/" + url.PathEscape(deploymentID) + "/events?" + values.Encode()
+	path := environmentScopedResourcePath(basePath, deploymentID, "/events") + "?" + values.Encode()
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return err
@@ -220,7 +251,15 @@ func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string
 }
 
 func (c *Client) PromoteDeployment(ctx context.Context, deployment string, input api.PromoteDeploymentRequest) (api.DeploymentResponse, error) {
-	path := "/api/deployments/" + url.PathEscape(deployment) + "/promote"
+	basePath, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	if scoped {
+		input.ProjectID = ""
+		input.EnvironmentID = ""
+	}
+	path := environmentScopedResourcePath(basePath, deployment, "/promote")
 	var response api.DeploymentResponse
 	if err := c.postJSON(ctx, path, input, &response); err != nil {
 		return api.DeploymentResponse{}, err
@@ -266,7 +305,10 @@ type SecretOptions struct {
 type SetSecretOptions = SecretOptions
 
 func (c *Client) ListSecrets(ctx context.Context, opts ...SecretOptions) (api.ListSecretsResponse, error) {
-	path := secretCollectionPath(opts...)
+	path, err := c.secretCollectionPath(opts...)
+	if err != nil {
+		return api.ListSecretsResponse{}, err
+	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return api.ListSecretsResponse{}, err
@@ -279,7 +321,10 @@ func (c *Client) ListSecrets(ctx context.Context, opts ...SecretOptions) (api.Li
 }
 
 func (c *Client) GetSecret(ctx context.Context, name string, opts ...SecretOptions) (api.SecretResponse, error) {
-	path := secretItemPath(name, opts...)
+	path, err := c.secretItemPath(name, opts...)
+	if err != nil {
+		return api.SecretResponse{}, err
+	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return api.SecretResponse{}, err
@@ -294,51 +339,90 @@ func (c *Client) GetSecret(ctx context.Context, name string, opts ...SecretOptio
 func (c *Client) SetSecret(ctx context.Context, name string, value string, opts ...SetSecretOptions) (api.SecretResponse, error) {
 	var response api.SecretResponse
 	request := api.SetSecretRequest{Value: value}
+	path, scoped, err := c.secretItemPathWithScope(name, opts...)
+	if err != nil {
+		return api.SecretResponse{}, err
+	}
 	if len(opts) > 0 {
 		request.ProjectID = opts[0].ProjectID
 		request.EnvironmentID = opts[0].EnvironmentID
 	}
-	if err := c.putJSON(ctx, "/api/secrets/"+url.PathEscape(name), request, &response); err != nil {
+	if scoped {
+		request.ProjectID = ""
+		request.EnvironmentID = ""
+	}
+	if err := c.putJSON(ctx, path, request, &response); err != nil {
 		return api.SecretResponse{}, err
 	}
 	return response, nil
 }
 
 func (c *Client) DeleteSecret(ctx context.Context, name string, opts ...SecretOptions) error {
-	req, err := c.newRequest(ctx, http.MethodDelete, secretItemPath(name, opts...), nil)
+	path, err := c.secretItemPath(name, opts...)
+	if err != nil {
+		return err
+	}
+	req, err := c.newRequest(ctx, http.MethodDelete, path, nil)
 	if err != nil {
 		return err
 	}
 	return c.doJSON(req, nil)
 }
 
-func secretCollectionPath(opts ...SecretOptions) string {
-	values := url.Values{}
-	if len(opts) > 0 {
-		if projectID := strings.TrimSpace(opts[0].ProjectID); projectID != "" {
-			values.Set("project_id", projectID)
-		}
-		if environmentID := strings.TrimSpace(opts[0].EnvironmentID); environmentID != "" {
-			values.Set("environment_id", environmentID)
-		}
+func (c *Client) secretCollectionPath(opts ...SecretOptions) (string, error) {
+	hasScope := len(opts) > 0 && (strings.TrimSpace(opts[0].ProjectID) != "" || strings.TrimSpace(opts[0].EnvironmentID) != "")
+	if hasScope && c.sessionScopedRoutes {
+		return c.secretCollectionPathWithScope(opts[0])
 	}
-	path := "/api/secrets"
-	if encoded := values.Encode(); encoded != "" {
-		path += "?" + encoded
+	if hasScope {
+		return "", errors.New("project and environment scope is only accepted on session-scoped API routes")
 	}
-	return path
+	if c.sessionScopedRoutes {
+		return c.secretCollectionPathWithScope(SecretOptions{})
+	}
+	return "/api/secrets", nil
 }
 
-func secretItemPath(name string, opts ...SecretOptions) string {
-	path := "/api/secrets/" + url.PathEscape(name)
-	if encoded := strings.TrimPrefix(secretCollectionPath(opts...), "/api/secrets"); encoded != "" {
-		path += encoded
-	}
-	return path
+func (c *Client) secretCollectionPathWithScope(opts SecretOptions) (string, error) {
+	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/secrets")
+	return path, err
 }
 
-func (c *Client) GetRun(ctx context.Context, id string) (api.RunResponse, error) {
-	req, err := c.newRequest(ctx, http.MethodGet, "/api/runs/"+url.PathEscape(id), nil)
+func (c *Client) secretItemPath(name string, opts ...SecretOptions) (string, error) {
+	path, _, err := c.secretItemPathWithScope(name, opts...)
+	return path, err
+}
+
+func (c *Client) secretItemPathWithScope(name string, opts ...SecretOptions) (string, bool, error) {
+	hasScope := len(opts) > 0 && (strings.TrimSpace(opts[0].ProjectID) != "" || strings.TrimSpace(opts[0].EnvironmentID) != "")
+	if c.sessionScopedRoutes {
+		scope := SecretOptions{}
+		if len(opts) > 0 {
+			scope = opts[0]
+		}
+		basePath, scoped, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/secrets")
+		if err != nil {
+			return "", false, err
+		}
+		return environmentScopedResourcePath(basePath, name, ""), scoped, nil
+	}
+	if hasScope {
+		return "", false, errors.New("project and environment scope is only accepted on session-scoped API routes")
+	}
+	return "/api/secrets/" + url.PathEscape(name), false, nil
+}
+
+type RunScopeOptions struct {
+	ProjectID     string
+	EnvironmentID string
+}
+
+func (c *Client) GetRun(ctx context.Context, id string, opts ...RunScopeOptions) (api.RunResponse, error) {
+	path, err := c.runItemPath(id, "", opts...)
+	if err != nil {
+		return api.RunResponse{}, err
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return api.RunResponse{}, err
 	}
@@ -349,17 +433,25 @@ func (c *Client) GetRun(ctx context.Context, id string) (api.RunResponse, error)
 	return response, nil
 }
 
-func (c *Client) CancelRun(ctx context.Context, id string, input api.CancelRunRequest) (api.CancelRunResponse, error) {
+func (c *Client) CancelRun(ctx context.Context, id string, input api.CancelRunRequest, opts ...RunScopeOptions) (api.CancelRunResponse, error) {
 	var response api.CancelRunResponse
-	if err := c.postJSON(ctx, "/api/runs/"+url.PathEscape(id)+"/cancel", input, &response); err != nil {
+	path, err := c.runItemPath(id, "/cancel", opts...)
+	if err != nil {
+		return api.CancelRunResponse{}, err
+	}
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
 		return api.CancelRunResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) ReplayRun(ctx context.Context, id string, input api.ReplayRunRequest) (api.ReplayRunResponse, error) {
+func (c *Client) ReplayRun(ctx context.Context, id string, input api.ReplayRunRequest, opts ...RunScopeOptions) (api.ReplayRunResponse, error) {
 	var response api.ReplayRunResponse
-	if err := c.postJSON(ctx, "/api/runs/"+url.PathEscape(id)+"/replay", input, &response); err != nil {
+	path, err := c.runItemPath(id, "/replay", opts...)
+	if err != nil {
+		return api.ReplayRunResponse{}, err
+	}
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
 		return api.ReplayRunResponse{}, err
 	}
 	return response, nil
@@ -375,10 +467,31 @@ type ListRunsOptions struct {
 type ListRunEventsOptions struct {
 	Cursor int64
 	Limit  int32
+	RunScopeOptions
+}
+
+func (c *Client) runItemPath(id string, suffix string, opts ...RunScopeOptions) (string, error) {
+	scope := RunScopeOptions{}
+	if len(opts) > 0 {
+		scope = opts[0]
+	}
+	basePath, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/runs")
+	if err != nil {
+		return "", err
+	}
+	return environmentScopedResourcePath(basePath, id, suffix), nil
 }
 
 func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.ListRunsResponse, error) {
-	path := "/api/runs"
+	scope := RunScopeOptions{}
+	if len(opts) > 0 {
+		scope.ProjectID = opts[0].ProjectID
+		scope.EnvironmentID = opts[0].EnvironmentID
+	}
+	path, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/runs")
+	if err != nil {
+		return api.ListRunsResponse{}, err
+	}
 	if len(opts) > 0 {
 		values := url.Values{}
 		if opts[0].Status != "" {
@@ -386,12 +499,6 @@ func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.Lis
 		}
 		if opts[0].Limit > 0 {
 			values.Set("limit", strconv.FormatInt(int64(opts[0].Limit), 10))
-		}
-		if opts[0].ProjectID != "" {
-			values.Set("project_id", opts[0].ProjectID)
-		}
-		if opts[0].EnvironmentID != "" {
-			values.Set("environment_id", opts[0].EnvironmentID)
 		}
 		if encoded := values.Encode(); encoded != "" {
 			path += "?" + encoded
@@ -408,8 +515,12 @@ func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.Lis
 	return response, nil
 }
 
-func (c *Client) GetRunLogs(ctx context.Context, id string) (api.LogSnapshotResponse, error) {
-	req, err := c.newRequest(ctx, http.MethodGet, "/api/runs/"+url.PathEscape(id)+"/logs", nil)
+func (c *Client) GetRunLogs(ctx context.Context, id string, opts ...RunScopeOptions) (api.LogSnapshotResponse, error) {
+	path, err := c.runItemPath(id, "/logs", opts...)
+	if err != nil {
+		return api.LogSnapshotResponse{}, err
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return api.LogSnapshotResponse{}, err
 	}
@@ -420,10 +531,14 @@ func (c *Client) GetRunLogs(ctx context.Context, id string) (api.LogSnapshotResp
 	return response, nil
 }
 
-func (c *Client) FollowRunLogs(ctx context.Context, id string, cursor int64, handle func(api.RunLogChunk) error) error {
+func (c *Client) FollowRunLogs(ctx context.Context, id string, cursor int64, handle func(api.RunLogChunk) error, opts ...RunScopeOptions) error {
 	values := url.Values{}
 	values.Set("follow", "1")
-	path := "/api/runs/" + url.PathEscape(id) + "/logs?" + values.Encode()
+	path, err := c.runItemPath(id, "/logs", opts...)
+	if err != nil {
+		return err
+	}
+	path += "?" + values.Encode()
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return err
@@ -460,7 +575,14 @@ func (c *Client) FollowRunLogs(ctx context.Context, id string, cursor int64, han
 }
 
 func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEventsOptions) (api.RunEventPage, error) {
-	path := "/api/runs/" + url.PathEscape(id) + "/events"
+	scope := RunScopeOptions{}
+	if len(opts) > 0 {
+		scope = opts[0].RunScopeOptions
+	}
+	path, err := c.runItemPath(id, "/events", scope)
+	if err != nil {
+		return api.RunEventPage{}, err
+	}
 	if len(opts) > 0 {
 		values := url.Values{}
 		if opts[0].Cursor > 0 {
@@ -484,10 +606,14 @@ func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEv
 	return response, nil
 }
 
-func (c *Client) FollowRunEvents(ctx context.Context, id string, cursor int64, handle func(api.RunEvent) error) error {
+func (c *Client) FollowRunEvents(ctx context.Context, id string, cursor int64, handle func(api.RunEvent) error, opts ...RunScopeOptions) error {
 	values := url.Values{}
 	values.Set("follow", "1")
-	path := "/api/runs/" + url.PathEscape(id) + "/events?" + values.Encode()
+	path, err := c.runItemPath(id, "/events", opts...)
+	if err != nil {
+		return err
+	}
+	path += "?" + values.Encode()
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return err

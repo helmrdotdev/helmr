@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -303,14 +304,14 @@ func TestCreateDeploymentSendsContentHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := client.CreateDeployment(context.Background(), api.CreateDeploymentRequest{ProjectID: "agents"}, sourcePath)
+	response, err := client.CreateDeployment(context.Background(), api.CreateDeploymentRequest{}, sourcePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if response.ID != "deployment-1" {
 		t.Fatalf("response = %+v", response)
 	}
-	if metadata.ProjectID != "agents" || metadata.ContentHash != cas.DigestBytes(source) {
+	if metadata.ProjectID != "" || metadata.EnvironmentID != "" || metadata.ContentHash != cas.DigestBytes(source) {
 		t.Fatalf("metadata = %+v", metadata)
 	}
 	if !bytes.Equal(uploaded, source) {
@@ -425,6 +426,29 @@ func TestListRunsOptionsAndGetRunLogs(t *testing.T) {
 	}
 	if got := strings.Join(paths, ","); got != "/api/runs?limit=25&status=all,/api/runs/run-1/logs" {
 		t.Fatalf("paths = %s", got)
+	}
+}
+
+func TestSessionScopedClientRequiresEnvironmentScope(t *testing.T) {
+	client, err := New("https://helmr.example.test", WithSessionScopedRoutes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListRuns(context.Background()); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
+		t.Fatalf("ListRuns err = %v", err)
+	}
+	if _, err := client.GetRun(context.Background(), "run-1"); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
+		t.Fatalf("GetRun err = %v", err)
+	}
+	if _, err := client.ListSecrets(context.Background()); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
+		t.Fatalf("ListSecrets err = %v", err)
+	}
+	sourcePath := filepath.Join(t.TempDir(), "source.tar")
+	if err := os.WriteFile(sourcePath, []byte("deployment source"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateDeployment(context.Background(), api.CreateDeploymentRequest{}, sourcePath); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
+		t.Fatalf("CreateDeployment err = %v", err)
 	}
 }
 

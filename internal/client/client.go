@@ -37,12 +37,13 @@ func IsStatus(err error, statusCode int) bool {
 }
 
 type Client struct {
-	baseURL       *url.URL
-	bearer        string
-	httpClient    *http.Client
-	clientName    string
-	clientVersion string
-	worker        workerAuth
+	baseURL             *url.URL
+	bearer              string
+	httpClient          *http.Client
+	clientName          string
+	clientVersion       string
+	sessionScopedRoutes bool
+	worker              workerAuth
 }
 
 type workerAuth struct {
@@ -62,6 +63,16 @@ func WithBearerToken(token string) Option {
 	return func(client *Client) {
 		client.bearer = token
 	}
+}
+
+func WithSessionScopedRoutes() Option {
+	return func(client *Client) {
+		client.sessionScopedRoutes = true
+	}
+}
+
+func (c *Client) UsesSessionScopedRoutes() bool {
+	return c.sessionScopedRoutes
 }
 
 func WithWorkerAuth(workerInstanceID string, secret string) Option {
