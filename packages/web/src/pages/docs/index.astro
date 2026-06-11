@@ -1,8 +1,60 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro";
 import { getDocs } from "../../lib/docs";
+import { pixelsFromRows } from "../../lib/pixels";
 
 const docs = await getDocs();
+
+const entryIcons = {
+  bolt: [
+    "..........",
+    ".....##...",
+    "....##....",
+    "...##.....",
+    "..######..",
+    "....##....",
+    "...##.....",
+    "..##......",
+    ".##.......",
+    "..........",
+  ],
+  layers: [
+    "....##....",
+    "..######..",
+    "##########",
+    "..######..",
+    "....##....",
+    "..........",
+    "##......##",
+    "..##..##..",
+    "....##....",
+    "..........",
+  ],
+  cloud: [
+    "..........",
+    "..........",
+    "..##..##..",
+    ".########.",
+    "##########",
+    "##########",
+    ".########.",
+    "..........",
+    "..........",
+    "..........",
+  ],
+  terminal: [
+    "..........",
+    "##########",
+    "#........#",
+    "#.#......#",
+    "#..#.....#",
+    "#.#......#",
+    "#....###.#",
+    "#........#",
+    "##########",
+    "..........",
+  ],
+} as const;
 
 const entryPoints = [
   {
@@ -10,6 +62,8 @@ const entryPoints = [
     title: "Start with Helmr",
     description: "Install the CLI, connect to a control plane, and run a small task in an isolated workspace.",
     href: "/docs/start/overview",
+    icon: pixelsFromRows(entryIcons.bolt),
+    tone: "yellow",
     links: [
       { label: "Quickstart", href: "/docs/start/quickstart" },
       { label: "First task", href: "/docs/guides/first-task" },
@@ -20,6 +74,8 @@ const entryPoints = [
     title: "Understand the runtime",
     description: "See how task projects, sandboxes, workspaces, runs, waitpoints, and secrets fit together.",
     href: "/docs/concepts/product-model",
+    icon: pixelsFromRows(entryIcons.layers),
+    tone: "blue",
     links: [
       { label: "Tasks", href: "/docs/concepts/tasks" },
       { label: "Runs", href: "/docs/concepts/runs" },
@@ -30,6 +86,8 @@ const entryPoints = [
     title: "Self-host in AWS",
     description: "Create the control plane, configure OAuth and Secrets Manager, then add Firecracker workers.",
     href: "/docs/self-hosting/overview",
+    icon: pixelsFromRows(entryIcons.cloud),
+    tone: "green",
     links: [
       { label: "Deploy on AWS", href: "/docs/self-hosting/deploy-on-aws" },
       { label: "Verify a run", href: "/docs/self-hosting/verify-run" },
@@ -40,6 +98,8 @@ const entryPoints = [
     title: "Check commands and APIs",
     description: "Look up CLI commands, SDK authoring, runtime APIs, run events, and environment variables.",
     href: "/docs/reference/cli",
+    icon: pixelsFromRows(entryIcons.terminal),
+    tone: "pink",
     links: [
       { label: "REST API", href: "/docs/reference/rest-api" },
       { label: "Environment variables", href: "/docs/reference/environment-variables" },
@@ -57,7 +117,14 @@ const entryPoints = [
     {entryPoints.map((entry) => (
       <section>
         <a class="entry-main" href={entry.href} data-astro-prefetch="viewport">
-          <span>{entry.section}</span>
+          <span class="entry-head">
+            <svg class="entry-icon" viewBox="0 0 10 10" aria-hidden="true" style={`background: var(--wash-${entry.tone})`}>
+              {entry.icon.map((pixel) => (
+                <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+              ))}
+            </svg>
+            <span class="entry-section">{entry.section}</span>
+          </span>
           <strong>{entry.title}</strong>
           <p>{entry.description}</p>
         </a>
@@ -97,13 +164,30 @@ const entryPoints = [
   }
 
   .entry-main:hover {
-    background: var(--accent);
-    color: var(--accent-fg);
+    background: var(--surface-dim);
   }
 
-  .entry-main span {
-    display: block;
-    margin-bottom: 0.55rem;
+  .entry-main:hover strong {
+    color: var(--accent);
+  }
+
+  .entry-head {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    margin-bottom: 0.65rem;
+  }
+
+  .entry-icon {
+    width: 26px;
+    height: 26px;
+    flex: 0 0 auto;
+    padding: 5px;
+    fill: var(--ink);
+    shape-rendering: crispEdges;
+  }
+
+  .entry-section {
     color: var(--text-subtle);
     font-family: var(--font-mono);
     font-size: 0.62rem;
@@ -111,16 +195,11 @@ const entryPoints = [
     letter-spacing: 0.08em;
   }
 
-  .entry-main:hover span,
-  .entry-main:hover p {
-    color: rgba(255, 255, 255, 0.72);
-  }
-
   .entry-main strong {
     display: block;
-    font-family: "Geist", var(--font-sans);
+    font-family: var(--font-sans);
     font-size: 0.9rem;
-    font-weight: 560;
+    font-weight: 500;
     line-height: 1.2;
   }
 

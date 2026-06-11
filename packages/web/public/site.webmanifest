@@ -4,8 +4,8 @@
   "description": "Self-hosted runtime for coding agents.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f4f4f2",
-  "theme_color": "#f4f4f2",
+  "background_color": "#faf8f4",
+  "theme_color": "#faf8f4",
   "icons": [
     {
       "src": "/web-app-manifest-192x192.png",

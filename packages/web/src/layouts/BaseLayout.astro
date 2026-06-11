@@ -9,7 +9,6 @@ import {
   websiteJsonLd,
   type JsonLdNode,
 } from "../lib/seo";
-import { pixelsFromRows } from "../lib/pixels";
 
 type Props = {
   title: string;
@@ -53,19 +52,30 @@ const serializeJsonLd = (data: JsonLdNode): string =>
     .replace(/\u2029/g, "\\u2029");
 const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
 
-const brandMarkRows = [
-  "....##....",
-  "...####...",
-  "..#....#..",
-  ".#......#.",
-  "##..##..##",
-  "##..##..##",
-  ".#......#.",
-  "..#....#..",
-  "...####...",
-  "....##....",
+const brandSpriteRows = [
+  "................",
+  "................",
+  "................",
+  ".......KK.......",
+  ".....KKKKKK.....",
+  "...KKKKKKKKKK...",
+  ".....KKKKKK.....",
+  ".......KK.......",
+  "................",
+  "...KK......KK...",
+  ".....KK..KK.....",
+  ".......KK.......",
+  "................",
+  "................",
+  "................",
+  "................",
 ] as const;
-const brandMarkPixels = pixelsFromRows(brandMarkRows);
+const brandSpriteColors: Record<string, string> = {
+  K: "#1f1f24",
+};
+const brandSpritePixels = brandSpriteRows.flatMap((row, y) =>
+  [...row].flatMap((ch, x) => (ch === "." ? [] : [{ x, y, fill: brandSpriteColors[ch] }])),
+);
 ---
 
 <!doctype html>
@@ -75,7 +85,7 @@ const brandMarkPixels = pixelsFromRows(brandMarkRows);
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content={robots} />
     <meta name="description" content={description} />
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="theme-color" content="#faf8f4" />
     <title>{title}</title>
     <link rel="canonical" href={canonicalUrl} />
     <link rel="icon" href="/favicon.ico" sizes="any" />
@@ -100,8 +110,14 @@ const brandMarkPixels = pixelsFromRows(brandMarkRows);
     <script is:inline type="application/ld+json" set:html={structuredData}></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://api.fontshare.com" />
+    <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=Geist+Mono:wght@400;500&family=Doto:ROND,wght@0..100,100..900&family=Geist:wght@400..700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600&display=swap"
       rel="stylesheet"
     />
     {enableClientRouter && <ClientRouter fallback="swap" />}
@@ -111,9 +127,9 @@ const brandMarkPixels = pixelsFromRows(brandMarkRows);
       <nav class="site-nav">
         <slot name="header-start" />
         <a class="brand" href="/">
-          <svg class="brand-mark" viewBox="0 0 10 10" aria-hidden="true">
-            {brandMarkPixels.map((pixel) => (
-              <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+          <svg class="brand-mark" viewBox="0 0 16 16" aria-hidden="true">
+            {brandSpritePixels.map((pixel) => (
+              <rect x={pixel.x} y={pixel.y} width="1" height="1" fill={pixel.fill} />
             ))}
           </svg>
           Helmr
@@ -158,9 +174,9 @@ const brandMarkPixels = pixelsFromRows(brandMarkRows);
         <div class="footer-top">
           <div class="footer-brand">
             <a class="brand" href="/">
-              <svg class="brand-mark" viewBox="0 0 10 10" aria-hidden="true">
-                {brandMarkPixels.map((pixel) => (
-                  <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+              <svg class="brand-mark" viewBox="0 0 16 16" aria-hidden="true">
+                {brandSpritePixels.map((pixel) => (
+                  <rect x={pixel.x} y={pixel.y} width="1" height="1" fill={pixel.fill} />
                 ))}
               </svg>
               Helmr
