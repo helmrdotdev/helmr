@@ -8,7 +8,7 @@ export default defineConfig({
   },
   markdown: {
     shikiConfig: {
-      theme: "min-light",
+      theme: "css-variables",
     },
   },
 });
