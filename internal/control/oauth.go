@@ -17,7 +17,7 @@ type githubOAuthProvider struct {
 	userEmailsURL string
 }
 
-func newGitHubOAuthProvider(clientID string, clientSecret string, publicURL *url.URL) authProvider {
+func NewGitHubOAuthProvider(clientID string, clientSecret string, publicURL *url.URL) AuthProvider {
 	redirect := publicURL.ResolveReference(&url.URL{Path: "/auth/github/callback"}).String()
 	return &githubOAuthProvider{
 		config: oauth2.Config{

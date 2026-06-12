@@ -14,7 +14,7 @@ import (
 )
 
 func TestConsoleFallbackServesIndex(t *testing.T) {
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	req := httptest.NewRequest(http.MethodGet, "/auth/device?user_code=ABCD-EFGH", nil)
 	rec := httptest.NewRecorder()
 
@@ -44,7 +44,7 @@ func TestConsoleAssetsUseImmutableCache(t *testing.T) {
 		t.Fatal("no built javascript asset found")
 	}
 
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	req := httptest.NewRequest(http.MethodGet, "/"+matches[0], nil)
 	rec := httptest.NewRecorder()
 
@@ -62,7 +62,7 @@ func TestConsoleAssetsUseImmutableCache(t *testing.T) {
 }
 
 func TestUnknownAPIPathReturnsJSONNotIndex(t *testing.T) {
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	req := httptest.NewRequest(http.MethodGet, "/api/missing", nil)
 	rec := httptest.NewRecorder()
 
@@ -77,7 +77,7 @@ func TestUnknownAPIPathReturnsJSONNotIndex(t *testing.T) {
 }
 
 func TestMissingConsoleAssetReturnsNotFound(t *testing.T) {
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	req := httptest.NewRequest(http.MethodGet, "/assets/missing.js", nil)
 	rec := httptest.NewRecorder()
 

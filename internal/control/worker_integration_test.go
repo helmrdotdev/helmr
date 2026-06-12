@@ -36,13 +36,7 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	queries, pool := newServerPostgresTestDB(t, ctx)
 	dispatchQueue := newTestDispatchQueue()
 	run := seedServerQueuedRun(t, ctx, queries, pool, dispatchQueue)
-	handler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(queries),
-		WithDispatchQueue(dispatchQueue),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-	)
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: queries, DispatchQueue: dispatchQueue, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 	workerBearer := mintPostgresTestWorkerToken(t, ctx, pool, queries, "worker-1")
 
 	claim := claimRunViaHTTP(t, handler, workerBearer)
@@ -172,12 +166,7 @@ func TestWorkerCompleteDeploymentBuildRejectsStaleLeaseBeforeRecordingArtifactsW
 	}); err != nil {
 		t.Fatal(err)
 	}
-	handler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDBTX(pool),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-	)
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DBTX: pool, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 	workerBearer := mintPostgresTestWorkerToken(t, ctx, pool, queries, "build-worker-1")
 	leaseResponse := postWorkerJSON[api.WorkerDeploymentBuildLeaseResponse](t, handler, workerBearer, "/api/worker/deployments/lease", api.WorkerDeploymentBuildLeaseRequest{
 		Capabilities: testWorkerCapabilities(),
@@ -209,13 +198,7 @@ func TestWorkerHTTPRejectsNegativeReleaseUsageWithPostgres(t *testing.T) {
 	queries, pool := newServerPostgresTestDB(t, ctx)
 	dispatchQueue := newTestDispatchQueue()
 	seedServerQueuedRun(t, ctx, queries, pool, dispatchQueue)
-	handler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(queries),
-		WithDispatchQueue(dispatchQueue),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-	)
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: queries, DispatchQueue: dispatchQueue, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 	workerBearer := mintPostgresTestWorkerToken(t, ctx, pool, queries, "worker-negative-usage")
 	claim := claimRunViaHTTP(t, handler, workerBearer)
 	exitCode := int32(0)
@@ -235,13 +218,7 @@ func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 	dispatchQueue := newTestDispatchQueue()
 	first := seedServerQueuedRun(t, ctx, queries, pool, dispatchQueue)
 	second := seedServerQueuedRun(t, ctx, queries, pool, dispatchQueue)
-	handler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(queries),
-		WithDispatchQueue(dispatchQueue),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-	)
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: queries, DispatchQueue: dispatchQueue, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 	workerBearer := mintPostgresTestWorkerToken(t, ctx, pool, queries, "worker-1")
 	capabilities := testWorkerCapabilities()
 	capabilities.MaxVCPUs = 4

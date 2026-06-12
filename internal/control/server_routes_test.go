@@ -13,7 +13,7 @@ import (
 )
 
 func TestControlRoutes(t *testing.T) {
-	handler := New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	routes, ok := handler.(chi.Routes)
 	if !ok {
 		t.Fatalf("control.New returned %T, want chi.Routes", handler)

@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -27,7 +28,7 @@ func TestMagicLinkStartSendsLoginLinkForExistingMember(t *testing.T) {
 	store := newMagicLinkStartStore()
 	store.loginUser = db.User{ID: ids.ToPG(ids.New()), DisplayName: "user"}
 	mailer := &fakeMagicLinkEmailSender{}
-	handler := newMagicLinkStartServerWithOptions(store, mailer, WithMagicLinkDebugURLs(true))
+	handler := newMagicLinkStartServerWithConfig(store, mailer, testServerConfig{MagicLinkDebugURLs: true})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"User@Example.Test","next":"/runs"}`))
 	rec := httptest.NewRecorder()
 
@@ -54,7 +55,7 @@ func TestMagicLinkStartDeliveryFailureMarksLinkFailedAndKeepsOldLinks(t *testing
 	store := newMagicLinkStartStore()
 	store.loginUser = db.User{ID: ids.ToPG(ids.New()), DisplayName: "user"}
 	mailer := &fakeMagicLinkEmailSender{err: errors.New("smtp failed")}
-	handler := newMagicLinkStartServerWithOptions(store, mailer, WithMagicLinkDebugURLs(true))
+	handler := newMagicLinkStartServerWithConfig(store, mailer, testServerConfig{MagicLinkDebugURLs: true})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"user@example.test"}`))
 	rec := httptest.NewRecorder()
 
@@ -71,7 +72,7 @@ func TestMagicLinkStartDeliveryFailureMarksLinkFailedAndKeepsOldLinks(t *testing
 func TestMagicLinkStartWithoutMailerFailsInsteadOfLoggingByDefault(t *testing.T) {
 	store := newMagicLinkStartStore()
 	store.loginUser = db.User{ID: ids.ToPG(ids.New()), DisplayName: "user"}
-	handler := newMagicLinkStartServerWithOptions(store, nil)
+	handler := newMagicLinkStartServerWithConfig(store, nil, testServerConfig{})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"user@example.test"}`))
 	rec := httptest.NewRecorder()
 
@@ -134,7 +135,7 @@ func TestMagicLinkStartSendsInviteAcceptLink(t *testing.T) {
 		Role:         db.OrgMemberRoleDeveloper,
 	}
 	mailer := &fakeMagicLinkEmailSender{}
-	handler := newMagicLinkStartServerWithOptions(store, mailer, WithMagicLinkDebugURLs(true))
+	handler := newMagicLinkStartServerWithConfig(store, mailer, testServerConfig{MagicLinkDebugURLs: true})
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/invite/start", bytes.NewBufferString(`{"token":"invite-token"}`)))
@@ -219,14 +220,19 @@ type fakeMagicLinkEmailSender struct {
 	sent     chan magicLinkMessage
 }
 
-func (m *fakeMagicLinkEmailSender) SendEmail(_ context.Context, message emailMessage) error {
+func (m *fakeMagicLinkEmailSender) SendEmail(_ context.Context, message email.Message) error {
 	if m.err != nil {
 		return m.err
 	}
-	if message.magicLink == nil {
+	if message.MagicLink == nil {
 		return errors.New("expected magic link email")
 	}
-	magicLink := *message.magicLink
+	magicLink := magicLinkMessage{
+		Email:     message.MagicLink.Email,
+		Purpose:   db.MagicLinkPurpose(message.MagicLink.Purpose),
+		URL:       message.MagicLink.URL,
+		ExpiresAt: message.MagicLink.ExpiresAt,
+	}
 	m.messages = append(m.messages, magicLink)
 	if m.sent != nil {
 		m.sent <- magicLink
@@ -249,23 +255,19 @@ func newMagicLinkStartStore() *magicLinkStartStore {
 }
 
 func newMagicLinkStartServer(store *magicLinkStartStore, mailer *fakeMagicLinkEmailSender) http.Handler {
-	return newMagicLinkStartServerWithOptions(store, mailer)
+	return newMagicLinkStartServerWithConfig(store, mailer, testServerConfig{})
 }
 
-func newMagicLinkStartServerWithOptions(store *magicLinkStartStore, mailer *fakeMagicLinkEmailSender, opts ...Option) http.Handler {
-	options := []Option{
-		WithDB(store),
-		WithUserAuth(memberTestAuthSecret, "https://helmr.example.test"),
-		func(server *Server) { server.tx = store },
-	}
+func newMagicLinkStartServerWithConfig(store *magicLinkStartStore, mailer *fakeMagicLinkEmailSender, cfg testServerConfig) http.Handler {
+	cfg.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg.DB = store
+	cfg.TX = store
+	cfg.AuthSecret = []byte(memberTestAuthSecret)
+	cfg.PublicURL = mustParseTestURL("https://helmr.example.test")
 	if mailer != nil {
-		options = append(options, WithEmailSender(mailer))
+		cfg.Mailer = mailer
 	}
-	options = append(options, opts...)
-	return New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		options...,
-	)
+	return newTestServer(cfg)
 }
 
 func (s *magicLinkStartStore) GetMagicLinkLoginUser(context.Context, pgtype.Text) (db.User, error) {
@@ -437,11 +439,7 @@ func newMagicLinkFinishDBTX(purpose db.MagicLinkPurpose) *magicLinkFinishDBTX {
 }
 
 func newMagicLinkFinishServer(dbtx *magicLinkFinishDBTX) http.Handler {
-	return New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDBTX(dbtx),
-		WithUserAuth(memberTestAuthSecret, "https://helmr.example.test"),
-	)
+	return newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DBTX: dbtx, AuthSecret: []byte(memberTestAuthSecret), PublicURL: mustParseTestURL("https://helmr.example.test")})
 }
 
 func magicLinkFinishRequest(token string) *http.Request {

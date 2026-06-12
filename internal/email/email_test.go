@@ -1,4 +1,4 @@
-package control
+package email
 
 import (
 	"context"
@@ -11,9 +11,9 @@ import (
 
 func TestResendEmailSenderSendsPlainTextEmail(t *testing.T) {
 	service := &recordingResendEmailService{}
-	sender := resendEmailSender{from: "Helmr <noreply@example.test>", emails: service}
+	sender := ResendSender{from: "Helmr <noreply@example.test>", emails: service}
 
-	err := sender.SendEmail(context.Background(), emailMessage{
+	err := sender.SendEmail(context.Background(), Message{
 		To:             "Owner <owner@example.test>",
 		Subject:        "Hello\nWorld",
 		PlainText:      "line one\r\nline two",
@@ -41,9 +41,9 @@ func TestResendEmailSenderSendsPlainTextEmail(t *testing.T) {
 
 func TestResendEmailSenderSendsBareRecipientAddressWithoutAngleBrackets(t *testing.T) {
 	service := &recordingResendEmailService{}
-	sender := resendEmailSender{from: "noreply@example.test", emails: service}
+	sender := ResendSender{from: "noreply@example.test", emails: service}
 
-	if err := sender.SendEmail(context.Background(), emailMessage{To: "owner@example.test", Subject: "Hello"}); err != nil {
+	if err := sender.SendEmail(context.Background(), Message{To: "owner@example.test", Subject: "Hello"}); err != nil {
 		t.Fatal(err)
 	}
 	if service.request.From != "noreply@example.test" || strings.Join(service.request.To, ",") != "owner@example.test" {
@@ -52,22 +52,22 @@ func TestResendEmailSenderSendsBareRecipientAddressWithoutAngleBrackets(t *testi
 }
 
 func TestResendEmailSenderRejectsInvalidAddresses(t *testing.T) {
-	sender := resendEmailSender{from: "noreply@example.test", emails: &recordingResendEmailService{}}
-	if err := sender.SendEmail(context.Background(), emailMessage{To: "bad address", Subject: "Hello"}); err == nil {
+	sender := ResendSender{from: "noreply@example.test", emails: &recordingResendEmailService{}}
+	if err := sender.SendEmail(context.Background(), Message{To: "bad address", Subject: "Hello"}); err == nil {
 		t.Fatal("expected invalid recipient error")
 	}
 	sender.from = "bad address"
-	if err := sender.SendEmail(context.Background(), emailMessage{To: "owner@example.test", Subject: "Hello"}); err == nil {
+	if err := sender.SendEmail(context.Background(), Message{To: "owner@example.test", Subject: "Hello"}); err == nil {
 		t.Fatal("expected invalid sender error")
 	}
 }
 
 func TestResendEmailSenderPropagatesSendError(t *testing.T) {
-	sender := resendEmailSender{
+	sender := ResendSender{
 		from:   "noreply@example.test",
 		emails: &recordingResendEmailService{err: errors.New("resend failed")},
 	}
-	if err := sender.SendEmail(context.Background(), emailMessage{To: "owner@example.test", Subject: "Hello"}); err == nil || !strings.Contains(err.Error(), "resend failed") {
+	if err := sender.SendEmail(context.Background(), Message{To: "owner@example.test", Subject: "Hello"}); err == nil || !strings.Contains(err.Error(), "resend failed") {
 		t.Fatalf("error = %v", err)
 	}
 }

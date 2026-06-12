@@ -184,27 +184,20 @@ func testWaitpointPolicyServer(store *waitpointPolicyStore) http.Handler {
 }
 
 func testWaitpointPolicyServerWithPermissions(store *waitpointPolicyStore, permissions []auth.Permission) http.Handler {
-	return New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{
-			kind:          auth.ActorKindAPIKey,
-			projectID:     testProjectIDString(),
-			environmentID: testEnvironmentIDString(),
-			permissions:   permissions,
-		}),
+	return newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{
+		kind:          auth.ActorKindAPIKey,
+		projectID:     testProjectIDString(),
+		environmentID: testEnvironmentIDString(),
+		permissions:   permissions,
+	}},
 	)
 }
 
 func testWaitpointPolicySessionServer(store *waitpointPolicyStore, role auth.Role) http.Handler {
-	return New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{
-			kind: auth.ActorKindSession,
-			role: role,
-		}),
-		WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://helmr.example.test"),
+	return newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{
+		kind: auth.ActorKindSession,
+		role: role,
+	}, AuthSecret: []byte("abcdefghijabcdefghijabcdefghij12"), PublicURL: mustParseTestURL("https://helmr.example.test")},
 	)
 }
 

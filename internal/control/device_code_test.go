@@ -40,12 +40,7 @@ func TestDeviceTokenIssuesSessionToken(t *testing.T) {
 			ExpiresAt:       pgTimeToPG(time.Now().Add(time.Minute)),
 		},
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithUserAuth(authSecret, "https://helmr.example.test"),
-		WithSessionTTL(time.Hour),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte(authSecret), PublicURL: mustParseTestURL("https://helmr.example.test"), SessionTTL: time.Hour})
 	body, err := json.Marshal(api.DeviceTokenRequest{DeviceCode: deviceCode})
 	if err != nil {
 		t.Fatal(err)
@@ -83,11 +78,7 @@ func TestDeviceTokenIssuesSessionToken(t *testing.T) {
 func TestDeviceStartCreatesPendingCodeWithoutOrganization(t *testing.T) {
 	authSecret := "abcdefghijabcdefghijabcdefghij12"
 	store := &deviceTokenStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithUserAuth(authSecret, "https://helmr.example.test"),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte(authSecret), PublicURL: mustParseTestURL("https://helmr.example.test")})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/device/start", nil)
 	rec := httptest.NewRecorder()
 

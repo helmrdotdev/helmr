@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
+	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -113,12 +115,17 @@ func run(log *slog.Logger) error {
 			return fmt.Errorf("configure async bus: %w", err)
 		}
 	}
+	publicURL, err := url.Parse(cfg.PublicURL)
+	if err != nil {
+		return fmt.Errorf("parse public URL: %w", err)
+	}
 	notificationWorker, err := control.NewWaitpointNotificationWorker(
 		log,
 		queries,
 		asyncSubscriber,
-		control.WithUserAuth(cfg.AuthSecret, cfg.PublicURL),
-		dispatcherEmailSenderOption(cfg),
+		configuredEmailSender(log, cfg),
+		[]byte(cfg.AuthSecret),
+		publicURL,
 	)
 	if err != nil {
 		return fmt.Errorf("configure waitpoint notification worker: %w", err)
@@ -203,15 +210,15 @@ func run(log *slog.Logger) error {
 	return firstErr
 }
 
-func dispatcherEmailSenderOption(cfg config.Dispatcher) control.Option {
+func configuredEmailSender(log *slog.Logger, cfg config.Dispatcher) email.Sender {
 	switch cfg.EmailProvider {
 	case config.EmailProviderSMTP:
-		return control.WithSMTPEmailSender(cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.EmailFrom)
+		return email.NewSMTPSender(cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.EmailFrom)
 	case config.EmailProviderResend:
-		return control.WithResendEmailSender(cfg.ResendAPIKey, cfg.EmailFrom)
+		return email.NewResendSender(cfg.ResendAPIKey, cfg.EmailFrom)
 	case config.EmailProviderLog:
-		return control.WithLogEmailSender()
+		return email.LogSender{Log: log}
 	default:
-		return control.WithDisabledEmailSender()
+		return email.Unconfigured{}
 	}
 }

@@ -13,7 +13,7 @@ func TestGitHubOAuthProviderUsesGitHubAuthCallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := newGitHubOAuthProvider("client-id", "client-secret", publicURL)
+	provider := NewGitHubOAuthProvider("client-id", "client-secret", publicURL)
 
 	redirectURL, err := url.Parse(provider.RedirectURL("state", "verifier"))
 	if err != nil {
@@ -60,7 +60,7 @@ func TestGitHubOAuthProviderFallsBackToPrimaryVerifiedEmail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := newGitHubOAuthProvider("client-id", "client-secret", publicURL).(*githubOAuthProvider)
+	provider := NewGitHubOAuthProvider("client-id", "client-secret", publicURL).(*githubOAuthProvider)
 	provider.config.Endpoint.TokenURL = server.URL + "/token"
 	provider.userURL = server.URL + "/user"
 	provider.userEmailsURL = server.URL + "/user/emails"
@@ -120,7 +120,7 @@ func TestGitHubOAuthProviderAllowsMissingPrivateEmail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := newGitHubOAuthProvider("client-id", "client-secret", publicURL).(*githubOAuthProvider)
+	provider := NewGitHubOAuthProvider("client-id", "client-secret", publicURL).(*githubOAuthProvider)
 	provider.config.Endpoint.TokenURL = server.URL + "/token"
 	provider.userURL = server.URL + "/user"
 	provider.userEmailsURL = server.URL + "/user/emails"
@@ -169,7 +169,7 @@ func TestGitHubOAuthProviderUsesPrimaryVerifiedEmailOverPublicEmail(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := newGitHubOAuthProvider("client-id", "client-secret", publicURL).(*githubOAuthProvider)
+	provider := NewGitHubOAuthProvider("client-id", "client-secret", publicURL).(*githubOAuthProvider)
 	provider.config.Endpoint.TokenURL = server.URL + "/token"
 	provider.userURL = server.URL + "/user"
 	provider.userEmailsURL = server.URL + "/user/emails"

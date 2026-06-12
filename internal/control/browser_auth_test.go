@@ -21,12 +21,7 @@ import (
 
 func TestLoginStartCreatesFlowCookie(t *testing.T) {
 	provider := &fakeAuthProvider{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(&browserAuthStore{}),
-		WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://helmr.example.test"),
-		WithAuthProvider(provider),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &browserAuthStore{}, AuthSecret: []byte("abcdefghijabcdefghijabcdefghij12"), PublicURL: mustParseTestURL("https://helmr.example.test"), AuthProvider: provider})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/github/start", strings.NewReader(`{"next":"/runs"}`))
 	rec := httptest.NewRecorder()
 
@@ -52,12 +47,7 @@ func TestLoginStartCreatesFlowCookie(t *testing.T) {
 
 func TestLoginStartTrustsCloudFrontViewerProto(t *testing.T) {
 	provider := &fakeAuthProvider{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(&browserAuthStore{}),
-		WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://d123.cloudfront.net"),
-		WithAuthProvider(provider),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &browserAuthStore{}, AuthSecret: []byte("abcdefghijabcdefghijabcdefghij12"), PublicURL: mustParseTestURL("https://d123.cloudfront.net"), AuthProvider: provider})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/github/start", strings.NewReader(`{}`))
 	req.Header.Set("cloudfront-forwarded-proto", "https")
 	rec := httptest.NewRecorder()
@@ -75,12 +65,7 @@ func TestLoginStartTrustsCloudFrontViewerProto(t *testing.T) {
 
 func TestLoginStartCreatesLoginFlowForFreshInstance(t *testing.T) {
 	provider := &fakeAuthProvider{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(&browserAuthStore{}),
-		WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://helmr.example.test"),
-		WithAuthProvider(provider),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &browserAuthStore{}, AuthSecret: []byte("abcdefghijabcdefghijabcdefghij12"), PublicURL: mustParseTestURL("https://helmr.example.test"), AuthProvider: provider})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/github/start", strings.NewReader(`{"next":"/runs"}`))
 	rec := httptest.NewRecorder()
 
@@ -99,12 +84,7 @@ func TestLoginStartCreatesLoginFlowForFreshInstance(t *testing.T) {
 
 func TestLoginStartCreatesLoginFlowWithoutOrganization(t *testing.T) {
 	provider := &fakeAuthProvider{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(&browserAuthStore{}),
-		WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://helmr.example.test"),
-		WithAuthProvider(provider),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &browserAuthStore{}, AuthSecret: []byte("abcdefghijabcdefghijabcdefghij12"), PublicURL: mustParseTestURL("https://helmr.example.test"), AuthProvider: provider})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/github/start", strings.NewReader(`{"next":"/runs"}`))
 	rec := httptest.NewRecorder()
 
@@ -127,12 +107,7 @@ func TestLoginCallbackIssuesSession(t *testing.T) {
 		ProfileImageURL: "https://avatars.example.test/octocat.png",
 		Claims:          json.RawMessage(`{"login":"octocat"}`),
 	}}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://helmr.example.test"),
-		WithAuthProvider(provider),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte("abcdefghijabcdefghijabcdefghij12"), PublicURL: mustParseTestURL("https://helmr.example.test"), AuthProvider: provider})
 
 	start := httptest.NewRecorder()
 	server.ServeHTTP(start, httptest.NewRequest(http.MethodPost, "/api/auth/github/start", bytes.NewReader([]byte(`{}`))))

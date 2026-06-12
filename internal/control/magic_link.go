@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -54,7 +55,7 @@ func (s *Server) magicLinkStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) magicLinkDeliveryConfigured() bool {
-	_, unconfigured := s.mailer.(unconfiguredEmailSender)
+	_, unconfigured := s.mailer.(email.Unconfigured)
 	return !unconfigured
 }
 
@@ -158,8 +159,8 @@ func (s *Server) deliverMagicLink(ctx context.Context, message magicLinkMessage,
 	return s.markMagicLinkSent(ctx, purpose, email, orgID, invitationID, linkID)
 }
 
-func magicLinkEmailMessage(message magicLinkMessage) emailMessage {
-	return emailMessage{
+func magicLinkEmailMessage(message magicLinkMessage) email.Message {
+	return email.Message{
 		To:      message.Email,
 		Subject: magicLinkSubject(message.Purpose),
 		PlainText: fmt.Sprintf(
@@ -167,7 +168,12 @@ func magicLinkEmailMessage(message magicLinkMessage) emailMessage {
 			message.URL,
 			message.ExpiresAt.Format(time.RFC3339),
 		),
-		magicLink: &message,
+		MagicLink: &email.MagicLink{
+			Email:     message.Email,
+			Purpose:   string(message.Purpose),
+			URL:       message.URL,
+			ExpiresAt: message.ExpiresAt,
+		},
 	}
 }
 

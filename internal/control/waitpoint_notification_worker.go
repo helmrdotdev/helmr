@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/url"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/asyncbus"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/sync/errgroup"
@@ -28,14 +30,14 @@ type WaitpointNotificationWorker struct {
 	batchSize      int32
 }
 
-func NewWaitpointNotificationWorker(log *slog.Logger, store db.Querier, queue asyncbus.Subscriber, opts ...Option) (*WaitpointNotificationWorker, error) {
+func NewWaitpointNotificationWorker(log *slog.Logger, store db.Querier, queue asyncbus.Subscriber, mailer email.Sender, authSecret []byte, publicURL *url.URL) (*WaitpointNotificationWorker, error) {
 	if store == nil {
 		return nil, errors.New("waitpoint notification store is required")
 	}
-	server := &Server{log: log, db: store, mailer: unconfiguredEmailSender{}}
-	for _, opt := range opts {
-		opt(server)
+	if mailer == nil {
+		mailer = email.Unconfigured{}
 	}
+	server := &Server{log: log, db: store, mailer: mailer, authSecret: authSecret, publicURL: publicURL}
 	if server.log == nil {
 		server.log = slog.Default()
 	}

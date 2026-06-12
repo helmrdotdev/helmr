@@ -21,12 +21,7 @@ import (
 
 func TestAPIKeysRequireOwnerSession(t *testing.T) {
 	store := &apiKeyStore{role: db.OrgMemberRoleOwner}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://helmr.example.test"),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, AuthSecret: []byte("abcdefghijabcdefghijabcdefghij12"), PublicURL: mustParseTestURL("https://helmr.example.test")})
 	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
@@ -397,11 +392,7 @@ func (s *apiKeyStore) RevokeAPIKey(_ context.Context, arg db.RevokeAPIKeyParams)
 }
 
 func testAPIKeyServer(store *apiKeyStore) http.Handler {
-	return New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://helmr.example.test"),
-	)
+	return newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte("abcdefghijabcdefghijabcdefghij12"), PublicURL: mustParseTestURL("https://helmr.example.test")})
 }
 
 func addSessionCookie(req *http.Request) {

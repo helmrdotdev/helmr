@@ -6,22 +6,35 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 )
 
 func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
-	handler := control.New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		control.WithDB(&emptyStore{}),
-		control.WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://helmr.example.test"),
-		control.WithMagicLinkDebugURLs(true),
-		emailSenderOption(config.Control{EmailProvider: config.EmailProviderNone}),
-	)
+	store := &emptyStore{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	publicURL, err := url.Parse("https://helmr.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := control.NewServer(control.ServerConfig{
+		Log:                log,
+		DB:                 store,
+		Auth:               auth.NewDBAuthenticator(store),
+		AuthSecret:         []byte("abcdefghijabcdefghijabcdefghij12"),
+		PublicURL:          publicURL,
+		MagicLinkDebugURLs: true,
+		Mailer:             configuredEmailSender(log, config.Control{EmailProvider: config.EmailProviderNone}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"user@example.test"}`))
 	rec := httptest.NewRecorder()
 

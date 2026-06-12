@@ -146,7 +146,7 @@ func TestCreateGetAndListRun(t *testing.T) {
 		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
 	}
 	runEnqueuer := &fakeRunEnqueuer{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}), WithRunEnqueuer(runEnqueuer))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}, RunEnqueuer: runEnqueuer})
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID:  "deploy",
@@ -280,12 +280,7 @@ func TestDeploymentTaskSecretNames(t *testing.T) {
 
 func TestCreateRunWithoutSecretsAllowsDeveloper(t *testing.T) {
 	store := &fakeStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{role: auth.RoleDeveloper}),
-		WithSecrets(fakeSecrets{}),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{role: auth.RoleDeveloper}, Secrets: fakeSecrets{}})
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID: "deploy",
 	})
@@ -304,11 +299,7 @@ func TestCreateRunWithoutSecretsAllowsDeveloper(t *testing.T) {
 
 func TestAPIKeyRunCreateRejectsActorWithoutEnvironmentScope(t *testing.T) {
 	store := &fakeStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{kind: auth.ActorKindAPIKey, role: auth.RoleOwner}),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{kind: auth.ActorKindAPIKey, role: auth.RoleOwner}})
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID: "deploy",
 	})
@@ -333,15 +324,12 @@ func TestAPIKeyRunCreateRejectsActorWithoutEnvironmentScope(t *testing.T) {
 
 func TestAPIKeyRunCreateUsesActorEnvironmentScope(t *testing.T) {
 	store := &fakeStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{
-			kind:          auth.ActorKindAPIKey,
-			projectID:     testProjectIDString(),
-			environmentID: testEnvironmentIDString(),
-			permissions:   []auth.Permission{auth.PermissionRunsCreate},
-		}),
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{
+		kind:          auth.ActorKindAPIKey,
+		projectID:     testProjectIDString(),
+		environmentID: testEnvironmentIDString(),
+		permissions:   []auth.Permission{auth.PermissionRunsCreate},
+	}},
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID: "deploy",
@@ -364,15 +352,12 @@ func TestAPIKeyRunCreateUsesActorEnvironmentScope(t *testing.T) {
 
 func TestAPIKeyRunCreateRejectsExplicitScopeOverride(t *testing.T) {
 	store := &fakeStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{
-			kind:          auth.ActorKindAPIKey,
-			projectID:     testProjectIDString(),
-			environmentID: testEnvironmentIDString(),
-			permissions:   []auth.Permission{auth.PermissionRunsCreate},
-		}),
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{
+		kind:          auth.ActorKindAPIKey,
+		projectID:     testProjectIDString(),
+		environmentID: testEnvironmentIDString(),
+		permissions:   []auth.Permission{auth.PermissionRunsCreate},
+	}},
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID:        "deploy",
@@ -399,16 +384,12 @@ func TestAPIKeyRunCreateAllowsDeclaredTaskSecrets(t *testing.T) {
 	store := &fakeStore{
 		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{
-			kind:          auth.ActorKindAPIKey,
-			projectID:     testProjectIDString(),
-			environmentID: testEnvironmentIDString(),
-			permissions:   []auth.Permission{auth.PermissionRunsCreate},
-		}),
-		WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}),
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{
+		kind:          auth.ActorKindAPIKey,
+		projectID:     testProjectIDString(),
+		environmentID: testEnvironmentIDString(),
+		permissions:   []auth.Permission{auth.PermissionRunsCreate},
+	}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}},
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID: "deploy",
@@ -430,12 +411,7 @@ func TestAPIKeyRunCreateAllowsDeclaredTaskSecrets(t *testing.T) {
 }
 
 func TestDeviceAuthorizationRequiresSession(t *testing.T) {
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(&fakeStore{}),
-		WithAuthenticator(fakeAuth{}),
-		WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://helmr.example.test"),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &fakeStore{}, Auth: fakeAuth{}, AuthSecret: []byte("abcdefghijabcdefghijabcdefghij12"), PublicURL: mustParseTestURL("https://helmr.example.test")})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/device/approve", strings.NewReader(`{"user_code":"ABCD-EFGH"}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
@@ -484,7 +460,7 @@ func TestSessionRefreshWriterPassesFlush(t *testing.T) {
 func TestCreateRunReturnsExistingRunForActiveIdempotencyKey(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer})
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID:  "deploy",
@@ -531,7 +507,7 @@ func TestCreateRunReturnsExistingRunForActiveIdempotencyKey(t *testing.T) {
 
 func TestCreateRunRejectsIdempotencyKeyReuseWithDifferentRequest(t *testing.T) {
 	store := &fakeStore{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
 
 	firstBody, err := json.Marshal(api.CreateRunRequest{
 		TaskID:  "deploy",
@@ -572,7 +548,7 @@ func TestCreateRunRejectsIdempotencyKeyReuseWithDifferentRequest(t *testing.T) {
 func TestCreateRunReturnsActiveRunEvenWhenIdempotencyTTLExpired(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer})
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID:  "deploy",
@@ -618,7 +594,7 @@ func TestCreateRunReturnsActiveRunEvenWhenIdempotencyTTLExpired(t *testing.T) {
 func TestCreateRunClearsExpiredRunIdempotencyKey(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer})
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID:  "deploy",
@@ -887,7 +863,7 @@ func TestCancelRunReturnsAppliedOperationAfterNoRowsRace(t *testing.T) {
 		},
 		cancelRunErr: pgx.ErrNoRows,
 	}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+ids.MustFromPG(runID).String()+"/cancel", strings.NewReader(`{"reason":"stop"}`))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -941,7 +917,7 @@ func TestCancelRunRejectsMismatchedIdempotencyRequest(t *testing.T) {
 			CreatedAt:      testTime(),
 		},
 	}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+ids.MustFromPG(runID).String()+"/cancel", strings.NewReader(`{"reason":"stop","force":true,"idempotency_key":"cancel-key"}`))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -1023,7 +999,7 @@ func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) 
 		CreatedAt:            testTime(),
 	}}}
 	runEnqueuer := &fakeRunEnqueuer{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer})
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID:  "deploy",
@@ -1070,7 +1046,7 @@ func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) 
 
 func TestCreateRunIdempotencyHitIncludesPendingWaitpoint(t *testing.T) {
 	store := &fakeStore{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID:  "deploy",
@@ -1117,7 +1093,7 @@ func TestCreateRunIdempotencyHitIncludesPendingWaitpoint(t *testing.T) {
 
 func TestCreateRunHashesLiteralHexIdempotencyKeys(t *testing.T) {
 	store := &fakeStore{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
 
 	rawKey := strings.Repeat("a", sha256.Size*2)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
@@ -1214,7 +1190,7 @@ func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
 
 func TestCreateRunRejectsInvalidTaskID(t *testing.T) {
 	store := &fakeStore{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID: "bad task",
@@ -1238,7 +1214,7 @@ func TestCreateRunRejectsInvalidTaskID(t *testing.T) {
 
 func TestListRunsQuery(t *testing.T) {
 	store := &fakeStore{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
 	runID := ids.New()
 	store.run = db.Run{
 		ID:               ids.ToPG(runID),
@@ -1269,16 +1245,12 @@ func TestListRunsQuery(t *testing.T) {
 
 func TestAPIKeyListRunsUsesActorEnvironmentScope(t *testing.T) {
 	store := &fakeStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{
-			kind:          auth.ActorKindAPIKey,
-			projectID:     testProjectIDString(),
-			environmentID: testEnvironmentIDString(),
-			permissions:   []auth.Permission{auth.PermissionRunsRead},
-		}),
-		WithSecrets(fakeSecrets{}),
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{
+		kind:          auth.ActorKindAPIKey,
+		projectID:     testProjectIDString(),
+		environmentID: testEnvironmentIDString(),
+		permissions:   []auth.Permission{auth.PermissionRunsRead},
+	}, Secrets: fakeSecrets{}},
 	)
 	runID := ids.New()
 	store.run = db.Run{
@@ -1371,7 +1343,7 @@ func TestListRunsIncludesPendingWaitpointDeliveries(t *testing.T) {
 			},
 		},
 	}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
 	req := httptest.NewRequest(http.MethodGet, "/api/runs?status=live", nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
@@ -1431,7 +1403,7 @@ func TestListRunsRunningFilterReturnsLeasedAsPublicRunning(t *testing.T) {
 					UpdatedAt:        testTime(),
 				},
 			}
-			server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+			server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
 			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
 			req.Header.Set("authorization", "Bearer test-key")
@@ -1503,7 +1475,7 @@ func TestGetRunLogs(t *testing.T) {
 		stdout: []byte("hello\n"),
 		stderr: []byte("warn\n"),
 	}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs", nil)
 	req.Header.Set("authorization", "Bearer test-key")
@@ -1541,7 +1513,7 @@ func TestGetRunLogsReportsTruncatedSnapshot(t *testing.T) {
 		logTruncated: true,
 		logCursor:    42,
 	}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs", nil)
 	req.Header.Set("authorization", "Bearer test-key")
@@ -1591,7 +1563,7 @@ func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
 			},
 		},
 	}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs?follow=1&cursor=1", nil)
 	req.Header.Set("authorization", "Bearer test-key")
@@ -1652,7 +1624,7 @@ func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
 			},
 		},
 	}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs?follow=1&cursor=11", nil)
 	req.Header.Set("authorization", "Bearer test-key")
@@ -1825,7 +1797,7 @@ func withCheckpointManifest(manifest api.WorkerCheckpointManifest, edit func(*ap
 
 func TestCreateRunRejectsClientSuppliedBundle(t *testing.T) {
 	store := &fakeStore{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewBufferString(`{
 		"task_id": "deploy",
@@ -1849,12 +1821,7 @@ func TestCreateRunRejectsUnavailableDeclaredSecret(t *testing.T) {
 	store := &fakeStore{
 		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"other": []byte("secret")}}),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"other": []byte("secret")}}})
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID: "deploy",
 	})
@@ -1876,7 +1843,7 @@ func TestCreateRunRejectsUnavailableDeclaredSecret(t *testing.T) {
 
 func TestRunRoutesRequireBearerAuth(t *testing.T) {
 	store := &fakeStore{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/runs", nil)
 	rec := httptest.NewRecorder()
@@ -1888,12 +1855,7 @@ func TestRunRoutesRequireBearerAuth(t *testing.T) {
 }
 
 func TestSetSecret(t *testing.T) {
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(&fakeStore{}),
-		WithAuthenticator(fakeAuth{}),
-		WithSecrets(fakeSecrets{}),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &fakeStore{}, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
 
 	req := httptest.NewRequest(http.MethodPut, "/api/secrets/github-token", bytes.NewBufferString(`{"value":"secret-value"}`))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -1924,12 +1886,7 @@ func TestGetSecretReturnsMetadataOnly(t *testing.T) {
 			UpdatedAt:     testTime(),
 		},
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithSecrets(fakeSecrets{}),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/secrets/github-token", nil)
 	req.Header.Set("authorization", "Bearer test-key")
@@ -1959,12 +1916,7 @@ func TestGetSecretReturnsMetadataOnly(t *testing.T) {
 }
 
 func TestSetSecretRequiresOwner(t *testing.T) {
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(&fakeStore{}),
-		WithAuthenticator(fakeAuth{role: auth.RoleDeveloper}),
-		WithSecrets(fakeSecrets{}),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &fakeStore{}, Auth: fakeAuth{role: auth.RoleDeveloper}, Secrets: fakeSecrets{}})
 
 	req := httptest.NewRequest(http.MethodPut, "/api/secrets/github-token", bytes.NewBufferString(`{"value":"secret-value"}`))
 	req.Header.Set("authorization", "Bearer developer-key")
@@ -1978,12 +1930,7 @@ func TestSetSecretRequiresOwner(t *testing.T) {
 
 func TestDeleteSecret(t *testing.T) {
 	store := &fakeStore{deleteSecretRows: 1}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithSecrets(fakeSecrets{}),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/secrets/github-token", nil)
 	req.Header.Set("authorization", "Bearer test-key")
@@ -1999,12 +1946,7 @@ func TestDeleteSecret(t *testing.T) {
 }
 
 func TestDeleteSecretNotFound(t *testing.T) {
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(&fakeStore{}),
-		WithAuthenticator(fakeAuth{}),
-		WithSecrets(fakeSecrets{}),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &fakeStore{}, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/secrets/github-token", nil)
 	req.Header.Set("authorization", "Bearer test-key")
@@ -2031,17 +1973,13 @@ func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
 		defaultProjectID:     otherProjectID(),
 		defaultEnvironmentID: otherEnvironmentID(),
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{
-			kind:          auth.ActorKindAPIKey,
-			role:          auth.RoleOwner,
-			projectID:     testProjectIDString(),
-			environmentID: testEnvironmentIDString(),
-			permissions:   []auth.Permission{auth.PermissionSecretsWrite},
-		}),
-		WithSecrets(fakeSecrets{}),
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{
+		kind:          auth.ActorKindAPIKey,
+		role:          auth.RoleOwner,
+		projectID:     testProjectIDString(),
+		environmentID: testEnvironmentIDString(),
+		permissions:   []auth.Permission{auth.PermissionSecretsWrite},
+	}, Secrets: fakeSecrets{}},
 	)
 
 	for _, tt := range []struct {
@@ -2092,7 +2030,7 @@ func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
 
 func TestCreateRunWithUnknownVersionReturnsVersionError(t *testing.T) {
 	store := &fakeStore{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID:  "deploy",
@@ -2133,13 +2071,7 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 		},
 		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 
 	capabilities := testWorkerCapabilities()
@@ -2283,12 +2215,7 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 
 func TestWorkerRunLeaseRejectsUnsupportedProtocol(t *testing.T) {
 	store := &fakeStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 
 	capabilities := testWorkerCapabilities()
@@ -2344,13 +2271,7 @@ func TestWorkerReleaseRejectsUnknownFields(t *testing.T) {
 	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
 	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-		WithEventStream(eventStream),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour, EventStream: eventStream})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
@@ -2406,12 +2327,7 @@ func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
 		executionWorkerInstanceID: ids.ToPG(workerID),
 		executionLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth(testWorkerTokenSecret, time.Hour),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour})
 	workerBearer := mintTestWorkerToken(t, server, workerID.String())
 	exitCode := int32(0)
 	body, err := json.Marshal(api.WorkerReleaseRequest{
@@ -2469,12 +2385,7 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 		executionLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 		activeQueueLeaseMissing:   true,
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth(testWorkerTokenSecret, time.Hour),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour})
 	workerBearer := mintTestWorkerToken(t, server, workerID.String())
 	body, err := json.Marshal(api.WorkerReleaseRequest{
 		Lease: api.WorkerRunLease{
@@ -2717,13 +2628,7 @@ func TestWorkerRestoreClaimDoesNotRequireWorkspaceSourceBinding(t *testing.T) {
 	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
 	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-		WithEventStream(eventStream),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour, EventStream: eventStream})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
@@ -2760,13 +2665,7 @@ func TestWorkerRunLeaseFailsRunWhenSecretUnavailable(t *testing.T) {
 		},
 		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"other": []byte("secret-value")}}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"other": []byte("secret-value")}}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
@@ -2807,12 +2706,7 @@ func assertTerminalPayloadFailure(t *testing.T, store *fakeStore, failureKind st
 
 func TestWorkerRoutesRejectUserAPIKey(t *testing.T) {
 	store := &fakeStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -2824,13 +2718,7 @@ func TestWorkerRoutesRejectUserAPIKey(t *testing.T) {
 }
 
 func TestWorkerTokenRejectsWrongSecret(t *testing.T) {
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(&fakeStore{}),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth(testWorkerTokenSecret, time.Hour),
-		WithUserAuth(testWorkerTokenSecret, "http://127.0.0.1:8080"),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &fakeStore{}, Auth: fakeAuth{}, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour, AuthSecret: []byte(testWorkerTokenSecret), PublicURL: mustParseTestURL("http://127.0.0.1:8080")})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/worker/auth/token", bytes.NewBufferString(`{"worker_instance_id":"00000000-0000-0000-0000-000000000401","worker_instance_secret":"wrong"}`))
 	rec := httptest.NewRecorder()
@@ -2848,12 +2736,7 @@ func TestWorkerBootstrapIssuesCredentialForTokenExchange(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &fakeStore{workerBootstrapTokenHash: bootstrapHash}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithWorkerAuth(testWorkerTokenSecret, time.Hour),
-		WithUserAuth(string(authSecret), "http://127.0.0.1:8080"),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour, AuthSecret: []byte(string(authSecret)), PublicURL: mustParseTestURL("http://127.0.0.1:8080")})
 
 	registerBody, err := json.Marshal(api.WorkerRegisterRequest{
 		BootstrapToken: bootstrapToken,
@@ -2900,12 +2783,7 @@ func TestWorkerBootstrapIssuesCredentialForTokenExchange(t *testing.T) {
 
 func TestWorkerRunLeaseRejectsMismatchedWorkerID(t *testing.T) {
 	store := &fakeStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000402")
 	claim := api.WorkerRunLease{
 		ID:                ids.New().String(),
@@ -2931,12 +2809,7 @@ func TestWorkerRunLeaseRejectsMismatchedWorkerID(t *testing.T) {
 
 func TestWorkerRunLeaseRejectsMissingAttemptNumber(t *testing.T) {
 	store := &fakeStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 	claim := api.WorkerRunLease{
 		ID:                ids.New().String(),
@@ -2978,12 +2851,7 @@ func TestWorkerRunLeaseRejectsMismatchedAttemptNumber(t *testing.T) {
 		executionWorkerInstanceID: ids.ToPG(workerID),
 		executionLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth(testWorkerTokenSecret, time.Hour),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour})
 	workerBearer := mintTestWorkerToken(t, server, workerID.String())
 	body, err := json.Marshal(api.WorkerRenewRequest{Lease: api.WorkerRunLease{
 		ID:                sessionID.String(),
@@ -3024,13 +2892,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
 	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-		WithEventStream(eventStream),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour, EventStream: eventStream})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
@@ -3154,7 +3016,7 @@ func TestRunEventsPaginationUsesLookahead(t *testing.T) {
 			CreatedAt: testTime(),
 		})
 	}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/events?limit=2", nil)
 	req.Header.Set("authorization", "Bearer test-key")
@@ -3262,12 +3124,7 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 			UpdatedAt:          testTime(),
 		},
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
@@ -3468,11 +3325,7 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 					RequestedAt: testTime(),
 				},
 			}
-			server := New(
-				slog.New(slog.NewTextHandler(io.Discard, nil)),
-				WithDB(store),
-				WithAuthenticator(fakeAuth{}),
-			)
+			server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}})
 			req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/"+waitpointID.String()+"/respond", strings.NewReader(tt.body))
 			req.Header.Set("authorization", "Bearer test-key")
 			rec := httptest.NewRecorder()
@@ -3520,11 +3373,7 @@ func TestRespondWaitpointReplayIsIdempotent(t *testing.T) {
 			RequestedAt: testTime(),
 		},
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}})
 	for i, wantStatus := range []int{http.StatusNoContent, http.StatusAccepted} {
 		req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/"+waitpointID.String()+"/respond", strings.NewReader(`{"value":{"action":"approve"}}`))
 		req.Header.Set("authorization", "Bearer test-key")
@@ -3563,11 +3412,7 @@ func TestRespondWaitpointRejectsNonRespondableKindInResolvePath(t *testing.T) {
 			RequestedAt: testTime(),
 		},
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}})
 	req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/"+waitpointID.String()+"/respond", strings.NewReader(`{"value":{"action":"approve"}}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
@@ -3602,11 +3447,7 @@ func TestResolveWaitpointReturnsAcceptedWhenRunWaitIsNotResuming(t *testing.T) {
 		},
 		resolveStatus: db.RunWaitStatusWaiting,
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}})
 	req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/"+waitpointID.String()+"/respond", strings.NewReader(`{"value":{"action":"approve"},"external_subject":"reviewer@example.test","metadata":{"source":"api"}}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()

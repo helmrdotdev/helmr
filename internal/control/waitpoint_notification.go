@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -65,7 +66,7 @@ type waitpointView struct {
 
 func (s *Server) emailDeliveryConfigured() bool {
 	switch s.mailer.(type) {
-	case nil, unconfiguredEmailSender:
+	case nil, email.Unconfigured:
 		return false
 	default:
 		return true
@@ -410,7 +411,7 @@ func waitpointPolicyFromSnapshot(waitpoint waitpointView) (resolvedWaitpointPoli
 	return policy, config, true, nil
 }
 
-func waitpointNotificationEmail(to string, run runSummary, waitpoint waitpointView, link string) emailMessage {
+func waitpointNotificationEmail(to string, run runSummary, waitpoint waitpointView, link string) email.Message {
 	runID := ids.MustFromPG(run.ID).String()
 	waitpointID := ids.MustFromPG(waitpoint.ID).String()
 	body := fmt.Sprintf(
@@ -423,7 +424,7 @@ func waitpointNotificationEmail(to string, run runSummary, waitpoint waitpointVi
 		waitpoint.DisplayText,
 		link,
 	)
-	return emailMessage{
+	return email.Message{
 		To:        to,
 		Subject:   "Helmr waitpoint pending: " + run.TaskID,
 		PlainText: body,

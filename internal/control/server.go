@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -36,7 +37,7 @@ const (
 	workerLogRequestBodyLimit = int64(256 << 10)
 )
 
-type secretManager interface {
+type SecretManager interface {
 	Put(ctx context.Context, orgID uuid.UUID, name string, value []byte) (db.Secret, error)
 	PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error)
 	CheckNames(ctx context.Context, orgID uuid.UUID, names []string) error
@@ -49,14 +50,14 @@ type Server struct {
 	log                 *slog.Logger
 	deploymentMode      string
 	db                  db.Querier
-	tx                  txBeginner
+	tx                  TxBeginner
 	readinessDB         db.DBTX
 	auth                auth.Authenticator
 	cas                 cas.Store
-	secrets             secretManager
-	runEnqueuer         runEnqueuer
+	secrets             SecretManager
+	runEnqueuer         RunEnqueuer
 	dispatchQueue       dispatch.Queue
-	scheduleEngine      scheduleRegistrar
+	scheduleEngine      ScheduleRegistrar
 	asyncPublisher      asyncbus.Publisher
 	eventStream         *EventStream
 	workerLeaseScanSeed atomic.Uint64
@@ -66,11 +67,9 @@ type Server struct {
 	setupToken          string
 	authSecret          []byte
 	publicURL           *url.URL
-	authProvider        authProvider
-	mailer              emailSender
+	authProvider        AuthProvider
+	mailer              email.Sender
 	magicLinkDebugURLs  bool
-	githubOAuthClientID string
-	githubOAuthSecret   string
 	sessionTTL          time.Duration
 	magicLinkTTL        time.Duration
 	deviceCodeTTL       time.Duration
@@ -86,216 +85,115 @@ type requestVersionMetadata struct {
 	CLIVersion string
 }
 
-type Option func(*Server)
-
 const (
 	deploymentModeSelfHosted   = "self-hosted"
 	deploymentModeManagedCloud = "managed-cloud"
 )
 
-func WithDeploymentMode(mode string) Option {
-	return func(server *Server) {
-		server.deploymentMode = strings.TrimSpace(mode)
-	}
-}
-
-type runEnqueuer interface {
+type RunEnqueuer interface {
 	EnqueueRun(context.Context, pgtype.UUID, pgtype.UUID) (dispatch.EnqueueResult, error)
 }
 
-type scheduleRegistrar interface {
+type ScheduleRegistrar interface {
 	RegisterNext(context.Context, schedule.Instance) error
 }
 
-type txBeginner interface {
+type TxBeginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
 
 type dbTXBeginner interface {
 	db.DBTX
-	txBeginner
+	TxBeginner
 }
 
-func WithDB(queries db.Querier) Option {
-	return func(server *Server) {
-		server.db = queries
-		if queue, ok := queries.(dispatch.Queue); ok {
-			server.dispatchQueue = queue
-		}
-		if queries != nil && server.auth == nil {
-			server.auth = auth.NewDBAuthenticator(queries)
-		}
-	}
+type ServerConfig struct {
+	Log            *slog.Logger
+	DeploymentMode string
+
+	DB          db.Querier
+	TX          TxBeginner
+	ReadinessDB db.DBTX
+
+	Auth           auth.Authenticator
+	CAS            cas.Store
+	Secrets        SecretManager
+	RunEnqueuer    RunEnqueuer
+	DispatchQueue  dispatch.Queue
+	ScheduleEngine ScheduleRegistrar
+	AsyncPublisher asyncbus.Publisher
+	EventStream    *EventStream
+	Mailer         email.Sender
+	AuthProvider   AuthProvider
+
+	WorkerTokenSecret   []byte
+	WorkerTokenTTL      time.Duration
+	WorkerRegisterToken string
+	SetupToken          string
+	AuthSecret          []byte
+	PublicURL           *url.URL
+
+	MagicLinkDebugURLs bool
+	SessionTTL         time.Duration
+	MagicLinkTTL       time.Duration
+	DeviceCodeTTL      time.Duration
+	DevicePollEvery    time.Duration
 }
 
-func WithDBTX(database dbTXBeginner) Option {
-	return func(server *Server) {
-		queries := db.New(database)
-		server.db = queries
-		server.tx = database
-		server.readinessDB = database
-		if server.auth == nil {
-			server.auth = auth.NewDBAuthenticator(queries)
-		}
-	}
-}
-
-func WithAuthenticator(authenticator auth.Authenticator) Option {
-	return func(server *Server) {
-		server.auth = authenticator
-	}
-}
-
-func WithCAS(store cas.Store) Option {
-	return func(server *Server) {
-		server.cas = store
-	}
-}
-
-func WithSecrets(secrets secretManager) Option {
-	return func(server *Server) {
-		server.secrets = secrets
-	}
-}
-
-func WithRunEnqueuer(enqueuer runEnqueuer) Option {
-	return func(server *Server) {
-		server.runEnqueuer = enqueuer
-	}
-}
-
-func WithDispatchQueue(queue dispatch.Queue) Option {
-	return func(server *Server) {
-		server.dispatchQueue = queue
-	}
-}
-
-func WithScheduleEngine(engine scheduleRegistrar) Option {
-	return func(server *Server) {
-		server.scheduleEngine = engine
-	}
-}
-
-func WithAsyncBus(queue asyncbus.Publisher) Option {
-	return func(server *Server) {
-		server.asyncPublisher = queue
-	}
-}
-
-func WithEventStream(stream *EventStream) Option {
-	return func(server *Server) {
-		server.eventStream = stream
-	}
-}
-
-func WithWorkerAuth(tokenSigningKey string, ttl time.Duration) Option {
-	return func(server *Server) {
-		server.workerTokenSecret = []byte(tokenSigningKey)
-		if ttl <= 0 {
-			ttl = defaultWorkerTokenTTL
-		}
-		server.workerTokenTTL = ttl
-	}
-}
-
-func WithDefaultWorkerBootstrapToken(token string) Option {
-	return func(server *Server) {
-		server.workerRegisterToken = strings.TrimSpace(token)
-	}
-}
-
-func WithInitialSetupToken(token string) Option {
-	return func(server *Server) {
-		server.setupToken = strings.TrimSpace(token)
-	}
-}
-
-func WithUserAuth(authSecret string, publicURL string) Option {
-	return func(server *Server) {
-		server.authSecret = []byte(authSecret)
-		if parsed, err := url.Parse(publicURL); err == nil && parsed.Scheme != "" && parsed.Host != "" {
-			server.publicURL = parsed
-		}
-	}
-}
-
-func WithGitHubOAuth(clientID string, clientSecret string) Option {
-	return func(server *Server) {
-		server.githubOAuthClientID = clientID
-		server.githubOAuthSecret = clientSecret
-	}
-}
-
-func WithAuthProvider(provider authProvider) Option {
-	return func(server *Server) {
-		server.authProvider = provider
-	}
-}
-
-func WithEmailSender(sender emailSender) Option {
-	return func(server *Server) {
-		server.mailer = sender
-	}
-}
-
-func WithDisabledEmailSender() Option {
-	return func(server *Server) {
-		server.mailer = unconfiguredEmailSender{}
-	}
-}
-
-func WithLogEmailSender() Option {
-	return func(server *Server) {
-		server.mailer = logEmailSender{log: server.log}
-	}
-}
-
-func WithMagicLinkDebugURLs(enabled bool) Option {
-	return func(server *Server) {
-		server.magicLinkDebugURLs = enabled
-	}
-}
-
-func WithSMTPEmailSender(addr string, username string, password string, from string) Option {
-	return func(server *Server) {
-		server.mailer = smtpEmailSender{
-			addr:     addr,
-			username: username,
-			password: password,
-			from:     from,
-		}
-	}
-}
-
-func WithResendEmailSender(apiKey string, from string) Option {
-	return func(server *Server) {
-		server.mailer = newResendEmailSender(apiKey, from)
-	}
-}
-
-func WithSessionTTL(ttl time.Duration) Option {
-	return func(server *Server) {
-		server.sessionTTL = ttl
-	}
-}
-
-func New(log *slog.Logger, opts ...Option) http.Handler {
+func NewServer(cfg ServerConfig) (http.Handler, error) {
+	log := cfg.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	server := &Server{log: log, deploymentMode: deploymentModeSelfHosted}
-	for _, opt := range opts {
-		opt(server)
+	if cfg.DB == nil {
+		return nil, errors.New("control database is required")
 	}
-	if server.mailer == nil {
-		if server.magicLinkDebugURLs {
-			server.mailer = logEmailSender{log: log}
+	if cfg.Auth == nil {
+		return nil, errors.New("control authenticator is required")
+	}
+	deploymentMode := strings.TrimSpace(cfg.DeploymentMode)
+	if deploymentMode == "" {
+		deploymentMode = deploymentModeSelfHosted
+	}
+	mailer := cfg.Mailer
+	if mailer == nil {
+		if cfg.MagicLinkDebugURLs {
+			mailer = email.LogSender{Log: log}
 		} else {
-			server.mailer = unconfiguredEmailSender{}
+			mailer = email.Unconfigured{}
 		}
 	}
-	if server.authProvider == nil && server.publicURL != nil && server.githubOAuthClientID != "" && server.githubOAuthSecret != "" {
-		server.authProvider = newGitHubOAuthProvider(server.githubOAuthClientID, server.githubOAuthSecret, server.publicURL)
+	workerTokenTTL := cfg.WorkerTokenTTL
+	if workerTokenTTL <= 0 {
+		workerTokenTTL = defaultWorkerTokenTTL
+	}
+	server := &Server{
+		log:                 log,
+		deploymentMode:      deploymentMode,
+		db:                  cfg.DB,
+		tx:                  cfg.TX,
+		readinessDB:         cfg.ReadinessDB,
+		auth:                cfg.Auth,
+		cas:                 cfg.CAS,
+		secrets:             cfg.Secrets,
+		runEnqueuer:         cfg.RunEnqueuer,
+		dispatchQueue:       cfg.DispatchQueue,
+		scheduleEngine:      cfg.ScheduleEngine,
+		asyncPublisher:      cfg.AsyncPublisher,
+		eventStream:         cfg.EventStream,
+		workerTokenSecret:   cfg.WorkerTokenSecret,
+		workerTokenTTL:      workerTokenTTL,
+		workerRegisterToken: strings.TrimSpace(cfg.WorkerRegisterToken),
+		setupToken:          strings.TrimSpace(cfg.SetupToken),
+		authSecret:          cfg.AuthSecret,
+		publicURL:           cfg.PublicURL,
+		authProvider:        cfg.AuthProvider,
+		mailer:              mailer,
+		magicLinkDebugURLs:  cfg.MagicLinkDebugURLs,
+		sessionTTL:          cfg.SessionTTL,
+		magicLinkTTL:        cfg.MagicLinkTTL,
+		deviceCodeTTL:       cfg.DeviceCodeTTL,
+		devicePollEvery:     cfg.DevicePollEvery,
 	}
 	router := chi.NewRouter()
 	router.Use(server.recoverPanics)
@@ -305,7 +203,7 @@ func New(log *slog.Logger, opts ...Option) http.Handler {
 	router.Get("/waitpoints/respond", server.waitpointConfirmationPage)
 	router.Route("/api", server.mountAPIRoutes)
 	router.NotFound(server.notFound)
-	return router
+	return router, nil
 }
 
 func (s *Server) recoverPanics(next http.Handler) http.Handler {
