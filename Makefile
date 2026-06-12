@@ -7,7 +7,7 @@ CONSOLE_OUT := $(CURDIR)/internal/console/out
 
 MIGRATE_VERSION ?= v4.19.1
 
-.PHONY: all tools generate proto sqlc fmt test test-linux-compile lint build console-build verify dev dev-console-stack images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
+.PHONY: all tools generate proto sqlc fmt test test-race test-linux-compile lint build console-build verify dev dev-console-stack images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
 
 all: verify
 
@@ -30,6 +30,9 @@ fmt:
 
 test: console-build
 	$(GO) test $(GO_CONSOLE_TAGS) ./...
+
+test-race: console-build
+	CGO_ENABLED=1 $(GO) test -race $(GO_CONSOLE_TAGS) ./...
 
 test-linux-compile:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/helmr-guestd-linux-amd64.test ./cmd/guestd
