@@ -18,5 +18,6 @@ bash tests/release_worker_image_identity_test.sh
 bun run typecheck
 bun run test:ts
 make verify
+make test-race
 make test-linux-compile
 git diff --exit-code
