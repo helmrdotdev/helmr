@@ -1233,20 +1233,33 @@ func runtimeBundle() *bundlev0.Bundle {
 	}
 }
 
-const testResolvedSHA = "0123456789abcdef0123456789abcdef01234567"
-
 func testWorkspaceArtifact(t *testing.T, checkoutRoot, projectRoot string) checkout.WorkspaceArtifact {
 	t.Helper()
-	artifact, cleanup, err := checkout.CreateWorkspaceArtifact(checkout.Worktree{
-		CheckoutRoot: checkoutRoot,
-		ProjectRoot:  projectRoot,
-		SHA:          testResolvedSHA,
-	}, t.TempDir())
+	rel, err := filepath.Rel(checkoutRoot, projectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
+		t.Fatalf("workspace project root %q is not inside checkout root %q", projectRoot, checkoutRoot)
+	}
+	tarArchive, cleanup, err := archive.CreateTarWithOptions(projectRoot, t.TempDir(), archive.TarOptions{
+		ExcludePatterns: []string{"**/.git/**"},
+		MaxBytes:        workspace.MaxArtifactExtractedBytes,
+		MaxEntries:      workspace.MaxArtifactEntries,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(cleanup)
-	return artifact
+	return checkout.WorkspaceArtifact{
+		Path:       tarArchive.Path,
+		Digest:     tarArchive.Digest,
+		MediaType:  workspace.ArtifactMediaType,
+		Encoding:   workspace.ArtifactEncoding,
+		VolumeKind: workspace.VolumeKind,
+		SizeBytes:  tarArchive.SizeBytes,
+		EntryCount: tarArchive.EntryCount,
+	}
 }
 
 func runtimeBundleWithSecret() *bundlev0.Bundle {

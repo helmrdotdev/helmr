@@ -407,12 +407,7 @@ func (s *memberManagementStore) DisableOrgMember(_ context.Context, arg db.Disab
 }
 
 func (s *memberManagementStore) DisableOrgMemberAndRevokeOrgSessions(_ context.Context, arg db.DisableOrgMemberAndRevokeOrgSessionsParams) (db.DisableOrgMemberAndRevokeOrgSessionsRow, error) {
-	disabled, err := s.DisableOrgMember(context.Background(), db.DisableOrgMemberParams{
-		OrgID:        arg.OrgID,
-		UserID:       arg.UserID,
-		ExpectedRole: arg.ExpectedRole,
-		ActorIsOwner: arg.ActorIsOwner,
-	})
+	disabled, err := s.DisableOrgMember(context.Background(), db.DisableOrgMemberParams(arg))
 	if err != nil {
 		return db.DisableOrgMemberAndRevokeOrgSessionsRow{}, err
 	}

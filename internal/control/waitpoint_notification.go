@@ -66,7 +66,7 @@ type waitpointView struct {
 
 func (s *Server) emailDeliveryConfigured() bool {
 	switch s.mailer.(type) {
-	case nil, unconfiguredEmailSender, legacyMagicLinkEmailSender:
+	case nil, unconfiguredEmailSender:
 		return false
 	default:
 		return true
@@ -353,14 +353,7 @@ func waitpointDeliveryMessageID(deliveryID uuid.UUID, publicURL *url.URL) string
 }
 
 func waitpointDeliveryFromQueuedRow(row db.CreateQueuedWaitpointEmailDeliveryRow) db.WaitpointDelivery {
-	return db.WaitpointDelivery{
-		ID: row.ID, OrgID: row.OrgID, RunID: row.RunID, RunWaitID: row.RunWaitID, WaitpointID: row.WaitpointID,
-		ResponseTokenID: row.ResponseTokenID, Channel: row.Channel, RecipientKind: row.RecipientKind,
-		Recipient: row.Recipient, Status: row.Status, AttemptCount: row.AttemptCount,
-		NextAttemptAt: row.NextAttemptAt, LastAttemptAt: row.LastAttemptAt,
-		SendingStartedAt: row.SendingStartedAt, LastError: row.LastError, MessageID: row.MessageID,
-		Metadata: row.Metadata, SentAt: row.SentAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
-	}
+	return db.WaitpointDelivery(row)
 }
 
 func deliveryWaitpointView(waitpoint db.GetWaitpointForDeliveryRow) waitpointView {

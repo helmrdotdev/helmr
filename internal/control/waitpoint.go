@@ -668,29 +668,6 @@ type waitpointResolveOutcome struct {
 	Resumed bool
 }
 
-func waitpointResolveOutcomeFromStatus(status db.RunWaitStatus) waitpointResolveOutcome {
-	return waitpointResolveOutcome{Resumed: status == db.RunWaitStatusResuming || status == db.RunWaitStatusRestored}
-}
-
-func waitpointResponse(row db.Waitpoint) api.WaitpointResponse {
-	expiresAt := pgTime(row.ExpiresAt)
-	var expiresAtPtr *time.Time
-	if row.ExpiresAt.Valid {
-		expiresAtPtr = &expiresAt
-	}
-	return api.WaitpointResponse{
-		ID:            ids.MustFromPG(row.ID).String(),
-		ProjectID:     ids.MustFromPG(row.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(row.EnvironmentID).String(),
-		Kind:          string(row.Kind),
-		Status:        string(row.Status),
-		Request:       row.Request,
-		DisplayText:   row.DisplayText,
-		ExpiresAt:     expiresAtPtr,
-		CreatedAt:     pgTime(row.CreatedAt),
-	}
-}
-
 func waitpointResponseFromCreate(row db.CreateHumanWaitpointRow) api.WaitpointResponse {
 	expiresAt := pgTime(row.ExpiresAt)
 	var expiresAtPtr *time.Time
@@ -841,7 +818,7 @@ func waitpointRequestLinkedID(kind db.WaitpointKind, request json.RawMessage) (u
 		return uuid.Nil, false, err
 	}
 	if !ok {
-		raw, ok, err = optionalStringField(payload, "waitpointId")
+		raw, _, err = optionalStringField(payload, "waitpointId")
 		if err != nil {
 			return uuid.Nil, false, err
 		}

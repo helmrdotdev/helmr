@@ -135,23 +135,6 @@ export async function getRunEvents(id: string, projectID: string, environmentID:
   return request<RunEventPage>(`${environmentPath(projectID, environmentID)}/runs/${encodeURIComponent(id)}/events${query ? `?${query}` : ""}`);
 }
 
-export async function listRunEvents(id: string, projectID: string, environmentID: string, limit = 200): Promise<RunEventPage> {
-  const pages: RunEventPage[] = [];
-  let cursor = 0;
-  for (;;) {
-    const page = await getRunEvents(id, projectID, environmentID, cursor === 0 ? { limit } : { cursor, limit });
-    pages.push(page);
-    if (page.next_cursor == null) break;
-    if (page.next_cursor <= cursor) break;
-    cursor = page.next_cursor;
-  }
-  return {
-    cursor: pages[0]?.cursor ?? 0,
-    events: pages.flatMap((page) => page.events),
-    next_cursor: null,
-  };
-}
-
 export async function respondWaitpoint(waitpointID: string, projectID: string, environmentID: string, value?: unknown): Promise<void> {
   return postJson<{ value?: unknown }, void>(
     `${environmentPath(projectID, environmentID)}/waitpoints/${encodeURIComponent(waitpointID)}/respond`,

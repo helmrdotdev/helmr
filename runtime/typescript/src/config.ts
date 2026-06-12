@@ -10,7 +10,7 @@ import { readdir, stat } from "node:fs/promises"
 import { relative, resolve, sep } from "node:path"
 import { pathToFileURL } from "node:url"
 
-export interface ConfigTaskRef {
+interface ConfigTaskRef {
   readonly id: string
   readonly originFile: string
   readonly modulePath: string
@@ -51,7 +51,7 @@ const HARD_IGNORE_PATTERNS = [
   "**/.next/**",
 ] as const
 
-export async function loadConfigTaskRefs(cwd: string): Promise<readonly ConfigTaskRef[]> {
+async function loadConfigTaskRefs(cwd: string): Promise<readonly ConfigTaskRef[]> {
   const config = await loadConfig(cwd)
   const taskFiles = await discoverTaskFiles(cwd, config)
   return collectTaskRefs(cwd, await importDiscoveredTaskModules(taskFiles))
@@ -78,7 +78,7 @@ export async function loadTaskRegistry(cwd: string): Promise<ReadonlyMap<string,
   return buildTaskRegistry(await loadConfigTaskRefs(cwd))
 }
 
-export function buildTaskRegistry(
+function buildTaskRegistry(
   refs: readonly ConfigTaskRef[],
 ): ReadonlyMap<string, RegisteredTask> {
   const registry = new Map<string, RegisteredTask>()

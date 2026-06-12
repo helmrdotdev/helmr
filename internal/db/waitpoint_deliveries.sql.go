@@ -525,6 +525,60 @@ func (q *Queries) ListWaitpointDeliveries(ctx context.Context, arg ListWaitpoint
 	return items, nil
 }
 
+const listWaitpointDeliveriesForRunWaits = `-- name: ListWaitpointDeliveriesForRunWaits :many
+SELECT id, org_id, run_id, run_wait_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
+  FROM waitpoint_deliveries
+ WHERE org_id = $1
+   AND run_wait_id = ANY($2::uuid[])
+ ORDER BY run_id ASC, run_wait_id ASC, waitpoint_id ASC, created_at ASC
+`
+
+type ListWaitpointDeliveriesForRunWaitsParams struct {
+	OrgID      pgtype.UUID   `json:"org_id"`
+	RunWaitIds []pgtype.UUID `json:"run_wait_ids"`
+}
+
+func (q *Queries) ListWaitpointDeliveriesForRunWaits(ctx context.Context, arg ListWaitpointDeliveriesForRunWaitsParams) ([]WaitpointDelivery, error) {
+	rows, err := q.db.Query(ctx, listWaitpointDeliveriesForRunWaits, arg.OrgID, arg.RunWaitIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WaitpointDelivery
+	for rows.Next() {
+		var i WaitpointDelivery
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.RunID,
+			&i.RunWaitID,
+			&i.WaitpointID,
+			&i.ResponseTokenID,
+			&i.Channel,
+			&i.RecipientKind,
+			&i.Recipient,
+			&i.Status,
+			&i.AttemptCount,
+			&i.NextAttemptAt,
+			&i.LastAttemptAt,
+			&i.SendingStartedAt,
+			&i.LastError,
+			&i.MessageID,
+			&i.Metadata,
+			&i.SentAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markObsoleteWaitpointDeliveryFailed = `-- name: MarkObsoleteWaitpointDeliveryFailed :one
 UPDATE waitpoint_deliveries
    SET status = 'failed',

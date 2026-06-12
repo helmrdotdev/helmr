@@ -23,37 +23,17 @@ type WorkspaceArtifact struct {
 	EntryCount int
 }
 
-// Worktree is a materialized workspace source tree.
-type Worktree struct {
-	CheckoutRoot string
-	ProjectRoot  string
-	SHA          string
-}
-
-// CreateWorkspaceArtifact packages the selected project root as a workspace
-// artifact. Repository subpath is a materialization boundary, not just cwd
-// metadata; callers should treat the artifact as an immutable seed for a
-// writable workspace volume.
-func CreateWorkspaceArtifact(worktree Worktree, tempDir string) (WorkspaceArtifact, func(), error) {
-	if strings.TrimSpace(worktree.CheckoutRoot) == "" {
-		return WorkspaceArtifact{}, func() {}, errors.New("workspace checkout root is required")
-	}
-	if strings.TrimSpace(worktree.ProjectRoot) == "" {
-		return WorkspaceArtifact{}, func() {}, errors.New("workspace project root is required")
-	}
-	if err := validateProjectRoot(worktree); err != nil {
-		return WorkspaceArtifact{}, func() {}, err
-	}
-	return createWorkspaceArtifactFromRoot(worktree.ProjectRoot, tempDir)
-}
-
 func CreateEmptyWorkspaceArtifact(tempDir string) (WorkspaceArtifact, func(), error) {
 	root, err := os.MkdirTemp(tempDir, "workspace-empty-")
 	if err != nil {
 		return WorkspaceArtifact{}, func() {}, fmt.Errorf("create empty workspace root: %w", err)
 	}
 	cleanupRoot := func() { _ = os.RemoveAll(root) }
-	artifact, cleanupArtifact, err := createWorkspaceArtifactFromRoot(root, tempDir)
+	trustedRoot := tempDir
+	if strings.TrimSpace(trustedRoot) == "" {
+		trustedRoot = os.TempDir()
+	}
+	artifact, cleanupArtifact, err := createWorkspaceArtifactFromRoot(root, tempDir, trustedRoot)
 	if err != nil {
 		cleanupRoot()
 		return WorkspaceArtifact{}, func() {}, err
@@ -64,7 +44,10 @@ func CreateEmptyWorkspaceArtifact(tempDir string) (WorkspaceArtifact, func(), er
 	}, nil
 }
 
-func createWorkspaceArtifactFromRoot(root string, tempDir string) (WorkspaceArtifact, func(), error) {
+func createWorkspaceArtifactFromRoot(root string, tempDir string, trustedRoot string) (WorkspaceArtifact, func(), error) {
+	if err := validateRootInside(root, trustedRoot); err != nil {
+		return WorkspaceArtifact{}, func() {}, err
+	}
 	tarArchive, cleanup, err := archive.CreateTarWithOptions(root, tempDir, archive.TarOptions{
 		ExcludePatterns: []string{"**/.git/**"},
 		MaxBytes:        workspace.MaxArtifactExtractedBytes,
@@ -84,13 +67,16 @@ func createWorkspaceArtifactFromRoot(root string, tempDir string) (WorkspaceArti
 	}, cleanup, nil
 }
 
-func validateProjectRoot(worktree Worktree) error {
-	rel, err := filepath.Rel(worktree.CheckoutRoot, worktree.ProjectRoot)
+func validateRootInside(root string, trustedRoot string) error {
+	if strings.TrimSpace(trustedRoot) == "" {
+		return errors.New("trusted workspace root is required")
+	}
+	rel, err := filepath.Rel(trustedRoot, root)
 	if err != nil {
-		return fmt.Errorf("resolve workspace project root: %w", err)
+		return fmt.Errorf("resolve workspace root: %w", err)
 	}
 	if strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
-		return errors.New("workspace project root must be inside checkout root")
+		return errors.New("workspace root must be inside trusted root")
 	}
 	return nil
 }

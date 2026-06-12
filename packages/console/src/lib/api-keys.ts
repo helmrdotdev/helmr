@@ -10,7 +10,7 @@ export type ApiKeyScope =
   | "waitpoint-policies:manage"
   | "tasks:deploy";
 
-export type ApiKeyPermissionGrant = {
+type ApiKeyPermissionGrant = {
   scopes: ApiKeyScope[];
 };
 

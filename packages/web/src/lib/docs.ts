@@ -11,7 +11,7 @@ export const getDocUrl = (doc: DocEntry) => `/docs/${doc.id}`;
 
 export const getDocLabel = (doc: DocEntry) => doc.data.sidebarLabel ?? doc.data.title;
 
-export const sortDocs = (docs: DocEntry[]) =>
+const sortDocs = (docs: DocEntry[]) =>
   [...docs].sort((a, b) => {
     const orderDelta = a.data.order - b.data.order;
     if (orderDelta !== 0) return orderDelta;

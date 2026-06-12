@@ -72,12 +72,6 @@ func NewRedisIndex(client goredis.Cmdable, opts ...RedisIndexOption) (*RedisInde
 	return index, nil
 }
 
-func WithRedisIndexPrefix(prefix string) RedisIndexOption {
-	return func(index *RedisIndex) {
-		index.prefix = prefix
-	}
-}
-
 func WithRedisIndexClock(now func() time.Time) RedisIndexOption {
 	return func(index *RedisIndex) {
 		index.now = now

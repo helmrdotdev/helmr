@@ -217,18 +217,3 @@ func normalizeResendEmailBody(body string) string {
 	}
 	return body
 }
-
-type magicLinkMailer interface {
-	SendMagicLink(ctx context.Context, message magicLinkMessage) error
-}
-
-type legacyMagicLinkEmailSender struct {
-	mailer magicLinkMailer
-}
-
-func (m legacyMagicLinkEmailSender) SendEmail(ctx context.Context, message emailMessage) error {
-	if message.magicLink == nil {
-		return errors.New("legacy magic link mailer cannot send generic email")
-	}
-	return m.mailer.SendMagicLink(ctx, *message.magicLink)
-}

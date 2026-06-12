@@ -12,7 +12,7 @@ export function AuthScreen(props: { children: JSX.Element }) {
   );
 }
 
-export function BrandHeader() {
+function BrandHeader() {
   return (
     <div class={"mb-4 font-mono text-[12px] font-medium text-console-text"}>
       <span>Helmr</span>
