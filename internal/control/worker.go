@@ -1,7 +1,6 @@
 package control
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -275,17 +274,6 @@ func workerInstanceHeartbeatParams(worker workerActor, capabilities api.WorkerCa
 		RootfsDigest:              capabilities.RootfsDigest,
 		CniProfile:                capabilities.CNIProfile,
 	}
-}
-
-func normalizedRetryPolicy(raw json.RawMessage) ([]byte, error) {
-	if len(raw) == 0 {
-		return []byte("false"), nil
-	}
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 {
-		return []byte("false"), nil
-	}
-	return validatedRetryPolicyJSON(trimmed, "retry")
 }
 
 func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabilities, error) {

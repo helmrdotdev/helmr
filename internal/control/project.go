@@ -637,13 +637,6 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func pgInt4Response(value pgtype.Int4) *int32 {
-	if !value.Valid {
-		return nil
-	}
-	return &value.Int32
-}
-
 func normalizeScopeCreateInput(slug string, name string) (string, string, error) {
 	slug = strings.ToLower(strings.TrimSpace(slug))
 	name = strings.TrimSpace(name)

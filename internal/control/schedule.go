@@ -22,27 +22,6 @@ const (
 	scheduleListPageSize = int32(200)
 )
 
-func nullableText(value string) pgtype.Text {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return pgtype.Text{}
-	}
-	return pgtype.Text{String: value, Valid: true}
-}
-
-func (s *Server) mountScheduleRoutes(r chi.Router) {
-	r.Group(func(r chi.Router) {
-		r.Use(s.requireActor)
-		r.Get("/schedules", s.listSchedules)
-		r.Post("/schedules", s.createSchedule)
-		r.Get("/schedules/{id}", s.getSchedule)
-		r.Put("/schedules/{id}", s.updateSchedule)
-		r.Post("/schedules/{id}/activate", s.activateSchedule)
-		r.Post("/schedules/{id}/deactivate", s.deactivateSchedule)
-		r.Delete("/schedules/{id}", s.deleteSchedule)
-	})
-}
-
 func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, unavailable(errors.New("schedule storage is not configured")))
@@ -671,13 +650,6 @@ func scheduleResponse(row scheduleView) api.ScheduleResponse {
 	response.NextFireAt = pgTimePtr(row.NextFireAt)
 	response.LastFireAt = pgTimePtr(row.LastFireAt)
 	return response
-}
-
-func pgTextValue(value pgtype.Text) string {
-	if !value.Valid {
-		return ""
-	}
-	return value.String
 }
 
 func scheduleStatus(row scheduleView) string {

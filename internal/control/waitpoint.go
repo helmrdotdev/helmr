@@ -501,20 +501,6 @@ func waitpointTimeout(kind db.WaitpointKind, timeoutSeconds *int32) (pgtype.Int4
 	return pgtype.Int4{Int32: *timeoutSeconds, Valid: true}, nil
 }
 
-func pgTextPtr(value *string) pgtype.Text {
-	if value == nil || strings.TrimSpace(*value) == "" {
-		return pgtype.Text{}
-	}
-	return pgtype.Text{String: *value, Valid: true}
-}
-
-func pgInt4Ptr(value *int32) pgtype.Int4 {
-	if value == nil {
-		return pgtype.Int4{}
-	}
-	return pgtype.Int4{Int32: *value, Valid: true}
-}
-
 func optionalPositiveInt32(value int64, field string) (*int32, error) {
 	if value == 0 {
 		return nil, nil

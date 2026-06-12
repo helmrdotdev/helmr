@@ -1,15 +1,12 @@
 package control
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -160,20 +157,6 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) secretRequestScope(ctx context.Context, orgID uuid.UUID, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
-	projectID = strings.TrimSpace(projectID)
-	environmentID = strings.TrimSpace(environmentID)
-	scope, _, _, err := s.normalizeProjectEnvironmentScope(ctx, orgID, projectID, environmentID)
-	if err != nil {
-		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
-	}
-	scopeProjectID, scopeEnvironmentID, err := s.runScopeIDs(ctx, orgID, scope)
-	if err != nil {
-		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
-	}
-	return scope, scopeProjectID, scopeEnvironmentID, nil
 }
 
 func secretResponse(projectID pgtype.UUID, environmentID pgtype.UUID, name string, createdAt pgtype.Timestamptz, updatedAt pgtype.Timestamptz) api.SecretResponse {

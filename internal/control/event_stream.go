@@ -260,10 +260,6 @@ func redisIDAlreadyExists(err error) bool {
 	return strings.Contains(message, "equal or smaller") || strings.Contains(message, "ID specified in XADD")
 }
 
-func pgInterval(duration time.Duration) pgtype.Interval {
-	return pgtype.Interval{Microseconds: duration.Microseconds(), Valid: true}
-}
-
 func eventPublisherBackoff(attempts int) time.Duration {
 	if attempts < 1 {
 		return eventPublisherRetryMin

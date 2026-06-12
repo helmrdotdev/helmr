@@ -368,11 +368,3 @@ func apiKeySummary(id pgtype.UUID, name string, keyPrefix string, projectID pgty
 		RevokedAt:     pgTimePtr(revokedAt),
 	}, nil
 }
-
-func pgTimePtr(value pgtype.Timestamptz) *time.Time {
-	if !value.Valid {
-		return nil
-	}
-	valueTime := value.Time
-	return &valueTime
-}
