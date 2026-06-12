@@ -934,12 +934,15 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 		replayOperationID: operation.ID,
 	})
 	if err != nil {
-		_, _ = s.db.MarkRunOperationRejected(r.Context(), db.MarkRunOperationRejectedParams{
-			Result: fmt.Appendf(nil, `{"error":%q}`, err.Error()),
-			ID:     operation.ID,
-			OrgID:  ids.ToPG(actor.OrgID),
-		})
+		markRejected := func() {
+			_, _ = s.db.MarkRunOperationRejected(context.WithoutCancel(r.Context()), db.MarkRunOperationRejectedParams{
+				Result: fmt.Appendf(nil, `{"error":%q}`, err.Error()),
+				ID:     operation.ID,
+				OrgID:  ids.ToPG(actor.OrgID),
+			})
+		}
 		if errors.Is(err, errIdempotencyKeyConflict) {
+			markRejected()
 			writeError(w, http.StatusConflict, err)
 			return
 		}
@@ -953,15 +956,18 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, errPermissionRequired) {
+			markRejected()
 			writeError(w, http.StatusForbidden, err)
 			return
 		}
 		var runDeploymentErr runDeploymentSelectionError
 		if errors.As(err, &runDeploymentErr) {
+			markRejected()
 			writeError(w, http.StatusBadRequest, runDeploymentErr)
 			return
 		}
 		if isCreateRunClientError(err) {
+			markRejected()
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}

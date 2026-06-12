@@ -617,16 +617,17 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 		case controlErr = <-controlErrCh:
 		default:
 		}
-		exitCode := int32(0)
-		var message string
+		exitCode := int32(1)
+		message := "adapter exited without reporting task_result"
 		if controlErr != nil {
-			exitCode = 1
 			message = controlErr.Error()
 		} else if waitErr != nil {
-			exitCode = 1
 			var exitErr *exec.ExitError
 			if errors.As(waitErr, &exitErr) {
 				exitCode = int32(exitErr.ExitCode())
+			}
+			if strings.TrimSpace(waitErr.Error()) != "" {
+				message = waitErr.Error()
 			}
 		}
 		return runStream.writeComplete(exitCode, message, "")

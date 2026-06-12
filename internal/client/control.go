@@ -649,12 +649,20 @@ func (c *Client) FollowRunEvents(ctx context.Context, id string, cursor int64, h
 	return scanner.Err()
 }
 
-func (c *Client) RespondWaitpoint(ctx context.Context, waitpointID string, request api.RespondWaitpointRequest) error {
-	return c.postJSON(ctx, "/api/waitpoints/"+url.PathEscape(waitpointID)+"/respond", request, nil)
+func (c *Client) RespondWaitpoint(ctx context.Context, waitpointID string, request api.RespondWaitpointRequest, scope RunScopeOptions) error {
+	basePath, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/waitpoints")
+	if err != nil {
+		return err
+	}
+	return c.postJSON(ctx, environmentScopedResourcePath(basePath, waitpointID, "/respond"), request, nil)
 }
 
-func (c *Client) ListWaitpointPolicies(ctx context.Context) (api.ListWaitpointPoliciesResponse, error) {
-	req, err := c.newRequest(ctx, http.MethodGet, "/api/waitpoint-policies", nil)
+func (c *Client) ListWaitpointPolicies(ctx context.Context, scope RunScopeOptions) (api.ListWaitpointPoliciesResponse, error) {
+	path, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/waitpoint-policies")
+	if err != nil {
+		return api.ListWaitpointPoliciesResponse{}, err
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return api.ListWaitpointPoliciesResponse{}, err
 	}
@@ -665,8 +673,12 @@ func (c *Client) ListWaitpointPolicies(ctx context.Context) (api.ListWaitpointPo
 	return response, nil
 }
 
-func (c *Client) GetWaitpointPolicy(ctx context.Context, name string) (api.WaitpointPolicyResponse, error) {
-	req, err := c.newRequest(ctx, http.MethodGet, "/api/waitpoint-policies/"+url.PathEscape(name), nil)
+func (c *Client) GetWaitpointPolicy(ctx context.Context, name string, scope RunScopeOptions) (api.WaitpointPolicyResponse, error) {
+	basePath, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/waitpoint-policies")
+	if err != nil {
+		return api.WaitpointPolicyResponse{}, err
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, environmentScopedResourcePath(basePath, name, ""), nil)
 	if err != nil {
 		return api.WaitpointPolicyResponse{}, err
 	}
@@ -677,24 +689,32 @@ func (c *Client) GetWaitpointPolicy(ctx context.Context, name string) (api.Waitp
 	return response, nil
 }
 
-func (c *Client) CreateWaitpointPolicy(ctx context.Context, request api.CreateWaitpointPolicyRequest) (api.WaitpointPolicyResponse, error) {
+func (c *Client) CreateWaitpointPolicy(ctx context.Context, request api.CreateWaitpointPolicyRequest, scope RunScopeOptions) (api.WaitpointPolicyResponse, error) {
 	var response api.WaitpointPolicyResponse
-	if err := c.postJSON(ctx, "/api/waitpoint-policies", request, &response); err != nil {
+	path, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/waitpoint-policies")
+	if err != nil {
+		return api.WaitpointPolicyResponse{}, err
+	}
+	if err := c.postJSON(ctx, path, request, &response); err != nil {
 		return api.WaitpointPolicyResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) UpdateWaitpointPolicy(ctx context.Context, name string, request api.UpdateWaitpointPolicyRequest) (api.WaitpointPolicyResponse, error) {
+func (c *Client) UpdateWaitpointPolicy(ctx context.Context, name string, request api.UpdateWaitpointPolicyRequest, scope RunScopeOptions) (api.WaitpointPolicyResponse, error) {
 	var response api.WaitpointPolicyResponse
-	if err := c.patchJSON(ctx, "/api/waitpoint-policies/"+url.PathEscape(name), request, &response); err != nil {
+	basePath, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/waitpoint-policies")
+	if err != nil {
+		return api.WaitpointPolicyResponse{}, err
+	}
+	if err := c.patchJSON(ctx, environmentScopedResourcePath(basePath, name, ""), request, &response); err != nil {
 		return api.WaitpointPolicyResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) ApplyWaitpointPolicy(ctx context.Context, name string, request api.UpdateWaitpointPolicyRequest) (api.WaitpointPolicyResponse, error) {
-	policy, err := c.UpdateWaitpointPolicy(ctx, name, request)
+func (c *Client) ApplyWaitpointPolicy(ctx context.Context, name string, request api.UpdateWaitpointPolicyRequest, scope RunScopeOptions) (api.WaitpointPolicyResponse, error) {
+	policy, err := c.UpdateWaitpointPolicy(ctx, name, request, scope)
 	if err == nil {
 		return policy, nil
 	}
@@ -705,11 +725,15 @@ func (c *Client) ApplyWaitpointPolicy(ctx context.Context, name string, request 
 		Name:   name,
 		Label:  request.Label,
 		Config: request.Config,
-	})
+	}, scope)
 }
 
-func (c *Client) DeleteWaitpointPolicy(ctx context.Context, name string) error {
-	req, err := c.newRequest(ctx, http.MethodDelete, "/api/waitpoint-policies/"+url.PathEscape(name), nil)
+func (c *Client) DeleteWaitpointPolicy(ctx context.Context, name string, scope RunScopeOptions) error {
+	basePath, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/waitpoint-policies")
+	if err != nil {
+		return err
+	}
+	req, err := c.newRequest(ctx, http.MethodDelete, environmentScopedResourcePath(basePath, name, ""), nil)
 	if err != nil {
 		return err
 	}

@@ -95,6 +95,26 @@ func TestIgnoreExpectedStopErrorsDropsFirecrackerSIGTERM(t *testing.T) {
 	}
 }
 
+func TestIgnoreStopSignalErrorDropsForcedSIGKILL(t *testing.T) {
+	cmd := exec.Command("sleep", "10")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Process.Signal(syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	waitErr := cmd.Wait()
+	if waitErr == nil {
+		t.Fatal("waitErr = nil, want signal error")
+	}
+	if err := ignoreStopSignalError(waitErr, syscall.SIGKILL); err != nil {
+		t.Fatalf("ignoreStopSignalError = %v, want nil", err)
+	}
+	if err := ignoreExpectedStopErrors(waitErr); err == nil {
+		t.Fatal("ignoreExpectedStopErrors ignored SIGKILL outside force-kill path")
+	}
+}
+
 type testWrappedErrors []error
 
 func (e testWrappedErrors) Error() string {

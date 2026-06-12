@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,6 +83,8 @@ func waitpointListCommand() *cobra.Command {
 func waitpointRespondCommand() *cobra.Command {
 	var value string
 	var valueFile string
+	var projectID string
+	var environmentID string
 	cmd := &cobra.Command{
 		Use:   "respond WAITPOINT_ID",
 		Short: "Respond to a human waitpoint.",
@@ -95,14 +98,35 @@ func waitpointRespondCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			scope, err := waitpointCommandScope(cmd.Context(), control, projectID, environmentID)
+			if err != nil {
+				return err
+			}
 			request := api.RespondWaitpointRequest{Value: resolvedValue}
-			return control.RespondWaitpoint(cmd.Context(), args[0], request)
+			return control.RespondWaitpoint(cmd.Context(), args[0], request, scope)
 		},
 	}
 	cmd.Flags().StringVar(&value, "value", "", "JSON value to return to the waiting run.")
 	cmd.Flags().StringVar(&valueFile, "value-file", "", "Read response JSON value from a file, or '-' for stdin.")
+	cmd.Flags().StringVarP(&projectID, "project", "p", "", "Project slug or ID.")
+	cmd.Flags().StringVarP(&environmentID, "env", "e", "", "Environment slug or ID.")
 	cmd.MarkFlagsMutuallyExclusive("value", "value-file")
 	return cmd
+}
+
+func waitpointCommandScope(ctx context.Context, control *client.Client, projectID string, environmentID string) (client.RunScopeOptions, error) {
+	scope, err := runScopeForClient(control, projectID, environmentID)
+	if err != nil {
+		return client.RunScopeOptions{}, err
+	}
+	if !control.UsesSessionScopedRoutes() {
+		return scope, nil
+	}
+	project, environment, err := resolveProjectEnvironment(ctx, control, scope.ProjectID, scope.EnvironmentID)
+	if err != nil {
+		return client.RunScopeOptions{}, err
+	}
+	return client.RunScopeOptions{ProjectID: project.ID, EnvironmentID: environment.ID}, nil
 }
 
 func waitpointResponseValue(stdin io.Reader, raw string, file string) (json.RawMessage, error) {

@@ -244,8 +244,11 @@ func TestRunAdapterNoResultTerminatesDescendantFDEOF(t *testing.T) {
 		}
 		complete = event.GetTaskResult()
 	}
-	if complete.ExitCode != 0 {
+	if complete.ExitCode != 1 {
 		t.Fatalf("exit code = %d message=%v", complete.ExitCode, complete.ErrorMessage)
+	}
+	if complete.ErrorMessage == nil || !strings.Contains(*complete.ErrorMessage, "without reporting task_result") {
+		t.Fatalf("error message = %v", complete.ErrorMessage)
 	}
 	select {
 	case err := <-errCh:
@@ -1293,38 +1296,34 @@ func runGuestAdapterHelperProcess() int {
 		if err != nil {
 			return 2
 		}
-		_ = control.Close()
 		fmt.Println("stdout-line")
 		fmt.Fprintln(os.Stderr, "stderr-line")
 		time.Sleep(50 * time.Millisecond)
-		return 0
+		return writeHelperTaskResult(control, 0, "")
 	case "stdout-stderr-tail":
 		control, err := helperControlWriter()
 		if err != nil {
 			return 2
 		}
-		_ = control.Close()
 		fmt.Print(strings.Repeat("stdout-block\n", 8192))
 		fmt.Println("stdout-tail")
 		fmt.Fprint(os.Stderr, strings.Repeat("stderr-block\n", 8192))
 		fmt.Fprintln(os.Stderr, "stderr-tail")
-		return 0
+		return writeHelperTaskResult(control, 0, "")
 	case "stdout-json":
 		control, err := helperControlWriter()
 		if err != nil {
 			return 2
 		}
-		_ = control.Close()
 		fmt.Print(`{"result":{"ok":true,"count":2}}`)
-		return 0
+		return writeHelperTaskResult(control, 0, "")
 	case "stdout-json-exit-3":
 		control, err := helperControlWriter()
 		if err != nil {
 			return 2
 		}
-		_ = control.Close()
 		fmt.Print(`{"result":{"ok":false}}`)
-		return 3
+		return writeHelperTaskResult(control, 3, "")
 	case "task-output-fd-holder":
 		control, err := helperControlWriter()
 		if err != nil {
@@ -1457,10 +1456,24 @@ func runGuestAdapterHelperProcess() int {
 			return 2
 		}
 		fmt.Println("after-second")
-		return 0
+		return writeHelperTaskResult(control, 0, "")
 	}
 	fmt.Println("after-resume")
-	return 0
+	return writeHelperTaskResult(control, 0, "")
+}
+
+func writeHelperTaskResult(control io.WriteCloser, exitCode int32, outputJSON string) int {
+	defer control.Close()
+	result := &runv0.TaskResult{ExitCode: exitCode}
+	if outputJSON != "" {
+		result.OutputJson = &outputJSON
+	}
+	if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+		Event: &runv0.RunEvent_TaskResult{TaskResult: result},
+	}); err != nil {
+		return 2
+	}
+	return int(exitCode)
 }
 
 func startFDHolderChild(control io.WriteCloser) error {

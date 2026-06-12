@@ -451,6 +451,42 @@ func TestWaitCommandFollowsEventsUntilTerminal(t *testing.T) {
 	}
 }
 
+func TestRunEventsFollowStopsAfterTerminalEvent(t *testing.T) {
+	eventRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/events" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("follow") != "1" {
+			t.Fatalf("query = %s", r.URL.RawQuery)
+		}
+		eventRequests++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("id: 7\nevent: run_event\ndata: {\"id\":\"7\",\"kind\":\"run.completed\",\"message\":\"run.completed\"}\n\n"))
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetContext(ctx)
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"events", "run-1", "--follow"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if eventRequests != 1 {
+		t.Fatalf("event requests = %d, want one", eventRequests)
+	}
+	if !strings.Contains(out.String(), `"kind":"run.completed"`) {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
 func TestWaitCommandChecksStatusAfterStreamDisconnect(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1837,6 +1873,74 @@ func TestWaitpointRespondCommand(t *testing.T) {
 	}
 }
 
+func TestWaitpointRespondCommandUsesSessionScopedRoute(t *testing.T) {
+	const projectID = "00000000-0000-0000-0000-000000000101"
+	const environmentID = "00000000-0000-0000-0000-000000000202"
+	state, _ := installTestCLIConfig(t)
+	var request api.RespondWaitpointRequest
+	methods := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method+" "+r.URL.Path)
+		if got := r.Header.Get("authorization"); got != "Bearer session-test" {
+			t.Fatalf("auth = %s", got)
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects":
+			_ = json.NewEncoder(w).Encode(api.ListProjectsResponse{Projects: []api.ProjectSummary{{
+				ID:   projectID,
+				Slug: "prod",
+				Environments: []api.EnvironmentSummary{{
+					ID:        environmentID,
+					ProjectID: projectID,
+					Slug:      "qa",
+				}},
+			}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/projects/"+projectID+"/environments/"+environmentID+"/waitpoints/wait-1/respond":
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	if err := state.SaveLogin(server.URL, "session-test"); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"waitpoint", "respond", "wait-1", "--project", "prod", "--env", "qa", "--value", `{"action":"approve"}`})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	wantMethods := "GET /api/projects,POST /api/projects/" + projectID + "/environments/" + environmentID + "/waitpoints/wait-1/respond"
+	if got := strings.Join(methods, ","); got != wantMethods {
+		t.Fatalf("methods = %s", got)
+	}
+	if string(request.Value) != `{"action":"approve"}` {
+		t.Fatalf("request = %+v", request)
+	}
+}
+
+func TestWaitpointRespondCommandRequiresScopeWithSessionAuth(t *testing.T) {
+	state, _ := installTestCLIConfig(t)
+	if err := state.SaveLogin("https://control.example.test", "session-test"); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"waitpoint", "respond", "wait-1", "--value", `{"action":"approve"}`})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--project and --env are required with helmr login") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestWaitpointRespondCommandReadsValueFile(t *testing.T) {
 	var request api.RespondWaitpointRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2083,6 +2187,79 @@ func TestPolicyApplyEmailCreatesWhenMissing(t *testing.T) {
 	}
 	if response.Name != "deploy-prod" || response.Label != "Production deploy" {
 		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestPolicyApplyUsesSessionScopedRoute(t *testing.T) {
+	const projectID = "00000000-0000-0000-0000-000000000101"
+	const environmentID = "00000000-0000-0000-0000-000000000202"
+	state, _ := installTestCLIConfig(t)
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method+" "+r.URL.Path)
+		if got := r.Header.Get("authorization"); got != "Bearer session-test" {
+			t.Fatalf("auth = %s", got)
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects":
+			_ = json.NewEncoder(w).Encode(api.ListProjectsResponse{Projects: []api.ProjectSummary{{
+				ID:   projectID,
+				Slug: "prod",
+				Environments: []api.EnvironmentSummary{{
+					ID:        environmentID,
+					ProjectID: projectID,
+					Slug:      "qa",
+				}},
+			}}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/api/projects/"+projectID+"/environments/"+environmentID+"/waitpoint-policies/deploy-prod":
+			var request api.UpdateWaitpointPolicyRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			assertWaitpointPolicyRequest(t, request.Label, request.Config, "Production deploy", []string{"sre@example.test"})
+			_ = json.NewEncoder(w).Encode(api.WaitpointPolicyResponse{
+				ID:        "policy-1",
+				Name:      "deploy-prod",
+				Label:     request.Label,
+				Config:    request.Config,
+				CreatedAt: time.Unix(0, 0).UTC(),
+				UpdatedAt: time.Unix(0, 0).UTC(),
+			})
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	if err := state.SaveLogin(server.URL, "session-test"); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"policy", "apply", "deploy-prod", "--project", "prod", "--env", "qa", "--label", "Production deploy", "--email", "sre@example.test"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	wantMethods := "GET /api/projects,PATCH /api/projects/" + projectID + "/environments/" + environmentID + "/waitpoint-policies/deploy-prod"
+	if got := strings.Join(methods, ","); got != wantMethods {
+		t.Fatalf("methods = %s", got)
+	}
+}
+
+func TestPolicyListCommandRequiresScopeWithSessionAuth(t *testing.T) {
+	state, _ := installTestCLIConfig(t)
+	if err := state.SaveLogin("https://control.example.test", "session-test"); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"policy", "list"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--project and --env are required with helmr login") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

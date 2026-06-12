@@ -209,6 +209,9 @@ for _ = 1, max_messages do
       local not_before_ms = tonumber(fields[19] or "0")
       local queue_concurrency_limit = tonumber(fields[20] or "0")
       local queue_concurrency_active_key = fields[21]
+      if not queue_concurrency_active_key then
+        queue_concurrency_active_key = ""
+      end
       if not run_generation_key or not generation or redis.call("GET", run_generation_key) ~= tostring(generation) then
         redis.call("DEL", message_key)
       elseif not_before_ms > now_ms then
@@ -218,6 +221,8 @@ for _ = 1, max_messages do
         -- ZPOPMIN has already removed this malformed ready id. Deleting the hash makes
         -- ReadyMessageExists return false so the DB reconciler can prepare/enqueue the
         -- run again with canonical runtime metadata.
+        redis.call("DEL", message_key)
+      elseif queue_concurrency_limit > 0 and queue_concurrency_active_key == "" then
         redis.call("DEL", message_key)
       elseif not compatible(fields) then
         redis.call("PEXPIRE", run_generation_key, generation_ttl_ms)
