@@ -287,11 +287,7 @@ func newMemberManagementStore(role db.OrgMemberRole) *memberManagementStore {
 }
 
 func newMemberManagementServer(store *memberManagementStore) http.Handler {
-	return New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithUserAuth(memberTestAuthSecret, "https://helmr.example.test"),
-	)
+	return newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte(memberTestAuthSecret), PublicURL: mustParseTestURL("https://helmr.example.test")})
 }
 
 func memberManagementRequest(method string, path string, body string) *http.Request {

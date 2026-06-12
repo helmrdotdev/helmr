@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -91,17 +92,30 @@ func main() {
 		}
 	}()
 
-	app := control.New(
-		log,
-		control.WithDeploymentMode(cfg.deploymentMode),
-		control.WithDBTX(pool),
-		control.WithCAS(casStore),
-		control.WithSecrets(secretStore),
-		control.WithWorkerAuth(cfg.workerTokenSecret, 0),
-		control.WithDefaultWorkerBootstrapToken(cfg.workerBootstrapToken),
-		control.WithInitialSetupToken(cfg.setupToken),
-		control.WithUserAuth(cfg.authSecret, cfg.publicURL),
-	)
+	publicURL, err := url.Parse(cfg.publicURL)
+	if err != nil {
+		log.Error("parse public URL", "error", err)
+		os.Exit(1)
+	}
+	app, err := control.NewServer(control.ServerConfig{
+		Log:                 log,
+		DeploymentMode:      cfg.deploymentMode,
+		DB:                  queries,
+		TX:                  pool,
+		ReadinessDB:         pool,
+		Auth:                auth.NewDBAuthenticator(queries),
+		CAS:                 casStore,
+		Secrets:             secretStore,
+		WorkerTokenSecret:   []byte(cfg.workerTokenSecret),
+		WorkerRegisterToken: cfg.workerBootstrapToken,
+		SetupToken:          cfg.setupToken,
+		AuthSecret:          []byte(cfg.authSecret),
+		PublicURL:           publicURL,
+	})
+	if err != nil {
+		log.Error("configure control server", "error", err)
+		os.Exit(1)
+	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/dev/login" {
 			devLogin(ctx, w, r, pool, queries, cfg)

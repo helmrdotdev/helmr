@@ -16,7 +16,7 @@ import (
 )
 
 func TestHealthzDoesNotRequireReadinessDB(t *testing.T) {
-	handler := New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 
@@ -28,7 +28,7 @@ func TestHealthzDoesNotRequireReadinessDB(t *testing.T) {
 }
 
 func TestReadyzRequiresReadinessDB(t *testing.T) {
-	handler := New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
 
@@ -68,7 +68,7 @@ func TestReadyzChecksSchemaVersion(t *testing.T) {
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			handler := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDBTX(fakeReadinessDB{row: tt.row}))
+			handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DBTX: fakeReadinessDB{row: tt.row}})
 			req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 			rec := httptest.NewRecorder()
 
@@ -91,9 +91,9 @@ func mustSchemaCurrentVersion(t *testing.T) uint {
 }
 
 func TestReadyzDoesNotExposeFailureDetails(t *testing.T) {
-	handler := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDBTX(fakeReadinessDB{
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DBTX: fakeReadinessDB{
 		row: fakeReadinessRow{err: errors.New("relation schema_migrations does not exist")},
-	}))
+	}})
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
 

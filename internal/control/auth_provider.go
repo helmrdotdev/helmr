@@ -17,7 +17,7 @@ type authIdentity struct {
 	Claims          json.RawMessage
 }
 
-type authProvider interface {
+type AuthProvider interface {
 	RedirectURL(state string, verifier string) string
 	Resolve(ctx context.Context, code string, verifier string) (authIdentity, error)
 }

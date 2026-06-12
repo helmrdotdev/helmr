@@ -1,4 +1,4 @@
-package control
+package email
 
 import (
 	"context"
@@ -19,47 +19,67 @@ import (
 const emailSMTPTimeout = 10 * time.Second
 const emailHTTPTimeout = 10 * time.Second
 
-type emailMessage struct {
+type Message struct {
 	To             string
 	Subject        string
 	PlainText      string
 	IdempotencyKey string
 	MessageID      string
 
-	magicLink *magicLinkMessage
+	MagicLink *MagicLink
 }
 
-type emailSender interface {
-	SendEmail(ctx context.Context, message emailMessage) error
+type MagicLink struct {
+	Email     string
+	Purpose   string
+	URL       string
+	ExpiresAt time.Time
 }
 
-type unconfiguredEmailSender struct{}
+type Sender interface {
+	SendEmail(ctx context.Context, message Message) error
+}
 
-func (unconfiguredEmailSender) SendEmail(context.Context, emailMessage) error {
+type Unconfigured struct{}
+
+func (Unconfigured) SendEmail(context.Context, Message) error {
 	return errors.New("email sender is not configured")
 }
 
-type logEmailSender struct {
-	log *slog.Logger
+type LogSender struct {
+	Log *slog.Logger
 }
 
-func (m logEmailSender) SendEmail(_ context.Context, message emailMessage) error {
-	if message.magicLink != nil {
-		m.log.Info("magic link email", "email", message.magicLink.Email, "purpose", message.magicLink.Purpose, "url", message.magicLink.URL, "expires_at", message.magicLink.ExpiresAt)
+func (m LogSender) SendEmail(_ context.Context, message Message) error {
+	log := m.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	if message.MagicLink != nil {
+		log.Info("magic link email", "email", message.MagicLink.Email, "purpose", message.MagicLink.Purpose, "url", message.MagicLink.URL, "expires_at", message.MagicLink.ExpiresAt)
 		return nil
 	}
-	m.log.Info("email notification", "to", message.To, "subject", message.Subject)
+	log.Info("email notification", "to", message.To, "subject", message.Subject)
 	return nil
 }
 
-type smtpEmailSender struct {
+type SMTPSender struct {
 	addr     string
 	username string
 	password string
 	from     string
 }
 
-func (m smtpEmailSender) SendEmail(ctx context.Context, message emailMessage) error {
+func NewSMTPSender(addr string, username string, password string, from string) SMTPSender {
+	return SMTPSender{
+		addr:     addr,
+		username: username,
+		password: password,
+		from:     from,
+	}
+}
+
+func (m SMTPSender) SendEmail(ctx context.Context, message Message) error {
 	if strings.TrimSpace(m.addr) == "" || strings.TrimSpace(m.from) == "" {
 		return errors.New("smtp email sender is not configured")
 	}
@@ -140,17 +160,17 @@ type resendEmailService interface {
 	SendWithOptions(ctx context.Context, params *resend.SendEmailRequest, options *resend.SendEmailOptions) (*resend.SendEmailResponse, error)
 }
 
-type resendEmailSender struct {
+type ResendSender struct {
 	from   string
 	emails resendEmailService
 }
 
-func newResendEmailSender(apiKey string, from string) resendEmailSender {
+func NewResendSender(apiKey string, from string) ResendSender {
 	client := resend.NewCustomClient(&http.Client{Timeout: emailHTTPTimeout}, apiKey)
-	return resendEmailSender{from: from, emails: client.Emails}
+	return ResendSender{from: from, emails: client.Emails}
 }
 
-func (m resendEmailSender) SendEmail(ctx context.Context, message emailMessage) error {
+func (m ResendSender) SendEmail(ctx context.Context, message Message) error {
 	if strings.TrimSpace(m.from) == "" || m.emails == nil {
 		return errors.New("resend email sender is not configured")
 	}

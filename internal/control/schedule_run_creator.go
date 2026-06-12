@@ -8,7 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 )
 
-func NewScheduleRunCreator(log *slog.Logger, database dbTXBeginner, secrets secretManager, enqueuer runEnqueuer) (*Server, error) {
+func NewScheduleRunCreator(log *slog.Logger, database dbTXBeginner, secrets SecretManager, enqueuer RunEnqueuer) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}

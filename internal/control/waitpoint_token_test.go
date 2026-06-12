@@ -76,12 +76,7 @@ func TestWaitpointResponseHashIgnoresExternalSubject(t *testing.T) {
 }
 
 func newWaitpointTokenCreationHandler(store *waitpointTokenCreationStore) http.Handler {
-	return New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithUserAuth("01234567890123456789012345678901", "https://helmr.example.test"),
-	)
+	return newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, AuthSecret: []byte("01234567890123456789012345678901"), PublicURL: mustParseTestURL("https://helmr.example.test")})
 }
 
 func postCreateWaitpointToken(t *testing.T, handler http.Handler, request api.CreateWaitpointTokenRequest) *httptest.ResponseRecorder {

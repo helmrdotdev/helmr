@@ -27,12 +27,7 @@ func TestCreateOrganizationRequiresSetupTokenAndSingleton(t *testing.T) {
 	queries, pool := newServerPostgresTestDB(t, ctx)
 	userID := ids.New()
 	rawSession := createOrganizationTestSession(t, ctx, queries, pool, userID, "owner@example.test")
-	handler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDBTX(pool),
-		WithUserAuth(organizationTestAuthSecret, "https://helmr.example.test"),
-		WithInitialSetupToken("setup-secret"),
-	)
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DBTX: pool, AuthSecret: []byte(organizationTestAuthSecret), PublicURL: mustParseTestURL("https://helmr.example.test"), SetupToken: "setup-secret"})
 
 	for _, tt := range []struct {
 		name       string
@@ -104,12 +99,7 @@ func TestMeReturnsAccessRequiredAfterSingletonOrganizationExists(t *testing.T) {
 	otherID := ids.New()
 	ownerSession := createOrganizationTestSession(t, ctx, queries, pool, ownerID, "owner@example.test")
 	otherSession := createOrganizationTestSession(t, ctx, queries, pool, otherID, "other@example.test")
-	handler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDBTX(pool),
-		WithUserAuth(organizationTestAuthSecret, "https://helmr.example.test"),
-		WithInitialSetupToken("setup-secret"),
-	)
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DBTX: pool, AuthSecret: []byte(organizationTestAuthSecret), PublicURL: mustParseTestURL("https://helmr.example.test"), SetupToken: "setup-secret"})
 
 	before := getMeForSession(t, handler, otherSession)
 	if !before.OrganizationRequired || !before.SetupTokenRequired || before.AccessRequired {
@@ -135,12 +125,7 @@ func TestManagedCloudAllowsMultipleOrganizationsWithoutSetupToken(t *testing.T) 
 	secondUserID := ids.New()
 	firstSession := createOrganizationTestSession(t, ctx, queries, pool, firstUserID, "first@example.test")
 	secondSession := createOrganizationTestSession(t, ctx, queries, pool, secondUserID, "second@example.test")
-	handler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDeploymentMode(deploymentModeManagedCloud),
-		WithDBTX(pool),
-		WithUserAuth(organizationTestAuthSecret, "https://helmr.example.test"),
-	)
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DeploymentMode: deploymentModeManagedCloud, DBTX: pool, AuthSecret: []byte(organizationTestAuthSecret), PublicURL: mustParseTestURL("https://helmr.example.test")})
 
 	firstMe := getMeForSession(t, handler, firstSession)
 	if !firstMe.OrganizationRequired || firstMe.SetupTokenRequired || firstMe.AccessRequired {

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/asyncbus"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/control"
@@ -22,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
+	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -129,27 +132,43 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
+	publicURL, err := url.Parse(cfg.PublicURL)
+	if err != nil {
+		return fmt.Errorf("parse public URL: %w", err)
+	}
+	var authProvider control.AuthProvider
+	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
+		authProvider = control.NewGitHubOAuthProvider(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
+	}
+	handler, err := control.NewServer(control.ServerConfig{
+		Log:                 log,
+		DeploymentMode:      cfg.DeploymentMode,
+		DB:                  queries,
+		TX:                  pool,
+		ReadinessDB:         pool,
+		Auth:                auth.NewDBAuthenticator(queries),
+		CAS:                 casStore,
+		Secrets:             secretStore,
+		RunEnqueuer:         runEnqueuer,
+		DispatchQueue:       dispatchQueue,
+		ScheduleEngine:      scheduleEngine,
+		AsyncPublisher:      asyncPublisher,
+		EventStream:         eventStream,
+		Mailer:              configuredEmailSender(log, cfg),
+		AuthProvider:        authProvider,
+		WorkerTokenSecret:   []byte(cfg.WorkerTokenSigningKey),
+		WorkerRegisterToken: cfg.WorkerBootstrapToken,
+		SetupToken:          cfg.SetupToken,
+		AuthSecret:          []byte(cfg.AuthSecret),
+		PublicURL:           publicURL,
+		MagicLinkDebugURLs:  cfg.MagicLinkDebugURLs,
+	})
+	if err != nil {
+		return fmt.Errorf("configure control server: %w", err)
+	}
 	server := &http.Server{
-		Addr: cfg.Addr,
-		Handler: control.New(
-			log,
-			control.WithDBTX(pool),
-			control.WithDeploymentMode(cfg.DeploymentMode),
-			control.WithCAS(casStore),
-			control.WithSecrets(secretStore),
-			control.WithRunEnqueuer(runEnqueuer),
-			control.WithDispatchQueue(dispatchQueue),
-			control.WithScheduleEngine(scheduleEngine),
-			control.WithAsyncBus(asyncPublisher),
-			control.WithEventStream(eventStream),
-			control.WithWorkerAuth(cfg.WorkerTokenSigningKey, 0),
-			control.WithDefaultWorkerBootstrapToken(cfg.WorkerBootstrapToken),
-			control.WithInitialSetupToken(cfg.SetupToken),
-			control.WithUserAuth(cfg.AuthSecret, cfg.PublicURL),
-			control.WithMagicLinkDebugURLs(cfg.MagicLinkDebugURLs),
-			emailSenderOption(cfg),
-			control.WithGitHubOAuth(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret),
-		),
+		Addr:              cfg.Addr,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -180,16 +199,16 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-func emailSenderOption(cfg config.Control) control.Option {
+func configuredEmailSender(log *slog.Logger, cfg config.Control) email.Sender {
 	switch cfg.EmailProvider {
 	case config.EmailProviderSMTP:
-		return control.WithSMTPEmailSender(cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.EmailFrom)
+		return email.NewSMTPSender(cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.EmailFrom)
 	case config.EmailProviderResend:
-		return control.WithResendEmailSender(cfg.ResendAPIKey, cfg.EmailFrom)
+		return email.NewResendSender(cfg.ResendAPIKey, cfg.EmailFrom)
 	case config.EmailProviderLog:
-		return control.WithLogEmailSender()
+		return email.LogSender{Log: log}
 	default:
-		return control.WithDisabledEmailSender()
+		return email.Unconfigured{}
 	}
 }
 

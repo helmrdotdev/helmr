@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -214,11 +215,7 @@ func TestWaitpointConfirmationPageAndFormCompletion(t *testing.T) {
 			WaitpointDisplayText: "Approve production deployment?",
 		},
 	}
-	handler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithUserAuth("01234567890123456789012345678901", "https://helmr.example.test"),
-	)
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte("01234567890123456789012345678901"), PublicURL: mustParseTestURL("https://helmr.example.test")})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/waitpoints/respond?id="+tokenID.String()+"&token=hlmr_wpt_response-token", nil)
@@ -266,11 +263,7 @@ func TestWaitpointConfirmationPageRespondsToHumanWaitpoint(t *testing.T) {
 			WaitpointDisplayText: "provide payload",
 		},
 	}
-	handler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithUserAuth("01234567890123456789012345678901", "https://helmr.example.test"),
-	)
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte("01234567890123456789012345678901"), PublicURL: mustParseTestURL("https://helmr.example.test")})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/waitpoints/respond?id="+tokenID.String()+"&token=hlmr_wpt_response-token", nil)
@@ -329,11 +322,7 @@ func TestWaitpointTokenRespondRespondsToHumanWaitpoint(t *testing.T) {
 			WaitpointDisplayText: "provide payload",
 		},
 	}
-	handler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithUserAuth("01234567890123456789012345678901", "https://helmr.example.test"),
-	)
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte("01234567890123456789012345678901"), PublicURL: mustParseTestURL("https://helmr.example.test")})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/tokens/"+tokenID.String()+"/respond", strings.NewReader(`{"token":"hlmr_wpt_response-token","value":{"ok":true}}`))
@@ -379,11 +368,7 @@ func TestWaitpointTokenCompletionRejectsInvalidMetadata(t *testing.T) {
 			WaitpointDisplayText: "Approve production deployment?",
 		},
 	}
-	handler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithUserAuth("01234567890123456789012345678901", "https://helmr.example.test"),
-	)
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte("01234567890123456789012345678901"), PublicURL: mustParseTestURL("https://helmr.example.test")})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/tokens/"+tokenID.String()+"/respond", strings.NewReader(`{"token":"hlmr_wpt_response-token","metadata":[]}`))
@@ -417,11 +402,7 @@ func TestWaitpointTokenCompletionUsesRequestSubjectWhenTokenHasNone(t *testing.T
 			WaitpointDisplayText: "Approve production deployment?",
 		},
 	}
-	handler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithUserAuth("01234567890123456789012345678901", "https://helmr.example.test"),
-	)
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte("01234567890123456789012345678901"), PublicURL: mustParseTestURL("https://helmr.example.test")})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/tokens/"+tokenID.String()+"/respond", strings.NewReader(`{"token":"hlmr_wpt_response-token","external_subject":"responder@example.test"}`))
@@ -456,11 +437,7 @@ func TestWaitpointTokenCompletionReturnsAcceptedWhenResolveDoesNotResume(t *test
 		},
 		resolveStatus: db.RunWaitStatusWaiting,
 	}
-	handler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithUserAuth("01234567890123456789012345678901", "https://helmr.example.test"),
-	)
+	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte("01234567890123456789012345678901"), PublicURL: mustParseTestURL("https://helmr.example.test")})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/tokens/"+tokenID.String()+"/respond", strings.NewReader(`{"token":"hlmr_wpt_response-token"}`))
@@ -752,10 +729,10 @@ func (s *notificationStore) RespondWithWaitpointToken(ctx context.Context, mark 
 }
 
 type recordingEmailSender struct {
-	messages []emailMessage
+	messages []email.Message
 }
 
-func (s *recordingEmailSender) SendEmail(_ context.Context, message emailMessage) error {
+func (s *recordingEmailSender) SendEmail(_ context.Context, message email.Message) error {
 	s.messages = append(s.messages, message)
 	return nil
 }

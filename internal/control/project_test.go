@@ -251,16 +251,12 @@ func TestCreateDeploymentDoesNotValidateTaskIndexMetadata(t *testing.T) {
 
 func TestDeploymentRouteAllowsAPIKeyWithProjectManage(t *testing.T) {
 	store := &fakeStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{
-			kind:          auth.ActorKindAPIKey,
-			projectID:     testProjectIDString(),
-			environmentID: testEnvironmentIDString(),
-			permissions:   []auth.Permission{auth.PermissionTasksDeploy},
-		}),
-		WithCAS(&fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("c", 64), MediaType: api.DeploymentSourceArtifactMediaType}}),
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{
+		kind:          auth.ActorKindAPIKey,
+		projectID:     testProjectIDString(),
+		environmentID: testEnvironmentIDString(),
+		permissions:   []auth.Permission{auth.PermissionTasksDeploy},
+	}, CAS: &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("c", 64), MediaType: api.DeploymentSourceArtifactMediaType}}},
 	)
 	body, contentType := deploymentMultipart(t, defaultDeploymentMetadata(), validDeploymentSourceTar(t))
 	req := httptest.NewRequest(http.MethodPost, "/api/deployments", bytes.NewReader(body))
@@ -281,15 +277,11 @@ func TestDeploymentRouteAllowsAPIKeyWithProjectManage(t *testing.T) {
 func TestDeploymentRouteAuthorizesBeforeReadingDeploymentSource(t *testing.T) {
 	store := &fakeStore{}
 	artifactStore := &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("f", 64), MediaType: api.DeploymentSourceArtifactMediaType}}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{
-			kind:          auth.ActorKindAPIKey,
-			projectID:     testProjectIDString(),
-			environmentID: testEnvironmentIDString(),
-		}),
-		WithCAS(artifactStore),
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{
+		kind:          auth.ActorKindAPIKey,
+		projectID:     testProjectIDString(),
+		environmentID: testEnvironmentIDString(),
+	}, CAS: artifactStore},
 	)
 	boundary := "helmr-test-boundary"
 	body := strings.Join([]string{
@@ -478,12 +470,7 @@ func TestProjectRoutesAcceptBearerSession(t *testing.T) {
 			UpdatedAt: testTime(),
 		},
 	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithUserAuth(authSecret, "https://helmr.example.test"),
-		WithSessionTTL(time.Hour),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte(authSecret), PublicURL: mustParseTestURL("https://helmr.example.test"), SessionTTL: time.Hour})
 	req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
 	req.Header.Set("authorization", "Bearer "+rawSession)
 	rec := httptest.NewRecorder()
@@ -503,10 +490,7 @@ func TestProjectRoutesAcceptBearerSession(t *testing.T) {
 }
 
 func TestProjectRoutesRejectAPIKeyBearer(t *testing.T) {
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(&projectManagementStore{}),
-	)
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &projectManagementStore{}})
 	req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
 	req.Header.Set("authorization", "Bearer "+auth.APIKeyPrefix+"test-key")
 	rec := httptest.NewRecorder()
