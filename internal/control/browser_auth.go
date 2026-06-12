@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -44,7 +43,7 @@ type browserAuthEnvelope struct {
 func (s *Server) githubInviteStart(w http.ResponseWriter, r *http.Request) {
 	var request api.GitHubAuthInviteStartRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid github invite request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid github invite request JSON: %w", err)))
 		return
 	}
 	tokenHash, err := s.validateInvitationToken(r, request.Token)
@@ -58,7 +57,7 @@ func (s *Server) githubInviteStart(w http.ResponseWriter, r *http.Request) {
 func (s *Server) githubStart(w http.ResponseWriter, r *http.Request) {
 	var request api.GitHubAuthStartRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid github auth request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid github auth request JSON: %w", err)))
 		return
 	}
 	s.writeGitHubAuthStart(w, r, browserAuthGitHubLogin, nil, validateRedirectAfter(request.Next))
@@ -66,21 +65,21 @@ func (s *Server) githubStart(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeGitHubAuthStart(w http.ResponseWriter, r *http.Request, kind browserAuthKind, tokenHash []byte, redirectAfter string) {
 	if err := s.userAuthConfigured(); err != nil {
-		writeError(w, http.StatusServiceUnavailable, err)
+		writeError(w, unavailable(err))
 		return
 	}
 	if s.authProvider == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("auth provider is not configured"))
+		writeError(w, unavailable(errors.New("auth provider is not configured")))
 		return
 	}
 	state, err := auth.GenerateOpaqueToken(32)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("generate auth state"))
+		writeError(w, errors.New("generate auth state"))
 		return
 	}
 	verifier, err := auth.GenerateOpaqueToken(64)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("generate pkce verifier"))
+		writeError(w, errors.New("generate pkce verifier"))
 		return
 	}
 	flow := browserAuthFlow{
@@ -94,7 +93,7 @@ func (s *Server) writeGitHubAuthStart(w http.ResponseWriter, r *http.Request, ki
 	}
 	encoded, err := s.encodeAuthFlow(flow)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("encode auth flow"))
+		writeError(w, errors.New("encode auth flow"))
 		return
 	}
 	http.SetCookie(w, authFlowCookie(r, encoded, int(authFlowTTL.Seconds())))
@@ -104,16 +103,16 @@ func (s *Server) writeGitHubAuthStart(w http.ResponseWriter, r *http.Request, ki
 
 func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 	if err := s.userAuthConfigured(); err != nil {
-		writeError(w, http.StatusServiceUnavailable, err)
+		writeError(w, unavailable(err))
 		return
 	}
 	if s.authProvider == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("auth provider is not configured"))
+		writeError(w, unavailable(errors.New("auth provider is not configured")))
 		return
 	}
 	var request api.GitHubAuthFinishRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid auth callback JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid auth callback JSON: %w", err)))
 		return
 	}
 	clearAuthFlowCookie(w, r)
@@ -122,26 +121,26 @@ func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 		if message == "" {
 			message = "authorization failed"
 		}
-		writeError(w, http.StatusBadRequest, errors.New(message))
+		writeError(w, badRequest(errors.New(message)))
 		return
 	}
 	flow, err := s.decodeAuthFlow(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if request.State == "" || request.State != flow.State {
-		writeError(w, http.StatusBadRequest, errors.New("auth state mismatch"))
+		writeError(w, badRequest(errors.New("auth state mismatch")))
 		return
 	}
 	if request.Code == "" {
-		writeError(w, http.StatusBadRequest, errors.New("authorization code is required"))
+		writeError(w, badRequest(errors.New("authorization code is required")))
 		return
 	}
 	identity, err := s.authProvider.Resolve(r.Context(), request.Code, flow.Verifier)
 	if err != nil {
 		s.log.Warn("auth callback failed", "error", err)
-		writeError(w, http.StatusBadRequest, errors.New("auth callback failed"))
+		writeError(w, badRequest(errors.New("auth callback failed")))
 		return
 	}
 	rawSession, err := s.completeBrowserAuth(r, flow, identity)
@@ -180,7 +179,7 @@ func (s *Server) completeInviteAuth(r *http.Request, flow browserAuthFlow, ident
 	}
 	invite, err := queries.GetActiveInvitation(r.Context(), tokenHash)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			return "", errInvalidOrExpiredToken
 		}
 		return "", err
@@ -199,7 +198,7 @@ func (s *Server) completeInviteAuth(r *http.Request, flow browserAuthFlow, ident
 		OrgID:  invite.OrgID,
 		UserID: user.ID,
 	})
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil && !isNoRows(err) {
 		return "", err
 	}
 	if err == nil && !existingMember.DisabledAt.Valid {
@@ -306,7 +305,7 @@ func (s *Server) validateInvitationToken(r *http.Request, raw string) ([]byte, e
 		return nil, errors.New("invalid invite token")
 	}
 	if _, err := s.db.GetActiveInvitation(r.Context(), tokenHash); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			return nil, errInvalidOrExpiredToken
 		}
 		return nil, err
@@ -456,7 +455,7 @@ func writeAuthError(w http.ResponseWriter, status int, err error) {
 		writeJSON(w, status, map[string]string{"error": err.Error(), "error_kind": kind})
 		return
 	}
-	writeError(w, status, err)
+	writeErrorStatus(w, status, err)
 }
 
 func authErrorKind(err error) string {

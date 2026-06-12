@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -561,7 +560,7 @@ func seedServerTestConfiguredScope(t *testing.T, ctx context.Context, queries *d
 	if err == nil {
 		return scope
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !isNoRows(err) {
 		t.Fatal(err)
 	}
 	if _, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
@@ -608,7 +607,7 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 	if err == nil {
 		return deploymentTask
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !isNoRows(err) {
 		t.Fatal(err)
 	}
 	taskDeploymentSourceDigest := "sha256:" + strings.Repeat("a", 64)

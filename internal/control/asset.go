@@ -13,7 +13,7 @@ import (
 
 func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
-		writeError(w, http.StatusNotFound, errors.New("not found"))
+		writeError(w, notFound(errors.New("not found")))
 		return
 	}
 	s.consoleAsset(w, r)
@@ -36,7 +36,7 @@ func (s *Server) consoleAsset(w http.ResponseWriter, r *http.Request) {
 
 	data, err := fs.ReadFile(dist, "index.html")
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("console bundle is not available"))
+		writeError(w, errors.New("console bundle is not available"))
 		return
 	}
 	writeConsoleFile(w, "index.html", data, false)

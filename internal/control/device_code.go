@@ -12,27 +12,26 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/jackc/pgx/v5"
 )
 
 func (s *Server) startDeviceCode(w http.ResponseWriter, r *http.Request) {
 	if err := s.userAuthConfigured(); err != nil {
-		writeError(w, http.StatusServiceUnavailable, err)
+		writeError(w, unavailable(err))
 		return
 	}
 	codes, err := auth.GenerateDeviceCodes()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("generate device code"))
+		writeError(w, errors.New("generate device code"))
 		return
 	}
 	deviceHash, err := auth.HashToken(s.authSecret, codes.DeviceCode)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("hash device code"))
+		writeError(w, errors.New("hash device code"))
 		return
 	}
 	userHash, err := auth.HashToken(s.authSecret, auth.NormalizeUserCode(codes.UserCode))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("hash user code"))
+		writeError(w, errors.New("hash user code"))
 		return
 	}
 	ttl := s.effectiveDeviceCodeTTL()
@@ -45,7 +44,7 @@ func (s *Server) startDeviceCode(w http.ResponseWriter, r *http.Request) {
 		PollIntervalSeconds: int32(pollEvery.Seconds()),
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("create device code"))
+		writeError(w, errors.New("create device code"))
 		return
 	}
 	verificationURI := s.publicURL.ResolveReference(&url.URL{Path: "/auth/device"}).String()
@@ -82,23 +81,23 @@ func (s *Server) denyDeviceCode(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) resolveDeviceCode(w http.ResponseWriter, r *http.Request, approve bool) {
 	if err := s.userAuthConfigured(); err != nil {
-		writeError(w, http.StatusServiceUnavailable, err)
+		writeError(w, unavailable(err))
 		return
 	}
 	var request api.DeviceAuthorizeRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("invalid device authorization JSON"))
+		writeError(w, badRequest(errors.New("invalid device authorization JSON")))
 		return
 	}
 	code := auth.NormalizeUserCode(request.UserCode)
 	hash, err := auth.HashToken(s.authSecret, code)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("invalid device code"))
+		writeError(w, badRequest(errors.New("invalid device code")))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	if actor.Role == "" {
-		writeError(w, http.StatusForbidden, errors.New("organization is required"))
+		writeError(w, forbidden(errors.New("organization is required")))
 		return
 	}
 	var device db.DeviceCode
@@ -116,11 +115,11 @@ func (s *Server) resolveDeviceCode(w http.ResponseWriter, r *http.Request, appro
 		})
 	}
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, errors.New("device code not found"))
+		if isNoRows(err) {
+			writeError(w, notFound(errors.New("device code not found")))
 			return
 		}
-		writeError(w, http.StatusInternalServerError, errors.New("resolve device code"))
+		writeError(w, errors.New("resolve device code"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.DeviceStatusResponse{Status: deviceStatus(device)})
@@ -128,12 +127,12 @@ func (s *Server) resolveDeviceCode(w http.ResponseWriter, r *http.Request, appro
 
 func (s *Server) deviceToken(w http.ResponseWriter, r *http.Request) {
 	if err := s.userAuthConfigured(); err != nil {
-		writeError(w, http.StatusServiceUnavailable, err)
+		writeError(w, unavailable(err))
 		return
 	}
 	var request api.DeviceTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("invalid device token JSON"))
+		writeError(w, badRequest(errors.New("invalid device token JSON")))
 		return
 	}
 	hash, err := auth.HashToken(s.authSecret, strings.TrimSpace(request.DeviceCode))
@@ -143,11 +142,11 @@ func (s *Server) deviceToken(w http.ResponseWriter, r *http.Request) {
 	}
 	device, err := s.db.GetDeviceCodeForPoll(r.Context(), hash)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			writeDeviceTokenError(w, "invalid_request")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, errors.New("poll device code"))
+		writeError(w, errors.New("poll device code"))
 		return
 	}
 	switch status := deviceStatus(device); status {
@@ -160,16 +159,16 @@ func (s *Server) deviceToken(w http.ResponseWriter, r *http.Request) {
 	case "approved":
 		consumed, err := s.db.ConsumeDeviceCode(r.Context(), hash)
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+			if isNoRows(err) {
 				writeDeviceTokenError(w, "invalid_request")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, errors.New("consume device code"))
+			writeError(w, errors.New("consume device code"))
 			return
 		}
 		token, err := s.issueSessionForOrg(r, s.db, consumed.DecidedByUserID, consumed.OrgID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("issue device session"))
+			writeError(w, errors.New("issue device session"))
 			return
 		}
 		writeJSON(w, http.StatusOK, api.DeviceTokenResponse{
@@ -184,21 +183,21 @@ func (s *Server) deviceToken(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) lookupDeviceCodeByUserCode(w http.ResponseWriter, r *http.Request, code string) (db.DeviceCode, bool) {
 	if err := s.userAuthConfigured(); err != nil {
-		writeError(w, http.StatusServiceUnavailable, err)
+		writeError(w, unavailable(err))
 		return db.DeviceCode{}, false
 	}
 	hash, err := auth.HashToken(s.authSecret, code)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("invalid device code"))
+		writeError(w, badRequest(errors.New("invalid device code")))
 		return db.DeviceCode{}, false
 	}
 	device, err := s.db.GetDeviceCodeByUserCodeHash(r.Context(), hash)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, errors.New("device code not found"))
+		if isNoRows(err) {
+			writeError(w, notFound(errors.New("device code not found")))
 			return db.DeviceCode{}, false
 		}
-		writeError(w, http.StatusInternalServerError, errors.New("load device code"))
+		writeError(w, errors.New("load device code"))
 		return db.DeviceCode{}, false
 	}
 	return device, true

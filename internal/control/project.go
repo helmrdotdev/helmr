@@ -54,17 +54,17 @@ func (s *Server) failDeletionJob(ctx context.Context, orgID pgtype.UUID, jobID p
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		writeError(w, unavailable(errors.New("project storage is not configured")))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	if actor.Role == "" {
-		writeError(w, http.StatusForbidden, errors.New("organization is required"))
+		writeError(w, forbidden(errors.New("organization is required")))
 		return
 	}
 	projects, err := s.db.ListProjects(r.Context(), ids.ToPG(actor.OrgID))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("list projects"))
+		writeError(w, errors.New("list projects"))
 		return
 	}
 	response := api.ListProjectsResponse{Projects: make([]api.ProjectSummary, 0, len(projects))}
@@ -75,7 +75,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 			ProjectID: project.ID,
 		})
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("list environments"))
+			writeError(w, errors.New("list environments"))
 			return
 		}
 		item.Environments = make([]api.EnvironmentSummary, 0, len(environments))
@@ -89,12 +89,12 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		writeError(w, unavailable(errors.New("project storage is not configured")))
 		return
 	}
 	projectID, err := parseUUIDParam(r, "projectID")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -102,17 +102,17 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 		OrgID: ids.ToPG(actor.OrgID),
 		ID:    ids.ToPG(projectID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("project not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("project not found")))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("load project"))
+		writeError(w, errors.New("load project"))
 		return
 	}
 	response, err := s.projectResponseWithEnvironments(r.Context(), projectRecordFromDB(project))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -120,17 +120,17 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		writeError(w, unavailable(errors.New("project storage is not configured")))
 		return
 	}
 	var request api.CreateProjectRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid project request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid project request JSON: %w", err)))
 		return
 	}
 	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -145,10 +145,10 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
-			writeError(w, http.StatusBadRequest, errors.New("project slug is already in use"))
+			writeError(w, badRequest(errors.New("project slug is already in use")))
 			return
 		}
-		writeError(w, http.StatusInternalServerError, errors.New("create project"))
+		writeError(w, errors.New("create project"))
 		return
 	}
 	environments, err := s.db.ListEnvironments(r.Context(), db.ListEnvironmentsParams{
@@ -156,7 +156,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		ProjectID: project.ID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("list environments"))
+		writeError(w, errors.New("list environments"))
 		return
 	}
 	response := projectResponse(projectRecordFromCreated(project))
@@ -169,22 +169,22 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		writeError(w, unavailable(errors.New("project storage is not configured")))
 		return
 	}
 	projectID, err := parseUUIDParam(r, "projectID")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	var request api.UpdateProjectRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid project request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid project request JSON: %w", err)))
 		return
 	}
 	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -194,16 +194,16 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		Slug:  slug,
 		Name:  name,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("project not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("project not found")))
 		return
 	}
 	if err != nil {
 		if isUniqueViolation(err) {
-			writeError(w, http.StatusBadRequest, errors.New("project slug is already in use"))
+			writeError(w, badRequest(errors.New("project slug is already in use")))
 			return
 		}
-		writeError(w, http.StatusInternalServerError, errors.New("update project"))
+		writeError(w, errors.New("update project"))
 		return
 	}
 	writeJSON(w, http.StatusOK, projectResponse(projectRecordFromDB(project)))
@@ -211,12 +211,12 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		writeError(w, unavailable(errors.New("project storage is not configured")))
 		return
 	}
 	projectID, err := parseUUIDParam(r, "projectID")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -224,17 +224,17 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		OrgID: ids.ToPG(actor.OrgID),
 		ID:    ids.ToPG(projectID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("project not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("project not found")))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("load project"))
+		writeError(w, errors.New("load project"))
 		return
 	}
 	principal, err := auth.ActorPrincipalAllowSystem(actor)
 	if err != nil {
-		writeError(w, http.StatusForbidden, err)
+		writeError(w, forbidden(err))
 		return
 	}
 	orgID := ids.ToPG(actor.OrgID)
@@ -250,7 +250,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		RequestedByPrincipal: principal,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("create deletion job"))
+		writeError(w, errors.New("create deletion job"))
 		return
 	}
 	if _, err := s.db.MarkDeletionJobRunning(r.Context(), db.MarkDeletionJobRunningParams{
@@ -258,7 +258,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		ID:    job.ID,
 	}); err != nil {
 		s.failDeletionJob(r.Context(), orgID, job.ID, err)
-		writeError(w, http.StatusInternalServerError, errors.New("mark deletion job running"))
+		writeError(w, errors.New("mark deletion job running"))
 		return
 	}
 	store := s.db
@@ -267,7 +267,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		tx, err = s.tx.Begin(r.Context())
 		if err != nil {
 			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, http.StatusInternalServerError, errors.New("begin deletion transaction"))
+			writeError(w, errors.New("begin deletion transaction"))
 			return
 		}
 		defer tx.Rollback(r.Context())
@@ -278,7 +278,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		projectsForPromotion, err = store.ListProjectsForUpdate(r.Context(), orgID)
 		if err != nil {
 			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, http.StatusInternalServerError, errors.New("lock projects"))
+			writeError(w, errors.New("lock projects"))
 			return
 		}
 		projectFound := false
@@ -290,8 +290,8 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !projectFound {
-			s.failDeletionJob(r.Context(), orgID, job.ID, pgx.ErrNoRows)
-			writeError(w, http.StatusNotFound, errors.New("project not found"))
+			s.failDeletionJob(r.Context(), orgID, job.ID, errRecordNotFound)
+			writeError(w, notFound(errors.New("project not found")))
 			return
 		}
 	}
@@ -301,7 +301,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 			projectsForPromotion, err = store.ListProjects(r.Context(), orgID)
 			if err != nil {
 				s.failDeletionJob(r.Context(), orgID, job.ID, err)
-				writeError(w, http.StatusInternalServerError, errors.New("list projects"))
+				writeError(w, errors.New("list projects"))
 				return
 			}
 		}
@@ -315,13 +315,13 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	if _, err := store.DeleteProject(r.Context(), db.DeleteProjectParams{
 		OrgID: orgID,
 		ID:    targetProjectID,
-	}); errors.Is(err, pgx.ErrNoRows) {
+	}); isNoRows(err) {
 		s.failDeletionJob(r.Context(), orgID, job.ID, err)
-		writeError(w, http.StatusNotFound, errors.New("project not found"))
+		writeError(w, notFound(errors.New("project not found")))
 		return
 	} else if err != nil {
 		s.failDeletionJob(r.Context(), orgID, job.ID, err)
-		writeError(w, http.StatusInternalServerError, errors.New("delete project"))
+		writeError(w, errors.New("delete project"))
 		return
 	}
 	if promotedProjectID != (pgtype.UUID{}) {
@@ -330,11 +330,11 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 			ID:    promotedProjectID,
 		}); err != nil {
 			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, http.StatusInternalServerError, errors.New("set default project"))
+			writeError(w, errors.New("set default project"))
 			return
 		} else if rows == 0 {
 			s.failDeletionJob(r.Context(), orgID, job.ID, errors.New("set default project affected no rows"))
-			writeError(w, http.StatusInternalServerError, errors.New("set default project"))
+			writeError(w, errors.New("set default project"))
 			return
 		}
 	}
@@ -346,12 +346,12 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			_ = tx.Rollback(r.Context())
 			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, http.StatusInternalServerError, errors.New("complete deletion job"))
+			writeError(w, errors.New("complete deletion job"))
 			return
 		}
 		if err := tx.Commit(r.Context()); err != nil {
 			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, http.StatusInternalServerError, errors.New("commit deletion"))
+			writeError(w, errors.New("commit deletion"))
 			return
 		}
 	} else {
@@ -361,7 +361,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 			DeletedCounts: json.RawMessage(`{"projects":1}`),
 		}); err != nil {
 			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, http.StatusInternalServerError, errors.New("complete deletion job"))
+			writeError(w, errors.New("complete deletion job"))
 			return
 		}
 	}
@@ -370,38 +370,38 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("environment storage is not configured"))
+		writeError(w, unavailable(errors.New("environment storage is not configured")))
 		return
 	}
 	projectID, err := parseUUIDParam(r, "projectID")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	var request api.CreateEnvironmentRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid environment request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid environment request JSON: %w", err)))
 		return
 	}
 	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	colorHex, err := normalizeEnvironmentColorHex(request.ColorHex)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	if _, err := s.db.GetProject(r.Context(), db.GetProjectParams{
 		OrgID: ids.ToPG(actor.OrgID),
 		ID:    ids.ToPG(projectID),
-	}); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("project not found"))
+	}); isNoRows(err) {
+		writeError(w, notFound(errors.New("project not found")))
 		return
 	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("load project"))
+		writeError(w, errors.New("load project"))
 		return
 	}
 	environment, err := s.db.CreateEnvironment(r.Context(), db.CreateEnvironmentParams{
@@ -415,10 +415,10 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
-			writeError(w, http.StatusBadRequest, errors.New("environment slug is already in use"))
+			writeError(w, badRequest(errors.New("environment slug is already in use")))
 			return
 		}
-		writeError(w, http.StatusInternalServerError, errors.New("create environment"))
+		writeError(w, errors.New("create environment"))
 		return
 	}
 	writeJSON(w, http.StatusCreated, environmentResponse(environmentRecordFromDB(environment)))
@@ -426,17 +426,17 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("environment storage is not configured"))
+		writeError(w, unavailable(errors.New("environment storage is not configured")))
 		return
 	}
 	projectID, err := parseUUIDParam(r, "projectID")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	environmentID, err := parseUUIDParam(r, "environmentID")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -445,12 +445,12 @@ func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
 		ProjectID: ids.ToPG(projectID),
 		ID:        ids.ToPG(environmentID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("environment not found")))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("load environment"))
+		writeError(w, errors.New("load environment"))
 		return
 	}
 	writeJSON(w, http.StatusOK, environmentResponse(environmentRecordFromDB(environment)))
@@ -458,32 +458,32 @@ func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("environment storage is not configured"))
+		writeError(w, unavailable(errors.New("environment storage is not configured")))
 		return
 	}
 	projectID, err := parseUUIDParam(r, "projectID")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	environmentID, err := parseUUIDParam(r, "environmentID")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	var request api.UpdateEnvironmentRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid environment request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid environment request JSON: %w", err)))
 		return
 	}
 	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	colorHex, err := normalizeEnvironmentColorHex(request.ColorHex)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -492,16 +492,16 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 		ProjectID: ids.ToPG(projectID),
 		ID:        ids.ToPG(environmentID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("environment not found")))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("load environment"))
+		writeError(w, errors.New("load environment"))
 		return
 	}
 	if current.Slug != slug && (protectedEnvironmentSlug(current.Slug) || protectedEnvironmentSlug(slug)) {
-		writeError(w, http.StatusBadRequest, errors.New("production and staging environment slugs cannot be renamed"))
+		writeError(w, badRequest(errors.New("production and staging environment slugs cannot be renamed")))
 		return
 	}
 	environment, err := s.db.UpdateEnvironmentDetails(r.Context(), db.UpdateEnvironmentDetailsParams{
@@ -512,16 +512,16 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 		Name:      name,
 		ColorHex:  colorHex,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("environment not found")))
 		return
 	}
 	if err != nil {
 		if isUniqueViolation(err) {
-			writeError(w, http.StatusBadRequest, errors.New("environment slug is already in use"))
+			writeError(w, badRequest(errors.New("environment slug is already in use")))
 			return
 		}
-		writeError(w, http.StatusInternalServerError, errors.New("update environment"))
+		writeError(w, errors.New("update environment"))
 		return
 	}
 	writeJSON(w, http.StatusOK, environmentResponse(environmentRecordFromDB(environment)))
@@ -529,17 +529,17 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("environment storage is not configured"))
+		writeError(w, unavailable(errors.New("environment storage is not configured")))
 		return
 	}
 	projectID, err := parseUUIDParam(r, "projectID")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	environmentID, err := parseUUIDParam(r, "environmentID")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -548,21 +548,21 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 		ProjectID: ids.ToPG(projectID),
 		ID:        ids.ToPG(environmentID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("environment not found")))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("load environment"))
+		writeError(w, errors.New("load environment"))
 		return
 	}
 	if protectedEnvironmentSlug(environment.Slug) {
-		writeError(w, http.StatusBadRequest, errors.New("production and staging environments cannot be deleted"))
+		writeError(w, badRequest(errors.New("production and staging environments cannot be deleted")))
 		return
 	}
 	principal, err := auth.ActorPrincipalAllowSystem(actor)
 	if err != nil {
-		writeError(w, http.StatusForbidden, err)
+		writeError(w, forbidden(err))
 		return
 	}
 	orgID := ids.ToPG(actor.OrgID)
@@ -579,7 +579,7 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 		RequestedByPrincipal: principal,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("create deletion job"))
+		writeError(w, errors.New("create deletion job"))
 		return
 	}
 	if _, err := s.db.MarkDeletionJobRunning(r.Context(), db.MarkDeletionJobRunningParams{
@@ -587,7 +587,7 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 		ID:    job.ID,
 	}); err != nil {
 		s.failDeletionJob(r.Context(), orgID, job.ID, err)
-		writeError(w, http.StatusInternalServerError, errors.New("mark deletion job running"))
+		writeError(w, errors.New("mark deletion job running"))
 		return
 	}
 	store := s.db
@@ -596,7 +596,7 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 		tx, err = s.tx.Begin(r.Context())
 		if err != nil {
 			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, http.StatusInternalServerError, errors.New("begin deletion transaction"))
+			writeError(w, errors.New("begin deletion transaction"))
 			return
 		}
 		defer tx.Rollback(r.Context())
@@ -606,13 +606,13 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 		OrgID:     orgID,
 		ProjectID: targetProjectID,
 		ID:        targetEnvironmentID,
-	}); errors.Is(err, pgx.ErrNoRows) {
+	}); isNoRows(err) {
 		s.failDeletionJob(r.Context(), orgID, job.ID, err)
-		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+		writeError(w, notFound(errors.New("environment not found")))
 		return
 	} else if err != nil {
 		s.failDeletionJob(r.Context(), orgID, job.ID, err)
-		writeError(w, http.StatusInternalServerError, errors.New("delete environment"))
+		writeError(w, errors.New("delete environment"))
 		return
 	}
 	if tx != nil {
@@ -623,12 +623,12 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			_ = tx.Rollback(r.Context())
 			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, http.StatusInternalServerError, errors.New("complete deletion job"))
+			writeError(w, errors.New("complete deletion job"))
 			return
 		}
 		if err := tx.Commit(r.Context()); err != nil {
 			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, http.StatusInternalServerError, errors.New("commit deletion"))
+			writeError(w, errors.New("commit deletion"))
 			return
 		}
 	} else {
@@ -638,7 +638,7 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 			DeletedCounts: json.RawMessage(`{"environments":1}`),
 		}); err != nil {
 			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, http.StatusInternalServerError, errors.New("complete deletion job"))
+			writeError(w, errors.New("complete deletion job"))
 			return
 		}
 	}
@@ -691,33 +691,33 @@ type casObjectLookupStore interface {
 
 func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		writeError(w, unavailable(errors.New("project storage is not configured")))
 		return
 	}
 	store, ok := s.db.(deploymentStatusStore)
 	if !ok {
-		writeError(w, http.StatusServiceUnavailable, errors.New("deployment storage is not configured"))
+		writeError(w, unavailable(errors.New("deployment storage is not configured")))
 		return
 	}
 	deploymentID, err := parseUUIDParam(r, "deploymentID")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	scope, err := s.requestedRunListScope(r, actor)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) && !actor.HasPermission(auth.PermissionRunsRead, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, scope)
 	if err != nil {
 		s.log.Error("resolve deployment scope failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get deployment"))
+		writeError(w, errors.New("get deployment"))
 		return
 	}
 	deployment, err := store.GetDeployment(r.Context(), db.GetDeploymentParams{
@@ -726,19 +726,19 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID: environmentID,
 		ID:            ids.ToPG(deploymentID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("deployment not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("deployment not found")))
 		return
 	}
 	if err != nil {
 		s.log.Error("get deployment failed", "deployment_id", deploymentID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get deployment"))
+		writeError(w, errors.New("get deployment"))
 		return
 	}
 	response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
 	if err != nil {
 		s.log.Error("get deployment artifacts failed", "deployment_id", deploymentID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get deployment"))
+		writeError(w, errors.New("get deployment"))
 		return
 	}
 	response.Tasks = []api.DeploymentTaskResponse{}
@@ -751,14 +751,14 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			s.log.Error("list deployment tasks failed", "deployment_id", deploymentID.String(), "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("list deployment tasks"))
+			writeError(w, errors.New("list deployment tasks"))
 			return
 		}
 		response.Tasks = make([]api.DeploymentTaskResponse, 0, len(tasks))
 		taskResponses, err := deploymentTaskResponses(r.Context(), store, tasks)
 		if err != nil {
 			s.log.Error("get deployment task artifacts failed", "deployment_id", deploymentID.String(), "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("list deployment tasks"))
+			writeError(w, errors.New("list deployment tasks"))
 			return
 		}
 		response.Tasks = taskResponses
@@ -768,42 +768,42 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		writeError(w, unavailable(errors.New("project storage is not configured")))
 		return
 	}
 	store, ok := s.db.(deploymentStatusStore)
 	if !ok {
-		writeError(w, http.StatusServiceUnavailable, errors.New("deployment storage is not configured"))
+		writeError(w, unavailable(errors.New("deployment storage is not configured")))
 		return
 	}
 	deploymentID, err := parseUUIDParam(r, "deploymentID")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	cursor, err := eventCursor(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	limit, err := eventLimit(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	scope, err := s.requestedRunListScope(r, actor)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) && !actor.HasPermission(auth.PermissionRunsRead, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, scope)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("get deployment events"))
+		writeError(w, errors.New("get deployment events"))
 		return
 	}
 	deployment, err := store.GetDeployment(r.Context(), db.GetDeploymentParams{
@@ -812,12 +812,12 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID: environmentID,
 		ID:            ids.ToPG(deploymentID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("deployment not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("deployment not found")))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("get deployment"))
+		writeError(w, errors.New("get deployment"))
 		return
 	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
@@ -832,7 +832,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		RowLimit:    limit + 1,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("list deployment events"))
+		writeError(w, errors.New("list deployment events"))
 		return
 	}
 	hasNext := len(rows) > int(limit)
@@ -853,7 +853,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) followDeploymentEvents(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, deploymentID uuid.UUID, cursor int64) {
 	if s.eventStream == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("event stream is not configured"))
+		writeError(w, unavailable(errors.New("event stream is not configured")))
 		return
 	}
 	flusher, _ := w.(http.Flusher)
@@ -901,28 +901,28 @@ func deploymentEventKindIsTerminal(kind string) bool {
 
 func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		writeError(w, unavailable(errors.New("project storage is not configured")))
 		return
 	}
 	store, ok := s.db.(currentDeploymentStore)
 	if !ok {
-		writeError(w, http.StatusServiceUnavailable, errors.New("deployment storage is not configured"))
+		writeError(w, unavailable(errors.New("deployment storage is not configured")))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	scope, err := s.requestedRunListScope(r, actor)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, scope)
 	if err != nil {
 		s.log.Error("resolve deployment scope failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get current deployment"))
+		writeError(w, errors.New("get current deployment"))
 		return
 	}
 	deployment, err := store.GetCurrentDeployment(r.Context(), db.GetCurrentDeploymentParams{
@@ -930,13 +930,13 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		writeJSON(w, http.StatusOK, api.GetCurrentDeploymentResponse{})
 		return
 	}
 	if err != nil {
 		s.log.Error("get current deployment failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get current deployment"))
+		writeError(w, errors.New("get current deployment"))
 		return
 	}
 	tasks, err := store.ListDeploymentTasks(r.Context(), db.ListDeploymentTasksParams{
@@ -947,20 +947,20 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		s.log.Error("list deployment tasks failed", "deployment_id", ids.MustFromPG(deployment.ID).String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("list deployment tasks"))
+		writeError(w, errors.New("list deployment tasks"))
 		return
 	}
 	response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
 	if err != nil {
 		s.log.Error("get current deployment artifacts failed", "deployment_id", ids.MustFromPG(deployment.ID).String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get current deployment"))
+		writeError(w, errors.New("get current deployment"))
 		return
 	}
 	response.Tasks = make([]api.DeploymentTaskResponse, 0, len(tasks))
 	taskResponses, err := deploymentTaskResponses(r.Context(), store, tasks)
 	if err != nil {
 		s.log.Error("get current deployment task artifacts failed", "deployment_id", ids.MustFromPG(deployment.ID).String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("list deployment tasks"))
+		writeError(w, errors.New("list deployment tasks"))
 		return
 	}
 	response.Tasks = taskResponses
@@ -969,34 +969,34 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		writeError(w, unavailable(errors.New("project storage is not configured")))
 		return
 	}
 	store, ok := s.db.(deploymentStatusStore)
 	if !ok {
-		writeError(w, http.StatusServiceUnavailable, errors.New("deployment storage is not configured"))
+		writeError(w, unavailable(errors.New("deployment storage is not configured")))
 		return
 	}
 	var request api.PromoteDeploymentRequest
 	if err := decodeOptionalJSON(r.Body, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid promotion request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid promotion request JSON: %w", err)))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	deploymentRef := strings.TrimSpace(chi.URLParam(r, "deployment"))
 	if deploymentRef == "" {
-		writeError(w, http.StatusBadRequest, errors.New("deployment is required"))
+		writeError(w, badRequest(errors.New("deployment is required")))
 		return
 	}
 	projectRef, environmentRef, err := environmentScopeRefsFromRequest(r, actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if projectRef == "" && environmentRef == "" && actor.Kind == auth.ActorKindAPIKey {
 		scope, ok := actor.EnvironmentScope()
 		if !ok {
-			writeError(w, http.StatusBadRequest, errors.New("API key is not bound to an environment"))
+			writeError(w, badRequest(errors.New("API key is not bound to an environment")))
 			return
 		}
 		projectRef = scope.ProjectID
@@ -1005,26 +1005,26 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 	request.ProjectID = projectRef
 	request.EnvironmentID = environmentRef
 	deployment, scope, projectID, environmentID, err := s.resolvePromotionTarget(r.Context(), store, actor.OrgID, deploymentRef, request)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("deployment not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("deployment not found")))
 		return
 	}
 	if errors.Is(err, errAmbiguousDeploymentVersion) {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if err != nil {
 		s.log.Error("get deployment for promotion failed", "deployment", deploymentRef, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get deployment"))
+		writeError(w, errors.New("get deployment"))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	principal, err := auth.ActorPrincipal(actor)
 	if err != nil {
-		writeError(w, http.StatusForbidden, err)
+		writeError(w, forbidden(err))
 		return
 	}
 	params := db.PromoteDeploymentParams{
@@ -1042,54 +1042,54 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 	if s.tx != nil {
 		tx, err := s.tx.Begin(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("begin promotion transaction"))
+			writeError(w, errors.New("begin promotion transaction"))
 			return
 		}
 		defer tx.Rollback(r.Context())
 		promoteStore = db.New(tx)
 		_, changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusBadRequest, errors.New("deployment is not deployable"))
+		if isNoRows(err) {
+			writeError(w, badRequest(errors.New("deployment is not deployable")))
 			return
 		} else if errors.Is(err, errPermissionRequired) {
-			writeError(w, http.StatusForbidden, err)
+			writeError(w, forbidden(err))
 			return
 		} else if err != nil {
 			s.log.Error("promote deployment failed", "deployment", deploymentRef, "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("promote deployment"))
+			writeError(w, errors.New("promote deployment"))
 			return
 		}
 		if err := tx.Commit(r.Context()); err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("commit promotion"))
+			writeError(w, errors.New("commit promotion"))
 			return
 		}
 		s.registerChangedScheduleInstances(r.Context(), params.OrgID, params.ProjectID, changedSchedules)
 		response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
 		if err != nil {
 			s.log.Error("get promoted deployment artifacts failed", "deployment", deploymentRef, "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("promote deployment"))
+			writeError(w, errors.New("promote deployment"))
 			return
 		}
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
 	_, changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusBadRequest, errors.New("deployment is not deployable"))
+	if isNoRows(err) {
+		writeError(w, badRequest(errors.New("deployment is not deployable")))
 		return
 	} else if errors.Is(err, errPermissionRequired) {
-		writeError(w, http.StatusForbidden, err)
+		writeError(w, forbidden(err))
 		return
 	} else if err != nil {
 		s.log.Error("promote deployment failed", "deployment", deploymentRef, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("promote deployment"))
+		writeError(w, errors.New("promote deployment"))
 		return
 	}
 	s.registerChangedScheduleInstances(r.Context(), params.OrgID, params.ProjectID, changedSchedules)
 	response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
 	if err != nil {
 		s.log.Error("get promoted deployment artifacts failed", "deployment", deploymentRef, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("promote deployment"))
+		writeError(w, errors.New("promote deployment"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -1097,60 +1097,60 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		writeError(w, unavailable(errors.New("project storage is not configured")))
 		return
 	}
 	if s.cas == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("deployment source artifact storage is not configured"))
+		writeError(w, unavailable(errors.New("deployment source artifact storage is not configured")))
 		return
 	}
 	reader, request, err := s.receiveDeploymentMetadata(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	metadata, err := deploymentMetadataFromRequest(r, request)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	archivePath, cleanup, err := receiveDeploymentArchive(reader)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	defer cleanup()
 	if err := validateDeploymentSourceArtifactArchive(archivePath); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid deployment source artifact: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid deployment source artifact: %w", err)))
 		return
 	}
 	if err := validateDeploymentContentHash(archivePath, request.ContentHash); err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	file, err := os.Open(archivePath)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("open deployment source artifact"))
+		writeError(w, errors.New("open deployment source artifact"))
 		return
 	}
 	artifactObject, err := s.cas.Put(r.Context(), api.DeploymentSourceArtifactMediaType, file)
 	closeErr := file.Close()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("store deployment source artifact: %w", err))
+		writeError(w, fmt.Errorf("store deployment source artifact: %w", err))
 		return
 	}
 	if closeErr != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("close deployment source artifact: %w", closeErr))
+		writeError(w, fmt.Errorf("close deployment source artifact: %w", closeErr))
 		return
 	}
 	artifact := api.DeploymentSourceArtifact{
@@ -1164,14 +1164,14 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 	store, ok := s.db.(deploymentStore)
 	if !ok {
 		cleanupArtifact()
-		writeError(w, http.StatusServiceUnavailable, errors.New("deployment storage is not configured"))
+		writeError(w, unavailable(errors.New("deployment storage is not configured")))
 		return
 	}
 	if s.tx != nil {
 		tx, err := s.tx.Begin(r.Context())
 		if err != nil {
 			cleanupArtifact()
-			writeError(w, http.StatusInternalServerError, errors.New("begin deployment transaction"))
+			writeError(w, errors.New("begin deployment transaction"))
 			return
 		}
 		defer tx.Rollback(r.Context())
@@ -1184,7 +1184,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := tx.Commit(r.Context()); err != nil {
 			cleanupArtifact()
-			writeError(w, http.StatusInternalServerError, errors.New("commit deployment"))
+			writeError(w, errors.New("commit deployment"))
 			return
 		}
 		writeJSON(w, http.StatusCreated, response)
@@ -1315,7 +1315,7 @@ func (s *Server) deleteUnreferencedDeploymentSourceArtifact(ctx context.Context,
 	if store, ok := s.db.(casObjectLookupStore); ok {
 		if _, err := store.GetCasObject(ctx, digest); err == nil {
 			return
-		} else if !errors.Is(err, pgx.ErrNoRows) {
+		} else if !isNoRows(err) {
 			if s.log != nil {
 				s.log.Warn("skip deployment source artifact cleanup after CAS lookup failure", "digest", digest, "error", err)
 			}
@@ -1400,7 +1400,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 		ContentHash:   contentHash,
 		WorkerGroupID: workerGroup.ID,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		deployment, err = createQueuedDeployment(ctx, store, orgID, projectID, environmentID, workerGroup.ID, contentHash, artifact, metadata)
 	}
 	if err != nil {
@@ -1539,7 +1539,7 @@ func deploymentByIDOrVersionForOrg(ctx context.Context, store deploymentStatusSt
 	}
 	switch len(deployments) {
 	case 0:
-		return db.Deployment{}, pgx.ErrNoRows
+		return db.Deployment{}, errRecordNotFound
 	case 1:
 		return deployments[0], nil
 	default:
@@ -1736,7 +1736,7 @@ func scopedArtifactsByID(ctx context.Context, store artifactLister, orgID pgtype
 	}
 	for _, artifactID := range unique {
 		if _, ok := artifacts[artifactID]; !ok {
-			return nil, pgx.ErrNoRows
+			return nil, errRecordNotFound
 		}
 	}
 	return artifacts, nil
@@ -1745,7 +1745,7 @@ func scopedArtifactsByID(ctx context.Context, store artifactLister, orgID pgtype
 func requiredArtifact(artifacts map[pgtype.UUID]db.Artifact, artifactID pgtype.UUID) (db.Artifact, error) {
 	artifact, ok := artifacts[artifactID]
 	if !ok {
-		return db.Artifact{}, pgx.ErrNoRows
+		return db.Artifact{}, errRecordNotFound
 	}
 	return artifact, nil
 }
@@ -1759,11 +1759,11 @@ func pgInt4Response(value pgtype.Int4) *int32 {
 
 func writeDeploymentError(w http.ResponseWriter, s *Server, err error) {
 	if isUniqueViolation(err) {
-		writeError(w, http.StatusBadRequest, errors.New("deployment conflicts with existing task metadata"))
+		writeError(w, badRequest(errors.New("deployment conflicts with existing task metadata")))
 		return
 	}
 	s.log.Error("create deployment failed", "error", err)
-	writeError(w, http.StatusInternalServerError, errors.New("create deployment"))
+	writeError(w, errors.New("create deployment"))
 }
 
 func normalizeScopeCreateInput(slug string, name string) (string, string, error) {

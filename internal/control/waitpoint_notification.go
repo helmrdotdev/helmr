@@ -19,7 +19,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -170,7 +169,7 @@ func (s *Server) createQueuedWaitpointEmailDelivery(ctx context.Context, waitpoi
 
 func (s *Server) SendQueuedWaitpointDelivery(ctx context.Context, deliveryID uuid.UUID) error {
 	delivery, err := s.db.ClaimWaitpointDeliveryForSend(ctx, ids.ToPG(deliveryID))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		s.markObsoleteWaitpointDeliveryFailed(ctx, deliveryID)
 		return nil
 	}
@@ -185,7 +184,7 @@ func (s *Server) SendQueuedWaitpointDelivery(ctx context.Context, deliveryID uui
 }
 
 func (s *Server) markObsoleteWaitpointDeliveryFailed(ctx context.Context, deliveryID uuid.UUID) {
-	if _, err := s.db.MarkObsoleteWaitpointDeliveryFailed(ctx, ids.ToPG(deliveryID)); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := s.db.MarkObsoleteWaitpointDeliveryFailed(ctx, ids.ToPG(deliveryID)); err != nil && !isNoRows(err) {
 		s.log.Warn("mark obsolete waitpoint delivery failed", "delivery_id", deliveryID.String(), "error", err)
 	}
 }
@@ -232,7 +231,7 @@ func (s *Server) sendClaimedWaitpointDelivery(ctx context.Context, delivery db.W
 		AttemptCount:     delivery.AttemptCount,
 		SendingStartedAt: delivery.SendingStartedAt,
 		LastAttemptAt:    delivery.LastAttemptAt,
-	}); errors.Is(err, pgx.ErrNoRows) {
+	}); isNoRows(err) {
 		return fmt.Errorf("waitpoint delivery send claim was superseded")
 	} else if err != nil {
 		return err
@@ -253,7 +252,7 @@ func (s *Server) markClaimedWaitpointDeliveryError(ctx context.Context, delivery
 		DeliveryID:       delivery.ID,
 		AttemptCount:     delivery.AttemptCount,
 		SendingStartedAt: delivery.SendingStartedAt,
-	}); errors.Is(err, pgx.ErrNoRows) {
+	}); isNoRows(err) {
 		return
 	} else if err != nil {
 		s.log.Warn("mark waitpoint delivery retrying failed", "delivery_id", ids.MustFromPG(delivery.ID).String(), "error", err)
@@ -266,7 +265,7 @@ func (s *Server) markWaitpointDeliverySignaled(ctx context.Context, delivery db.
 		OrgID:         delivery.OrgID,
 		DeliveryID:    delivery.ID,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		return
 	}
 	if err != nil {
@@ -387,7 +386,7 @@ func (s *Server) markWaitpointDeliveryFailed(ctx context.Context, delivery db.Wa
 		LastError:        pgText(reason),
 		AttemptCount:     delivery.AttemptCount,
 		SendingStartedAt: delivery.SendingStartedAt,
-	}); errors.Is(err, pgx.ErrNoRows) {
+	}); isNoRows(err) {
 		return
 	} else if err != nil {
 		s.log.Warn("mark waitpoint delivery failed failed", "delivery_id", ids.MustFromPG(delivery.ID).String(), "error", err)
@@ -459,7 +458,7 @@ func (s *Server) waitpointConfirmationPage(w http.ResponseWriter, r *http.Reques
 		if !s.waitpointResponseTokensConfigured() {
 			status = http.StatusServiceUnavailable
 		}
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			status = http.StatusBadRequest
 		}
 		writeWaitpointHTML(w, status, "Invalid link", "<p>This waitpoint link is no longer valid.</p>")

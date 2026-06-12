@@ -343,7 +343,7 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 				if committed {
 					panic(recovered)
 				}
-				writeError(wrapped, http.StatusInternalServerError, errors.New("internal server error"))
+				writeError(wrapped, errors.New("internal server error"))
 			}
 		}()
 		next.ServeHTTP(wrapped, r)
@@ -366,7 +366,7 @@ func (s *Server) requireCurrentAPIVersion(next http.Handler) http.Handler {
 		w.Header().Set(api.APIVersionHeader, api.CurrentAPIVersion)
 		requested := strings.TrimSpace(r.Header.Get(api.APIVersionHeader))
 		if requested != "" && requested != api.CurrentAPIVersion {
-			writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported %s %q; current version is %s", api.APIVersionHeader, requested, api.CurrentAPIVersion))
+			writeError(w, badRequest(fmt.Errorf("unsupported %s %q; current version is %s", api.APIVersionHeader, requested, api.CurrentAPIVersion)))
 			return
 		}
 		ctx := context.WithValue(r.Context(), apiVersionContextKey{}, api.CurrentAPIVersion)
@@ -607,10 +607,6 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func writeError(w http.ResponseWriter, status int, err error) {
-	writeJSON(w, status, map[string]string{"error": err.Error()})
-}
-
 func decodeJSON(r *http.Request, out any) error {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -627,7 +623,7 @@ func limitRequestBody(limit int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.ContentLength > limit {
-				writeError(w, http.StatusRequestEntityTooLarge, errors.New("request body is too large"))
+				writeError(w, tooLarge(errors.New("request body is too large")))
 				return
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)

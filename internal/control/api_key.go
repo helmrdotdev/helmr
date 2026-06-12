@@ -23,13 +23,13 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 		filter = "active"
 	}
 	if !validAPIKeyFilter(filter) {
-		writeError(w, http.StatusBadRequest, errors.New("filter must be active, expired, revoked, or all"))
+		writeError(w, badRequest(errors.New("filter must be active, expired, revoked, or all")))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	_, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	rows, err := s.db.ListAPIKeys(r.Context(), db.ListAPIKeysParams{
@@ -40,7 +40,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 		RowLimit:      apiKeyListLimit + 1,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("list api keys"))
+		writeError(w, errors.New("list api keys"))
 		return
 	}
 	hasMore := len(rows) > apiKeyListLimit
@@ -51,7 +51,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		item, err := apiKeySummaryFromRow(row)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("format api key"))
+			writeError(w, errors.New("format api key"))
 			return
 		}
 		grants, err := s.db.ListAPIKeyGrants(r.Context(), db.ListAPIKeyGrantsParams{
@@ -59,7 +59,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 			ApiKeyID: row.ID,
 		})
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("list api key permissions"))
+			writeError(w, errors.New("list api key permissions"))
 			return
 		}
 		item.Permissions = apiKeyPermissionGrantsFromRows(grants)
@@ -71,36 +71,36 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 	var input api.IssueAPIKeyRequest
 	if err := decodeJSON(r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid API key request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid API key request JSON: %w", err)))
 		return
 	}
 	name := strings.TrimSpace(input.Name)
 	if !validAPIKeyName(name) {
-		writeError(w, http.StatusBadRequest, errors.New("name must be 1-64 characters and contain no control characters"))
+		writeError(w, badRequest(errors.New("name must be 1-64 characters and contain no control characters")))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	scope, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	permissionGrants, err := normalizeAPIKeyPermissionGrants(input.Permissions)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	expiresAt := pgtype.Timestamptz{}
 	if input.ExpiresInDays != nil {
 		if !validAPIKeyExpiryDays(*input.ExpiresInDays) {
-			writeError(w, http.StatusBadRequest, errors.New("expires_in_days must be 30, 90, or 365"))
+			writeError(w, badRequest(errors.New("expires_in_days must be 30, 90, or 365")))
 			return
 		}
 		expiresAt = pgTimeToPG(time.Now().AddDate(0, 0, *input.ExpiresInDays))
 	}
 	generated, err := auth.GenerateAPIKey()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("generate api key"))
+		writeError(w, errors.New("generate api key"))
 		return
 	}
 	record, err := s.db.IssueAPIKey(r.Context(), db.IssueAPIKeyParams{
@@ -116,14 +116,14 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:       expiresAt,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("create api key"))
+		writeError(w, errors.New("create api key"))
 		return
 	}
 	for _, grant := range permissionGrants {
 		for _, scope := range grant.Scopes {
 			permission, ok := apiKeyScopePermission(scope)
 			if !ok {
-				writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported permission scope %q", scope))
+				writeError(w, badRequest(fmt.Errorf("unsupported permission scope %q", scope)))
 				return
 			}
 			if _, err := s.db.CreateAPIKeyGrant(r.Context(), db.CreateAPIKeyGrantParams{
@@ -133,14 +133,14 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 				Permission:      string(permission),
 				CreatedByUserID: ids.ToPG(actor.UserID),
 			}); err != nil {
-				writeError(w, http.StatusInternalServerError, errors.New("create api key permission"))
+				writeError(w, errors.New("create api key permission"))
 				return
 			}
 		}
 	}
 	summary, err := apiKeySummaryFromRecord(record)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("format api key"))
+		writeError(w, errors.New("format api key"))
 		return
 	}
 	summary.ProjectID = scope.ProjectID
@@ -152,13 +152,13 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	id, err := ids.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, errors.New("api key not found"))
+		writeError(w, notFound(errors.New("api key not found")))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	_, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	rows, err := s.db.RevokeAPIKey(r.Context(), db.RevokeAPIKeyParams{
@@ -168,11 +168,11 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		ID:            ids.ToPG(id),
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("revoke api key"))
+		writeError(w, errors.New("revoke api key"))
 		return
 	}
 	if rows == 0 {
-		writeError(w, http.StatusNotFound, errors.New("api key not found"))
+		writeError(w, notFound(errors.New("api key not found")))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

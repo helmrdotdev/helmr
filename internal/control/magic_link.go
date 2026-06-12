@@ -43,7 +43,7 @@ func magicLinkSubject(purpose db.MagicLinkPurpose) string {
 func (s *Server) magicLinkStart(w http.ResponseWriter, r *http.Request) {
 	var request api.MagicLinkStartRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid magic link request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid magic link request JSON: %w", err)))
 		return
 	}
 	if request.Token != "" {
@@ -61,7 +61,7 @@ func (s *Server) magicLinkDeliveryConfigured() bool {
 func (s *Server) magicLinkInviteStartRoute(w http.ResponseWriter, r *http.Request) {
 	var request api.MagicLinkStartRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid invite magic link request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid invite magic link request JSON: %w", err)))
 		return
 	}
 	s.magicLinkInviteStart(w, r, request)
@@ -69,7 +69,7 @@ func (s *Server) magicLinkInviteStartRoute(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) magicLinkInviteStart(w http.ResponseWriter, r *http.Request, request api.MagicLinkStartRequest) {
 	if !s.magicLinkDeliveryConfigured() {
-		writeError(w, http.StatusServiceUnavailable, errors.New("magic link mailer is not configured"))
+		writeError(w, unavailable(errors.New("magic link mailer is not configured")))
 		return
 	}
 	tokenHash, err := s.validateInvitationToken(r, request.Token)
@@ -79,16 +79,16 @@ func (s *Server) magicLinkInviteStart(w http.ResponseWriter, r *http.Request, re
 	}
 	invite, err := s.db.GetActiveInvitation(r.Context(), tokenHash)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			writeAuthError(w, http.StatusBadRequest, errInvalidOrExpiredToken)
 			return
 		}
-		writeError(w, http.StatusInternalServerError, errors.New("load invitation"))
+		writeError(w, errors.New("load invitation"))
 		return
 	}
 	debugURL, err := s.sendMagicLink(r, db.MagicLinkPurposeInviteAccept, invite.InviteeEmail, invite.OrgID, invite.ID, "")
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("send magic link"))
+		writeError(w, errors.New("send magic link"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true, Email: invite.InviteeEmail, DebugURL: debugURL})
@@ -96,16 +96,16 @@ func (s *Server) magicLinkInviteStart(w http.ResponseWriter, r *http.Request, re
 
 func (s *Server) magicLinkLoginStart(w http.ResponseWriter, r *http.Request, request api.MagicLinkStartRequest) {
 	if err := s.userAuthConfigured(); err != nil {
-		writeError(w, http.StatusServiceUnavailable, err)
+		writeError(w, unavailable(err))
 		return
 	}
 	if !s.magicLinkDeliveryConfigured() {
-		writeError(w, http.StatusServiceUnavailable, errors.New("magic link mailer is not configured"))
+		writeError(w, unavailable(errors.New("magic link mailer is not configured")))
 		return
 	}
 	email, err := normalizeInviteEmail(request.Email)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	redirectAfter := validateRedirectAfter(request.Next)
@@ -297,16 +297,16 @@ func magicLinkRecipientLockKey(purpose db.MagicLinkPurpose, email string, orgID 
 
 func (s *Server) magicLinkFinish(w http.ResponseWriter, r *http.Request) {
 	if err := s.userAuthConfigured(); err != nil {
-		writeError(w, http.StatusServiceUnavailable, err)
+		writeError(w, unavailable(err))
 		return
 	}
 	if s.tx == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("transactional storage is not configured"))
+		writeError(w, unavailable(errors.New("transactional storage is not configured")))
 		return
 	}
 	var request api.MagicLinkFinishRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid magic link finish JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid magic link finish JSON: %w", err)))
 		return
 	}
 	tokenHash, err := auth.HashToken(s.authSecret, request.Token)
@@ -332,7 +332,7 @@ func (s *Server) completeMagicLink(r *http.Request, tokenHash []byte) (string, s
 	queries := db.New(tx)
 	link, err := queries.GetActiveMagicLinkByTokenHash(r.Context(), tokenHash)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			return "", "", errInvalidOrExpiredToken
 		}
 		return "", "", err
@@ -377,7 +377,7 @@ func (s *Server) completeMagicLinkInvite(r *http.Request, queries db.Querier, li
 	}
 	invite, err := queries.GetActiveInvitationByID(r.Context(), link.InvitationID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			return "", pgtype.UUID{}, errInvalidOrExpiredToken
 		}
 		return "", pgtype.UUID{}, err
@@ -396,7 +396,7 @@ func (s *Server) completeMagicLinkInvite(r *http.Request, queries db.Querier, li
 		OrgID:  invite.OrgID,
 		UserID: user.ID,
 	})
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil && !isNoRows(err) {
 		return "", pgtype.UUID{}, err
 	}
 	if err == nil && !existingMember.DisabledAt.Valid {

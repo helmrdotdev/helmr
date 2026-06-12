@@ -23,7 +23,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -35,33 +34,33 @@ const (
 
 func (s *Server) workerRegister(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("worker bootstrap storage is not configured"))
+		writeError(w, unavailable(errors.New("worker bootstrap storage is not configured")))
 		return
 	}
 	if len(s.authSecret) == 0 {
-		writeError(w, http.StatusServiceUnavailable, errors.New("worker bootstrap is not configured"))
+		writeError(w, unavailable(errors.New("worker bootstrap is not configured")))
 		return
 	}
 	var request api.WorkerRegisterRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker bootstrap request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker bootstrap request JSON: %w", err)))
 		return
 	}
 	registrationHash, err := auth.HashToken(s.authSecret, request.BootstrapToken)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, errors.New("worker bootstrap token is required"))
+		writeError(w, unauthorized(errors.New("worker bootstrap token is required")))
 		return
 	}
 	if strings.TrimSpace(request.BootstrapToken) == s.workerRegisterToken {
 		if err := s.ensureWorkerBootstrapToken(r.Context(), s.db); err != nil {
 			s.log.Error("worker bootstrap token bootstrap failed", "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("configure worker bootstrap token"))
+			writeError(w, errors.New("configure worker bootstrap token"))
 			return
 		}
 	}
 	generated, err := auth.GenerateWorkerInstanceSecret(s.authSecret)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("generate worker instance credential"))
+		writeError(w, errors.New("generate worker instance credential"))
 		return
 	}
 	workerInstanceID := ids.New()
@@ -77,13 +76,13 @@ func (s *Server) workerRegister(w http.ResponseWriter, r *http.Request) {
 		KeyPrefix:          generated.KeyPrefix,
 		SecretHash:         generated.TokenHash,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusUnauthorized, errors.New("worker bootstrap token is invalid"))
+	if isNoRows(err) {
+		writeError(w, unauthorized(errors.New("worker bootstrap token is invalid")))
 		return
 	}
 	if err != nil {
 		s.log.Error("worker bootstrap failed", "worker_instance_id", workerInstanceID.String(), "resource_id", resourceID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("register worker"))
+		writeError(w, errors.New("register worker"))
 		return
 	}
 	writeJSON(w, http.StatusCreated, api.WorkerRegisterResponse{
@@ -95,45 +94,45 @@ func (s *Server) workerRegister(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil || len(s.authSecret) == 0 || len(s.workerTokenSecret) == 0 {
-		writeError(w, http.StatusServiceUnavailable, errors.New("worker authentication is not configured"))
+		writeError(w, unavailable(errors.New("worker authentication is not configured")))
 		return
 	}
 	var request api.WorkerTokenRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker token request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker token request JSON: %w", err)))
 		return
 	}
 	request.WorkerInstanceID = strings.TrimSpace(request.WorkerInstanceID)
 	if request.WorkerInstanceID == "" {
-		writeError(w, http.StatusBadRequest, errors.New("worker_instance_id is required"))
+		writeError(w, badRequest(errors.New("worker_instance_id is required")))
 		return
 	}
 	workerInstanceID, err := ids.Parse(request.WorkerInstanceID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("worker_instance_id must be a UUID"))
+		writeError(w, badRequest(errors.New("worker_instance_id must be a UUID")))
 		return
 	}
 	secretHash, err := auth.HashToken(s.authSecret, request.WorkerInstanceSecret)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
+		writeError(w, unauthorized(errors.New("worker authentication is required")))
 		return
 	}
 	credential, err := s.db.AuthenticateWorkerInstanceCredential(r.Context(), db.AuthenticateWorkerInstanceCredentialParams{
 		WorkerInstanceID: ids.ToPG(workerInstanceID),
 		SecretHash:       secretHash,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
+	if isNoRows(err) {
+		writeError(w, unauthorized(errors.New("worker authentication is required")))
 		return
 	}
 	if err != nil {
 		s.log.Error("worker instance credential authentication failed", "worker_instance_id", request.WorkerInstanceID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("worker authentication"))
+		writeError(w, errors.New("worker authentication"))
 		return
 	}
 	credentialID, err := ids.FromPG(credential.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("worker instance credential id"))
+		writeError(w, errors.New("worker instance credential id"))
 		return
 	}
 	now := time.Now()
@@ -146,7 +145,7 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		s.log.Error("mint worker token failed", "worker_instance_id", request.WorkerInstanceID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("mint worker token"))
+		writeError(w, errors.New("mint worker token"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerTokenResponse{
@@ -158,37 +157,37 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("deployment build storage is not configured"))
+		writeError(w, unavailable(errors.New("deployment build storage is not configured")))
 		return
 	}
 	var request api.WorkerDeploymentBuildLeaseRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker deployment build lease JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker deployment build lease JSON: %w", err)))
 		return
 	}
 	capabilities, err := normalizeWorkerCapabilities(request.Capabilities)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerInstanceHeartbeatParams(worker, capabilities)); err != nil {
 		s.log.Error("worker heartbeat failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("record worker heartbeat"))
+		writeError(w, errors.New("record worker heartbeat"))
 		return
 	}
 	if err := s.db.EnsureRuntimeReleaseSelection(r.Context(), capabilities.RuntimeID); err != nil {
 		s.log.Error("ensure runtime release selection failed", "worker_instance_id", worker.WorkerInstanceID.String(), "runtime_id", capabilities.RuntimeID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("select runtime release"))
+		writeError(w, errors.New("select runtime release"))
 		return
 	}
 	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), ids.ToPG(worker.WorkerInstanceID))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
 		return
 	}
 	if err != nil {
 		s.log.Error("worker capacity lookup failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get worker capacity"))
+		writeError(w, errors.New("get worker capacity"))
 		return
 	}
 	if capacity.AvailableExecutionSlots <= 0 || capacity.AvailableMilliCpu <= 0 || capacity.AvailableMemoryMib <= 0 {
@@ -203,7 +202,7 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 	if s.tx != nil {
 		tx, err := s.tx.Begin(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("begin deployment build lease"))
+			writeError(w, errors.New("begin deployment build lease"))
 			return
 		}
 		defer tx.Rollback(r.Context())
@@ -217,24 +216,24 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		BuildWorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
 		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: leaseExpiresAt, Valid: true},
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
 		return
 	}
 	if err != nil {
 		s.log.Error("worker deployment build lease failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("lease deployment build"))
+		writeError(w, errors.New("lease deployment build"))
 		return
 	}
 	if err := appendDeploymentLifecycleEvent(r.Context(), buildStore, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.building", "info", "worker", "building", "Deployment build started"); err != nil {
 		rollback()
 		s.log.Error("record deployment building event failed", "deployment_id", ids.MustFromPG(row.ID).String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("record deployment event"))
+		writeError(w, errors.New("record deployment event"))
 		return
 	}
 	if err := commit(); err != nil {
 		s.log.Error("commit deployment build lease failed", "deployment_id", ids.MustFromPG(row.ID).String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("commit deployment build lease"))
+		writeError(w, errors.New("commit deployment build lease"))
 		return
 	}
 	deploymentID := ids.MustFromPG(row.ID).String()
@@ -269,31 +268,31 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	if s.db == nil || s.tx == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("deployment build storage is not configured"))
+		writeError(w, unavailable(errors.New("deployment build storage is not configured")))
 		return
 	}
 	var request api.WorkerCompleteDeploymentBuildRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker deployment build completion JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker deployment build completion JSON: %w", err)))
 		return
 	}
 	if request.Lease.WorkerInstanceID != worker.WorkerInstanceID.String() {
-		writeError(w, http.StatusConflict, errors.New("deployment build lease is stale"))
+		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
 	}
 	if time.Now().After(request.Lease.ExpiresAt) {
-		writeError(w, http.StatusConflict, errors.New("deployment build lease expired"))
+		writeError(w, conflict(errors.New("deployment build lease expired")))
 		return
 	}
 	orgID, projectID, environmentID, deploymentID, err := parseDeploymentBuildLeaseIDs(request.Lease)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 
 	tx, err := s.tx.Begin(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("begin deployment build completion"))
+		writeError(w, errors.New("begin deployment build completion"))
 		return
 	}
 	defer tx.Rollback(r.Context())
@@ -302,7 +301,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 	failBuild := func(message string) bool {
 		payload, err := json.Marshal(workerMessagePayload{Message: strings.TrimSpace(message)})
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("marshal deployment build error"))
+			writeError(w, errors.New("marshal deployment build error"))
 			return false
 		}
 		row, err := queries.FailDeploymentBuild(r.Context(), db.FailDeploymentBuildParams{
@@ -314,20 +313,20 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			BuildLeaseID:          pgtype.Text{String: strings.TrimSpace(request.Lease.ID), Valid: true},
 			BuildWorkerInstanceID: buildWorkerInstanceID,
 		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusConflict, errors.New("deployment build lease is stale"))
+		if isNoRows(err) {
+			writeError(w, conflict(errors.New("deployment build lease is stale")))
 			return false
 		}
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("mark deployment build failed"))
+			writeError(w, errors.New("mark deployment build failed"))
 			return false
 		}
 		if err := appendDeploymentLifecycleEvent(r.Context(), queries, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.failed", "error", "worker", "failed", strings.TrimSpace(message)); err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("record deployment event"))
+			writeError(w, errors.New("record deployment event"))
 			return false
 		}
 		if err := tx.Commit(r.Context()); err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("commit deployment build failure"))
+			writeError(w, errors.New("commit deployment build failure"))
 			return false
 		}
 		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{DeploymentID: ids.MustFromPG(row.ID).String(), Status: string(row.Status)})
@@ -353,11 +352,11 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		ID:                    deploymentID,
 		BuildLeaseID:          pgtype.Text{String: strings.TrimSpace(request.Lease.ID), Valid: true},
 		BuildWorkerInstanceID: buildWorkerInstanceID,
-	}); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("deployment build lease is stale"))
+	}); isNoRows(err) {
+		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
 	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("get deployment build lease"))
+		writeError(w, errors.New("get deployment build lease"))
 		return
 	}
 	casObjectByDigest := make(map[string]api.CASObject, len(casObjects))
@@ -447,20 +446,20 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		BuildLeaseID:                 pgtype.Text{String: strings.TrimSpace(request.Lease.ID), Valid: true},
 		BuildWorkerInstanceID:        buildWorkerInstanceID,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("deployment build lease is stale"))
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("mark deployment deployed"))
+		writeError(w, errors.New("mark deployment deployed"))
 		return
 	}
 	if err := appendDeploymentLifecycleEvent(r.Context(), queries, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.deployed", "info", "worker", "deployed", "Deployment build completed"); err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("record deployment event"))
+		writeError(w, errors.New("record deployment event"))
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("commit deployment build completion"))
+		writeError(w, errors.New("commit deployment build completion"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{DeploymentID: ids.MustFromPG(row.ID).String(), Status: string(row.Status)})
@@ -525,45 +524,45 @@ func (s *Server) verifyDeploymentBuildArtifacts(ctx context.Context, objects []a
 
 func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	if s.dispatchQueue == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run queue item queue is not configured"))
+		writeError(w, unavailable(errors.New("run queue item queue is not configured")))
 		return
 	}
 	var request api.WorkerRunLeaseRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker run lease request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker run lease request JSON: %w", err)))
 		return
 	}
 	capabilities, err := normalizeWorkerCapabilities(request.Capabilities)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerInstanceHeartbeatParams(worker, capabilities)); err != nil {
 		s.log.Error("worker heartbeat failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("record worker heartbeat"))
+		writeError(w, errors.New("record worker heartbeat"))
 		return
 	}
 	if err := s.db.EnsureRuntimeReleaseSelection(r.Context(), capabilities.RuntimeID); err != nil {
 		s.log.Error("ensure runtime release selection failed", "worker_instance_id", worker.WorkerInstanceID.String(), "runtime_id", capabilities.RuntimeID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("select runtime release"))
+		writeError(w, errors.New("select runtime release"))
 		return
 	}
 	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), ids.ToPG(worker.WorkerInstanceID))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{})
 		return
 	}
 	if err != nil {
 		s.log.Error("worker capacity lookup failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get worker capacity"))
+		writeError(w, errors.New("get worker capacity"))
 		return
 	}
 	if capacity.AvailableExecutionSlots <= 0 || capacity.AvailableMilliCpu <= 0 || capacity.AvailableMemoryMib <= 0 {
@@ -572,7 +571,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 	}
 	runClaimer, err := dispatch.NewClaimer(s.db, s.dispatchQueue)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run queue item queue is not configured"))
+		writeError(w, unavailable(errors.New("run queue item queue is not configured")))
 		return
 	}
 	dequeueRequest := dispatch.DequeueRequest{
@@ -611,7 +610,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			s.log.Error("worker queue scope lookup failed", "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("list worker queue scopes"))
+			writeError(w, errors.New("list worker queue scopes"))
 			return
 		}
 		if len(scopeRows) == 0 {
@@ -644,7 +643,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 				}
 				if err != nil {
 					s.log.Error("worker queue lease failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-					writeError(w, http.StatusInternalServerError, errors.New("lease run queue item"))
+					writeError(w, errors.New("lease run queue item"))
 					return
 				}
 				if candidateLease.Lease.MessageID == "" {
@@ -654,7 +653,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					s.requeueWorkerQueueItem(r.Context(), worker, candidateLease.Entry.RunID, candidateLease.Lease, dispatch.NackReasonRetry, err.Error())
 					s.log.Error("worker run trace span failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-					writeError(w, http.StatusInternalServerError, errors.New("lease run"))
+					writeError(w, errors.New("lease run"))
 					return
 				}
 				candidateRun, err := s.db.LeaseRunExecutionSession(r.Context(), db.LeaseRunExecutionSessionParams{
@@ -674,13 +673,13 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 					foundLease = true
 					break
 				}
-				if errors.Is(err, pgx.ErrNoRows) {
+				if isNoRows(err) {
 					s.requeueWorkerQueueItem(r.Context(), worker, candidateLease.Entry.RunID, candidateLease.Lease, dispatch.NackReasonLeaseConflict, "execution lease conflict")
 					continue
 				}
 				s.requeueWorkerQueueItem(r.Context(), worker, candidateLease.Entry.RunID, candidateLease.Lease, dispatch.NackReasonRetry, err.Error())
 				s.log.Error("worker run lease failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-				writeError(w, http.StatusInternalServerError, errors.New("lease run"))
+				writeError(w, errors.New("lease run"))
 				return
 			}
 			if foundLease {
@@ -702,7 +701,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		if failure, ok := terminalPayloadFailure(err); ok {
 			if failErr := s.failLeasedRunPayload(r.Context(), leasedRun, queueLease.Lease, failure); failErr != nil {
 				s.log.Error("fail worker run payload failed", "run_id", ids.MustFromPG(leasedRun.ID).String(), "session_id", ids.MustFromPG(leasedRun.SessionID).String(), "error", failErr)
-				writeError(w, http.StatusInternalServerError, errors.New("fail worker run payload"))
+				writeError(w, errors.New("fail worker run payload"))
 				return
 			}
 			s.log.Warn("terminal worker run payload failed", "run_id", ids.MustFromPG(leasedRun.ID).String(), "session_id", ids.MustFromPG(leasedRun.SessionID).String(), "failure_kind", failure.kind, "error", err)
@@ -719,7 +718,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		}
 		s.requeueWorkerQueueItem(r.Context(), worker, leasedRun.ID, queueLease.Lease, dispatch.NackReasonRetry, err.Error())
 		s.log.Error("build worker run payload failed", "run_id", ids.MustFromPG(leasedRun.ID).String(), "session_id", ids.MustFromPG(leasedRun.SessionID).String(), "error", err)
-		writeError(w, http.StatusBadGateway, errors.New("build worker run payload"))
+		writeError(w, badGateway(errors.New("build worker run payload")))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{Lease: &lease, Run: &run})
@@ -727,41 +726,41 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	var request api.WorkerActivateRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker activate request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker activate request JSON: %w", err)))
 		return
 	}
 	capabilities, err := normalizeWorkerCapabilities(request.Capabilities)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerInstanceHeartbeatParams(worker, capabilities)); err != nil {
 		s.log.Error("worker activate failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("activate worker"))
+		writeError(w, errors.New("activate worker"))
 		return
 	}
 	if err := s.db.EnsureRuntimeReleaseSelection(r.Context(), capabilities.RuntimeID); err != nil {
 		s.log.Error("ensure runtime release selection failed", "worker_instance_id", worker.WorkerInstanceID.String(), "runtime_id", capabilities.RuntimeID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("select runtime release"))
+		writeError(w, errors.New("select runtime release"))
 		return
 	}
 	if _, err := s.db.SetWorkerInstanceStatus(r.Context(), db.SetWorkerInstanceStatusParams{
 		ID:     ids.ToPG(worker.WorkerInstanceID),
 		Status: db.WorkerInstanceStatusActive,
-	}); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("worker is not registered"))
+	}); isNoRows(err) {
+		writeError(w, notFound(errors.New("worker is not registered")))
 		return
 	} else if err != nil {
 		s.log.Error("worker activate status failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("activate worker"))
+		writeError(w, errors.New("activate worker"))
 		return
 	}
 	s.writeWorkerStatus(w, r, worker)
@@ -769,19 +768,19 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.SetWorkerInstanceStatus(r.Context(), db.SetWorkerInstanceStatusParams{
 		ID:     ids.ToPG(worker.WorkerInstanceID),
 		Status: db.WorkerInstanceStatusDraining,
-	}); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("worker is not registered"))
+	}); isNoRows(err) {
+		writeError(w, notFound(errors.New("worker is not registered")))
 		return
 	} else if err != nil {
 		s.log.Error("worker drain failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("drain worker"))
+		writeError(w, errors.New("drain worker"))
 		return
 	}
 	s.writeWorkerStatus(w, r, worker)
@@ -789,7 +788,7 @@ func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerStatus(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	s.writeWorkerStatus(w, r, workerFromContext(r.Context()))
@@ -797,13 +796,13 @@ func (s *Server) workerStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worker workerActor) {
 	state, err := s.db.GetWorkerInstanceState(r.Context(), ids.ToPG(worker.WorkerInstanceID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("worker is not registered"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("worker is not registered")))
 		return
 	}
 	if err != nil {
 		s.log.Error("get worker status failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get worker status"))
+		writeError(w, errors.New("get worker status"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerStatusResponse{
@@ -816,32 +815,32 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 
 func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	var request api.WorkerStartRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker start request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker start request JSON: %w", err)))
 		return
 	}
 	leaseIDs, err := parseWorkerRunLease(request.Lease)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	worker := workerFromContext(r.Context())
 	if request.Lease.WorkerInstanceID != worker.WorkerInstanceID.String() {
-		writeError(w, http.StatusForbidden, errors.New("worker run lease belongs to another worker"))
+		writeError(w, forbidden(errors.New("worker run lease belongs to another worker")))
 		return
 	}
-	if _, _, err := s.workerExecutionLease(r.Context(), worker, leaseIDs); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
+	if _, _, err := s.workerExecutionLease(r.Context(), worker, leaseIDs); isNoRows(err) {
+		writeError(w, conflict(errors.New("worker run lease is stale")))
 		return
 	} else if err != nil {
 		s.log.Error("worker queue lease lookup failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
+		writeError(w, errors.New("get queue lease"))
 		return
 	}
 	status, err := s.db.StartRunExecutionSession(r.Context(), db.StartRunExecutionSessionParams{
@@ -850,13 +849,13 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 		SessionID:        ids.ToPG(leaseIDs.sessionID),
 		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("worker run lease is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("worker start failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("start run"))
+		writeError(w, errors.New("start run"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerStartResponse{RunID: request.Lease.RunID, Status: string(status)})
@@ -864,38 +863,38 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	if s.dispatchQueue == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run queue item queue is not configured"))
+		writeError(w, unavailable(errors.New("run queue item queue is not configured")))
 		return
 	}
 	var request api.WorkerRenewRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker renew request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker renew request JSON: %w", err)))
 		return
 	}
 	leaseIDs, err := parseWorkerRunLease(request.Lease)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	worker := workerFromContext(r.Context())
 	if request.Lease.WorkerInstanceID != worker.WorkerInstanceID.String() {
-		writeError(w, http.StatusForbidden, errors.New("worker run lease belongs to another worker"))
+		writeError(w, forbidden(errors.New("worker run lease belongs to another worker")))
 		return
 	}
 	leaseRow, queueLease, err := s.workerExecutionLease(r.Context(), worker, leaseIDs)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
+		if isNoRows(err) {
+			writeError(w, conflict(errors.New("worker run lease is stale")))
 			return
 		}
 		s.log.Error("worker queue lease lookup failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
+		writeError(w, errors.New("get queue lease"))
 		return
 	}
 	expiresAt := time.Now().Add(workerLeaseDuration)
@@ -905,12 +904,12 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		WorkerInstanceID:     ids.ToPG(worker.WorkerInstanceID),
 		DispatchMessageID:    pgtype.Text{String: leaseRow.DispatchMessageID, Valid: true},
 		ReservationExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
-	}); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
+	}); isNoRows(err) {
+		writeError(w, conflict(errors.New("worker run lease is stale")))
 		return
 	} else if err != nil {
 		s.log.Error("worker queue lease renewal failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("renew queue lease"))
+		writeError(w, errors.New("renew queue lease"))
 		return
 	}
 	renewed, err := s.db.RenewRunExecutionSessionLease(r.Context(), db.RenewRunExecutionSessionLeaseParams{
@@ -922,13 +921,13 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		DispatchLeaseID:   leaseRow.DispatchLeaseID,
 		LeaseExpiresAt:    pgtype.Timestamptz{Time: expiresAt, Valid: true},
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("worker run lease is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("worker renew failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("renew run session"))
+		writeError(w, errors.New("renew run session"))
 		return
 	}
 	if _, err := s.dispatchQueue.Renew(r.Context(), queueLease, expiresAt); err != nil {
@@ -954,52 +953,52 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	if s.dispatchQueue == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run queue item queue is not configured"))
+		writeError(w, unavailable(errors.New("run queue item queue is not configured")))
 		return
 	}
 	var request api.WorkerReleaseRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker release request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker release request JSON: %w", err)))
 		return
 	}
 	if request.Result.Usage.ActiveDurationMs < 0 {
-		writeError(w, http.StatusBadRequest, errors.New("result.usage.active_duration_ms must be non-negative"))
+		writeError(w, badRequest(errors.New("result.usage.active_duration_ms must be non-negative")))
 		return
 	}
 	leaseIDs, err := parseWorkerRunLease(request.Lease)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	worker := workerFromContext(r.Context())
 	if request.Lease.WorkerInstanceID != worker.WorkerInstanceID.String() {
-		writeError(w, http.StatusForbidden, errors.New("worker run lease belongs to another worker"))
+		writeError(w, forbidden(errors.New("worker run lease belongs to another worker")))
 		return
 	}
 	_, lease, err := s.workerExecutionLease(r.Context(), worker, leaseIDs)
 	activeQueueLeaseFound := err == nil
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if !isNoRows(err) {
 			s.log.Error("worker queue lease lookup failed", "run_id", request.Lease.RunID, "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
+			writeError(w, errors.New("get queue lease"))
 			return
 		}
 	}
 	status, exitCode, errorMessage, err := releaseFields(request.Result)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	output := releaseOutput(request.Result, status, exitCode)
 	terminalEventKind, terminalEventPayload, err := terminalRunEventForFields(status, exitCode, errorMessage, request.Result)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("encode terminal run event"))
+		writeError(w, errors.New("encode terminal run event"))
 		return
 	}
 	run, err := s.db.ReleaseRunExecutionSession(r.Context(), db.ReleaseRunExecutionSessionParams{
@@ -1018,13 +1017,13 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		TerminalEventPayload:    terminalEventPayload,
 		ReleaseActiveDurationMs: request.Result.Usage.ActiveDurationMs,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("worker run lease is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("worker release failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("release run"))
+		writeError(w, errors.New("release run"))
 		return
 	}
 	if activeQueueLeaseFound {
@@ -1057,7 +1056,7 @@ func (s *Server) requeueWorkerQueueItem(ctx context.Context, worker workerActor,
 	}); err != nil {
 		s.log.Warn("requeue run queue item failed", "run_id", ids.MustFromPG(runID).String(), "reason", reason, "error", err)
 		nackReason := reason
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			nackReason = dispatch.NackReasonInvalid
 		}
 		if nackErr := s.dispatchQueue.Nack(ctx, lease, nackReason); nackErr != nil {
@@ -1075,12 +1074,12 @@ func (s *Server) workerAppendLogs(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker log request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker log request JSON: %w", err)))
 		return
 	}
 	content, err := base64.StdEncoding.DecodeString(request.ContentBase64)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("log content is not valid base64"))
+		writeError(w, badRequest(errors.New("log content is not valid base64")))
 		return
 	}
 	kind := "log.stdout"
@@ -1089,11 +1088,11 @@ func (s *Server) workerAppendLogs(w http.ResponseWriter, r *http.Request) {
 	case api.WorkerLogStreamStderr:
 		kind = "log.stderr"
 	default:
-		writeError(w, http.StatusBadRequest, errors.New("stream must be stdout or stderr"))
+		writeError(w, badRequest(errors.New("stream must be stdout or stderr")))
 		return
 	}
 	if request.ObservedSeq > uint64(^uint64(0)>>1) {
-		writeError(w, http.StatusBadRequest, errors.New("observed_seq is too large"))
+		writeError(w, badRequest(errors.New("observed_seq is too large")))
 		return
 	}
 	worker, leaseIDs, ok := s.workerRunLeaseForWrite(w, r, request.Lease)
@@ -1107,7 +1106,7 @@ func (s *Server) workerAppendLogs(w http.ResponseWriter, r *http.Request) {
 		Bytes:       len(content),
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("encode worker log event"))
+		writeError(w, errors.New("encode worker log event"))
 		return
 	}
 	_, err = s.db.AppendRunLogChunk(r.Context(), db.AppendRunLogChunkParams{
@@ -1121,13 +1120,13 @@ func (s *Server) workerAppendLogs(w http.ResponseWriter, r *http.Request) {
 		Kind:             kind,
 		Payload:          payload,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("worker run lease is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("append worker logs failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("append worker logs"))
+		writeError(w, errors.New("append worker logs"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerEventResponse{RunID: request.Lease.RunID})
@@ -1138,12 +1137,12 @@ func (s *Server) workerRecordLogEntry(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker log entry request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker log entry request JSON: %w", err)))
 		return
 	}
 	payload, err := json.Marshal(workerMessagePayload{Message: request.Entry})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("encode worker log entry"))
+		writeError(w, errors.New("encode worker log entry"))
 		return
 	}
 	s.appendWorkerEvent(w, r, request.Lease, "log", payload)
@@ -1154,12 +1153,12 @@ func (s *Server) workerEmitEvent(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker event request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker event request JSON: %w", err)))
 		return
 	}
 	request.EventType = strings.TrimSpace(request.EventType)
 	if request.EventType == "" {
-		writeError(w, http.StatusBadRequest, errors.New("event_type is required"))
+		writeError(w, badRequest(errors.New("event_type is required")))
 		return
 	}
 	content := request.Content
@@ -1167,7 +1166,7 @@ func (s *Server) workerEmitEvent(w http.ResponseWriter, r *http.Request) {
 		content = json.RawMessage(`null`)
 	}
 	if !json.Valid(content) {
-		writeError(w, http.StatusBadRequest, errors.New("content must be valid JSON"))
+		writeError(w, badRequest(errors.New("content must be valid JSON")))
 		return
 	}
 	payload, err := json.Marshal(workerEmitPayload{
@@ -1175,7 +1174,7 @@ func (s *Server) workerEmitEvent(w http.ResponseWriter, r *http.Request) {
 		Content: content,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("encode worker event"))
+		writeError(w, errors.New("encode worker event"))
 		return
 	}
 	s.appendWorkerEvent(w, r, request.Lease, "emit."+request.EventType, payload)
@@ -1194,13 +1193,13 @@ func (s *Server) appendWorkerEvent(w http.ResponseWriter, r *http.Request, lease
 		Kind:             kind,
 		Payload:          payload,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("worker run lease is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("append worker event failed", "run_id", lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("append worker event"))
+		writeError(w, errors.New("append worker event"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerEventResponse{RunID: lease.RunID})
@@ -1209,20 +1208,20 @@ func (s *Server) appendWorkerEvent(w http.ResponseWriter, r *http.Request, lease
 func (s *Server) workerRunLeaseForWrite(w http.ResponseWriter, r *http.Request, lease api.WorkerRunLease) (workerActor, workerRunLeaseIDs, bool) {
 	leaseIDs, err := parseWorkerRunLease(lease)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return workerActor{}, workerRunLeaseIDs{}, false
 	}
 	worker := workerFromContext(r.Context())
 	if lease.WorkerInstanceID != worker.WorkerInstanceID.String() {
-		writeError(w, http.StatusForbidden, errors.New("worker run lease belongs to another worker"))
+		writeError(w, forbidden(errors.New("worker run lease belongs to another worker")))
 		return workerActor{}, workerRunLeaseIDs{}, false
 	}
-	if _, _, err := s.workerExecutionLease(r.Context(), worker, leaseIDs); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
+	if _, _, err := s.workerExecutionLease(r.Context(), worker, leaseIDs); isNoRows(err) {
+		writeError(w, conflict(errors.New("worker run lease is stale")))
 		return workerActor{}, workerRunLeaseIDs{}, false
 	} else if err != nil {
 		s.log.Error("worker queue lease lookup failed", "run_id", lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
+		writeError(w, errors.New("get queue lease"))
 		return workerActor{}, workerRunLeaseIDs{}, false
 	}
 	return worker, leaseIDs, true
@@ -1401,7 +1400,7 @@ func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, l
 		return db.GetRunExecutionSessionQueueLeaseRow{}, dispatch.Lease{}, err
 	}
 	if row.DispatchMessageID != leaseIDs.queueMessageID || row.DispatchLeaseID != leaseIDs.queueLeaseID || row.AttemptNumber != leaseIDs.attemptNumber {
-		return db.GetRunExecutionSessionQueueLeaseRow{}, dispatch.Lease{}, pgx.ErrNoRows
+		return db.GetRunExecutionSessionQueueLeaseRow{}, dispatch.Lease{}, errRecordNotFound
 	}
 	lease := dispatch.Lease{
 		ID:               row.DispatchLeaseID,
@@ -1605,7 +1604,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 		}
 		resolvedSecrets, err = s.secrets.ResolveScopedNames(ctx, ids.MustFromPG(row.OrgID), ids.MustFromPG(row.ProjectID), ids.MustFromPG(row.EnvironmentID), secretNames)
 		if err != nil {
-			if secret.IsUnavailable(err) || errors.Is(err, pgx.ErrNoRows) {
+			if secret.IsUnavailable(err) || isNoRows(err) {
 				return api.WorkerRun{}, terminalPayload("secret_unavailable", err)
 			}
 			return api.WorkerRun{}, err
@@ -1844,7 +1843,7 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunExecut
 		SessionID:        row.SessionID,
 		WorkerInstanceID: row.SessionWorkerInstanceID,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		if row.SessionRestoreCheckpointID.Valid {
 			return nil, fmt.Errorf("restore checkpoint %s is unavailable", ids.MustFromPG(row.SessionRestoreCheckpointID).String())
 		}
