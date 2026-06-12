@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -31,17 +30,17 @@ type resolvedWaitpointPolicy struct {
 
 func (s *Server) listWaitpointPolicies(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("waitpoint policy storage is not configured"))
+		writeError(w, unavailable(errors.New("waitpoint policy storage is not configured")))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
-		writeError(w, http.StatusForbidden, errPermissionRequired)
+		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
 	rows, err := s.db.ListWaitpointPolicies(r.Context(), db.ListWaitpointPoliciesParams{
@@ -50,7 +49,7 @@ func (s *Server) listWaitpointPolicies(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID: environmentID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("list waitpoint policies"))
+		writeError(w, errors.New("list waitpoint policies"))
 		return
 	}
 	response := api.ListWaitpointPoliciesResponse{Policies: make([]api.WaitpointPolicyResponse, 0, len(rows))}
@@ -62,27 +61,27 @@ func (s *Server) listWaitpointPolicies(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("waitpoint policy storage is not configured"))
+		writeError(w, unavailable(errors.New("waitpoint policy storage is not configured")))
 		return
 	}
 	var request api.CreateWaitpointPolicyRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid waitpoint policy request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid waitpoint policy request JSON: %w", err)))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
-		writeError(w, http.StatusForbidden, errPermissionRequired)
+		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
 	normalized, err := normalizeWaitpointPolicyInput(request.Name, request.Label, request.Config)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	policy, err := s.db.CreateWaitpointPolicy(r.Context(), db.CreateWaitpointPolicyParams{
@@ -96,10 +95,10 @@ func (s *Server) createWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
-			writeError(w, http.StatusBadRequest, errors.New("waitpoint policy name is already in use"))
+			writeError(w, badRequest(errors.New("waitpoint policy name is already in use")))
 			return
 		}
-		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint policy"))
+		writeError(w, errors.New("create waitpoint policy"))
 		return
 	}
 	writeJSON(w, http.StatusCreated, waitpointPolicyResponse(policy))
@@ -107,22 +106,22 @@ func (s *Server) createWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("waitpoint policy storage is not configured"))
+		writeError(w, unavailable(errors.New("waitpoint policy storage is not configured")))
 		return
 	}
 	name, err := waitpointPolicyNameParam(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
-		writeError(w, http.StatusForbidden, errPermissionRequired)
+		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
 	policy, err := s.db.GetWaitpointPolicyByName(r.Context(), db.GetWaitpointPolicyByNameParams{
@@ -131,12 +130,12 @@ func (s *Server) getWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID: environmentID,
 		Name:          name,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("waitpoint policy not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("waitpoint policy not found")))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("get waitpoint policy"))
+		writeError(w, errors.New("get waitpoint policy"))
 		return
 	}
 	writeJSON(w, http.StatusOK, waitpointPolicyResponse(policy))
@@ -144,32 +143,32 @@ func (s *Server) getWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("waitpoint policy storage is not configured"))
+		writeError(w, unavailable(errors.New("waitpoint policy storage is not configured")))
 		return
 	}
 	name, err := waitpointPolicyNameParam(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
-		writeError(w, http.StatusForbidden, errPermissionRequired)
+		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
 	var request api.UpdateWaitpointPolicyRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid waitpoint policy request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid waitpoint policy request JSON: %w", err)))
 		return
 	}
 	normalized, err := normalizeWaitpointPolicyInput(name, request.Label, request.Config)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	policy, err := s.db.UpdateWaitpointPolicy(r.Context(), db.UpdateWaitpointPolicyParams{
@@ -180,12 +179,12 @@ func (s *Server) updateWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		Label:         normalized.label,
 		Config:        normalized.config,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("waitpoint policy not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("waitpoint policy not found")))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("update waitpoint policy"))
+		writeError(w, errors.New("update waitpoint policy"))
 		return
 	}
 	writeJSON(w, http.StatusOK, waitpointPolicyResponse(policy))
@@ -193,22 +192,22 @@ func (s *Server) updateWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("waitpoint policy storage is not configured"))
+		writeError(w, unavailable(errors.New("waitpoint policy storage is not configured")))
 		return
 	}
 	name, err := waitpointPolicyNameParam(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionWaitpointPolicies, scope) {
-		writeError(w, http.StatusForbidden, errPermissionRequired)
+		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
 	rows, err := s.db.DeleteWaitpointPolicy(r.Context(), db.DeleteWaitpointPolicyParams{
@@ -218,11 +217,11 @@ func (s *Server) deleteWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		Name:          name,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("delete waitpoint policy"))
+		writeError(w, errors.New("delete waitpoint policy"))
 		return
 	}
 	if rows == 0 {
-		writeError(w, http.StatusNotFound, errors.New("waitpoint policy not found"))
+		writeError(w, notFound(errors.New("waitpoint policy not found")))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -318,7 +317,7 @@ func (s *Server) resolveWaitpointPolicy(ctx context.Context, orgID uuid.UUID, pr
 			EnvironmentID: environmentID,
 			Name:          name,
 		})
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			return nil, fmt.Errorf("waitpoint policy %q was not found", name)
 		}
 		if err != nil {

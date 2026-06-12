@@ -4136,7 +4136,7 @@ func (f *fakeStore) ListArtifactsByIDs(ctx context.Context, arg db.ListArtifacts
 			EnvironmentID: arg.EnvironmentID,
 			ID:            artifactID,
 		})
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			continue
 		}
 		if err != nil {

@@ -26,7 +26,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -50,12 +49,12 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
 	var request api.CreateRunRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid run request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid run request JSON: %w", err)))
 		return
 	}
 	projectID, environmentID, err := environmentScopeRefsFromRequest(r, actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	request.ProjectID = projectID
@@ -63,39 +62,39 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	run, idempotencyHit, err := s.createRunFromRequest(contextWithRequestVersionMetadata(r.Context(), r), actor, request, runSource{})
 	if err != nil {
 		if errors.Is(err, errIdempotencyKeyConflict) {
-			writeError(w, http.StatusConflict, err)
+			writeError(w, conflict(err))
 			return
 		}
 		var upstreamErr createRunUpstreamError
 		if errors.As(err, &upstreamErr) {
-			writeError(w, http.StatusBadGateway, upstreamErr)
+			writeError(w, badGateway(upstreamErr))
 			return
 		}
 		if isCreateRunConfigError(err) {
-			writeError(w, http.StatusServiceUnavailable, err)
+			writeError(w, unavailable(err))
 			return
 		}
 		if errors.Is(err, errPermissionRequired) {
-			writeError(w, http.StatusForbidden, err)
+			writeError(w, forbidden(err))
 			return
 		}
 		var runDeploymentErr runDeploymentSelectionError
 		if errors.As(err, &runDeploymentErr) {
-			writeError(w, http.StatusBadRequest, runDeploymentErr)
+			writeError(w, badRequest(runDeploymentErr))
 			return
 		}
 		if isCreateRunClientError(err) {
-			writeError(w, http.StatusBadRequest, err)
+			writeError(w, badRequest(err))
 			return
 		}
 		s.log.Error("create run failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("create run"))
+		writeError(w, errors.New("create run"))
 		return
 	}
 	response, err := s.runResponse(r.Context(), run)
 	if err != nil {
 		s.log.Error("build run response failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("build run response"))
+		writeError(w, errors.New("build run response"))
 		return
 	}
 	if idempotencyHit {
@@ -115,7 +114,7 @@ func isCreateRunConfigError(err error) bool {
 
 func isCreateRunClientError(err error) bool {
 	message := err.Error()
-	return errors.Is(err, pgx.ErrNoRows) ||
+	return isNoRows(err) ||
 		strings.Contains(message, "must be") ||
 		strings.Contains(message, "must match") ||
 		strings.Contains(message, "cannot be") ||
@@ -217,7 +216,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 	}
 	idempotencyRequestHash := pgtype.Text{}
 	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, projectID, environmentID, request.TaskID, deploymentSelection)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		return runSummary{}, false, fmt.Errorf("task %q is not deployed in the selected deployment", request.TaskID)
 	}
 	if err != nil {
@@ -332,7 +331,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		ScheduledAt:             source.scheduledAt,
 	})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) && source.scheduleInstanceID.Valid {
+		if isNoRows(err) && source.scheduleInstanceID.Valid {
 			return runSummary{}, false, schedule.ErrTriggerSuperseded
 		}
 		if idempotency.key.Valid && isUniqueViolation(err) {
@@ -422,7 +421,7 @@ func (s *Server) deploymentTaskForRunRequest(ctx context.Context, orgID uuid.UUI
 			EnvironmentID: environmentID,
 			ID:            deploymentID,
 		})
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			return db.GetDeploymentTaskRow{}, runDeploymentSelectionErrorf("deployment_id %s was not found in this environment", ids.MustFromPG(deploymentID).String())
 		}
 		if err != nil {
@@ -440,7 +439,7 @@ func (s *Server) deploymentTaskForRunRequest(ctx context.Context, orgID uuid.UUI
 			EnvironmentID: environmentID,
 			Version:       selection.version,
 		})
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			return db.GetDeploymentTaskRow{}, runDeploymentSelectionErrorf("deployment version %q was not found in this environment", selection.version)
 		}
 		if err != nil {
@@ -569,7 +568,7 @@ func (s *Server) requireActorScopeForRecord(r *http.Request, actor auth.Actor, p
 			return err
 		}
 		if pathProjectID != projectID || pathEnvironmentID != environmentID {
-			return pgx.ErrNoRows
+			return errRecordNotFound
 		}
 	case auth.ActorKindAPIKey:
 		scope, ok := actor.EnvironmentScope()
@@ -582,7 +581,7 @@ func (s *Server) requireActorScopeForRecord(r *http.Request, actor auth.Actor, p
 			EnvironmentID: ids.MustFromPG(environmentID).String(),
 		}
 		if scope.ProjectID != recordScope.ProjectID || scope.EnvironmentID != recordScope.EnvironmentID {
-			return pgx.ErrNoRows
+			return errRecordNotFound
 		}
 	default:
 		return nil
@@ -642,25 +641,25 @@ func deploymentTaskSecretNames(raw []byte) ([]string, error) {
 
 func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	runID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	run, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{
 		OrgID: ids.ToPG(actorFromContext(r.Context()).OrgID),
 		ID:    ids.ToPG(runID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("run not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("run not found")))
 		return
 	}
 	if err != nil {
 		s.log.Error("get run failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get run"))
+		writeError(w, errors.New("get run"))
 		return
 	}
 	summary := getRunSummary(run)
@@ -671,21 +670,21 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID: ids.MustFromPG(summary.EnvironmentID).String(),
 	}
 	if err := s.requireActorScopeForRecord(r, actor, summary.ProjectID, summary.EnvironmentID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, errors.New("run not found"))
+		if isNoRows(err) {
+			writeError(w, notFound(errors.New("run not found")))
 			return
 		}
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	response, err := s.runResponse(r.Context(), summary)
 	if err != nil {
 		s.log.Error("get pending waitpoint failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get run"))
+		writeError(w, errors.New("get run"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -693,35 +692,35 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	runID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	var request api.CancelRunRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid cancel request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid cancel request JSON: %w", err)))
 		return
 	}
 	request.Reason = strings.TrimSpace(request.Reason)
 	idempotencyKey, err := normalizeRunOperationIdempotencyKey(request.IdempotencyKey)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 
 	actor := actorFromContext(r.Context())
 	runRow, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("run not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("run not found")))
 		return
 	}
 	if err != nil {
 		s.log.Error("get run before cancel failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+		writeError(w, errors.New("cancel run"))
 		return
 	}
 	summary := getRunSummary(runRow)
@@ -731,43 +730,43 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID: ids.MustFromPG(summary.EnvironmentID).String(),
 	}
 	if err := s.requireActorScopeForRecord(r, actor, summary.ProjectID, summary.EnvironmentID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, errors.New("run not found"))
+		if isNoRows(err) {
+			writeError(w, notFound(errors.New("run not found")))
 			return
 		}
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionRunsManage, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	requestBody, err := json.Marshal(request)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("encode cancel request"))
+		writeError(w, errors.New("encode cancel request"))
 		return
 	}
 	operation, err := s.createRunOperation(r.Context(), actor, summary, db.RunOperationKindCancel, request.Reason, requestBody, idempotencyKey)
 	if err != nil {
 		s.log.Error("create cancel operation failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+		writeError(w, errors.New("cancel run"))
 		return
 	}
 	sameCancelRequest, err := sameJSONValue(operation.Request, requestBody)
 	if err != nil {
 		s.log.Error("compare cancel operation request failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operation.ID).String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+		writeError(w, errors.New("cancel run"))
 		return
 	}
 	if idempotencyKey != "" && !sameCancelRequest {
-		writeError(w, http.StatusConflict, errors.New("cancel idempotency key was used with a different request"))
+		writeError(w, conflict(errors.New("cancel idempotency key was used with a different request")))
 		return
 	}
 	if operation.Status != db.RunOperationStatusRequested {
 		response, err := s.runResponse(r.Context(), summary)
 		if err != nil {
 			s.log.Error("build idempotent cancel response failed", "run_id", runID.String(), "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+			writeError(w, errors.New("cancel run"))
 			return
 		}
 		writeJSON(w, http.StatusOK, api.CancelRunResponse{Run: response, Operation: runOperationResponse(operation)})
@@ -781,25 +780,25 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		OperationID: operation.ID,
 	})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			operationID := operation.ID
 			operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{OrgID: ids.ToPG(actor.OrgID), ID: operationID})
 			if err != nil {
 				s.log.Error("get idempotent cancel operation failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operationID).String(), "error", err)
-				writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+				writeError(w, errors.New("cancel run"))
 				return
 			}
 			if operation.Status != db.RunOperationStatusRequested {
 				runRow, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
 				if err != nil {
 					s.log.Error("get idempotent cancel run failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operationID).String(), "error", err)
-					writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+					writeError(w, errors.New("cancel run"))
 					return
 				}
 				response, err := s.runResponse(r.Context(), getRunSummary(runRow))
 				if err != nil {
 					s.log.Error("build idempotent cancel response failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operationID).String(), "error", err)
-					writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+					writeError(w, errors.New("cancel run"))
 					return
 				}
 				writeJSON(w, http.StatusOK, api.CancelRunResponse{Run: response, Operation: runOperationResponse(operation)})
@@ -807,19 +806,19 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		s.log.Error("cancel run failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+		writeError(w, errors.New("cancel run"))
 		return
 	}
 	operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{OrgID: ids.ToPG(actor.OrgID), ID: operation.ID})
 	if err != nil {
 		s.log.Error("get cancel operation failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operation.ID).String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+		writeError(w, errors.New("cancel run"))
 		return
 	}
 	response, err := s.runResponse(r.Context(), cancelRunSummary(cancelled))
 	if err != nil {
 		s.log.Error("build cancel response failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+		writeError(w, errors.New("cancel run"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.CancelRunResponse{Run: response, Operation: runOperationResponse(operation)})
@@ -827,36 +826,36 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	runID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	var request api.ReplayRunRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid replay request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid replay request JSON: %w", err)))
 		return
 	}
 	request.Version = strings.TrimSpace(request.Version)
 	request.Reason = strings.TrimSpace(request.Reason)
 	idempotencyKey, err := normalizeRunOperationIdempotencyKey(request.IdempotencyKey)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 
 	actor := actorFromContext(r.Context())
 	original, err := s.db.GetRun(r.Context(), db.GetRunParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("run not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("run not found")))
 		return
 	}
 	if err != nil {
 		s.log.Error("get run before replay failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+		writeError(w, errors.New("replay run"))
 		return
 	}
 	originalSummary := runRecordSummary(original)
@@ -866,20 +865,20 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID: ids.MustFromPG(originalSummary.EnvironmentID).String(),
 	}
 	if err := s.requireActorScopeForRecord(r, actor, originalSummary.ProjectID, originalSummary.EnvironmentID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, errors.New("run not found"))
+		if isNoRows(err) {
+			writeError(w, notFound(errors.New("run not found")))
 			return
 		}
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionRunsManage, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	replayRequest, err := replayCreateRunRequest(original, request)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if idempotencyKey != "" {
@@ -887,40 +886,40 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 	}
 	requestBody, err := json.Marshal(request)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("encode replay request"))
+		writeError(w, errors.New("encode replay request"))
 		return
 	}
 	operation, err := s.createRunOperation(r.Context(), actor, originalSummary, db.RunOperationKindReplay, request.Reason, requestBody, idempotencyKey)
 	if err != nil {
 		s.log.Error("create replay operation failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+		writeError(w, errors.New("replay run"))
 		return
 	}
 	sameReplayRequest, err := sameJSONValue(operation.Request, requestBody)
 	if err != nil {
 		s.log.Error("compare replay operation request failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operation.ID).String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+		writeError(w, errors.New("replay run"))
 		return
 	}
 	if idempotencyKey != "" && !sameReplayRequest {
-		writeError(w, http.StatusConflict, errors.New("replay idempotency key was used with a different request"))
+		writeError(w, conflict(errors.New("replay idempotency key was used with a different request")))
 		return
 	}
 	if operation.Status != db.RunOperationStatusRequested {
 		replayed, err := s.idempotentReplayRun(r.Context(), actor, operation, requestBody)
 		if err != nil {
 			if errors.Is(err, errIdempotencyKeyConflict) {
-				writeError(w, http.StatusConflict, err)
+				writeError(w, conflict(err))
 				return
 			}
 			s.log.Error("resolve idempotent replay failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operation.ID).String(), "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+			writeError(w, errors.New("replay run"))
 			return
 		}
 		response, err := s.runResponse(r.Context(), replayed)
 		if err != nil {
 			s.log.Error("build idempotent replay response failed", "run_id", ids.MustFromPG(replayed.ID).String(), "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+			writeError(w, errors.New("replay run"))
 			return
 		}
 		writeJSON(w, http.StatusOK, api.ReplayRunResponse{
@@ -943,36 +942,36 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, errIdempotencyKeyConflict) {
 			markRejected()
-			writeError(w, http.StatusConflict, err)
+			writeError(w, conflict(err))
 			return
 		}
 		var upstreamErr createRunUpstreamError
 		if errors.As(err, &upstreamErr) {
-			writeError(w, http.StatusBadGateway, upstreamErr)
+			writeError(w, badGateway(upstreamErr))
 			return
 		}
 		if isCreateRunConfigError(err) {
-			writeError(w, http.StatusServiceUnavailable, err)
+			writeError(w, unavailable(err))
 			return
 		}
 		if errors.Is(err, errPermissionRequired) {
 			markRejected()
-			writeError(w, http.StatusForbidden, err)
+			writeError(w, forbidden(err))
 			return
 		}
 		var runDeploymentErr runDeploymentSelectionError
 		if errors.As(err, &runDeploymentErr) {
 			markRejected()
-			writeError(w, http.StatusBadRequest, runDeploymentErr)
+			writeError(w, badRequest(runDeploymentErr))
 			return
 		}
 		if isCreateRunClientError(err) {
 			markRejected()
-			writeError(w, http.StatusBadRequest, err)
+			writeError(w, badRequest(err))
 			return
 		}
 		s.log.Error("replay run failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+		writeError(w, errors.New("replay run"))
 		return
 	}
 	operationResult, err := json.Marshal(map[string]string{
@@ -980,7 +979,7 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 		"run_id":        ids.MustFromPG(replayed.ID).String(),
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("encode replay result"))
+		writeError(w, errors.New("encode replay result"))
 		return
 	}
 	operationID := operation.ID
@@ -989,7 +988,7 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 		ID:     operationID,
 		OrgID:  ids.ToPG(actor.OrgID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{OrgID: ids.ToPG(actor.OrgID), ID: operationID})
 		if err == nil && operation.Status != db.RunOperationStatusRequested {
 			replayed, replayErr := s.idempotentReplayRun(r.Context(), actor, operation, requestBody)
@@ -997,7 +996,7 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 				response, responseErr := s.runResponse(r.Context(), replayed)
 				if responseErr != nil {
 					s.log.Error("build raced replay response failed", "run_id", ids.MustFromPG(replayed.ID).String(), "error", responseErr)
-					writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+					writeError(w, errors.New("replay run"))
 					return
 				}
 				writeJSON(w, http.StatusOK, api.ReplayRunResponse{
@@ -1010,13 +1009,13 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.log.Error("mark replay operation applied failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operationID).String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+		writeError(w, errors.New("replay run"))
 		return
 	}
 	response, err := s.runResponse(r.Context(), replayed)
 	if err != nil {
 		s.log.Error("build replay response failed", "run_id", ids.MustFromPG(replayed.ID).String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+		writeError(w, errors.New("replay run"))
 		return
 	}
 	writeJSON(w, http.StatusCreated, api.ReplayRunResponse{
@@ -1027,33 +1026,33 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	statusFilter, limit, err := listRunsQuery(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	summaries, err := s.listRunSummaries(r, actor, statusFilter, limit)
 	if errors.Is(err, errPermissionRequired) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	if isScopeRequestError(err) {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if err != nil {
 		s.log.Error("list runs failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("list runs"))
+		writeError(w, errors.New("list runs"))
 		return
 	}
 	runs, err := s.runResponses(r.Context(), ids.ToPG(actor.OrgID), summaries)
 	if err != nil {
 		s.log.Error("list pending waitpoints failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("list runs"))
+		writeError(w, errors.New("list runs"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.ListRunsResponse{Runs: runs})
@@ -1061,22 +1060,22 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) countRuns(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	counts, err := s.countRunStatuses(r, actor)
 	if errors.Is(err, errPermissionRequired) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	if isScopeRequestError(err) {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if err != nil {
 		s.log.Error("count runs failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("count runs"))
+		writeError(w, errors.New("count runs"))
 		return
 	}
 	writeJSON(w, http.StatusOK, counts)
@@ -1084,22 +1083,22 @@ func (s *Server) countRuns(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	runID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	run, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("run not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("run not found")))
 		return
 	} else if err != nil {
 		s.log.Error("get run before logs failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get run logs"))
+		writeError(w, errors.New("get run logs"))
 		return
 	}
 	summary := getRunSummary(run)
@@ -1109,21 +1108,21 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID: ids.MustFromPG(summary.EnvironmentID).String(),
 	}
 	if err := s.requireActorScopeForRecord(r, actor, summary.ProjectID, summary.EnvironmentID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, errors.New("run not found"))
+		if isNoRows(err) {
+			writeError(w, notFound(errors.New("run not found")))
 			return
 		}
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
 		cursor, err := eventCursor(r)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
+			writeError(w, badRequest(err))
 			return
 		}
 		s.followRunLogs(w, r, actor.OrgID, runID, cursor)
@@ -1135,13 +1134,13 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 		OrgID:       ids.ToPG(actor.OrgID),
 		RunID:       ids.ToPG(runID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		writeJSON(w, http.StatusOK, api.LogSnapshotResponse{Cursor: "0"})
 		return
 	}
 	if err != nil {
 		s.log.Error("get run logs failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get run logs"))
+		writeError(w, errors.New("get run logs"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.LogSnapshotResponse{
@@ -1177,7 +1176,7 @@ func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uui
 			continue
 		}
 		run, err := s.db.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: ids.ToPG(orgID), ID: ids.ToPG(runID)})
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && api.RunStatusIsTerminal(string(run.Status))) {
+		if isNoRows(err) || (err == nil && api.RunStatusIsTerminal(string(run.Status))) {
 			for {
 				nextCursor, rowCount, err := s.writeRunLogChunksAfter(ctx, w, flusher, encoder, orgID, runID, cursor)
 				if err != nil {
@@ -1236,32 +1235,32 @@ func (s *Server) writeRunLogChunksAfter(ctx context.Context, w http.ResponseWrit
 
 func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	runID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	cursor, err := eventCursor(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	limit, err := eventLimit(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	run, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("run not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("run not found")))
 		return
 	} else if err != nil {
 		s.log.Error("get run before events failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("list run events"))
+		writeError(w, errors.New("list run events"))
 		return
 	}
 	summary := getRunSummary(run)
@@ -1271,15 +1270,15 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID: ids.MustFromPG(summary.EnvironmentID).String(),
 	}
 	if err := s.requireActorScopeForRecord(r, actor, summary.ProjectID, summary.EnvironmentID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, errors.New("run not found"))
+		if isNoRows(err) {
+			writeError(w, notFound(errors.New("run not found")))
 			return
 		}
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
@@ -1289,7 +1288,7 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.listRunEvents(r, ids.ToPG(actor.OrgID), ids.ToPG(runID), cursor, limit)
 	if err != nil {
 		s.log.Error("list run events failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("list run events"))
+		writeError(w, errors.New("list run events"))
 		return
 	}
 	hasNext := len(rows) > int(limit)
@@ -1436,7 +1435,7 @@ func (s *Server) resolveProjectRef(ctx context.Context, orgID uuid.UUID, project
 	}
 	if parsed, err := ids.Parse(projectRef); err == nil {
 		project, err := s.db.GetProject(ctx, db.GetProjectParams{OrgID: ids.ToPG(orgID), ID: ids.ToPG(parsed)})
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			return db.Project{}, errors.New("project_id must reference an active project")
 		}
 		if err != nil {
@@ -1445,7 +1444,7 @@ func (s *Server) resolveProjectRef(ctx context.Context, orgID uuid.UUID, project
 		return project, nil
 	}
 	project, err := s.db.GetProjectBySlug(ctx, db.GetProjectBySlugParams{OrgID: ids.ToPG(orgID), Slug: strings.ToLower(projectRef)})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		return db.Project{}, errors.New("project_id must be a project UUID or a project slug")
 	}
 	if err != nil {
@@ -1458,7 +1457,7 @@ func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, pro
 	environmentRef = strings.TrimSpace(environmentRef)
 	if environmentRef == "" {
 		environment, err := s.db.GetDefaultEnvironment(ctx, db.GetDefaultEnvironmentParams{OrgID: ids.ToPG(orgID), ProjectID: projectID})
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			return db.Environment{}, errors.New("environment_id must reference an active environment")
 		}
 		if err != nil {
@@ -1468,7 +1467,7 @@ func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, pro
 	}
 	if parsed, err := ids.Parse(environmentRef); err == nil {
 		environment, err := s.db.GetEnvironment(ctx, db.GetEnvironmentParams{OrgID: ids.ToPG(orgID), ProjectID: projectID, ID: ids.ToPG(parsed)})
-		if errors.Is(err, pgx.ErrNoRows) {
+		if isNoRows(err) {
 			return db.Environment{}, errors.New("environment_id must reference an active environment")
 		}
 		if err != nil {
@@ -1477,7 +1476,7 @@ func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, pro
 		return environment, nil
 	}
 	environment, err := s.db.GetEnvironmentBySlug(ctx, db.GetEnvironmentBySlugParams{OrgID: ids.ToPG(orgID), ProjectID: projectID, Slug: strings.ToLower(environmentRef)})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		return db.Environment{}, errors.New("environment_id must be an environment UUID or an environment slug")
 	}
 	if err != nil {
@@ -1515,7 +1514,7 @@ func eventLimit(r *http.Request) (int32, error) {
 
 func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, runID uuid.UUID, cursor int64) {
 	if s.eventStream == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("event stream is not configured"))
+		writeError(w, unavailable(errors.New("event stream is not configured")))
 		return
 	}
 	flusher, _ := w.(http.Flusher)
@@ -1820,7 +1819,7 @@ func (s *Server) validateRunQueueOverride(ctx context.Context, orgID uuid.UUID, 
 		DeploymentID:  task.DeploymentID,
 		QueueName:     scheduling.queueName,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		return runScheduling{}, fmt.Errorf("queue %q is not declared in the selected deployment", scheduling.queueName)
 	}
 	if err != nil {
@@ -1970,7 +1969,7 @@ func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, pro
 		TaskID:         taskID,
 		IdempotencyKey: pgtype.Text{String: key, Valid: true},
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		return runSummary{}, false, nil
 	}
 	if err != nil {
@@ -2497,7 +2496,7 @@ func (s *Server) runResponse(ctx context.Context, run runSummary) (api.RunRespon
 		OrgID: run.OrgID,
 		RunID: run.ID,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		return response, nil
 	}
 	if err != nil {

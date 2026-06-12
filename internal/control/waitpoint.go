@@ -22,7 +22,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -30,38 +29,38 @@ const checkpointRuntimeBackendFirecracker = "firecracker"
 
 func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	var request api.WorkerCreateWaitpointRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker waitpoint request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker waitpoint request JSON: %w", err)))
 		return
 	}
 	leaseIDs, err := parseWorkerRunLease(request.Lease)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	worker := workerFromContext(r.Context())
 	if request.Lease.WorkerInstanceID != worker.WorkerInstanceID.String() {
-		writeError(w, http.StatusForbidden, errors.New("worker run lease belongs to another worker"))
+		writeError(w, forbidden(errors.New("worker run lease belongs to another worker")))
 		return
 	}
 	leaseRow, _, err := s.workerExecutionLease(r.Context(), worker, leaseIDs)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("worker run lease is stale")))
 		return
 	} else if err != nil {
 		s.log.Error("worker queue lease lookup failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
+		writeError(w, errors.New("get queue lease"))
 		return
 	}
 	request.CorrelationID = strings.TrimSpace(request.CorrelationID)
 	if request.CorrelationID == "" {
-		writeError(w, http.StatusBadRequest, errors.New("correlation_id is required"))
+		writeError(w, badRequest(errors.New("correlation_id is required")))
 		return
 	}
 	requestJSON := request.Request
@@ -69,22 +68,22 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 		requestJSON = []byte(`{}`)
 	}
 	if !json.Valid(requestJSON) {
-		writeError(w, http.StatusBadRequest, errors.New("request must be valid JSON"))
+		writeError(w, badRequest(errors.New("request must be valid JSON")))
 		return
 	}
 	kind, displayText, err := waitpointRequestFields(request.Kind, requestJSON, request.DisplayText)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	timeout, err := waitpointTimeout(kind, request.TimeoutSeconds)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	policy, err := s.resolveWaitpointPolicy(r.Context(), leaseIDs.orgID, leaseRow.ProjectID, leaseRow.EnvironmentID, request.Policy)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	policyName := pgtype.Text{}
@@ -92,7 +91,7 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 	if policy != nil {
 		snapshot, err := policy.snapshot()
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("encode waitpoint policy"))
+			writeError(w, errors.New("encode waitpoint policy"))
 			return
 		}
 		policyName = pgText(policy.Name)
@@ -101,7 +100,7 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 	runWaitID := ids.New()
 	waitpointID := ids.New()
 	if linkedWaitpointID, ok, err := waitpointRequestLinkedID(kind, requestJSON); err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	} else if ok {
 		waitpointID = linkedWaitpointID
@@ -124,13 +123,13 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 		PolicyName:       policyName,
 		PolicySnapshot:   policySnapshot,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("worker run lease is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("create waitpoint failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint"))
+		writeError(w, errors.New("create waitpoint"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerCreateWaitpointResponse{
@@ -143,14 +142,14 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerAcknowledgeRestore(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	var request api.WorkerAcknowledgeRestoreRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker restore ack request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker restore ack request JSON: %w", err)))
 		return
 	}
 	worker, leaseIDs, ok := s.workerRunLeaseForWrite(w, r, request.Lease)
@@ -159,17 +158,17 @@ func (s *Server) workerAcknowledgeRestore(w http.ResponseWriter, r *http.Request
 	}
 	runWaitID, err := ids.Parse(request.RunWaitID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("run_wait_id must be a UUID"))
+		writeError(w, badRequest(errors.New("run_wait_id must be a UUID")))
 		return
 	}
 	waitpointID, err := ids.Parse(request.WaitpointID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("waitpoint_id must be a UUID"))
+		writeError(w, badRequest(errors.New("waitpoint_id must be a UUID")))
 		return
 	}
 	checkpointID, err := ids.Parse(request.CheckpointID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("checkpoint_id must be a UUID"))
+		writeError(w, badRequest(errors.New("checkpoint_id must be a UUID")))
 		return
 	}
 	waitpoint, err := s.db.AcknowledgeRestore(r.Context(), db.AcknowledgeRestoreParams{
@@ -181,13 +180,13 @@ func (s *Server) workerAcknowledgeRestore(w http.ResponseWriter, r *http.Request
 		RunWaitID:        ids.ToPG(runWaitID),
 		WaitpointID:      ids.ToPG(waitpointID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker restore acknowledgement is stale"))
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("worker restore acknowledgement is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("acknowledge restore failed", "run_id", request.Lease.RunID, "checkpoint_id", request.CheckpointID, "waitpoint_id", request.WaitpointID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("acknowledge restore"))
+		writeError(w, errors.New("acknowledge restore"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerAcknowledgeRestoreResponse{
@@ -200,58 +199,58 @@ func (s *Server) workerAcknowledgeRestore(w http.ResponseWriter, r *http.Request
 
 func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	if s.dispatchQueue == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run queue item queue is not configured"))
+		writeError(w, unavailable(errors.New("run queue item queue is not configured")))
 		return
 	}
 	var request api.WorkerCheckpointReadyRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker checkpoint ready request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker checkpoint ready request JSON: %w", err)))
 		return
 	}
 	leaseIDs, err := parseWorkerRunLease(request.Lease)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	worker := workerFromContext(r.Context())
 	if request.Lease.WorkerInstanceID != worker.WorkerInstanceID.String() {
-		writeError(w, http.StatusForbidden, errors.New("worker run lease belongs to another worker"))
+		writeError(w, forbidden(errors.New("worker run lease belongs to another worker")))
 		return
 	}
 	runWaitID, err := ids.Parse(request.RunWaitID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("run_wait_id must be a UUID"))
+		writeError(w, badRequest(errors.New("run_wait_id must be a UUID")))
 		return
 	}
 	waitpointID, err := ids.Parse(request.WaitpointID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("waitpoint_id must be a UUID"))
+		writeError(w, badRequest(errors.New("waitpoint_id must be a UUID")))
 		return
 	}
 	checkpointID, err := ids.Parse(request.CheckpointID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("checkpoint_id must be a UUID"))
+		writeError(w, badRequest(errors.New("checkpoint_id must be a UUID")))
 		return
 	}
 	params, err := checkpointReadyParams(leaseIDs.orgID, leaseIDs, worker.WorkerInstanceID, runWaitID, waitpointID, checkpointID, request)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	_, lease, err := s.workerExecutionLease(r.Context(), worker, leaseIDs)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker run lease or checkpoint is stale"))
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("worker run lease or checkpoint is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("worker queue lease lookup failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
+		writeError(w, errors.New("get queue lease"))
 		return
 	}
 	runtimeRelease, err := s.db.GetRunExecutionSessionRuntimeRelease(r.Context(), db.GetRunExecutionSessionRuntimeReleaseParams{
@@ -260,14 +259,14 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		SessionID:        ids.ToPG(leaseIDs.sessionID),
 		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		s.log.Warn("checkpoint ready runtime release missing", "run_id", request.Lease.RunID, "session_id", request.Lease.ID, "checkpoint_id", request.CheckpointID)
-		writeError(w, http.StatusConflict, errors.New("worker run lease runtime is unavailable"))
+		writeError(w, conflict(errors.New("worker run lease runtime is unavailable")))
 		return
 	}
 	if err != nil {
 		s.log.Error("worker runtime release lookup failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get worker runtime release"))
+		writeError(w, errors.New("get worker runtime release"))
 		return
 	}
 	if err := validateCheckpointReadyRuntime(runtimeRelease, params); err != nil {
@@ -280,16 +279,16 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 			"runtime_id", params.RuntimeID,
 			"session_runtime_id", runtimeRelease.RuntimeID,
 		)
-		writeError(w, http.StatusConflict, err)
+		writeError(w, conflict(err))
 		return
 	}
 	if err := s.verifyCheckpointReadyArtifacts(r.Context(), request.Manifest); err != nil {
 		s.log.Warn("checkpoint ready artifact rejected", "run_id", request.Lease.RunID, "session_id", request.Lease.ID, "checkpoint_id", request.CheckpointID, "error", err)
-		writeError(w, http.StatusConflict, err)
+		writeError(w, conflict(err))
 		return
 	}
 	waitpoint, resumed, err := s.markWaitpointCheckpointReady(r.Context(), ids.ToPG(leaseIDs.orgID), ids.ToPG(waitpointID), params)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		s.log.Warn(
 			"checkpoint ready rejected",
 			"run_id", request.Lease.RunID,
@@ -298,12 +297,12 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 			"runtime_backend", params.RuntimeBackend,
 			"runtime_id", params.RuntimeID,
 		)
-		writeError(w, http.StatusConflict, errors.New("worker run lease or checkpoint is stale"))
+		writeError(w, conflict(errors.New("worker run lease or checkpoint is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("mark checkpoint ready failed", "run_id", request.Lease.RunID, "checkpoint_id", request.CheckpointID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("mark checkpoint ready"))
+		writeError(w, errors.New("mark checkpoint ready"))
 		return
 	}
 	s.ackWorkerQueueLease(r.Context(), ids.ToPG(leaseIDs.runID), lease)
@@ -419,47 +418,47 @@ func (s *Server) markWaitpointCheckpointReady(ctx context.Context, orgID pgtype.
 
 func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	var request api.WorkerCheckpointFailedRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker checkpoint failed request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid worker checkpoint failed request JSON: %w", err)))
 		return
 	}
 	leaseIDs, err := parseWorkerRunLease(request.Lease)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	worker := workerFromContext(r.Context())
 	if request.Lease.WorkerInstanceID != worker.WorkerInstanceID.String() {
-		writeError(w, http.StatusForbidden, errors.New("worker run lease belongs to another worker"))
+		writeError(w, forbidden(errors.New("worker run lease belongs to another worker")))
 		return
 	}
-	if _, _, err := s.workerExecutionLease(r.Context(), worker, leaseIDs); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker run lease or checkpoint is stale"))
+	if _, _, err := s.workerExecutionLease(r.Context(), worker, leaseIDs); isNoRows(err) {
+		writeError(w, conflict(errors.New("worker run lease or checkpoint is stale")))
 		return
 	} else if err != nil {
 		s.log.Error("worker queue lease lookup failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
+		writeError(w, errors.New("get queue lease"))
 		return
 	}
 	runWaitID, err := ids.Parse(request.RunWaitID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("run_wait_id must be a UUID"))
+		writeError(w, badRequest(errors.New("run_wait_id must be a UUID")))
 		return
 	}
 	waitpointID, err := ids.Parse(request.WaitpointID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("waitpoint_id must be a UUID"))
+		writeError(w, badRequest(errors.New("waitpoint_id must be a UUID")))
 		return
 	}
 	checkpointID, err := ids.Parse(request.CheckpointID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("checkpoint_id must be a UUID"))
+		writeError(w, badRequest(errors.New("checkpoint_id must be a UUID")))
 		return
 	}
 	message := strings.TrimSpace(request.Error)
@@ -476,13 +475,13 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
 		ErrorMessage:     pgtype.Text{String: message, Valid: true},
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker run lease or checkpoint is stale"))
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("worker run lease or checkpoint is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("mark checkpoint failed failed", "run_id", request.Lease.RunID, "checkpoint_id", request.CheckpointID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("mark checkpoint failed"))
+		writeError(w, errors.New("mark checkpoint failed"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerCreateWaitpointResponse{
@@ -495,12 +494,12 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) createWaitpoint(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	var request api.CreateWaitpointRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid waitpoint request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid waitpoint request JSON: %w", err)))
 		return
 	}
 	requestJSON := request.Request
@@ -508,21 +507,21 @@ func (s *Server) createWaitpoint(w http.ResponseWriter, r *http.Request) {
 		requestJSON = []byte(`{}`)
 	}
 	if !json.Valid(requestJSON) {
-		writeError(w, http.StatusBadRequest, errors.New("request must be valid JSON"))
+		writeError(w, badRequest(errors.New("request must be valid JSON")))
 		return
 	}
 	if request.ExpiresAt.IsZero() || !request.ExpiresAt.After(time.Now().UTC()) {
-		writeError(w, http.StatusBadRequest, errors.New("expires_at must be in the future"))
+		writeError(w, badRequest(errors.New("expires_at must be in the future")))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionWaitpointsRespond, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	idempotencyKey := strings.TrimSpace(request.IdempotencyKey)
@@ -532,7 +531,7 @@ func (s *Server) createWaitpoint(w http.ResponseWriter, r *http.Request) {
 		idempotencyKeyHash = pgtype.Text{String: waitpointCreationRequestHash(requestJSON, request.DisplayText, request.ExpiresAt), Valid: true}
 		expiresAt, err := waitpointTokenExpiry(time.Now().UTC(), request.IdempotencyKeyExpiresAt, request.IdempotencyKeyTTLSeconds, defaultIdempotencyKeyTTL, "idempotency_key_expires")
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
+			writeError(w, badRequest(err))
 			return
 		}
 		idempotencyKeyExpiresAt = pgTimeToPG(expiresAt)
@@ -550,13 +549,13 @@ func (s *Server) createWaitpoint(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKeyExpiresAt: idempotencyKeyExpiresAt,
 		IdempotencyKeyOptions:   []byte(`{}`),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("idempotency key reused with a different request"))
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("idempotency key reused with a different request")))
 		return
 	}
 	if err != nil {
 		s.log.Error("create waitpoint failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint"))
+		writeError(w, errors.New("create waitpoint"))
 		return
 	}
 	writeJSON(w, http.StatusCreated, waitpointResponseFromCreate(waitpoint))
@@ -567,16 +566,16 @@ func (s *Server) respondWaitpoint(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid waitpoint response JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid waitpoint response JSON: %w", err)))
 		return
 	}
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	waitpointID, err := ids.Parse(chi.URLParam(r, "waitpointID"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("waitpointID must be a UUID"))
+		writeError(w, badRequest(errors.New("waitpointID must be a UUID")))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -584,13 +583,13 @@ func (s *Server) respondWaitpoint(w http.ResponseWriter, r *http.Request) {
 		OrgID:       ids.ToPG(actor.OrgID),
 		WaitpointID: ids.ToPG(waitpointID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("pending waitpoint not found")))
 		return
 	}
 	if err != nil {
 		s.log.Error("get waitpoint before resolving failed", "waitpoint_id", waitpointID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("resolve waitpoint"))
+		writeError(w, errors.New("resolve waitpoint"))
 		return
 	}
 	scope := auth.Scope{
@@ -599,26 +598,26 @@ func (s *Server) respondWaitpoint(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID: ids.MustFromPG(waitpoint.EnvironmentID).String(),
 	}
 	if err := s.requireActorScopeForRecord(r, actor, waitpoint.ProjectID, waitpoint.EnvironmentID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
+		if isNoRows(err) {
+			writeError(w, notFound(errors.New("pending waitpoint not found")))
 			return
 		}
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionWaitpointsRespond, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	responseKey, principal, err := waitpointActorResponseIdentity(actor)
 	if err != nil {
-		writeError(w, http.StatusForbidden, err)
+		writeError(w, forbidden(err))
 		return
 	}
 	expectedKind := db.WaitpointKindHuman
 	response, err := waitpointResponsePayload(expectedKind, principal, request.Value, request.Metadata, time.Now().UTC())
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	outcome, err := s.resolveWaitpointRecord(r.Context(), waitpointResolution{
@@ -635,12 +634,12 @@ func (s *Server) respondWaitpoint(w http.ResponseWriter, r *http.Request) {
 		Metadata:        response.Metadata,
 	})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusConflict, errors.New("waitpoint cannot be resolved"))
+		if isNoRows(err) {
+			writeError(w, conflict(errors.New("waitpoint cannot be resolved")))
 			return
 		}
 		s.log.Error("resolve waitpoint failed", "waitpoint_id", waitpointID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("resolve waitpoint"))
+		writeError(w, errors.New("resolve waitpoint"))
 		return
 	}
 	if !outcome.Resumed {

@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/schedule"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -46,18 +45,18 @@ func (s *Server) mountScheduleRoutes(r chi.Router) {
 
 func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("schedule storage is not configured"))
+		writeError(w, unavailable(errors.New("schedule storage is not configured")))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	var request api.CreateScheduleRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid schedule request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid schedule request JSON: %w", err)))
 		return
 	}
 	projectID, environmentID, err := environmentScopeRefsFromRequest(r, actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	request.ProjectID = projectID
@@ -65,11 +64,11 @@ func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
 	row, err := s.createScheduleForActor(r.Context(), actor, request)
 	if err != nil {
 		if isUniqueViolation(err) {
-			writeError(w, http.StatusConflict, errors.New("schedule already exists"))
+			writeError(w, conflict(errors.New("schedule already exists")))
 			return
 		}
 		if errors.Is(err, errPermissionRequired) {
-			writeError(w, http.StatusForbidden, err)
+			writeError(w, forbidden(err))
 			return
 		}
 		s.writeCreateScheduleError(w, err)
@@ -82,7 +81,7 @@ func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateSchedule(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("schedule storage is not configured"))
+		writeError(w, unavailable(errors.New("schedule storage is not configured")))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -91,26 +90,26 @@ func (s *Server) updateSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if row.ScheduleType == db.TaskScheduleTypeDeclarative {
-		writeError(w, http.StatusBadRequest, errors.New("declarative schedules are managed by task definitions"))
+		writeError(w, badRequest(errors.New("declarative schedules are managed by task definitions")))
 		return
 	}
 	var request api.CreateScheduleRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid schedule request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid schedule request JSON: %w", err)))
 		return
 	}
 	if _, _, err := environmentScopeRefsFromRequest(r, actor, request.ProjectID, request.EnvironmentID); err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	updated, err := s.updateScheduleForActor(r.Context(), actor, row, request)
 	if err != nil {
 		if isUniqueViolation(err) {
-			writeError(w, http.StatusConflict, errors.New("schedule already exists"))
+			writeError(w, conflict(errors.New("schedule already exists")))
 			return
 		}
 		if errors.Is(err, errPermissionRequired) {
-			writeError(w, http.StatusForbidden, err)
+			writeError(w, forbidden(err))
 			return
 		}
 		s.writeCreateScheduleError(w, err)
@@ -124,28 +123,28 @@ func (s *Server) updateSchedule(w http.ResponseWriter, r *http.Request) {
 func (s *Server) writeCreateScheduleError(w http.ResponseWriter, err error) {
 	var upstreamErr createRunUpstreamError
 	if errors.As(err, &upstreamErr) {
-		writeError(w, http.StatusBadGateway, upstreamErr)
+		writeError(w, badGateway(upstreamErr))
 		return
 	}
 	var runDeploymentErr runDeploymentSelectionError
 	if errors.As(err, &runDeploymentErr) {
-		writeError(w, http.StatusBadRequest, runDeploymentErr)
+		writeError(w, badRequest(runDeploymentErr))
 		return
 	}
 	if isCreateRunConfigError(err) {
-		writeError(w, http.StatusServiceUnavailable, err)
+		writeError(w, unavailable(err))
 		return
 	}
 	if err.Error() == "deduplication_key is required" {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if isCreateRunClientError(err) {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	s.log.Error("create schedule failed", "error", err)
-	writeError(w, http.StatusInternalServerError, errors.New("create schedule"))
+	writeError(w, errors.New("create schedule"))
 }
 
 func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, current db.GetScheduleSummaryRow, request api.CreateScheduleRequest) (db.UpdateScheduleRow, error) {
@@ -172,7 +171,7 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 		return db.UpdateScheduleRow{}, err
 	}
 	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, current.ProjectID, current.EnvironmentID, request.Task, deploymentSelection)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		return db.UpdateScheduleRow{}, fmt.Errorf("task %q is not deployed in the selected deployment", request.Task)
 	}
 	if err != nil {
@@ -244,7 +243,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		return db.CreateScheduleRow{}, err
 	}
 	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, projectID, environmentID, request.Task, deploymentSelection)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if isNoRows(err) {
 		return db.CreateScheduleRow{}, fmt.Errorf("task %q is not deployed in the selected deployment", request.Task)
 	}
 	if err != nil {
@@ -299,11 +298,11 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	rows, err := s.db.ListScheduleSummaries(r.Context(), db.ListScheduleSummariesParams{
@@ -313,7 +312,7 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		RowLimit:      scheduleListPageSize,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("list schedules"))
+		writeError(w, errors.New("list schedules"))
 		return
 	}
 	out := make([]api.ScheduleResponse, 0, len(rows))
@@ -345,7 +344,7 @@ func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if row.ScheduleType == db.TaskScheduleTypeDeclarative {
-		writeError(w, http.StatusBadRequest, errors.New("declarative schedules are managed by task definitions"))
+		writeError(w, badRequest(errors.New("declarative schedules are managed by task definitions")))
 		return
 	}
 	affected, err := s.db.DeleteSchedule(r.Context(), db.DeleteScheduleParams{
@@ -355,11 +354,11 @@ func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 		ScheduleID:    row.ScheduleID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("delete schedule"))
+		writeError(w, errors.New("delete schedule"))
 		return
 	}
 	if affected == 0 {
-		writeError(w, http.StatusNotFound, errors.New("schedule not found"))
+		writeError(w, notFound(errors.New("schedule not found")))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -371,14 +370,14 @@ func (s *Server) setScheduleState(w http.ResponseWriter, r *http.Request, active
 		return
 	}
 	if row.ScheduleType == db.TaskScheduleTypeDeclarative {
-		writeError(w, http.StatusBadRequest, errors.New("declarative schedules are managed by task definitions"))
+		writeError(w, badRequest(errors.New("declarative schedules are managed by task definitions")))
 		return
 	}
 	var nextFireAt pgtype.Timestamptz
 	if active {
 		next, err := schedule.NextCronTime(row.Cron, row.Timezone, time.Now())
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
+			writeError(w, badRequest(err))
 			return
 		}
 		nextFireAt = pgTimeToPG(next)
@@ -392,11 +391,11 @@ func (s *Server) setScheduleState(w http.ResponseWriter, r *http.Request, active
 		EnvironmentID: row.EnvironmentID,
 	})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, errors.New("schedule not found"))
+		if isNoRows(err) {
+			writeError(w, notFound(errors.New("schedule not found")))
 			return
 		}
-		writeError(w, http.StatusInternalServerError, errors.New("update schedule"))
+		writeError(w, errors.New("update schedule"))
 		return
 	}
 	view := updateScheduleView(updated)
@@ -446,16 +445,16 @@ func (s *Server) loadScheduleForRequest(w http.ResponseWriter, r *http.Request, 
 	actor := actorFromContext(r.Context())
 	scheduleID, err := ids.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("schedule id must be a UUID"))
+		writeError(w, badRequest(errors.New("schedule id must be a UUID")))
 		return db.GetScheduleSummaryRow{}, false
 	}
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return db.GetScheduleSummaryRow{}, false
 	}
 	if !actor.HasPermission(permission, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return db.GetScheduleSummaryRow{}, false
 	}
 	row, err := s.db.GetScheduleSummary(r.Context(), db.GetScheduleSummaryParams{
@@ -464,12 +463,12 @@ func (s *Server) loadScheduleForRequest(w http.ResponseWriter, r *http.Request, 
 		EnvironmentID: environmentID,
 		ScheduleID:    ids.ToPG(scheduleID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("schedule not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("schedule not found")))
 		return db.GetScheduleSummaryRow{}, false
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("load schedule"))
+		writeError(w, errors.New("load schedule"))
 		return db.GetScheduleSummaryRow{}, false
 	}
 	return row, true

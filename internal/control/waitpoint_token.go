@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -45,32 +44,32 @@ func waitpointKindExternallyCompletable(kind db.WaitpointKind) bool {
 
 func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	if err := auth.ValidateTokenSecret(s.authSecret); err != nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("token hashing is not configured"))
+		writeError(w, unavailable(errors.New("token hashing is not configured")))
 		return
 	}
 	var request api.CreateWaitpointTokenRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid waitpoint token request JSON: %w", err))
+		writeError(w, badRequest(fmt.Errorf("invalid waitpoint token request JSON: %w", err)))
 		return
 	}
 	waitpointID, err := ids.Parse(request.WaitpointID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("waitpoint_id must be a UUID"))
+		writeError(w, badRequest(errors.New("waitpoint_id must be a UUID")))
 		return
 	}
 	now := time.Now().UTC()
 	expiresAt, err := waitpointTokenExpiry(now, request.ExpiresAt, request.ExpiresInSeconds, defaultWaitpointResponseTokenTTL, "expires")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	metadata, err := normalizeWaitpointTokenMetadata(request.Metadata)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -78,13 +77,13 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		OrgID:       ids.ToPG(actor.OrgID),
 		WaitpointID: ids.ToPG(waitpointID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("pending waitpoint not found")))
 		return
 	}
 	if err != nil {
 		s.log.Error("get waitpoint before creating waitpoint token failed", "waitpoint_id", waitpointID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint token"))
+		writeError(w, errors.New("create waitpoint token"))
 		return
 	}
 	scope := auth.Scope{
@@ -93,24 +92,24 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID: ids.MustFromPG(waitpoint.EnvironmentID).String(),
 	}
 	if err := s.requireActorScopeForRecord(r, actor, waitpoint.ProjectID, waitpoint.EnvironmentID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
+		if isNoRows(err) {
+			writeError(w, notFound(errors.New("pending waitpoint not found")))
 			return
 		}
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionWaitpointsRespond, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
 	if !waitpointKindExternallyCompletable(waitpoint.Kind) {
-		writeError(w, http.StatusBadRequest, errors.New("waitpoint kind cannot be responded to externally"))
+		writeError(w, badRequest(errors.New("waitpoint kind cannot be responded to externally")))
 		return
 	}
 	rawToken, tokenHash, err := s.generateWaitpointResponseToken()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("generate waitpoint token"))
+		writeError(w, errors.New("generate waitpoint token"))
 		return
 	}
 	row, err := s.db.CreateWaitpointResponseToken(r.Context(), db.CreateWaitpointResponseTokenParams{
@@ -122,13 +121,13 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		ExternalSubject: pgtype.Text{},
 		Metadata:        metadata,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("pending waitpoint not found")))
 		return
 	}
 	if err != nil {
 		s.log.Error("create waitpoint token failed", "waitpoint_id", waitpointID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint token"))
+		writeError(w, errors.New("create waitpoint token"))
 		return
 	}
 	writeJSON(w, http.StatusCreated, s.waitpointTokenResponseFromCreate(row, rawToken))
@@ -136,21 +135,21 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) respondWaitpointToken(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
 	if err := auth.ValidateTokenSecret(s.authSecret); err != nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("token hashing is not configured"))
+		writeError(w, unavailable(errors.New("token hashing is not configured")))
 		return
 	}
 	tokenID, err := ids.Parse(chi.URLParam(r, "tokenID"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("tokenID must be a UUID"))
+		writeError(w, badRequest(errors.New("tokenID must be a UUID")))
 		return
 	}
 	request, err := decodeRespondWaitpointRequest(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	rawToken := strings.TrimSpace(request.Token)
@@ -161,37 +160,37 @@ func (s *Server) respondWaitpointToken(w http.ResponseWriter, r *http.Request) {
 	}
 	tokenHash, err := s.hashWaitpointResponseToken(rawToken)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, errors.New("invalid token"))
+		writeError(w, unauthorized(errors.New("invalid token")))
 		return
 	}
 	token, err := s.db.GetWaitpointResponseTokenForRespond(r.Context(), db.GetWaitpointResponseTokenForRespondParams{
 		ID:        ids.ToPG(tokenID),
 		TokenHash: tokenHash,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("invalid or inactive token"))
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("invalid or inactive token")))
 		return
 	}
 	if err != nil {
 		s.log.Error("get waitpoint token failed", "token_id", tokenID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("respond with waitpoint token"))
+		writeError(w, errors.New("respond with waitpoint token"))
 		return
 	}
 	if !waitpointKindExternallyCompletable(token.WaitpointKind) {
-		writeError(w, http.StatusConflict, errors.New("waitpoint kind cannot be responded to externally"))
+		writeError(w, conflict(errors.New("waitpoint kind cannot be responded to externally")))
 		return
 	}
 	externalSubject := waitpointTokenResponseSubject(token, request.ExternalSubject)
 	principal := waitpointTokenPrincipal(token, externalSubject)
 	response, err := waitpointResponsePayload(token.WaitpointKind, principal, request.Value, request.Metadata, time.Now().UTC())
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, badRequest(err))
 		return
 	}
 	response.EventPayload["waitpoint_id"] = ids.MustFromPG(token.WaitpointID).String()
 	eventJSON, err := json.Marshal(response.EventPayload)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("encode waitpoint resolved event"))
+		writeError(w, errors.New("encode waitpoint resolved event"))
 		return
 	}
 	recordParams := db.RecordWaitpointResponseParams{
@@ -228,13 +227,13 @@ func (s *Server) respondWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		Metadata:             response.Metadata,
 	}
 	outcome, err := s.respondWithWaitpointToken(r.Context(), markParams, recordParams, resolveParams)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("waitpoint token cannot resolve this waitpoint"))
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("waitpoint token cannot resolve this waitpoint")))
 		return
 	}
 	if err != nil {
 		s.log.Error("respond with waitpoint token failed", "token_id", tokenID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("respond with waitpoint token"))
+		writeError(w, errors.New("respond with waitpoint token"))
 		return
 	}
 	if acceptsHTML(r) {
@@ -279,7 +278,7 @@ func (s *Server) respondWithWaitpointToken(ctx context.Context, markParams db.Ma
 	}); err != nil {
 		return waitpointResolveOutcome{}, err
 	}
-	if _, err := queries.MarkWaitpointResponseTokenCompleted(ctx, markParams); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := queries.MarkWaitpointResponseTokenCompleted(ctx, markParams); err != nil && !isNoRows(err) {
 		return waitpointResolveOutcome{}, err
 	}
 	if _, err := queries.RecordWaitpointResponse(ctx, recordParams); err != nil {
