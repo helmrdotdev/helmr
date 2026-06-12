@@ -422,6 +422,63 @@ func TestQueueConcurrencyLimitSpansRuntimeQueues(t *testing.T) {
 	}
 }
 
+func TestQueueDequeueHandlesMissingQueueConcurrencyActiveKey(t *testing.T) {
+	ctx := context.Background()
+	queue, cleanup := newTestQueue(t)
+	defer cleanup()
+
+	enqueued, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	messageKey := queue.prefix + ":message:" + enqueued.MessageID
+	if err := queue.client.HDel(ctx, messageKey, "queue_concurrency_active_key").Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	lease := mustDequeueOne(t, ctx, queue, "host-1")
+	if lease.MessageID != enqueued.MessageID {
+		t.Fatalf("lease message id = %q, want %q", lease.MessageID, enqueued.MessageID)
+	}
+}
+
+func TestQueueDequeueInvalidatesLimitedMessageMissingQueueConcurrencyActiveKey(t *testing.T) {
+	ctx := context.Background()
+	queue, cleanup := newTestQueue(t)
+	defer cleanup()
+
+	message := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
+	message.QueueConcurrencyLimit = 1
+	enqueued, err := queue.Enqueue(ctx, message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messageKey := queue.prefix + ":message:" + enqueued.MessageID
+	if err := queue.client.HDel(ctx, messageKey, "queue_concurrency_active_key").Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
+		OrgID:            "org-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
+		MaxMessages:      1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 0 {
+		t.Fatalf("leases = %+v, want malformed message invalidated", leases)
+	}
+	if exists, err := queue.client.Exists(ctx, messageKey).Result(); err != nil || exists != 0 {
+		t.Fatalf("message exists = %d, err = %v", exists, err)
+	}
+}
+
 func TestQueueDefaultLeaseMatchesWorkerExecutionLease(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)

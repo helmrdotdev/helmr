@@ -25,10 +25,14 @@ async function handleResponse<T>(
       response.status,
     );
   }
-  if (response.status === 204) {
+  if (response.status === 204 || response.status === 205 || response.headers.get("content-length") === "0") {
     return undefined as T;
   }
-  return response.json() as Promise<T>;
+  const body = await response.text();
+  if (body.trim() === "") {
+    return undefined as T;
+  }
+  return JSON.parse(body) as T;
 }
 
 function errorKind(status: number, body: Record<string, unknown>): string {

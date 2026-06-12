@@ -582,9 +582,13 @@ func optionalTags(tags []string) []string {
 
 func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, cursor int64, scope client.RunScopeOptions) error {
 	for {
+		terminal := false
 		err := control.FollowRunEvents(cmd.Context(), runID, cursor, func(event api.RunEvent) error {
 			if parsed, parseErr := strconv.ParseInt(event.ID, 10, 64); parseErr == nil && parsed > cursor {
 				cursor = parsed
+			}
+			if api.RunEventKindIsTerminal(event.Kind) {
+				terminal = true
 			}
 			return format.JSONLines(cmd.OutOrStdout(), []api.RunEvent{event})
 		}, scope)
@@ -593,6 +597,9 @@ func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, c
 		}
 		if err != nil && runEventStreamErrorIsFatal(err) {
 			return err
+		}
+		if terminal {
+			return nil
 		}
 		timer := time.NewTimer(runEventReconnectDelay)
 		select {

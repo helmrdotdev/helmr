@@ -151,6 +151,10 @@ func writeWorkerInstanceSecret(path string, credential workerCredentialFile) err
 		_ = tmp.Close()
 		return fmt.Errorf("chmod worker instance credential temp file: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync worker instance credential temp file: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close worker instance credential temp file: %w", err)
 	}

@@ -647,6 +647,10 @@ func (s *guestSession) Close() error {
 		if s.machineCancel != nil {
 			s.machineCancel()
 		}
+		if stopErr != nil {
+			s.err = errors.Join(streamErr, stopErr)
+			return
+		}
 		var networkPolicyErr error
 		if s.networkPolicyCleanup != nil {
 			networkPolicyErr = s.networkPolicyCleanup()
@@ -772,10 +776,23 @@ func (s *guestSession) Resume(ctx context.Context) error {
 }
 
 func stopMachine(machine *fc.Machine) error {
+	pid, pidErr := machine.PID()
 	stopErr := machine.StopVMM()
 	waitCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 	defer cancel()
 	waitErr := machine.Wait(waitCtx)
+	if errors.Is(waitErr, context.DeadlineExceeded) && pidErr == nil {
+		if process, err := os.FindProcess(pid); err != nil {
+			waitErr = errors.Join(waitErr, fmt.Errorf("find firecracker process %d: %w", pid, err))
+		} else if err := process.Signal(syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			waitErr = errors.Join(waitErr, fmt.Errorf("kill firecracker process %d: %w", pid, err))
+		} else {
+			killWaitCtx, killCancel := context.WithTimeout(context.Background(), stopTimeout)
+			waitErr = machine.Wait(killWaitCtx)
+			killCancel()
+			waitErr = ignoreStopSignalError(waitErr, syscall.SIGKILL)
+		}
+	}
 	return errors.Join(stopErr, ignoreExpectedStopErrors(waitErr))
 }
 
@@ -794,9 +811,19 @@ func ignoreExpectedStopErrors(err error) error {
 		}
 		return out
 	}
+	if ignoreStopSignalError(err, syscall.SIGTERM) == nil {
+		return nil
+	}
+	return err
+}
+
+func ignoreStopSignalError(err error, signal syscall.Signal) error {
+	if err == nil {
+		return nil
+	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ProcessState != nil {
-		if status, ok := exitErr.ProcessState.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGTERM {
+		if status, ok := exitErr.ProcessState.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == signal {
 			return nil
 		}
 	}

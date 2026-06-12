@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cli/format"
+	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +29,8 @@ func policyCommand() *cobra.Command {
 
 func policyListCommand() *cobra.Command {
 	var jsonOutput bool
+	var projectID string
+	var environmentID string
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List waitpoint policies.",
@@ -36,7 +40,11 @@ func policyListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			response, err := control.ListWaitpointPolicies(cmd.Context())
+			scope, err := policyCommandScope(cmd.Context(), control, projectID, environmentID)
+			if err != nil {
+				return err
+			}
+			response, err := control.ListWaitpointPolicies(cmd.Context(), scope)
 			if err != nil {
 				return err
 			}
@@ -50,11 +58,15 @@ func policyListCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	cmd.Flags().StringVarP(&projectID, "project", "p", "", "Project slug or ID.")
+	cmd.Flags().StringVarP(&environmentID, "env", "e", "", "Environment slug or ID.")
 	return cmd
 }
 
 func policyGetCommand() *cobra.Command {
 	var jsonOutput bool
+	var projectID string
+	var environmentID string
 	cmd := &cobra.Command{
 		Use:   "get NAME",
 		Short: "Show a waitpoint policy.",
@@ -64,7 +76,11 @@ func policyGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			policy, err := control.GetWaitpointPolicy(cmd.Context(), args[0])
+			scope, err := policyCommandScope(cmd.Context(), control, projectID, environmentID)
+			if err != nil {
+				return err
+			}
+			policy, err := control.GetWaitpointPolicy(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}
@@ -75,6 +91,8 @@ func policyGetCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	cmd.Flags().StringVarP(&projectID, "project", "p", "", "Project slug or ID.")
+	cmd.Flags().StringVarP(&environmentID, "env", "e", "", "Environment slug or ID.")
 	return cmd
 }
 
@@ -84,6 +102,8 @@ func policyApplyCommand() *cobra.Command {
 	var label string
 	var emails []string
 	var jsonOutput bool
+	var projectID string
+	var environmentID string
 	cmd := &cobra.Command{
 		Use:   "apply NAME",
 		Short: "Create or update a waitpoint policy.",
@@ -102,7 +122,11 @@ func policyApplyCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			policy, err := control.ApplyWaitpointPolicy(cmd.Context(), args[0], request)
+			scope, err := policyCommandScope(cmd.Context(), control, projectID, environmentID)
+			if err != nil {
+				return err
+			}
+			policy, err := control.ApplyWaitpointPolicy(cmd.Context(), args[0], request, scope)
 			if err != nil {
 				return err
 			}
@@ -118,10 +142,14 @@ func policyApplyCommand() *cobra.Command {
 	cmd.Flags().StringVar(&label, "label", "", "Policy label for --email.")
 	cmd.Flags().StringArrayVar(&emails, "email", nil, "Add an email recipient.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	cmd.Flags().StringVarP(&projectID, "project", "p", "", "Project slug or ID.")
+	cmd.Flags().StringVarP(&environmentID, "env", "e", "", "Environment slug or ID.")
 	return cmd
 }
 
 func policyDeleteCommand() *cobra.Command {
+	var projectID string
+	var environmentID string
 	cmd := &cobra.Command{
 		Use:   "delete NAME",
 		Short: "Delete a waitpoint policy.",
@@ -131,14 +159,24 @@ func policyDeleteCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := control.DeleteWaitpointPolicy(cmd.Context(), args[0]); err != nil {
+			scope, err := policyCommandScope(cmd.Context(), control, projectID, environmentID)
+			if err != nil {
+				return err
+			}
+			if err := control.DeleteWaitpointPolicy(cmd.Context(), args[0], scope); err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), args[0])
 			return nil
 		},
 	}
+	cmd.Flags().StringVarP(&projectID, "project", "p", "", "Project slug or ID.")
+	cmd.Flags().StringVarP(&environmentID, "env", "e", "", "Environment slug or ID.")
 	return cmd
+}
+
+func policyCommandScope(ctx context.Context, control *client.Client, projectID string, environmentID string) (client.RunScopeOptions, error) {
+	return waitpointCommandScope(ctx, control, projectID, environmentID)
 }
 
 func writeWaitpointPolicy(w io.Writer, policy api.WaitpointPolicyResponse) error {

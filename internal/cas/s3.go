@@ -38,15 +38,24 @@ type s3Client interface {
 }
 
 type S3 struct {
-	client s3Client
-	bucket string
-	prefix string
+	client  s3Client
+	bucket  string
+	prefix  string
+	tempDir string
 
 	multipartThresholdBytes int64
 	multipartPartSizeBytes  int64
 }
 
-func NewS3(ctx context.Context, rawURI string) (*S3, error) {
+type S3Option func(*S3)
+
+func WithS3TempDir(path string) S3Option {
+	return func(store *S3) {
+		store.tempDir = strings.TrimSpace(path)
+	}
+}
+
+func NewS3(ctx context.Context, rawURI string, opts ...S3Option) (*S3, error) {
 	uri, err := url.Parse(rawURI)
 	if err != nil {
 		return nil, err
@@ -64,11 +73,15 @@ func NewS3(ctx context.Context, rawURI string) (*S3, error) {
 			options.UsePathStyle = true
 		}
 	})
-	return &S3{
+	store := &S3{
 		client: client,
 		bucket: uri.Host,
 		prefix: strings.Trim(uri.Path, "/"),
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(store)
+	}
+	return store, nil
 }
 
 func (c *S3) Put(ctx context.Context, mediaType string, body io.Reader) (Object, error) {
@@ -83,7 +96,12 @@ func (c *S3) Stage(ctx context.Context, mediaType string) (Stage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	tmp, err := os.CreateTemp("", "helmr-cas-*")
+	if c.tempDir != "" {
+		if err := os.MkdirAll(c.tempDir, 0o700); err != nil {
+			return nil, err
+		}
+	}
+	tmp, err := os.CreateTemp(c.tempDir, "helmr-cas-*")
 	if err != nil {
 		return nil, err
 	}

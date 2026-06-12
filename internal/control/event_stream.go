@@ -104,13 +104,16 @@ func (s *EventStream) publishOutboxRow(ctx context.Context, row db.ClaimEventOut
 		return fmt.Errorf("encode event: %w", err)
 	}
 	id := redisEventID(row.Seq)
-	err = s.redis.XAdd(ctx, &goredis.XAddArgs{
-		Stream: row.StreamKey,
-		MaxLen: eventStreamMaxLen,
-		Approx: true,
-		ID:     id,
-		Values: map[string]any{"event": string(payload)},
-	}).Err()
+	add := func() error {
+		return s.redis.XAdd(ctx, &goredis.XAddArgs{
+			Stream: row.StreamKey,
+			MaxLen: eventStreamMaxLen,
+			Approx: true,
+			ID:     id,
+			Values: map[string]any{"event": string(payload)},
+		}).Err()
+	}
+	err = add()
 	if err == nil {
 		return nil
 	}

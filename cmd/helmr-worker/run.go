@@ -30,10 +30,6 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	store, err := cas.NewS3(ctx, cfg.CASURI)
-	if err != nil {
-		return fmt.Errorf("configure CAS: %w", err)
-	}
 	checkpointKey, err := checkpoint.KeyFromBase64(cfg.CheckpointKey)
 	if err != nil {
 		return fmt.Errorf("load checkpoint encryption key: %w", err)
@@ -45,6 +41,10 @@ func run(log *slog.Logger) error {
 	workDir := cfg.WorkDir
 	if workDir == "" {
 		workDir = executor.DefaultWorkDir()
+	}
+	store, err := cas.NewS3(ctx, cfg.CASURI, cas.WithS3TempDir(filepath.Join(workDir, "tmp", "cas")))
+	if err != nil {
+		return fmt.Errorf("configure CAS: %w", err)
 	}
 	workerCredential, err := resolveWorkerInstanceCredential(ctx, cfg, workDir)
 	if err != nil {

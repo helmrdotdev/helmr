@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { createWaitpointResponseToken, getRunEvents, listRunEvents, listRuns } from "./runs";
+import { createWaitpointResponseToken, getRunEvents, listRunEvents, listRuns, respondWaitpoint } from "./runs";
 
 const originalFetch = globalThis.fetch;
 const originalWindow = (globalThis as unknown as { window?: unknown }).window;
@@ -123,6 +123,18 @@ test("creates human wait confirmation links with respond action", async () => {
     waitpoint_id: "wait-human",
   });
   expect(token.url).toBe("https://console.example.test/waitpoints/respond?id=response-1&token=secret");
+});
+
+test("responds to waitpoint when server returns empty accepted response", async () => {
+  let requestedUrl: string | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requestedUrl = String(input);
+    return new Response(null, { status: 202 });
+  }) as typeof fetch;
+
+  await respondWaitpoint("wait-1", "project-1", "env-1", { action: "approve" });
+
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/waitpoints/wait-1/respond");
 });
 
 test("does not create delay wait confirmation links", async () => {
