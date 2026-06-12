@@ -2312,6 +2312,53 @@ func TestResolveWaitpointRecordsAndResolvesSingleResponse(t *testing.T) {
 	requireRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
 }
 
+func TestListPendingWaitpointsForRunsMatchesSingleRunQuery(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "pending-batch-match")
+	secondRunID, secondWaitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "pending-batch-match-second")
+
+	single, err := queries.GetPendingWaitpointForRun(ctx, db.GetPendingWaitpointForRunParams{
+		OrgID: orgID,
+		RunID: runID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := queries.ListPendingWaitpointsForRuns(ctx, db.ListPendingWaitpointsForRunsParams{
+		OrgID:  orgID,
+		RunIds: []pgtype.UUID{runID, secondRunID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch) != 2 {
+		t.Fatalf("batch = %+v, want two pending waitpoints", batch)
+	}
+	batchByRunID := map[pgtype.UUID]db.ListPendingWaitpointsForRunsRow{}
+	for _, row := range batch {
+		batchByRunID[row.RunID] = row
+	}
+	got, ok := batchByRunID[runID]
+	if !ok {
+		t.Fatalf("batch missing run %v: %+v", runID, batch)
+	}
+	if got.ID != single.ID || got.ID != waitpointID || got.RunWaitID != single.RunWaitID || got.RunID != single.RunID || got.Kind != single.Kind || got.DisplayText != single.DisplayText {
+		t.Fatalf("batch waitpoint = %+v, single = %+v", got, single)
+	}
+	if got.RequestedAt != single.RequestedAt || got.CreatedAt != single.CreatedAt {
+		t.Fatalf("batch times = requested %+v created %+v, single requested %+v created %+v", got.RequestedAt, got.CreatedAt, single.RequestedAt, single.CreatedAt)
+	}
+	secondGot, ok := batchByRunID[secondRunID]
+	if !ok {
+		t.Fatalf("batch missing second run %v: %+v", secondRunID, batch)
+	}
+	if secondGot.ID != secondWaitpointID || secondGot.RunID != secondRunID {
+		t.Fatalf("second batch waitpoint = %+v, want run %v waitpoint %v", secondGot, secondRunID, secondWaitpointID)
+	}
+}
+
 func TestResolveWaitpointRequiresSuspendedQueueEntryBeforeMutating(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)

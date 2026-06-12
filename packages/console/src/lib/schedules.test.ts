@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { activateSchedule, createSchedule, deleteSchedule, listSchedules, updateSchedule } from "./schedules";
+import { activateSchedule, createSchedule, deleteSchedule, listSchedules } from "./schedules";
 
 const originalFetch = globalThis.fetch;
 
@@ -109,42 +109,4 @@ test("scopes schedule actions and escapes ids", async () => {
     "/api/projects/project-1/environments/env-1/schedules/schedule%2F1/activate",
     "/api/projects/project-1/environments/env-1/schedules/schedule%2F1",
   ]);
-});
-
-test("updates schedules with scope query", async () => {
-  let requestedUrl: string | undefined;
-  let requestedMethod: string | undefined;
-  let requestedBody: unknown;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    requestedUrl = String(input);
-    requestedMethod = init?.method;
-    requestedBody = JSON.parse(String(init?.body));
-    return Response.json({
-      id: "schedule-1",
-      project_id: "project-1",
-      environment_id: "env-1",
-      task: "task",
-      deduplication_key: "task-hourly",
-      cron: "*/10 * * * *",
-      timezone: "UTC",
-      active: true,
-      status: "active",
-      created_at: "2026-06-01T00:00:00Z",
-      updated_at: "2026-06-01T00:00:00Z",
-    });
-  }) as typeof fetch;
-
-  await updateSchedule("schedule/1", {
-    project_id: "project-1",
-    environment_id: "env-1",
-    task: "task",
-    cron: "*/10 * * * *",
-  });
-
-  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/schedules/schedule%2F1");
-  expect(requestedMethod).toBe("PUT");
-  expect(requestedBody).toEqual({
-    task: "task",
-    cron: "*/10 * * * *",
-  });
 });

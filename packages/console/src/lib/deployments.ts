@@ -1,6 +1,6 @@
 import { request } from "./api";
 
-export type DeploymentSourceArtifact = {
+type DeploymentSourceArtifact = {
   digest: string;
   size_bytes?: number;
   media_type?: string;

@@ -1,12 +1,12 @@
-export const TASK_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" as const
-export const TASK_ID_MAX_LENGTH = 128
-export const DEFAULT_MAX_DURATION_SECONDS = 900
-export const MIN_MAX_DURATION_SECONDS = 5
-export const MAX_DURATION_SECONDS = 86400
-export const QUEUE_NAME_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$" as const
-export const QUEUE_NAME_MAX_LENGTH = 256
+const TASK_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" as const
+const TASK_ID_MAX_LENGTH = 128
+const DEFAULT_MAX_DURATION_SECONDS = 900
+const MIN_MAX_DURATION_SECONDS = 5
+const MAX_DURATION_SECONDS = 86400
+const QUEUE_NAME_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$" as const
+const QUEUE_NAME_MAX_LENGTH = 256
 
-export class TaskIdError extends Error {
+class TaskIdError extends Error {
   override readonly name = "TaskIdError"
   readonly value: string
 
@@ -22,7 +22,7 @@ export function validateTaskId(value: string): void {
   }
 }
 
-export function isValidTaskId(value: string): boolean {
+function isValidTaskId(value: string): boolean {
   if (value.length === 0 || value.length > TASK_ID_MAX_LENGTH) {
     return false
   }
@@ -39,7 +39,7 @@ export function isValidTaskId(value: string): boolean {
   return true
 }
 
-export class TaskMaxDurationError extends Error {
+class TaskMaxDurationError extends Error {
   override readonly name = "TaskMaxDurationError"
   readonly value: unknown
   readonly label: string
@@ -76,7 +76,7 @@ export function validateOptionalMaxDurationSeconds(value: unknown, label = "task
   readOptionalMaxDurationSeconds(value, label)
 }
 
-export class TaskQueueNameError extends Error {
+class TaskQueueNameError extends Error {
   override readonly name = "TaskQueueNameError"
   readonly value: string
 
@@ -86,7 +86,7 @@ export class TaskQueueNameError extends Error {
   }
 }
 
-export class TaskQueueConcurrencyLimitError extends Error {
+class TaskQueueConcurrencyLimitError extends Error {
   override readonly name = "TaskQueueConcurrencyLimitError"
   readonly value: unknown
 
@@ -102,7 +102,7 @@ export function validateQueueName(value: string): void {
   }
 }
 
-export function isValidQueueName(value: string): boolean {
+function isValidQueueName(value: string): boolean {
   if (value.length === 0 || value.length > QUEUE_NAME_MAX_LENGTH) {
     return false
   }

@@ -71,7 +71,7 @@ export function assertPayloadSchema(value: unknown, label = "payload"): asserts 
   assertStandardSchema(value, label)
 }
 
-export function assertStandardSchema(value: unknown, label = "schema"): asserts value is StandardSchemaV1 {
+function assertStandardSchema(value: unknown, label = "schema"): asserts value is StandardSchemaV1 {
   if (value === null || (typeof value !== "object" && typeof value !== "function")) {
     throw new Error(`${label} must implement the Standard Schema v1 interface`)
   }

@@ -26,7 +26,7 @@ import (
 func TestMagicLinkStartSendsLoginLinkForExistingMember(t *testing.T) {
 	store := newMagicLinkStartStore()
 	store.loginUser = db.User{ID: ids.ToPG(ids.New()), DisplayName: "user"}
-	mailer := &fakeMagicLinkMailer{}
+	mailer := &fakeMagicLinkEmailSender{}
 	handler := newMagicLinkStartServerWithOptions(store, mailer, WithMagicLinkDebugURLs(true))
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"User@Example.Test","next":"/runs"}`))
 	rec := httptest.NewRecorder()
@@ -53,7 +53,7 @@ func TestMagicLinkStartSendsLoginLinkForExistingMember(t *testing.T) {
 func TestMagicLinkStartDeliveryFailureMarksLinkFailedAndKeepsOldLinks(t *testing.T) {
 	store := newMagicLinkStartStore()
 	store.loginUser = db.User{ID: ids.ToPG(ids.New()), DisplayName: "user"}
-	mailer := &fakeMagicLinkMailer{err: errors.New("smtp failed")}
+	mailer := &fakeMagicLinkEmailSender{err: errors.New("smtp failed")}
 	handler := newMagicLinkStartServerWithOptions(store, mailer, WithMagicLinkDebugURLs(true))
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"user@example.test"}`))
 	rec := httptest.NewRecorder()
@@ -88,7 +88,7 @@ func TestMagicLinkStartWithoutMailerFailsInsteadOfLoggingByDefault(t *testing.T)
 func TestMagicLinkStartAllowsUnknownEmail(t *testing.T) {
 	known := newMagicLinkStartStore()
 	known.loginUser = db.User{ID: ids.ToPG(ids.New()), DisplayName: "known"}
-	knownMailer := &fakeMagicLinkMailer{sent: make(chan magicLinkMessage, 1)}
+	knownMailer := &fakeMagicLinkEmailSender{sent: make(chan magicLinkMessage, 1)}
 	knownRec := httptest.NewRecorder()
 	newMagicLinkStartServer(known, knownMailer).ServeHTTP(
 		knownRec,
@@ -96,7 +96,7 @@ func TestMagicLinkStartAllowsUnknownEmail(t *testing.T) {
 	)
 
 	unknown := newMagicLinkStartStore()
-	unknownMailer := &fakeMagicLinkMailer{sent: make(chan magicLinkMessage, 1)}
+	unknownMailer := &fakeMagicLinkEmailSender{sent: make(chan magicLinkMessage, 1)}
 	unknownRec := httptest.NewRecorder()
 	newMagicLinkStartServer(unknown, unknownMailer).ServeHTTP(
 		unknownRec,
@@ -133,7 +133,7 @@ func TestMagicLinkStartSendsInviteAcceptLink(t *testing.T) {
 		InviteeEmail: "invited@example.test",
 		Role:         db.OrgMemberRoleDeveloper,
 	}
-	mailer := &fakeMagicLinkMailer{}
+	mailer := &fakeMagicLinkEmailSender{}
 	handler := newMagicLinkStartServerWithOptions(store, mailer, WithMagicLinkDebugURLs(true))
 	rec := httptest.NewRecorder()
 
@@ -213,19 +213,23 @@ func TestMagicLinkFinishAcceptsInvitation(t *testing.T) {
 	}
 }
 
-type fakeMagicLinkMailer struct {
+type fakeMagicLinkEmailSender struct {
 	messages []magicLinkMessage
 	err      error
 	sent     chan magicLinkMessage
 }
 
-func (m *fakeMagicLinkMailer) SendMagicLink(_ context.Context, message magicLinkMessage) error {
+func (m *fakeMagicLinkEmailSender) SendEmail(_ context.Context, message emailMessage) error {
 	if m.err != nil {
 		return m.err
 	}
-	m.messages = append(m.messages, message)
+	if message.magicLink == nil {
+		return errors.New("expected magic link email")
+	}
+	magicLink := *message.magicLink
+	m.messages = append(m.messages, magicLink)
 	if m.sent != nil {
-		m.sent <- message
+		m.sent <- magicLink
 	}
 	return nil
 }
@@ -244,18 +248,18 @@ func newMagicLinkStartStore() *magicLinkStartStore {
 	return &magicLinkStartStore{orgID: ids.New()}
 }
 
-func newMagicLinkStartServer(store *magicLinkStartStore, mailer *fakeMagicLinkMailer) http.Handler {
+func newMagicLinkStartServer(store *magicLinkStartStore, mailer *fakeMagicLinkEmailSender) http.Handler {
 	return newMagicLinkStartServerWithOptions(store, mailer)
 }
 
-func newMagicLinkStartServerWithOptions(store *magicLinkStartStore, mailer *fakeMagicLinkMailer, opts ...Option) http.Handler {
+func newMagicLinkStartServerWithOptions(store *magicLinkStartStore, mailer *fakeMagicLinkEmailSender, opts ...Option) http.Handler {
 	options := []Option{
 		WithDB(store),
 		WithUserAuth(memberTestAuthSecret, "https://helmr.example.test"),
 		func(server *Server) { server.tx = store },
 	}
 	if mailer != nil {
-		options = append(options, WithMagicLinkMailer(mailer))
+		options = append(options, WithEmailSender(mailer))
 	}
 	options = append(options, opts...)
 	return New(

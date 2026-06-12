@@ -15,9 +15,9 @@ export type JsonLdNode = Record<string, unknown>;
 
 export const absoluteUrl = (path: string, base = SITE.url) => new URL(path, base).toString();
 
-export const organizationId = `${SITE.url}/#organization`;
-export const websiteId = `${SITE.url}/#website`;
-export const softwareId = `${SITE.url}/#software`;
+const organizationId = `${SITE.url}/#organization`;
+const websiteId = `${SITE.url}/#website`;
+const softwareId = `${SITE.url}/#software`;
 
 export const organizationJsonLd = (): JsonLdNode => ({
   "@type": "Organization",

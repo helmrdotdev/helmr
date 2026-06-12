@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestListRunSummariesRunningFilterIncludesRunningRuns(t *testing.T) {
+func TestListScopedRunSummariesRunningFilterIncludesRunningRuns(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -42,22 +42,6 @@ func TestListRunSummariesRunningFilterIncludesRunningRuns(t *testing.T) {
 		}
 	}
 
-	rows, err := queries.ListRunSummaries(ctx, db.ListRunSummariesParams{
-		OrgID:        orgID,
-		StatusFilter: "running",
-		RowLimit:     10,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := map[db.RunStatus]int{}
-	for _, row := range rows {
-		got[row.Status]++
-	}
-	if len(rows) != 1 || got[db.RunStatusRunning] != 1 {
-		t.Fatalf("running summary statuses = %+v, rows = %+v", got, rows)
-	}
-
 	scopedRows, err := queries.ListScopedRunSummaries(ctx, db.ListScopedRunSummariesParams{
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
@@ -68,7 +52,7 @@ func TestListRunSummariesRunningFilterIncludesRunningRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got = map[db.RunStatus]int{}
+	got := map[db.RunStatus]int{}
 	for _, row := range scopedRows {
 		got[row.Status]++
 	}

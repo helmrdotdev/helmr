@@ -56,18 +56,6 @@ func WithRenewEvery(duration time.Duration) Option {
 	}
 }
 
-func WithRenewWait(duration time.Duration) Option {
-	return func(runner *Runner) {
-		runner.renewWait = duration
-	}
-}
-
-func WithReleaseWait(duration time.Duration) Option {
-	return func(runner *Runner) {
-		runner.releaseWait = duration
-	}
-}
-
 func WithLogger(log *slog.Logger) Option {
 	return func(runner *Runner) {
 		runner.log = log

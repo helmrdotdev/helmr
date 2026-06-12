@@ -1,13 +1,11 @@
 package compute
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
 	"strings"
-	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
@@ -177,61 +175,4 @@ func (r RunRuntimeRequirements) Validate() error {
 		problems = append(problems, err)
 	}
 	return errors.Join(problems...)
-}
-
-type ArtifactRef struct {
-	URI       string
-	Digest    string
-	MediaType string
-	SizeBytes int64
-}
-
-type SecretRef struct {
-	Name string
-	URI  string
-}
-
-type SessionAttachment struct {
-	Name      string
-	Kind      string
-	Reference ArtifactRef
-	ReadOnly  bool
-}
-
-type SandboxRequest struct {
-	RunID             string
-	SessionID         string
-	WorkerInstanceID  string
-	Requirements      RunRuntimeRequirements
-	Image             ArtifactRef
-	DeploymentSource  ArtifactRef
-	WorkspaceArtifact ArtifactRef
-	Checkpoint        *ArtifactRef
-	Secrets           []SecretRef
-	Attachments       []SessionAttachment
-	Traceparent       string
-	DequeuedAt        time.Time
-	MaxDuration       time.Duration
-}
-
-type SandboxResult struct {
-	ExitCode int32
-	Output   []byte
-	Detached bool
-}
-
-type RestoreRequest struct {
-	SandboxRequest
-	Snapshot ArtifactRef
-}
-
-type SandboxManager interface {
-	Create(context.Context, SandboxRequest) (SandboxHandle, error)
-	Restore(context.Context, RestoreRequest) (SandboxHandle, error)
-}
-
-type SandboxHandle interface {
-	ID() string
-	Wait(context.Context) (SandboxResult, error)
-	Stop(context.Context) error
 }

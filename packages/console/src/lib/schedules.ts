@@ -34,8 +34,6 @@ export type CreateScheduleInput = {
   active?: boolean;
 };
 
-export type UpdateScheduleInput = Omit<CreateScheduleInput, "deduplication_key">;
-
 export type ScheduleScope = {
   projectID: string;
   environmentID: string;
@@ -49,13 +47,6 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Schedu
   return postJson<Omit<CreateScheduleInput, "project_id" | "environment_id">, Schedule>(
     schedulePath({ projectID: input.project_id, environmentID: input.environment_id }),
     scheduleRequest(input),
-  );
-}
-
-export async function updateSchedule(id: string, input: UpdateScheduleInput): Promise<Schedule> {
-  return request<Schedule>(
-    `${schedulePath({ projectID: input.project_id, environmentID: input.environment_id })}/${encodeURIComponent(id)}`,
-    { method: "PUT", body: JSON.stringify(scheduleRequest(input)) },
   );
 }
 
@@ -81,9 +72,9 @@ function schedulePath(scope: ScheduleScope): string {
   return `/api/projects/${encodeURIComponent(scope.projectID)}/environments/${encodeURIComponent(scope.environmentID)}/schedules`;
 }
 
-function scheduleRequest<T extends CreateScheduleInput | UpdateScheduleInput>(input: T): Omit<T, "project_id" | "environment_id"> {
-  const request = { ...input } as Partial<T> & { project_id?: string; environment_id?: string };
+function scheduleRequest(input: CreateScheduleInput): Omit<CreateScheduleInput, "project_id" | "environment_id"> {
+  const request = { ...input } as Partial<CreateScheduleInput>;
   delete request.project_id;
   delete request.environment_id;
-  return request as Omit<T, "project_id" | "environment_id">;
+  return request as Omit<CreateScheduleInput, "project_id" | "environment_id">;
 }

@@ -1290,6 +1290,63 @@ SELECT waitpoints.id,
  ORDER BY run_waits.waiting_at DESC, run_wait_dependencies.ordinal ASC
  LIMIT 1;
 
+-- name: ListPendingWaitpointsForRuns :many
+WITH ranked_waitpoints AS (
+    SELECT waitpoints.id,
+           run_waits.id AS run_wait_id,
+           waitpoints.org_id,
+           run_waits.run_id,
+           run_waits.session_id,
+           run_waits.checkpoint_id,
+           run_waits.correlation_id,
+           waitpoints.kind,
+           waitpoints.request,
+           waitpoints.display_text,
+           run_waits.timeout_seconds,
+           run_waits.policy_name,
+           run_waits.policy_snapshot,
+           run_waits.status,
+           run_waits.resolution_kind,
+           run_waits.resolution,
+           waitpoints.created_at,
+           run_waits.waiting_at AS requested_at,
+           run_waits.resolved_at,
+           row_number() OVER (
+               PARTITION BY run_waits.run_id
+               ORDER BY run_waits.waiting_at DESC, run_wait_dependencies.ordinal ASC
+           ) AS waitpoint_rank
+      FROM run_waits
+      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
+                                AND run_wait_dependencies.run_wait_id = run_waits.id
+      JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
+                     AND waitpoints.id = run_wait_dependencies.waitpoint_id
+     WHERE run_waits.org_id = sqlc.arg(org_id)
+       AND run_waits.run_id = ANY(sqlc.arg(run_ids)::uuid[])
+       AND run_waits.status = 'waiting'
+       AND waitpoints.status = 'pending'
+)
+SELECT id,
+       run_wait_id,
+       org_id,
+       run_id,
+       session_id,
+       checkpoint_id,
+       correlation_id,
+       kind,
+       request,
+       display_text,
+       timeout_seconds,
+       policy_name,
+       policy_snapshot,
+       status,
+       resolution_kind,
+       resolution,
+       created_at,
+       requested_at,
+       resolved_at
+  FROM ranked_waitpoints
+ WHERE waitpoint_rank = 1;
+
 -- name: GetWaitpointForRespond :one
 SELECT *
  FROM waitpoints

@@ -64,3 +64,14 @@ func TestWaitpointRequestLinkedIDExtractsStringID(t *testing.T) {
 		t.Fatalf("linked id = %s, ok = %v", id, ok)
 	}
 }
+
+func TestWaitpointRequestLinkedIDExtractsCamelCaseStringID(t *testing.T) {
+	waitpointID := ids.New()
+	id, ok, err := waitpointRequestLinkedID(db.WaitpointKindHuman, []byte(`{"waitpointId":"`+waitpointID.String()+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || id != waitpointID {
+		t.Fatalf("linked id = %s, ok = %v", id, ok)
+	}
+}

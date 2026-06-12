@@ -1016,6 +1016,131 @@ func (q *Queries) GetWaitpointForRespond(ctx context.Context, arg GetWaitpointFo
 	return i, err
 }
 
+const listPendingWaitpointsForRuns = `-- name: ListPendingWaitpointsForRuns :many
+WITH ranked_waitpoints AS (
+    SELECT waitpoints.id,
+           run_waits.id AS run_wait_id,
+           waitpoints.org_id,
+           run_waits.run_id,
+           run_waits.session_id,
+           run_waits.checkpoint_id,
+           run_waits.correlation_id,
+           waitpoints.kind,
+           waitpoints.request,
+           waitpoints.display_text,
+           run_waits.timeout_seconds,
+           run_waits.policy_name,
+           run_waits.policy_snapshot,
+           run_waits.status,
+           run_waits.resolution_kind,
+           run_waits.resolution,
+           waitpoints.created_at,
+           run_waits.waiting_at AS requested_at,
+           run_waits.resolved_at,
+           row_number() OVER (
+               PARTITION BY run_waits.run_id
+               ORDER BY run_waits.waiting_at DESC, run_wait_dependencies.ordinal ASC
+           ) AS waitpoint_rank
+      FROM run_waits
+      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
+                                AND run_wait_dependencies.run_wait_id = run_waits.id
+      JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
+                     AND waitpoints.id = run_wait_dependencies.waitpoint_id
+     WHERE run_waits.org_id = $1
+       AND run_waits.run_id = ANY($2::uuid[])
+       AND run_waits.status = 'waiting'
+       AND waitpoints.status = 'pending'
+)
+SELECT id,
+       run_wait_id,
+       org_id,
+       run_id,
+       session_id,
+       checkpoint_id,
+       correlation_id,
+       kind,
+       request,
+       display_text,
+       timeout_seconds,
+       policy_name,
+       policy_snapshot,
+       status,
+       resolution_kind,
+       resolution,
+       created_at,
+       requested_at,
+       resolved_at
+  FROM ranked_waitpoints
+ WHERE waitpoint_rank = 1
+`
+
+type ListPendingWaitpointsForRunsParams struct {
+	OrgID  pgtype.UUID   `json:"org_id"`
+	RunIds []pgtype.UUID `json:"run_ids"`
+}
+
+type ListPendingWaitpointsForRunsRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	RunWaitID      pgtype.UUID        `json:"run_wait_id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	SessionID      pgtype.UUID        `json:"session_id"`
+	CheckpointID   pgtype.UUID        `json:"checkpoint_id"`
+	CorrelationID  string             `json:"correlation_id"`
+	Kind           WaitpointKind      `json:"kind"`
+	Request        []byte             `json:"request"`
+	DisplayText    string             `json:"display_text"`
+	TimeoutSeconds pgtype.Int4        `json:"timeout_seconds"`
+	PolicyName     pgtype.Text        `json:"policy_name"`
+	PolicySnapshot []byte             `json:"policy_snapshot"`
+	Status         RunWaitStatus      `json:"status"`
+	ResolutionKind pgtype.Text        `json:"resolution_kind"`
+	Resolution     []byte             `json:"resolution"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	RequestedAt    pgtype.Timestamptz `json:"requested_at"`
+	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
+}
+
+func (q *Queries) ListPendingWaitpointsForRuns(ctx context.Context, arg ListPendingWaitpointsForRunsParams) ([]ListPendingWaitpointsForRunsRow, error) {
+	rows, err := q.db.Query(ctx, listPendingWaitpointsForRuns, arg.OrgID, arg.RunIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPendingWaitpointsForRunsRow
+	for rows.Next() {
+		var i ListPendingWaitpointsForRunsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunWaitID,
+			&i.OrgID,
+			&i.RunID,
+			&i.SessionID,
+			&i.CheckpointID,
+			&i.CorrelationID,
+			&i.Kind,
+			&i.Request,
+			&i.DisplayText,
+			&i.TimeoutSeconds,
+			&i.PolicyName,
+			&i.PolicySnapshot,
+			&i.Status,
+			&i.ResolutionKind,
+			&i.Resolution,
+			&i.CreatedAt,
+			&i.RequestedAt,
+			&i.ResolvedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markWaitpointCheckpointDurableReady = `-- name: MarkWaitpointCheckpointDurableReady :one
 WITH current_session AS (
     SELECT runs.id AS run_id,

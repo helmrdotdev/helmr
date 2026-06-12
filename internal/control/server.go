@@ -232,12 +232,6 @@ func WithAuthProvider(provider authProvider) Option {
 	}
 }
 
-func WithMagicLinkMailer(mailer magicLinkMailer) Option {
-	return func(server *Server) {
-		server.mailer = legacyMagicLinkEmailSender{mailer: mailer}
-	}
-}
-
 func WithEmailSender(sender emailSender) Option {
 	return func(server *Server) {
 		server.mailer = sender
@@ -262,10 +256,6 @@ func WithMagicLinkDebugURLs(enabled bool) Option {
 	}
 }
 
-func WithSMTPMagicLinkMailer(addr string, username string, password string, from string) Option {
-	return WithSMTPEmailSender(addr, username, password, from)
-}
-
 func WithSMTPEmailSender(addr string, username string, password string, from string) Option {
 	return func(server *Server) {
 		server.mailer = smtpEmailSender{
@@ -286,19 +276,6 @@ func WithResendEmailSender(apiKey string, from string) Option {
 func WithSessionTTL(ttl time.Duration) Option {
 	return func(server *Server) {
 		server.sessionTTL = ttl
-	}
-}
-
-func WithMagicLinkTTL(ttl time.Duration) Option {
-	return func(server *Server) {
-		server.magicLinkTTL = ttl
-	}
-}
-
-func WithDeviceCode(ttl time.Duration, pollEvery time.Duration) Option {
-	return func(server *Server) {
-		server.deviceCodeTTL = ttl
-		server.devicePollEvery = pollEvery
 	}
 }
 

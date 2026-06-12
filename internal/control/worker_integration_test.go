@@ -401,43 +401,6 @@ func postWorkerJSON[T any](t *testing.T, handler http.Handler, workerBearer stri
 	return response
 }
 
-func postSessionJSON[T any](t *testing.T, handler http.Handler, rawSession string, path string, input any, wantStatus int) T {
-	t.Helper()
-	body, err := json.Marshal(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "https://helmr.example.test"+path, bytes.NewReader(body))
-	req.Header.Set("content-type", "application/json")
-	req.AddCookie(&http.Cookie{Name: sessionCookieName(req), Value: rawSession})
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != wantStatus {
-		t.Fatalf("%s status = %d want %d body=%s", path, rec.Code, wantStatus, rec.Body.String())
-	}
-	var zero T
-	if rec.Body.Len() == 0 {
-		return zero
-	}
-	var response T
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	return response
-}
-
-func postSessionRaw(t *testing.T, handler http.Handler, rawSession string, path string, body []byte, wantStatus int) {
-	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "https://helmr.example.test"+path, bytes.NewReader(body))
-	req.Header.Set("content-type", "application/json")
-	req.AddCookie(&http.Cookie{Name: sessionCookieName(req), Value: rawSession})
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != wantStatus {
-		t.Fatalf("%s status = %d want %d body=%s", path, rec.Code, wantStatus, rec.Body.String())
-	}
-}
-
 func getWorkerJSON[T any](t *testing.T, handler http.Handler, workerBearer string, path string, wantStatus int) T {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)

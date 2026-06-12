@@ -1308,6 +1308,98 @@ func TestAPIKeyListRunsUsesActorEnvironmentScope(t *testing.T) {
 	}
 }
 
+func TestListRunsIncludesPendingWaitpointDeliveries(t *testing.T) {
+	runID := ids.ToPG(ids.New())
+	runWaitID := ids.ToPG(ids.New())
+	waitpointID := ids.ToPG(ids.New())
+	matchingDeliveryID := ids.ToPG(ids.New())
+	ignoredDeliveryID := ids.ToPG(ids.New())
+	createdAt := testTime()
+	store := &fakeStore{
+		run: db.Run{
+			ID:               runID,
+			OrgID:            ids.ToPG(ids.DefaultOrgID),
+			ProjectID:        testProjectID(),
+			EnvironmentID:    testEnvironmentID(),
+			DeploymentID:     testDeploymentID(),
+			DeploymentTaskID: testDeploymentTaskID(),
+			TaskID:           "deploy",
+			Status:           db.RunStatusWaiting,
+			CreatedAt:        testTime(),
+			UpdatedAt:        testTime(),
+		},
+		waitpoint: fakeWaitpoint{
+			ID:            waitpointID,
+			RunWaitID:     runWaitID,
+			OrgID:         ids.ToPG(ids.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			RunID:         runID,
+			Kind:          db.WaitpointKindHuman,
+			Request:       []byte(`{"prompt":"approve"}`),
+			DisplayText:   "approve deploy",
+			Status:        db.RunWaitStatusWaiting,
+			CreatedAt:     createdAt,
+			RequestedAt:   createdAt,
+		},
+		waitpointDeliveries: []db.WaitpointDelivery{
+			{
+				ID:            ignoredDeliveryID,
+				OrgID:         ids.ToPG(ids.DefaultOrgID),
+				RunID:         runID,
+				RunWaitID:     runWaitID,
+				WaitpointID:   ids.ToPG(ids.New()),
+				Channel:       "email",
+				RecipientKind: "user",
+				Recipient:     "ignored@example.test",
+				Status:        db.WaitpointDeliveryStatusQueued,
+				CreatedAt:     createdAt,
+				UpdatedAt:     createdAt,
+			},
+			{
+				ID:            matchingDeliveryID,
+				OrgID:         ids.ToPG(ids.DefaultOrgID),
+				RunID:         runID,
+				RunWaitID:     runWaitID,
+				WaitpointID:   waitpointID,
+				Channel:       "email",
+				RecipientKind: "user",
+				Recipient:     "reviewer@example.test",
+				Status:        db.WaitpointDeliveryStatusSent,
+				CreatedAt:     pgtype.Timestamptz{Time: createdAt.Time.Add(time.Second), Valid: true},
+				UpdatedAt:     createdAt,
+			},
+		},
+	}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}))
+	req := httptest.NewRequest(http.MethodGet, "/api/runs?status=live", nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var list api.ListRunsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Runs) != 1 || list.Runs[0].PendingWaitpoint == nil {
+		t.Fatalf("list = %+v", list)
+	}
+	deliveries := list.Runs[0].PendingWaitpoint.Deliveries
+	if len(deliveries) != 1 {
+		t.Fatalf("deliveries = %+v", deliveries)
+	}
+	if deliveries[0].ID != ids.MustFromPG(matchingDeliveryID).String() || deliveries[0].Recipient != "reviewer@example.test" || deliveries[0].Status != string(db.WaitpointDeliveryStatusSent) {
+		t.Fatalf("delivery = %+v", deliveries[0])
+	}
+	if deliveries[0].ID == ids.MustFromPG(ignoredDeliveryID).String() {
+		t.Fatalf("included non-matching delivery: %+v", deliveries)
+	}
+}
+
 func TestListRunsQueryRejectsLeasedStatus(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/runs?status=leased", nil)
 
@@ -1381,11 +1473,8 @@ func TestRunResponseMapsLeasedToRunning(t *testing.T) {
 	}
 }
 
-func TestRunCountsResponseMapsLeasedToRunning(t *testing.T) {
-	counts := runCountsResponse(db.CountRunsByStatusRow{
-		Queued:  2,
-		Running: 5,
-	})
+func TestScopedRunCountsResponseMapsRunningCount(t *testing.T) {
+	counts := scopedRunCountsResponse(db.CountScopedRunsByStatusRow{Queued: 2, Running: 5})
 	if counts.Queued != 2 || counts.Running != 5 {
 		t.Fatalf("counts = %+v", counts)
 	}
@@ -1398,12 +1487,6 @@ func TestRunCountsResponseMapsLeasedToRunning(t *testing.T) {
 		t.Fatalf("counts leaked leased field: %s", body)
 	}
 
-	scoped := scopedRunCountsResponse(db.CountScopedRunsByStatusRow{
-		Running: 11,
-	})
-	if scoped.Running != 11 {
-		t.Fatalf("scoped counts = %+v", scoped)
-	}
 }
 
 func TestGetRunLogs(t *testing.T) {
@@ -3606,6 +3689,30 @@ func fakeWaitpointRow(waitpoint fakeWaitpoint) db.GetPendingWaitpointForRunRow {
 	}
 }
 
+func fakeWaitpointListRow(waitpoint fakeWaitpoint) db.ListPendingWaitpointsForRunsRow {
+	return db.ListPendingWaitpointsForRunsRow{
+		ID:             waitpoint.ID,
+		RunWaitID:      waitpointRunWaitID(waitpoint),
+		OrgID:          waitpoint.OrgID,
+		RunID:          waitpoint.RunID,
+		SessionID:      waitpoint.SessionID,
+		CheckpointID:   waitpoint.CheckpointID,
+		CorrelationID:  waitpoint.CorrelationID,
+		Kind:           waitpoint.Kind,
+		Request:        waitpoint.Request,
+		DisplayText:    waitpoint.DisplayText,
+		TimeoutSeconds: waitpoint.TimeoutSeconds,
+		PolicyName:     waitpoint.PolicyName,
+		PolicySnapshot: waitpoint.PolicySnapshot,
+		Status:         waitpoint.Status,
+		ResolutionKind: waitpoint.ResolutionKind,
+		Resolution:     waitpoint.Resolution,
+		CreatedAt:      waitpoint.CreatedAt,
+		RequestedAt:    waitpoint.RequestedAt,
+		ResolvedAt:     waitpoint.ResolvedAt,
+	}
+}
+
 func waitpointRunWaitID(waitpoint fakeWaitpoint) pgtype.UUID {
 	if waitpoint.RunWaitID.Valid {
 		return waitpoint.RunWaitID
@@ -3613,12 +3720,16 @@ func waitpointRunWaitID(waitpoint fakeWaitpoint) pgtype.UUID {
 	return waitpoint.ID
 }
 
+type fakeListRunsParams struct {
+	StatusFilter string
+	RowLimit     int32
+}
+
 type fakeStore struct {
 	db.Querier
 	createRun                               db.CreateScopedRunParams
-	listRuns                                db.ListRunSummariesParams
+	listRuns                                fakeListRunsParams
 	listScopedRuns                          db.ListScopedRunSummariesParams
-	countRunsOrgID                          pgtype.UUID
 	countScopedRuns                         db.CountScopedRunsByStatusParams
 	run                                     db.Run
 	runOperation                            db.RunOperation
@@ -3659,6 +3770,7 @@ type fakeStore struct {
 	executionWorkerInstanceID               pgtype.UUID
 	executionLeaseExpiresAt                 pgtype.Timestamptz
 	waitpoint                               fakeWaitpoint
+	waitpointDeliveries                     []db.WaitpointDelivery
 	checkpoint                              db.Checkpoint
 	abandonedClaim                          bool
 	workerBootstrapTokenHash                []byte
@@ -4463,31 +4575,9 @@ func (f *fakeStore) GetRunSummary(_ context.Context, arg db.GetRunSummaryParams)
 	}, nil
 }
 
-func (f *fakeStore) ListRunSummaries(_ context.Context, arg db.ListRunSummariesParams) ([]db.ListRunSummariesRow, error) {
-	f.listRuns = arg
-	if !f.run.ID.Valid {
-		return nil, nil
-	}
-	return []db.ListRunSummariesRow{{
-		ID:               f.run.ID,
-		OrgID:            f.run.OrgID,
-		ProjectID:        fakeRunProjectID(f.run),
-		EnvironmentID:    fakeRunEnvironmentID(f.run),
-		DeploymentID:     fakeRunDeploymentID(f.run),
-		DeploymentTaskID: fakeRunDeploymentTaskID(f.run),
-		TaskID:           f.run.TaskID,
-		Status:           f.run.Status,
-		ExitCode:         f.run.ExitCode,
-		Output:           f.run.Output,
-		CreatedAt:        f.run.CreatedAt,
-		UpdatedAt:        f.run.UpdatedAt,
-	}}, nil
-}
-
 func (f *fakeStore) ListScopedRunSummaries(_ context.Context, arg db.ListScopedRunSummariesParams) ([]db.ListScopedRunSummariesRow, error) {
 	f.listScopedRuns = arg
-	f.listRuns = db.ListRunSummariesParams{
-		OrgID:        arg.OrgID,
+	f.listRuns = fakeListRunsParams{
 		StatusFilter: arg.StatusFilter,
 		RowLimit:     arg.RowLimit,
 	}
@@ -4508,16 +4598,6 @@ func (f *fakeStore) ListScopedRunSummaries(_ context.Context, arg db.ListScopedR
 		CreatedAt:        f.run.CreatedAt,
 		UpdatedAt:        f.run.UpdatedAt,
 	}}, nil
-}
-
-func (f *fakeStore) CountRunsByStatus(_ context.Context, orgID pgtype.UUID) (db.CountRunsByStatusRow, error) {
-	f.countRunsOrgID = orgID
-	var counts db.CountRunsByStatusRow
-	if !f.run.ID.Valid {
-		return counts, nil
-	}
-	addRunStatusCount(&counts, f.run.Status)
-	return counts, nil
 }
 
 func (f *fakeStore) CountScopedRunsByStatus(_ context.Context, arg db.CountScopedRunsByStatusParams) (db.CountScopedRunsByStatusRow, error) {
@@ -4541,23 +4621,6 @@ func (f *fakeStore) CountScopedRunsByStatus(_ context.Context, arg db.CountScope
 		counts.Cancelled++
 	}
 	return counts, nil
-}
-
-func addRunStatusCount(counts *db.CountRunsByStatusRow, status db.RunStatus) {
-	switch status {
-	case db.RunStatusQueued:
-		counts.Queued++
-	case db.RunStatusRunning:
-		counts.Running++
-	case db.RunStatusWaiting:
-		counts.Waiting++
-	case db.RunStatusSucceeded:
-		counts.Succeeded++
-	case db.RunStatusFailed:
-		counts.Failed++
-	case db.RunStatusCancelled:
-		counts.Cancelled++
-	}
 }
 
 func (f *fakeStore) ListSubjectEvents(_ context.Context, arg db.ListSubjectEventsParams) ([]db.Event, error) {
@@ -5350,6 +5413,18 @@ func (f *fakeStore) GetPendingWaitpointForRun(_ context.Context, arg db.GetPendi
 	return db.GetPendingWaitpointForRunRow{}, pgx.ErrNoRows
 }
 
+func (f *fakeStore) ListPendingWaitpointsForRuns(_ context.Context, arg db.ListPendingWaitpointsForRunsParams) ([]db.ListPendingWaitpointsForRunsRow, error) {
+	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.Status != db.RunWaitStatusWaiting {
+		return nil, nil
+	}
+	for _, runID := range arg.RunIds {
+		if f.waitpoint.RunID == runID {
+			return []db.ListPendingWaitpointsForRunsRow{fakeWaitpointListRow(f.waitpoint)}, nil
+		}
+	}
+	return nil, nil
+}
+
 func (f *fakeStore) GetWaitpointForResponseTokenCreation(_ context.Context, arg db.GetWaitpointForResponseTokenCreationParams) (db.GetWaitpointForResponseTokenCreationRow, error) {
 	if f.waitpoint.ID.Valid && f.waitpoint.OrgID == arg.OrgID && f.waitpoint.ID == arg.WaitpointID && f.waitpoint.Status == db.RunWaitStatusWaiting {
 		return db.GetWaitpointForResponseTokenCreationRow{ID: f.waitpoint.ID, OrgID: f.waitpoint.OrgID, ProjectID: f.waitpoint.ProjectID, EnvironmentID: f.waitpoint.EnvironmentID, Kind: f.waitpoint.Kind}, nil
@@ -5384,6 +5459,24 @@ func (f *fakeStore) GetWaitpointForRespond(_ context.Context, arg db.GetWaitpoin
 
 func (f *fakeStore) ListWaitpointDeliveries(context.Context, db.ListWaitpointDeliveriesParams) ([]db.WaitpointDelivery, error) {
 	return nil, nil
+}
+
+func (f *fakeStore) ListWaitpointDeliveriesForRunWaits(_ context.Context, arg db.ListWaitpointDeliveriesForRunWaitsParams) ([]db.WaitpointDelivery, error) {
+	runWaitIDs := make(map[pgtype.UUID]struct{}, len(arg.RunWaitIds))
+	for _, runWaitID := range arg.RunWaitIds {
+		runWaitIDs[runWaitID] = struct{}{}
+	}
+	var deliveries []db.WaitpointDelivery
+	for _, delivery := range f.waitpointDeliveries {
+		if delivery.OrgID != arg.OrgID {
+			continue
+		}
+		if _, ok := runWaitIDs[delivery.RunWaitID]; !ok {
+			continue
+		}
+		deliveries = append(deliveries, delivery)
+	}
+	return deliveries, nil
 }
 
 func (f *fakeStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWaitpointParams) (db.ResolveWaitpointRow, error) {

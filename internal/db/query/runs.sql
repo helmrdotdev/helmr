@@ -317,17 +317,6 @@ SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id
 FROM runs
 WHERE org_id = $1 AND id = $2;
 
--- name: CountRunsByStatus :one
-SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
-       count(*) FILTER (WHERE status = 'running') AS running,
-       count(*) FILTER (WHERE status = 'waiting') AS waiting,
-       count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
-       count(*) FILTER (WHERE status = 'failed') AS failed,
-       count(*) FILTER (WHERE status = 'cancelled') AS cancelled,
-       count(*) FILTER (WHERE status = 'expired') AS expired
-FROM runs
-WHERE org_id = sqlc.arg(org_id);
-
 -- name: CountScopedRunsByStatus :one
 SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'running') AS running,
@@ -340,19 +329,6 @@ FROM runs
 WHERE org_id = sqlc.arg(org_id)
   AND project_id = sqlc.arg(project_id)
   AND environment_id = sqlc.arg(environment_id);
-
--- name: ListRunSummaries :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, replayed_from_run_id, current_attempt_number, exit_code, output, created_at, updated_at
-FROM runs
-WHERE org_id = $1
-  AND (
-    sqlc.arg(status_filter)::text = 'all'
-    OR (sqlc.arg(status_filter)::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
-    OR (sqlc.arg(status_filter)::text = 'running' AND status = 'running')
-    OR status::text = sqlc.arg(status_filter)::text
-  )
-ORDER BY created_at DESC, id DESC
-LIMIT sqlc.arg(row_limit);
 
 -- name: ListScopedRunSummaries :many
 SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, replayed_from_run_id, current_attempt_number, exit_code, output, created_at, updated_at

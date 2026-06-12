@@ -296,3 +296,10 @@ SELECT *
    AND run_wait_id = sqlc.arg(run_wait_id)
    AND waitpoint_id = sqlc.arg(waitpoint_id)
  ORDER BY created_at ASC;
+
+-- name: ListWaitpointDeliveriesForRunWaits :many
+SELECT *
+  FROM waitpoint_deliveries
+ WHERE org_id = sqlc.arg(org_id)
+   AND run_wait_id = ANY(sqlc.arg(run_wait_ids)::uuid[])
+ ORDER BY run_id ASC, run_wait_id ASC, waitpoint_id ASC, created_at ASC;

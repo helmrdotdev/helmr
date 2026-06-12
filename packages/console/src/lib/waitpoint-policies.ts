@@ -1,6 +1,6 @@
 import { postJson, request } from "./api";
 
-export type WaitpointPolicyDelivery = {
+type WaitpointPolicyDelivery = {
   type: "email" | string;
   to?: string[];
 };

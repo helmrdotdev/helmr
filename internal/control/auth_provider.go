@@ -3,8 +3,6 @@ package control
 import (
 	"context"
 	"encoding/json"
-
-	"golang.org/x/oauth2"
 )
 
 type authIdentity struct {
@@ -22,8 +20,4 @@ type authIdentity struct {
 type authProvider interface {
 	RedirectURL(state string, verifier string) string
 	Resolve(ctx context.Context, code string, verifier string) (authIdentity, error)
-}
-
-type tokenAuthProvider interface {
-	ResolveWithToken(ctx context.Context, code string, verifier string) (authIdentity, *oauth2.Token, error)
 }

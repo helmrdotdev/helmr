@@ -1757,13 +1757,6 @@ func pgInt4Response(value pgtype.Int4) *int32 {
 	return &value.Int32
 }
 
-func pgTextString(value pgtype.Text) string {
-	if !value.Valid {
-		return ""
-	}
-	return value.String
-}
-
 func writeDeploymentError(w http.ResponseWriter, s *Server, err error) {
 	if isUniqueViolation(err) {
 		writeError(w, http.StatusBadRequest, errors.New("deployment conflicts with existing task metadata"))

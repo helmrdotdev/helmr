@@ -1050,17 +1050,13 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("list runs"))
 		return
 	}
-	response := api.ListRunsResponse{Runs: make([]api.RunResponse, 0, len(summaries))}
-	for _, run := range summaries {
-		item, err := s.runResponse(r.Context(), run)
-		if err != nil {
-			s.log.Error("list pending waitpoint failed", "run_id", ids.MustFromPG(run.ID).String(), "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("list runs"))
-			return
-		}
-		response.Runs = append(response.Runs, item)
+	runs, err := s.runResponses(r.Context(), ids.ToPG(actor.OrgID), summaries)
+	if err != nil {
+		s.log.Error("list pending waitpoints failed", "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("list runs"))
+		return
 	}
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, api.ListRunsResponse{Runs: runs})
 }
 
 func (s *Server) countRuns(w http.ResponseWriter, r *http.Request) {
@@ -2258,34 +2254,6 @@ func getRunSummary(run db.GetRunSummaryRow) runSummary {
 	}
 }
 
-func listRunSummary(run db.ListRunSummariesRow) runSummary {
-	return runSummary{
-		ID:                   run.ID,
-		OrgID:                run.OrgID,
-		ProjectID:            run.ProjectID,
-		EnvironmentID:        run.EnvironmentID,
-		DeploymentID:         run.DeploymentID,
-		DeploymentTaskID:     run.DeploymentTaskID,
-		DeploymentVersion:    run.DeploymentVersion,
-		APIVersion:           run.ApiVersion,
-		SDKVersion:           run.SdkVersion,
-		CLIVersion:           run.CliVersion,
-		TaskID:               run.TaskID,
-		Status:               run.Status,
-		ExecutionStatus:      run.ExecutionStatus,
-		TerminalOutcome:      run.TerminalOutcome,
-		Metadata:             run.Metadata,
-		Tags:                 run.Tags,
-		LockedRetryPolicy:    run.LockedRetryPolicy,
-		ReplayedFromRunID:    run.ReplayedFromRunID,
-		CurrentAttemptNumber: run.CurrentAttemptNumber,
-		ExitCode:             run.ExitCode,
-		Output:               run.Output,
-		CreatedAt:            run.CreatedAt,
-		UpdatedAt:            run.UpdatedAt,
-	}
-}
-
 func listScopedRunSummary(run db.ListScopedRunSummariesRow) runSummary {
 	return runSummary{
 		ID:                   run.ID,
@@ -2370,18 +2338,6 @@ func runRecordSummary(run db.Run) runSummary {
 	}
 }
 
-func runCountsResponse(counts db.CountRunsByStatusRow) api.RunCountsResponse {
-	return api.RunCountsResponse{
-		Queued:    counts.Queued,
-		Running:   counts.Running,
-		Waiting:   counts.Waiting,
-		Succeeded: counts.Succeeded,
-		Failed:    counts.Failed,
-		Cancelled: counts.Cancelled,
-		Expired:   counts.Expired,
-	}
-}
-
 func scopedRunCountsResponse(counts db.CountScopedRunsByStatusRow) api.RunCountsResponse {
 	return api.RunCountsResponse{
 		Queued:    counts.Queued,
@@ -2450,6 +2406,88 @@ func publicRunStatus(status db.RunStatus) string {
 	return string(status)
 }
 
+type waitpointDeliveryKey struct {
+	runID       pgtype.UUID
+	runWaitID   pgtype.UUID
+	waitpointID pgtype.UUID
+}
+
+func (s *Server) runResponses(ctx context.Context, orgID pgtype.UUID, runs []runSummary) ([]api.RunResponse, error) {
+	responses := make([]api.RunResponse, 0, len(runs))
+	waitingRunIDs := make([]pgtype.UUID, 0, len(runs))
+	responseIndexesByRunID := make(map[pgtype.UUID][]int, len(runs))
+	for _, run := range runs {
+		responseIndexesByRunID[run.ID] = append(responseIndexesByRunID[run.ID], len(responses))
+		responses = append(responses, runResponse(run))
+		if run.Status == db.RunStatusWaiting {
+			waitingRunIDs = append(waitingRunIDs, run.ID)
+		}
+	}
+	if len(waitingRunIDs) == 0 {
+		return responses, nil
+	}
+	waitpoints, err := s.db.ListPendingWaitpointsForRuns(ctx, db.ListPendingWaitpointsForRunsParams{
+		OrgID:  orgID,
+		RunIds: waitingRunIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list pending waitpoints for runs: %w", err)
+	}
+	deliveryKeys := make(map[waitpointDeliveryKey]struct{}, len(waitpoints))
+	runWaitIDs := make([]pgtype.UUID, 0, len(waitpoints))
+	for _, waitpoint := range waitpoints {
+		indexes := responseIndexesByRunID[waitpoint.RunID]
+		if len(indexes) == 0 {
+			continue
+		}
+		pending, err := pendingWaitpointResponse(pendingWaitpointViewFromList(waitpoint))
+		if err != nil {
+			return nil, fmt.Errorf("build pending waitpoint response for run %s: %w", ids.MustFromPG(waitpoint.RunID).String(), err)
+		}
+		for _, index := range indexes {
+			pendingCopy := pending
+			responses[index].PendingWaitpoint = &pendingCopy
+		}
+		deliveryKeys[waitpointDeliveryKey{
+			runID:       waitpoint.RunID,
+			runWaitID:   waitpoint.RunWaitID,
+			waitpointID: waitpoint.ID,
+		}] = struct{}{}
+		runWaitIDs = append(runWaitIDs, waitpoint.RunWaitID)
+	}
+	if len(deliveryKeys) == 0 {
+		return responses, nil
+	}
+	deliveries, err := s.db.ListWaitpointDeliveriesForRunWaits(ctx, db.ListWaitpointDeliveriesForRunWaitsParams{
+		OrgID:      orgID,
+		RunWaitIds: runWaitIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list waitpoint deliveries for run waits: %w", err)
+	}
+	for _, delivery := range deliveries {
+		key := waitpointDeliveryKey{
+			runID:       delivery.RunID,
+			runWaitID:   delivery.RunWaitID,
+			waitpointID: delivery.WaitpointID,
+		}
+		if _, ok := deliveryKeys[key]; !ok {
+			continue
+		}
+		indexes := responseIndexesByRunID[delivery.RunID]
+		if len(indexes) == 0 {
+			continue
+		}
+		for _, index := range indexes {
+			if responses[index].PendingWaitpoint == nil {
+				continue
+			}
+			responses[index].PendingWaitpoint.Deliveries = append(responses[index].PendingWaitpoint.Deliveries, waitpointDeliveryResponse(delivery))
+		}
+	}
+	return responses, nil
+}
+
 func (s *Server) runResponse(ctx context.Context, run runSummary) (api.RunResponse, error) {
 	response := runResponse(run)
 	if run.Status != db.RunStatusWaiting {
@@ -2510,6 +2548,30 @@ func pendingWaitpointResponse(waitpoint waitpointView) (api.PendingWaitpoint, er
 }
 
 func pendingWaitpointView(waitpoint db.GetPendingWaitpointForRunRow) waitpointView {
+	return waitpointView{
+		ID:             waitpoint.ID,
+		RunWaitID:      waitpoint.RunWaitID,
+		OrgID:          waitpoint.OrgID,
+		RunID:          waitpoint.RunID,
+		SessionID:      waitpoint.SessionID,
+		CheckpointID:   waitpoint.CheckpointID,
+		CorrelationID:  waitpoint.CorrelationID,
+		Kind:           waitpoint.Kind,
+		Request:        waitpoint.Request,
+		DisplayText:    waitpoint.DisplayText,
+		TimeoutSeconds: waitpoint.TimeoutSeconds,
+		PolicyName:     waitpoint.PolicyName,
+		PolicySnapshot: waitpoint.PolicySnapshot,
+		Status:         waitpoint.Status,
+		ResolutionKind: waitpoint.ResolutionKind,
+		Resolution:     waitpoint.Resolution,
+		CreatedAt:      waitpoint.CreatedAt,
+		RequestedAt:    waitpoint.RequestedAt,
+		ResolvedAt:     waitpoint.ResolvedAt,
+	}
+}
+
+func pendingWaitpointViewFromList(waitpoint db.ListPendingWaitpointsForRunsRow) waitpointView {
 	return waitpointView{
 		ID:             waitpoint.ID,
 		RunWaitID:      waitpoint.RunWaitID,
