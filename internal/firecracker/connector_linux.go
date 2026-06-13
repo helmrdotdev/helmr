@@ -386,13 +386,7 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 			return nil, fmt.Errorf("resume restored firecracker machine: %w", err)
 		}
 	}
-	if !restoring {
-		if err := c.waitForHealth(ctx, vsockHostPath); err != nil {
-			started = false
-			return nil, err
-		}
-	}
-	conn, err := c.connectGuestPort(ctx, vsockHostPath)
+	conn, err := c.connectReadyGuest(ctx, vsockHostPath)
 	if err != nil {
 		started = false
 		return nil, err
@@ -410,6 +404,13 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 			return c.cleanupNetworkPolicy(context.Background(), instanceID)
 		},
 	}, nil
+}
+
+func (c *Connector) connectReadyGuest(ctx context.Context, vsockHostPath string) (io.ReadWriteCloser, error) {
+	if err := c.waitForHealth(ctx, vsockHostPath); err != nil {
+		return nil, err
+	}
+	return c.connectGuestPort(ctx, vsockHostPath)
 }
 
 func (c *Connector) createScratchDisk(ctx context.Context, scratchDiskPath string) error {

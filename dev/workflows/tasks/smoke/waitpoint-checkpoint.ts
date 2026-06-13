@@ -6,16 +6,16 @@ const dependencyInputs = source.directory(".", {
   ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
 })
 
-const base = image("helmr-checkpoint-waitpoint-diagnostic")
+const base = image("helmr-waitpoint-checkpoint-smoke")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
   .copy("/workspace", dependencyInputs)
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .run(["bun", "install", "--frozen-lockfile"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("checkpoint-waitpoint-diagnostic-bun") }],
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("waitpoint-checkpoint-smoke-bun") }],
   })
 
-const sbx = sandbox("helmr-checkpoint-waitpoint-diagnostic")
+const sbx = sandbox("helmr-waitpoint-checkpoint-smoke")
   .image(base)
   .resources({ cpu: 1, memory: "1Gi" })
 
@@ -44,17 +44,17 @@ interface DiagnosticState {
   }
 }
 
-const statePath = "checkpoint-waitpoint-diagnostic-state.json"
-const logPath = "checkpoint-waitpoint-diagnostic.log"
-const reportPath = "checkpoint-waitpoint-diagnostic-report.json"
+const statePath = "waitpoint-checkpoint-smoke-state.json"
+const logPath = "waitpoint-checkpoint-smoke.log"
+const reportPath = "waitpoint-checkpoint-smoke-report.json"
 
-export const checkpointWaitpointDiagnostic = task({
-  id: "checkpoint-waitpoint-diagnostic",
+export const waitpointCheckpointSmoke = task({
+  id: "waitpoint-checkpoint-smoke",
   sandbox: sbx,
   maxDuration: 1200,
   payload,
   run: async (payload: Payload, ctx) => {
-    const marker = payload.marker?.trim() || `checkpoint-diagnostic-${ctx.run.id}`
+    const marker = payload.marker?.trim() || `waitpoint-checkpoint-${ctx.run.id}`
     const memoryState = {
       marker,
       pid: process.pid,
@@ -68,7 +68,7 @@ export const checkpointWaitpointDiagnostic = task({
       pid: process.pid,
       steps: memoryState.steps,
     })
-    ctx.log.info({ phase: "checkpoint-waitpoint-diagnostic", step: "before-decision", marker, pid: process.pid })
+    ctx.log.info({ phase: "waitpoint-checkpoint-smoke", step: "before-decision", marker, pid: process.pid })
 
     const decision = await ctx.wait.human<{ approved: boolean }>({
       displayText: `Approve checkpoint diagnostic marker ${marker}`,
@@ -97,7 +97,7 @@ export const checkpointWaitpointDiagnostic = task({
         approved: decision.approved,
       },
     })
-    ctx.log.info({ phase: "checkpoint-waitpoint-diagnostic", step: "before-input", marker, pid: process.pid })
+    ctx.log.info({ phase: "waitpoint-checkpoint-smoke", step: "before-input", marker, pid: process.pid })
 
     const reply = await ctx.wait.human<{ text: string }>({
       displayText: `Reply with text for checkpoint diagnostic marker ${marker}`,
@@ -133,7 +133,7 @@ export const checkpointWaitpointDiagnostic = task({
       },
     })
     await writeJson(reportPath, report)
-    ctx.log.info({ phase: "checkpoint-waitpoint-diagnostic", step: "completed", marker, pid: process.pid })
+    ctx.log.info({ phase: "waitpoint-checkpoint-smoke", step: "completed", marker, pid: process.pid })
     return report
   },
 })
