@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -252,8 +251,4 @@ func jsonSemanticallyEqual(a []byte, b []byte) bool {
 		return false
 	}
 	return reflect.DeepEqual(av, bv)
-}
-
-func uuidFromPG(value pgtype.UUID) uuid.UUID {
-	return ids.MustFromPG(value)
 }

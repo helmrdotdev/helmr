@@ -496,11 +496,3 @@ func (s *Server) waitpointTokenURL(id string, token string) string {
 	}
 	return waitpointConfirmationPath(id, token)
 }
-
-func pgText(value string) pgtype.Text {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return pgtype.Text{}
-	}
-	return pgtype.Text{String: value, Valid: true}
-}

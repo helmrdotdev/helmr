@@ -25,6 +25,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -569,4 +570,25 @@ func (s *Server) effectiveDevicePollEvery() time.Duration {
 		return s.devicePollEvery
 	}
 	return 5 * time.Second
+}
+
+func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {
+	id, err := ids.Parse(chi.URLParam(r, name))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("%s must be a UUID", name)
+	}
+	return id, nil
+}
+
+func (s *Server) mountScheduleRoutes(r chi.Router) {
+	r.Group(func(r chi.Router) {
+		r.Use(s.requireActor)
+		r.Get("/schedules", s.listSchedules)
+		r.Post("/schedules", s.createSchedule)
+		r.Get("/schedules/{id}", s.getSchedule)
+		r.Put("/schedules/{id}", s.updateSchedule)
+		r.Post("/schedules/{id}/activate", s.activateSchedule)
+		r.Post("/schedules/{id}/deactivate", s.deactivateSchedule)
+		r.Delete("/schedules/{id}", s.deleteSchedule)
+	})
 }

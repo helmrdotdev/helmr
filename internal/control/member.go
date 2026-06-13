@@ -532,14 +532,3 @@ func invitationSummary(id pgtype.UUID, email string, role db.OrgMemberRole, invi
 		RevokedAt:        pgTimePtr(revokedAt),
 	}, nil
 }
-
-func nullableUUIDString(value pgtype.UUID) string {
-	if !value.Valid {
-		return ""
-	}
-	parsed, err := ids.FromPG(value)
-	if err != nil {
-		return ""
-	}
-	return parsed.String()
-}
