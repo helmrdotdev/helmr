@@ -30,7 +30,6 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"builder":         {"proto/bundle/v0", "secret"},
 		"buildkit":        {"builder", "proto/bundle/v0", "secret"},
 		"cas":             {},
-		"checkout":        {"archive", "workspace"},
 		"checkpoint":      {},
 		"cli/browser":     {},
 		"cli/format":      {},
@@ -47,7 +46,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"dispatch":        {"compute", "db", "ids"},
 		"dispatch/redis":  {"compute", "dispatch"},
 		"email":           {},
-		"executor":        {"api", "archive", "builder", "cas", "checkout", "checkpoint", "compute", "proto/bundle/v0", "proto/run/v0", "task", "transport", "vm", "workspace"},
+		"executor":        {"api", "archive", "builder", "cas", "checkpoint", "compute", "proto/bundle/v0", "proto/run/v0", "task", "transport", "vm", "workspace"},
 		"firecracker":     {"cas", "compute", "vm"},
 		"guestd":          {"archive", "proto/run/v0", "transport", "workspace"},
 		"ids":             {},
@@ -62,7 +61,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"vm":              {"compute"},
 		"waitpoint":       {"api", "asyncbus", "auth", "db", "email", "ids"},
 		"worker":          {"api", "client", "compute"},
-		"workspace":       {},
+		"workspace":       {"archive"},
 	}
 	normalizeGraph(expected)
 

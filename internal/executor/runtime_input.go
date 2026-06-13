@@ -8,7 +8,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/builder"
-	"github.com/helmrdotdev/helmr/internal/checkout"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -77,7 +76,7 @@ func workspaceMountPath(bundle *bundlev0.Bundle) string {
 	return "/workspace"
 }
 
-func runTaskWorkspaceProto(mountPath string, artifact checkout.WorkspaceArtifact) (*runv0.RunTaskWorkspace, error) {
+func runTaskWorkspaceProto(mountPath string, artifact workspace.WorkspaceArtifact) (*runv0.RunTaskWorkspace, error) {
 	mountPath = strings.TrimSpace(mountPath)
 	if mountPath == "" {
 		mountPath = "/workspace"
