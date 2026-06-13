@@ -36,4 +36,4 @@ fi
 
 export HELMR_TEST_DATABASE_URL="postgres://postgres@127.0.0.1:${port}/postgres?sslmode=disable"
 cd "$repo_root"
-go test ./internal/db ./internal/db/schema ./internal/control
+go test ./internal/db ./internal/db/schema ./internal/control ./cmd/helmr-control ./cmd/helmr-dispatcher
