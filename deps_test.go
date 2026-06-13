@@ -37,7 +37,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"cli/session":     {},
 		"cli/ui":          {"api"},
 		"client":          {"api", "version"},
-		"compute":         {"cas"},
+		"compute":         {},
 		"config":          {"auth"},
 		"console":         {},
 		"control":         {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "ids", "schedule", "secret", "tracing", "waitpoint"},
