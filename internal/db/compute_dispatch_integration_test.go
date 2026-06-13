@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -20,7 +20,7 @@ import (
 func TestPrepareQueuedRunQueueItemBuildsRequirementsFromDeploymentTask(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	upsertTestWorkerInstance(t, ctx, queries, "instance-runtime-release")
@@ -71,12 +71,12 @@ func TestPrepareQueuedRunQueueItemBuildsRequirementsFromDeploymentTask(t *testin
 func TestListQueuedRunCandidateScopesGroupsQueuedRunsByQueue(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgA := ids.ToPG(ids.New())
-	orgB := ids.ToPG(ids.New())
+	orgA := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgB := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	scopeA := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgA)
 	scopeB := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgB)
 	siblingEnvironment, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
-		ID:        ids.ToPG(ids.New()),
+		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:     orgA,
 		ProjectID: scopeA.ProjectID,
 		Slug:      "sibling",
@@ -104,12 +104,12 @@ func TestListQueuedRunCandidateScopesGroupsQueuedRunsByQueue(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, scope := range scopes {
-		seen[ids.MustFromPG(scope.OrgID).String()+":"+ids.MustFromPG(scope.ProjectID).String()+":"+ids.MustFromPG(scope.EnvironmentID).String()+":"+scope.QueueName] = true
+		seen[pgvalue.MustUUIDValue(scope.OrgID).String()+":"+pgvalue.MustUUIDValue(scope.ProjectID).String()+":"+pgvalue.MustUUIDValue(scope.EnvironmentID).String()+":"+scope.QueueName] = true
 	}
-	if !seen[ids.MustFromPG(orgA).String()+":"+ids.MustFromPG(scopeA.ProjectID).String()+":"+ids.MustFromPG(scopeA.EnvironmentID).String()+":queue-a"] ||
-		!seen[ids.MustFromPG(orgA).String()+":"+ids.MustFromPG(scopeA.ProjectID).String()+":"+ids.MustFromPG(scopeA.EnvironmentID).String()+":queue-b"] ||
-		!seen[ids.MustFromPG(orgA).String()+":"+ids.MustFromPG(scopeA.ProjectID).String()+":"+ids.MustFromPG(siblingEnvironment.ID).String()+":queue-a"] ||
-		!seen[ids.MustFromPG(orgB).String()+":"+ids.MustFromPG(scopeB.ProjectID).String()+":"+ids.MustFromPG(scopeB.EnvironmentID).String()+":queue-a"] {
+	if !seen[pgvalue.MustUUIDValue(orgA).String()+":"+pgvalue.MustUUIDValue(scopeA.ProjectID).String()+":"+pgvalue.MustUUIDValue(scopeA.EnvironmentID).String()+":queue-a"] ||
+		!seen[pgvalue.MustUUIDValue(orgA).String()+":"+pgvalue.MustUUIDValue(scopeA.ProjectID).String()+":"+pgvalue.MustUUIDValue(scopeA.EnvironmentID).String()+":queue-b"] ||
+		!seen[pgvalue.MustUUIDValue(orgA).String()+":"+pgvalue.MustUUIDValue(scopeA.ProjectID).String()+":"+pgvalue.MustUUIDValue(siblingEnvironment.ID).String()+":queue-a"] ||
+		!seen[pgvalue.MustUUIDValue(orgB).String()+":"+pgvalue.MustUUIDValue(scopeB.ProjectID).String()+":"+pgvalue.MustUUIDValue(scopeB.EnvironmentID).String()+":queue-a"] {
 		t.Fatalf("candidate scopes = %+v", scopes)
 	}
 }
@@ -117,10 +117,10 @@ func TestListQueuedRunCandidateScopesGroupsQueuedRunsByQueue(t *testing.T) {
 func TestListQueuedRunQueueItemCandidatesForScopeIsQueueScopedAndDispatchOrdered(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.New())
+	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	siblingEnvironment, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
-		ID:        ids.ToPG(ids.New()),
+		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:     orgID,
 		ProjectID: scope.ProjectID,
 		Slug:      "sibling",
@@ -246,7 +246,7 @@ SELECT runtime_id, kernel_digest, available_execution_slots, available_milli_cpu
 func TestRuntimeReleaseSelectionControlsPreparedRequirements(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	firstRuntime := runtimeReleaseFields{
@@ -292,7 +292,7 @@ func TestRuntimeReleaseSelectionControlsPreparedRequirements(t *testing.T) {
 func TestPrepareQueuedRunQueueItemRequiresRuntimeReleaseSelection(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 3000, 4096, 32768)
@@ -308,7 +308,7 @@ func TestPrepareQueuedRunQueueItemRequiresRuntimeReleaseSelection(t *testing.T) 
 func TestQueuedRunQueueItemWithMessageIDCanBeReenqueued(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 3000, 4096)
@@ -378,11 +378,11 @@ func TestQueuedRunQueueItemWithMessageIDCanBeReenqueued(t *testing.T) {
 func TestListQueueScopesReturnsEveryQueueForEnvironment(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	siblingEnvironment, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
-		ID:        ids.ToPG(ids.New()),
+		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:     orgID,
 		ProjectID: scope.ProjectID,
 		Slug:      "sibling",
@@ -461,12 +461,12 @@ func TestListQueueScopesReturnsEveryQueueForEnvironment(t *testing.T) {
 	seen := map[string]bool{}
 	for _, scope := range scopes {
 		if scope.OrgID == orgID {
-			seen[ids.MustFromPG(scope.EnvironmentID).String()+":"+scope.QueueName] = true
+			seen[pgvalue.MustUUIDValue(scope.EnvironmentID).String()+":"+scope.QueueName] = true
 		}
 	}
-	if !seen[ids.MustFromPG(scope.EnvironmentID).String()+":queue-a"] ||
-		!seen[ids.MustFromPG(scope.EnvironmentID).String()+":queue-b"] ||
-		!seen[ids.MustFromPG(siblingEnvironment.ID).String()+":queue-a"] {
+	if !seen[pgvalue.MustUUIDValue(scope.EnvironmentID).String()+":queue-a"] ||
+		!seen[pgvalue.MustUUIDValue(scope.EnvironmentID).String()+":queue-b"] ||
+		!seen[pgvalue.MustUUIDValue(siblingEnvironment.ID).String()+":queue-a"] {
 		t.Fatalf("queue scopes = %+v", scopes)
 	}
 	if seen["queue-other"] {
@@ -477,7 +477,7 @@ func TestListQueueScopesReturnsEveryQueueForEnvironment(t *testing.T) {
 func TestRunQueueItemFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 1000, 1024)
@@ -611,7 +611,7 @@ func upsertRuntimeWorker(t *testing.T, ctx context.Context, queries *db.Queries,
 
 func workerHeartbeatParams(instanceID string, runtime runtimeReleaseFields, workerGroupID pgtype.UUID) db.UpsertWorkerInstanceHeartbeatParams {
 	return db.UpsertWorkerInstanceHeartbeatParams{
-		ID:                        ids.ToPG(ids.New()),
+		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		WorkerGroupID:             workerGroupID,
 		ResourceID:                instanceID,
 		Region:                    "",
@@ -663,8 +663,8 @@ func seedComputeDispatchRunWithResources(t *testing.T, ctx context.Context, pool
 		diskMiB = requestedDiskMiB[0]
 	}
 	deploymentID, deploymentTaskID := ensureComputeDispatchDeploymentTask(t, ctx, pool, orgID, projectID, environmentID, requestedMilliCPU, requestedMemoryMiB, diskMiB)
-	runID := ids.ToPG(ids.New())
-	attemptID := ids.ToPG(ids.New())
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	attemptID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	traceID, err := tracing.NewTraceID()
 	if err != nil {
 		t.Fatal(err)
@@ -736,13 +736,13 @@ func ensureComputeDispatchDeploymentTask(t *testing.T, ctx context.Context, pool
 	t.Helper()
 	queries := db.New(pool)
 	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
-	deploymentID := ids.ToPG(ids.New())
-	deploymentTaskID := ids.ToPG(ids.New())
-	sourceArtifactID := ids.ToPG(ids.New())
-	buildManifestArtifactID := ids.ToPG(ids.New())
-	deploymentManifestArtifactID := ids.ToPG(ids.New())
-	bundleArtifactID := ids.ToPG(ids.New())
-	sourceDigest := "sha256:" + ids.New().String()
+	deploymentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	deploymentTaskID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	sourceArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	buildManifestArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	deploymentManifestArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	bundleArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	sourceDigest := "sha256:" + uuid.Must(uuid.NewV7()).String()
 	if _, err := pool.Exec(ctx, `
 INSERT INTO cas_objects (digest, size_bytes, media_type)
 VALUES ($1, 1, 'application/vnd.helmr.bundle')
@@ -763,7 +763,7 @@ VALUES
 	if _, err := pool.Exec(ctx, `
 INSERT INTO deployments (id, org_id, project_id, environment_id, version, worker_group_id, content_hash, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, building_at, built_at, deployed_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'deployed', now(), now(), now())
-`, deploymentID, orgID, projectID, environmentID, "test-"+ids.MustFromPG(deploymentID).String(), workerGroup.ID, sourceDigest, sourceArtifactID, buildManifestArtifactID, deploymentManifestArtifactID); err != nil {
+`, deploymentID, orgID, projectID, environmentID, "test-"+pgvalue.MustUUIDValue(deploymentID).String(), workerGroup.ID, sourceDigest, sourceArtifactID, buildManifestArtifactID, deploymentManifestArtifactID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

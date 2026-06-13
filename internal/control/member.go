@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -34,7 +34,7 @@ var (
 
 func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
-	rows, err := s.db.ListOrgMembers(r.Context(), ids.ToPG(actor.OrgID))
+	rows, err := s.db.ListOrgMembers(r.Context(), pgvalue.UUID(actor.OrgID))
 	if err != nil {
 		writeError(w, errors.New("list members"))
 		return
@@ -54,7 +54,7 @@ func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
 	rows, err := s.db.ListInvitations(r.Context(), db.ListInvitationsParams{
-		OrgID:    ids.ToPG(actor.OrgID),
+		OrgID:    pgvalue.UUID(actor.OrgID),
 		RowLimit: invitationListLimit + 1,
 	})
 	if err != nil {
@@ -103,14 +103,14 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.db.RevokeExpiredInvitationsByEmail(r.Context(), db.RevokeExpiredInvitationsByEmailParams{
-		OrgID:        ids.ToPG(actor.OrgID),
+		OrgID:        pgvalue.UUID(actor.OrgID),
 		InviteeEmail: email,
 	}); err != nil {
 		writeError(w, errors.New("expire invitations"))
 		return
 	}
 	pending, err := s.db.GetPendingInvitationByEmail(r.Context(), db.GetPendingInvitationByEmailParams{
-		OrgID:        ids.ToPG(actor.OrgID),
+		OrgID:        pgvalue.UUID(actor.OrgID),
 		InviteeEmail: email,
 	})
 	if err != nil && !isNoRows(err) {
@@ -144,18 +144,18 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	record, err := s.db.CreateInvitation(r.Context(), db.CreateInvitationParams{
-		ID:              ids.ToPG(ids.New()),
-		OrgID:           ids.ToPG(actor.OrgID),
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(actor.OrgID),
 		InviteeEmail:    email,
 		Role:            role,
-		InvitedByUserID: ids.ToPG(actor.UserID),
+		InvitedByUserID: pgvalue.UUID(actor.UserID),
 		TokenHash:       tokenHash,
 		ExpiresAt:       pgvalue.Timestamptz(time.Now().AddDate(0, 0, expiresInDays)),
 	})
 	if err != nil {
 		if isNoRows(err) {
 			pending, pendingErr := s.db.GetPendingInvitationByEmail(r.Context(), db.GetPendingInvitationByEmailParams{
-				OrgID:        ids.ToPG(actor.OrgID),
+				OrgID:        pgvalue.UUID(actor.OrgID),
 				InviteeEmail: email,
 			})
 			if pendingErr == nil && pending.Role == db.OrgMemberRoleOwner && actor.Role != auth.RoleOwner {
@@ -185,15 +185,15 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
-	invitationID, err := ids.Parse(chi.URLParam(r, "id"))
+	invitationID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, notFound(errors.New("invitation not found")))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	invitation, err := s.db.GetRevocableInvitation(r.Context(), db.GetRevocableInvitationParams{
-		OrgID: ids.ToPG(actor.OrgID),
-		ID:    ids.ToPG(invitationID),
+		OrgID: pgvalue.UUID(actor.OrgID),
+		ID:    pgvalue.UUID(invitationID),
 	})
 	if err != nil {
 		if isNoRows(err) {
@@ -208,9 +208,9 @@ func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.db.RevokeInvitation(r.Context(), db.RevokeInvitationParams{
-		OrgID:           ids.ToPG(actor.OrgID),
-		ID:              ids.ToPG(invitationID),
-		RevokedByUserID: ids.ToPG(actor.UserID),
+		OrgID:           pgvalue.UUID(actor.OrgID),
+		ID:              pgvalue.UUID(invitationID),
+		RevokedByUserID: pgvalue.UUID(actor.UserID),
 	})
 	if err != nil {
 		writeError(w, errors.New("revoke invitation"))
@@ -224,7 +224,7 @@ func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
-	targetUserID, err := ids.Parse(chi.URLParam(r, "userID"))
+	targetUserID, err := uuid.Parse(chi.URLParam(r, "userID"))
 	if err != nil {
 		writeError(w, notFound(errors.New("member not found")))
 		return
@@ -246,8 +246,8 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := actorFromContext(r.Context())
 	target, err := s.db.GetOrgMemberForManagement(r.Context(), db.GetOrgMemberForManagementParams{
-		OrgID:  ids.ToPG(actor.OrgID),
-		UserID: ids.ToPG(targetUserID),
+		OrgID:  pgvalue.UUID(actor.OrgID),
+		UserID: pgvalue.UUID(targetUserID),
 	})
 	if err != nil {
 		if isNoRows(err) {
@@ -270,8 +270,8 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, err := s.db.UpdateOrgMemberRole(r.Context(), db.UpdateOrgMemberRoleParams{
-		OrgID:        ids.ToPG(actor.OrgID),
-		UserID:       ids.ToPG(targetUserID),
+		OrgID:        pgvalue.UUID(actor.OrgID),
+		UserID:       pgvalue.UUID(targetUserID),
 		Role:         newRole,
 		ExpectedRole: expectedRole,
 		ActorIsOwner: actor.Role == auth.RoleOwner,
@@ -297,7 +297,7 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
-	targetUserID, err := ids.Parse(chi.URLParam(r, "userID"))
+	targetUserID, err := uuid.Parse(chi.URLParam(r, "userID"))
 	if err != nil {
 		writeError(w, notFound(errors.New("member not found")))
 		return
@@ -308,8 +308,8 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target, err := s.db.GetOrgMemberForManagement(r.Context(), db.GetOrgMemberForManagementParams{
-		OrgID:  ids.ToPG(actor.OrgID),
-		UserID: ids.ToPG(targetUserID),
+		OrgID:  pgvalue.UUID(actor.OrgID),
+		UserID: pgvalue.UUID(targetUserID),
 	})
 	if err != nil {
 		if isNoRows(err) {
@@ -330,8 +330,8 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if _, err := s.db.DisableOrgMemberAndRevokeOrgSessions(r.Context(), db.DisableOrgMemberAndRevokeOrgSessionsParams{
-		OrgID:        ids.ToPG(actor.OrgID),
-		UserID:       ids.ToPG(targetUserID),
+		OrgID:        pgvalue.UUID(actor.OrgID),
+		UserID:       pgvalue.UUID(targetUserID),
 		ExpectedRole: target.Role,
 		ActorIsOwner: actor.Role == auth.RoleOwner,
 	}); err != nil {
@@ -350,7 +350,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authorizeMemberRoleChange(r *http.Request, actor auth.Actor, target db.GetOrgMemberForManagementRow, expectedRole db.OrgMemberRole, newRole db.OrgMemberRole) error {
-	targetUserID, err := ids.FromPG(target.UserID)
+	targetUserID, err := pgvalue.UUIDValue(target.UserID)
 	if err != nil {
 		return err
 	}
@@ -415,7 +415,7 @@ func (s *Server) inviteURL(token string) string {
 }
 
 func memberSummaryFromListRow(row db.ListOrgMembersRow) (api.MemberSummary, error) {
-	userID, err := ids.FromPG(row.UserID)
+	userID, err := pgvalue.UUIDValue(row.UserID)
 	if err != nil {
 		return api.MemberSummary{}, err
 	}
@@ -444,7 +444,7 @@ func memberSummaryFromListRow(row db.ListOrgMembersRow) (api.MemberSummary, erro
 }
 
 func memberSummaryFromOrgMember(member db.OrgMember, displayName pgtype.Text, email pgtype.Text, userDisabledAt pgtype.Timestamptz) (api.MemberSummary, error) {
-	userID, err := ids.FromPG(member.UserID)
+	userID, err := pgvalue.UUIDValue(member.UserID)
 	if err != nil {
 		return api.MemberSummary{}, err
 	}
@@ -507,7 +507,7 @@ func invitationSummaryFromListRow(row db.ListInvitationsRow) (api.InvitationSumm
 }
 
 func invitationSummary(id pgtype.UUID, email string, role db.OrgMemberRole, invitedByUserID pgtype.UUID, createdAt pgtype.Timestamptz, expiresAt pgtype.Timestamptz, acceptedAt pgtype.Timestamptz, acceptedByUserID pgtype.UUID, revokedAt pgtype.Timestamptz, revokedByUserID pgtype.UUID) (api.InvitationSummary, error) {
-	parsedID, err := ids.FromPG(id)
+	parsedID, err := pgvalue.UUIDValue(id)
 	if err != nil {
 		return api.InvitationSummary{}, err
 	}
@@ -524,9 +524,9 @@ func invitationSummary(id pgtype.UUID, email string, role db.OrgMemberRole, invi
 		Email:            email,
 		Role:             string(role),
 		Status:           status,
-		InvitedByUserID:  ids.StringFromPG(invitedByUserID),
-		AcceptedByUserID: ids.StringFromPG(acceptedByUserID),
-		RevokedByUserID:  ids.StringFromPG(revokedByUserID),
+		InvitedByUserID:  pgvalue.UUIDString(invitedByUserID),
+		AcceptedByUserID: pgvalue.UUIDString(acceptedByUserID),
+		RevokedByUserID:  pgvalue.UUIDString(revokedByUserID),
 		CreatedAt:        pgvalue.Time(createdAt),
 		ExpiresAt:        pgvalue.Time(expiresAt),
 		AcceptedAt:       pgvalue.TimePtr(acceptedAt),

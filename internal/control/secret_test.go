@@ -17,7 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -95,8 +95,8 @@ func TestAPIKeyRunCreateAllowsDeclaredTaskSecrets(t *testing.T) {
 }
 
 func TestCreateScheduleRunUsesDeclaredTaskSecrets(t *testing.T) {
-	scheduleID := ids.New()
-	instanceID := ids.New()
+	scheduleID := uuid.Must(uuid.NewV7())
+	instanceID := uuid.Must(uuid.NewV7())
 	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	store := &fakeStore{
 		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
@@ -109,11 +109,11 @@ func TestCreateScheduleRunUsesDeclaredTaskSecrets(t *testing.T) {
 		runEnqueuer: runEnqueuer,
 	}
 	runID, err := server.CreateScheduleRun(context.Background(), db.GetScheduleTriggerCandidateRow{
-		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:     testProjectID(),
 		EnvironmentID: testEnvironmentID(),
-		ScheduleID:    ids.ToPG(scheduleID),
-		InstanceID:    ids.ToPG(instanceID),
+		ScheduleID:    pgvalue.UUID(scheduleID),
+		InstanceID:    pgvalue.UUID(instanceID),
 		ScheduleType:  db.TaskScheduleTypeImperative,
 		TaskID:        "deploy",
 		Cron:          "0 9 * * *",
@@ -128,7 +128,7 @@ func TestCreateScheduleRunUsesDeclaredTaskSecrets(t *testing.T) {
 	if runID != store.run.ID || runEnqueuer.count != 1 {
 		t.Fatalf("runID=%+v stored=%+v enqueues=%d", runID, store.run.ID, runEnqueuer.count)
 	}
-	if store.createRun.ScheduleID != ids.ToPG(scheduleID) || store.createRun.ScheduleInstanceID != ids.ToPG(instanceID) {
+	if store.createRun.ScheduleID != pgvalue.UUID(scheduleID) || store.createRun.ScheduleInstanceID != pgvalue.UUID(instanceID) {
 		t.Fatalf("schedule source = %+v/%+v", store.createRun.ScheduleID, store.createRun.ScheduleInstanceID)
 	}
 	var eventPayload struct {
@@ -189,8 +189,8 @@ func TestSetSecret(t *testing.T) {
 func TestGetSecretReturnsMetadataOnly(t *testing.T) {
 	store := &fakeStore{
 		secret: db.GetScopedSecretMetadataByNameRow{
-			ID:            ids.ToPG(ids.New()),
-			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Name:          "github-token",
@@ -273,8 +273,8 @@ func TestDeleteSecretNotFound(t *testing.T) {
 func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
 	store := &fakeStore{
 		secret: db.GetScopedSecretMetadataByNameRow{
-			ID:            ids.ToPG(ids.New()),
-			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Name:          "github-token",
@@ -343,8 +343,8 @@ func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
 func TestWorkerRunLeaseFailsRunWhenSecretUnavailable(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
-			ID:                 ids.ToPG(ids.New()),
-			OrgID:              ids.ToPG(dbtest.DefaultOrgID),
+			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
@@ -385,10 +385,10 @@ func (f fakeSecrets) Put(_ context.Context, orgID uuid.UUID, name string, value 
 
 func (f fakeSecrets) PutScoped(_ context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
 	return db.Secret{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(orgID),
-		ProjectID:     ids.ToPG(projectID),
-		EnvironmentID: ids.ToPG(environmentID),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(orgID),
+		ProjectID:     pgvalue.UUID(projectID),
+		EnvironmentID: pgvalue.UUID(environmentID),
 		Name:          name,
 		Ciphertext:    append([]byte(nil), value...),
 		CreatedAt:     testTime(),

@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/sync/errgroup"
 )
@@ -99,7 +98,7 @@ func NewWorker(log *slog.Logger, engine *Engine, opts ...WorkerOption) (*Worker,
 	worker := &Worker{
 		log:         log,
 		engine:      engine,
-		workerID:    ids.New(),
+		workerID:    uuid.Must(uuid.NewV7()),
 		interval:    DefaultRepairEvery,
 		limit:       DefaultRepairLimit,
 		concurrency: DefaultTriggerConcurrency,

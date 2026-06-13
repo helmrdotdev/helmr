@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/email"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5"
@@ -22,12 +22,12 @@ import (
 )
 
 func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
-	runID := ids.New()
-	waitpointID := ids.New()
-	tokenID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
+	waitpointID := uuid.Must(uuid.NewV7())
+	tokenID := uuid.Must(uuid.NewV7())
 	view := waitpointView{
-		ID:             ids.ToPG(waitpointID),
-		OrgID:          ids.ToPG(dbtest.DefaultOrgID),
+		ID:             pgvalue.UUID(waitpointID),
+		OrgID:          pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:      testProjectID(),
 		EnvironmentID:  testEnvironmentID(),
 		Kind:           db.WaitpointKindHuman,
@@ -39,10 +39,10 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 	}
 	store := &notificationStore{
 		waitpoint: view,
-		tokenID:   ids.ToPG(tokenID),
+		tokenID:   pgvalue.UUID(tokenID),
 		run: db.GetRunSummaryRow{
-			ID:            ids.ToPG(runID),
-			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+			ID:            pgvalue.UUID(runID),
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			TaskID:        "deploy-prod",
@@ -69,7 +69,7 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 		t.Fatalf("tokens=%+v sent=%d", store.createdTokens, store.sentDeliveries)
 	}
 
-	deliveryID := ids.MustFromPG(store.createdDeliveries[0].ID)
+	deliveryID := pgvalue.MustUUIDValue(store.createdDeliveries[0].ID)
 	if err := notifier.SendQueuedDelivery(context.Background(), deliveryID); err != nil {
 		t.Fatalf("send queued delivery: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 			t.Fatalf("email missing %q:\nsubject=%s\n%s", want, message.Subject, message.PlainText)
 		}
 	}
-	if len(store.createdTokens) != 1 || store.createdTokens[0].WaitpointID != ids.ToPG(waitpointID) {
+	if len(store.createdTokens) != 1 || store.createdTokens[0].WaitpointID != pgvalue.UUID(waitpointID) {
 		t.Fatalf("created tokens = %+v", store.createdTokens)
 	}
 	if len(store.createdDeliveries) != 1 || store.sentDeliveries != 1 {
@@ -104,7 +104,7 @@ func TestSendQueuedWaitpointDeliveryMarksObsoleteDelivery(t *testing.T) {
 	sender := &recordingEmailSender{}
 	notifier := newTestWaitpointNotifier(t, store, sender)
 
-	if err := notifier.SendQueuedDelivery(context.Background(), ids.New()); err != nil {
+	if err := notifier.SendQueuedDelivery(context.Background(), uuid.Must(uuid.NewV7())); err != nil {
 		t.Fatalf("send queued delivery: %v", err)
 	}
 	if store.obsoleteDeliveries != 1 {
@@ -116,14 +116,14 @@ func TestSendQueuedWaitpointDeliveryMarksObsoleteDelivery(t *testing.T) {
 }
 
 func TestSendQueuedWaitpointDeliveryDoesNotSwallowSupersededSentMark(t *testing.T) {
-	runID := ids.New()
-	waitpointID := ids.New()
-	deliveryID := ids.New()
-	tokenID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
+	waitpointID := uuid.Must(uuid.NewV7())
+	deliveryID := uuid.Must(uuid.NewV7())
+	tokenID := uuid.Must(uuid.NewV7())
 	store := &notificationStore{
 		waitpoint: waitpointView{
-			ID:            ids.ToPG(waitpointID),
-			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+			ID:            pgvalue.UUID(waitpointID),
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Kind:          db.WaitpointKindHuman,
@@ -132,8 +132,8 @@ func TestSendQueuedWaitpointDeliveryDoesNotSwallowSupersededSentMark(t *testing.
 			RequestedAt:   testTime(),
 		},
 		run: db.GetRunSummaryRow{
-			ID:            ids.ToPG(runID),
-			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+			ID:            pgvalue.UUID(runID),
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			TaskID:        "deploy-prod",
@@ -142,10 +142,10 @@ func TestSendQueuedWaitpointDeliveryDoesNotSwallowSupersededSentMark(t *testing.
 			UpdatedAt:     testTime(),
 		},
 		createdDeliveries: []db.WaitpointDelivery{{
-			ID:              ids.ToPG(deliveryID),
-			OrgID:           ids.ToPG(dbtest.DefaultOrgID),
-			WaitpointID:     ids.ToPG(waitpointID),
-			ResponseTokenID: ids.ToPG(tokenID),
+			ID:              pgvalue.UUID(deliveryID),
+			OrgID:           pgvalue.UUID(dbtest.DefaultOrgID),
+			WaitpointID:     pgvalue.UUID(waitpointID),
+			ResponseTokenID: pgvalue.UUID(tokenID),
 			Channel:         "email",
 			RecipientKind:   "email",
 			Recipient:       "owner@example.test",
@@ -172,14 +172,14 @@ func TestSendQueuedWaitpointDeliveryDoesNotSwallowSupersededSentMark(t *testing.
 }
 
 func TestWaitpointConfirmationPageAndFormCompletion(t *testing.T) {
-	runID := ids.New()
-	waitpointID := ids.New()
-	tokenID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
+	waitpointID := uuid.Must(uuid.NewV7())
+	tokenID := uuid.Must(uuid.NewV7())
 	store := &notificationStore{
-		tokenID: ids.ToPG(tokenID),
+		tokenID: pgvalue.UUID(tokenID),
 		run: db.GetRunSummaryRow{
-			ID:            ids.ToPG(runID),
-			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+			ID:            pgvalue.UUID(runID),
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			TaskID:        "deploy-prod",
@@ -188,11 +188,11 @@ func TestWaitpointConfirmationPageAndFormCompletion(t *testing.T) {
 			UpdatedAt:     testTime(),
 		},
 		activeToken: db.GetWaitpointResponseTokenForRespondRow{
-			ID:                   ids.ToPG(tokenID),
-			OrgID:                ids.ToPG(dbtest.DefaultOrgID),
+			ID:                   pgvalue.UUID(tokenID),
+			OrgID:                pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:            testProjectID(),
 			EnvironmentID:        testEnvironmentID(),
-			WaitpointID:          ids.ToPG(waitpointID),
+			WaitpointID:          pgvalue.UUID(waitpointID),
 			Status:               db.WaitpointResponseTokenStatusPending,
 			ExpiresAt:            pgvalue.Timestamptz(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),
@@ -223,24 +223,24 @@ func TestWaitpointConfirmationPageAndFormCompletion(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("respond status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.completedTokens) != 1 || store.completedTokens[0].ID != ids.ToPG(tokenID) || store.recordedResponses[0].ResolutionKind.String != "completed" || store.recordedResponses[0].Kind != db.WaitpointKindHuman {
+	if len(store.completedTokens) != 1 || store.completedTokens[0].ID != pgvalue.UUID(tokenID) || store.recordedResponses[0].ResolutionKind.String != "completed" || store.recordedResponses[0].Kind != db.WaitpointKindHuman {
 		t.Fatalf("responded = %+v recorded = %+v", store.completedTokens, store.recordedResponses)
 	}
 }
 
 func TestWaitpointConfirmationPageRespondsToHumanWaitpoint(t *testing.T) {
-	runID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
 	_ = runID
-	waitpointID := ids.New()
-	tokenID := ids.New()
+	waitpointID := uuid.Must(uuid.NewV7())
+	tokenID := uuid.Must(uuid.NewV7())
 	store := &notificationStore{
-		tokenID: ids.ToPG(tokenID),
+		tokenID: pgvalue.UUID(tokenID),
 		activeToken: db.GetWaitpointResponseTokenForRespondRow{
-			ID:                   ids.ToPG(tokenID),
-			OrgID:                ids.ToPG(dbtest.DefaultOrgID),
+			ID:                   pgvalue.UUID(tokenID),
+			OrgID:                pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:            testProjectID(),
 			EnvironmentID:        testEnvironmentID(),
-			WaitpointID:          ids.ToPG(waitpointID),
+			WaitpointID:          pgvalue.UUID(waitpointID),
 			Status:               db.WaitpointResponseTokenStatusPending,
 			ExpiresAt:            pgvalue.Timestamptz(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),
@@ -288,18 +288,18 @@ func TestWaitpointConfirmationPageRespondsToHumanWaitpoint(t *testing.T) {
 }
 
 func TestWaitpointTokenRespondRespondsToHumanWaitpoint(t *testing.T) {
-	runID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
 	_ = runID
-	waitpointID := ids.New()
-	tokenID := ids.New()
+	waitpointID := uuid.Must(uuid.NewV7())
+	tokenID := uuid.Must(uuid.NewV7())
 	store := &notificationStore{
-		tokenID: ids.ToPG(tokenID),
+		tokenID: pgvalue.UUID(tokenID),
 		activeToken: db.GetWaitpointResponseTokenForRespondRow{
-			ID:                   ids.ToPG(tokenID),
-			OrgID:                ids.ToPG(dbtest.DefaultOrgID),
+			ID:                   pgvalue.UUID(tokenID),
+			OrgID:                pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:            testProjectID(),
 			EnvironmentID:        testEnvironmentID(),
-			WaitpointID:          ids.ToPG(waitpointID),
+			WaitpointID:          pgvalue.UUID(waitpointID),
 			Status:               db.WaitpointResponseTokenStatusPending,
 			ExpiresAt:            pgvalue.Timestamptz(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),
@@ -334,18 +334,18 @@ func TestWaitpointTokenRespondRespondsToHumanWaitpoint(t *testing.T) {
 }
 
 func TestWaitpointTokenCompletionRejectsInvalidMetadata(t *testing.T) {
-	runID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
 	_ = runID
-	waitpointID := ids.New()
-	tokenID := ids.New()
+	waitpointID := uuid.Must(uuid.NewV7())
+	tokenID := uuid.Must(uuid.NewV7())
 	store := &notificationStore{
-		tokenID: ids.ToPG(tokenID),
+		tokenID: pgvalue.UUID(tokenID),
 		activeToken: db.GetWaitpointResponseTokenForRespondRow{
-			ID:                   ids.ToPG(tokenID),
-			OrgID:                ids.ToPG(dbtest.DefaultOrgID),
+			ID:                   pgvalue.UUID(tokenID),
+			OrgID:                pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:            testProjectID(),
 			EnvironmentID:        testEnvironmentID(),
-			WaitpointID:          ids.ToPG(waitpointID),
+			WaitpointID:          pgvalue.UUID(waitpointID),
 			Status:               db.WaitpointResponseTokenStatusPending,
 			ExpiresAt:            pgvalue.Timestamptz(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),
@@ -368,18 +368,18 @@ func TestWaitpointTokenCompletionRejectsInvalidMetadata(t *testing.T) {
 }
 
 func TestWaitpointTokenCompletionUsesRequestSubjectWhenTokenHasNone(t *testing.T) {
-	runID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
 	_ = runID
-	waitpointID := ids.New()
-	tokenID := ids.New()
+	waitpointID := uuid.Must(uuid.NewV7())
+	tokenID := uuid.Must(uuid.NewV7())
 	store := &notificationStore{
-		tokenID: ids.ToPG(tokenID),
+		tokenID: pgvalue.UUID(tokenID),
 		activeToken: db.GetWaitpointResponseTokenForRespondRow{
-			ID:                   ids.ToPG(tokenID),
-			OrgID:                ids.ToPG(dbtest.DefaultOrgID),
+			ID:                   pgvalue.UUID(tokenID),
+			OrgID:                pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:            testProjectID(),
 			EnvironmentID:        testEnvironmentID(),
-			WaitpointID:          ids.ToPG(waitpointID),
+			WaitpointID:          pgvalue.UUID(waitpointID),
 			Status:               db.WaitpointResponseTokenStatusPending,
 			ExpiresAt:            pgvalue.Timestamptz(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{}`),
@@ -402,18 +402,18 @@ func TestWaitpointTokenCompletionUsesRequestSubjectWhenTokenHasNone(t *testing.T
 }
 
 func TestWaitpointTokenCompletionReturnsAcceptedWhenResolveDoesNotResume(t *testing.T) {
-	runID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
 	_ = runID
-	waitpointID := ids.New()
-	tokenID := ids.New()
+	waitpointID := uuid.Must(uuid.NewV7())
+	tokenID := uuid.Must(uuid.NewV7())
 	store := &notificationStore{
-		tokenID: ids.ToPG(tokenID),
+		tokenID: pgvalue.UUID(tokenID),
 		activeToken: db.GetWaitpointResponseTokenForRespondRow{
-			ID:                   ids.ToPG(tokenID),
-			OrgID:                ids.ToPG(dbtest.DefaultOrgID),
+			ID:                   pgvalue.UUID(tokenID),
+			OrgID:                pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:            testProjectID(),
 			EnvironmentID:        testEnvironmentID(),
-			WaitpointID:          ids.ToPG(waitpointID),
+			WaitpointID:          pgvalue.UUID(waitpointID),
 			Status:               db.WaitpointResponseTokenStatusPending,
 			ExpiresAt:            pgvalue.Timestamptz(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),

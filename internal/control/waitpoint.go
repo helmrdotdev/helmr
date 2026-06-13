@@ -19,7 +19,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -95,24 +94,24 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 		policyName = pgvalue.Text(policy.Name)
 		policySnapshot = snapshot
 	}
-	runWaitID := ids.New()
-	waitpointID := ids.New()
+	runWaitID := uuid.Must(uuid.NewV7())
+	waitpointID := uuid.Must(uuid.NewV7())
 	if linkedWaitpointID, ok, err := waitpointRequestLinkedID(kind, requestJSON); err != nil {
 		writeError(w, badRequest(err))
 		return
 	} else if ok {
 		waitpointID = linkedWaitpointID
 	}
-	checkpointID := ids.New()
+	checkpointID := uuid.Must(uuid.NewV7())
 	waitpoint, err := s.db.CreateWaitpointForExecution(r.Context(), db.CreateWaitpointForExecutionParams{
-		OrgID:            ids.ToPG(leaseIDs.orgID),
-		RunID:            ids.ToPG(leaseIDs.runID),
-		SessionID:        ids.ToPG(leaseIDs.sessionID),
-		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
-		CheckpointID:     ids.ToPG(checkpointID),
+		OrgID:            pgvalue.UUID(leaseIDs.orgID),
+		RunID:            pgvalue.UUID(leaseIDs.runID),
+		SessionID:        pgvalue.UUID(leaseIDs.sessionID),
+		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		CheckpointID:     pgvalue.UUID(checkpointID),
 		CheckpointReason: checkpointReason(kind),
-		RunWaitID:        ids.ToPG(runWaitID),
-		ID:               ids.ToPG(waitpointID),
+		RunWaitID:        pgvalue.UUID(runWaitID),
+		ID:               pgvalue.UUID(waitpointID),
 		CorrelationID:    request.CorrelationID,
 		Kind:             kind,
 		Request:          requestJSON,
@@ -132,9 +131,9 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, api.WorkerCreateWaitpointResponse{
 		RunID:        request.Lease.RunID,
-		RunWaitID:    ids.MustFromPG(waitpoint.RunWaitID).String(),
-		WaitpointID:  ids.MustFromPG(waitpoint.ID).String(),
-		CheckpointID: ids.MustFromPG(waitpoint.CheckpointID).String(),
+		RunWaitID:    pgvalue.MustUUIDValue(waitpoint.RunWaitID).String(),
+		WaitpointID:  pgvalue.MustUUIDValue(waitpoint.ID).String(),
+		CheckpointID: pgvalue.MustUUIDValue(waitpoint.CheckpointID).String(),
 	})
 }
 
@@ -183,8 +182,8 @@ func (s *Server) createWaitpoint(w http.ResponseWriter, r *http.Request) {
 		idempotencyKeyExpiresAt = pgvalue.Timestamptz(expiresAt)
 	}
 	waitpoint, err := s.db.CreateHumanWaitpoint(r.Context(), db.CreateHumanWaitpointParams{
-		ID:                      ids.ToPG(ids.New()),
-		OrgID:                   ids.ToPG(actor.OrgID),
+		ID:                      pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                   pgvalue.UUID(actor.OrgID),
 		ProjectID:               projectID,
 		EnvironmentID:           environmentID,
 		Request:                 requestJSON,
@@ -219,15 +218,15 @@ func (s *Server) respondWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	waitpointID, err := ids.Parse(chi.URLParam(r, "waitpointID"))
+	waitpointID, err := uuid.Parse(chi.URLParam(r, "waitpointID"))
 	if err != nil {
 		writeError(w, badRequest(errors.New("waitpointID must be a UUID")))
 		return
 	}
 	actor := actorFromContext(r.Context())
 	waitpoint, err := s.db.GetWaitpointForRespond(r.Context(), db.GetWaitpointForRespondParams{
-		OrgID:       ids.ToPG(actor.OrgID),
-		WaitpointID: ids.ToPG(waitpointID),
+		OrgID:       pgvalue.UUID(actor.OrgID),
+		WaitpointID: pgvalue.UUID(waitpointID),
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("pending waitpoint not found")))
@@ -240,8 +239,8 @@ func (s *Server) respondWaitpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	scope := auth.Scope{
 		OrgID:         actor.OrgID,
-		ProjectID:     ids.MustFromPG(waitpoint.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(waitpoint.EnvironmentID).String(),
+		ProjectID:     pgvalue.MustUUIDValue(waitpoint.ProjectID).String(),
+		EnvironmentID: pgvalue.MustUUIDValue(waitpoint.EnvironmentID).String(),
 	}
 	if err := s.requireActorScopeForRecord(r, actor, waitpoint.ProjectID, waitpoint.EnvironmentID); err != nil {
 		if isNoRows(err) {
@@ -320,9 +319,9 @@ func waitpointResponseFromCreate(row db.CreateHumanWaitpointRow) api.WaitpointRe
 		expiresAtPtr = &expiresAt
 	}
 	return api.WaitpointResponse{
-		ID:            ids.MustFromPG(row.ID).String(),
-		ProjectID:     ids.MustFromPG(row.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(row.EnvironmentID).String(),
+		ID:            pgvalue.MustUUIDValue(row.ID).String(),
+		ProjectID:     pgvalue.MustUUIDValue(row.ProjectID).String(),
+		EnvironmentID: pgvalue.MustUUIDValue(row.EnvironmentID).String(),
 		Kind:          string(row.Kind),
 		Status:        string(row.Status),
 		Request:       row.Request,
@@ -355,7 +354,7 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 		return waitpointResolveOutcome{}, fmt.Errorf("encode waitpoint resolved event: %w", err)
 	}
 	recordParams := db.RecordWaitpointResponseParams{
-		ID:                   ids.ToPG(ids.New()),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ResponseKey:          resolution.ResponseKey,
 		RequestHash:          waitpointResponseRequestHash(resolution.OutputJSON, resolution.ExternalSubject, resolution.Metadata),
 		Action:               "respond",
@@ -366,16 +365,16 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 		CompletedVia:         pgtype.Text{String: "authenticated_api", Valid: true},
 		ExternalSubject:      pgvalue.Text(resolution.ExternalSubject),
 		Metadata:             resolution.Metadata,
-		OrgID:                ids.ToPG(resolution.OrgID),
-		WaitpointID:          ids.ToPG(waitpointID),
+		OrgID:                pgvalue.UUID(resolution.OrgID),
+		WaitpointID:          pgvalue.UUID(waitpointID),
 		Kind:                 resolution.ExpectedKind,
 	}
 	resolveParams := db.ResolveWaitpointParams{
 		ResolutionKind: pgtype.Text{String: resolution.ResolutionKind, Valid: true},
 		Output:         resolution.OutputJSON,
 		Resolution:     resolution.ResolutionJSON,
-		OrgID:          ids.ToPG(resolution.OrgID),
-		ID:             ids.ToPG(waitpointID),
+		OrgID:          pgvalue.UUID(resolution.OrgID),
+		ID:             pgvalue.UUID(waitpointID),
 		Kind:           resolution.ExpectedKind,
 	}
 	return s.recordAndResolveWaitpoint(ctx, recordParams, resolveParams)
@@ -471,7 +470,7 @@ func waitpointRequestLinkedID(kind db.WaitpointKind, request json.RawMessage) (u
 	if raw == "" {
 		return uuid.Nil, false, nil
 	}
-	id, err := ids.Parse(raw)
+	id, err := uuid.Parse(raw)
 	if err != nil {
 		return uuid.Nil, false, errors.New("request.waitpoint_id must be a UUID")
 	}

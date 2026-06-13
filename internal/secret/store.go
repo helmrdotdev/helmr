@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -198,10 +198,10 @@ func (s *Store) PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.U
 			return db.Secret{}, err
 		}
 		updated, err := s.db.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
-			ID:              ids.ToPG(ids.New()),
-			OrgID:           ids.ToPG(orgID),
-			ProjectID:       ids.ToPG(projectID),
-			EnvironmentID:   ids.ToPG(environmentID),
+			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:           pgvalue.UUID(orgID),
+			ProjectID:       pgvalue.UUID(projectID),
+			EnvironmentID:   pgvalue.UUID(environmentID),
 			Name:            name,
 			Version:         version,
 			KeyID:           encrypted.keyID,
@@ -287,9 +287,9 @@ func (s *Store) ResolveScopedNames(ctx context.Context, orgID uuid.UUID, project
 
 func (s *Store) scopedSecret(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string) (db.Secret, error) {
 	record, err := s.db.GetScopedSecretByName(ctx, db.GetScopedSecretByNameParams{
-		OrgID:         ids.ToPG(orgID),
-		ProjectID:     ids.ToPG(projectID),
-		EnvironmentID: ids.ToPG(environmentID),
+		OrgID:         pgvalue.UUID(orgID),
+		ProjectID:     pgvalue.UUID(projectID),
+		EnvironmentID: pgvalue.UUID(environmentID),
 		Name:          name,
 	})
 	if err != nil {
@@ -322,15 +322,15 @@ func (s *Store) ReencryptBatch(ctx context.Context, fromKeyID string, limit int3
 	}
 	result := ReencryptBatchResult{Scanned: len(rows)}
 	for _, row := range rows {
-		orgID, err := ids.FromPG(row.OrgID)
+		orgID, err := pgvalue.UUIDValue(row.OrgID)
 		if err != nil {
 			return result, err
 		}
-		projectID, err := ids.FromPG(row.ProjectID)
+		projectID, err := pgvalue.UUIDValue(row.ProjectID)
 		if err != nil {
 			return result, err
 		}
-		environmentID, err := ids.FromPG(row.EnvironmentID)
+		environmentID, err := pgvalue.UUIDValue(row.EnvironmentID)
 		if err != nil {
 			return result, err
 		}
@@ -412,15 +412,15 @@ func scopedAdditionalData(orgID uuid.UUID, projectID uuid.UUID, environmentID uu
 }
 
 func (s *Store) defaultScope(ctx context.Context, orgID uuid.UUID) (uuid.UUID, uuid.UUID, error) {
-	scope, err := s.db.GetDefaultProjectEnvironment(ctx, ids.ToPG(orgID))
+	scope, err := s.db.GetDefaultProjectEnvironment(ctx, pgvalue.UUID(orgID))
 	if err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
-	projectID, err := ids.FromPG(scope.ProjectID)
+	projectID, err := pgvalue.UUIDValue(scope.ProjectID)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
-	environmentID, err := ids.FromPG(scope.EnvironmentID)
+	environmentID, err := pgvalue.UUIDValue(scope.EnvironmentID)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}

@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -89,8 +89,8 @@ func (s *Server) requireActorScopeForRecord(r *http.Request, actor auth.Actor, p
 		}
 		recordScope := auth.Scope{
 			OrgID:         actor.OrgID,
-			ProjectID:     ids.MustFromPG(projectID).String(),
-			EnvironmentID: ids.MustFromPG(environmentID).String(),
+			ProjectID:     pgvalue.MustUUIDValue(projectID).String(),
+			EnvironmentID: pgvalue.MustUUIDValue(environmentID).String(),
 		}
 		if scope.ProjectID != recordScope.ProjectID || scope.EnvironmentID != recordScope.EnvironmentID {
 			return errRecordNotFound
@@ -131,15 +131,15 @@ func (s *Server) requestedRunListScope(r *http.Request, actor auth.Actor) (auth.
 }
 
 func (s *Server) runScopeIDs(ctx context.Context, orgID uuid.UUID, scope auth.Scope) (pgtype.UUID, pgtype.UUID, error) {
-	projectID, err := ids.Parse(scope.ProjectID)
+	projectID, err := uuid.Parse(scope.ProjectID)
 	if err != nil {
 		return pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	environmentID, err := ids.Parse(scope.EnvironmentID)
+	environmentID, err := uuid.Parse(scope.EnvironmentID)
 	if err != nil {
 		return pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	return ids.ToPG(projectID), ids.ToPG(environmentID), nil
+	return pgvalue.UUID(projectID), pgvalue.UUID(environmentID), nil
 }
 
 func (s *Server) normalizeProjectEnvironmentScope(ctx context.Context, orgID uuid.UUID, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
@@ -151,20 +151,20 @@ func (s *Server) normalizeProjectEnvironmentScope(ctx context.Context, orgID uui
 	if err != nil {
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	return auth.Scope{OrgID: orgID, ProjectID: ids.MustFromPG(project.ID).String(), EnvironmentID: ids.MustFromPG(environment.ID).String()}, project.ID, environment.ID, nil
+	return auth.Scope{OrgID: orgID, ProjectID: pgvalue.MustUUIDValue(project.ID).String(), EnvironmentID: pgvalue.MustUUIDValue(environment.ID).String()}, project.ID, environment.ID, nil
 }
 
 func (s *Server) resolveProjectRef(ctx context.Context, orgID uuid.UUID, projectRef string) (db.Project, error) {
 	projectRef = strings.TrimSpace(projectRef)
 	if projectRef == "" {
-		defaultScope, err := s.db.GetDefaultProjectEnvironment(ctx, ids.ToPG(orgID))
+		defaultScope, err := s.db.GetDefaultProjectEnvironment(ctx, pgvalue.UUID(orgID))
 		if err != nil {
 			return db.Project{}, fmt.Errorf("load project selection: %w", err)
 		}
-		return s.db.GetProject(ctx, db.GetProjectParams{OrgID: ids.ToPG(orgID), ID: defaultScope.ProjectID})
+		return s.db.GetProject(ctx, db.GetProjectParams{OrgID: pgvalue.UUID(orgID), ID: defaultScope.ProjectID})
 	}
-	if parsed, err := ids.Parse(projectRef); err == nil {
-		project, err := s.db.GetProject(ctx, db.GetProjectParams{OrgID: ids.ToPG(orgID), ID: ids.ToPG(parsed)})
+	if parsed, err := uuid.Parse(projectRef); err == nil {
+		project, err := s.db.GetProject(ctx, db.GetProjectParams{OrgID: pgvalue.UUID(orgID), ID: pgvalue.UUID(parsed)})
 		if isNoRows(err) {
 			return db.Project{}, errors.New("project_id must reference an active project")
 		}
@@ -173,7 +173,7 @@ func (s *Server) resolveProjectRef(ctx context.Context, orgID uuid.UUID, project
 		}
 		return project, nil
 	}
-	project, err := s.db.GetProjectBySlug(ctx, db.GetProjectBySlugParams{OrgID: ids.ToPG(orgID), Slug: strings.ToLower(projectRef)})
+	project, err := s.db.GetProjectBySlug(ctx, db.GetProjectBySlugParams{OrgID: pgvalue.UUID(orgID), Slug: strings.ToLower(projectRef)})
 	if isNoRows(err) {
 		return db.Project{}, errors.New("project_id must be a project UUID or a project slug")
 	}
@@ -186,7 +186,7 @@ func (s *Server) resolveProjectRef(ctx context.Context, orgID uuid.UUID, project
 func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentRef string) (db.Environment, error) {
 	environmentRef = strings.TrimSpace(environmentRef)
 	if environmentRef == "" {
-		environment, err := s.db.GetDefaultEnvironment(ctx, db.GetDefaultEnvironmentParams{OrgID: ids.ToPG(orgID), ProjectID: projectID})
+		environment, err := s.db.GetDefaultEnvironment(ctx, db.GetDefaultEnvironmentParams{OrgID: pgvalue.UUID(orgID), ProjectID: projectID})
 		if isNoRows(err) {
 			return db.Environment{}, errors.New("environment_id must reference an active environment")
 		}
@@ -195,8 +195,8 @@ func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, pro
 		}
 		return environment, nil
 	}
-	if parsed, err := ids.Parse(environmentRef); err == nil {
-		environment, err := s.db.GetEnvironment(ctx, db.GetEnvironmentParams{OrgID: ids.ToPG(orgID), ProjectID: projectID, ID: ids.ToPG(parsed)})
+	if parsed, err := uuid.Parse(environmentRef); err == nil {
+		environment, err := s.db.GetEnvironment(ctx, db.GetEnvironmentParams{OrgID: pgvalue.UUID(orgID), ProjectID: projectID, ID: pgvalue.UUID(parsed)})
 		if isNoRows(err) {
 			return db.Environment{}, errors.New("environment_id must reference an active environment")
 		}
@@ -205,7 +205,7 @@ func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, pro
 		}
 		return environment, nil
 	}
-	environment, err := s.db.GetEnvironmentBySlug(ctx, db.GetEnvironmentBySlugParams{OrgID: ids.ToPG(orgID), ProjectID: projectID, Slug: strings.ToLower(environmentRef)})
+	environment, err := s.db.GetEnvironmentBySlug(ctx, db.GetEnvironmentBySlugParams{OrgID: pgvalue.UUID(orgID), ProjectID: projectID, Slug: strings.ToLower(environmentRef)})
 	if isNoRows(err) {
 		return db.Environment{}, errors.New("environment_id must be an environment UUID or an environment slug")
 	}

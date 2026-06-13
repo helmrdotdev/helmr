@@ -16,7 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
@@ -154,7 +154,7 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 	}
 	request.Options.IdempotencyKey = schedule.TriggerIdempotencyKey(row.InstanceID, row.Generation, row.NextFireAt)
 	request.Options.IdempotencyKeyTTL = schedule.TriggerIdempotencyKeyTTL
-	orgID, err := ids.FromPG(row.OrgID)
+	orgID, err := pgvalue.UUIDValue(row.OrgID)
 	if err != nil {
 		return pgtype.UUID{}, fmt.Errorf("schedule trigger org id is invalid: %v", err)
 	}
@@ -228,11 +228,11 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		if s.secrets == nil {
 			return runSummary{}, false, errors.New("secret store is not configured")
 		}
-		projectUUID, err := ids.FromPG(projectID)
+		projectUUID, err := pgvalue.UUIDValue(projectID)
 		if err != nil {
 			return runSummary{}, false, fmt.Errorf("project id is invalid: %v", err)
 		}
-		environmentUUID, err := ids.FromPG(environmentID)
+		environmentUUID, err := pgvalue.UUIDValue(environmentID)
 		if err != nil {
 			return runSummary{}, false, fmt.Errorf("environment id is invalid: %v", err)
 		}
@@ -285,7 +285,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		return runSummary{}, false, err
 	}
 	versionMetadata := requestVersionMetadataFromContext(ctx)
-	runID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
 	traceID, err := tracing.NewTraceID()
 	if err != nil {
 		return runSummary{}, false, fmt.Errorf("generate run trace id: %w", err)
@@ -299,8 +299,8 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		return runSummary{}, false, fmt.Errorf("encode run created event: %w", err)
 	}
 	run, err := s.db.CreateScopedRun(ctx, db.CreateScopedRunParams{
-		ID:                      ids.ToPG(runID),
-		OrgID:                   ids.ToPG(actor.OrgID),
+		ID:                      pgvalue.UUID(runID),
+		OrgID:                   pgvalue.UUID(actor.OrgID),
 		ProjectID:               projectID,
 		EnvironmentID:           environmentID,
 		DeploymentID:            deploymentTask.DeploymentID,
@@ -360,7 +360,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 	}
 	if s.runEnqueuer != nil {
 		if _, err := s.runEnqueuer.EnqueueRun(ctx, run.OrgID, run.ID); err != nil {
-			s.log.Error("enqueue run queue item failed", "run_id", ids.MustFromPG(run.ID).String(), "error", err)
+			s.log.Error("enqueue run queue item failed", "run_id", pgvalue.MustUUIDValue(run.ID).String(), "error", err)
 		}
 	}
 	return createScopedRunSummary(run), false, nil
@@ -393,11 +393,11 @@ func normalizeRunDeploymentSelection(deploymentID string, version string) (runDe
 		return runDeploymentSelection{}, errors.New("deployment_id and version cannot be combined")
 	}
 	if deploymentID != "" {
-		parsedID, err := ids.Parse(deploymentID)
+		parsedID, err := uuid.Parse(deploymentID)
 		if err != nil {
 			return runDeploymentSelection{}, errors.New("deployment_id must be a UUID")
 		}
-		return runDeploymentSelection{deploymentID: ids.ToPG(parsedID)}, nil
+		return runDeploymentSelection{deploymentID: pgvalue.UUID(parsedID)}, nil
 	}
 	return runDeploymentSelection{version: version}, nil
 }
@@ -422,25 +422,25 @@ func (s *Server) deploymentTaskForRunRequest(ctx context.Context, orgID uuid.UUI
 	deploymentID := selection.deploymentID
 	if deploymentID.Valid {
 		deployment, err := s.db.GetDeployment(ctx, db.GetDeploymentParams{
-			OrgID:         ids.ToPG(orgID),
+			OrgID:         pgvalue.UUID(orgID),
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			ID:            deploymentID,
 		})
 		if isNoRows(err) {
-			return db.GetDeploymentTaskRow{}, runDeploymentSelectionErrorf("deployment_id %s was not found in this environment", ids.MustFromPG(deploymentID).String())
+			return db.GetDeploymentTaskRow{}, runDeploymentSelectionErrorf("deployment_id %s was not found in this environment", pgvalue.MustUUIDValue(deploymentID).String())
 		}
 		if err != nil {
 			return db.GetDeploymentTaskRow{}, err
 		}
 		if deployment.Status != db.DeploymentStatusDeployed {
-			return db.GetDeploymentTaskRow{}, runDeploymentSelectionErrorf("deployment_id %s is not deployed", ids.MustFromPG(deploymentID).String())
+			return db.GetDeploymentTaskRow{}, runDeploymentSelectionErrorf("deployment_id %s is not deployed", pgvalue.MustUUIDValue(deploymentID).String())
 		}
 		return s.deploymentTask(ctx, orgID, projectID, environmentID, deployment.ID, taskID)
 	}
 	if selection.version != "" {
 		deployment, err := s.db.GetDeploymentByVersion(ctx, db.GetDeploymentByVersionParams{
-			OrgID:         ids.ToPG(orgID),
+			OrgID:         pgvalue.UUID(orgID),
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			Version:       selection.version,
@@ -457,7 +457,7 @@ func (s *Server) deploymentTaskForRunRequest(ctx context.Context, orgID uuid.UUI
 		return s.deploymentTask(ctx, orgID, projectID, environmentID, deployment.ID, taskID)
 	}
 	task, err := s.db.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
-		OrgID:         ids.ToPG(orgID),
+		OrgID:         pgvalue.UUID(orgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		TaskID:        taskID,
@@ -501,7 +501,7 @@ func deploymentTaskRowFromCurrent(task db.GetCurrentDeploymentTaskRow) db.GetDep
 
 func (s *Server) deploymentTask(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, taskID string) (db.GetDeploymentTaskRow, error) {
 	return s.db.GetDeploymentTask(ctx, db.GetDeploymentTaskParams{
-		OrgID:         ids.ToPG(orgID),
+		OrgID:         pgvalue.UUID(orgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		DeploymentID:  deploymentID,
@@ -570,8 +570,8 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{
-		OrgID: ids.ToPG(actorFromContext(r.Context()).OrgID),
-		ID:    ids.ToPG(runID),
+		OrgID: pgvalue.UUID(actorFromContext(r.Context()).OrgID),
+		ID:    pgvalue.UUID(runID),
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("run not found")))
@@ -586,8 +586,8 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
 	scope := auth.Scope{
 		OrgID:         actor.OrgID,
-		ProjectID:     ids.MustFromPG(summary.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(summary.EnvironmentID).String(),
+		ProjectID:     pgvalue.MustUUIDValue(summary.ProjectID).String(),
+		EnvironmentID: pgvalue.MustUUIDValue(summary.EnvironmentID).String(),
 	}
 	if err := s.requireActorScopeForRecord(r, actor, summary.ProjectID, summary.EnvironmentID); err != nil {
 		if isNoRows(err) {
@@ -635,7 +635,7 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("list runs"))
 		return
 	}
-	runs, err := s.runResponses(r.Context(), ids.ToPG(actor.OrgID), summaries)
+	runs, err := s.runResponses(r.Context(), pgvalue.UUID(actor.OrgID), summaries)
 	if err != nil {
 		s.log.Error("list pending waitpoints failed", "error", err)
 		writeError(w, errors.New("list runs"))
@@ -680,7 +680,7 @@ func (s *Server) listRunSummaries(r *http.Request, actor auth.Actor, statusFilte
 		return nil, err
 	}
 	rows, err := s.db.ListScopedRunSummaries(r.Context(), db.ListScopedRunSummariesParams{
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		StatusFilter:  statusFilter,
@@ -709,7 +709,7 @@ func (s *Server) countRunStatuses(r *http.Request, actor auth.Actor) (api.RunCou
 		return api.RunCountsResponse{}, err
 	}
 	counts, err := s.db.CountScopedRunsByStatus(r.Context(), db.CountScopedRunsByStatusParams{
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 	})
@@ -873,7 +873,7 @@ func (s *Server) validateRunQueueOverride(ctx context.Context, orgID uuid.UUID, 
 		return scheduling, nil
 	}
 	queueConfig, err := s.db.GetDeploymentQueueConfig(ctx, db.GetDeploymentQueueConfigParams{
-		OrgID:         ids.ToPG(orgID),
+		OrgID:         pgvalue.UUID(orgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		DeploymentID:  task.DeploymentID,

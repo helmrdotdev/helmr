@@ -11,11 +11,11 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/email"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -150,7 +150,7 @@ func (s *Server) sendMagicLink(r *http.Request, purpose db.MagicLinkPurpose, ema
 
 func (s *Server) deliverMagicLink(ctx context.Context, message magicLinkMessage, purpose db.MagicLinkPurpose, email string, orgID pgtype.UUID, invitationID pgtype.UUID, linkID pgtype.UUID) error {
 	emailMessage := magicLinkEmailMessage(message)
-	emailMessage.IdempotencyKey = "magic-link/" + ids.MustFromPG(linkID).String()
+	emailMessage.IdempotencyKey = "magic-link/" + pgvalue.MustUUIDValue(linkID).String()
 	if err := s.mailer.SendEmail(ctx, emailMessage); err != nil {
 		if markErr := s.markMagicLinkDeliveryFailed(ctx, linkID); markErr != nil {
 			return fmt.Errorf("send magic link: %w; mark delivery failed: %v", err, markErr)
@@ -219,7 +219,7 @@ func (s *Server) createPendingMagicLink(r *http.Request, purpose db.MagicLinkPur
 	}
 	expiresAt := time.Now().Add(s.effectiveMagicLinkTTL())
 	link, err := queries.CreateMagicLink(r.Context(), db.CreateMagicLinkParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Purpose:       purpose,
 		TokenHash:     tokenHash,
 		Email:         email,
@@ -460,8 +460,8 @@ func (s *Server) upsertMagicLinkAuthIdentity(r *http.Request, queries db.Querier
 		claims = []byte(`{}`)
 	}
 	return queries.UpsertMagicLinkAuthIdentity(r.Context(), db.UpsertMagicLinkAuthIdentityParams{
-		UserID:           ids.ToPG(ids.New()),
-		IdentityID:       ids.ToPG(ids.New()),
+		UserID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		IdentityID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		IdentityProvider: identity.Provider,
 		IdentitySubject:  identity.Subject,
 		DisplayName:      identity.DisplayName,

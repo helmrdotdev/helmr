@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -119,10 +119,10 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 			changed = append(changed, updatedScheduleView(updated))
 			continue
 		}
-		scheduleID := ids.New()
-		instanceID := ids.New()
+		scheduleID := uuid.Must(uuid.NewV7())
+		instanceID := uuid.Must(uuid.NewV7())
 		created, err := store.CreateDeclarativeSchedule(ctx, db.CreateDeclarativeScheduleParams{
-			ScheduleID:    ids.ToPG(scheduleID),
+			ScheduleID:    pgvalue.UUID(scheduleID),
 			OrgID:         orgID,
 			ProjectID:     projectID,
 			TaskID:        spec.TaskID,
@@ -132,7 +132,7 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 			Timezone:      spec.Timezone,
 			RunOptions:    runOptionsJSON,
 			Active:        spec.Active,
-			InstanceID:    ids.ToPG(instanceID),
+			InstanceID:    pgvalue.UUID(instanceID),
 			EnvironmentID: environmentID,
 			NextFireAt:    nextFireAt,
 		})
@@ -219,8 +219,8 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 
 func declarativeScheduleDedupKey(orgID pgtype.UUID, projectID pgtype.UUID, taskID string, scheduleID string) string {
 	parts := []string{
-		ids.MustFromPG(orgID).String(),
-		ids.MustFromPG(projectID).String(),
+		pgvalue.MustUUIDValue(orgID).String(),
+		pgvalue.MustUUIDValue(projectID).String(),
 		taskID,
 		scheduleID,
 	}

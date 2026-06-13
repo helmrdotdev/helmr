@@ -6,9 +6,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 )
@@ -16,11 +17,11 @@ import (
 func TestSecretCanBeSetAfterDelete(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
-	orgUUID := ids.MustFromPG(orgID)
-	projectUUID := ids.MustFromPG(scope.ProjectID)
-	environmentUUID := ids.MustFromPG(scope.EnvironmentID)
+	orgUUID := pgvalue.MustUUIDValue(orgID)
+	projectUUID := pgvalue.MustUUIDValue(scope.ProjectID)
+	environmentUUID := pgvalue.MustUUIDValue(scope.EnvironmentID)
 
 	keyring, err := secret.NewKeyring(bytes.Repeat([]byte{1}, 32), nil)
 	if err != nil {
@@ -69,11 +70,11 @@ func TestSecretCanBeSetAfterDelete(t *testing.T) {
 func TestSecretUpsertVersionConflictReturnsNoRows(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
 	inserted, err := queries.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
-		ID:              ids.ToPG(ids.New()),
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           orgID,
 		ProjectID:       scope.ProjectID,
 		EnvironmentID:   scope.EnvironmentID,
@@ -91,7 +92,7 @@ func TestSecretUpsertVersionConflictReturnsNoRows(t *testing.T) {
 		t.Fatalf("inserted version = %d, want 1", inserted.Version)
 	}
 	_, err = queries.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
-		ID:              ids.ToPG(ids.New()),
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           orgID,
 		ProjectID:       scope.ProjectID,
 		EnvironmentID:   scope.EnvironmentID,
@@ -110,11 +111,11 @@ func TestSecretUpsertVersionConflictReturnsNoRows(t *testing.T) {
 func TestSecretReencryptBatchRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
-	orgUUID := ids.MustFromPG(orgID)
-	projectUUID := ids.MustFromPG(scope.ProjectID)
-	environmentUUID := ids.MustFromPG(scope.EnvironmentID)
+	orgUUID := pgvalue.MustUUIDValue(orgID)
+	projectUUID := pgvalue.MustUUIDValue(scope.ProjectID)
+	environmentUUID := pgvalue.MustUUIDValue(scope.EnvironmentID)
 
 	oldKey := bytes.Repeat([]byte{1}, 32)
 	currentKey := bytes.Repeat([]byte{2}, 32)

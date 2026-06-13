@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -25,8 +25,8 @@ import (
 func TestGetWaitpointPolicyRoute(t *testing.T) {
 	store := &waitpointPolicyStore{
 		policy: db.WaitpointPolicy{
-			ID:            ids.ToPG(ids.New()),
-			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Name:          "deploy-prod",
@@ -46,7 +46,7 @@ func TestGetWaitpointPolicyRoute(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.get.Name != "deploy-prod" || store.get.OrgID != ids.ToPG(dbtest.DefaultOrgID) || store.get.ProjectID != testProjectID() || store.get.EnvironmentID != testEnvironmentID() {
+	if store.get.Name != "deploy-prod" || store.get.OrgID != pgvalue.UUID(dbtest.DefaultOrgID) || store.get.ProjectID != testProjectID() || store.get.EnvironmentID != testEnvironmentID() {
 		t.Fatalf("get = %+v", store.get)
 	}
 	var response api.WaitpointPolicyResponse
@@ -205,8 +205,8 @@ func testWaitpointPolicySessionServer(store *waitpointPolicyStore, role auth.Rol
 
 func testWaitpointPolicy() db.WaitpointPolicy {
 	return db.WaitpointPolicy{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:     testProjectID(),
 		EnvironmentID: testEnvironmentID(),
 		Name:          "deploy-prod",
@@ -242,9 +242,9 @@ func (s *waitpointPolicyStore) GetProject(_ context.Context, arg db.GetProjectPa
 
 func (s *waitpointPolicyStore) GetSessionByTokenHash(context.Context, []byte) (db.GetSessionByTokenHashRow, error) {
 	return db.GetSessionByTokenHashRow{
-		ID:        ids.ToPG(ids.New()),
-		OrgID:     ids.ToPG(dbtest.DefaultOrgID),
-		UserID:    ids.ToPG(ids.New()),
+		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
+		UserID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Role:      string(db.OrgMemberRoleOwner),
 		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	}, nil

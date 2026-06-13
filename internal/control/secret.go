@@ -10,7 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -34,7 +33,7 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.db.ListScopedSecrets(r.Context(), db.ListScopedSecretsParams{
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		RowLimit:      secretListLimit,
@@ -71,7 +70,7 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	record, err := s.db.GetScopedSecretMetadataByName(r.Context(), db.GetScopedSecretMetadataByNameParams{
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Name:          name,
@@ -114,7 +113,7 @@ func (s *Server) setSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	record, err := s.secrets.PutScoped(r.Context(), actor.OrgID, ids.MustFromPG(projectID), ids.MustFromPG(environmentID), name, []byte(request.Value))
+	record, err := s.secrets.PutScoped(r.Context(), actor.OrgID, pgvalue.MustUUIDValue(projectID), pgvalue.MustUUIDValue(environmentID), name, []byte(request.Value))
 	if err != nil {
 		s.log.Error("set secret failed", "name", name, "error", err)
 		writeError(w, errors.New("set secret"))
@@ -144,7 +143,7 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.db.DeleteScopedSecret(r.Context(), db.DeleteScopedSecretParams{
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Name:          name,
@@ -162,8 +161,8 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
 
 func secretResponse(projectID pgtype.UUID, environmentID pgtype.UUID, name string, createdAt pgtype.Timestamptz, updatedAt pgtype.Timestamptz) api.SecretResponse {
 	return api.SecretResponse{
-		ProjectID:     ids.MustFromPG(projectID).String(),
-		EnvironmentID: ids.MustFromPG(environmentID).String(),
+		ProjectID:     pgvalue.MustUUIDValue(projectID).String(),
+		EnvironmentID: pgvalue.MustUUIDValue(environmentID).String(),
 		Name:          name,
 		CreatedAt:     pgvalue.Time(createdAt),
 		UpdatedAt:     pgvalue.Time(updatedAt),

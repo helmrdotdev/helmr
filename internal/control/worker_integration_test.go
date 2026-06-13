@@ -20,12 +20,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -42,8 +42,8 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	workerBearer := mintPostgresTestWorkerToken(t, ctx, pool, queries, "worker-1")
 
 	claim := claimRunViaHTTP(t, handler, workerBearer)
-	if claim.RunID != ids.MustFromPG(run.ID).String() {
-		t.Fatalf("claim = %+v run=%s", claim, ids.MustFromPG(run.ID))
+	if claim.RunID != pgvalue.MustUUIDValue(run.ID).String() {
+		t.Fatalf("claim = %+v run=%s", claim, pgvalue.MustUUIDValue(run.ID))
 	}
 	renewed := postWorkerJSON[api.WorkerRenewResponse](t, handler, workerBearer, "/api/worker/sessions/renew", api.WorkerRenewRequest{Lease: claim}, http.StatusOK)
 	requireWorkerTraceContext(t, renewed.Lease.Trace)
@@ -99,7 +99,7 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	}, http.StatusConflict)
 
 	events, err := queries.ListSubjectEvents(ctx, db.ListSubjectEventsParams{
-		OrgID:       ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:       pgvalue.UUID(dbtest.DefaultOrgID),
 		SubjectType: db.EventSubjectTypeRun,
 		SubjectID:   run.ID,
 		RowLimit:    100,
@@ -113,7 +113,7 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 			t.Fatalf("stale event persisted: %+v", event)
 		}
 	}
-	updated, err := queries.GetRun(ctx, db.GetRunParams{OrgID: ids.ToPG(dbtest.DefaultOrgID), ID: run.ID})
+	updated, err := queries.GetRun(ctx, db.GetRunParams{OrgID: pgvalue.UUID(dbtest.DefaultOrgID), ID: run.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,8 +135,8 @@ func TestWorkerCompleteDeploymentBuildRejectsStaleLeaseBeforeRecordingArtifactsW
 		t.Fatal(err)
 	}
 	sourceArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Digest:        sourceDigest,
@@ -151,13 +151,13 @@ func TestWorkerCompleteDeploymentBuildRejectsStaleLeaseBeforeRecordingArtifactsW
 	if err != nil {
 		t.Fatal(err)
 	}
-	deploymentID := ids.ToPG(ids.New())
+	deploymentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                         deploymentID,
-		OrgID:                      ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:                      pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:                  scope.ProjectID,
 		EnvironmentID:              scope.EnvironmentID,
-		Version:                    ids.MustFromPG(deploymentID).String(),
+		Version:                    pgvalue.MustUUIDValue(deploymentID).String(),
 		ApiVersion:                 api.CurrentAPIVersion,
 		BundleFormatVersion:        api.CurrentBundleFormatVersion,
 		WorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
@@ -181,7 +181,7 @@ func TestWorkerCompleteDeploymentBuildRejectsStaleLeaseBeforeRecordingArtifactsW
 		t.Fatal(err)
 	}
 	staleLease := *leaseResponse.Lease
-	staleLease.ID = ids.New().String()
+	staleLease.ID = uuid.Must(uuid.NewV7()).String()
 	postWorkerJSON[map[string]string](t, handler, workerBearer, "/api/worker/deployments/complete", api.WorkerCompleteDeploymentBuildRequest{
 		Lease:  staleLease,
 		Result: validWorkerDeploymentBuildResult(),
@@ -232,8 +232,8 @@ func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 		t.Fatalf("activated = %+v", activated)
 	}
 	claimResponse := postWorkerJSON[api.WorkerRunLeaseResponse](t, handler, workerBearer, "/api/worker/sessions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, http.StatusOK)
-	if claimResponse.Lease == nil || claimResponse.Lease.RunID != ids.MustFromPG(first.ID).String() {
-		t.Fatalf("claim response = %+v first=%s", claimResponse, ids.MustFromPG(first.ID))
+	if claimResponse.Lease == nil || claimResponse.Lease.RunID != pgvalue.MustUUIDValue(first.ID).String() {
+		t.Fatalf("claim response = %+v first=%s", claimResponse, pgvalue.MustUUIDValue(first.ID))
 	}
 
 	draining := postWorkerJSON[api.WorkerStatusResponse](t, handler, workerBearer, "/api/worker/drain", struct{}{}, http.StatusOK)
@@ -254,8 +254,8 @@ func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 		t.Fatalf("reactivated = %+v", reactivated)
 	}
 	secondClaim := postWorkerJSON[api.WorkerRunLeaseResponse](t, handler, workerBearer, "/api/worker/sessions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, http.StatusOK)
-	if secondClaim.Lease == nil || secondClaim.Lease.RunID != ids.MustFromPG(second.ID).String() {
-		t.Fatalf("second claim = %+v second=%s", secondClaim, ids.MustFromPG(second.ID))
+	if secondClaim.Lease == nil || secondClaim.Lease.RunID != pgvalue.MustUUIDValue(second.ID).String() {
+		t.Fatalf("second claim = %+v second=%s", secondClaim, pgvalue.MustUUIDValue(second.ID))
 	}
 }
 
@@ -328,14 +328,14 @@ func mintPostgresTestWorkerToken(t *testing.T, ctx context.Context, pool *pgxpoo
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentialID, err := ids.Parse(testWorkerInstanceCredentialID)
+	credentialID, err := uuid.Parse(testWorkerInstanceCredentialID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	credential, err := queries.CreateWorkerInstanceCredentialFromBootstrap(ctx, db.CreateWorkerInstanceCredentialFromBootstrapParams{
 		BootstrapTokenHash: bootstrapTokenHash,
-		CredentialID:       ids.ToPG(credentialID),
-		WorkerInstanceID:   ids.ToPG(ids.New()),
+		CredentialID:       pgvalue.UUID(credentialID),
+		WorkerInstanceID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ResourceID:         workerID,
 		KeyPrefix:          secret.KeyPrefix,
 		SecretHash:         secret.TokenHash,
@@ -344,8 +344,8 @@ func mintPostgresTestWorkerToken(t *testing.T, ctx context.Context, pool *pgxpoo
 		t.Fatal(err)
 	}
 	token, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
-		WorkerInstanceID: ids.MustFromPG(credential.WorkerInstanceID).String(),
-		CredentialID:     ids.MustFromPG(credential.ID).String(),
+		WorkerInstanceID: pgvalue.MustUUIDValue(credential.WorkerInstanceID).String(),
+		CredentialID:     pgvalue.MustUUIDValue(credential.ID).String(),
 		IssuedAt:         time.Now(),
 		ExpiresAt:        time.Now().Add(time.Hour),
 	})
@@ -413,8 +413,8 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 		t.Fatal(err)
 	}
 	created, err := queries.CreateScopedRun(ctx, db.CreateScopedRunParams{
-		ID:                    ids.ToPG(ids.New()),
-		OrgID:                 ids.ToPG(dbtest.DefaultOrgID),
+		ID:                    pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                 pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:             scope.ProjectID,
 		EnvironmentID:         scope.EnvironmentID,
 		DeploymentID:          deploymentTask.DeploymentID,
@@ -494,7 +494,7 @@ func upsertWorkerHeartbeatForCapabilities(t *testing.T, ctx context.Context, que
 		t.Fatal(err)
 	}
 	worker, err := queries.UpsertWorkerInstanceHeartbeat(ctx, db.UpsertWorkerInstanceHeartbeatParams{
-		ID:                        ids.ToPG(ids.New()),
+		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		WorkerGroupID:             workerGroup.ID,
 		ResourceID:                resourceID,
 		Region:                    capabilities.Region,
@@ -527,7 +527,7 @@ func upsertWorkerHeartbeatForCapabilities(t *testing.T, ctx context.Context, que
 
 func seedServerTestConfiguredScope(t *testing.T, ctx context.Context, queries *db.Queries) db.GetDefaultProjectEnvironmentRow {
 	t.Helper()
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	if _, err := queries.CreateOrganization(ctx, db.CreateOrganizationParams{
 		ID:   orgID,
 		Name: "Test Organization",
@@ -543,12 +543,12 @@ func seedServerTestConfiguredScope(t *testing.T, ctx context.Context, queries *d
 		t.Fatal(err)
 	}
 	if _, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
-		ID:                   ids.ToPG(ids.New()),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                orgID,
 		Slug:                 "main",
 		Name:                 "Main",
-		EnvironmentID:        ids.ToPG(ids.New()),
-		StagingEnvironmentID: ids.ToPG(ids.New()),
+		EnvironmentID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		StagingEnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -567,7 +567,7 @@ func seedServerTestWorkerBootstrapToken(t *testing.T, ctx context.Context, _ *pg
 		t.Fatal(err)
 	}
 	if _, err := queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		TokenHash:     tokenHash,
 		WorkerGroupID: workerGroup.ID,
 	}); err != nil {
@@ -578,7 +578,7 @@ func seedServerTestWorkerBootstrapToken(t *testing.T, ctx context.Context, _ *pg
 func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, scope db.GetDefaultProjectEnvironmentRow) db.GetCurrentDeploymentTaskRow {
 	t.Helper()
 	deploymentTask, err := queries.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
-		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		TaskID:        "deploy",
@@ -604,8 +604,8 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		}
 	}
 	sourceArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Digest:        taskDeploymentSourceDigest,
@@ -617,8 +617,8 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		t.Fatal(err)
 	}
 	bundleArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Digest:        taskBundleDigest,
@@ -630,8 +630,8 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		t.Fatal(err)
 	}
 	buildManifestArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Digest:        buildManifestDigest,
@@ -643,8 +643,8 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		t.Fatal(err)
 	}
 	deploymentManifestArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Digest:        deploymentManifestDigest,
@@ -655,15 +655,15 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 	if err != nil {
 		t.Fatal(err)
 	}
-	deploymentID := ids.ToPG(ids.New())
-	deploymentVersion := ids.MustFromPG(deploymentID).String()
+	deploymentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	deploymentVersion := pgvalue.MustUUIDValue(deploymentID).String()
 	workerGroup, err := queries.GetDefaultWorkerGroup(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                         deploymentID,
-		OrgID:                      ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:                      pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:                  scope.ProjectID,
 		EnvironmentID:              scope.EnvironmentID,
 		Version:                    deploymentVersion,
@@ -677,10 +677,10 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	taskID := ids.ToPG(ids.New())
+	taskID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateDeploymentTask(ctx, db.CreateDeploymentTaskParams{
 		ID:                   taskID,
-		OrgID:                ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:                pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:            scope.ProjectID,
 		EnvironmentID:        scope.EnvironmentID,
 		DeploymentID:         deploymentID,
@@ -712,12 +712,12 @@ UPDATE deployments
    AND project_id = $4
    AND environment_id = $5
    AND id = $6
-`, buildManifestArtifact.ID, deploymentManifestArtifact.ID, ids.ToPG(dbtest.DefaultOrgID), scope.ProjectID, scope.EnvironmentID, deploymentID); err != nil {
+`, buildManifestArtifact.ID, deploymentManifestArtifact.ID, pgvalue.UUID(dbtest.DefaultOrgID), scope.ProjectID, scope.EnvironmentID, deploymentID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.PromoteDeployment(ctx, db.PromoteDeploymentParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		DeploymentID:  deploymentID,
@@ -726,7 +726,7 @@ UPDATE deployments
 		t.Fatal(err)
 	}
 	deploymentTask, err = queries.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
-		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		TaskID:        "deploy",
@@ -888,7 +888,7 @@ func newExternalServerPostgresTestDB(t *testing.T, ctx context.Context, dsn stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbName := "helmr_test_" + strings.ReplaceAll(ids.New().String(), "-", "")
+	dbName := "helmr_test_" + strings.ReplaceAll(uuid.Must(uuid.NewV7()).String(), "-", "")
 	dbIdentifier := pgx.Identifier{dbName}.Sanitize()
 	if _, err := admin.Exec(adminCtx, "CREATE DATABASE "+dbIdentifier); err != nil {
 		admin.Close()

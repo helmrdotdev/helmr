@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -219,9 +220,9 @@ func (c *Claimer) isLeaseConflict(ctx context.Context, lease Lease) (bool, error
 }
 
 func parseUUID(label string, value string) (pgtype.UUID, error) {
-	parsed, err := ids.Parse(strings.TrimSpace(value))
+	parsed, err := uuid.Parse(strings.TrimSpace(value))
 	if err != nil {
 		return pgtype.UUID{}, fmt.Errorf("%w: %s: %v", errInvalidLease, label, err)
 	}
-	return ids.ToPG(parsed), nil
+	return pgvalue.UUID(parsed), nil
 }

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -21,7 +21,7 @@ func TestRedisIndexDequeuesDueEntriesAndAcks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	instanceID := ids.New()
+	instanceID := uuid.Must(uuid.NewV7())
 	entry := IndexEntry{
 		InstanceID:  instanceID,
 		Generation:  4,
@@ -33,7 +33,7 @@ func TestRedisIndexDequeuesDueEntriesAndAcks(t *testing.T) {
 	}
 
 	leases, err := index.Dequeue(ctx, DequeueRequest{
-		WorkerID: ids.New(),
+		WorkerID: uuid.Must(uuid.NewV7()),
 		Limit:    1,
 		Now:      now,
 		Lease:    time.Minute,
@@ -52,7 +52,7 @@ func TestRedisIndexDequeuesDueEntriesAndAcks(t *testing.T) {
 	}
 
 	leases, err = index.Dequeue(ctx, DequeueRequest{
-		WorkerID: ids.New(),
+		WorkerID: uuid.Must(uuid.NewV7()),
 		Limit:    1,
 		Now:      now.Add(time.Hour),
 		Lease:    time.Minute,
@@ -76,9 +76,9 @@ func TestRedisIndexNackDelaysRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerID := ids.New()
+	workerID := uuid.Must(uuid.NewV7())
 	entry := IndexEntry{
-		InstanceID:  ids.New(),
+		InstanceID:  uuid.Must(uuid.NewV7()),
 		Generation:  1,
 		ScheduledAt: now,
 		AvailableAt: now,
@@ -126,8 +126,8 @@ func TestRedisIndexNackAfterExpiredLeaseStillDelaysRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerID := ids.New()
-	entry := IndexEntry{InstanceID: ids.New(), Generation: 1, ScheduledAt: now, AvailableAt: now}
+	workerID := uuid.Must(uuid.NewV7())
+	entry := IndexEntry{InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
 	if err := index.Enqueue(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
@@ -170,8 +170,8 @@ func TestRedisIndexReclaimAppliesBackoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	workerID := ids.New()
-	entry := IndexEntry{InstanceID: ids.New(), Generation: 1, ScheduledAt: now, AvailableAt: now}
+	workerID := uuid.Must(uuid.NewV7())
+	entry := IndexEntry{InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
 	if err := index.Enqueue(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
@@ -211,8 +211,8 @@ func TestRedisIndexEnqueueDoesNotResetInflightAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerID := ids.New()
-	entry := IndexEntry{InstanceID: ids.New(), Generation: 1, ScheduledAt: now, AvailableAt: now}
+	workerID := uuid.Must(uuid.NewV7())
+	entry := IndexEntry{InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
 	if err := index.Enqueue(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
@@ -255,8 +255,8 @@ func TestRedisIndexAckAfterExpiredLeaseCleansMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerID := ids.New()
-	entry := IndexEntry{InstanceID: ids.New(), Generation: 1, ScheduledAt: now, AvailableAt: now}
+	workerID := uuid.Must(uuid.NewV7())
+	entry := IndexEntry{InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
 	if err := index.Enqueue(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
@@ -292,8 +292,8 @@ func TestRedisIndexActiveStaleAckDoesNotDeleteNewerFire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerID := ids.New()
-	instanceID := ids.New()
+	workerID := uuid.Must(uuid.NewV7())
+	instanceID := uuid.Must(uuid.NewV7())
 	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
 		t.Fatal(err)
 	}
@@ -336,8 +336,8 @@ func TestRedisIndexActiveStaleNackDoesNotDelayNewerFire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerID := ids.New()
-	instanceID := ids.New()
+	workerID := uuid.Must(uuid.NewV7())
+	instanceID := uuid.Must(uuid.NewV7())
 	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
 		t.Fatal(err)
 	}
@@ -377,8 +377,8 @@ func TestRedisIndexExpiredStaleLeaseDoesNotDelayNewerFire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerID := ids.New()
-	instanceID := ids.New()
+	workerID := uuid.Must(uuid.NewV7())
+	instanceID := uuid.Must(uuid.NewV7())
 	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
 		t.Fatal(err)
 	}

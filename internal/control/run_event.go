@@ -13,7 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -38,7 +38,7 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	run, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
+	run, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: pgvalue.UUID(actor.OrgID), ID: pgvalue.UUID(runID)})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("run not found")))
 		return
@@ -50,8 +50,8 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 	summary := getRunSummary(run)
 	scope := auth.Scope{
 		OrgID:         actor.OrgID,
-		ProjectID:     ids.MustFromPG(summary.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(summary.EnvironmentID).String(),
+		ProjectID:     pgvalue.MustUUIDValue(summary.ProjectID).String(),
+		EnvironmentID: pgvalue.MustUUIDValue(summary.EnvironmentID).String(),
 	}
 	if err := s.requireActorScopeForRecord(r, actor, summary.ProjectID, summary.EnvironmentID); err != nil {
 		if isNoRows(err) {
@@ -69,7 +69,7 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 		s.followRunEvents(w, r, actor.OrgID, runID, cursor)
 		return
 	}
-	rows, err := s.listRunEvents(r, ids.ToPG(actor.OrgID), ids.ToPG(runID), cursor, limit)
+	rows, err := s.listRunEvents(r, pgvalue.UUID(actor.OrgID), pgvalue.UUID(runID), cursor, limit)
 	if err != nil {
 		s.log.Error("list run events failed", "run_id", runID.String(), "error", err)
 		writeError(w, errors.New("list run events"))

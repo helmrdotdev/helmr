@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -64,7 +64,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 	}
 	queries := db.New(tx)
 	org, err := queries.CreateOrganization(r.Context(), db.CreateOrganizationParams{
-		ID:   ids.ToPG(ids.New()),
+		ID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Name: name,
 		Slug: slug,
 	})
@@ -78,7 +78,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := queries.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
 		OrgID:       org.ID,
-		UserID:      ids.ToPG(actor.UserID),
+		UserID:      pgvalue.UUID(actor.UserID),
 		Role:        db.OrgMemberRoleOwner,
 		DisplayName: pgtype.Text{},
 	}); err != nil {
@@ -121,7 +121,7 @@ func (s *Server) ensureWorkerBootstrapToken(ctx context.Context, queries workerB
 		return fmt.Errorf("get default worker group: %w", err)
 	}
 	_, err = queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		TokenHash:     tokenHash,
 		WorkerGroupID: workerGroup.ID,
 	})
@@ -134,7 +134,7 @@ func (s *Server) selfHostedMode() bool {
 
 func organizationResponse(org db.Organization) api.OrganizationSummary {
 	return api.OrganizationSummary{
-		ID:        ids.MustFromPG(org.ID).String(),
+		ID:        pgvalue.MustUUIDValue(org.ID).String(),
 		Slug:      org.Slug,
 		Name:      org.Name,
 		CreatedAt: pgvalue.Time(org.CreatedAt),

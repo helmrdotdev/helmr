@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -16,10 +16,10 @@ import (
 func TestScheduleRepairEntriesAndCursorAdvance(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
-	scheduleID := ids.ToPG(ids.New())
-	instanceID := ids.ToPG(ids.New())
+	scheduleID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	instanceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	scheduledAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 
 	created, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
@@ -73,7 +73,7 @@ func TestScheduleRepairEntriesAndCursorAdvance(t *testing.T) {
 		Generation:       created.Generation,
 		LastFireAt:       pgvalue.Timestamptz(scheduledAt),
 		NextFireAt:       pgvalue.Timestamptz(next),
-		LastTriggerRunID: ids.ToPG(ids.New()),
+		LastTriggerRunID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -98,10 +98,10 @@ func TestScheduleRepairEntriesAndCursorAdvance(t *testing.T) {
 func TestScheduleTriggerFailurePersistsRetryAndExhausts(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
-	scheduleID := ids.ToPG(ids.New())
-	instanceID := ids.ToPG(ids.New())
+	scheduleID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	instanceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	scheduledAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 
 	created, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
@@ -211,10 +211,10 @@ func TestScheduleTriggerFailurePersistsRetryAndExhausts(t *testing.T) {
 func TestStopScheduleInstanceTriggerClearsCursorAndKeepsError(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
-	scheduleID := ids.ToPG(ids.New())
-	instanceID := ids.ToPG(ids.New())
+	scheduleID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	instanceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	scheduledAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 	retryAt := time.Now().UTC().Add(time.Minute).Truncate(time.Second)
 
@@ -275,12 +275,12 @@ func TestStopScheduleInstanceTriggerClearsCursorAndKeepsError(t *testing.T) {
 func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	scheduledAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 
 	single, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:    ids.ToPG(ids.New()),
+		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		ScheduleType:  db.TaskScheduleTypeImperative,
@@ -290,7 +290,7 @@ func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 		Timezone:      "UTC",
 		RunOptions:    []byte(`{}`),
 		Active:        true,
-		InstanceID:    ids.ToPG(ids.New()),
+		InstanceID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: scope.EnvironmentID,
 		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	})
@@ -317,7 +317,7 @@ func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 		t.Fatalf("single schedule row count = %d, want 0", scheduleCount)
 	}
 
-	environmentID := ids.ToPG(ids.New())
+	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
 		ID:        environmentID,
 		OrgID:     orgID,
@@ -329,7 +329,7 @@ func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:    ids.ToPG(ids.New()),
+		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		ScheduleType:  db.TaskScheduleTypeImperative,
@@ -340,7 +340,7 @@ func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 		Timezone:      "UTC",
 		RunOptions:    []byte(`{}`),
 		Active:        true,
-		InstanceID:    ids.ToPG(ids.New()),
+		InstanceID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: scope.EnvironmentID,
 		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	})
@@ -348,7 +348,7 @@ func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:    ids.ToPG(ids.New()),
+		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		ScheduleType:  db.TaskScheduleTypeImperative,
@@ -359,7 +359,7 @@ func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 		Timezone:      "UTC",
 		RunOptions:    []byte(`{}`),
 		Active:        true,
-		InstanceID:    ids.ToPG(ids.New()),
+		InstanceID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: environmentID,
 		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	}); err != nil {
@@ -405,9 +405,9 @@ func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstances(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
-	environmentID := ids.ToPG(ids.New())
+	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
 		ID:        environmentID,
 		OrgID:     orgID,
@@ -422,7 +422,7 @@ func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstanc
 	userDedupKey := pgtype.Text{String: "daily-report", Valid: true}
 	firstScheduledAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	first, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:    ids.ToPG(ids.New()),
+		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		ScheduleType:  db.TaskScheduleTypeImperative,
@@ -433,7 +433,7 @@ func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstanc
 		Timezone:      "UTC",
 		RunOptions:    []byte(`{"queue":"default"}`),
 		Active:        true,
-		InstanceID:    ids.ToPG(ids.New()),
+		InstanceID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: scope.EnvironmentID,
 		NextFireAt:    pgvalue.Timestamptz(firstScheduledAt),
 	})
@@ -443,7 +443,7 @@ func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstanc
 
 	secondScheduledAt := firstScheduledAt.Add(time.Hour)
 	second, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:    ids.ToPG(ids.New()),
+		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		ScheduleType:  db.TaskScheduleTypeImperative,
@@ -454,7 +454,7 @@ func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstanc
 		Timezone:      "America/New_York",
 		RunOptions:    []byte(`{"queue":"preview"}`),
 		Active:        false,
-		InstanceID:    ids.ToPG(ids.New()),
+		InstanceID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: environmentID,
 		NextFireAt:    pgvalue.Timestamptz(secondScheduledAt),
 	})
@@ -503,12 +503,12 @@ func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstanc
 func TestScheduleDedupKeysAreNamespacedByScheduleType(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	scheduledAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 
 	declarative, err := queries.CreateDeclarativeSchedule(ctx, db.CreateDeclarativeScheduleParams{
-		ScheduleID:    ids.ToPG(ids.New()),
+		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		TaskID:        "shared-key",
@@ -518,7 +518,7 @@ func TestScheduleDedupKeysAreNamespacedByScheduleType(t *testing.T) {
 		Timezone:      "UTC",
 		RunOptions:    []byte(`{}`),
 		Active:        true,
-		InstanceID:    ids.ToPG(ids.New()),
+		InstanceID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: scope.EnvironmentID,
 		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	})
@@ -526,7 +526,7 @@ func TestScheduleDedupKeysAreNamespacedByScheduleType(t *testing.T) {
 		t.Fatal(err)
 	}
 	imperative, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:    ids.ToPG(ids.New()),
+		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		ScheduleType:  db.TaskScheduleTypeImperative,
@@ -537,7 +537,7 @@ func TestScheduleDedupKeysAreNamespacedByScheduleType(t *testing.T) {
 		Timezone:      "UTC",
 		RunOptions:    []byte(`{}`),
 		Active:        true,
-		InstanceID:    ids.ToPG(ids.New()),
+		InstanceID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: scope.EnvironmentID,
 		NextFireAt:    pgvalue.Timestamptz(scheduledAt.Add(time.Hour)),
 	})
@@ -555,7 +555,7 @@ func TestScheduleDedupKeysAreNamespacedByScheduleType(t *testing.T) {
 func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	staging, err := queries.GetEnvironmentBySlug(ctx, db.GetEnvironmentBySlugParams{
 		OrgID:     orgID,
@@ -570,7 +570,7 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 	userDedupKey := pgtype.Text{String: "shared-schedule", Valid: true}
 	scheduledAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	first, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:    ids.ToPG(ids.New()),
+		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		ScheduleType:  db.TaskScheduleTypeImperative,
@@ -581,7 +581,7 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 		Timezone:      "UTC",
 		RunOptions:    []byte(`{}`),
 		Active:        true,
-		InstanceID:    ids.ToPG(ids.New()),
+		InstanceID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: scope.EnvironmentID,
 		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	})
@@ -589,7 +589,7 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 		t.Fatal(err)
 	}
 	second, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:    ids.ToPG(ids.New()),
+		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		ScheduleType:  db.TaskScheduleTypeImperative,
@@ -600,7 +600,7 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 		Timezone:      "UTC",
 		RunOptions:    []byte(`{}`),
 		Active:        true,
-		InstanceID:    ids.ToPG(ids.New()),
+		InstanceID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: environmentID,
 		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	})

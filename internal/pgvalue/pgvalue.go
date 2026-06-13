@@ -2,9 +2,11 @@
 package pgvalue
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -72,4 +74,34 @@ func Int4Response(value pgtype.Int4) *int32 {
 		return nil
 	}
 	return &value.Int32
+}
+
+func UUID(value uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: value, Valid: true}
+}
+
+func UUIDValue(value pgtype.UUID) (uuid.UUID, error) {
+	if !value.Valid {
+		return uuid.Nil, fmt.Errorf("uuid is null")
+	}
+	return uuid.UUID(value.Bytes), nil
+}
+
+func MustUUIDValue(value pgtype.UUID) uuid.UUID {
+	id, err := UUIDValue(value)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
+func UUIDString(value pgtype.UUID) string {
+	if !value.Valid {
+		return ""
+	}
+	id, err := UUIDValue(value)
+	if err != nil {
+		return ""
+	}
+	return id.String()
 }

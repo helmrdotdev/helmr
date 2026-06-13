@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,7 +25,7 @@ const organizationTestAuthSecret = "abcdefghijabcdefghijabcdefghij12"
 func TestCreateOrganizationRequiresSetupTokenAndSingleton(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newServerPostgresTestDB(t, ctx)
-	userID := ids.New()
+	userID := uuid.Must(uuid.NewV7())
 	rawSession := createOrganizationTestSession(t, ctx, queries, pool, userID, "owner@example.test")
 	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DBTX: pool, AuthSecret: []byte(organizationTestAuthSecret), PublicURL: mustParseTestURL("https://helmr.example.test"), SetupToken: "setup-secret"})
 
@@ -71,13 +70,13 @@ func TestCreateOrganizationRequiresSetupTokenAndSingleton(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	orgID, err := ids.Parse(created.ID)
+	orgID, err := uuid.Parse(created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	member, err := queries.GetOrgMember(ctx, db.GetOrgMemberParams{
-		OrgID:  ids.ToPG(orgID),
-		UserID: ids.ToPG(userID),
+		OrgID:  pgvalue.UUID(orgID),
+		UserID: pgvalue.UUID(userID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -96,8 +95,8 @@ func TestCreateOrganizationRequiresSetupTokenAndSingleton(t *testing.T) {
 func TestMeReturnsAccessRequiredAfterSingletonOrganizationExists(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newServerPostgresTestDB(t, ctx)
-	ownerID := ids.New()
-	otherID := ids.New()
+	ownerID := uuid.Must(uuid.NewV7())
+	otherID := uuid.Must(uuid.NewV7())
 	ownerSession := createOrganizationTestSession(t, ctx, queries, pool, ownerID, "owner@example.test")
 	otherSession := createOrganizationTestSession(t, ctx, queries, pool, otherID, "other@example.test")
 	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DBTX: pool, AuthSecret: []byte(organizationTestAuthSecret), PublicURL: mustParseTestURL("https://helmr.example.test"), SetupToken: "setup-secret"})
@@ -122,8 +121,8 @@ func TestMeReturnsAccessRequiredAfterSingletonOrganizationExists(t *testing.T) {
 func TestManagedCloudAllowsMultipleOrganizationsWithoutSetupToken(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newServerPostgresTestDB(t, ctx)
-	firstUserID := ids.New()
-	secondUserID := ids.New()
+	firstUserID := uuid.Must(uuid.NewV7())
+	secondUserID := uuid.Must(uuid.NewV7())
 	firstSession := createOrganizationTestSession(t, ctx, queries, pool, firstUserID, "first@example.test")
 	secondSession := createOrganizationTestSession(t, ctx, queries, pool, secondUserID, "second@example.test")
 	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DeploymentMode: deploymentModeManagedCloud, DBTX: pool, AuthSecret: []byte(organizationTestAuthSecret), PublicURL: mustParseTestURL("https://helmr.example.test")})
@@ -158,7 +157,7 @@ func TestManagedCloudAllowsMultipleOrganizationsWithoutSetupToken(t *testing.T) 
 
 func createOrganizationTestSession(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, userID uuid.UUID, email string) string {
 	t.Helper()
-	if _, err := pool.Exec(ctx, `INSERT INTO users (id, display_name, primary_email) VALUES ($1, $2, $3)`, ids.ToPG(userID), email, email); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, display_name, primary_email) VALUES ($1, $2, $3)`, pgvalue.UUID(userID), email, email); err != nil {
 		t.Fatal(err)
 	}
 	rawSession := "session-" + userID.String()
@@ -167,9 +166,9 @@ func createOrganizationTestSession(t *testing.T, ctx context.Context, queries *d
 		t.Fatal(err)
 	}
 	if _, err := queries.CreateSession(ctx, db.CreateSessionParams{
-		ID:        ids.ToPG(ids.New()),
+		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:     pgtype.UUID{},
-		UserID:    ids.ToPG(userID),
+		UserID:    pgvalue.UUID(userID),
 		TokenHash: tokenHash,
 		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	}); err != nil {

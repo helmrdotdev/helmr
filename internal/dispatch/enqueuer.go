@@ -8,7 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -198,7 +198,7 @@ func requirementsFromRow(row db.PrepareQueuedRunQueueItemRow) (compute.RunRuntim
 }
 
 func pgUUIDString(value pgtype.UUID) (string, error) {
-	parsed, err := ids.FromPG(value)
+	parsed, err := pgvalue.UUIDValue(value)
 	if err != nil {
 		return "", err
 	}

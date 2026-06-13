@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -19,10 +19,10 @@ import (
 
 func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, workerInstanceID pgtype.UUID) pgtype.UUID {
 	t.Helper()
-	sessionID := ids.ToPG(ids.New())
-	checkpointID := ids.ToPG(ids.New())
-	runWaitID := ids.ToPG(ids.New())
-	waitpointID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runWaitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	waitpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := pool.Exec(ctx, `
 	INSERT INTO run_execution_sessions (
 	    id,
@@ -97,8 +97,8 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	`, checkpointID, orgID, runID, sessionID); err != nil {
 		t.Fatal(err)
 	}
-	runtimeConfigArtifactID := ids.ToPG(ids.New())
-	workspaceArtifactID := ids.ToPG(ids.New())
+	runtimeConfigArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	workspaceArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := pool.Exec(ctx, `
 	INSERT INTO cas_objects (digest, size_bytes, media_type)
 	VALUES
@@ -889,7 +889,7 @@ SELECT session_id, attempt_number, payload
 		t.Fatal(err)
 	}
 	if gotSessionID != sessionID || !gotAttemptNumber.Valid || gotAttemptNumber.Int32 != attemptNumber {
-		t.Fatalf("run event %q session = %+v attempt = %+v, want session %s attempt %d", kind, gotSessionID, gotAttemptNumber, ids.MustFromPG(sessionID), attemptNumber)
+		t.Fatalf("run event %q session = %+v attempt = %+v, want session %s attempt %d", kind, gotSessionID, gotAttemptNumber, pgvalue.MustUUIDValue(sessionID), attemptNumber)
 	}
 	requireCanonicalJSON(t, "run event payload", gotPayload, wantPayload)
 }
@@ -918,7 +918,7 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	messageID := "message-" + suffix
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, messageID)
-	sessionID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
@@ -940,9 +940,9 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	checkpointID := ids.ToPG(ids.New())
-	runWaitID := ids.ToPG(ids.New())
-	waitpointID := ids.ToPG(ids.New())
+	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runWaitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	waitpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
@@ -995,7 +995,7 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 
 func seedWaitpointResponseToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, waitpointID pgtype.UUID, tokenHash []byte, externalSubject string) pgtype.UUID {
 	t.Helper()
-	tokenID := ids.ToPG(ids.New())
+	tokenID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := pool.Exec(ctx, `
 INSERT INTO waitpoint_response_tokens (id, org_id, project_id, environment_id, waitpoint_id, token_hash, expires_at, external_subject, metadata)
 SELECT $1, $2, waitpoints.project_id, waitpoints.environment_id, $4, $5, now() + interval '5 minutes', $6, '{}'
@@ -1023,7 +1023,7 @@ func respondWaitpointToken(ctx context.Context, queries *db.Queries, orgID, wait
 		return err
 	}
 	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
-		ID:                   ids.ToPG(ids.New()),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                orgID,
 		WaitpointID:          waitpointID,
 		ResponseKey:          responseKey,

@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 var uuidNil uuid.UUID
@@ -18,7 +18,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unauthorized(errors.New("session authentication is required")))
 		return
 	}
-	state, err := s.db.GetUserOnboardingState(r.Context(), ids.ToPG(actor.UserID))
+	state, err := s.db.GetUserOnboardingState(r.Context(), pgvalue.UUID(actor.UserID))
 	if err != nil {
 		if isNoRows(err) {
 			writeError(w, unauthorized(errors.New("authentication is required")))
@@ -35,7 +35,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		ProjectRequired: state.OrgID.Valid && !state.HasProjects,
 	}
 	if state.OrgID.Valid {
-		orgID, err := ids.FromPG(state.OrgID)
+		orgID, err := pgvalue.UUIDValue(state.OrgID)
 		if err != nil {
 			writeError(w, errors.New("load current organization"))
 			return

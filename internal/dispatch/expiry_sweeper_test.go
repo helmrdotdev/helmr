@@ -8,14 +8,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestSweepOnce(t *testing.T) {
-	orgA := ids.ToPG(ids.New())
-	orgB := ids.ToPG(ids.New())
+	orgA := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgB := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeSweeperStore{orgIDs: []pgtype.UUID{orgA, orgB}}
 	if err := sweepOnce(context.Background(), store, DefaultExpirySweepOrgLimit); err != nil {
 		t.Fatal(err)
@@ -34,7 +35,7 @@ func TestSweepOnce(t *testing.T) {
 func TestSweepOnceStopsAfterRequeueError(t *testing.T) {
 	store := &fakeSweeperStore{
 		fakeSweeperOrgStore: fakeSweeperOrgStore{requeueErr: errors.New("requeue failed")},
-		orgIDs:              []pgtype.UUID{ids.ToPG(ids.New())},
+		orgIDs:              []pgtype.UUID{pgvalue.UUID(uuid.Must(uuid.NewV7()))},
 	}
 	if err := sweepOnce(context.Background(), store, DefaultExpirySweepOrgLimit); err == nil {
 		t.Fatal("expected error")
@@ -45,8 +46,8 @@ func TestSweepOnceStopsAfterRequeueError(t *testing.T) {
 }
 
 func TestSweepOnceContinuesAfterOrgError(t *testing.T) {
-	orgA := ids.ToPG(ids.New())
-	orgB := ids.ToPG(ids.New())
+	orgA := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgB := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeSweeperStore{
 		fakeSweeperOrgStore: fakeSweeperOrgStore{requeueErrs: map[pgtype.UUID]error{orgA: errors.New("requeue failed")}},
 		orgIDs:              []pgtype.UUID{orgA, orgB},
@@ -63,9 +64,9 @@ func TestSweepOnceContinuesAfterOrgError(t *testing.T) {
 }
 
 func TestSweeperPaginatesOrganizations(t *testing.T) {
-	orgA := ids.ToPG(ids.New())
-	orgB := ids.ToPG(ids.New())
-	orgC := ids.ToPG(ids.New())
+	orgA := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgB := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgC := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeSweeperStore{pages: [][]pgtype.UUID{{orgA, orgB}, {orgC}}}
 	sweeper, err := NewExpirySweeper(store, WithExpirySweepOrgLimit(2))
 	if err != nil {
@@ -83,7 +84,7 @@ func TestSweeperPaginatesOrganizations(t *testing.T) {
 }
 
 func TestSweepExpiredForOrgUsesProvidedOrg(t *testing.T) {
-	orgID := ids.ToPG(ids.New())
+	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeSweeperOrgStore{}
 	if err := SweepExpiredForOrg(context.Background(), store, orgID); err != nil {
 		t.Fatal(err)
@@ -184,7 +185,7 @@ func TestSweeperSkipsWhenLockIsHeld(t *testing.T) {
 
 func TestSweeperUnlocksAfterSweep(t *testing.T) {
 	lock := &fakeSweepLock{locked: true}
-	sweeper, err := NewExpirySweeper(&fakeSweeperStore{orgIDs: []pgtype.UUID{ids.ToPG(ids.New())}}, WithExpirySweepLock(lock))
+	sweeper, err := NewExpirySweeper(&fakeSweeperStore{orgIDs: []pgtype.UUID{pgvalue.UUID(uuid.Must(uuid.NewV7()))}}, WithExpirySweepLock(lock))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +201,7 @@ func TestSweeperUnlocksAfterSweepError(t *testing.T) {
 	lock := &fakeSweepLock{locked: true}
 	sweeper, err := NewExpirySweeper(&fakeSweeperStore{
 		fakeSweeperOrgStore: fakeSweeperOrgStore{requeueErr: errors.New("requeue failed")},
-		orgIDs:              []pgtype.UUID{ids.ToPG(ids.New())},
+		orgIDs:              []pgtype.UUID{pgvalue.UUID(uuid.Must(uuid.NewV7()))},
 	}, WithExpirySweepLock(lock))
 	if err != nil {
 		t.Fatal(err)

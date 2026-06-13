@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -100,7 +99,7 @@ func (e *Engine) RegisterNext(ctx context.Context, instance Instance) error {
 	if !instance.Active || !instance.NextFireAt.Valid {
 		return nil
 	}
-	instanceID, err := ids.FromPG(instance.InstanceID)
+	instanceID, err := pgvalue.UUIDValue(instance.InstanceID)
 	if err != nil {
 		return fmt.Errorf("schedule instance id is invalid: %v", err)
 	}
@@ -125,13 +124,13 @@ func (e *Engine) Fire(ctx context.Context, lease IndexLease) error {
 		return errors.New("schedule run creator is required")
 	}
 	candidate, err := e.db.GetScheduleTriggerCandidate(ctx, db.GetScheduleTriggerCandidateParams{
-		InstanceID:  ids.ToPG(lease.Entry.InstanceID),
+		InstanceID:  pgvalue.UUID(lease.Entry.InstanceID),
 		Generation:  lease.Entry.Generation,
 		ScheduledAt: pgvalue.TimestamptzUTCZeroInvalid(lease.Entry.ScheduledAt),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		retryAfter, retryErr := e.db.GetScheduleRetryAfter(ctx, db.GetScheduleRetryAfterParams{
-			InstanceID:  ids.ToPG(lease.Entry.InstanceID),
+			InstanceID:  pgvalue.UUID(lease.Entry.InstanceID),
 			Generation:  lease.Entry.Generation,
 			ScheduledAt: pgvalue.TimestamptzUTCZeroInvalid(lease.Entry.ScheduledAt),
 		})
@@ -334,7 +333,7 @@ func (e *Engine) availableAt(instanceID pgtype.UUID, scheduledAt pgtype.Timestam
 	if retryAfter.Valid {
 		return retryAfter.Time.UTC(), nil
 	}
-	id, err := ids.FromPG(instanceID)
+	id, err := pgvalue.UUIDValue(instanceID)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("schedule instance id is invalid: %v", err)
 	}

@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -17,9 +17,9 @@ import (
 func TestEngineRepairRegistersEveryPage(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	firstID := ids.New()
-	secondID := ids.New()
-	thirdID := ids.New()
+	firstID := uuid.Must(uuid.NewV7())
+	secondID := uuid.Must(uuid.NewV7())
+	thirdID := uuid.Must(uuid.NewV7())
 	store := &fakeRepairStore{
 		pages: [][]db.ListScheduleRepairEntriesRow{
 			{
@@ -53,7 +53,7 @@ func TestEngineRepairRegistersEveryPage(t *testing.T) {
 	if store.args[0].AfterAvailableAt.Valid {
 		t.Fatalf("first page after_available_at = %+v, want invalid", store.args[0].AfterAvailableAt)
 	}
-	if !store.args[1].AfterAvailableAt.Time.Equal(now.Add(2*time.Minute)) || ids.MustFromPG(store.args[1].AfterInstanceID) != secondID {
+	if !store.args[1].AfterAvailableAt.Time.Equal(now.Add(2*time.Minute)) || pgvalue.MustUUIDValue(store.args[1].AfterInstanceID) != secondID {
 		t.Fatalf("second page cursor = %+v / %+v", store.args[1].AfterAvailableAt, store.args[1].AfterInstanceID)
 	}
 }
@@ -83,11 +83,11 @@ func scheduleRepairRow(instanceID uuid.UUID, generation int64, scheduledAt time.
 		availableAt = retryAfter
 	}
 	return db.ListScheduleRepairEntriesRow{
-		ScheduleID:    ids.ToPG(ids.New()),
-		InstanceID:    ids.ToPG(instanceID),
-		OrgID:         ids.ToPG(ids.New()),
-		ProjectID:     ids.ToPG(ids.New()),
-		EnvironmentID: ids.ToPG(ids.New()),
+		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		InstanceID:    pgvalue.UUID(instanceID),
+		OrgID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ProjectID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Generation:    generation,
 		NextFireAt:    pgtype.Timestamptz{Time: scheduledAt.UTC(), Valid: true},
 		RetryAfter:    retryAfter,

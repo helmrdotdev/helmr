@@ -11,11 +11,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -84,7 +85,7 @@ func TestCreateGetAndListRun(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	if created.DeploymentID != ids.MustFromPG(testDeploymentID()).String() || created.DeploymentTaskID != ids.MustFromPG(testDeploymentTaskID()).String() {
+	if created.DeploymentID != pgvalue.MustUUIDValue(testDeploymentID()).String() || created.DeploymentTaskID != pgvalue.MustUUIDValue(testDeploymentTaskID()).String() {
 		t.Fatalf("created deployment pin = %s/%s", created.DeploymentID, created.DeploymentTaskID)
 	}
 
@@ -137,10 +138,10 @@ func TestCreateGetAndListRun(t *testing.T) {
 func TestListRunsQuery(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
-	runID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
 	store.run = db.Run{
-		ID:               ids.ToPG(runID),
-		OrgID:            ids.ToPG(dbtest.DefaultOrgID),
+		ID:               pgvalue.UUID(runID),
+		OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:        testProjectID(),
 		EnvironmentID:    testEnvironmentID(),
 		DeploymentID:     testDeploymentID(),
@@ -174,10 +175,10 @@ func TestAPIKeyListRunsUsesActorEnvironmentScope(t *testing.T) {
 		permissions:   []auth.Permission{auth.PermissionRunsRead},
 	}, Secrets: fakeSecrets{}},
 	)
-	runID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
 	store.run = db.Run{
-		ID:               ids.ToPG(runID),
-		OrgID:            ids.ToPG(dbtest.DefaultOrgID),
+		ID:               pgvalue.UUID(runID),
+		OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:        testProjectID(),
 		EnvironmentID:    testEnvironmentID(),
 		DeploymentID:     testDeploymentID(),
@@ -218,11 +219,11 @@ func TestListRunsRunningFilterReturnsLeasedAsPublicRunning(t *testing.T) {
 		{name: "org", path: "/api/runs?status=running"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			runID := ids.New()
+			runID := uuid.Must(uuid.NewV7())
 			store := &fakeStore{
 				run: db.Run{
-					ID:               ids.ToPG(runID),
-					OrgID:            ids.ToPG(dbtest.DefaultOrgID),
+					ID:               pgvalue.UUID(runID),
+					OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
 					ProjectID:        testProjectID(),
 					EnvironmentID:    testEnvironmentID(),
 					DeploymentID:     testDeploymentID(),
@@ -259,7 +260,7 @@ func TestListRunsRunningFilterReturnsLeasedAsPublicRunning(t *testing.T) {
 
 func TestRunResponseMapsLeasedToRunning(t *testing.T) {
 	response := runResponse(runSummary{
-		ID:               ids.ToPG(ids.New()),
+		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ProjectID:        testProjectID(),
 		EnvironmentID:    testEnvironmentID(),
 		DeploymentID:     testDeploymentID(),

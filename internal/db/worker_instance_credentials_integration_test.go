@@ -4,23 +4,24 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestCreateWorkerInstanceCredentialFromBootstrapRotatesExistingHostCredential(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	tokenHash := []byte("bootstrap-token-hash")
-	workerInstanceID := ids.ToPG(ids.New())
+	workerInstanceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 
 	seedPostgresTestWorkerBootstrapToken(t, ctx, pool, queries, orgID, tokenHash)
 
 	first, err := queries.CreateWorkerInstanceCredentialFromBootstrap(ctx, db.CreateWorkerInstanceCredentialFromBootstrapParams{
 		BootstrapTokenHash: tokenHash,
-		CredentialID:       ids.ToPG(ids.New()),
+		CredentialID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		WorkerInstanceID:   workerInstanceID,
 		ResourceID:         "instance-a",
 		KeyPrefix:          "first",
@@ -31,8 +32,8 @@ func TestCreateWorkerInstanceCredentialFromBootstrapRotatesExistingHostCredentia
 	}
 	second, err := queries.CreateWorkerInstanceCredentialFromBootstrap(ctx, db.CreateWorkerInstanceCredentialFromBootstrapParams{
 		BootstrapTokenHash: tokenHash,
-		CredentialID:       ids.ToPG(ids.New()),
-		WorkerInstanceID:   ids.ToPG(ids.New()),
+		CredentialID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		WorkerInstanceID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ResourceID:         "instance-a",
 		KeyPrefix:          "second",
 		SecretHash:         []byte("second-secret-hash"),
@@ -65,14 +66,14 @@ SELECT count(*)
 		t.Fatal(err)
 	}
 	if authenticated.ID != second.ID {
-		t.Fatalf("authenticated credential = %s, want %s", ids.MustFromPG(authenticated.ID), ids.MustFromPG(second.ID))
+		t.Fatalf("authenticated credential = %s, want %s", pgvalue.MustUUIDValue(authenticated.ID), pgvalue.MustUUIDValue(second.ID))
 	}
 }
 
 func TestWorkerInstanceResourceIdentifierIsScopedByWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	firstTokenHash := []byte("first-group-bootstrap-token-hash")
 	secondTokenHash := []byte("second-group-bootstrap-token-hash")
 
@@ -83,14 +84,14 @@ func TestWorkerInstanceResourceIdentifierIsScopedByWorkerGroup(t *testing.T) {
 	}
 	secondGroupID := createPostgresTestWorkerGroup(t, ctx, pool, "secondary")
 	if _, err := queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		TokenHash:     firstTokenHash,
 		WorkerGroupID: defaultGroup.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		TokenHash:     secondTokenHash,
 		WorkerGroupID: secondGroupID,
 	}); err != nil {
@@ -99,8 +100,8 @@ func TestWorkerInstanceResourceIdentifierIsScopedByWorkerGroup(t *testing.T) {
 
 	first, err := queries.CreateWorkerInstanceCredentialFromBootstrap(ctx, db.CreateWorkerInstanceCredentialFromBootstrapParams{
 		BootstrapTokenHash: firstTokenHash,
-		CredentialID:       ids.ToPG(ids.New()),
-		WorkerInstanceID:   ids.ToPG(ids.New()),
+		CredentialID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		WorkerInstanceID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ResourceID:         "shared-resource",
 		KeyPrefix:          "first",
 		SecretHash:         []byte("first-group-secret-hash"),
@@ -110,8 +111,8 @@ func TestWorkerInstanceResourceIdentifierIsScopedByWorkerGroup(t *testing.T) {
 	}
 	second, err := queries.CreateWorkerInstanceCredentialFromBootstrap(ctx, db.CreateWorkerInstanceCredentialFromBootstrapParams{
 		BootstrapTokenHash: secondTokenHash,
-		CredentialID:       ids.ToPG(ids.New()),
-		WorkerInstanceID:   ids.ToPG(ids.New()),
+		CredentialID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		WorkerInstanceID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ResourceID:         "shared-resource",
 		KeyPrefix:          "second",
 		SecretHash:         []byte("second-group-secret-hash"),
@@ -120,20 +121,20 @@ func TestWorkerInstanceResourceIdentifierIsScopedByWorkerGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	if first.WorkerInstanceID == second.WorkerInstanceID {
-		t.Fatalf("worker instance id reused across groups: %s", ids.MustFromPG(first.WorkerInstanceID))
+		t.Fatalf("worker instance id reused across groups: %s", pgvalue.MustUUIDValue(first.WorkerInstanceID))
 	}
 	if first.WorkerGroupID != defaultGroup.ID {
-		t.Fatalf("first worker group = %s, want %s", ids.MustFromPG(first.WorkerGroupID), ids.MustFromPG(defaultGroup.ID))
+		t.Fatalf("first worker group = %s, want %s", pgvalue.MustUUIDValue(first.WorkerGroupID), pgvalue.MustUUIDValue(defaultGroup.ID))
 	}
 	if second.WorkerGroupID != secondGroupID {
-		t.Fatalf("second worker group = %s, want %s", ids.MustFromPG(second.WorkerGroupID), ids.MustFromPG(secondGroupID))
+		t.Fatalf("second worker group = %s, want %s", pgvalue.MustUUIDValue(second.WorkerGroupID), pgvalue.MustUUIDValue(secondGroupID))
 	}
 }
 
 func TestWorkerBootstrapTokenConflictIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	tokenHash := []byte("stable-bootstrap-token-hash")
 
 	seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
@@ -143,7 +144,7 @@ func TestWorkerBootstrapTokenConflictIsIdempotent(t *testing.T) {
 	}
 
 	created, err := queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		TokenHash:     tokenHash,
 		WorkerGroupID: workerGroup.ID,
 	})
@@ -152,7 +153,7 @@ func TestWorkerBootstrapTokenConflictIsIdempotent(t *testing.T) {
 	}
 
 	reused, err := queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		TokenHash:     tokenHash,
 		WorkerGroupID: workerGroup.ID,
 	})
@@ -163,11 +164,11 @@ func TestWorkerBootstrapTokenConflictIsIdempotent(t *testing.T) {
 		t.Fatalf("reused token id = %v, want %v", reused.ID, created.ID)
 	}
 	if reused.WorkerGroupID != workerGroup.ID {
-		t.Fatalf("reused worker group = %s, want %s", ids.MustFromPG(reused.WorkerGroupID), ids.MustFromPG(workerGroup.ID))
+		t.Fatalf("reused worker group = %s, want %s", pgvalue.MustUUIDValue(reused.WorkerGroupID), pgvalue.MustUUIDValue(workerGroup.ID))
 	}
 	secondWorkerGroupID := createPostgresTestWorkerGroup(t, ctx, pool, "token-secondary")
 	again, err := queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		TokenHash:     tokenHash,
 		WorkerGroupID: secondWorkerGroupID,
 	})
@@ -178,6 +179,6 @@ func TestWorkerBootstrapTokenConflictIsIdempotent(t *testing.T) {
 		t.Fatalf("reused token id after conflicting group = %v, want %v", again.ID, created.ID)
 	}
 	if again.WorkerGroupID != workerGroup.ID {
-		t.Fatalf("reused worker group after conflicting group = %s, want preserved %s", ids.MustFromPG(again.WorkerGroupID), ids.MustFromPG(workerGroup.ID))
+		t.Fatalf("reused worker group after conflicting group = %s, want preserved %s", pgvalue.MustUUIDValue(again.WorkerGroupID), pgvalue.MustUUIDValue(workerGroup.ID))
 	}
 }

@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -47,7 +47,7 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid waitpoint token request JSON: %w", err)))
 		return
 	}
-	waitpointID, err := ids.Parse(request.WaitpointID)
+	waitpointID, err := uuid.Parse(request.WaitpointID)
 	if err != nil {
 		writeError(w, badRequest(errors.New("waitpoint_id must be a UUID")))
 		return
@@ -65,8 +65,8 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := actorFromContext(r.Context())
 	pending, err := s.db.GetWaitpointForResponseTokenCreation(r.Context(), db.GetWaitpointForResponseTokenCreationParams{
-		OrgID:       ids.ToPG(actor.OrgID),
-		WaitpointID: ids.ToPG(waitpointID),
+		OrgID:       pgvalue.UUID(actor.OrgID),
+		WaitpointID: pgvalue.UUID(waitpointID),
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("pending waitpoint not found")))
@@ -79,8 +79,8 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 	}
 	scope := auth.Scope{
 		OrgID:         actor.OrgID,
-		ProjectID:     ids.MustFromPG(pending.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(pending.EnvironmentID).String(),
+		ProjectID:     pgvalue.MustUUIDValue(pending.ProjectID).String(),
+		EnvironmentID: pgvalue.MustUUIDValue(pending.EnvironmentID).String(),
 	}
 	if err := s.requireActorScopeForRecord(r, actor, pending.ProjectID, pending.EnvironmentID); err != nil {
 		if isNoRows(err) {
@@ -104,9 +104,9 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token, err := s.db.CreateWaitpointResponseToken(r.Context(), db.CreateWaitpointResponseTokenParams{
-		ID:              ids.ToPG(ids.New()),
-		OrgID:           ids.ToPG(actor.OrgID),
-		WaitpointID:     ids.ToPG(waitpointID),
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(actor.OrgID),
+		WaitpointID:     pgvalue.UUID(waitpointID),
 		TokenHash:       tokenHash,
 		ExpiresAt:       pgvalue.Timestamptz(expiresAt),
 		ExternalSubject: pgtype.Text{},
@@ -133,7 +133,7 @@ func (s *Server) respondWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("token hashing is not configured")))
 		return
 	}
-	tokenID, err := ids.Parse(chi.URLParam(r, "tokenID"))
+	tokenID, err := uuid.Parse(chi.URLParam(r, "tokenID"))
 	if err != nil {
 		writeError(w, badRequest(errors.New("tokenID must be a UUID")))
 		return
@@ -155,7 +155,7 @@ func (s *Server) respondWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token, err := s.db.GetWaitpointResponseTokenForRespond(r.Context(), db.GetWaitpointResponseTokenForRespondParams{
-		ID:        ids.ToPG(tokenID),
+		ID:        pgvalue.UUID(tokenID),
 		TokenHash: tokenHash,
 	})
 	if isNoRows(err) {
@@ -178,14 +178,14 @@ func (s *Server) respondWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	response.EventPayload["waitpoint_id"] = ids.MustFromPG(token.WaitpointID).String()
+	response.EventPayload["waitpoint_id"] = pgvalue.MustUUIDValue(token.WaitpointID).String()
 	eventJSON, err := json.Marshal(response.EventPayload)
 	if err != nil {
 		writeError(w, errors.New("encode waitpoint resolved event"))
 		return
 	}
 	recordParams := db.RecordWaitpointResponseParams{
-		ID:                   ids.ToPG(ids.New()),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                token.OrgID,
 		WaitpointID:          token.WaitpointID,
 		ResponseKey:          "token:" + tokenID.String(),
@@ -210,7 +210,7 @@ func (s *Server) respondWaitpointToken(w http.ResponseWriter, r *http.Request) {
 	}
 	markParams := db.MarkWaitpointResponseTokenCompletedParams{
 		OrgID:                token.OrgID,
-		ID:                   ids.ToPG(tokenID),
+		ID:                   pgvalue.UUID(tokenID),
 		TokenHash:            tokenHash,
 		CompletedByPrincipal: pgtype.Text{String: principal, Valid: true},
 		CompletedVia:         pgtype.Text{String: "waitpoint_response_token", Valid: true},
@@ -368,9 +368,9 @@ func (s *Server) waitpointTokenResponseFromCreate(row db.WaitpointResponseToken,
 		expiresAtPtr = &expiresAt
 	}
 	return api.WaitpointTokenResponse{
-		ID:          ids.MustFromPG(row.ID).String(),
-		WaitpointID: ids.MustFromPG(row.WaitpointID).String(),
-		URL:         s.waitpointTokenURL(ids.MustFromPG(row.ID).String(), rawToken),
+		ID:          pgvalue.MustUUIDValue(row.ID).String(),
+		WaitpointID: pgvalue.MustUUIDValue(row.WaitpointID).String(),
+		URL:         s.waitpointTokenURL(pgvalue.MustUUIDValue(row.ID).String(), rawToken),
 		Token:       rawToken,
 		ExpiresAt:   expiresAtPtr,
 	}

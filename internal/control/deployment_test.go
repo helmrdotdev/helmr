@@ -14,12 +14,13 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -183,7 +184,7 @@ func TestCreateDeploymentReusesDeployedContentHashWithoutPromotion(t *testing.T)
 	store := &fakeStore{
 		createDeploymentResult: &db.Deployment{
 			ID:                         testDeploymentID(),
-			OrgID:                      ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:                      pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:                  testProjectID(),
 			EnvironmentID:              testEnvironmentID(),
 			ContentHash:                digest,
@@ -196,7 +197,7 @@ func TestCreateDeploymentReusesDeployedContentHashWithoutPromotion(t *testing.T)
 		},
 		artifacts: []db.Artifact{{
 			ID:            testArtifactID(),
-			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Digest:        digest,
@@ -315,7 +316,7 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 	store := &fakeStore{
 		deployment: db.Deployment{
 			ID:                         testDeploymentID(),
-			OrgID:                      ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:                      pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:                  testProjectID(),
 			EnvironmentID:              testEnvironmentID(),
 			DeploymentSourceArtifactID: testArtifactID(),
@@ -326,7 +327,7 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 		deploymentTasks: []db.DeploymentTask{
 			{
 				ID:               testDeploymentTaskID(),
-				OrgID:            ids.ToPG(dbtest.DefaultOrgID),
+				OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
 				ProjectID:        testProjectID(),
 				EnvironmentID:    testEnvironmentID(),
 				DeploymentID:     testDeploymentID(),
@@ -385,7 +386,7 @@ func TestGetDeploymentReturnsFailedDeploymentError(t *testing.T) {
 	store := &fakeStore{
 		deployment: db.Deployment{
 			ID:                         testDeploymentID(),
-			OrgID:                      ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:                      pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:                  testProjectID(),
 			EnvironmentID:              testEnvironmentID(),
 			DeploymentSourceArtifactID: testArtifactID(),
@@ -426,7 +427,7 @@ func TestGetDeploymentAllowsDeployPermission(t *testing.T) {
 	store := &fakeStore{
 		deployment: db.Deployment{
 			ID:                         testDeploymentID(),
-			OrgID:                      ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:                      pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:                  testProjectID(),
 			EnvironmentID:              testEnvironmentID(),
 			DeploymentSourceArtifactID: testArtifactID(),
@@ -436,7 +437,7 @@ func TestGetDeploymentAllowsDeployPermission(t *testing.T) {
 		},
 	}
 	server := &Server{db: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	id := ids.MustFromPG(testDeploymentID())
+	id := pgvalue.MustUUIDValue(testDeploymentID())
 	req := httptest.NewRequest(http.MethodGet, "/api/deployments/"+id.String(), nil)
 	routeContext := chi.NewRouteContext()
 	routeContext.URLParams.Add("deploymentID", id.String())
@@ -466,14 +467,14 @@ func TestGetDeploymentAllowsDeployPermission(t *testing.T) {
 }
 
 func TestGetDeploymentReturnsTasksWhenDeployed(t *testing.T) {
-	sourceArtifactID := ids.ToPG(ids.New())
-	bundleArtifactID := ids.ToPG(ids.New())
-	buildManifestArtifactID := ids.ToPG(ids.New())
-	deploymentManifestArtifactID := ids.ToPG(ids.New())
+	sourceArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	bundleArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	buildManifestArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	deploymentManifestArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
 		deployment: db.Deployment{
 			ID:                           testDeploymentID(),
-			OrgID:                        ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:                        pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:                    testProjectID(),
 			EnvironmentID:                testEnvironmentID(),
 			DeploymentSourceArtifactID:   sourceArtifactID,
@@ -486,7 +487,7 @@ func TestGetDeploymentReturnsTasksWhenDeployed(t *testing.T) {
 		deploymentTasks: []db.DeploymentTask{
 			{
 				ID:               testDeploymentTaskID(),
-				OrgID:            ids.ToPG(dbtest.DefaultOrgID),
+				OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
 				ProjectID:        testProjectID(),
 				EnvironmentID:    testEnvironmentID(),
 				DeploymentID:     testDeploymentID(),
@@ -533,7 +534,7 @@ func TestPromoteDeploymentResolvesVersionInPathScope(t *testing.T) {
 	store := &fakeStore{
 		deployment: db.Deployment{
 			ID:                         testDeploymentID(),
-			OrgID:                      ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:                      pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:                  testProjectID(),
 			EnvironmentID:              environmentID,
 			Version:                    "20260101.2",

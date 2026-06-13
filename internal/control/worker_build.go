@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -45,7 +45,7 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		writeError(w, errors.New("select runtime release"))
 		return
 	}
-	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), ids.ToPG(worker.WorkerInstanceID))
+	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), pgvalue.UUID(worker.WorkerInstanceID))
 	if isNoRows(err) {
 		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
 		return
@@ -59,7 +59,7 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
 		return
 	}
-	leaseID := ids.New().String()
+	leaseID := uuid.Must(uuid.NewV7()).String()
 	leaseExpiresAt := time.Now().Add(deploymentBuildLeaseDuration)
 	buildStore := s.db
 	commit := func() error { return nil }
@@ -76,9 +76,9 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		rollback = func() {}
 	}
 	row, err := buildStore.LeaseQueuedDeploymentBuild(r.Context(), db.LeaseQueuedDeploymentBuildParams{
-		WorkerGroupID:         ids.ToPG(worker.WorkerGroupID),
+		WorkerGroupID:         pgvalue.UUID(worker.WorkerGroupID),
 		BuildLeaseID:          pgtype.Text{String: leaseID, Valid: true},
-		BuildWorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
+		BuildWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: leaseExpiresAt, Valid: true},
 	})
 	if isNoRows(err) {
@@ -92,21 +92,21 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 	}
 	if err := appendDeploymentLifecycleEvent(r.Context(), buildStore, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.building", "info", "worker", "building", "Deployment build started"); err != nil {
 		rollback()
-		s.log.Error("record deployment building event failed", "deployment_id", ids.MustFromPG(row.ID).String(), "error", err)
+		s.log.Error("record deployment building event failed", "deployment_id", pgvalue.MustUUIDValue(row.ID).String(), "error", err)
 		writeError(w, errors.New("record deployment event"))
 		return
 	}
 	if err := commit(); err != nil {
-		s.log.Error("commit deployment build lease failed", "deployment_id", ids.MustFromPG(row.ID).String(), "error", err)
+		s.log.Error("commit deployment build lease failed", "deployment_id", pgvalue.MustUUIDValue(row.ID).String(), "error", err)
 		writeError(w, errors.New("commit deployment build lease"))
 		return
 	}
-	deploymentID := ids.MustFromPG(row.ID).String()
+	deploymentID := pgvalue.MustUUIDValue(row.ID).String()
 	lease := api.WorkerDeploymentBuildLease{
 		ID:               leaseID,
-		OrgID:            ids.MustFromPG(row.OrgID).String(),
-		ProjectID:        ids.MustFromPG(row.ProjectID).String(),
-		EnvironmentID:    ids.MustFromPG(row.EnvironmentID).String(),
+		OrgID:            pgvalue.MustUUIDValue(row.OrgID).String(),
+		ProjectID:        pgvalue.MustUUIDValue(row.ProjectID).String(),
+		EnvironmentID:    pgvalue.MustUUIDValue(row.EnvironmentID).String(),
 		DeploymentID:     deploymentID,
 		WorkerInstanceID: worker.WorkerInstanceID.String(),
 		ExpiresAt:        leaseExpiresAt,
@@ -119,8 +119,8 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		CLIVersion:            row.CliVersion,
 		BundleFormatVersion:   row.BundleFormatVersion,
 		WorkerProtocolVersion: row.WorkerProtocolVersion,
-		ProjectID:             ids.MustFromPG(row.ProjectID).String(),
-		EnvironmentID:         ids.MustFromPG(row.EnvironmentID).String(),
+		ProjectID:             pgvalue.MustUUIDValue(row.ProjectID).String(),
+		EnvironmentID:         pgvalue.MustUUIDValue(row.EnvironmentID).String(),
 		DeploymentSource: api.DeploymentSourceArtifact{
 			Digest:    row.DeploymentSourceDigest,
 			SizeBytes: row.SourceSizeBytes,
@@ -162,7 +162,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 	}
 	defer tx.Rollback(r.Context())
 	queries := db.New(tx)
-	buildWorkerInstanceID := ids.ToPG(worker.WorkerInstanceID)
+	buildWorkerInstanceID := pgvalue.UUID(worker.WorkerInstanceID)
 	failBuild := func(message string) bool {
 		payload, err := json.Marshal(workerMessagePayload{Message: strings.TrimSpace(message)})
 		if err != nil {
@@ -194,7 +194,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			writeError(w, errors.New("commit deployment build failure"))
 			return false
 		}
-		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{DeploymentID: ids.MustFromPG(row.ID).String(), Status: string(row.Status)})
+		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)})
 		return true
 	}
 	if request.Result.Error != nil {
@@ -273,7 +273,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			return
 		}
 		if _, err := queries.CreateDeploymentTask(r.Context(), db.CreateDeploymentTaskParams{
-			ID:                    ids.ToPG(ids.New()),
+			ID:                    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                 orgID,
 			ProjectID:             projectID,
 			EnvironmentID:         environmentID,
@@ -327,27 +327,27 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		writeError(w, errors.New("commit deployment build completion"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{DeploymentID: ids.MustFromPG(row.ID).String(), Status: string(row.Status)})
+	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)})
 }
 
 func parseDeploymentBuildLeaseIDs(lease api.WorkerDeploymentBuildLease) (pgtype.UUID, pgtype.UUID, pgtype.UUID, pgtype.UUID, error) {
-	orgID, err := ids.Parse(lease.OrgID)
+	orgID, err := uuid.Parse(lease.OrgID)
 	if err != nil {
 		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease org_id must be a UUID")
 	}
-	projectID, err := ids.Parse(lease.ProjectID)
+	projectID, err := uuid.Parse(lease.ProjectID)
 	if err != nil {
 		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease project_id must be a UUID")
 	}
-	environmentID, err := ids.Parse(lease.EnvironmentID)
+	environmentID, err := uuid.Parse(lease.EnvironmentID)
 	if err != nil {
 		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease environment_id must be a UUID")
 	}
-	deploymentID, err := ids.Parse(lease.DeploymentID)
+	deploymentID, err := uuid.Parse(lease.DeploymentID)
 	if err != nil {
 		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease deployment_id must be a UUID")
 	}
-	return ids.ToPG(orgID), ids.ToPG(projectID), ids.ToPG(environmentID), ids.ToPG(deploymentID), nil
+	return pgvalue.UUID(orgID), pgvalue.UUID(projectID), pgvalue.UUID(environmentID), pgvalue.UUID(deploymentID), nil
 }
 
 func createDeploymentBuildArtifact(ctx context.Context, queries *db.Queries, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workerInstanceID pgtype.UUID, digest string, kind db.ArtifactKind, objects map[string]api.CASObject) (db.Artifact, error) {
@@ -356,7 +356,7 @@ func createDeploymentBuildArtifact(ctx context.Context, queries *db.Queries, org
 		return db.Artifact{}, fmt.Errorf("missing CAS object %s", digest)
 	}
 	return queries.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID:                        ids.ToPG(ids.New()),
+		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     orgID,
 		ProjectID:                 projectID,
 		EnvironmentID:             environmentID,

@@ -14,7 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -102,8 +102,8 @@ func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMes
 		Tags:        append([]string(nil), tags...),
 		RetryPolicy: json.RawMessage(lockedRetryPolicy),
 	}
-	fingerprint.Deployment.ID = ids.MustFromPG(deploymentTask.DeploymentID).String()
-	fingerprint.Deployment.TaskID = ids.MustFromPG(deploymentTask.ID).String()
+	fingerprint.Deployment.ID = pgvalue.MustUUIDValue(deploymentTask.DeploymentID).String()
+	fingerprint.Deployment.TaskID = pgvalue.MustUUIDValue(deploymentTask.ID).String()
 	fingerprint.Deployment.BundleDigest = strings.TrimSpace(deploymentTask.BundleDigest)
 	fingerprint.Deployment.FilePath = strings.TrimSpace(deploymentTask.FilePath)
 	fingerprint.Deployment.ExportName = strings.TrimSpace(deploymentTask.ExportName)
@@ -148,7 +148,7 @@ func parseIdempotencyKeyTTL(raw string) (time.Duration, error) {
 
 func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, requestHash string, source runSource, allowTerminalClear bool) (runSummary, bool, error) {
 	existing, err := s.db.GetScopedRunByIdempotencyKey(ctx, db.GetScopedRunByIdempotencyKeyParams{
-		OrgID:          ids.ToPG(orgID),
+		OrgID:          pgvalue.UUID(orgID),
 		ProjectID:      projectID,
 		EnvironmentID:  environmentID,
 		TaskID:         taskID,
@@ -163,7 +163,7 @@ func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, pro
 	expired := existing.IdempotencyKeyExpiresAt.Valid && !time.Now().Before(existing.IdempotencyKeyExpiresAt.Time)
 	if allowTerminalClear && (existing.Status == db.RunStatusFailed || existing.Status == db.RunStatusExpired || (expired && api.RunStatusIsTerminal(string(existing.Status)))) {
 		if err := s.db.ClearRunIdempotencyKey(ctx, db.ClearRunIdempotencyKeyParams{
-			OrgID:         ids.ToPG(orgID),
+			OrgID:         pgvalue.UUID(orgID),
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			ID:            existing.ID,

@@ -18,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/email"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -27,7 +26,7 @@ import (
 
 func TestMagicLinkStartSendsLoginLinkForExistingMember(t *testing.T) {
 	store := newMagicLinkStartStore()
-	store.loginUser = db.User{ID: ids.ToPG(ids.New()), DisplayName: "user"}
+	store.loginUser = db.User{ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), DisplayName: "user"}
 	mailer := &fakeMagicLinkEmailSender{}
 	handler := newMagicLinkStartServerWithConfig(store, mailer, testServerConfig{MagicLinkDebugURLs: true})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"User@Example.Test","next":"/runs"}`))
@@ -54,7 +53,7 @@ func TestMagicLinkStartSendsLoginLinkForExistingMember(t *testing.T) {
 
 func TestMagicLinkStartDeliveryFailureMarksLinkFailedAndKeepsOldLinks(t *testing.T) {
 	store := newMagicLinkStartStore()
-	store.loginUser = db.User{ID: ids.ToPG(ids.New()), DisplayName: "user"}
+	store.loginUser = db.User{ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), DisplayName: "user"}
 	mailer := &fakeMagicLinkEmailSender{err: errors.New("smtp failed")}
 	handler := newMagicLinkStartServerWithConfig(store, mailer, testServerConfig{MagicLinkDebugURLs: true})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"user@example.test"}`))
@@ -72,7 +71,7 @@ func TestMagicLinkStartDeliveryFailureMarksLinkFailedAndKeepsOldLinks(t *testing
 
 func TestMagicLinkStartWithoutMailerFailsInsteadOfLoggingByDefault(t *testing.T) {
 	store := newMagicLinkStartStore()
-	store.loginUser = db.User{ID: ids.ToPG(ids.New()), DisplayName: "user"}
+	store.loginUser = db.User{ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), DisplayName: "user"}
 	handler := newMagicLinkStartServerWithConfig(store, nil, testServerConfig{})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"user@example.test"}`))
 	rec := httptest.NewRecorder()
@@ -89,7 +88,7 @@ func TestMagicLinkStartWithoutMailerFailsInsteadOfLoggingByDefault(t *testing.T)
 
 func TestMagicLinkStartAllowsUnknownEmail(t *testing.T) {
 	known := newMagicLinkStartStore()
-	known.loginUser = db.User{ID: ids.ToPG(ids.New()), DisplayName: "known"}
+	known.loginUser = db.User{ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), DisplayName: "known"}
 	knownMailer := &fakeMagicLinkEmailSender{sent: make(chan magicLinkMessage, 1)}
 	knownRec := httptest.NewRecorder()
 	newMagicLinkStartServer(known, knownMailer).ServeHTTP(
@@ -128,10 +127,10 @@ func TestMagicLinkStartAllowsUnknownEmail(t *testing.T) {
 
 func TestMagicLinkStartSendsInviteAcceptLink(t *testing.T) {
 	store := newMagicLinkStartStore()
-	invitationID := ids.New()
+	invitationID := uuid.Must(uuid.NewV7())
 	store.invitation = db.GetActiveInvitationRow{
-		ID:           ids.ToPG(invitationID),
-		OrgID:        ids.ToPG(store.orgID),
+		ID:           pgvalue.UUID(invitationID),
+		OrgID:        pgvalue.UUID(store.orgID),
 		InviteeEmail: "invited@example.test",
 		Role:         db.OrgMemberRoleDeveloper,
 	}
@@ -154,7 +153,7 @@ func TestMagicLinkStartSendsInviteAcceptLink(t *testing.T) {
 	if len(mailer.messages) != 1 {
 		t.Fatalf("messages = %+v", mailer.messages)
 	}
-	if store.created.Purpose != db.MagicLinkPurposeInviteAccept || store.created.InvitationID != ids.ToPG(invitationID) {
+	if store.created.Purpose != db.MagicLinkPurposeInviteAccept || store.created.InvitationID != pgvalue.UUID(invitationID) {
 		t.Fatalf("created link = %+v", store.created)
 	}
 }
@@ -172,7 +171,7 @@ func TestMagicLinkFinishLoginIssuesSession(t *testing.T) {
 	if !dbtx.tx.consumed || !dbtx.tx.committed {
 		t.Fatalf("consumed=%v committed=%v", dbtx.tx.consumed, dbtx.tx.committed)
 	}
-	if dbtx.tx.createdSession.UserID != ids.ToPG(dbtx.userID) {
+	if dbtx.tx.createdSession.UserID != pgvalue.UUID(dbtx.userID) {
 		t.Fatalf("session = %+v", dbtx.tx.createdSession)
 	}
 	if !hasCookie(rec.Result().Cookies(), "helmr_session_dev") {
@@ -252,7 +251,7 @@ type magicLinkStartStore struct {
 }
 
 func newMagicLinkStartStore() *magicLinkStartStore {
-	return &magicLinkStartStore{orgID: ids.New()}
+	return &magicLinkStartStore{orgID: uuid.Must(uuid.NewV7())}
 }
 
 func newMagicLinkStartServer(store *magicLinkStartStore, mailer *fakeMagicLinkEmailSender) http.Handler {
@@ -418,20 +417,20 @@ type magicLinkFinishDBTX struct {
 }
 
 func newMagicLinkFinishDBTX(purpose db.MagicLinkPurpose) *magicLinkFinishDBTX {
-	orgID := ids.New()
-	userID := ids.New()
+	orgID := uuid.Must(uuid.NewV7())
+	userID := uuid.Must(uuid.NewV7())
 	invitationID := pgtype.UUID{}
 	if purpose == db.MagicLinkPurposeInviteAccept {
-		invitationID = ids.ToPG(ids.New())
+		invitationID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	}
 	return &magicLinkFinishDBTX{
 		orgID:  orgID,
 		userID: userID,
 		link: db.GetActiveMagicLinkByTokenHashRow{
-			ID:            ids.ToPG(ids.New()),
+			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			Purpose:       purpose,
 			Email:         "invited@example.test",
-			OrgID:         ids.ToPG(orgID),
+			OrgID:         pgvalue.UUID(orgID),
 			InvitationID:  invitationID,
 			RedirectAfter: pgtype.Text{String: "/runs", Valid: true},
 			ExpiresAt:     pgvalue.Timestamptz(time.Now().Add(time.Minute)),
@@ -535,7 +534,7 @@ func (tx *magicLinkFinishTx) QueryRow(_ context.Context, sql string, args ...any
 		}}
 	case strings.Contains(sql, "WITH upserted_user") && strings.Contains(sql, "INSERT INTO auth_identities"):
 		return scanRow{values: []any{
-			ids.ToPG(parent.userID),
+			pgvalue.UUID(parent.userID),
 			args[1].(string),
 			args[2].(pgtype.Text),
 			args[3].(pgtype.Text),
@@ -548,7 +547,7 @@ func (tx *magicLinkFinishTx) QueryRow(_ context.Context, sql string, args ...any
 	case strings.Contains(sql, "FROM invitations"):
 		return scanRow{values: []any{
 			parent.link.InvitationID,
-			ids.ToPG(parent.orgID),
+			pgvalue.UUID(parent.orgID),
 			parent.link.Email,
 			db.OrgMemberRoleDeveloper,
 		}}
@@ -556,8 +555,8 @@ func (tx *magicLinkFinishTx) QueryRow(_ context.Context, sql string, args ...any
 		return scanRow{err: pgx.ErrNoRows}
 	case strings.Contains(sql, "auth_identities.user_id"):
 		return scanRow{values: []any{
-			ids.ToPG(parent.userID),
-			ids.ToPG(parent.orgID),
+			pgvalue.UUID(parent.userID),
+			pgvalue.UUID(parent.orgID),
 			db.OrgMemberRoleDeveloper,
 		}}
 	case strings.Contains(sql, "INSERT INTO org_members"):

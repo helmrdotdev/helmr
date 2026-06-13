@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 )
@@ -46,7 +46,7 @@ func (s *Server) loadWaitpointConfirmationView(r *http.Request) (waitpointConfir
 	if !s.waitpointResponseTokensConfigured() {
 		return waitpointConfirmationView{}, errors.New("waitpoint response tokens are not configured")
 	}
-	tokenID, err := ids.Parse(strings.TrimSpace(r.URL.Query().Get("id")))
+	tokenID, err := uuid.Parse(strings.TrimSpace(r.URL.Query().Get("id")))
 	if err != nil {
 		return waitpointConfirmationView{}, errors.New("id must be a UUID")
 	}
@@ -56,7 +56,7 @@ func (s *Server) loadWaitpointConfirmationView(r *http.Request) (waitpointConfir
 		return waitpointConfirmationView{}, err
 	}
 	token, err := s.db.GetWaitpointResponseTokenForRespond(r.Context(), db.GetWaitpointResponseTokenForRespondParams{
-		ID:        ids.ToPG(tokenID),
+		ID:        pgvalue.UUID(tokenID),
 		TokenHash: tokenHash,
 	})
 	if err != nil {
@@ -65,7 +65,7 @@ func (s *Server) loadWaitpointConfirmationView(r *http.Request) (waitpointConfir
 	return waitpointConfirmationView{
 		TokenID:     tokenID.String(),
 		Token:       rawToken,
-		WaitpointID: ids.MustFromPG(token.WaitpointID).String(),
+		WaitpointID: pgvalue.MustUUIDValue(token.WaitpointID).String(),
 		Kind:        token.WaitpointKind,
 		DisplayText: token.WaitpointDisplayText,
 		ExpiresAt:   pgvalue.Time(token.ExpiresAt),

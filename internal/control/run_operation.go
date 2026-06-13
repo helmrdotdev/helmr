@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -42,7 +42,7 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	actor := actorFromContext(r.Context())
-	runRow, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
+	runRow, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: pgvalue.UUID(actor.OrgID), ID: pgvalue.UUID(runID)})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("run not found")))
 		return
@@ -55,8 +55,8 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 	summary := getRunSummary(runRow)
 	scope := auth.Scope{
 		OrgID:         actor.OrgID,
-		ProjectID:     ids.MustFromPG(summary.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(summary.EnvironmentID).String(),
+		ProjectID:     pgvalue.MustUUIDValue(summary.ProjectID).String(),
+		EnvironmentID: pgvalue.MustUUIDValue(summary.EnvironmentID).String(),
 	}
 	if err := s.requireActorScopeForRecord(r, actor, summary.ProjectID, summary.EnvironmentID); err != nil {
 		if isNoRows(err) {
@@ -83,7 +83,7 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 	}
 	sameCancelRequest, err := sameJSONValue(operation.Request, requestBody)
 	if err != nil {
-		s.log.Error("compare cancel operation request failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operation.ID).String(), "error", err)
+		s.log.Error("compare cancel operation request failed", "run_id", runID.String(), "operation_id", pgvalue.MustUUIDValue(operation.ID).String(), "error", err)
 		writeError(w, errors.New("cancel run"))
 		return
 	}
@@ -102,8 +102,8 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cancelled, err := s.db.CancelRun(r.Context(), db.CancelRunParams{
-		OrgID:       ids.ToPG(actor.OrgID),
-		RunID:       ids.ToPG(runID),
+		OrgID:       pgvalue.UUID(actor.OrgID),
+		RunID:       pgvalue.UUID(runID),
 		Reason:      request.Reason,
 		Force:       request.Force,
 		OperationID: operation.ID,
@@ -111,22 +111,22 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if isNoRows(err) {
 			operationID := operation.ID
-			operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{OrgID: ids.ToPG(actor.OrgID), ID: operationID})
+			operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{OrgID: pgvalue.UUID(actor.OrgID), ID: operationID})
 			if err != nil {
-				s.log.Error("get idempotent cancel operation failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operationID).String(), "error", err)
+				s.log.Error("get idempotent cancel operation failed", "run_id", runID.String(), "operation_id", pgvalue.MustUUIDValue(operationID).String(), "error", err)
 				writeError(w, errors.New("cancel run"))
 				return
 			}
 			if operation.Status != db.RunOperationStatusRequested {
-				runRow, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
+				runRow, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: pgvalue.UUID(actor.OrgID), ID: pgvalue.UUID(runID)})
 				if err != nil {
-					s.log.Error("get idempotent cancel run failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operationID).String(), "error", err)
+					s.log.Error("get idempotent cancel run failed", "run_id", runID.String(), "operation_id", pgvalue.MustUUIDValue(operationID).String(), "error", err)
 					writeError(w, errors.New("cancel run"))
 					return
 				}
 				response, err := s.runResponse(r.Context(), getRunSummary(runRow))
 				if err != nil {
-					s.log.Error("build idempotent cancel response failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operationID).String(), "error", err)
+					s.log.Error("build idempotent cancel response failed", "run_id", runID.String(), "operation_id", pgvalue.MustUUIDValue(operationID).String(), "error", err)
 					writeError(w, errors.New("cancel run"))
 					return
 				}
@@ -138,9 +138,9 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("cancel run"))
 		return
 	}
-	operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{OrgID: ids.ToPG(actor.OrgID), ID: operation.ID})
+	operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{OrgID: pgvalue.UUID(actor.OrgID), ID: operation.ID})
 	if err != nil {
-		s.log.Error("get cancel operation failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operation.ID).String(), "error", err)
+		s.log.Error("get cancel operation failed", "run_id", runID.String(), "operation_id", pgvalue.MustUUIDValue(operation.ID).String(), "error", err)
 		writeError(w, errors.New("cancel run"))
 		return
 	}
@@ -177,7 +177,7 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	actor := actorFromContext(r.Context())
-	original, err := s.db.GetRun(r.Context(), db.GetRunParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
+	original, err := s.db.GetRun(r.Context(), db.GetRunParams{OrgID: pgvalue.UUID(actor.OrgID), ID: pgvalue.UUID(runID)})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("run not found")))
 		return
@@ -190,8 +190,8 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 	originalSummary := runRecordSummary(original)
 	scope := auth.Scope{
 		OrgID:         actor.OrgID,
-		ProjectID:     ids.MustFromPG(originalSummary.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(originalSummary.EnvironmentID).String(),
+		ProjectID:     pgvalue.MustUUIDValue(originalSummary.ProjectID).String(),
+		EnvironmentID: pgvalue.MustUUIDValue(originalSummary.EnvironmentID).String(),
 	}
 	if err := s.requireActorScopeForRecord(r, actor, originalSummary.ProjectID, originalSummary.EnvironmentID); err != nil {
 		if isNoRows(err) {
@@ -226,7 +226,7 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 	}
 	sameReplayRequest, err := sameJSONValue(operation.Request, requestBody)
 	if err != nil {
-		s.log.Error("compare replay operation request failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operation.ID).String(), "error", err)
+		s.log.Error("compare replay operation request failed", "run_id", runID.String(), "operation_id", pgvalue.MustUUIDValue(operation.ID).String(), "error", err)
 		writeError(w, errors.New("replay run"))
 		return
 	}
@@ -241,13 +241,13 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 				writeError(w, conflict(err))
 				return
 			}
-			s.log.Error("resolve idempotent replay failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operation.ID).String(), "error", err)
+			s.log.Error("resolve idempotent replay failed", "run_id", runID.String(), "operation_id", pgvalue.MustUUIDValue(operation.ID).String(), "error", err)
 			writeError(w, errors.New("replay run"))
 			return
 		}
 		response, err := s.runResponse(r.Context(), replayed)
 		if err != nil {
-			s.log.Error("build idempotent replay response failed", "run_id", ids.MustFromPG(replayed.ID).String(), "error", err)
+			s.log.Error("build idempotent replay response failed", "run_id", pgvalue.MustUUIDValue(replayed.ID).String(), "error", err)
 			writeError(w, errors.New("replay run"))
 			return
 		}
@@ -266,7 +266,7 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 			_, _ = s.db.MarkRunOperationRejected(context.WithoutCancel(r.Context()), db.MarkRunOperationRejectedParams{
 				Result: fmt.Appendf(nil, `{"error":%q}`, err.Error()),
 				ID:     operation.ID,
-				OrgID:  ids.ToPG(actor.OrgID),
+				OrgID:  pgvalue.UUID(actor.OrgID),
 			})
 		}
 		if errors.Is(err, errIdempotencyKeyConflict) {
@@ -305,7 +305,7 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 	}
 	operationResult, err := json.Marshal(map[string]string{
 		"source_run_id": runID.String(),
-		"run_id":        ids.MustFromPG(replayed.ID).String(),
+		"run_id":        pgvalue.MustUUIDValue(replayed.ID).String(),
 	})
 	if err != nil {
 		writeError(w, errors.New("encode replay result"))
@@ -315,16 +315,16 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 	operation, err = s.db.MarkRunOperationApplied(r.Context(), db.MarkRunOperationAppliedParams{
 		Result: operationResult,
 		ID:     operationID,
-		OrgID:  ids.ToPG(actor.OrgID),
+		OrgID:  pgvalue.UUID(actor.OrgID),
 	})
 	if isNoRows(err) {
-		operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{OrgID: ids.ToPG(actor.OrgID), ID: operationID})
+		operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{OrgID: pgvalue.UUID(actor.OrgID), ID: operationID})
 		if err == nil && operation.Status != db.RunOperationStatusRequested {
 			replayed, replayErr := s.idempotentReplayRun(r.Context(), actor, operation, requestBody)
 			if replayErr == nil {
 				response, responseErr := s.runResponse(r.Context(), replayed)
 				if responseErr != nil {
-					s.log.Error("build raced replay response failed", "run_id", ids.MustFromPG(replayed.ID).String(), "error", responseErr)
+					s.log.Error("build raced replay response failed", "run_id", pgvalue.MustUUIDValue(replayed.ID).String(), "error", responseErr)
 					writeError(w, errors.New("replay run"))
 					return
 				}
@@ -337,13 +337,13 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		s.log.Error("mark replay operation applied failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operationID).String(), "error", err)
+		s.log.Error("mark replay operation applied failed", "run_id", runID.String(), "operation_id", pgvalue.MustUUIDValue(operationID).String(), "error", err)
 		writeError(w, errors.New("replay run"))
 		return
 	}
 	response, err := s.runResponse(r.Context(), replayed)
 	if err != nil {
-		s.log.Error("build replay response failed", "run_id", ids.MustFromPG(replayed.ID).String(), "error", err)
+		s.log.Error("build replay response failed", "run_id", pgvalue.MustUUIDValue(replayed.ID).String(), "error", err)
 		writeError(w, errors.New("replay run"))
 		return
 	}
@@ -371,10 +371,10 @@ func (s *Server) createRunOperation(ctx context.Context, actor auth.Actor, run r
 	}
 	apiKeyID := pgtype.UUID{}
 	if actor.Kind == auth.ActorKindAPIKey {
-		apiKeyID = ids.ToPG(actor.APIKeyID)
+		apiKeyID = pgvalue.UUID(actor.APIKeyID)
 	}
 	return s.db.CreateRunOperation(ctx, db.CreateRunOperationParams{
-		ID:             ids.ToPG(ids.New()),
+		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          run.OrgID,
 		ProjectID:      run.ProjectID,
 		EnvironmentID:  run.EnvironmentID,
@@ -406,11 +406,11 @@ func (s *Server) idempotentReplayRun(ctx context.Context, actor auth.Actor, oper
 	if err := json.Unmarshal(operation.Result, &result); err != nil {
 		return runSummary{}, fmt.Errorf("decode replay operation result: %w", err)
 	}
-	runID, err := ids.Parse(strings.TrimSpace(result.RunID))
+	runID, err := uuid.Parse(strings.TrimSpace(result.RunID))
 	if err != nil {
 		return runSummary{}, fmt.Errorf("decode replay operation run_id: %w", err)
 	}
-	run, err := s.db.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
+	run, err := s.db.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: pgvalue.UUID(actor.OrgID), ID: pgvalue.UUID(runID)})
 	if err != nil {
 		return runSummary{}, err
 	}
@@ -462,8 +462,8 @@ func replayCreateRunRequest(original db.Run, replay api.ReplayRunRequest) (api.C
 		tags = append([]string(nil), replay.Tags...)
 	}
 	request := api.CreateRunRequest{
-		ProjectID:     ids.MustFromPG(original.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(original.EnvironmentID).String(),
+		ProjectID:     pgvalue.MustUUIDValue(original.ProjectID).String(),
+		EnvironmentID: pgvalue.MustUUIDValue(original.EnvironmentID).String(),
 		TaskID:        original.TaskID,
 		Payload:       payload,
 		Options: api.CreateRunOptions{
@@ -481,7 +481,7 @@ func replayCreateRunRequest(original db.Run, replay api.ReplayRunRequest) (api.C
 	}
 	switch replay.Version {
 	case "", "original":
-		request.Options.DeploymentID = ids.MustFromPG(original.DeploymentID).String()
+		request.Options.DeploymentID = pgvalue.MustUUIDValue(original.DeploymentID).String()
 	case "latest":
 	default:
 		request.Options.Version = replay.Version
@@ -496,8 +496,8 @@ func runOperationResponse(operation db.RunOperation) api.RunOperationResponse {
 		appliedAt = &value
 	}
 	return api.RunOperationResponse{
-		ID:        ids.MustFromPG(operation.ID).String(),
-		RunID:     ids.MustFromPG(operation.RunID).String(),
+		ID:        pgvalue.MustUUIDValue(operation.ID).String(),
+		RunID:     pgvalue.MustUUIDValue(operation.RunID).String(),
 		Kind:      string(operation.Kind),
 		Status:    string(operation.Status),
 		Reason:    operation.Reason,

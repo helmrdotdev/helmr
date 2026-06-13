@@ -19,7 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -29,43 +29,43 @@ const testWorkerTokenSecret = "01234567890123456789012345678901"
 const testWorkerInstanceCredentialID = "00000000-0000-0000-0000-00000000c001"
 
 func testWorkerGroupID() pgtype.UUID {
-	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000201"))
+	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000201"))
 }
 
 func testProjectID() pgtype.UUID {
-	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000301"))
+	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000301"))
 }
 
 func testEnvironmentID() pgtype.UUID {
-	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000302"))
+	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000302"))
 }
 
 func otherProjectID() pgtype.UUID {
-	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000311"))
+	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000311"))
 }
 
 func otherEnvironmentID() pgtype.UUID {
-	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000312"))
+	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000312"))
 }
 
 func testProjectIDString() string {
-	return ids.MustFromPG(testProjectID()).String()
+	return pgvalue.MustUUIDValue(testProjectID()).String()
 }
 
 func testEnvironmentIDString() string {
-	return ids.MustFromPG(testEnvironmentID()).String()
+	return pgvalue.MustUUIDValue(testEnvironmentID()).String()
 }
 
 func testDeploymentID() pgtype.UUID {
-	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000304"))
+	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000304"))
 }
 
 func testDeploymentTaskID() pgtype.UUID {
-	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000305"))
+	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000305"))
 }
 
 func testArtifactID() pgtype.UUID {
-	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000306"))
+	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000306"))
 }
 
 func testWorkerRunLeaseRequestBody(t *testing.T) []byte {

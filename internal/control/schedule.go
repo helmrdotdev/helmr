@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -55,7 +55,7 @@ func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := createScheduleView(row)
-	s.registerScheduleInstances(r.Context(), ids.ToPG(actor.OrgID), view.ProjectID, view.ScheduleID)
+	s.registerScheduleInstances(r.Context(), pgvalue.UUID(actor.OrgID), view.ProjectID, view.ScheduleID)
 	writeJSON(w, http.StatusCreated, scheduleResponse(view))
 }
 
@@ -96,7 +96,7 @@ func (s *Server) updateSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := updatedScheduleView(updated)
-	s.registerScheduleInstances(r.Context(), ids.ToPG(actor.OrgID), view.ProjectID, view.ScheduleID)
+	s.registerScheduleInstances(r.Context(), pgvalue.UUID(actor.OrgID), view.ProjectID, view.ScheduleID)
 	writeJSON(w, http.StatusOK, scheduleResponse(view))
 }
 
@@ -140,8 +140,8 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	runOptions := request.Options.CreateRunOptions()
 	scope := auth.Scope{
 		OrgID:         actor.OrgID,
-		ProjectID:     ids.MustFromPG(current.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(current.EnvironmentID).String(),
+		ProjectID:     pgvalue.MustUUIDValue(current.ProjectID).String(),
+		EnvironmentID: pgvalue.MustUUIDValue(current.EnvironmentID).String(),
 	}
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
 		return db.UpdateScheduleRow{}, errPermissionRequired
@@ -188,7 +188,7 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 		Timezone:      timezone,
 		RunOptions:    runOptionsJSON,
 		Active:        active,
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     current.ProjectID,
 		EnvironmentID: current.EnvironmentID,
 		ScheduleID:    current.ScheduleID,
@@ -248,16 +248,16 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	if request.Active != nil {
 		active = *request.Active
 	}
-	scheduleID := ids.New()
-	instanceID := ids.New()
+	scheduleID := uuid.Must(uuid.NewV7())
+	instanceID := uuid.Must(uuid.NewV7())
 	nextFireAt := pgvalue.Timestamptz(next)
 	runOptionsJSON, err := json.Marshal(runOptions)
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
 	return s.db.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:    ids.ToPG(scheduleID),
-		OrgID:         ids.ToPG(actor.OrgID),
+		ScheduleID:    pgvalue.UUID(scheduleID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		ScheduleType:  db.TaskScheduleTypeImperative,
 		TaskID:        request.Task,
@@ -268,7 +268,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		Timezone:      timezone,
 		RunOptions:    runOptionsJSON,
 		Active:        active,
-		InstanceID:    ids.ToPG(instanceID),
+		InstanceID:    pgvalue.UUID(instanceID),
 		EnvironmentID: environmentID,
 		NextFireAt:    nextFireAt,
 	})
@@ -286,7 +286,7 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.db.ListScheduleSummaries(r.Context(), db.ListScheduleSummariesParams{
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		RowLimit:      scheduleListPageSize,
@@ -393,7 +393,7 @@ func (s *Server) registerScheduleInstances(ctx context.Context, orgID pgtype.UUI
 		ScheduleID: scheduleID,
 	})
 	if err != nil {
-		s.log.Warn("list schedule instances for registration failed", "schedule_id", ids.MustFromPG(scheduleID).String(), "error", err)
+		s.log.Warn("list schedule instances for registration failed", "schedule_id", pgvalue.MustUUIDValue(scheduleID).String(), "error", err)
 		return
 	}
 	for _, row := range rows {
@@ -404,7 +404,7 @@ func (s *Server) registerScheduleInstances(ctx context.Context, orgID pgtype.UUI
 			NextFireAt: row.NextFireAt,
 			RetryAfter: row.RetryAfter,
 		}); err != nil {
-			s.log.Warn("register schedule next fire failed", "schedule_id", ids.MustFromPG(scheduleID).String(), "instance_id", ids.MustFromPG(row.InstanceID).String(), "error", err)
+			s.log.Warn("register schedule next fire failed", "schedule_id", pgvalue.MustUUIDValue(scheduleID).String(), "instance_id", pgvalue.MustUUIDValue(row.InstanceID).String(), "error", err)
 		}
 	}
 }
@@ -412,7 +412,7 @@ func (s *Server) registerScheduleInstances(ctx context.Context, orgID pgtype.UUI
 func (s *Server) registerChangedScheduleInstances(ctx context.Context, orgID pgtype.UUID, projectID pgtype.UUID, schedules []scheduleView) {
 	seen := make(map[string]struct{}, len(schedules))
 	for _, row := range schedules {
-		key := ids.MustFromPG(row.ScheduleID).String()
+		key := pgvalue.MustUUIDValue(row.ScheduleID).String()
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -423,7 +423,7 @@ func (s *Server) registerChangedScheduleInstances(ctx context.Context, orgID pgt
 
 func (s *Server) loadScheduleForRequest(w http.ResponseWriter, r *http.Request, permission auth.Permission) (db.GetScheduleSummaryRow, bool) {
 	actor := actorFromContext(r.Context())
-	scheduleID, err := ids.Parse(chi.URLParam(r, "id"))
+	scheduleID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, badRequest(errors.New("schedule id must be a UUID")))
 		return db.GetScheduleSummaryRow{}, false
@@ -438,10 +438,10 @@ func (s *Server) loadScheduleForRequest(w http.ResponseWriter, r *http.Request, 
 		return db.GetScheduleSummaryRow{}, false
 	}
 	row, err := s.db.GetScheduleSummary(r.Context(), db.GetScheduleSummaryParams{
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		ScheduleID:    ids.ToPG(scheduleID),
+		ScheduleID:    pgvalue.UUID(scheduleID),
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("schedule not found")))
@@ -633,10 +633,10 @@ func scheduleResponse(row scheduleView) api.ScheduleResponse {
 		deduplicationKey = pgvalue.TextValue(row.UserDedupKey)
 	}
 	response := api.ScheduleResponse{
-		ID:               ids.MustFromPG(row.ScheduleID).String(),
+		ID:               pgvalue.MustUUIDValue(row.ScheduleID).String(),
 		Type:             string(row.ScheduleType),
-		ProjectID:        ids.MustFromPG(row.ProjectID).String(),
-		EnvironmentID:    ids.MustFromPG(row.EnvironmentID).String(),
+		ProjectID:        pgvalue.MustUUIDValue(row.ProjectID).String(),
+		EnvironmentID:    pgvalue.MustUUIDValue(row.EnvironmentID).String(),
 		Task:             row.TaskID,
 		DeduplicationKey: deduplicationKey,
 		ExternalID:       pgvalue.TextValue(row.ExternalID),

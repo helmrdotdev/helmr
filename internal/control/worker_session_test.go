@@ -13,13 +13,14 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	goredis "github.com/redis/go-redis/v9"
@@ -28,8 +29,8 @@ import (
 func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
-			ID:                 ids.ToPG(ids.New()),
-			OrgID:              ids.ToPG(dbtest.DefaultOrgID),
+			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:          testProjectID(),
 			EnvironmentID:      testEnvironmentID(),
 			DeploymentID:       testDeploymentID(),
@@ -214,8 +215,8 @@ func TestWorkerRunLeaseRejectsUnsupportedProtocol(t *testing.T) {
 func TestWorkerReleaseRejectsUnknownFields(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
-			ID:                 ids.ToPG(ids.New()),
-			OrgID:              ids.ToPG(dbtest.DefaultOrgID),
+			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
@@ -262,26 +263,26 @@ func TestWorkerReleaseRejectsUnknownFields(t *testing.T) {
 }
 
 func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
-	runID := ids.New()
-	sessionID := ids.New()
-	workerID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
+	sessionID := uuid.Must(uuid.NewV7())
+	workerID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		run: db.Run{
-			ID:               ids.ToPG(runID),
-			OrgID:            ids.ToPG(dbtest.DefaultOrgID),
+			ID:               pgvalue.UUID(runID),
+			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
 			DeploymentTaskID: testDeploymentTaskID(),
 			TaskID:           "deploy",
 			Status:           db.RunStatusRunning,
-			CurrentSessionID: ids.ToPG(sessionID),
+			CurrentSessionID: pgvalue.UUID(sessionID),
 			CreatedAt:        testTime(),
 			UpdatedAt:        testTime(),
 			StartedAt:        testTime(),
 		},
-		sessionID:                 ids.ToPG(sessionID),
-		executionWorkerInstanceID: ids.ToPG(workerID),
+		sessionID:                 pgvalue.UUID(sessionID),
+		executionWorkerInstanceID: pgvalue.UUID(workerID),
 		executionLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour})
@@ -317,13 +318,13 @@ func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
 }
 
 func TestWorkerRestoreClaimDoesNotRequireWorkspaceSourceBinding(t *testing.T) {
-	runID := ids.ToPG(ids.New())
-	checkpointID := ids.ToPG(ids.New())
-	waitpointID := ids.ToPG(ids.New())
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	waitpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
 		run: db.Run{
 			ID:                 runID,
-			OrgID:              ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
@@ -334,14 +335,14 @@ func TestWorkerRestoreClaimDoesNotRequireWorkspaceSourceBinding(t *testing.T) {
 		},
 		checkpoint: db.Checkpoint{
 			ID:       checkpointID,
-			OrgID:    ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:    pgvalue.UUID(dbtest.DefaultOrgID),
 			RunID:    runID,
 			Status:   db.CheckpointStatusReady,
 			Manifest: []byte(`{}`),
 		},
 		waitpoint: fakeWaitpoint{
 			ID:             waitpointID,
-			OrgID:          ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:          pgvalue.UUID(dbtest.DefaultOrgID),
 			RunID:          runID,
 			CheckpointID:   checkpointID,
 			Kind:           db.WaitpointKindHuman,
@@ -372,7 +373,7 @@ func TestWorkerRestoreClaimDoesNotRequireWorkspaceSourceBinding(t *testing.T) {
 	if claimResponse.Lease == nil || claimResponse.Run == nil {
 		t.Fatalf("claim response = %+v", claimResponse)
 	}
-	if claimResponse.Run.Restore == nil || claimResponse.Run.Restore.CheckpointID != ids.MustFromPG(checkpointID).String() {
+	if claimResponse.Run.Restore == nil || claimResponse.Run.Restore.CheckpointID != pgvalue.MustUUIDValue(checkpointID).String() {
 		t.Fatalf("restore payload = %+v", claimResponse.Run.Restore)
 	}
 }
@@ -417,7 +418,7 @@ func TestWorkerBootstrapIssuesCredentialForTokenExchange(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &registered); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ids.Parse(registered.WorkerInstanceID); err != nil || registered.WorkerInstanceID == "worker-resource-1" || !strings.HasPrefix(registered.WorkerInstanceSecret, auth.WorkerInstanceSecretPrefix) {
+	if _, err := uuid.Parse(registered.WorkerInstanceID); err != nil || registered.WorkerInstanceID == "worker-resource-1" || !strings.HasPrefix(registered.WorkerInstanceSecret, auth.WorkerInstanceSecretPrefix) {
 		t.Fatalf("register response = %+v", registered)
 	}
 
@@ -448,9 +449,9 @@ func TestWorkerRunLeaseRejectsMismatchedWorkerID(t *testing.T) {
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000402")
 	claim := api.WorkerRunLease{
-		ID:                ids.New().String(),
+		ID:                uuid.Must(uuid.NewV7()).String(),
 		OrgID:             dbtest.DefaultOrgID.String(),
-		RunID:             ids.New().String(),
+		RunID:             uuid.Must(uuid.NewV7()).String(),
 		WorkerInstanceID:  "00000000-0000-0000-0000-000000000401",
 		AttemptNumber:     1,
 		DispatchMessageID: "message-1",
@@ -474,9 +475,9 @@ func TestWorkerRunLeaseRejectsMissingAttemptNumber(t *testing.T) {
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 	claim := api.WorkerRunLease{
-		ID:                ids.New().String(),
+		ID:                uuid.Must(uuid.NewV7()).String(),
 		OrgID:             dbtest.DefaultOrgID.String(),
-		RunID:             ids.New().String(),
+		RunID:             uuid.Must(uuid.NewV7()).String(),
 		WorkerInstanceID:  "00000000-0000-0000-0000-000000000401",
 		DispatchMessageID: "message-1",
 		DispatchLeaseID:   "lease-1",
@@ -495,13 +496,13 @@ func TestWorkerRunLeaseRejectsMissingAttemptNumber(t *testing.T) {
 }
 
 func TestWorkerRunLeaseRejectsMismatchedAttemptNumber(t *testing.T) {
-	runID := ids.New()
-	sessionID := ids.New()
-	workerID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
+	sessionID := uuid.Must(uuid.NewV7())
+	workerID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		run: db.Run{
-			ID:                 ids.ToPG(runID),
-			OrgID:              ids.ToPG(dbtest.DefaultOrgID),
+			ID:                 pgvalue.UUID(runID),
+			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:             "deploy",
 			Status:             db.RunStatusRunning,
 			Payload:            []byte(`{}`),
@@ -509,8 +510,8 @@ func TestWorkerRunLeaseRejectsMismatchedAttemptNumber(t *testing.T) {
 			CreatedAt:          testTime(),
 			UpdatedAt:          testTime(),
 		},
-		sessionID:                 ids.ToPG(sessionID),
-		executionWorkerInstanceID: ids.ToPG(workerID),
+		sessionID:                 pgvalue.UUID(sessionID),
+		executionWorkerInstanceID: pgvalue.UUID(workerID),
 		executionLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour})
@@ -554,7 +555,7 @@ func mintTestWorkerToken(t *testing.T, server http.Handler, workerID string) str
 func (f *fakeStore) ListQueueScopes(_ context.Context, arg db.ListQueueScopesParams) ([]db.ListQueueScopesRow, error) {
 	f.listQueueScopes = arg
 	return []db.ListQueueScopesRow{{
-		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:     fakeRunProjectID(f.run),
 		EnvironmentID: fakeRunEnvironmentID(f.run),
 		QueueName:     "queue-a",
@@ -599,7 +600,7 @@ func (f *fakeStore) EnsureRuntimeReleaseSelection(context.Context, string) error
 func (f *fakeStore) GetWorkerInstanceState(_ context.Context, id pgtype.UUID) (db.GetWorkerInstanceStateRow, error) {
 	return db.GetWorkerInstanceStateRow{
 		ID:               id,
-		ResourceID:       ids.MustFromPG(id).String(),
+		ResourceID:       pgvalue.MustUUIDValue(id).String(),
 		Status:           db.WorkerInstanceStatusActive,
 		ActiveExecutions: 0,
 	}, nil
@@ -617,7 +618,7 @@ func (f *fakeStore) GetWorkerInstanceQueueCapacity(context.Context, pgtype.UUID)
 func (f *fakeStore) SetWorkerInstanceStatus(_ context.Context, arg db.SetWorkerInstanceStatusParams) (db.WorkerInstance, error) {
 	return db.WorkerInstance{
 		ID:         arg.ID,
-		ResourceID: ids.MustFromPG(arg.ID).String(),
+		ResourceID: pgvalue.MustUUIDValue(arg.ID).String(),
 		Status:     arg.Status,
 	}, nil
 }
@@ -637,7 +638,7 @@ func (f *fakeStore) Dequeue(_ context.Context, request dispatch.DequeueRequest) 
 		WorkerInstanceID: request.WorkerInstanceID,
 		Message: dispatch.Message{
 			OrgID:     dbtest.DefaultOrgID.String(),
-			RunID:     ids.MustFromPG(f.run.ID).String(),
+			RunID:     pgvalue.MustUUIDValue(f.run.ID).String(),
 			QueueName: "queue-a",
 		},
 		AttemptNumber: 1,
@@ -783,8 +784,8 @@ func (f *fakeStore) AuthenticateWorkerInstanceCredential(_ context.Context, arg 
 }
 
 func (f *fakeStore) AuthorizeWorkerInstanceCredential(_ context.Context, arg db.AuthorizeWorkerInstanceCredentialParams) (db.AuthorizeWorkerInstanceCredentialRow, error) {
-	credentialID, _ := ids.Parse(testWorkerInstanceCredentialID)
-	allowed := ids.ToPG(credentialID)
+	credentialID, _ := uuid.Parse(testWorkerInstanceCredentialID)
+	allowed := pgvalue.UUID(credentialID)
 	if f.workerCredentialID.Valid {
 		allowed = f.workerCredentialID
 	}
@@ -795,7 +796,7 @@ func (f *fakeStore) AuthorizeWorkerInstanceCredential(_ context.Context, arg db.
 		ID:               arg.CredentialID,
 		WorkerInstanceID: arg.WorkerInstanceID,
 		WorkerGroupID:    testWorkerGroupID(),
-		ResourceID:       ids.MustFromPG(arg.WorkerInstanceID).String(),
+		ResourceID:       pgvalue.MustUUIDValue(arg.WorkerInstanceID).String(),
 	}, nil
 }
 
@@ -823,7 +824,7 @@ func (f *fakeStore) LeaseRunExecutionSession(_ context.Context, arg db.LeaseRunE
 	f.executionLeaseExpiresAt = arg.LeaseExpiresAt
 	f.run.Status = db.RunStatusRunning
 	if !f.run.CurrentAttemptID.Valid {
-		f.run.CurrentAttemptID = ids.ToPG(ids.New())
+		f.run.CurrentAttemptID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	}
 	f.run.CurrentAttemptNumber = pgtype.Int4{Int32: 1, Valid: true}
 	f.run.CurrentSessionID = f.sessionID

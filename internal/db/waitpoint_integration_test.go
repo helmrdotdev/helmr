@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -17,13 +17,13 @@ import (
 func TestFailExpiredRunningRunExecutionSessionsSweepsOpeningWaitpoint(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-opening")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-opening")
-	sessionID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
@@ -45,9 +45,9 @@ func TestFailExpiredRunningRunExecutionSessionsSweepsOpeningWaitpoint(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	checkpointID := ids.ToPG(ids.New())
-	runWaitID := ids.ToPG(ids.New())
-	waitpointID := ids.ToPG(ids.New())
+	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runWaitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	waitpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
@@ -124,14 +124,14 @@ func TestFailExpiredRunningRunExecutionSessionsSweepsOpeningWaitpoint(t *testing
 func TestReleaseRunExecutionSessionSeparatesCancelledWaitpointOutputAndResolution(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-release-cancelled-waitpoint")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	messageID := "message-release-cancelled-waitpoint"
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, messageID)
-	sessionID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
@@ -153,9 +153,9 @@ func TestReleaseRunExecutionSessionSeparatesCancelledWaitpointOutputAndResolutio
 	}); err != nil {
 		t.Fatal(err)
 	}
-	checkpointID := ids.ToPG(ids.New())
-	runWaitID := ids.ToPG(ids.New())
-	waitpointID := ids.ToPG(ids.New())
+	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runWaitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	waitpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
@@ -204,13 +204,13 @@ UPDATE run_execution_sessions
 func TestCreateWaitpointForExecutionRequiresRunningExecution(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-leased-waitpoint")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-leased-waitpoint")
-	sessionID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
@@ -231,10 +231,10 @@ func TestCreateWaitpointForExecutionRequiresRunningExecution(t *testing.T) {
 		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 		CorrelationID:    "wait-before-start",
-		CheckpointID:     ids.ToPG(ids.New()),
+		CheckpointID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		CheckpointReason: "waitpoint",
-		RunWaitID:        ids.ToPG(ids.New()),
-		ID:               ids.ToPG(ids.New()),
+		RunWaitID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.WaitpointKindHuman,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
@@ -247,9 +247,9 @@ func TestCreateWaitpointForExecutionRequiresRunningExecution(t *testing.T) {
 func TestRespondWaitpointResponseTokenResolvesSingleResponse(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "token-single-response")
-	tokenID := ids.ToPG(ids.New())
+	tokenID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := pool.Exec(ctx, `
 INSERT INTO waitpoint_response_tokens (id, org_id, project_id, environment_id, waitpoint_id, token_hash, expires_at, external_subject, metadata)
 SELECT $1, $2, waitpoints.project_id, waitpoints.environment_id, $4, '\x01', now() + interval '5 minutes', 'reviewer@example.com', '{}'
@@ -273,7 +273,7 @@ SELECT $1, $2, waitpoints.project_id, waitpoints.environment_id, $4, '\x01', now
 		t.Fatal(err)
 	}
 	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
-		ID:             ids.ToPG(ids.New()),
+		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          orgID,
 		WaitpointID:    waitpointID,
 		ResponseKey:    "email:reviewer@example.com",
@@ -303,10 +303,10 @@ SELECT $1, $2, waitpoints.project_id, waitpoints.environment_id, $4, '\x01', now
 func TestResolveWaitpointRecordsAndResolvesSingleResponse(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "api-single-response")
 	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
-		ID:                   ids.ToPG(ids.New()),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ResponseKey:          "user:admin",
 		Action:               "respond",
 		ResolutionKind:       pgvalue.Text("completed"),
@@ -345,7 +345,7 @@ func TestResolveWaitpointRecordsAndResolvesSingleResponse(t *testing.T) {
 func TestListPendingWaitpointsForRunsMatchesSingleRunQuery(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "pending-batch-match")
 	secondRunID, secondWaitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "pending-batch-match-second")
 
@@ -392,10 +392,10 @@ func TestListPendingWaitpointsForRunsMatchesSingleRunQuery(t *testing.T) {
 func TestResolveWaitpointRequiresSuspendedQueueEntryBeforeMutating(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "api-missing-suspended")
 	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
-		ID:                   ids.ToPG(ids.New()),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ResponseKey:          "user:admin",
 		Action:               "respond",
 		ResolutionKind:       pgvalue.Text("completed"),
@@ -440,7 +440,7 @@ UPDATE run_queue_items
 func TestExpireDuePendingWaitpointsMarksConditionExpired(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "timeout-expired")
 	if _, err := pool.Exec(ctx, `
 UPDATE run_waits
@@ -470,7 +470,7 @@ UPDATE run_waits
 func TestExpireDuePendingWaitpointsHandlesMultipleRuns(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	type waitingRun struct {
 		runID       pgtype.UUID
@@ -510,7 +510,7 @@ UPDATE run_waits
 func TestConcurrentWaitpointTokenResponsesResolveOnce(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "token-concurrent-single")
 	tokenID1 := seedWaitpointResponseToken(t, ctx, pool, orgID, runID, waitpointID, []byte{1}, "first@example.com")
 	tokenID2 := seedWaitpointResponseToken(t, ctx, pool, orgID, runID, waitpointID, []byte{2}, "second@example.com")
@@ -557,9 +557,9 @@ func TestConcurrentWaitpointTokenResponsesResolveOnce(t *testing.T) {
 func TestMarkWaitpointDeliverySentWinsSameAttemptStaleRequeue(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "delivery-stale-sent")
-	deliveryID := ids.ToPG(ids.New())
+	deliveryID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	future := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
 	if _, err := queries.CreateQueuedWaitpointEmailDelivery(ctx, db.CreateQueuedWaitpointEmailDeliveryParams{
 		DeliveryID:       deliveryID,

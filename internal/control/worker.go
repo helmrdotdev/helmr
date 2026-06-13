@@ -10,11 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 const defaultWorkerTokenTTL = 15 * time.Minute
@@ -50,15 +51,15 @@ func (s *Server) workerRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("generate worker instance credential"))
 		return
 	}
-	workerInstanceID := ids.New()
+	workerInstanceID := uuid.Must(uuid.NewV7())
 	resourceID := strings.TrimSpace(request.ResourceID)
 	if resourceID == "" {
 		resourceID = workerInstanceID.String()
 	}
 	credential, err := s.db.CreateWorkerInstanceCredentialFromBootstrap(r.Context(), db.CreateWorkerInstanceCredentialFromBootstrapParams{
 		BootstrapTokenHash: registrationHash,
-		CredentialID:       ids.ToPG(ids.New()),
-		WorkerInstanceID:   ids.ToPG(workerInstanceID),
+		CredentialID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		WorkerInstanceID:   pgvalue.UUID(workerInstanceID),
 		ResourceID:         resourceID,
 		KeyPrefix:          generated.KeyPrefix,
 		SecretHash:         generated.TokenHash,
@@ -73,8 +74,8 @@ func (s *Server) workerRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, api.WorkerRegisterResponse{
-		WorkerInstanceID:     ids.MustFromPG(credential.WorkerInstanceID).String(),
-		WorkerGroupID:        ids.MustFromPG(credential.WorkerGroupID).String(),
+		WorkerInstanceID:     pgvalue.MustUUIDValue(credential.WorkerInstanceID).String(),
+		WorkerGroupID:        pgvalue.MustUUIDValue(credential.WorkerGroupID).String(),
 		WorkerInstanceSecret: generated.Raw,
 	})
 }
@@ -94,7 +95,7 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("worker_instance_id is required")))
 		return
 	}
-	workerInstanceID, err := ids.Parse(request.WorkerInstanceID)
+	workerInstanceID, err := uuid.Parse(request.WorkerInstanceID)
 	if err != nil {
 		writeError(w, badRequest(errors.New("worker_instance_id must be a UUID")))
 		return
@@ -105,7 +106,7 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	credential, err := s.db.AuthenticateWorkerInstanceCredential(r.Context(), db.AuthenticateWorkerInstanceCredentialParams{
-		WorkerInstanceID: ids.ToPG(workerInstanceID),
+		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
 		SecretHash:       secretHash,
 	})
 	if isNoRows(err) {
@@ -117,7 +118,7 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("worker authentication"))
 		return
 	}
-	credentialID, err := ids.FromPG(credential.ID)
+	credentialID, err := pgvalue.UUIDValue(credential.ID)
 	if err != nil {
 		writeError(w, errors.New("worker instance credential id"))
 		return
@@ -125,7 +126,7 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	expiresAt := now.Add(s.workerTokenTTL)
 	signed, err := auth.IssueWorkerToken(s.workerTokenSecret, auth.WorkerClaims{
-		WorkerInstanceID: ids.MustFromPG(credential.WorkerInstanceID).String(),
+		WorkerInstanceID: pgvalue.MustUUIDValue(credential.WorkerInstanceID).String(),
 		CredentialID:     credentialID.String(),
 		IssuedAt:         now,
 		ExpiresAt:        expiresAt,
@@ -170,7 +171,7 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.db.SetWorkerInstanceStatus(r.Context(), db.SetWorkerInstanceStatusParams{
-		ID:     ids.ToPG(worker.WorkerInstanceID),
+		ID:     pgvalue.UUID(worker.WorkerInstanceID),
 		Status: db.WorkerInstanceStatusActive,
 	}); isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))
@@ -190,7 +191,7 @@ func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 	}
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.SetWorkerInstanceStatus(r.Context(), db.SetWorkerInstanceStatusParams{
-		ID:     ids.ToPG(worker.WorkerInstanceID),
+		ID:     pgvalue.UUID(worker.WorkerInstanceID),
 		Status: db.WorkerInstanceStatusDraining,
 	}); isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))
@@ -212,7 +213,7 @@ func (s *Server) workerStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worker workerActor) {
-	state, err := s.db.GetWorkerInstanceState(r.Context(), ids.ToPG(worker.WorkerInstanceID))
+	state, err := s.db.GetWorkerInstanceState(r.Context(), pgvalue.UUID(worker.WorkerInstanceID))
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))
 		return
@@ -223,8 +224,8 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerStatusResponse{
-		WorkerInstanceID: ids.MustFromPG(state.ID).String(),
-		WorkerGroupID:    ids.MustFromPG(state.WorkerGroupID).String(),
+		WorkerInstanceID: pgvalue.MustUUIDValue(state.ID).String(),
+		WorkerGroupID:    pgvalue.MustUUIDValue(state.WorkerGroupID).String(),
 		Status:           api.WorkerStatus(state.Status),
 		ActiveExecutions: state.ActiveExecutions,
 	})
@@ -249,8 +250,8 @@ func workerInstanceHeartbeatParams(worker workerActor, capabilities api.WorkerCa
 	labels, _ := json.Marshal(capabilities.Labels)
 	supportedProtocolVersions, _ := json.Marshal(capabilities.SupportedProtocolVersions)
 	return db.UpsertWorkerInstanceHeartbeatParams{
-		ID:                        ids.ToPG(worker.WorkerInstanceID),
-		WorkerGroupID:             ids.ToPG(worker.WorkerGroupID),
+		ID:                        pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID:             pgvalue.UUID(worker.WorkerGroupID),
 		ResourceID:                worker.ResourceID,
 		Region:                    capabilities.Region,
 		TotalMilliCpu:             resources.MilliCPU,

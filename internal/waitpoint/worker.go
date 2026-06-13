@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sqs"
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/sync/errgroup"
@@ -128,7 +128,7 @@ func (w *Worker) reconcileOnce(ctx context.Context, sendDirect bool) error {
 			return nil
 		}
 		for _, delivery := range deliveries {
-			deliveryID := ids.MustFromPG(delivery.ID)
+			deliveryID := pgvalue.MustUUIDValue(delivery.ID)
 			if sendDirect || w.notifier.publisher == nil {
 				if err := w.notifier.SendQueuedDelivery(ctx, deliveryID); err != nil {
 					w.log.Warn("send due waitpoint notification failed", "delivery_id", deliveryID.String(), "error", err)
@@ -154,7 +154,7 @@ func deliveryAsyncMessage(delivery db.WaitpointDelivery) sqs.Message {
 	return sqs.Message{
 		Type:        deliveryMessageType,
 		Version:     asyncMessageVersionV0,
-		ID:          ids.MustFromPG(delivery.ID).String(),
+		ID:          pgvalue.MustUUIDValue(delivery.ID).String(),
 		FairGroupID: deliveryFairGroupID(delivery.OrgID),
 	}
 }
@@ -174,5 +174,5 @@ func deliveryFairGroupID(orgID pgtype.UUID) string {
 	if !orgID.Valid {
 		return deliveryMessageType
 	}
-	return "org:" + ids.MustFromPG(orgID).String()
+	return "org:" + pgvalue.MustUUIDValue(orgID).String()
 }

@@ -8,7 +8,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -220,7 +219,7 @@ func scopedRunCountsResponse(counts db.CountScopedRunsByStatusRow) api.RunCounts
 }
 
 func runResponse(run runSummary) api.RunResponse {
-	runID := ids.MustFromPG(run.ID)
+	runID := pgvalue.MustUUIDValue(run.ID)
 	var exitCode *int32
 	if run.ExitCode.Valid {
 		exitCode = &run.ExitCode.Int32
@@ -235,10 +234,10 @@ func runResponse(run runSummary) api.RunResponse {
 	}
 	return api.RunResponse{
 		ID:                runID.String(),
-		ProjectID:         ids.MustFromPG(run.ProjectID).String(),
-		EnvironmentID:     ids.MustFromPG(run.EnvironmentID).String(),
-		DeploymentID:      ids.MustFromPG(run.DeploymentID).String(),
-		DeploymentTaskID:  ids.MustFromPG(run.DeploymentTaskID).String(),
+		ProjectID:         pgvalue.MustUUIDValue(run.ProjectID).String(),
+		EnvironmentID:     pgvalue.MustUUIDValue(run.EnvironmentID).String(),
+		DeploymentID:      pgvalue.MustUUIDValue(run.DeploymentID).String(),
+		DeploymentTaskID:  pgvalue.MustUUIDValue(run.DeploymentTaskID).String(),
 		Version:           run.DeploymentVersion,
 		DeploymentVersion: run.DeploymentVersion,
 		APIVersion:        run.APIVersion,
@@ -290,7 +289,7 @@ func (s *Server) runResponses(ctx context.Context, orgID pgtype.UUID, runs []run
 		}
 		pending, err := pendingWaitpointResponse(pendingWaitpointViewFromList(waitpoint))
 		if err != nil {
-			return nil, fmt.Errorf("build pending waitpoint response for run %s: %w", ids.MustFromPG(waitpoint.RunID).String(), err)
+			return nil, fmt.Errorf("build pending waitpoint response for run %s: %w", pgvalue.MustUUIDValue(waitpoint.RunID).String(), err)
 		}
 		for _, index := range indexes {
 			pendingCopy := pending
@@ -375,7 +374,7 @@ func (s *Server) runResponse(ctx context.Context, run runSummary) (api.RunRespon
 func pendingWaitpointResponse(waitpoint waitpointView) (api.PendingWaitpoint, error) {
 	response := api.PendingWaitpoint{
 		Kind:        string(waitpoint.Kind),
-		WaitpointID: ids.MustFromPG(waitpoint.ID).String(),
+		WaitpointID: pgvalue.MustUUIDValue(waitpoint.ID).String(),
 		Request:     waitpoint.Request,
 		DisplayText: waitpoint.DisplayText,
 		RequestedAt: pgvalue.Time(waitpoint.RequestedAt),
@@ -454,7 +453,7 @@ func waitpointDeliveryResponse(delivery db.WaitpointDelivery) api.WaitpointDeliv
 		sentAt = &value
 	}
 	return api.WaitpointDeliveryResponse{
-		ID:            ids.MustFromPG(delivery.ID).String(),
+		ID:            pgvalue.MustUUIDValue(delivery.ID).String(),
 		Channel:       delivery.Channel,
 		RecipientKind: delivery.RecipientKind,
 		Recipient:     delivery.Recipient,

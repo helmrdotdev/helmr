@@ -8,15 +8,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestQueueReconcilerReconcilesScopesRoundRobinByOrganization(t *testing.T) {
 	ctx := context.Background()
-	orgA := ids.ToPG(ids.New())
-	orgB := ids.ToPG(ids.New())
+	orgA := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgB := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	scopeA1 := testQueueScope(orgA, "queue-a")
 	scopeA2 := testQueueScope(orgA, "queue-b")
 	scopeB1 := testQueueScope(orgB, "queue-a")
@@ -47,9 +48,9 @@ func TestQueueReconcilerReconcilesScopesRoundRobinByOrganization(t *testing.T) {
 
 func TestQueueReconcilerPaginatesScopes(t *testing.T) {
 	ctx := context.Background()
-	scopeA := testQueueScope(ids.ToPG(ids.New()), "queue-a")
-	scopeB := testQueueScope(ids.ToPG(ids.New()), "queue-b")
-	scopeC := testQueueScope(ids.ToPG(ids.New()), "queue-c")
+	scopeA := testQueueScope(pgvalue.UUID(uuid.Must(uuid.NewV7())), "queue-a")
+	scopeB := testQueueScope(pgvalue.UUID(uuid.Must(uuid.NewV7())), "queue-b")
+	scopeC := testQueueScope(pgvalue.UUID(uuid.Must(uuid.NewV7())), "queue-c")
 	store := &fakeQueueReconcilerStore{pages: [][]QueueScope{{scopeA, scopeB}, {scopeC}}}
 	enqueuer := &fakeQueueEnqueuer{}
 	reconciler, err := NewQueueReconciler(
@@ -223,8 +224,8 @@ func sameScopes(a, b []QueueScope) bool {
 func testQueueScope(orgID pgtype.UUID, queueName string) QueueScope {
 	return QueueScope{
 		OrgID:         orgID,
-		ProjectID:     ids.ToPG(ids.New()),
-		EnvironmentID: ids.ToPG(ids.New()),
+		ProjectID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		QueueName:     queueName,
 	}
 }

@@ -13,8 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -71,7 +72,7 @@ func newPostgresTestDB(t *testing.T, ctx context.Context) (*db.Queries, *pgxpool
 
 func seedPostgresTestOrganization(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID pgtype.UUID) {
 	t.Helper()
-	orgSlug := "test-" + ids.MustFromPG(orgID).String()
+	orgSlug := "test-" + pgvalue.MustUUIDValue(orgID).String()
 	if _, err := pool.Exec(ctx, `
 INSERT INTO organizations (id, name, slug)
 VALUES ($1, 'Test Organization', $2)
@@ -92,12 +93,12 @@ func seedPostgresTestConfiguredScope(t *testing.T, ctx context.Context, pool *pg
 		t.Fatal(err)
 	}
 	if _, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
-		ID:                   ids.ToPG(ids.New()),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                orgID,
 		Slug:                 "main",
 		Name:                 "Main",
-		EnvironmentID:        ids.ToPG(ids.New()),
-		StagingEnvironmentID: ids.ToPG(ids.New()),
+		EnvironmentID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		StagingEnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +120,7 @@ func defaultPostgresTestWorkerGroup(t *testing.T, ctx context.Context, queries *
 
 func createPostgresTestWorkerGroup(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name string) pgtype.UUID {
 	t.Helper()
-	workerGroupID := ids.ToPG(ids.New())
+	workerGroupID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := pool.Exec(ctx, `
 INSERT INTO worker_groups (id, name, description)
 VALUES ($1, $2, $3)
@@ -134,7 +135,7 @@ func seedPostgresTestWorkerBootstrapToken(t *testing.T, ctx context.Context, poo
 	seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 	if _, err := queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		TokenHash:     tokenHash,
 		WorkerGroupID: workerGroup.ID,
 	}); err != nil {
@@ -150,7 +151,7 @@ func newExternalPostgresTestDB(t *testing.T, ctx context.Context, dsn string, mi
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbName := "helmr_test_" + strings.ReplaceAll(ids.New().String(), "-", "")
+	dbName := "helmr_test_" + strings.ReplaceAll(uuid.Must(uuid.NewV7()).String(), "-", "")
 	dbIdentifier := pgx.Identifier{dbName}.Sanitize()
 	if _, err := admin.Exec(adminCtx, "CREATE DATABASE "+dbIdentifier); err != nil {
 		admin.Close()

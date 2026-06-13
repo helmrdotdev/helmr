@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -34,7 +34,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.db.ListAPIKeys(r.Context(), db.ListAPIKeysParams{
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectUUID,
 		EnvironmentID: environmentUUID,
 		StatusFilter:  filter,
@@ -105,11 +105,11 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	record, err := s.db.IssueAPIKey(r.Context(), db.IssueAPIKeyParams{
-		ID:              ids.ToPG(ids.New()),
-		OrgID:           ids.ToPG(actor.OrgID),
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(actor.OrgID),
 		ProjectID:       projectUUID,
 		EnvironmentID:   environmentUUID,
-		CreatedByUserID: ids.ToPG(actor.UserID),
+		CreatedByUserID: pgvalue.UUID(actor.UserID),
 		Role:            db.OrgMemberRole(actor.Role),
 		Name:            name,
 		KeyPrefix:       generated.KeyPrefix,
@@ -128,11 +128,11 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if _, err := s.db.CreateAPIKeyGrant(r.Context(), db.CreateAPIKeyGrantParams{
-				ID:              ids.ToPG(ids.New()),
-				OrgID:           ids.ToPG(actor.OrgID),
+				ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				OrgID:           pgvalue.UUID(actor.OrgID),
 				ApiKeyID:        record.ID,
 				Permission:      string(permission),
-				CreatedByUserID: ids.ToPG(actor.UserID),
+				CreatedByUserID: pgvalue.UUID(actor.UserID),
 			}); err != nil {
 				writeError(w, errors.New("create api key permission"))
 				return
@@ -151,7 +151,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
-	id, err := ids.Parse(chi.URLParam(r, "id"))
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, notFound(errors.New("api key not found")))
 		return
@@ -163,10 +163,10 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.db.RevokeAPIKey(r.Context(), db.RevokeAPIKeyParams{
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectUUID,
 		EnvironmentID: environmentUUID,
-		ID:            ids.ToPG(id),
+		ID:            pgvalue.UUID(id),
 	})
 	if err != nil {
 		writeError(w, errors.New("revoke api key"))
@@ -338,15 +338,15 @@ func apiKeySummaryFromRow(row db.ListAPIKeysRow) (api.APIKeySummary, error) {
 }
 
 func apiKeySummary(id pgtype.UUID, name string, keyPrefix string, projectID pgtype.UUID, environmentID pgtype.UUID, createdAt pgtype.Timestamptz, lastUsedAt pgtype.Timestamptz, expiresAt pgtype.Timestamptz, revokedAt pgtype.Timestamptz) (api.APIKeySummary, error) {
-	parsedID, err := ids.FromPG(id)
+	parsedID, err := pgvalue.UUIDValue(id)
 	if err != nil {
 		return api.APIKeySummary{}, err
 	}
-	parsedProjectID, err := ids.FromPG(projectID)
+	parsedProjectID, err := pgvalue.UUIDValue(projectID)
 	if err != nil {
 		return api.APIKeySummary{}, err
 	}
-	parsedEnvironmentID, err := ids.FromPG(environmentID)
+	parsedEnvironmentID, err := pgvalue.UUIDValue(environmentID)
 	if err != nil {
 		return api.APIKeySummary{}, err
 	}

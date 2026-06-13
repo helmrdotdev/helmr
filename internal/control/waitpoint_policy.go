@@ -14,7 +14,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -45,7 +44,7 @@ func (s *Server) listWaitpointPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.db.ListWaitpointPolicies(r.Context(), db.ListWaitpointPoliciesParams{
-		OrgID:         ids.ToPG(scope.OrgID),
+		OrgID:         pgvalue.UUID(scope.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 	})
@@ -86,8 +85,8 @@ func (s *Server) createWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	policy, err := s.db.CreateWaitpointPolicy(r.Context(), db.CreateWaitpointPolicyParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(scope.OrgID),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(scope.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Name:          normalized.name,
@@ -126,7 +125,7 @@ func (s *Server) getWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	policy, err := s.db.GetWaitpointPolicyByName(r.Context(), db.GetWaitpointPolicyByNameParams{
-		OrgID:         ids.ToPG(scope.OrgID),
+		OrgID:         pgvalue.UUID(scope.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Name:          name,
@@ -173,7 +172,7 @@ func (s *Server) updateWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	policy, err := s.db.UpdateWaitpointPolicy(r.Context(), db.UpdateWaitpointPolicyParams{
-		OrgID:         ids.ToPG(scope.OrgID),
+		OrgID:         pgvalue.UUID(scope.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Name:          name,
@@ -212,7 +211,7 @@ func (s *Server) deleteWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.db.DeleteWaitpointPolicy(r.Context(), db.DeleteWaitpointPolicyParams{
-		OrgID:         ids.ToPG(scope.OrgID),
+		OrgID:         pgvalue.UUID(scope.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Name:          name,
@@ -313,7 +312,7 @@ func (s *Server) resolveWaitpointPolicy(ctx context.Context, orgID uuid.UUID, pr
 			return nil, fmt.Errorf("waitpoint policy %q must match %s", name, waitpointPolicyNamePattern.String())
 		}
 		policy, err := s.db.GetWaitpointPolicyByName(ctx, db.GetWaitpointPolicyByNameParams{
-			OrgID:         ids.ToPG(orgID),
+			OrgID:         pgvalue.UUID(orgID),
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			Name:          name,
@@ -356,9 +355,9 @@ func waitpointPolicyNameParam(r *http.Request) (string, error) {
 
 func waitpointPolicyResponse(policy db.WaitpointPolicy) api.WaitpointPolicyResponse {
 	return api.WaitpointPolicyResponse{
-		ID:            ids.MustFromPG(policy.ID).String(),
-		ProjectID:     ids.MustFromPG(policy.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(policy.EnvironmentID).String(),
+		ID:            pgvalue.MustUUIDValue(policy.ID).String(),
+		ProjectID:     pgvalue.MustUUIDValue(policy.ProjectID).String(),
+		EnvironmentID: pgvalue.MustUUIDValue(policy.EnvironmentID).String(),
 		Name:          policy.Name,
 		Label:         policy.Label,
 		Config:        append(json.RawMessage(nil), policy.Config...),

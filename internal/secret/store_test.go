@@ -6,9 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -27,7 +28,7 @@ func TestStoreEncryptsAndResolvesNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	orgID := ids.New()
+	orgID := uuid.Must(uuid.NewV7())
 	if _, err := store.Put(context.Background(), orgID, "github-token", []byte("secret-value")); err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +60,7 @@ func TestStoreIncrementsVersionOnUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	orgID := ids.New()
+	orgID := uuid.Must(uuid.NewV7())
 	if _, err := store.Put(context.Background(), orgID, "API_TOKEN", []byte("first")); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func TestStoreResolvesOldKeyDuringRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	orgID := ids.New()
+	orgID := uuid.Must(uuid.NewV7())
 	if _, err := oldStore.Put(context.Background(), orgID, "API_TOKEN", []byte("secret-value")); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +115,7 @@ func TestStoreReencryptBatchMovesOldKeyToCurrentKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	orgID := ids.New()
+	orgID := uuid.Must(uuid.NewV7())
 	if _, err := oldStore.Put(context.Background(), orgID, "API_TOKEN", []byte("secret-value")); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +158,7 @@ func TestStoreRejectsUnsupportedKeyID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	orgID := ids.New()
+	orgID := uuid.Must(uuid.NewV7())
 	if _, err := oldStore.Put(context.Background(), orgID, "API_TOKEN", []byte("secret-value")); err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +179,7 @@ func TestStoreCheckNamesRejectsUnsupportedKeyID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	orgID := ids.New()
+	orgID := uuid.Must(uuid.NewV7())
 	if _, err := oldStore.Put(context.Background(), orgID, "API_TOKEN", []byte("secret-value")); err != nil {
 		t.Fatal(err)
 	}
@@ -221,8 +222,8 @@ type fakeSecretDB struct {
 
 func (f *fakeSecretDB) GetDefaultProjectEnvironment(context.Context, pgtype.UUID) (db.GetDefaultProjectEnvironmentRow, error) {
 	return db.GetDefaultProjectEnvironmentRow{
-		ProjectID:     ids.ToPG(dbtest.DefaultOrgID),
-		EnvironmentID: ids.ToPG(dbtest.DefaultOrgID),
+		ProjectID:     pgvalue.UUID(dbtest.DefaultOrgID),
+		EnvironmentID: pgvalue.UUID(dbtest.DefaultOrgID),
 	}, nil
 }
 
