@@ -24,9 +24,9 @@ import (
 	"time"
 
 	"github.com/containernetworking/plugins/pkg/ns"
-	fc "github.com/firecracker-microvm/firecracker-go-sdk"
+	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
-	fcvsock "github.com/firecracker-microvm/firecracker-go-sdk/vsock"
+	"github.com/firecracker-microvm/firecracker-go-sdk/vsock"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
@@ -44,7 +44,7 @@ const vsockSocketName = "vsock.sock"
 const scratchDiskName = "scratch.ext4"
 
 var nextGuestCID atomic.Uint32
-var dialVsock = fcvsock.DialContext
+var dialVsock = vsock.DialContext
 
 type Connector struct {
 	cfg Config
@@ -227,8 +227,8 @@ func (c *Connector) validateRestoreIdentity(checkpointID string, manifestBytes [
 	return manifest, nil
 }
 
-func (c *Connector) networkInterface(restoreNetwork *snapshotNetworkManifest) fc.NetworkInterface {
-	cni := &fc.CNIConfiguration{
+func (c *Connector) networkInterface(restoreNetwork *snapshotNetworkManifest) firecracker.NetworkInterface {
+	cni := &firecracker.CNIConfiguration{
 		NetworkName: c.cfg.CNINetworkName,
 		ConfDir:     c.cfg.CNIConfDir,
 		BinPath:     []string{c.cfg.CNIBinDir},
@@ -239,7 +239,7 @@ func (c *Connector) networkInterface(restoreNetwork *snapshotNetworkManifest) fc
 	if restoreNetwork != nil && restoreNetwork.GuestIPCIDR != "" {
 		cni.Args = [][2]string{{"IP", restoreNetwork.GuestIPCIDR}}
 	}
-	return fc.NetworkInterface{CNIConfiguration: cni}
+	return firecracker.NetworkInterface{CNIConfiguration: cni}
 }
 
 func (c *Connector) unpackRestoreArtifact(ctx context.Context, artifactPath string, role string, suffix string, expectedLogicalSize int64) (string, error) {
@@ -306,7 +306,7 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 
 	vsockHostPath := filepath.Join(jailRoot, vsockSocketName)
 	guestCID := allocateGuestCID()
-	machineCfg := fc.Config{
+	machineCfg := firecracker.Config{
 		VMID:            instanceID,
 		SocketPath:      apiSocketName,
 		LogLevel:        "Info",
@@ -314,47 +314,47 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 		InitrdPath:      c.cfg.InitramfsPath,
 		KernelArgs:      defaultKernelArgs,
 		NetNS:           filepath.Join("/var/run/netns", instanceID),
-		Seccomp: fc.SeccompConfig{
+		Seccomp: firecracker.SeccompConfig{
 			Enabled: true,
 		},
-		JailerCfg: &fc.JailerConfig{
-			UID:            fc.Int(c.cfg.JailerUID),
-			GID:            fc.Int(c.cfg.JailerGID),
+		JailerCfg: &firecracker.JailerConfig{
+			UID:            firecracker.Int(c.cfg.JailerUID),
+			GID:            firecracker.Int(c.cfg.JailerGID),
 			ID:             instanceID,
-			NumaNode:       fc.Int(c.cfg.JailerNumaNode),
+			NumaNode:       firecracker.Int(c.cfg.JailerNumaNode),
 			ExecFile:       c.cfg.FirecrackerPath,
 			JailerBinary:   c.cfg.JailerPath,
 			ChrootBaseDir:  c.cfg.JailerChrootBaseDir,
-			ChrootStrategy: fc.NewNaiveChrootStrategy(c.cfg.KernelPath),
+			ChrootStrategy: firecracker.NewNaiveChrootStrategy(c.cfg.KernelPath),
 			CgroupVersion:  c.cfg.CgroupVersion,
 			Stdin:          nil,
 			Stdout:         os.Stderr,
 			Stderr:         os.Stderr,
 		},
 		Drives: []models.Drive{{
-			DriveID:      fc.String("rootfs"),
-			PathOnHost:   fc.String(c.cfg.RootfsPath),
-			IsRootDevice: fc.Bool(true),
-			IsReadOnly:   fc.Bool(true),
+			DriveID:      firecracker.String("rootfs"),
+			PathOnHost:   firecracker.String(c.cfg.RootfsPath),
+			IsRootDevice: firecracker.Bool(true),
+			IsReadOnly:   firecracker.Bool(true),
 		}, {
-			DriveID:      fc.String("scratch"),
-			PathOnHost:   fc.String(scratchDiskPath),
-			IsRootDevice: fc.Bool(false),
-			IsReadOnly:   fc.Bool(false),
+			DriveID:      firecracker.String("scratch"),
+			PathOnHost:   firecracker.String(scratchDiskPath),
+			IsRootDevice: firecracker.Bool(false),
+			IsReadOnly:   firecracker.Bool(false),
 		}},
-		VsockDevices: []fc.VsockDevice{{
+		VsockDevices: []firecracker.VsockDevice{{
 			ID:   "guest-vsock",
 			Path: vsockSocketName,
 			CID:  guestCID,
 		}},
-		NetworkInterfaces: fc.NetworkInterfaces{c.networkInterface(restoreNetwork)},
+		NetworkInterfaces: firecracker.NetworkInterfaces{c.networkInterface(restoreNetwork)},
 		MachineCfg: models.MachineConfiguration{
-			VcpuCount:  fc.Int64(c.cfg.VCPUCount),
-			MemSizeMib: fc.Int64(c.cfg.MemoryMiB),
-			Smt:        fc.Bool(false),
+			VcpuCount:  firecracker.Int64(c.cfg.VCPUCount),
+			MemSizeMib: firecracker.Int64(c.cfg.MemoryMiB),
+			Smt:        firecracker.Bool(false),
 		},
 	}
-	opts := []fc.Opt{}
+	opts := []firecracker.Opt{}
 	restoring := snapshotMemoryPath != "" || snapshotStatePath != ""
 	if restoring {
 		opts = append(opts, withSnapshotRestore(snapshotMemoryPath, snapshotStatePath))
@@ -362,7 +362,7 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 	}
 	opts = append(opts, c.withTapOwner())
 	opts = append(opts, c.withNetworkPolicy(instanceID, network))
-	machine, err := fc.NewMachine(ctx, machineCfg, opts...)
+	machine, err := firecracker.NewMachine(ctx, machineCfg, opts...)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("create firecracker machine: %w", err)
@@ -451,11 +451,11 @@ func (c *Connector) prepareScratchDiskForJailer(scratchDiskPath string) error {
 	return nil
 }
 
-func (c *Connector) withTapOwner() fc.Opt {
-	return func(machine *fc.Machine) {
-		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(fc.SetupNetworkHandlerName, fc.Handler{
+func (c *Connector) withTapOwner() firecracker.Opt {
+	return func(machine *firecracker.Machine) {
+		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(firecracker.SetupNetworkHandlerName, firecracker.Handler{
 			Name: "helmr.SetTapOwner",
-			Fn: func(ctx context.Context, machine *fc.Machine) error {
+			Fn: func(ctx context.Context, machine *firecracker.Machine) error {
 				for _, iface := range machine.Cfg.NetworkInterfaces {
 					if iface.StaticConfiguration == nil || iface.StaticConfiguration.HostDevName == "" {
 						continue
@@ -620,7 +620,7 @@ func readHealth(conn io.ReadWriter) (healthResponse, error) {
 
 type guestSession struct {
 	stream               io.ReadWriteCloser
-	machine              *fc.Machine
+	machine              *firecracker.Machine
 	machineCancel        context.CancelFunc
 	cfg                  Config
 	instanceDir          string
@@ -775,7 +775,7 @@ func (s *guestSession) Resume(ctx context.Context) error {
 	return nil
 }
 
-func stopMachine(machine *fc.Machine) error {
+func stopMachine(machine *firecracker.Machine) error {
 	pid, pidErr := machine.PID()
 	stopErr := machine.StopVMM()
 	waitCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
@@ -907,7 +907,7 @@ type snapshotNetworkManifest struct {
 	GuestIPCIDR string `json:"guest_ip_cidr,omitempty"`
 }
 
-func snapshotRuntimeConfig(cfg Config, machine *fc.Machine, checkpointID string, runtimeID string, kernelDigest string, initramfsDigest string, rootfsDigest string) (string, []byte, error) {
+func snapshotRuntimeConfig(cfg Config, machine *firecracker.Machine, checkpointID string, runtimeID string, kernelDigest string, initramfsDigest string, rootfsDigest string) (string, []byte, error) {
 	network := snapshotNetworkConfig(cfg, machine)
 	if network.GuestIPCIDR == "" {
 		return "", nil, errors.New("firecracker CNI guest IP is required for checkpoint restore")
@@ -948,7 +948,7 @@ func snapshotRuntimeConfig(cfg Config, machine *fc.Machine, checkpointID string,
 	return sha256sum.DigestBytes(manifest), manifest, nil
 }
 
-func snapshotNetworkConfig(cfg Config, machine *fc.Machine) snapshotNetworkManifest {
+func snapshotNetworkConfig(cfg Config, machine *firecracker.Machine) snapshotNetworkManifest {
 	network := snapshotNetworkManifest{
 		Mode:        "cni",
 		Profile:     cfg.CNIProfile,
@@ -1030,19 +1030,19 @@ func jailRootPath(cfg Config, id string) string {
 	return filepath.Join(cfg.JailerChrootBaseDir, filepath.Base(cfg.FirecrackerPath), id, "root")
 }
 
-func withSnapshotRestore(memoryPath string, statePath string) fc.Opt {
-	return func(machine *fc.Machine) {
-		fc.WithSnapshot(memoryPath, statePath)(machine)
-		machine.Handlers.FcInit = machine.Handlers.FcInit.Remove(fc.AddVsocksHandlerName)
+func withSnapshotRestore(memoryPath string, statePath string) firecracker.Opt {
+	return func(machine *firecracker.Machine) {
+		firecracker.WithSnapshot(memoryPath, statePath)(machine)
+		machine.Handlers.FcInit = machine.Handlers.FcInit.Remove(firecracker.AddVsocksHandlerName)
 	}
 }
 
-func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, memoryPath string, statePath string) fc.Opt {
-	return func(machine *fc.Machine) {
-		machine.Handlers.Validation = machine.Handlers.Validation.Append(fc.JailerConfigValidationHandler)
-		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(fc.CreateLogFilesHandlerName, fc.Handler{
+func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, memoryPath string, statePath string) firecracker.Opt {
+	return func(machine *firecracker.Machine) {
+		machine.Handlers.Validation = machine.Handlers.Validation.Append(firecracker.JailerConfigValidationHandler)
+		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(firecracker.CreateLogFilesHandlerName, firecracker.Handler{
 			Name: "fcinit.LinkHelmrRestoreFilesToRootFS",
-			Fn: func(ctx context.Context, machine *fc.Machine) error {
+			Fn: func(ctx context.Context, machine *firecracker.Machine) error {
 				root := jailRootPath(Config{
 					FirecrackerPath:     machine.Cfg.JailerCfg.ExecFile,
 					JailerChrootBaseDir: machine.Cfg.JailerCfg.ChrootBaseDir,
@@ -1051,16 +1051,16 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, memoryPat
 					return fmt.Errorf("link rootfs into jail: %w", err)
 				}
 				for i := range machine.Cfg.Drives {
-					if fc.StringValue(machine.Cfg.Drives[i].PathOnHost) == rootfsPath {
-						machine.Cfg.Drives[i].PathOnHost = fc.String(filepath.Base(rootfsPath))
+					if firecracker.StringValue(machine.Cfg.Drives[i].PathOnHost) == rootfsPath {
+						machine.Cfg.Drives[i].PathOnHost = firecracker.String(filepath.Base(rootfsPath))
 					}
 				}
 				if err := linkIntoJailForVMM(scratchDiskPath, root, scratchDiskName, *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
 					return fmt.Errorf("link scratch disk into jail: %w", err)
 				}
 				for i := range machine.Cfg.Drives {
-					if fc.StringValue(machine.Cfg.Drives[i].PathOnHost) == scratchDiskPath {
-						machine.Cfg.Drives[i].PathOnHost = fc.String(scratchDiskName)
+					if firecracker.StringValue(machine.Cfg.Drives[i].PathOnHost) == scratchDiskPath {
+						machine.Cfg.Drives[i].PathOnHost = firecracker.String(scratchDiskName)
 					}
 				}
 				if err := linkIntoJailForVMM(memoryPath, root, filepath.Base(memoryPath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {

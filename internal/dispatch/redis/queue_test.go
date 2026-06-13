@@ -9,8 +9,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/helmrdotdev/helmr/internal/compute"
-	dispatch "github.com/helmrdotdev/helmr/internal/dispatch"
-	goredis "github.com/redis/go-redis/v9"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestQueueEnqueueDequeueAck(t *testing.T) {
@@ -131,7 +131,7 @@ func TestQueueReadyMessageExistsInvalidatesMessageWithoutRuntimeMetadata(t *test
 	keys := queue.keys("org-1", "project-1", "env-1", "queue-a")
 	if score, err := queue.client.ZScore(ctx, keys.ready, result.MessageID).Result(); err == nil {
 		t.Fatalf("message without runtime metadata remained ready with score %f", score)
-	} else if !errors.Is(err, goredis.Nil) {
+	} else if !errors.Is(err, redis.Nil) {
 		t.Fatal(err)
 	}
 }
@@ -1006,7 +1006,7 @@ func TestQueueRenewFencesExpiredAndConflictingLeases(t *testing.T) {
 func newTestQueue(t *testing.T, opts ...Option) (*Queue, func()) {
 	t.Helper()
 	server := miniredis.RunT(t)
-	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	allOpts := append([]Option{WithPrefix("test")}, opts...)
 	queue, err := New(client, allOpts...)
 	if err != nil {

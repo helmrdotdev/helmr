@@ -15,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
-	goredis "github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -31,10 +31,10 @@ const (
 type EventStream struct {
 	log   *slog.Logger
 	db    db.Querier
-	redis goredis.Cmdable
+	redis redis.Cmdable
 }
 
-func NewEventStream(log *slog.Logger, queries db.Querier, redis goredis.Cmdable) (*EventStream, error) {
+func NewEventStream(log *slog.Logger, queries db.Querier, redis redis.Cmdable) (*EventStream, error) {
 	if queries == nil {
 		return nil, errors.New("event stream database is required")
 	}
@@ -105,7 +105,7 @@ func (s *EventStream) publishOutboxRow(ctx context.Context, row db.ClaimEventOut
 	}
 	id := redisEventID(row.Seq)
 	add := func() error {
-		return s.redis.XAdd(ctx, &goredis.XAddArgs{
+		return s.redis.XAdd(ctx, &redis.XAddArgs{
 			Stream: row.StreamKey,
 			MaxLen: eventStreamMaxLen,
 			Approx: true,
@@ -170,12 +170,12 @@ func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectT
 		if hasMore {
 			continue
 		}
-		streams, err := s.redis.XRead(ctx, &goredis.XReadArgs{
+		streams, err := s.redis.XRead(ctx, &redis.XReadArgs{
 			Streams: []string{streamKey, redisEventID(cursor)},
 			Count:   int64(runEventsPageSize),
 			Block:   eventStreamBlockEvery,
 		}).Result()
-		if errors.Is(err, goredis.Nil) {
+		if errors.Is(err, redis.Nil) {
 			if onIdle != nil {
 				if idleErr := onIdle(); idleErr != nil {
 					return idleErr

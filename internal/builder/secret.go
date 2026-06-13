@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/secret"
 )
 

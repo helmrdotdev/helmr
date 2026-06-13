@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/builder"
-	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	bkclient "github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 )

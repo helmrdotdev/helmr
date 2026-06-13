@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	pathpkg "path"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -37,11 +37,11 @@ func installAdapterBundle(adapterBundlePath, imageRoot string) error {
 }
 
 func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, launchCwd string, runtimeUser *resolvedRuntimeUser) (string, error) {
-	runtimePath := pathpkg.Join(launchCwd, ".helmr", "deployment-source")
+	runtimePath := path.Join(launchCwd, ".helmr", "deployment-source")
 	if isReservedRuntimePath(runtimePath) {
 		return "", fmt.Errorf("deployment source path %s conflicts with reserved runtime paths", runtimePath)
 	}
-	parent := pathpkg.Join(strings.TrimPrefix(runtimePath, "/"), "..")
+	parent := path.Join(strings.TrimPrefix(runtimePath, "/"), "..")
 	if err := mkdirAllNoSymlink(imageRoot, parent, 0o755); err != nil {
 		return "", err
 	}
@@ -92,7 +92,7 @@ func imageNodeRuntimeCommand(imageRoot string, imageConfig ociRuntimeConfig) (st
 		if !strings.HasPrefix(dir, "/") {
 			continue
 		}
-		runtimePath := pathpkg.Clean(pathpkg.Join(dir, "node"))
+		runtimePath := path.Clean(path.Join(dir, "node"))
 		if isReservedRuntimePath(runtimePath) {
 			continue
 		}

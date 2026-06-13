@@ -7,13 +7,13 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
-	goredis "github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestRedisIndexDequeuesDueEntriesAndAcks(t *testing.T) {
 	ctx := context.Background()
 	server := miniredis.RunT(t)
-	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	defer client.Close()
 
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -68,7 +68,7 @@ func TestRedisIndexDequeuesDueEntriesAndAcks(t *testing.T) {
 func TestRedisIndexNackDelaysRetry(t *testing.T) {
 	ctx := context.Background()
 	server := miniredis.RunT(t)
-	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	defer client.Close()
 
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -117,7 +117,7 @@ func TestRedisIndexNackDelaysRetry(t *testing.T) {
 func TestRedisIndexNackAfterExpiredLeaseStillDelaysRetry(t *testing.T) {
 	ctx := context.Background()
 	server := miniredis.RunT(t)
-	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	defer client.Close()
 
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -162,7 +162,7 @@ func TestRedisIndexNackAfterExpiredLeaseStillDelaysRetry(t *testing.T) {
 func TestRedisIndexReclaimAppliesBackoff(t *testing.T) {
 	ctx := context.Background()
 	server := miniredis.RunT(t)
-	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	defer client.Close()
 
 	index, err := NewRedisIndex(client)
@@ -203,7 +203,7 @@ func TestRedisIndexReclaimAppliesBackoff(t *testing.T) {
 func TestRedisIndexEnqueueDoesNotResetInflightAttempt(t *testing.T) {
 	ctx := context.Background()
 	server := miniredis.RunT(t)
-	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	defer client.Close()
 
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -246,7 +246,7 @@ func TestRedisIndexEnqueueDoesNotResetInflightAttempt(t *testing.T) {
 func TestRedisIndexAckAfterExpiredLeaseCleansMessage(t *testing.T) {
 	ctx := context.Background()
 	server := miniredis.RunT(t)
-	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	defer client.Close()
 
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -283,7 +283,7 @@ func TestRedisIndexAckAfterExpiredLeaseCleansMessage(t *testing.T) {
 func TestRedisIndexActiveStaleAckDoesNotDeleteNewerFire(t *testing.T) {
 	ctx := context.Background()
 	server := miniredis.RunT(t)
-	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	defer client.Close()
 
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -327,7 +327,7 @@ func TestRedisIndexActiveStaleAckDoesNotDeleteNewerFire(t *testing.T) {
 func TestRedisIndexActiveStaleNackDoesNotDelayNewerFire(t *testing.T) {
 	ctx := context.Background()
 	server := miniredis.RunT(t)
-	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	defer client.Close()
 
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -368,7 +368,7 @@ func TestRedisIndexActiveStaleNackDoesNotDelayNewerFire(t *testing.T) {
 func TestRedisIndexExpiredStaleLeaseDoesNotDelayNewerFire(t *testing.T) {
 	ctx := context.Background()
 	server := miniredis.RunT(t)
-	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	defer client.Close()
 
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)

@@ -4,13 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	pathpkg "path"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 )
 
 func applySecrets(imageRoot, workspaceRoot string, request *runv0.RunTaskRequest, runtimeUser *resolvedRuntimeUser, env *[]string) error {
@@ -173,71 +173,71 @@ func secretOwner(imageRoot string, runtimeUser *resolvedRuntimeUser, owner *stri
 	return identity.UID, identity.GID, nil
 }
 
-func materializedPath(imageRoot, workspaceRoot, path string) (string, error) {
-	if err := validateSecretPath(path); err != nil {
+func materializedPath(imageRoot, workspaceRoot, secretPath string) (string, error) {
+	if err := validateSecretPath(secretPath); err != nil {
 		return "", err
 	}
-	if filepath.IsAbs(path) {
-		return confinedMaterializedPath(imageRoot, strings.TrimPrefix(path, "/"))
+	if filepath.IsAbs(secretPath) {
+		return confinedMaterializedPath(imageRoot, strings.TrimPrefix(secretPath, "/"))
 	}
-	return confinedMaterializedPath(workspaceRoot, path)
+	return confinedMaterializedPath(workspaceRoot, secretPath)
 }
 
-func validateSecretPath(path string) error {
-	if strings.TrimSpace(path) == "" {
+func validateSecretPath(secretPath string) error {
+	if strings.TrimSpace(secretPath) == "" {
 		return errors.New("secret path is required")
 	}
-	if path != strings.TrimSpace(path) {
-		return fmt.Errorf("secret path must not contain leading or trailing whitespace: %q", path)
+	if secretPath != strings.TrimSpace(secretPath) {
+		return fmt.Errorf("secret path must not contain leading or trailing whitespace: %q", secretPath)
 	}
-	clean := filepath.Clean(filepath.FromSlash(path))
+	clean := filepath.Clean(filepath.FromSlash(secretPath))
 	if clean == "." || clean == string(filepath.Separator) {
-		return fmt.Errorf("secret path must target a file or directory: %q", path)
+		return fmt.Errorf("secret path must target a file or directory: %q", secretPath)
 	}
-	for part := range strings.SplitSeq(filepath.ToSlash(path), "/") {
+	for part := range strings.SplitSeq(filepath.ToSlash(secretPath), "/") {
 		if part == ".." {
-			return fmt.Errorf("secret path must not contain parent components: %q", path)
+			return fmt.Errorf("secret path must not contain parent components: %q", secretPath)
 		}
 	}
-	if strings.HasPrefix(path, "/") && isReservedRuntimePath(pathpkg.Clean(filepath.ToSlash(path))) {
-		return fmt.Errorf("secret path %q conflicts with reserved runtime paths", path)
+	if strings.HasPrefix(secretPath, "/") && isReservedRuntimePath(path.Clean(filepath.ToSlash(secretPath))) {
+		return fmt.Errorf("secret path %q conflicts with reserved runtime paths", secretPath)
 	}
 	return nil
 }
 
-func ensureRuntimeCanReadSecretFile(imageRoot, workspaceRoot, path string, runtimeUser *resolvedRuntimeUser) error {
+func ensureRuntimeCanReadSecretFile(imageRoot, workspaceRoot, hostPath string, runtimeUser *resolvedRuntimeUser) error {
 	if runtimeUser == nil {
 		return nil
 	}
-	if err := ensureRuntimeCanTraversePath(imageRoot, workspaceRoot, filepath.Dir(path), runtimeUser); err != nil {
+	if err := ensureRuntimeCanTraversePath(imageRoot, workspaceRoot, filepath.Dir(hostPath), runtimeUser); err != nil {
 		return err
 	}
-	info, err := os.Lstat(path)
+	info, err := os.Lstat(hostPath)
 	if err != nil {
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return fmt.Errorf("secret file is not a regular file: %s", path)
+		return fmt.Errorf("secret file is not a regular file: %s", hostPath)
 	}
 	if !runtimeCanRead(info, runtimeUser) {
-		return fmt.Errorf("secret file is not readable by runtime user %s: %s", runtimeUser.Name, path)
+		return fmt.Errorf("secret file is not readable by runtime user %s: %s", runtimeUser.Name, hostPath)
 	}
 	return nil
 }
 
-func ensureRuntimeCanTraverseSecretDir(imageRoot, workspaceRoot, path string, runtimeUser *resolvedRuntimeUser) error {
+func ensureRuntimeCanTraverseSecretDir(imageRoot, workspaceRoot, hostPath string, runtimeUser *resolvedRuntimeUser) error {
 	if runtimeUser == nil {
 		return nil
 	}
-	return ensureRuntimeCanTraversePath(imageRoot, workspaceRoot, path, runtimeUser)
+	return ensureRuntimeCanTraversePath(imageRoot, workspaceRoot, hostPath, runtimeUser)
 }
 
-func ensureRuntimeCanTraversePath(imageRoot, workspaceRoot, path string, runtimeUser *resolvedRuntimeUser) error {
-	root, err := materializedRoot(imageRoot, workspaceRoot, path)
+func ensureRuntimeCanTraversePath(imageRoot, workspaceRoot, hostPath string, runtimeUser *resolvedRuntimeUser) error {
+	root, err := materializedRoot(imageRoot, workspaceRoot, hostPath)
 	if err != nil {
 		return err
 	}
-	current := filepath.Clean(path)
+	current := filepath.Clean(hostPath)
 	root = filepath.Clean(root)
 	for current != root {
 		info, err := os.Lstat(current)
@@ -259,17 +259,17 @@ func ensureRuntimeCanTraversePath(imageRoot, workspaceRoot, path string, runtime
 	return nil
 }
 
-func materializedRoot(imageRoot, workspaceRoot, path string) (string, error) {
+func materializedRoot(imageRoot, workspaceRoot, hostPath string) (string, error) {
 	imageRoot = filepath.Clean(imageRoot)
 	workspaceRoot = filepath.Clean(workspaceRoot)
-	path = filepath.Clean(path)
-	if path == imageRoot || strings.HasPrefix(path, imageRoot+string(filepath.Separator)) {
-		if path == workspaceRoot || strings.HasPrefix(path, workspaceRoot+string(filepath.Separator)) {
+	hostPath = filepath.Clean(hostPath)
+	if hostPath == imageRoot || strings.HasPrefix(hostPath, imageRoot+string(filepath.Separator)) {
+		if hostPath == workspaceRoot || strings.HasPrefix(hostPath, workspaceRoot+string(filepath.Separator)) {
 			return workspaceRoot, nil
 		}
 		return imageRoot, nil
 	}
-	return "", fmt.Errorf("secret path is outside materialized roots: %s", path)
+	return "", fmt.Errorf("secret path is outside materialized roots: %s", hostPath)
 }
 
 func runtimeCanRead(info os.FileInfo, runtimeUser *resolvedRuntimeUser) bool {
@@ -304,21 +304,21 @@ func permissionApplies(mode os.FileMode, uid uint32, gid uint32, runtimeUser *re
 }
 
 func confinedMaterializedPath(root, relative string) (string, error) {
-	path, err := confinedLayerPath(root, relative)
+	hostPath, err := confinedLayerPath(root, relative)
 	if err != nil {
 		return "", err
 	}
-	info, err := os.Lstat(path)
+	info, err := os.Lstat(hostPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return path, nil
+		return hostPath, nil
 	}
 	if err != nil {
 		return "", err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("secret path must not be a symlink: %s", path)
+		return "", fmt.Errorf("secret path must not be a symlink: %s", hostPath)
 	}
-	return path, nil
+	return hostPath, nil
 }
 
 func writeFileNoFollow(path string, body []byte, mode os.FileMode) error {

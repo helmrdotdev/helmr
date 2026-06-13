@@ -15,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"golang.org/x/sync/errgroup"

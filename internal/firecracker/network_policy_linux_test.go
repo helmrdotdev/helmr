@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	fc "github.com/firecracker-microvm/firecracker-go-sdk"
+	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
@@ -91,10 +91,10 @@ func TestEffectiveBlockedCIDRsIncludesRunDenyCIDRs(t *testing.T) {
 
 func TestWithNetworkPolicySurvivesSnapshotHandlerReplacement(t *testing.T) {
 	connector := &Connector{cfg: (Config{}).WithDefaults()}
-	machine, err := fc.NewMachine(
+	machine, err := firecracker.NewMachine(
 		context.Background(),
-		fc.Config{},
-		fc.WithSnapshot("/tmp/mem", "/tmp/state"),
+		firecracker.Config{},
+		firecracker.WithSnapshot("/tmp/mem", "/tmp/state"),
 		connector.withNetworkPolicy("vm-1", compute.DefaultNetworkPolicy()),
 	)
 	if err != nil {

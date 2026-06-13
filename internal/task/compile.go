@@ -9,7 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/compute"
-	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"google.golang.org/protobuf/proto"

@@ -23,7 +23,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	goredis "github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
@@ -226,7 +226,7 @@ func TestWorkerReleaseRejectsUnknownFields(t *testing.T) {
 		},
 	}
 	redisServer := miniredis.RunT(t)
-	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
 	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour, EventStream: eventStream})
@@ -352,7 +352,7 @@ func TestWorkerRestoreClaimDoesNotRequireWorkspaceSourceBinding(t *testing.T) {
 		},
 	}
 	redisServer := miniredis.RunT(t)
-	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
 	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour, EventStream: eventStream})

@@ -19,7 +19,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/safepath"
 
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"google.golang.org/protobuf/proto"
 )

@@ -4,13 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	pathpkg "path"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/containerd/platforms"
-	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/safepath"
 	"github.com/moby/buildkit/client/llb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
@@ -231,13 +231,13 @@ func resolveWorkdir(current string, next string) string {
 		return current
 	}
 	if strings.HasPrefix(next, "/") {
-		return pathpkg.Clean(next)
+		return path.Clean(next)
 	}
 	base := strings.TrimSpace(current)
 	if base == "" {
 		base = "/"
 	}
-	return pathpkg.Clean(pathpkg.Join(base, next))
+	return path.Clean(path.Join(base, next))
 }
 
 func cacheSharing(value string) (llb.CacheMountSharingMode, error) {
@@ -369,18 +369,18 @@ func resolveSourcePath(root, raw string) (string, string, error) {
 }
 
 func rejectSymlinkComponents(root, relative string) error {
-	path := root
+	current := root
 	for component := range strings.SplitSeq(filepath.ToSlash(relative), "/") {
 		if component == "" || component == "." {
 			continue
 		}
-		path = filepath.Join(path, component)
-		info, err := os.Lstat(path)
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
 		if err != nil {
-			return fmt.Errorf("stat source ref %s: %w", path, err)
+			return fmt.Errorf("stat source ref %s: %w", current, err)
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("source ref path is a symlink: %s", path)
+			return fmt.Errorf("source ref path is a symlink: %s", current)
 		}
 	}
 	return nil

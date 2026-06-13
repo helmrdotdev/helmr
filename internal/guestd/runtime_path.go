@@ -3,7 +3,7 @@ package guestd
 import (
 	"fmt"
 	"os"
-	pathpkg "path"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -24,7 +24,7 @@ func resolveLaunchCwd(raw string, fallback string) (string, error) {
 			return "", fmt.Errorf("OCI WorkingDir %q contains unsafe path components", raw)
 		}
 	}
-	clean := pathpkg.Clean(cwd)
+	clean := path.Clean(cwd)
 	if isReservedRuntimePath(clean) {
 		return "", fmt.Errorf("OCI WorkingDir %s conflicts with reserved runtime paths", clean)
 	}

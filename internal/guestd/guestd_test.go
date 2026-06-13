@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/safepath"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"

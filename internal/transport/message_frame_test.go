@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 )
 
 func TestMessageFrameRoundTrip(t *testing.T) {

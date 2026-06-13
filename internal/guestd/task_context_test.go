@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 )
 
 func TestAdapterTaskContextJSON(t *testing.T) {

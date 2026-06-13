@@ -18,7 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	goredis "github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestTerminalRunEventDoesNotTrustWorkerFailureKind(t *testing.T) {
@@ -271,10 +271,10 @@ func TestEventCursorPrefersLastEventID(t *testing.T) {
 func TestEventStreamTreatsTrimmedOlderDuplicateAsPublished(t *testing.T) {
 	runID := uuid.Must(uuid.NewV7())
 	redisServer := miniredis.RunT(t)
-	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
 	streamKey := eventStreamKey(dbtest.DefaultOrgID, db.EventSubjectTypeRun, runID)
-	if err := redisClient.XAdd(context.Background(), &goredis.XAddArgs{
+	if err := redisClient.XAdd(context.Background(), &redis.XAddArgs{
 		Stream: streamKey,
 		ID:     "2-0",
 		Values: map[string]any{"event": `{"id":"2","kind":"run.completed"}`},

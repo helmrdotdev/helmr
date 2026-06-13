@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 )
 
 func TestValidateWorkerDeploymentBuildResultRequiresReportedArtifacts(t *testing.T) {

@@ -10,17 +10,17 @@ import (
 	"os/exec"
 	"strings"
 
-	fc "github.com/firecracker-microvm/firecracker-go-sdk"
+	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
 const networkPolicyTableName = "helmr_network_policy"
 
-func (c *Connector) withNetworkPolicy(netns string, policy compute.NetworkPolicy) fc.Opt {
-	return func(machine *fc.Machine) {
-		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(fc.SetupNetworkHandlerName, fc.Handler{
+func (c *Connector) withNetworkPolicy(netns string, policy compute.NetworkPolicy) firecracker.Opt {
+	return func(machine *firecracker.Machine) {
+		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(firecracker.SetupNetworkHandlerName, firecracker.Handler{
 			Name: "fcinit.ApplyHelmrNetworkPolicy",
-			Fn: func(ctx context.Context, _ *fc.Machine) error {
+			Fn: func(ctx context.Context, _ *firecracker.Machine) error {
 				return c.applyNetworkPolicy(ctx, netns, policy)
 			},
 		})

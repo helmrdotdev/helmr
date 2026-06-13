@@ -16,7 +16,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"

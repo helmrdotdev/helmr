@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	pathpkg "path"
+	"path"
 	"strings"
 
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 )
 
 func workspaceMountPath(request *runv0.RunTaskRequest) (string, error) {
@@ -23,7 +23,7 @@ func workspaceMountPath(request *runv0.RunTaskRequest) (string, error) {
 			return "", fmt.Errorf("workspace mount path must not contain parent components: %q", mountPath)
 		}
 	}
-	clean := pathpkg.Clean(mountPath)
+	clean := path.Clean(mountPath)
 	if clean == "/" {
 		return "", errors.New("workspace mount path must not be root")
 	}
