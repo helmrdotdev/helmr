@@ -42,10 +42,80 @@ in
     export PATH=${ciChecksPath}
     exec ${pkgs.bash}/bin/bash ./scripts/ci-checks.sh "$@"
   '';
+  ci-policy =
+    app "ci-policy" "run repository policy and release script checks for CI" toolsets.ciChecks
+      ''
+        bun install --frozen-lockfile --ignore-scripts
+        bun audit
+        actionlint
+        scripts/security-checks.sh
+        bash tests/install_test.sh
+        bash tests/release_manifest_test.sh
+        bash tests/release_workflow_test.sh
+        bash tests/release_worker_ami_cleanup_test.sh
+        bash tests/release_worker_image_identity_test.sh
+      '';
+  ci-generated =
+    app "ci-generated" "check generated artifacts and formatting for CI" toolsets.ciChecks
+      ''
+        bun install --frozen-lockfile --ignore-scripts
+        scripts/build-embedded-adapter.sh
+        git diff --exit-code -- internal/adapter/js
+        test -z "$(git status --porcelain -- internal/adapter/js)"
+        make generate
+        make fmt
+        make console-build
+        git diff --exit-code
+      '';
+  ci-typescript =
+    app "ci-typescript" "run TypeScript type checks and tests for CI" toolsets.ciChecks
+      ''
+        bun install --frozen-lockfile --ignore-scripts
+        bun run typecheck
+        bun run test:ts
+      '';
+  ci-go-test =
+    app "ci-go-test" "run Go tests with embedded console assets for CI" toolsets.ciChecks
+      ''
+        bun install --frozen-lockfile --ignore-scripts
+        make test
+      '';
+  ci-go-lint =
+    app "ci-go-lint" "run Go lint checks with embedded console assets for CI" toolsets.ciChecks
+      ''
+        bun install --frozen-lockfile --ignore-scripts
+        make lint
+      '';
+  ci-go-build =
+    app "ci-go-build" "build Go commands with embedded console assets for CI" toolsets.ciChecks
+      ''
+        bun install --frozen-lockfile --ignore-scripts
+        make build
+      '';
+  ci-go-race =
+    app "ci-go-race" "run Go race tests with embedded console assets for CI" toolsets.ciChecks
+      ''
+        bun install --frozen-lockfile --ignore-scripts
+        make test-race
+      '';
+  ci-linux-compile =
+    app "ci-linux-compile" "cross-compile Linux Go test binaries for CI" toolsets.ciChecks
+      ''
+        make test-linux-compile
+      '';
+  ci-linux-lint =
+    app "ci-linux-lint" "run Linux-targeted Go static analysis for CI" toolsets.ciChecks
+      ''
+        bun install --frozen-lockfile --ignore-scripts
+        make console-build
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 staticcheck -tags embed_console ./...
+      '';
   test = app "test" "run the full Helmr test recipe" toolsets.appRuntime "make test";
   lint = app "lint" "run Go vet with repository lint settings" toolsets.appRuntime "make lint";
   modernize = app "modernize" "apply Go modernizer fixes" toolsets.appRuntime "make modernize";
-  modernize-check = app "modernize-check" "check Go modernizer fixes" toolsets.appRuntime "make modernize-check";
+  modernize-check =
+    app "modernize-check" "check Go modernizer fixes" toolsets.appRuntime
+      "make modernize-check";
   dev = app "dev" "run the local Helmr control plane and console dashboard" toolsets.appRuntime ''
     exec ./scripts/dev-console-stack.sh "$@"
   '';

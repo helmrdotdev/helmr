@@ -64,27 +64,28 @@ jobs:
 
       - name: Build CLI archives
         run: |
-          nix develop --command bash -ceu '
-            bun install --frozen-lockfile --ignore-scripts
-            scripts/build-embedded-adapter.sh
-            git diff --exit-code -- internal/adapter/js
-            test -z "$(git status --porcelain -- internal/adapter/js)"
-            mkdir -p dist/cli
-            for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
-              os="${target%/*}"
-              arch="${target#*/}"
-              out_dir="dist/cli/helmr-${os}-${arch}"
-              mkdir -p "$out_dir"
-              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
-                -trimpath \
-                -ldflags="-s -w -X github.com/helmrdotdev/helmr/internal/version.Version=${RELEASE_TAG}" \
-                -o "$out_dir/helmr" \
-                ./cmd/helmr
-              tar -C "$out_dir" -czf "dist/helmr-${os}-${arch}.tar.gz" helmr
-            done
-            cd dist
-            sha256sum helmr-*.tar.gz > checksums.txt
-          '
+          nix develop --command bash <<'EOF'
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts
+          scripts/build-embedded-adapter.sh
+          git diff --exit-code -- internal/adapter/js
+          test -z "$(git status --porcelain -- internal/adapter/js)"
+          mkdir -p dist/cli
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            out_dir="dist/cli/helmr-${os}-${arch}"
+            mkdir -p "$out_dir"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
+              -trimpath \
+              -ldflags="-s -w -X github.com/helmrdotdev/helmr/internal/version.Version=${RELEASE_TAG}" \
+              -o "$out_dir/helmr" \
+              ./cmd/helmr
+            tar -C "$out_dir" -czf "dist/helmr-${os}-${arch}.tar.gz" helmr
+          done
+          cd dist
+          sha256sum helmr-*.tar.gz > checksums.txt
+          EOF
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -139,7 +140,10 @@ jobs:
           IMAGE_URI: ${{ env.CONTROL_IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
           HELMR_BUILD_VERSION: ${{ env.RELEASE_TAG }}
         run: |
-          nix develop .#images --command bash -ceu './scripts/build-control-image.sh "$IMAGE_URI"'
+          nix develop .#images --command bash <<'EOF'
+          set -euo pipefail
+          ./scripts/build-control-image.sh "$IMAGE_URI"
+          EOF
           mkdir -p dist
           docker save "$IMAGE_URI" -o dist/control-image.tar
 

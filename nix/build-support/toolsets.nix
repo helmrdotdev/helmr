@@ -62,6 +62,7 @@ rec {
     pkgs.git
     pkgs.gnumake
     pkgs.curl
+    pkgs.actionlint
     pkgs.zizmor
   ];
 
