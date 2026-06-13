@@ -53,18 +53,18 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	if err := run(log); err != nil {
+	if err := run(context.Background(), log); err != nil {
 		log.Error("control stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger) error {
+func run(ctx context.Context, log *slog.Logger) error {
 	cfg, err := config.LoadControl()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	backgroundCtx, cancelBackground := context.WithCancel(context.Background())
 	defer cancelBackground()
