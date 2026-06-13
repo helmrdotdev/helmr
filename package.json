@@ -16,6 +16,7 @@
     "packages/*"
   ],
   "overrides": {
+    "esbuild": "0.28.1",
     "yaml": "2.9.0",
     "ws": "8.20.1"
   },
