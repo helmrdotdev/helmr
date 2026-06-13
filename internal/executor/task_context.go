@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 )
 
 func taskContextJSON(runID, taskID string, workspace *runv0.RunTaskWorkspace) (string, error) {

@@ -2,9 +2,10 @@ package transport
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"io"
 	"os"
+
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 func WriteFileFrame(w io.Writer, header StreamHeader, path string) error {
@@ -40,5 +41,5 @@ func HashFile(path string) (string, int64, error) {
 	if err != nil {
 		return "", 0, err
 	}
-	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), size, nil
+	return sha256sum.DigestHash(hash), size, nil
 }

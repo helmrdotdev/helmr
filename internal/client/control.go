@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 func (c *Client) CreateRun(ctx context.Context, input api.CreateRunRequest) (api.RunResponse, error) {
@@ -272,7 +272,7 @@ func deploymentSourceDigest(source io.Reader) (string, error) {
 	if _, err := io.Copy(hash, source); err != nil {
 		return "", err
 	}
-	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+	return sha256sum.DigestHash(hash), nil
 }
 
 func writeDeploymentMultipart(writer *multipart.Writer, input api.CreateDeploymentRequest, source io.Reader) error {

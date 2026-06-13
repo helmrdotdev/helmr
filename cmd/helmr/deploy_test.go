@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
@@ -158,8 +158,8 @@ esac
 	if metadata.ProjectID != "" || metadata.EnvironmentID != "" {
 		t.Fatalf("metadata = %+v", metadata)
 	}
-	if metadata.ContentHash == "" || metadata.ContentHash != cas.DigestBytes(uploaded) {
-		t.Fatalf("content hash = %q, uploaded digest = %q", metadata.ContentHash, cas.DigestBytes(uploaded))
+	if metadata.ContentHash == "" || metadata.ContentHash != sha256sum.DigestBytes(uploaded) {
+		t.Fatalf("content hash = %q, uploaded digest = %q", metadata.ContentHash, sha256sum.DigestBytes(uploaded))
 	}
 	if !bytes.Contains(uploaded, []byte("helmr.config.ts")) || !bytes.Contains(uploaded, []byte("package.json")) || !bytes.Contains(uploaded, []byte("tasks/deploy.ts")) {
 		t.Fatalf("uploaded archive does not include expected files")

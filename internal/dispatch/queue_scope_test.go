@@ -3,13 +3,14 @@ package dispatch
 import (
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestRoundRobinQueueScopeSelectorInterleavesOrganizations(t *testing.T) {
-	orgA := ids.ToPG(ids.New())
-	orgB := ids.ToPG(ids.New())
-	orgC := ids.ToPG(ids.New())
+	orgA := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgB := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgC := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	input := []QueueScope{
 		testQueueScope(orgA, "a-1"),
 		testQueueScope(orgA, "a-2"),

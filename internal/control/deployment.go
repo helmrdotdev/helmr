@@ -20,7 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -93,17 +93,17 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, scope)
+	projectID, environmentID, err := runScopeIDs(scope)
 	if err != nil {
 		s.log.Error("resolve deployment scope failed", "error", err)
 		writeError(w, errors.New("get deployment"))
 		return
 	}
 	deployment, err := store.GetDeployment(r.Context(), db.GetDeploymentParams{
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		ID:            ids.ToPG(deploymentID),
+		ID:            pgvalue.UUID(deploymentID),
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("deployment not found")))
@@ -123,7 +123,7 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 	response.Tasks = []api.DeploymentTaskResponse{}
 	if deployment.Status == db.DeploymentStatusDeployed {
 		tasks, err := store.ListDeploymentTasks(r.Context(), db.ListDeploymentTasksParams{
-			OrgID:         ids.ToPG(actor.OrgID),
+			OrgID:         pgvalue.UUID(actor.OrgID),
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			DeploymentID:  deployment.ID,
@@ -180,16 +180,16 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, scope)
+	projectID, environmentID, err := runScopeIDs(scope)
 	if err != nil {
 		writeError(w, errors.New("get deployment events"))
 		return
 	}
 	deployment, err := store.GetDeployment(r.Context(), db.GetDeploymentParams{
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		ID:            ids.ToPG(deploymentID),
+		ID:            pgvalue.UUID(deploymentID),
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("deployment not found")))
@@ -204,7 +204,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.db.ListSubjectEvents(r.Context(), db.ListSubjectEventsParams{
-		OrgID:       ids.ToPG(actor.OrgID),
+		OrgID:       pgvalue.UUID(actor.OrgID),
 		SubjectType: db.EventSubjectTypeDeployment,
 		SubjectID:   deployment.ID,
 		Seq:         cursor,
@@ -298,14 +298,14 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, scope)
+	projectID, environmentID, err := runScopeIDs(scope)
 	if err != nil {
 		s.log.Error("resolve deployment scope failed", "error", err)
 		writeError(w, errors.New("get current deployment"))
 		return
 	}
 	deployment, err := store.GetCurrentDeployment(r.Context(), db.GetCurrentDeploymentParams{
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 	})
@@ -319,26 +319,26 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tasks, err := store.ListDeploymentTasks(r.Context(), db.ListDeploymentTasksParams{
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		DeploymentID:  deployment.ID,
 	})
 	if err != nil {
-		s.log.Error("list deployment tasks failed", "deployment_id", ids.MustFromPG(deployment.ID).String(), "error", err)
+		s.log.Error("list deployment tasks failed", "deployment_id", pgvalue.MustUUIDValue(deployment.ID).String(), "error", err)
 		writeError(w, errors.New("list deployment tasks"))
 		return
 	}
 	response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
 	if err != nil {
-		s.log.Error("get current deployment artifacts failed", "deployment_id", ids.MustFromPG(deployment.ID).String(), "error", err)
+		s.log.Error("get current deployment artifacts failed", "deployment_id", pgvalue.MustUUIDValue(deployment.ID).String(), "error", err)
 		writeError(w, errors.New("get current deployment"))
 		return
 	}
 	response.Tasks = make([]api.DeploymentTaskResponse, 0, len(tasks))
 	taskResponses, err := deploymentTaskResponses(r.Context(), store, tasks)
 	if err != nil {
-		s.log.Error("get current deployment task artifacts failed", "deployment_id", ids.MustFromPG(deployment.ID).String(), "error", err)
+		s.log.Error("get current deployment task artifacts failed", "deployment_id", pgvalue.MustUUIDValue(deployment.ID).String(), "error", err)
 		writeError(w, errors.New("list deployment tasks"))
 		return
 	}
@@ -407,8 +407,8 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	params := db.PromoteDeploymentParams{
-		ID:                  ids.ToPG(ids.New()),
-		OrgID:               ids.ToPG(actor.OrgID),
+		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:               pgvalue.UUID(actor.OrgID),
 		ProjectID:           projectID,
 		EnvironmentID:       environmentID,
 		DeploymentID:        deployment.ID,
@@ -426,7 +426,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 		defer tx.Rollback(r.Context())
 		promoteStore = db.New(tx)
-		_, changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
+		changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
 		if isNoRows(err) {
 			writeError(w, badRequest(errors.New("deployment is not deployable")))
 			return
@@ -452,7 +452,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	_, changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
+	changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
 	if isNoRows(err) {
 		writeError(w, badRequest(errors.New("deployment is not deployable")))
 		return
@@ -764,7 +764,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 		return api.DeploymentResponse{}, fmt.Errorf("get default worker group: %w", err)
 	}
 	if err := store.LockDeploymentReusableBuildKey(ctx, db.LockDeploymentReusableBuildKeyParams{
-		OrgID:         ids.ToPG(orgID),
+		OrgID:         pgvalue.UUID(orgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		WorkerGroupID: workerGroup.ID,
@@ -773,7 +773,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 		return api.DeploymentResponse{}, err
 	}
 	deployment, err := store.GetReusableDeploymentByContentHash(ctx, db.GetReusableDeploymentByContentHashParams{
-		OrgID:         ids.ToPG(orgID),
+		OrgID:         pgvalue.UUID(orgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		ContentHash:   contentHash,
@@ -798,8 +798,8 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, orgID uu
 		return db.Deployment{}, err
 	}
 	sourceArtifact, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(orgID),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(orgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Digest:        artifact.Digest,
@@ -811,8 +811,8 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, orgID uu
 		return db.Deployment{}, err
 	}
 	deployment, err := store.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:                         ids.ToPG(ids.New()),
-		OrgID:                      ids.ToPG(orgID),
+		ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                      pgvalue.UUID(orgID),
 		ProjectID:                  projectID,
 		EnvironmentID:              environmentID,
 		Version:                    version,
@@ -858,7 +858,7 @@ func appendDeploymentLifecycleEvent(ctx context.Context, store deploymentEventAp
 
 func nextDeploymentVersion(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (string, error) {
 	return store.AllocateDeploymentVersion(ctx, db.AllocateDeploymentVersionParams{
-		OrgID:         ids.ToPG(orgID),
+		OrgID:         pgvalue.UUID(orgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Prefix:        deploymentVersionPrefix(),
@@ -897,20 +897,20 @@ func (s *Server) resolvePromotionTarget(ctx context.Context, store deploymentSta
 	}
 	return deployment, auth.Scope{
 		OrgID:         orgID,
-		ProjectID:     ids.MustFromPG(deployment.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(deployment.EnvironmentID).String(),
+		ProjectID:     pgvalue.MustUUIDValue(deployment.ProjectID).String(),
+		EnvironmentID: pgvalue.MustUUIDValue(deployment.EnvironmentID).String(),
 	}, deployment.ProjectID, deployment.EnvironmentID, nil
 }
 
 func deploymentByIDOrVersionForOrg(ctx context.Context, store deploymentStatusStore, orgID uuid.UUID, deploymentRef string) (db.Deployment, error) {
-	if deploymentID, err := ids.Parse(deploymentRef); err == nil {
+	if deploymentID, err := uuid.Parse(deploymentRef); err == nil {
 		return store.GetDeploymentForOrg(ctx, db.GetDeploymentForOrgParams{
-			OrgID: ids.ToPG(orgID),
-			ID:    ids.ToPG(deploymentID),
+			OrgID: pgvalue.UUID(orgID),
+			ID:    pgvalue.UUID(deploymentID),
 		})
 	}
 	deployments, err := store.ListDeploymentsByVersionForOrg(ctx, db.ListDeploymentsByVersionForOrgParams{
-		OrgID:   ids.ToPG(orgID),
+		OrgID:   pgvalue.UUID(orgID),
 		Version: strings.TrimSpace(deploymentRef),
 	})
 	if err != nil {
@@ -927,16 +927,16 @@ func deploymentByIDOrVersionForOrg(ctx context.Context, store deploymentStatusSt
 }
 
 func deploymentByIDOrVersion(ctx context.Context, store deploymentStatusStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentRef string) (db.Deployment, error) {
-	if deploymentID, err := ids.Parse(deploymentRef); err == nil {
+	if deploymentID, err := uuid.Parse(deploymentRef); err == nil {
 		return store.GetDeployment(ctx, db.GetDeploymentParams{
-			OrgID:         ids.ToPG(orgID),
+			OrgID:         pgvalue.UUID(orgID),
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
-			ID:            ids.ToPG(deploymentID),
+			ID:            pgvalue.UUID(deploymentID),
 		})
 	}
 	return store.GetDeploymentByVersion(ctx, db.GetDeploymentByVersionParams{
-		OrgID:         ids.ToPG(orgID),
+		OrgID:         pgvalue.UUID(orgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Version:       strings.TrimSpace(deploymentRef),
@@ -945,26 +945,26 @@ func deploymentByIDOrVersion(ctx context.Context, store deploymentStatusStore, o
 
 func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceArtifact, buildManifestDigest string, deploymentManifestDigest string) api.DeploymentResponse {
 	return api.DeploymentResponse{
-		ID:                       ids.MustFromPG(deployment.ID).String(),
+		ID:                       pgvalue.MustUUIDValue(deployment.ID).String(),
 		Version:                  deployment.Version,
 		APIVersion:               deployment.ApiVersion,
 		SDKVersion:               deployment.SdkVersion,
 		CLIVersion:               deployment.CliVersion,
 		BundleFormatVersion:      deployment.BundleFormatVersion,
 		WorkerProtocolVersion:    deployment.WorkerProtocolVersion,
-		ProjectID:                ids.MustFromPG(deployment.ProjectID).String(),
-		EnvironmentID:            ids.MustFromPG(deployment.EnvironmentID).String(),
+		ProjectID:                pgvalue.MustUUIDValue(deployment.ProjectID).String(),
+		EnvironmentID:            pgvalue.MustUUIDValue(deployment.EnvironmentID).String(),
 		ContentHash:              deployment.ContentHash,
 		DeploymentSource:         artifact,
 		BuildManifestDigest:      buildManifestDigest,
 		DeploymentManifestDigest: deploymentManifestDigest,
 		Status:                   string(deployment.Status),
 		Error:                    deploymentErrorResponse(deployment.Failure),
-		CreatedAt:                pgTime(deployment.CreatedAt),
-		BuildingAt:               pgTime(deployment.BuildingAt),
-		BuiltAt:                  pgTime(deployment.BuiltAt),
-		DeployedAt:               pgTime(deployment.DeployedAt),
-		FailedAt:                 pgTime(deployment.FailedAt),
+		CreatedAt:                pgvalue.Time(deployment.CreatedAt),
+		BuildingAt:               pgvalue.Time(deployment.BuildingAt),
+		BuiltAt:                  pgvalue.Time(deployment.BuiltAt),
+		DeployedAt:               pgvalue.Time(deployment.DeployedAt),
+		FailedAt:                 pgvalue.Time(deployment.FailedAt),
 	}
 }
 
@@ -1071,16 +1071,16 @@ func deploymentTaskResponses(ctx context.Context, store artifactLister, tasks []
 
 func deploymentTaskResponse(task db.DeploymentTask, artifact db.Artifact) api.DeploymentTaskResponse {
 	return api.DeploymentTaskResponse{
-		ID:                ids.MustFromPG(task.ID).String(),
+		ID:                pgvalue.MustUUIDValue(task.ID).String(),
 		TaskID:            task.TaskID,
 		FilePath:          task.FilePath,
 		ExportName:        task.ExportName,
 		HandlerEntrypoint: task.HandlerEntrypoint,
 		BundleDigest:      artifact.Digest,
 		QueueName:         task.QueueName,
-		ConcurrencyLimit:  pgInt4Response(task.QueueConcurrencyLimit),
+		ConcurrencyLimit:  pgvalue.Int4Response(task.QueueConcurrencyLimit),
 		TTL:               task.Ttl,
-		CreatedAt:         pgTime(task.CreatedAt),
+		CreatedAt:         pgvalue.Time(task.CreatedAt),
 	}
 }
 

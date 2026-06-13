@@ -14,21 +14,22 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	goredis "github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestGetRunLogs(t *testing.T) {
-	runID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		run: db.Run{
-			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+			ID:        pgvalue.UUID(runID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusRunning,
 			CreatedAt: testTime(),
@@ -61,11 +62,11 @@ func TestGetRunLogs(t *testing.T) {
 }
 
 func TestGetRunLogsReportsTruncatedSnapshot(t *testing.T) {
-	runID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		run: db.Run{
-			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+			ID:        pgvalue.UUID(runID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusRunning,
 			CreatedAt: testTime(),
@@ -99,12 +100,12 @@ func TestGetRunLogsReportsTruncatedSnapshot(t *testing.T) {
 }
 
 func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
-	runID := ids.New()
-	sessionID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
+	sessionID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		run: db.Run{
-			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+			ID:        pgvalue.UUID(runID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusSucceeded,
 			CreatedAt: testTime(),
@@ -112,9 +113,9 @@ func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
 		},
 		logChunks: []db.RunLogChunk{
 			{
-				OrgID:         ids.ToPG(dbtest.DefaultOrgID),
-				RunID:         ids.ToPG(runID),
-				SessionID:     ids.ToPG(sessionID),
+				OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+				RunID:         pgvalue.UUID(runID),
+				SessionID:     pgvalue.UUID(sessionID),
 				AttemptNumber: 1,
 				Stream:        db.RunLogStreamStdout,
 				Seq:           8,
@@ -159,12 +160,12 @@ func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
 }
 
 func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
-	runID := ids.New()
-	sessionID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
+	sessionID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		run: db.Run{
-			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+			ID:        pgvalue.UUID(runID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusSucceeded,
 			CreatedAt: testTime(),
@@ -173,9 +174,9 @@ func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
 		deferLogChunksUntilSecondList: true,
 		logChunks: []db.RunLogChunk{
 			{
-				OrgID:         ids.ToPG(dbtest.DefaultOrgID),
-				RunID:         ids.ToPG(runID),
-				SessionID:     ids.ToPG(sessionID),
+				OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+				RunID:         pgvalue.UUID(runID),
+				SessionID:     pgvalue.UUID(sessionID),
 				AttemptNumber: 1,
 				Stream:        db.RunLogStreamStderr,
 				Seq:           12,
@@ -208,8 +209,8 @@ func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
 func TestWorkerLogsAndEvents(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
-			ID:                 ids.ToPG(ids.New()),
-			OrgID:              ids.ToPG(dbtest.DefaultOrgID),
+			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
@@ -219,7 +220,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 		},
 	}
 	redisServer := miniredis.RunT(t)
-	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
 	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour, EventStream: eventStream})
@@ -266,7 +267,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 		t.Fatalf("event status = %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+ids.MustFromPG(store.run.ID).String()+"/events", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+pgvalue.MustUUIDValue(store.run.ID).String()+"/events", nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -299,7 +300,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 		RedactionClass: "sensitive",
 		CreatedAt:      testTime(),
 	}}
-	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+ids.MustFromPG(store.run.ID).String()+"/events?follow=1", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+pgvalue.MustUUIDValue(store.run.ID).String()+"/events?follow=1", nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	req.Header.Set("accept", "text/event-stream")
 	rec = httptest.NewRecorder()

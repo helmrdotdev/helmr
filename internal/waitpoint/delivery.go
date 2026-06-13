@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/email"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -38,7 +38,7 @@ func (n *Notifier) NotifyPending(ctx context.Context, pending Pending) {
 		if n.publisher == nil {
 			continue
 		}
-		deliveryID := ids.MustFromPG(delivery.ID)
+		deliveryID := pgvalue.MustUUIDValue(delivery.ID)
 		if _, err := n.publisher.Publish(ctx, deliveryAsyncMessage(delivery)); err != nil {
 			n.log.Warn("enqueue waitpoint notification failed", "delivery_id", deliveryID.String(), "error", err)
 			continue
@@ -50,7 +50,7 @@ func (n *Notifier) NotifyPending(ctx context.Context, pending Pending) {
 func (n *Notifier) queuePendingNotifications(ctx context.Context, pending Pending) []db.WaitpointDelivery {
 	_, config, ok, err := policyFromSnapshot(pending)
 	if err != nil {
-		n.log.Warn("parse waitpoint policy failed", "run_id", ids.MustFromPG(pending.RunID).String(), "waitpoint_id", ids.MustFromPG(pending.ID).String(), "error", err)
+		n.log.Warn("parse waitpoint policy failed", "run_id", pgvalue.MustUUIDValue(pending.RunID).String(), "waitpoint_id", pgvalue.MustUUIDValue(pending.ID).String(), "error", err)
 		return nil
 	}
 	if !ok {
@@ -65,7 +65,7 @@ func (n *Notifier) queuePendingNotifications(ctx context.Context, pending Pendin
 		return nil
 	}
 	if !n.responseTokensConfigured() {
-		n.log.Warn("skip waitpoint email notification: response token API is not configured", "run_id", ids.MustFromPG(pending.RunID).String(), "waitpoint_id", ids.MustFromPG(pending.ID).String())
+		n.log.Warn("skip waitpoint email notification: response token API is not configured", "run_id", pgvalue.MustUUIDValue(pending.RunID).String(), "waitpoint_id", pgvalue.MustUUIDValue(pending.ID).String())
 		n.createFailedEmailDeliveries(ctx, pending, recipients, "response token API is not configured")
 		return nil
 	}
@@ -73,7 +73,7 @@ func (n *Notifier) queuePendingNotifications(ctx context.Context, pending Pendin
 	for _, recipient := range recipients {
 		delivery, err := n.createQueuedEmailDelivery(ctx, pending, recipient)
 		if err != nil {
-			n.log.Warn("create waitpoint delivery failed", "run_id", ids.MustFromPG(pending.RunID).String(), "waitpoint_id", ids.MustFromPG(pending.ID).String(), "recipient", recipient, "error", err)
+			n.log.Warn("create waitpoint delivery failed", "run_id", pgvalue.MustUUIDValue(pending.RunID).String(), "waitpoint_id", pgvalue.MustUUIDValue(pending.ID).String(), "recipient", recipient, "error", err)
 			continue
 		}
 		deliveries = append(deliveries, delivery)
@@ -95,7 +95,7 @@ func (n *Notifier) responseTokensConfigured() bool {
 }
 
 func (n *Notifier) createQueuedEmailDelivery(ctx context.Context, pending Pending, recipient string) (db.WaitpointDelivery, error) {
-	deliveryID := ids.New()
+	deliveryID := uuid.Must(uuid.NewV7())
 	_, tokenHash, err := NewEmailResponseToken(n.authSecret, deliveryID)
 	if err != nil {
 		return db.WaitpointDelivery{}, err
@@ -119,15 +119,15 @@ func (n *Notifier) createQueuedEmailDelivery(ctx context.Context, pending Pendin
 	}
 	messageID := DeliveryMessageID(deliveryID, n.publicURL)
 	delivery, err := n.store.CreateQueuedWaitpointEmailDelivery(ctx, db.CreateQueuedWaitpointEmailDeliveryParams{
-		DeliveryID:       ids.ToPG(deliveryID),
+		DeliveryID:       pgvalue.UUID(deliveryID),
 		OrgID:            pending.OrgID,
 		RunID:            pending.RunID,
 		WaitpointID:      pending.ID,
 		TokenHash:        tokenHash,
-		ExpiresAt:        pgTimeToPG(time.Now().UTC().Add(DefaultResponseTokenTTL)),
+		ExpiresAt:        pgvalue.Timestamptz(time.Now().UTC().Add(DefaultResponseTokenTTL)),
 		Recipient:        recipient,
 		TokenMetadata:    tokenMetadata,
-		MessageID:        pgText(messageID),
+		MessageID:        pgvalue.Text(messageID),
 		DeliveryMetadata: deliveryMetadata,
 	})
 	if err != nil {
@@ -137,7 +137,7 @@ func (n *Notifier) createQueuedEmailDelivery(ctx context.Context, pending Pendin
 }
 
 func (n *Notifier) SendQueuedDelivery(ctx context.Context, deliveryID uuid.UUID) error {
-	delivery, err := n.store.ClaimWaitpointDeliveryForSend(ctx, ids.ToPG(deliveryID))
+	delivery, err := n.store.ClaimWaitpointDeliveryForSend(ctx, pgvalue.UUID(deliveryID))
 	if isNoRows(err) {
 		n.markObsoleteDeliveryFailed(ctx, deliveryID)
 		return nil
@@ -153,7 +153,7 @@ func (n *Notifier) SendQueuedDelivery(ctx context.Context, deliveryID uuid.UUID)
 }
 
 func (n *Notifier) markObsoleteDeliveryFailed(ctx context.Context, deliveryID uuid.UUID) {
-	if _, err := n.store.MarkObsoleteWaitpointDeliveryFailed(ctx, ids.ToPG(deliveryID)); err != nil && !isNoRows(err) {
+	if _, err := n.store.MarkObsoleteWaitpointDeliveryFailed(ctx, pgvalue.UUID(deliveryID)); err != nil && !isNoRows(err) {
 		n.log.Warn("mark obsolete waitpoint delivery failed", "delivery_id", deliveryID.String(), "error", err)
 	}
 }
@@ -174,7 +174,7 @@ func (n *Notifier) sendClaimedDelivery(ctx context.Context, delivery db.Waitpoin
 	if err != nil {
 		return err
 	}
-	tokenID, err := ids.FromPG(delivery.ResponseTokenID)
+	tokenID, err := pgvalue.UUIDValue(delivery.ResponseTokenID)
 	if err != nil {
 		return fmt.Errorf("waitpoint delivery response token is not set: %w", err)
 	}
@@ -187,7 +187,7 @@ func (n *Notifier) sendClaimedDelivery(ctx context.Context, delivery db.Waitpoin
 		return err
 	}
 	message := notificationEmail(delivery.Recipient, runInfoFromSummary(run), pending, link)
-	message.IdempotencyKey = "waitpoint-delivery/" + ids.MustFromPG(delivery.ID).String()
+	message.IdempotencyKey = "waitpoint-delivery/" + pgvalue.MustUUIDValue(delivery.ID).String()
 	if delivery.MessageID.Valid {
 		message.MessageID = delivery.MessageID.String
 	}
@@ -215,8 +215,8 @@ func (n *Notifier) markClaimedDeliveryError(ctx context.Context, delivery db.Wai
 	}
 	delay := deliveryRetryDelay(delivery.AttemptCount)
 	if _, err := n.store.MarkWaitpointDeliveryRetrying(ctx, db.MarkWaitpointDeliveryRetryingParams{
-		LastError:        pgText(cause.Error()),
-		NextAttemptAt:    pgTimeToPG(time.Now().UTC().Add(delay)),
+		LastError:        pgvalue.Text(cause.Error()),
+		NextAttemptAt:    pgvalue.Timestamptz(time.Now().UTC().Add(delay)),
 		OrgID:            delivery.OrgID,
 		DeliveryID:       delivery.ID,
 		AttemptCount:     delivery.AttemptCount,
@@ -224,13 +224,13 @@ func (n *Notifier) markClaimedDeliveryError(ctx context.Context, delivery db.Wai
 	}); isNoRows(err) {
 		return
 	} else if err != nil {
-		n.log.Warn("mark waitpoint delivery retrying failed", "delivery_id", ids.MustFromPG(delivery.ID).String(), "error", err)
+		n.log.Warn("mark waitpoint delivery retrying failed", "delivery_id", pgvalue.MustUUIDValue(delivery.ID).String(), "error", err)
 	}
 }
 
 func (n *Notifier) markDeliverySignaled(ctx context.Context, delivery db.WaitpointDelivery, nextAttemptAt time.Time) {
 	_, err := n.store.MarkWaitpointDeliverySignaled(ctx, db.MarkWaitpointDeliverySignaledParams{
-		NextAttemptAt: pgTimeToPG(nextAttemptAt),
+		NextAttemptAt: pgvalue.Timestamptz(nextAttemptAt),
 		OrgID:         delivery.OrgID,
 		DeliveryID:    delivery.ID,
 	})
@@ -238,7 +238,7 @@ func (n *Notifier) markDeliverySignaled(ctx context.Context, delivery db.Waitpoi
 		return
 	}
 	if err != nil {
-		n.log.Warn("mark waitpoint delivery signaled failed", "delivery_id", ids.MustFromPG(delivery.ID).String(), "error", err)
+		n.log.Warn("mark waitpoint delivery signaled failed", "delivery_id", pgvalue.MustUUIDValue(delivery.ID).String(), "error", err)
 	}
 }
 
@@ -261,7 +261,7 @@ func (n *Notifier) createFailedEmailDeliveries(ctx context.Context, pending Pend
 
 func (n *Notifier) createFailedEmailDelivery(ctx context.Context, pending Pending, tokenID pgtype.UUID, recipient string, reason string) {
 	if _, err := n.createEmailDelivery(ctx, pending, tokenID, recipient, db.WaitpointDeliveryStatusFailed, reason); err != nil {
-		n.log.Warn("create failed waitpoint delivery failed", "run_id", ids.MustFromPG(pending.RunID).String(), "waitpoint_id", ids.MustFromPG(pending.ID).String(), "recipient", recipient, "error", err)
+		n.log.Warn("create failed waitpoint delivery failed", "run_id", pgvalue.MustUUIDValue(pending.RunID).String(), "waitpoint_id", pgvalue.MustUUIDValue(pending.ID).String(), "recipient", recipient, "error", err)
 	}
 }
 
@@ -272,9 +272,9 @@ func (n *Notifier) createEmailDelivery(ctx context.Context, pending Pending, tok
 	if err != nil {
 		return db.WaitpointDelivery{}, err
 	}
-	deliveryID := ids.New()
+	deliveryID := uuid.Must(uuid.NewV7())
 	delivery, err := n.store.CreateWaitpointDelivery(ctx, db.CreateWaitpointDeliveryParams{
-		DeliveryID:      ids.ToPG(deliveryID),
+		DeliveryID:      pgvalue.UUID(deliveryID),
 		OrgID:           pending.OrgID,
 		RunID:           pending.RunID,
 		RunWaitID:       pending.RunWaitID,
@@ -284,8 +284,8 @@ func (n *Notifier) createEmailDelivery(ctx context.Context, pending Pending, tok
 		RecipientKind:   "email",
 		Recipient:       recipient,
 		Status:          status,
-		MessageID:       pgText(DeliveryMessageID(deliveryID, n.publicURL)),
-		LastError:       pgText(lastError),
+		MessageID:       pgvalue.Text(DeliveryMessageID(deliveryID, n.publicURL)),
+		LastError:       pgvalue.Text(lastError),
 		Metadata:        metadata,
 	})
 	if err != nil {
@@ -323,13 +323,13 @@ func (n *Notifier) markDeliveryFailed(ctx context.Context, delivery db.Waitpoint
 	if _, err := n.store.MarkWaitpointDeliveryFailed(ctx, db.MarkWaitpointDeliveryFailedParams{
 		OrgID:            delivery.OrgID,
 		DeliveryID:       delivery.ID,
-		LastError:        pgText(reason),
+		LastError:        pgvalue.Text(reason),
 		AttemptCount:     delivery.AttemptCount,
 		SendingStartedAt: delivery.SendingStartedAt,
 	}); isNoRows(err) {
 		return
 	} else if err != nil {
-		n.log.Warn("mark waitpoint delivery failed failed", "delivery_id", ids.MustFromPG(delivery.ID).String(), "error", err)
+		n.log.Warn("mark waitpoint delivery failed failed", "delivery_id", pgvalue.MustUUIDValue(delivery.ID).String(), "error", err)
 	}
 }
 
@@ -351,15 +351,15 @@ func policyFromSnapshot(pending Pending) (resolvedPolicySnapshot, api.WaitpointP
 }
 
 func notificationEmail(to string, run RunInfo, pending Pending, link string) email.Message {
-	runID := ids.MustFromPG(run.ID).String()
-	waitpointID := ids.MustFromPG(pending.ID).String()
+	runID := pgvalue.MustUUIDValue(run.ID).String()
+	waitpointID := pgvalue.MustUUIDValue(pending.ID).String()
 	body := fmt.Sprintf(
 		"A Helmr run is waiting for input.\n\nTask: %s\nRun: %s\nWaitpoint: %s\nType: %s\nRequested: %s\n\n%s\n\nReview and respond here:\n%s\n\nThis link opens a confirmation page before submitting a response.\n",
 		run.TaskID,
 		runID,
 		waitpointID,
 		pending.Kind,
-		pgTime(pending.RequestedAt).Format(time.RFC3339),
+		pgvalue.Time(pending.RequestedAt).Format(time.RFC3339),
 		pending.DisplayText,
 		link,
 	)

@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -16,7 +17,7 @@ import (
 func TestRequeueExpiredLeasedRunExecutionSessionRestoresDispatchContract(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-leased")
@@ -36,16 +37,16 @@ func TestRequeueExpiredLeasedRunExecutionSessionRestoresDispatchContract(t *test
 	}
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "limited-expired-leased", instance, "message-expired-leased")
 	restoreCheckpointID := seedReadyRestoreCheckpoint(t, ctx, pool, orgID, runID, instance.ID)
-	sessionID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-expired-leased"),
+		DispatchMessageID: pgvalue.Text("message-expired-leased"),
 		DispatchLeaseID:   "lease-expired-leased",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -116,23 +117,23 @@ func TestRequeueExpiredLeasedRunExecutionSessionRestoresDispatchContract(t *test
 func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-restored-next-waitpoint")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-restored-next")
 	restoreCheckpointID := seedReadyRestoreCheckpoint(t, ctx, pool, orgID, runID, instance.ID)
-	sessionID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-restored-next"),
+		DispatchMessageID: pgvalue.Text("message-restored-next"),
 		DispatchLeaseID:   "lease-restored-next",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -171,9 +172,9 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	}
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
 	requireWaitpointStatus(t, ctx, pool, orgID, runID, restoreWaitpointID, db.RunWaitStatusRestored)
-	nextCheckpointID := ids.ToPG(ids.New())
-	nextRunWaitID := ids.ToPG(ids.New())
-	nextWaitpointID := ids.ToPG(ids.New())
+	nextCheckpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	nextRunWaitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	nextWaitpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
@@ -218,12 +219,12 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactDigest:    pgvalue.Text(testDigest("5")),
 		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
-		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
-		WorkspaceArtifactEncoding:  pgText("tar"),
-		WorkspaceMountPath:         pgText("/workspace"),
-		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		WorkspaceArtifactMediaType: pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
+		WorkspaceMountPath:         pgvalue.Text("/workspace"),
+		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
 		ActiveDurationMs:           10000,
 		CheckpointPayload:          []byte(`{"checkpoint_id":"next"}`),
 	}); err != nil {
@@ -241,7 +242,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		OrgID:          orgID,
 		ID:             nextWaitpointID,
 		Kind:           db.WaitpointKindHuman,
-		ResolutionKind: pgText("completed"),
+		ResolutionKind: pgvalue.Text("completed"),
 		Output:         []byte(`{"approved":true}`),
 		Resolution:     approvedWaitpointResolution("admin"),
 	}); err != nil {
@@ -251,16 +252,16 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		t.Fatal(err)
 	}
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-restored-final")
-	resumedSessionID := ids.ToPG(ids.New())
+	resumedSessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         resumedSessionID,
-		DispatchMessageID: pgText("message-restored-final"),
+		DispatchMessageID: pgvalue.Text("message-restored-final"),
 		DispatchLeaseID:   "lease-restored-final",
 		DispatchAttempt:   2,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -291,7 +292,7 @@ UPDATE run_execution_sessions
 		DispatchLeaseID:         "lease-restored-final",
 		RunStatus:               db.RunStatusFailed,
 		AttemptStatus:           db.RunAttemptStatusFailed,
-		ErrorMessage:            pgText("worker failed after resume"),
+		ErrorMessage:            pgvalue.Text("worker failed after resume"),
 		ReleaseActiveDurationMs: 0,
 		TerminalEventKind:       "run.failed",
 		TerminalEventPayload:    []byte(`{"failure_kind":"worker_failed"}`),
@@ -304,22 +305,22 @@ UPDATE run_execution_sessions
 func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-checkpoint-runtime")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-checkpoint-runtime")
-	sessionID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-checkpoint-runtime"),
+		DispatchMessageID: pgvalue.Text("message-checkpoint-runtime"),
 		DispatchLeaseID:   "lease-checkpoint-runtime",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -332,9 +333,9 @@ func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	runWaitID := ids.ToPG(ids.New())
-	checkpointID := ids.ToPG(ids.New())
-	waitpointID := ids.ToPG(ids.New())
+	runWaitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	waitpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
@@ -369,12 +370,12 @@ func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactDigest:    pgvalue.Text(testDigest("5")),
 		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
-		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
-		WorkspaceArtifactEncoding:  pgText("tar"),
-		WorkspaceMountPath:         pgText("/workspace"),
-		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		WorkspaceArtifactMediaType: pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
+		WorkspaceMountPath:         pgvalue.Text("/workspace"),
+		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
 		ActiveDurationMs:           100,
 		CheckpointPayload:          []byte(`{"checkpoint_id":"mismatch"}`),
 	})
@@ -389,22 +390,22 @@ func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
 func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-checkpoint-backend")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-checkpoint-backend")
-	sessionID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-checkpoint-backend"),
+		DispatchMessageID: pgvalue.Text("message-checkpoint-backend"),
 		DispatchLeaseID:   "lease-checkpoint-backend",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -417,9 +418,9 @@ func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	runWaitID := ids.ToPG(ids.New())
-	checkpointID := ids.ToPG(ids.New())
-	waitpointID := ids.ToPG(ids.New())
+	runWaitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	waitpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
@@ -454,12 +455,12 @@ func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactDigest:    pgvalue.Text(testDigest("5")),
 		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
-		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
-		WorkspaceArtifactEncoding:  pgText("tar"),
-		WorkspaceMountPath:         pgText("/workspace"),
-		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		WorkspaceArtifactMediaType: pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
+		WorkspaceMountPath:         pgvalue.Text("/workspace"),
+		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
 		ActiveDurationMs:           100,
 		CheckpointPayload:          []byte(`{"checkpoint_id":"unsupported-backend"}`),
 	})
@@ -474,23 +475,23 @@ func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *
 func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-checkpoint-failed")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	messageID := "message-checkpoint-failed"
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, messageID)
-	sessionID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText(messageID),
+		DispatchMessageID: pgvalue.Text(messageID),
 		DispatchLeaseID:   "lease-checkpoint-failed",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -503,9 +504,9 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	checkpointID := ids.ToPG(ids.New())
-	runWaitID := ids.ToPG(ids.New())
-	waitpointID := ids.ToPG(ids.New())
+	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runWaitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	waitpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
@@ -530,7 +531,7 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 		RunWaitID:        runWaitID,
 		WaitpointID:      waitpointID,
 		CheckpointID:     checkpointID,
-		ErrorMessage:     pgText("snapshot upload failed"),
+		ErrorMessage:     pgvalue.Text("snapshot upload failed"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -545,7 +546,7 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 func TestLeaseRunExecutionSessionRequiresRestoreRuntimeSnapshot(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-restore-missing-runtime")
@@ -565,11 +566,11 @@ func TestLeaseRunExecutionSessionRequiresRestoreRuntimeSnapshot(t *testing.T) {
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		SessionID:         ids.ToPG(ids.New()),
-		DispatchMessageID: pgText("message-missing-runtime"),
+		SessionID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		DispatchMessageID: pgvalue.Text("message-missing-runtime"),
 		DispatchLeaseID:   "lease-missing-runtime",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -581,10 +582,10 @@ func TestLeaseRunExecutionSessionRequiresRestoreRuntimeSnapshot(t *testing.T) {
 func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
-	waitpointID := ids.ToPG(ids.New())
+	waitpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateHumanWaitpoint(ctx, db.CreateHumanWaitpointParams{
 		ID:                    waitpointID,
 		OrgID:                 orgID,
@@ -592,24 +593,24 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 		EnvironmentID:         scope.EnvironmentID,
 		Request:               []byte(`{"message":"approve"}`),
 		DisplayText:           "approve",
-		ExpiresAt:             pgTime(time.Now().Add(time.Hour)),
+		ExpiresAt:             pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		IdempotencyKeyOptions: []byte(`{}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
-		ID:                   ids.ToPG(ids.New()),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                orgID,
 		WaitpointID:          waitpointID,
 		ResponseKey:          "api:owner",
 		RequestHash:          "same-request",
 		Action:               "respond",
 		Kind:                 db.WaitpointKindHuman,
-		ResolutionKind:       pgText("completed"),
+		ResolutionKind:       pgvalue.Text("completed"),
 		Resolution:           approvedWaitpointResolution("owner@example.com"),
 		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
-		CompletedByPrincipal: pgText("owner@example.com"),
-		CompletedVia:         pgText("authenticated_api"),
+		CompletedByPrincipal: pgvalue.Text("owner@example.com"),
+		CompletedVia:         pgvalue.Text("authenticated_api"),
 		Metadata:             []byte(`{}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -624,16 +625,16 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-pre-respond")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-pre-respond")
-	sessionID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-pre-respond"),
+		DispatchMessageID: pgvalue.Text("message-pre-respond"),
 		DispatchLeaseID:   "lease-pre-respond",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -646,8 +647,8 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	runWaitID := ids.ToPG(ids.New())
-	checkpointID := ids.ToPG(ids.New())
+	runWaitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
@@ -682,12 +683,12 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		WorkspaceArtifactDigest:    pgText(testDigest("7")),
+		WorkspaceArtifactDigest:    pgvalue.Text(testDigest("7")),
 		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
-		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
-		WorkspaceArtifactEncoding:  pgText("tar"),
-		WorkspaceMountPath:         pgText("/workspace"),
-		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		WorkspaceArtifactMediaType: pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
+		WorkspaceMountPath:         pgvalue.Text("/workspace"),
+		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
 		ActiveDurationMs:           100,
 		CheckpointPayload:          []byte(`{"checkpoint_id":"pre-respond"}`),
 	}); err != nil {
@@ -710,23 +711,23 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 func TestReleaseRestoredExecutionFailureInvalidatesRestoreCheckpoint(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-restored-failure")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-restored-failure")
 	restoreCheckpointID := seedReadyRestoreCheckpoint(t, ctx, pool, orgID, runID, instance.ID)
-	sessionID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-restored-failure"),
+		DispatchMessageID: pgvalue.Text("message-restored-failure"),
 		DispatchLeaseID:   "lease-restored-failure",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -748,7 +749,7 @@ func TestReleaseRestoredExecutionFailureInvalidatesRestoreCheckpoint(t *testing.
 		DispatchLeaseID:      "lease-restored-failure",
 		RunStatus:            db.RunStatusFailed,
 		AttemptStatus:        db.RunAttemptStatusFailed,
-		ErrorMessage:         pgText("restore failed"),
+		ErrorMessage:         pgvalue.Text("restore failed"),
 		TerminalEventKind:    "run.failed",
 		TerminalEventPayload: []byte(`{"failure_kind":"worker_failed"}`),
 	}); err != nil {

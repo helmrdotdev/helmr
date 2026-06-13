@@ -6,10 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -18,8 +19,8 @@ func TestUpsertAuthIdentityCreatesNewUserAndUpdatesExisting(t *testing.T) {
 	queries, _ := newPostgresTestDB(t, ctx)
 
 	first, err := queries.UpsertAuthIdentity(ctx, db.UpsertAuthIdentityParams{
-		UserID:           ids.ToPG(ids.New()),
-		IdentityID:       ids.ToPG(ids.New()),
+		UserID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		IdentityID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		IdentityProvider: "github",
 		IdentitySubject:  "123",
 		DisplayName:      "octocat",
@@ -38,8 +39,8 @@ func TestUpsertAuthIdentityCreatesNewUserAndUpdatesExisting(t *testing.T) {
 	}
 
 	second, err := queries.UpsertAuthIdentity(ctx, db.UpsertAuthIdentityParams{
-		UserID:           ids.ToPG(ids.New()),
-		IdentityID:       ids.ToPG(ids.New()),
+		UserID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		IdentityID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		IdentityProvider: "github",
 		IdentitySubject:  "123",
 		DisplayName:      "octo",
@@ -62,14 +63,14 @@ func TestUpsertAuthIdentityCreatesNewUserAndUpdatesExisting(t *testing.T) {
 func TestUpsertAuthIdentityDoesNotLinkUnverifiedEmail(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	existingUserID := ids.ToPG(ids.New())
+	existingUserID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := pool.Exec(ctx, "INSERT INTO users (id, display_name, primary_email) VALUES ($1, $2, $3)", existingUserID, "owner", "owner@example.com"); err != nil {
 		t.Fatal(err)
 	}
 
 	row, err := queries.UpsertAuthIdentity(ctx, db.UpsertAuthIdentityParams{
-		UserID:           ids.ToPG(ids.New()),
-		IdentityID:       ids.ToPG(ids.New()),
+		UserID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		IdentityID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		IdentityProvider: "github",
 		IdentitySubject:  "attacker",
 		DisplayName:      "attacker",
@@ -103,8 +104,8 @@ func TestUpsertAuthIdentityConcurrentEmailCreatesOneUser(t *testing.T) {
 			wantIdentityCount: 2,
 			upsert: func(ctx context.Context, queries *db.Queries, index int) (db.UpsertAuthIdentityRow, error) {
 				return queries.UpsertAuthIdentity(ctx, db.UpsertAuthIdentityParams{
-					UserID:           ids.ToPG(ids.New()),
-					IdentityID:       ids.ToPG(ids.New()),
+					UserID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+					IdentityID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 					IdentityProvider: "github",
 					IdentitySubject:  fmt.Sprintf("race-%d", index),
 					DisplayName:      fmt.Sprintf("octo-%d", index),
@@ -120,8 +121,8 @@ func TestUpsertAuthIdentityConcurrentEmailCreatesOneUser(t *testing.T) {
 			wantIdentityCount: 1,
 			upsert: func(ctx context.Context, queries *db.Queries, index int) (db.UpsertAuthIdentityRow, error) {
 				row, err := queries.UpsertMagicLinkAuthIdentity(ctx, db.UpsertMagicLinkAuthIdentityParams{
-					UserID:           ids.ToPG(ids.New()),
-					IdentityID:       ids.ToPG(ids.New()),
+					UserID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+					IdentityID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 					IdentityProvider: "magic-link",
 					IdentitySubject:  "magic-race@example.com",
 					DisplayName:      fmt.Sprintf("magic-%d", index),
@@ -192,8 +193,8 @@ SELECT count(*)
 func TestOwnerExistsIgnoresDisabledUsers(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
-	userID := ids.ToPG(ids.New())
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
+	userID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
 	exists, err := queries.OwnerExists(ctx, orgID)
@@ -234,7 +235,7 @@ func TestOwnerExistsIgnoresDisabledUsers(t *testing.T) {
 func TestTouchActiveAPIKeyUsesStoredKeyRole(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
@@ -243,7 +244,7 @@ func TestTouchActiveAPIKeyUsesStoredKeyRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
@@ -262,7 +263,7 @@ func TestTouchActiveAPIKeyUsesStoredKeyRole(t *testing.T) {
 		t.Fatalf("bootstrap role = %q", bootstrapRow.Role)
 	}
 
-	userID := ids.ToPG(ids.New())
+	userID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := pool.Exec(ctx, "INSERT INTO users (id, display_name, primary_email) VALUES ($1, $2, $3)", userID, "octocat", "octocat@example.com"); err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +275,7 @@ func TestTouchActiveAPIKeyUsesStoredKeyRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
-		ID:              ids.ToPG(ids.New()),
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           orgID,
 		ProjectID:       scope.ProjectID,
 		EnvironmentID:   scope.EnvironmentID,
@@ -309,12 +310,12 @@ func TestTouchActiveAPIKeyUsesStoredKeyRole(t *testing.T) {
 func TestIssueAPIKeyRevokesSameNameOnlyInScope(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	siblingEnvironment, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
-		ID:        ids.ToPG(ids.New()),
+		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:     orgID,
 		ProjectID: scope.ProjectID,
 		Slug:      "sibling",
@@ -327,7 +328,7 @@ func TestIssueAPIKeyRevokesSameNameOnlyInScope(t *testing.T) {
 
 	firstToken := []byte("same-name-token-1")
 	if _, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
@@ -340,7 +341,7 @@ func TestIssueAPIKeyRevokesSameNameOnlyInScope(t *testing.T) {
 	}
 	siblingToken := []byte("same-name-token-2")
 	if _, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: siblingEnvironment.ID,
@@ -353,7 +354,7 @@ func TestIssueAPIKeyRevokesSameNameOnlyInScope(t *testing.T) {
 	}
 	replacementToken := []byte("same-name-token-3")
 	if _, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
@@ -401,12 +402,12 @@ SELECT revoked_at IS NOT NULL
 func TestWaitpointPolicyNameIsScopedToEnvironment(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	siblingEnvironment, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
-		ID:        ids.ToPG(ids.New()),
+		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:     orgID,
 		ProjectID: scope.ProjectID,
 		Slug:      "approval-sibling",
@@ -418,7 +419,7 @@ func TestWaitpointPolicyNameIsScopedToEnvironment(t *testing.T) {
 	}
 
 	if _, err := queries.CreateWaitpointPolicy(ctx, db.CreateWaitpointPolicyParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
@@ -429,7 +430,7 @@ func TestWaitpointPolicyNameIsScopedToEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.CreateWaitpointPolicy(ctx, db.CreateWaitpointPolicyParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: siblingEnvironment.ID,
@@ -469,9 +470,9 @@ func TestWaitpointPolicyNameIsScopedToEnvironment(t *testing.T) {
 func TestDisableOrgMemberAndRevokeOrgSessionsRevokesGlobalSession(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
-	userID := ids.ToPG(ids.New())
-	sessionID := ids.ToPG(ids.New())
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
+	userID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
 	if _, err := pool.Exec(ctx, "INSERT INTO users (id, display_name, primary_email) VALUES ($1, $2, $3)", userID, "octocat", "octocat@example.com"); err != nil {
@@ -484,7 +485,7 @@ func TestDisableOrgMemberAndRevokeOrgSessionsRevokesGlobalSession(t *testing.T) 
 		ID:        sessionID,
 		UserID:    userID,
 		TokenHash: []byte("global-session-token"),
-		ExpiresAt: pgTime(time.Now().Add(time.Hour)),
+		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +534,7 @@ SELECT count(*)
 		t.Fatalf("updated_at trigger count = %d, want 5", triggerCount)
 	}
 
-	userID := ids.ToPG(ids.New())
+	userID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	oldUpdatedAt := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 	if _, err := pool.Exec(ctx, `
 INSERT INTO users (id, display_name, primary_email, updated_at)

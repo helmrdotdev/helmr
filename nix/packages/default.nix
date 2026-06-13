@@ -14,6 +14,33 @@ let
   buildGo126Module = pkgs.callPackage "${nixpkgs}/pkgs/build-support/go/module.nix" {
     go = pkgs.go_1_26;
   };
+  staticcheck = buildGo126Module {
+    pname = "staticcheck";
+    version = "2026.1";
+
+    src = pkgs.fetchFromGitHub {
+      owner = "dominikh";
+      repo = "go-tools";
+      rev = "2026.1";
+      hash = "sha256-cj/pHKwp7eGuOO1zhv5bFmuPHgsFytktLQmihhdYkfY=";
+    };
+
+    vendorHash = "sha256-Wu8+e0r0bkztLbxekbHktoKjg6c8q7ls5APSEdO8CKs=";
+    subPackages = [ "cmd/staticcheck" ];
+  };
+  unparam = buildGo126Module {
+    pname = "unparam";
+    version = "2025-10-27";
+
+    src = pkgs.fetchFromGitHub {
+      owner = "mvdan";
+      repo = "unparam";
+      rev = "5beb8c8f8f15";
+      hash = "sha256-Xxl2ERHRqKbC0fqFSMqw5+yF/UiqEtz0xaFCBdYy85k=";
+    };
+
+    vendorHash = "sha256-TzyN1epeEmIuAorNO3X6xBQSANDnPeJ4mbWPNjB0mrk=";
+  };
   revision = self.shortRev or self.dirtyShortRev or "dirty";
   helmrVersion = "0.0.0-dev+${revision}";
   helmr = pkgs.callPackage ./helmr.nix {
@@ -37,6 +64,8 @@ let
 in
 {
   inherit helmr;
+  inherit staticcheck;
+  inherit unparam;
   default = helmr;
   bun = pkgsBun.bun;
   apko = if pkgsUnstable ? apko then pkgsUnstable.apko else pkgs.apko;

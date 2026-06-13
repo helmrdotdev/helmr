@@ -13,11 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -29,16 +30,16 @@ func TestDeviceTokenIssuesSessionToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	userID := ids.New()
+	userID := uuid.Must(uuid.NewV7())
 	store := &deviceTokenStore{
 		deviceHash: deviceHash,
 		device: db.DeviceCode{
-			ID:              ids.ToPG(ids.New()),
-			OrgID:           ids.ToPG(dbtest.DefaultOrgID),
+			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:           pgvalue.UUID(dbtest.DefaultOrgID),
 			DeviceCodeHash:  deviceHash,
-			DecidedByUserID: ids.ToPG(userID),
+			DecidedByUserID: pgvalue.UUID(userID),
 			Status:          db.DeviceCodeStatusApproved,
-			ExpiresAt:       pgTimeToPG(time.Now().Add(time.Minute)),
+			ExpiresAt:       pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		},
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte(authSecret), PublicURL: mustParseTestURL("https://helmr.example.test"), SessionTTL: time.Hour})
@@ -54,7 +55,7 @@ func TestDeviceTokenIssuesSessionToken(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.createdSession.UserID != ids.ToPG(userID) {
+	if store.createdSession.UserID != pgvalue.UUID(userID) {
 		t.Fatalf("created session = %+v", store.createdSession)
 	}
 	if len(store.issuedAPIKeys) != 0 {
@@ -100,16 +101,16 @@ func TestBearerActorAcceptsSessionToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	userID := ids.New()
+	userID := uuid.Must(uuid.NewV7())
 	store := &deviceTokenStore{
 		sessionHash: sessionHash,
 		session: db.GetSessionByTokenHashRow{
-			ID:          ids.ToPG(ids.New()),
-			OrgID:       ids.ToPG(dbtest.DefaultOrgID),
-			UserID:      ids.ToPG(userID),
+			ID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:       pgvalue.UUID(dbtest.DefaultOrgID),
+			UserID:      pgvalue.UUID(userID),
 			Role:        string(db.OrgMemberRoleDeveloper),
 			DisplayName: "CLI User",
-			ExpiresAt:   pgTimeToPG(time.Now().Add(time.Hour)),
+			ExpiresAt:   pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		},
 	}
 	server := &Server{
@@ -144,11 +145,11 @@ func TestRequireActorAcceptsBearerSessionWithoutAPIKeyAuthenticator(t *testing.T
 	store := &deviceTokenStore{
 		sessionHash: sessionHash,
 		session: db.GetSessionByTokenHashRow{
-			ID:        ids.ToPG(ids.New()),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
-			UserID:    ids.ToPG(ids.New()),
+			ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
+			UserID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			Role:      string(db.OrgMemberRoleDeveloper),
-			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+			ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		},
 	}
 	server := &Server{
@@ -186,11 +187,11 @@ func TestRequireSessionAcceptsBearerSession(t *testing.T) {
 	store := &deviceTokenStore{
 		sessionHash: sessionHash,
 		session: db.GetSessionByTokenHashRow{
-			ID:        ids.ToPG(ids.New()),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
-			UserID:    ids.ToPG(ids.New()),
+			ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
+			UserID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			Role:      string(db.OrgMemberRoleOwner),
-			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+			ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		},
 	}
 	server := &Server{
@@ -244,11 +245,11 @@ func TestLogoutRevokesBearerSession(t *testing.T) {
 	store := &deviceTokenStore{
 		sessionHash: sessionHash,
 		session: db.GetSessionByTokenHashRow{
-			ID:        ids.ToPG(ids.New()),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
-			UserID:    ids.ToPG(ids.New()),
+			ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
+			UserID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			Role:      string(db.OrgMemberRoleDeveloper),
-			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+			ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		},
 	}
 	server := &Server{

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 )
 
 func adapterTaskContextJSON(request *runv0.RunTaskRequest) (string, error) {

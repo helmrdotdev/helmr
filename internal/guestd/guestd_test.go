@@ -20,8 +20,9 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
-	"github.com/helmrdotdev/helmr/internal/cas"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/safepath"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
 )
 
@@ -576,7 +577,7 @@ func TestHandleRunConnectionRejectsWorkspaceArtifactBodyDigestMismatch(t *testin
 	}
 	request := testRunTaskRequest()
 	request.RunId = "run-1"
-	request.Workspace.Artifact.Digest = cas.DigestBytes([]byte("not the tar body"))
+	request.Workspace.Artifact.Digest = sha256sum.DigestBytes([]byte("not the tar body"))
 	request.Workspace.Artifact.SizeBytes = uint64(len(source))
 	request.Workspace.Artifact.EntryCount = 1
 	if err := transport.WriteProtoFrame(&input, request); err != nil {
@@ -618,7 +619,7 @@ func TestHandleRunConnectionAcceptsEmptyWorkspaceArtifact(t *testing.T) {
 	request := testRunTaskRequest()
 	request.RunId = "run-1"
 	request.ModulePath = "task.ts"
-	request.Workspace.Artifact.Digest = cas.DigestBytes(workspaceArtifact)
+	request.Workspace.Artifact.Digest = sha256sum.DigestBytes(workspaceArtifact)
 	request.Workspace.Artifact.SizeBytes = uint64(len(workspaceArtifact))
 	request.Workspace.Artifact.EntryCount = 0
 	if err := transport.WriteProtoFrame(&input, request); err != nil {
@@ -1131,7 +1132,7 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 		t.Fatalf("ack = %+v", &ack)
 	}
 
-	var stdout string
+	var stdout strings.Builder
 	var completed bool
 	for !completed {
 		event, err := transport.ReadRunEvent(attachedHost)
@@ -1140,7 +1141,7 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 		}
 		switch value := event.Event.(type) {
 		case *runv0.RunEvent_StdoutChunk:
-			stdout += string(value.StdoutChunk)
+			stdout.WriteString(string(value.StdoutChunk))
 		case *runv0.RunEvent_TaskResult:
 			completed = true
 			if value.TaskResult.ExitCode != 0 {
@@ -1148,8 +1149,8 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(stdout, "after-resume") {
-		t.Fatalf("stdout = %q", stdout)
+	if !strings.Contains(stdout.String(), "after-resume") {
+		t.Fatalf("stdout = %q", stdout.String())
 	}
 	if err := <-errCh; err != nil {
 		t.Fatal(err)
@@ -1202,7 +1203,7 @@ func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 	}
 	writeDecisionAndReadAck(t, secondHost, "waitpoint-2", "completed")
 
-	var stdout string
+	var stdout strings.Builder
 	var completed bool
 	for !completed {
 		event, err := transport.ReadRunEvent(secondHost)
@@ -1211,7 +1212,7 @@ func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 		}
 		switch value := event.Event.(type) {
 		case *runv0.RunEvent_StdoutChunk:
-			stdout += string(value.StdoutChunk)
+			stdout.WriteString(string(value.StdoutChunk))
 		case *runv0.RunEvent_TaskResult:
 			completed = true
 			if value.TaskResult.ExitCode != 0 {
@@ -1219,8 +1220,8 @@ func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(stdout, "after-second") {
-		t.Fatalf("stdout = %q", stdout)
+	if !strings.Contains(stdout.String(), "after-second") {
+		t.Fatalf("stdout = %q", stdout.String())
 	}
 	if err := <-errCh; err != nil {
 		t.Fatal(err)
@@ -1610,7 +1611,7 @@ func envKeyCount(env []string, key string) int {
 
 func readGuestdFailureEvents(t *testing.T, stream io.Reader) (string, *runv0.TaskResult) {
 	t.Helper()
-	var stderr string
+	var stderr strings.Builder
 	for {
 		event, err := transport.ReadRunEvent(stream)
 		if err != nil {
@@ -1618,9 +1619,9 @@ func readGuestdFailureEvents(t *testing.T, stream io.Reader) (string, *runv0.Tas
 		}
 		switch value := event.Event.(type) {
 		case *runv0.RunEvent_StderrChunk:
-			stderr += string(value.StderrChunk)
+			stderr.WriteString(string(value.StderrChunk))
 		case *runv0.RunEvent_TaskResult:
-			return stderr, value.TaskResult
+			return stderr.String(), value.TaskResult
 		default:
 			t.Fatalf("unexpected event = %+v", event)
 		}
@@ -2256,7 +2257,7 @@ func TestInstallAdapterBundleRejectsSymlinkedOptParent(t *testing.T) {
 
 func TestSafeJoinStaysUnderRoot(t *testing.T) {
 	root := t.TempDir()
-	path, err := safeJoin(root, "../outside")
+	path, err := safepath.JoinSlash(root, "../outside")
 	if err != nil {
 		t.Fatal(err)
 	}

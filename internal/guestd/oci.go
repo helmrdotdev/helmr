@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -489,7 +489,7 @@ func copyWithSHA256(w io.Writer, r io.Reader) (string, error) {
 	if _, err := io.Copy(io.MultiWriter(w, hash), r); err != nil {
 		return "", err
 	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
+	return sha256sum.HexHash(hash), nil
 }
 
 func validateSymlinkTarget(linkPath, target string) error {
@@ -500,7 +500,7 @@ func validateSymlinkTarget(linkPath, target string) error {
 	if filepath.Dir(linkPath) == "." {
 		depth = 0
 	}
-	for _, part := range strings.Split(filepath.Clean(target), string(filepath.Separator)) {
+	for part := range strings.SplitSeq(filepath.Clean(target), string(filepath.Separator)) {
 		switch part {
 		case ".", "":
 		case "..":

@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/builder"
-	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	bkclient "github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 )
@@ -176,6 +176,23 @@ func TestPlanImageRejectsEscapingSource(t *testing.T) {
 		from("debian:trixie-slim"),
 		copySourceFile("/app/passwd", "../passwd"),
 	), nil, t.TempDir(), defaultPlatform, defaultCacheNS)
+	if err == nil || !strings.Contains(err.Error(), "escapes root") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPlanImageRejectsParentComponentSource(t *testing.T) {
+	sourceRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "b", "package.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := planImage(image(
+		from("debian:trixie-slim"),
+		copySourceFile("/app/package.json", "a/../b/package.json"),
+	), nil, sourceRoot, defaultPlatform, defaultCacheNS)
 	if err == nil || !strings.Contains(err.Error(), "escapes root") {
 		t.Fatalf("err = %v", err)
 	}

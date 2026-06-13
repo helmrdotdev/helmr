@@ -11,11 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -35,14 +36,14 @@ func TestAPIKeysRequireOwnerSession(t *testing.T) {
 }
 
 func TestListAPIKeysFiltersAndShapesResponse(t *testing.T) {
-	activeID := ids.New()
-	revokedID := ids.New()
+	activeID := uuid.Must(uuid.NewV7())
+	revokedID := uuid.Must(uuid.NewV7())
 	store := &apiKeyStore{
 		role: db.OrgMemberRoleOwner,
 		keys: []db.ListAPIKeysRow{
 			{
-				ID:            ids.ToPG(activeID),
-				OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+				ID:            pgvalue.UUID(activeID),
+				OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 				ProjectID:     testProjectID(),
 				EnvironmentID: testEnvironmentID(),
 				Name:          "active key",
@@ -50,8 +51,8 @@ func TestListAPIKeysFiltersAndShapesResponse(t *testing.T) {
 				CreatedAt:     testTime(),
 			},
 			{
-				ID:            ids.ToPG(revokedID),
-				OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+				ID:            pgvalue.UUID(revokedID),
+				OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 				ProjectID:     testProjectID(),
 				EnvironmentID: testEnvironmentID(),
 				Name:          "revoked key",
@@ -211,7 +212,7 @@ func TestIssueAPIKeySupportsWaitpointPolicyManagement(t *testing.T) {
 }
 
 func TestRevokeAPIKeyReturnsNoContentAndNotFoundEnvelope(t *testing.T) {
-	keyID := ids.New()
+	keyID := uuid.Must(uuid.NewV7())
 	store := &apiKeyStore{role: db.OrgMemberRoleOwner, revokeRows: 1}
 	server := testAPIKeyServer(store)
 	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys/"+keyID.String(), nil)
@@ -223,12 +224,12 @@ func TestRevokeAPIKeyReturnsNoContentAndNotFoundEnvelope(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.revokeParams.ID != ids.ToPG(keyID) || store.revokeParams.ProjectID != testProjectID() || store.revokeParams.EnvironmentID != testEnvironmentID() {
+	if store.revokeParams.ID != pgvalue.UUID(keyID) || store.revokeParams.ProjectID != testProjectID() || store.revokeParams.EnvironmentID != testEnvironmentID() {
 		t.Fatalf("revoke params = %+v", store.revokeParams)
 	}
 
 	store.revokeRows = 0
-	req = httptest.NewRequest(http.MethodDelete, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys/"+ids.New().String(), nil)
+	req = httptest.NewRequest(http.MethodDelete, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys/"+uuid.Must(uuid.NewV7()).String(), nil)
 	addSessionCookie(req)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -260,11 +261,11 @@ type apiKeyStore struct {
 
 func (s *apiKeyStore) GetSessionByTokenHash(context.Context, []byte) (db.GetSessionByTokenHashRow, error) {
 	return db.GetSessionByTokenHashRow{
-		ID:        ids.ToPG(ids.New()),
-		OrgID:     ids.ToPG(dbtest.DefaultOrgID),
-		UserID:    ids.ToPG(ids.New()),
+		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
+		UserID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Role:      string(s.role),
-		ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	}, nil
 }
 
@@ -329,7 +330,7 @@ func (s *apiKeyStore) GetProject(_ context.Context, arg db.GetProjectParams) (db
 	}
 	return db.Project{
 		ID:        testProjectID(),
-		OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 		Slug:      "helmr",
 		Name:      "Helmr",
 		IsDefault: true,
@@ -344,7 +345,7 @@ func (s *apiKeyStore) GetDefaultEnvironment(_ context.Context, arg db.GetDefault
 	}
 	return db.Environment{
 		ID:        testEnvironmentID(),
-		OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID: testProjectID(),
 		Slug:      "production",
 		Name:      "Production",
@@ -360,7 +361,7 @@ func (s *apiKeyStore) GetEnvironment(_ context.Context, arg db.GetEnvironmentPar
 	}
 	return db.Environment{
 		ID:        testEnvironmentID(),
-		OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID: testProjectID(),
 		Slug:      "production",
 		Name:      "Production",

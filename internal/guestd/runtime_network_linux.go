@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
 const (
@@ -68,7 +70,7 @@ func writeImageRuntimeFile(imageRoot string, rel string, contents []byte, mode o
 	if err := mkdirAllNoSymlink(imageRoot, parent, 0o755); err != nil {
 		return err
 	}
-	target, err := safeJoin(imageRoot, filepath.ToSlash(rel))
+	target, err := safepath.JoinSlash(imageRoot, filepath.ToSlash(rel))
 	if err != nil {
 		return err
 	}

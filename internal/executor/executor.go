@@ -15,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/task"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )

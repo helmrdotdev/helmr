@@ -9,9 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -36,25 +37,25 @@ type declarativeScheduleSpec struct {
 
 func promoteDeploymentAndSyncSchedules(ctx context.Context, store interface {
 	PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
-}, params db.PromoteDeploymentParams) (db.PromoteDeploymentRow, []scheduleView, error) {
+}, params db.PromoteDeploymentParams) ([]scheduleView, error) {
 	syncStore, ok := store.(declarativeScheduleSyncStore)
 	if ok {
 		if err := validateDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID); err != nil {
-			return db.PromoteDeploymentRow{}, nil, err
+			return nil, err
 		}
 	}
-	row, err := store.PromoteDeployment(ctx, params)
+	_, err := store.PromoteDeployment(ctx, params)
 	if err != nil {
-		return db.PromoteDeploymentRow{}, nil, err
+		return nil, err
 	}
 	if !ok {
-		return row, nil, nil
+		return nil, nil
 	}
 	changed, err := syncDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID)
 	if err != nil {
-		return db.PromoteDeploymentRow{}, nil, err
+		return nil, err
 	}
-	return row, changed, nil
+	return changed, nil
 }
 
 func validateDeclarativeSchedulesForDeployment(ctx context.Context, store declarativeScheduleSyncStore, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID) error {
@@ -94,7 +95,7 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 		if err != nil {
 			return nil, err
 		}
-		nextFireAt := pgTimeToPG(next)
+		nextFireAt := pgvalue.Timestamptz(next)
 		if row, ok := current[spec.DedupKey]; ok {
 			if declarativeScheduleCurrent(row, spec, runOptionsJSON) {
 				continue
@@ -118,10 +119,10 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 			changed = append(changed, updatedScheduleView(updated))
 			continue
 		}
-		scheduleID := ids.New()
-		instanceID := ids.New()
+		scheduleID := uuid.Must(uuid.NewV7())
+		instanceID := uuid.Must(uuid.NewV7())
 		created, err := store.CreateDeclarativeSchedule(ctx, db.CreateDeclarativeScheduleParams{
-			ScheduleID:    ids.ToPG(scheduleID),
+			ScheduleID:    pgvalue.UUID(scheduleID),
 			OrgID:         orgID,
 			ProjectID:     projectID,
 			TaskID:        spec.TaskID,
@@ -131,7 +132,7 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 			Timezone:      spec.Timezone,
 			RunOptions:    runOptionsJSON,
 			Active:        spec.Active,
-			InstanceID:    ids.ToPG(instanceID),
+			InstanceID:    pgvalue.UUID(instanceID),
 			EnvironmentID: environmentID,
 			NextFireAt:    nextFireAt,
 		})
@@ -175,7 +176,7 @@ func deploymentDeclarativeScheduleSpecs(ctx context.Context, store declarativeSc
 			}
 		}
 		for _, item := range schedules {
-			spec, err := normalizeDeclarativeScheduleSpec(orgID, projectID, environmentID, task.TaskID, item)
+			spec, err := normalizeDeclarativeScheduleSpec(orgID, projectID, task.TaskID, item)
 			if err != nil {
 				return nil, err
 			}
@@ -185,7 +186,7 @@ func deploymentDeclarativeScheduleSpecs(ctx context.Context, store declarativeSc
 	return specs, nil
 }
 
-func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, item api.WorkerDeploymentTaskSchedule) (declarativeScheduleSpec, error) {
+func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, taskID string, item api.WorkerDeploymentTaskSchedule) (declarativeScheduleSpec, error) {
 	taskID = strings.TrimSpace(taskID)
 	if err := api.ValidateTaskID(taskID); err != nil {
 		return declarativeScheduleSpec{}, err
@@ -218,8 +219,8 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 
 func declarativeScheduleDedupKey(orgID pgtype.UUID, projectID pgtype.UUID, taskID string, scheduleID string) string {
 	parts := []string{
-		uuidFromPG(orgID).String(),
-		uuidFromPG(projectID).String(),
+		pgvalue.MustUUIDValue(orgID).String(),
+		pgvalue.MustUUIDValue(projectID).String(),
 		taskID,
 		scheduleID,
 	}

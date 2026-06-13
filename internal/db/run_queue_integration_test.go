@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -17,7 +18,7 @@ import (
 func TestLeaseRunExecutionSessionSeparatesWorkerGroupsWithinSharedQueue(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instanceA := upsertTestWorkerInstance(t, ctx, queries, "runner-shared-queue-a")
@@ -32,11 +33,11 @@ func TestLeaseRunExecutionSessionSeparatesWorkerGroupsWithinSharedQueue(t *testi
 		OrgID:             orgID,
 		RunID:             runB,
 		WorkerInstanceID:  instanceA.ID,
-		SessionID:         ids.ToPG(ids.New()),
-		DispatchMessageID: pgText("message-shared-b"),
+		SessionID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		DispatchMessageID: pgvalue.Text("message-shared-b"),
 		DispatchLeaseID:   "lease-shared-b",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("cross-group lease error = %v, want no rows", err)
@@ -45,11 +46,11 @@ func TestLeaseRunExecutionSessionSeparatesWorkerGroupsWithinSharedQueue(t *testi
 		OrgID:             orgID,
 		RunID:             runA,
 		WorkerInstanceID:  instanceA.ID,
-		SessionID:         ids.ToPG(ids.New()),
-		DispatchMessageID: pgText("message-shared-a"),
+		SessionID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		DispatchMessageID: pgvalue.Text("message-shared-a"),
 		DispatchLeaseID:   "lease-shared-a",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -59,7 +60,7 @@ func TestLeaseRunExecutionSessionSeparatesWorkerGroupsWithinSharedQueue(t *testi
 func TestLeaseRunExecutionSessionHonorsQueuedExpiry(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-queued")
@@ -73,11 +74,11 @@ func TestLeaseRunExecutionSessionHonorsQueuedExpiry(t *testing.T) {
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		SessionID:         ids.ToPG(ids.New()),
-		DispatchMessageID: pgText("message-expired"),
+		SessionID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		DispatchMessageID: pgvalue.Text("message-expired"),
 		DispatchLeaseID:   "lease-expired",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -88,7 +89,7 @@ func TestLeaseRunExecutionSessionHonorsQueuedExpiry(t *testing.T) {
 func TestLeaseRunExecutionSessionHonorsQueueConcurrencyLimit(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-limited-queue")
@@ -118,12 +119,12 @@ UPDATE runs
 	}
 	attempts := []leaseAttempt{{
 		runID:     firstRunID,
-		execID:    ids.ToPG(ids.New()),
+		execID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		messageID: "message-limited-a",
 		leaseID:   "lease-limited-a",
 	}, {
 		runID:     secondRunID,
-		execID:    ids.ToPG(ids.New()),
+		execID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		messageID: "message-limited-b",
 		leaseID:   "lease-limited-b",
 	}}
@@ -138,10 +139,10 @@ UPDATE runs
 				RunID:             attempt.runID,
 				WorkerInstanceID:  instance.ID,
 				SessionID:         attempt.execID,
-				DispatchMessageID: pgText(attempt.messageID),
+				DispatchMessageID: pgvalue.Text(attempt.messageID),
 				DispatchLeaseID:   attempt.leaseID,
 				DispatchAttempt:   1,
-				LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+				LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 				SessionSpanID:     "0123456789abcdef",
 			})
 			results <- leaseResult{attempt: attempt, err: err}
@@ -201,11 +202,11 @@ UPDATE runs
 		OrgID:             orgID,
 		RunID:             blocked.runID,
 		WorkerInstanceID:  instance.ID,
-		SessionID:         ids.ToPG(ids.New()),
-		DispatchMessageID: pgText(blocked.messageID),
+		SessionID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		DispatchMessageID: pgvalue.Text(blocked.messageID),
 		DispatchLeaseID:   blocked.leaseID,
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -215,22 +216,22 @@ UPDATE runs
 func TestCancelRequeuedLeasedRunFinalizesQueueItem(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-requeue-cancel")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-requeue-cancel")
-	sessionID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-requeue-cancel"),
+		DispatchMessageID: pgvalue.Text("message-requeue-cancel"),
 		DispatchLeaseID:   "lease-requeue-cancel",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -256,7 +257,7 @@ UPDATE run_execution_sessions
 	}
 
 	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
@@ -289,7 +290,7 @@ UPDATE run_execution_sessions
 func TestRequeueExpiredLeasedRunExecutionSessionsHandlesMultipleRuns(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-leased-multi")
@@ -299,16 +300,16 @@ func TestRequeueExpiredLeasedRunExecutionSessionsHandlesMultipleRuns(t *testing.
 		runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 		messageID := "message-expired-leased-multi-" + suffix
 		seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "multi-expired-leased", instance, messageID)
-		sessionID := ids.ToPG(ids.New())
+		sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 		if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 			OrgID:             orgID,
 			RunID:             runID,
 			WorkerInstanceID:  instance.ID,
 			SessionID:         sessionID,
-			DispatchMessageID: pgText(messageID),
+			DispatchMessageID: pgvalue.Text(messageID),
 			DispatchLeaseID:   "lease-expired-leased-multi-" + suffix,
 			DispatchAttempt:   1,
-			LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+			LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 			SessionSpanID:     "0123456789abcdef",
 		}); err != nil {
 			t.Fatal(err)
@@ -340,7 +341,7 @@ UPDATE run_execution_sessions
 func TestLostRunSessionsExhaustDispatchAttempts(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-lost-attempts")
@@ -387,7 +388,7 @@ INSERT INTO run_execution_sessions (
 	  FROM runs
 	 WHERE runs.org_id = $2
 	   AND runs.id = $3
-		`, ids.ToPG(ids.New()), orgID, runID, instance.ID, instance.WorkerGroupID, "message-lost", "lease-lost", attempt, instance.RuntimeID); err != nil {
+		`, pgvalue.UUID(uuid.Must(uuid.NewV7())), orgID, runID, instance.ID, instance.WorkerGroupID, "message-lost", "lease-lost", attempt, instance.RuntimeID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -407,7 +408,7 @@ INSERT INTO run_execution_sessions (
 func TestDeadLetterRunQueueItemFailsQueuedRun(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "dead-letter-runner")
@@ -417,7 +418,7 @@ func TestDeadLetterRunQueueItemFailsQueuedRun(t *testing.T) {
 	deadLettered, err := queries.DeadLetterRunQueueItem(ctx, db.DeadLetterRunQueueItemParams{
 		OrgID:             orgID,
 		RunID:             runID,
-		DispatchMessageID: pgText("dead-letter-message"),
+		DispatchMessageID: pgvalue.Text("dead-letter-message"),
 		LastError:         "delivery exhausted",
 		EventKind:         "run.dead_lettered",
 		EventPayload:      []byte(`{"reason":"max_dispatch_attempts_exceeded"}`),

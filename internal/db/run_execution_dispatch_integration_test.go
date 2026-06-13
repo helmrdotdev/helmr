@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,10 +19,10 @@ import (
 
 func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, workerInstanceID pgtype.UUID) pgtype.UUID {
 	t.Helper()
-	sessionID := ids.ToPG(ids.New())
-	checkpointID := ids.ToPG(ids.New())
-	runWaitID := ids.ToPG(ids.New())
-	waitpointID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runWaitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	waitpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := pool.Exec(ctx, `
 	INSERT INTO run_execution_sessions (
 	    id,
@@ -96,8 +97,8 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	`, checkpointID, orgID, runID, sessionID); err != nil {
 		t.Fatal(err)
 	}
-	runtimeConfigArtifactID := ids.ToPG(ids.New())
-	workspaceArtifactID := ids.ToPG(ids.New())
+	runtimeConfigArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	workspaceArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := pool.Exec(ctx, `
 	INSERT INTO cas_objects (digest, size_bytes, media_type)
 	VALUES
@@ -888,7 +889,7 @@ SELECT session_id, attempt_number, payload
 		t.Fatal(err)
 	}
 	if gotSessionID != sessionID || !gotAttemptNumber.Valid || gotAttemptNumber.Int32 != attemptNumber {
-		t.Fatalf("run event %q session = %+v attempt = %+v, want session %s attempt %d", kind, gotSessionID, gotAttemptNumber, ids.MustFromPG(sessionID), attemptNumber)
+		t.Fatalf("run event %q session = %+v attempt = %+v, want session %s attempt %d", kind, gotSessionID, gotAttemptNumber, pgvalue.MustUUIDValue(sessionID), attemptNumber)
 	}
 	requireCanonicalJSON(t, "run event payload", gotPayload, wantPayload)
 }
@@ -917,16 +918,16 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	messageID := "message-" + suffix
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, messageID)
-	sessionID := ids.ToPG(ids.New())
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText(messageID),
+		DispatchMessageID: pgvalue.Text(messageID),
 		DispatchLeaseID:   "lease-" + suffix,
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -939,9 +940,9 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	checkpointID := ids.ToPG(ids.New())
-	runWaitID := ids.ToPG(ids.New())
-	waitpointID := ids.ToPG(ids.New())
+	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runWaitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	waitpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
@@ -976,12 +977,12 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactDigest:    pgvalue.Text(testDigest("5")),
 		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
-		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
-		WorkspaceArtifactEncoding:  pgText("tar"),
-		WorkspaceMountPath:         pgText("/workspace"),
-		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		WorkspaceArtifactMediaType: pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
+		WorkspaceMountPath:         pgvalue.Text("/workspace"),
+		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
 		ActiveDurationMs:           100,
 		CheckpointPayload:          []byte(`{"checkpoint_id":"next"}`),
 	}); err != nil {
@@ -994,7 +995,7 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 
 func seedWaitpointResponseToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, waitpointID pgtype.UUID, tokenHash []byte, externalSubject string) pgtype.UUID {
 	t.Helper()
-	tokenID := ids.ToPG(ids.New())
+	tokenID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := pool.Exec(ctx, `
 INSERT INTO waitpoint_response_tokens (id, org_id, project_id, environment_id, waitpoint_id, token_hash, expires_at, external_subject, metadata)
 SELECT $1, $2, waitpoints.project_id, waitpoints.environment_id, $4, $5, now() + interval '5 minutes', $6, '{}'
@@ -1015,25 +1016,25 @@ func respondWaitpointToken(ctx context.Context, queries *db.Queries, orgID, wait
 		OrgID:                orgID,
 		ID:                   tokenID,
 		TokenHash:            tokenHash,
-		CompletedByPrincipal: pgText(responseKey),
-		CompletedVia:         pgText("email_token"),
+		CompletedByPrincipal: pgvalue.Text(responseKey),
+		CompletedVia:         pgvalue.Text("email_token"),
 		Metadata:             []byte(`{}`),
 	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
 	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
-		ID:                   ids.ToPG(ids.New()),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                orgID,
 		WaitpointID:          waitpointID,
 		ResponseKey:          responseKey,
 		RequestHash:          responseKey,
 		Action:               "respond",
 		Kind:                 db.WaitpointKindHuman,
-		ResolutionKind:       pgText("completed"),
+		ResolutionKind:       pgvalue.Text("completed"),
 		Resolution:           approvedWaitpointResolution(responseKey),
 		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
-		CompletedByPrincipal: pgText(responseKey),
-		CompletedVia:         pgText("email_token"),
+		CompletedByPrincipal: pgvalue.Text(responseKey),
+		CompletedVia:         pgvalue.Text("email_token"),
 		Metadata:             []byte(`{}`),
 	}); err != nil {
 		return err
@@ -1050,7 +1051,7 @@ func resolveApprovedWaitpointParams(orgID, runID, waitpointID pgtype.UUID) db.Re
 		OrgID:          orgID,
 		ID:             waitpointID,
 		Kind:           db.WaitpointKindHuman,
-		ResolutionKind: pgText("completed"),
+		ResolutionKind: pgvalue.Text("completed"),
 		Output:         []byte(`{"approved":true}`),
 		Resolution:     approvedWaitpointResolution("reviewer@example.com"),
 	}
@@ -1114,8 +1115,8 @@ func seedLeasableRunQueueItem(t *testing.T, ctx context.Context, queries *db.Que
 		OrgID:             orgID,
 		Priority:          10,
 		QueueName:         queueName,
-		QueueTimestamp:    pgTime(time.Now()),
-		DispatchMessageID: pgText(messageID),
+		QueueTimestamp:    pgvalue.Timestamptz(time.Now()),
+		DispatchMessageID: pgvalue.Text(messageID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1125,8 +1126,8 @@ func seedLeasableRunQueueItem(t *testing.T, ctx context.Context, queries *db.Que
 		OrgID:                orgID,
 		RunID:                runID,
 		WorkerInstanceID:     instance.ID,
-		DispatchMessageID:    pgText(messageID),
-		ReservationExpiresAt: pgTime(time.Now().Add(time.Minute)),
+		DispatchMessageID:    pgvalue.Text(messageID),
+		ReservationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 	}); err != nil {
 		t.Fatal(err)
 	}

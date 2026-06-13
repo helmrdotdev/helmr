@@ -16,14 +16,14 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestCreateWaitpointTokenRejectsDelayWaitpoint(t *testing.T) {
-	runID := ids.New()
-	waitpointID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
+	waitpointID := uuid.Must(uuid.NewV7())
 	store := newWaitpointTokenCreationStore(runID, waitpointID, db.WaitpointKindDelay)
 	handler := newWaitpointTokenCreationHandler(store)
 
@@ -39,8 +39,8 @@ func TestCreateWaitpointTokenRejectsDelayWaitpoint(t *testing.T) {
 }
 
 func TestCreateWaitpointTokenCreatesHumanWaitpointToken(t *testing.T) {
-	runID := ids.New()
-	waitpointID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
+	waitpointID := uuid.Must(uuid.NewV7())
 	store := newWaitpointTokenCreationStore(runID, waitpointID, db.WaitpointKindHuman)
 	handler := newWaitpointTokenCreationHandler(store)
 
@@ -104,8 +104,8 @@ type waitpointTokenCreationStore struct {
 func newWaitpointTokenCreationStore(runID uuid.UUID, waitpointID uuid.UUID, kind db.WaitpointKind) *waitpointTokenCreationStore {
 	return &waitpointTokenCreationStore{
 		run: db.GetRunSummaryRow{
-			ID:               ids.ToPG(runID),
-			OrgID:            ids.ToPG(dbtest.DefaultOrgID),
+			ID:               pgvalue.UUID(runID),
+			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -116,8 +116,8 @@ func newWaitpointTokenCreationStore(runID uuid.UUID, waitpointID uuid.UUID, kind
 			UpdatedAt:        testTime(),
 		},
 		waitpoint: db.GetWaitpointForResponseTokenCreationRow{
-			ID:            ids.ToPG(waitpointID),
-			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+			ID:            pgvalue.UUID(waitpointID),
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Kind:          kind,

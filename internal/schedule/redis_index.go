@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	goredis "github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -43,14 +43,14 @@ type IndexLease struct {
 }
 
 type RedisIndex struct {
-	client goredis.Cmdable
+	client redis.Cmdable
 	prefix string
 	now    func() time.Time
 }
 
 type RedisIndexOption func(*RedisIndex)
 
-func NewRedisIndex(client goredis.Cmdable, opts ...RedisIndexOption) (*RedisIndex, error) {
+func NewRedisIndex(client redis.Cmdable, opts ...RedisIndexOption) (*RedisIndex, error) {
 	if client == nil {
 		return nil, errors.New("redis client is required")
 	}

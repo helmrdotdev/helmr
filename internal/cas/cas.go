@@ -2,8 +2,6 @@ package cas
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -46,19 +44,6 @@ var (
 	errStageCommitted = errors.New("cas stage already committed")
 	errStageAborted   = errors.New("cas stage aborted")
 )
-
-func DigestBytes(bytes []byte) string {
-	sum := sha256.Sum256(bytes)
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func DigestReader(body io.Reader) ([]byte, string, error) {
-	bytes, err := io.ReadAll(body)
-	if err != nil {
-		return nil, "", err
-	}
-	return bytes, DigestBytes(bytes), nil
-}
 
 func ObjectKey(prefix, digest string) (string, error) {
 	hash, ok := strings.CutPrefix(digest, "sha256:")

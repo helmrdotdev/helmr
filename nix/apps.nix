@@ -44,6 +44,8 @@ in
   '';
   test = app "test" "run the full Helmr test recipe" toolsets.appRuntime "make test";
   lint = app "lint" "run Go vet with repository lint settings" toolsets.appRuntime "make lint";
+  modernize = app "modernize" "apply Go modernizer fixes" toolsets.appRuntime "make modernize";
+  modernize-check = app "modernize-check" "check Go modernizer fixes" toolsets.appRuntime "make modernize-check";
   dev = app "dev" "run the local Helmr control plane and console dashboard" toolsets.appRuntime ''
     exec ./scripts/dev-console-stack.sh "$@"
   '';

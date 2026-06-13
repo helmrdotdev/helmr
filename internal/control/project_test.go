@@ -16,22 +16,24 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestProjectManagementDeletesProject(t *testing.T) {
-	projectID := ids.New()
+	projectID := uuid.Must(uuid.NewV7())
 	store := &projectManagementStore{
 		project: db.Project{
-			ID:        ids.ToPG(projectID),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+			ID:        pgvalue.UUID(projectID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			Slug:      "main",
 			Name:      "Main",
 			IsDefault: true,
@@ -43,7 +45,7 @@ func TestProjectManagementDeletesProject(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID.String(), nil)
 	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
 		OrgID:  dbtest.DefaultOrgID,
-		UserID: ids.New(),
+		UserID: uuid.Must(uuid.NewV7()),
 		Role:   auth.RoleOwner,
 		Kind:   auth.ActorKindSession,
 	}))
@@ -66,11 +68,11 @@ func TestProjectManagementDeletesProject(t *testing.T) {
 }
 
 func TestProjectManagementMarksDeletionJobFailedWhenDeleteFails(t *testing.T) {
-	projectID := ids.New()
+	projectID := uuid.Must(uuid.NewV7())
 	store := &projectManagementStore{
 		project: db.Project{
-			ID:        ids.ToPG(projectID),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+			ID:        pgvalue.UUID(projectID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			Slug:      "main",
 			Name:      "Main",
 			IsDefault: true,
@@ -83,7 +85,7 @@ func TestProjectManagementMarksDeletionJobFailedWhenDeleteFails(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID.String(), nil)
 	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
 		OrgID:  dbtest.DefaultOrgID,
-		UserID: ids.New(),
+		UserID: uuid.Must(uuid.NewV7()),
 		Role:   auth.RoleOwner,
 		Kind:   auth.ActorKindSession,
 	}))
@@ -106,13 +108,13 @@ func TestProjectManagementMarksDeletionJobFailedWhenDeleteFails(t *testing.T) {
 }
 
 func TestProjectManagementPromotesSiblingWhenDeletingDefaultProject(t *testing.T) {
-	defaultProjectID := ids.New()
-	siblingProjectID := ids.New()
+	defaultProjectID := uuid.Must(uuid.NewV7())
+	siblingProjectID := uuid.Must(uuid.NewV7())
 	store := &projectManagementStore{
 		projects: []db.Project{
 			{
-				ID:        ids.ToPG(defaultProjectID),
-				OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+				ID:        pgvalue.UUID(defaultProjectID),
+				OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 				Slug:      "main",
 				Name:      "Main",
 				IsDefault: true,
@@ -120,8 +122,8 @@ func TestProjectManagementPromotesSiblingWhenDeletingDefaultProject(t *testing.T
 				UpdatedAt: testTime(),
 			},
 			{
-				ID:        ids.ToPG(siblingProjectID),
-				OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+				ID:        pgvalue.UUID(siblingProjectID),
+				OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 				Slug:      "next",
 				Name:      "Next",
 				IsDefault: false,
@@ -134,7 +136,7 @@ func TestProjectManagementPromotesSiblingWhenDeletingDefaultProject(t *testing.T
 	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+defaultProjectID.String(), nil)
 	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
 		OrgID:  dbtest.DefaultOrgID,
-		UserID: ids.New(),
+		UserID: uuid.Must(uuid.NewV7()),
 		Role:   auth.RoleOwner,
 		Kind:   auth.ActorKindSession,
 	}))
@@ -166,19 +168,19 @@ func TestProjectRoutesAcceptBearerSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectID := ids.New()
+	projectID := uuid.Must(uuid.NewV7())
 	store := &projectManagementStore{
 		sessionHash: sessionHash,
 		session: db.GetSessionByTokenHashRow{
-			ID:        ids.ToPG(ids.New()),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
-			UserID:    ids.ToPG(ids.New()),
+			ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
+			UserID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			Role:      string(db.OrgMemberRoleOwner),
-			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+			ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		},
 		project: db.Project{
-			ID:        ids.ToPG(projectID),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+			ID:        pgvalue.UUID(projectID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			Slug:      "main",
 			Name:      "Main",
 			IsDefault: true,
@@ -219,19 +221,19 @@ func TestProjectRoutesRejectAPIKeyBearer(t *testing.T) {
 }
 
 func TestProjectManagementUpdatesEnvironment(t *testing.T) {
-	projectID := ids.New()
-	environmentID := ids.New()
+	projectID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.Must(uuid.NewV7())
 	store := &projectManagementStore{
 		project: db.Project{
-			ID:    ids.ToPG(projectID),
-			OrgID: ids.ToPG(dbtest.DefaultOrgID),
+			ID:    pgvalue.UUID(projectID),
+			OrgID: pgvalue.UUID(dbtest.DefaultOrgID),
 			Slug:  "main",
 			Name:  "Main",
 		},
 		environment: db.Environment{
-			ID:        ids.ToPG(environmentID),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
-			ProjectID: ids.ToPG(projectID),
+			ID:        pgvalue.UUID(environmentID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID: pgvalue.UUID(projectID),
 			Slug:      "dev",
 			Name:      "Dev",
 			ColorHex:  "#22C55E",
@@ -270,13 +272,13 @@ func TestProjectManagementUpdatesEnvironment(t *testing.T) {
 }
 
 func TestProjectManagementRejectsInvalidEnvironmentColor(t *testing.T) {
-	projectID := ids.New()
-	environmentID := ids.New()
+	projectID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.Must(uuid.NewV7())
 	store := &projectManagementStore{
 		environment: db.Environment{
-			ID:        ids.ToPG(environmentID),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
-			ProjectID: ids.ToPG(projectID),
+			ID:        pgvalue.UUID(environmentID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID: pgvalue.UUID(projectID),
 			Slug:      "dev",
 			Name:      "Dev",
 			ColorHex:  "#22C55E",
@@ -308,13 +310,13 @@ func TestProjectManagementRejectsInvalidEnvironmentColor(t *testing.T) {
 }
 
 func TestProjectManagementRejectsDeletingProtectedEnvironment(t *testing.T) {
-	projectID := ids.New()
-	environmentID := ids.New()
+	projectID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.Must(uuid.NewV7())
 	store := &projectManagementStore{
 		environment: db.Environment{
-			ID:        ids.ToPG(environmentID),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
-			ProjectID: ids.ToPG(projectID),
+			ID:        pgvalue.UUID(environmentID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID: pgvalue.UUID(projectID),
 			Slug:      "production",
 			Name:      "Production",
 			ColorHex:  "#315FCE",
@@ -346,16 +348,12 @@ func TestProjectManagementRejectsDeletingProtectedEnvironment(t *testing.T) {
 	}
 }
 
-func idsMustString(value pgtype.UUID) string {
-	return ids.MustFromPG(value).String()
-}
-
 func deploymentRequest(body []byte, contentType string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/deployments", bytes.NewReader(body))
 	req.Header.Set("content-type", contentType)
 	routeContext := chi.NewRouteContext()
-	routeContext.URLParams.Add("projectID", idsMustString(testProjectID()))
-	routeContext.URLParams.Add("environmentID", idsMustString(testEnvironmentID()))
+	routeContext.URLParams.Add("projectID", pgvalue.MustUUIDValue(testProjectID()).String())
+	routeContext.URLParams.Add("environmentID", pgvalue.MustUUIDValue(testEnvironmentID()).String())
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
 	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: dbtest.DefaultOrgID, Role: auth.RoleOwner, Kind: auth.ActorKindSession})
 	return req.WithContext(ctx)
@@ -374,7 +372,7 @@ func currentDeploymentRequest() *http.Request {
 func testScopedArtifact(id pgtype.UUID, kind db.ArtifactKind, digest string, mediaType string) db.Artifact {
 	return db.Artifact{
 		ID:            id,
-		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:     testProjectID(),
 		EnvironmentID: testEnvironmentID(),
 		Digest:        digest,
@@ -386,7 +384,7 @@ func testScopedArtifact(id pgtype.UUID, kind db.ArtifactKind, digest string, med
 }
 
 func deploymentStatusRequest(deploymentID pgtype.UUID) *http.Request {
-	id := ids.MustFromPG(deploymentID)
+	id := pgvalue.MustUUIDValue(deploymentID)
 	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/deployments/"+id.String(), nil)
 	routeContext := chi.NewRouteContext()
 	routeContext.URLParams.Add("projectID", testProjectIDString())
@@ -404,7 +402,7 @@ func promoteDeploymentRequest(deploymentRef string, body string) *http.Request {
 	routeContext.URLParams.Add("environmentID", testEnvironmentIDString())
 	routeContext.URLParams.Add("deployment", deploymentRef)
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
-	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: dbtest.DefaultOrgID, UserID: ids.New(), Role: auth.RoleOwner, Kind: auth.ActorKindSession})
+	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: dbtest.DefaultOrgID, UserID: uuid.Must(uuid.NewV7()), Role: auth.RoleOwner, Kind: auth.ActorKindSession})
 	return req.WithContext(ctx)
 }
 
@@ -421,7 +419,7 @@ func (f *fakeStore) GetDeployment(_ context.Context, arg db.GetDeploymentParams)
 func deploymentMultipart(t *testing.T, metadata api.CreateDeploymentRequest, source []byte) ([]byte, string) {
 	t.Helper()
 	if strings.TrimSpace(metadata.ContentHash) == "" {
-		metadata.ContentHash = cas.DigestBytes(source)
+		metadata.ContentHash = sha256sum.DigestBytes(source)
 	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)

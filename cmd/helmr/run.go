@@ -649,7 +649,7 @@ func followRunLogs(cmd *cobra.Command, control *client.Client, runID string, cur
 			return err
 		}
 		run, snapshotErr := control.GetRun(cmd.Context(), runID, scope)
-		if snapshotErr == nil && isTerminalRunStatus(run.Status) {
+		if snapshotErr == nil && api.RunStatusIsTerminal(run.Status) {
 			drainErr := control.FollowRunLogs(cmd.Context(), runID, cursor, handleChunk, scope)
 			if drainErr != nil && runEventStreamErrorIsFatal(drainErr) {
 				return drainErr
@@ -677,7 +677,7 @@ func waitForRun(ctx context.Context, control *client.Client, runID string, scope
 	if err != nil {
 		return api.RunResponse{}, err
 	}
-	if isTerminalRunStatus(run.Status) {
+	if api.RunStatusIsTerminal(run.Status) {
 		return run, nil
 	}
 	var cursor int64
@@ -708,7 +708,7 @@ func waitForRun(ctx context.Context, control *client.Client, runID string, scope
 		if err != nil {
 			return api.RunResponse{}, err
 		}
-		if isTerminalRunStatus(run.Status) {
+		if api.RunStatusIsTerminal(run.Status) {
 			return run, nil
 		}
 		timer := time.NewTimer(runEventReconnectDelay)
@@ -729,7 +729,7 @@ func waitForTerminalRunSnapshot(ctx context.Context, control *client.Client, run
 		run, err := control.GetRun(convergeCtx, runID, scope)
 		if err != nil {
 			lastErr = err
-		} else if isTerminalRunStatus(run.Status) {
+		} else if api.RunStatusIsTerminal(run.Status) {
 			return run, nil
 		}
 		timer := time.NewTimer(runTerminalSnapshotRetryDelay)
@@ -743,10 +743,6 @@ func waitForTerminalRunSnapshot(ctx context.Context, control *client.Client, run
 		case <-timer.C:
 		}
 	}
-}
-
-func isTerminalRunStatus(status string) bool {
-	return api.RunStatusIsTerminal(status)
 }
 
 func runEventStreamErrorIsFatal(err error) bool {

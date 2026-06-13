@@ -22,8 +22,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/compute"
-	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -1114,7 +1115,7 @@ func (f *fakeCAS) Stage(_ context.Context, mediaType string) (cas.Stage, error) 
 }
 
 func (f *fakeCAS) put(mediaType string, content []byte) cas.Object {
-	object := cas.Object{Digest: cas.DigestBytes(content), SizeBytes: int64(len(content)), MediaType: mediaType}
+	object := cas.Object{Digest: sha256sum.DigestBytes(content), SizeBytes: int64(len(content)), MediaType: mediaType}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.mediaType = mediaType
@@ -1217,7 +1218,7 @@ func encryptedCheckpointObject(t *testing.T, encryptor *checkpoint.Encryptor, pl
 		t.Fatal(err)
 	}
 	encrypted := body.Bytes()
-	return encryptedCheckpoint{digest: cas.DigestBytes(encrypted), body: encrypted}
+	return encryptedCheckpoint{digest: sha256sum.DigestBytes(encrypted), body: encrypted}
 }
 
 func withCheckpointManifest(checkpoint api.WorkerCheckpointManifest, edit func(*api.WorkerCheckpointManifest)) api.WorkerCheckpointManifest {

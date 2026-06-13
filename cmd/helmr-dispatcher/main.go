@@ -22,7 +22,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sqs"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgxpool"
-	goredis "github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -51,11 +51,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	queries := db.New(pool)
 
-	redisOptions, err := goredis.ParseURL(cfg.RedisURL)
+	redisOptions, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("parse redis url: %w", err)
 	}
-	redisClient := goredis.NewClient(redisOptions)
+	redisClient := redis.NewClient(redisOptions)
 	defer redisClient.Close()
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("ping redis: %w", err)

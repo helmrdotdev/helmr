@@ -22,7 +22,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -281,7 +281,7 @@ ON CONFLICT (id) DO UPDATE
        primary_email = EXCLUDED.primary_email,
        disabled_at = NULL,
        updated_at = now()
-`, ids.ToPG(userID)); err != nil {
+`, pgvalue.UUID(userID)); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -296,8 +296,8 @@ ON CONFLICT (id) DO UPDATE
 		return
 	}
 	if _, err := queries.CreateSession(ctx, db.CreateSessionParams{
-		ID:        ids.ToPG(ids.New()),
-		UserID:    ids.ToPG(userID),
+		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		UserID:    pgvalue.UUID(userID),
 		TokenHash: hash,
 		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(30 * 24 * time.Hour), Valid: true},
 	}); err != nil {

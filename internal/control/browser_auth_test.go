@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -99,7 +99,7 @@ func TestLoginStartCreatesLoginFlowWithoutOrganization(t *testing.T) {
 }
 
 func TestLoginCallbackIssuesSession(t *testing.T) {
-	store := &browserAuthStore{orgID: ids.New(), userID: ids.New()}
+	store := &browserAuthStore{orgID: uuid.Must(uuid.NewV7()), userID: uuid.Must(uuid.NewV7())}
 	provider := &fakeAuthProvider{identity: authIdentity{
 		Provider:        "github",
 		Subject:         "123",
@@ -127,7 +127,7 @@ func TestLoginCallbackIssuesSession(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("callback status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.createdSession.UserID != ids.ToPG(store.userID) || len(store.createdSession.TokenHash) == 0 {
+	if store.createdSession.UserID != pgvalue.UUID(store.userID) || len(store.createdSession.TokenHash) == 0 {
 		t.Fatalf("created session = %+v", store.createdSession)
 	}
 	if store.upsertedIdentity.ProfileImageUrl.String != "https://avatars.example.test/octocat.png" {
@@ -165,7 +165,7 @@ type browserAuthStore struct {
 func (s *browserAuthStore) UpsertAuthIdentity(_ context.Context, arg db.UpsertAuthIdentityParams) (db.UpsertAuthIdentityRow, error) {
 	s.upsertedIdentity = arg
 	return db.UpsertAuthIdentityRow{
-		ID:              ids.ToPG(s.userID),
+		ID:              pgvalue.UUID(s.userID),
 		DisplayName:     arg.DisplayName,
 		ProfileImageUrl: arg.ProfileImageUrl,
 		PrimaryEmail:    arg.Email,

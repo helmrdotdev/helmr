@@ -15,10 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -196,11 +197,11 @@ func TestCreateRunClearsExpiredRunIdempotencyKey(t *testing.T) {
 }
 
 func TestExistingIdempotentRunKeepsScheduledTerminalRun(t *testing.T) {
-	runID := ids.ToPG(ids.New())
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{}
 	store.run = db.Run{
 		ID:                     runID,
-		OrgID:                  ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:                  pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:              testProjectID(),
 		EnvironmentID:          testEnvironmentID(),
 		DeploymentID:           testDeploymentID(),
@@ -237,14 +238,14 @@ func TestExistingIdempotentRunKeepsScheduledTerminalRun(t *testing.T) {
 }
 
 func TestExistingIdempotentRunAllowsScheduledHashMismatch(t *testing.T) {
-	runID := ids.ToPG(ids.New())
-	scheduleID := ids.ToPG(ids.New())
-	scheduleInstanceID := ids.ToPG(ids.New())
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	scheduleID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	scheduleInstanceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	scheduledAt := pgtype.Timestamptz{Time: testTime().Time.Add(time.Minute), Valid: true}
 	store := &fakeStore{}
 	store.run = db.Run{
 		ID:                     runID,
-		OrgID:                  ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:                  pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:              testProjectID(),
 		EnvironmentID:          testEnvironmentID(),
 		DeploymentID:           testDeploymentID(),
@@ -287,8 +288,8 @@ func TestExistingIdempotentRunAllowsScheduledHashMismatch(t *testing.T) {
 func TestExistingIdempotentRunRejectsScheduledSourceMismatch(t *testing.T) {
 	store := &fakeStore{}
 	store.run = db.Run{
-		ID:                     ids.ToPG(ids.New()),
-		OrgID:                  ids.ToPG(dbtest.DefaultOrgID),
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:              testProjectID(),
 		EnvironmentID:          testEnvironmentID(),
 		DeploymentID:           testDeploymentID(),
@@ -297,8 +298,8 @@ func TestExistingIdempotentRunRejectsScheduledSourceMismatch(t *testing.T) {
 		Status:                 db.RunStatusQueued,
 		IdempotencyKey:         pgtype.Text{String: "schedule-key", Valid: true},
 		IdempotencyRequestHash: pgtype.Text{String: "previous-hash", Valid: true},
-		ScheduleID:             ids.ToPG(ids.New()),
-		ScheduleInstanceID:     ids.ToPG(ids.New()),
+		ScheduleID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ScheduleInstanceID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ScheduledAt:            pgtype.Timestamptz{Time: testTime().Time.Add(time.Minute), Valid: true},
 		CreatedAt:              testTime(),
 		UpdatedAt:              testTime(),
@@ -314,8 +315,8 @@ func TestExistingIdempotentRunRejectsScheduledSourceMismatch(t *testing.T) {
 		"schedule-key",
 		"new-hash",
 		runSource{
-			scheduleID:         ids.ToPG(ids.New()),
-			scheduleInstanceID: ids.ToPG(ids.New()),
+			scheduleID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			scheduleInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			scheduledAt:        pgtype.Timestamptz{Time: testTime().Time.Add(2 * time.Minute), Valid: true},
 		},
 		false,
@@ -381,7 +382,7 @@ func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
 		}
 	}
 	changedTask := deploymentTask
-	changedTask.DeploymentID = ids.ToPG(ids.New())
+	changedTask.DeploymentID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	deploymentHash, err := runIdempotencyRequestHash(request, payload, changedTask, 300, retryPolicy, metadata, tags, scheduling)
 	if err != nil {
 		t.Fatal(err)
@@ -400,7 +401,7 @@ func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
 	}
 	requireIdempotencyHashChanged("queue name", queueHash)
 	changedScheduling = scheduling
-	changedScheduling.concurrencyKey = pgText("deploy:prod")
+	changedScheduling.concurrencyKey = pgvalue.Text("deploy:prod")
 	concurrencyHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, retryPolicy, metadata, tags, changedScheduling)
 	if err != nil {
 		t.Fatal(err)
@@ -423,14 +424,14 @@ func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
 }
 
 func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
-	runID := ids.New()
-	sessionID := ids.New()
-	workerID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
+	sessionID := uuid.Must(uuid.NewV7())
+	workerID := uuid.Must(uuid.NewV7())
 	exitCode := int32(0)
 	store := &fakeStore{
 		run: db.Run{
-			ID:               ids.ToPG(runID),
-			OrgID:            ids.ToPG(dbtest.DefaultOrgID),
+			ID:               pgvalue.UUID(runID),
+			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -443,8 +444,8 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 			StartedAt:        testTime(),
 			FinishedAt:       testTime(),
 		},
-		sessionID:                 ids.ToPG(sessionID),
-		executionWorkerInstanceID: ids.ToPG(workerID),
+		sessionID:                 pgvalue.UUID(sessionID),
+		executionWorkerInstanceID: pgvalue.UUID(workerID),
 		executionLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 		activeQueueLeaseMissing:   true,
 	}

@@ -15,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +29,7 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	run, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
+	run, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: pgvalue.UUID(actor.OrgID), ID: pgvalue.UUID(runID)})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("run not found")))
 		return
@@ -41,8 +41,8 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 	summary := getRunSummary(run)
 	scope := auth.Scope{
 		OrgID:         actor.OrgID,
-		ProjectID:     ids.MustFromPG(summary.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(summary.EnvironmentID).String(),
+		ProjectID:     pgvalue.MustUUIDValue(summary.ProjectID).String(),
+		EnvironmentID: pgvalue.MustUUIDValue(summary.EnvironmentID).String(),
 	}
 	if err := s.requireActorScopeForRecord(r, actor, summary.ProjectID, summary.EnvironmentID); err != nil {
 		if isNoRows(err) {
@@ -68,8 +68,8 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 	logs, err := s.db.GetRunLogSnapshot(r.Context(), db.GetRunLogSnapshotParams{
 		StdoutLimit: maxRunLogSnapshotBytes,
 		StderrLimit: maxRunLogSnapshotBytes,
-		OrgID:       ids.ToPG(actor.OrgID),
-		RunID:       ids.ToPG(runID),
+		OrgID:       pgvalue.UUID(actor.OrgID),
+		RunID:       pgvalue.UUID(runID),
 	})
 	if isNoRows(err) {
 		writeJSON(w, http.StatusOK, api.LogSnapshotResponse{Cursor: "0"})
@@ -112,7 +112,7 @@ func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uui
 		if rowCount == int(runLogStreamBatchSize) {
 			continue
 		}
-		run, err := s.db.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: ids.ToPG(orgID), ID: ids.ToPG(runID)})
+		run, err := s.db.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: pgvalue.UUID(orgID), ID: pgvalue.UUID(runID)})
 		if isNoRows(err) || (err == nil && api.RunStatusIsTerminal(string(run.Status))) {
 			for {
 				nextCursor, rowCount, err := s.writeRunLogChunksAfter(ctx, w, flusher, encoder, orgID, runID, cursor)
@@ -145,8 +145,8 @@ func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uui
 
 func (s *Server) writeRunLogChunksAfter(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, orgID uuid.UUID, runID uuid.UUID, cursor int64) (int64, int, error) {
 	rows, err := s.db.ListRunLogChunksAfter(ctx, db.ListRunLogChunksAfterParams{
-		OrgID:    ids.ToPG(orgID),
-		RunID:    ids.ToPG(runID),
+		OrgID:    pgvalue.UUID(orgID),
+		RunID:    pgvalue.UUID(runID),
 		Seq:      cursor,
 		RowLimit: runLogStreamBatchSize,
 	})
@@ -173,13 +173,13 @@ func (s *Server) writeRunLogChunksAfter(ctx context.Context, w http.ResponseWrit
 func runLogChunkResponse(chunk db.RunLogChunk) api.RunLogChunk {
 	return api.RunLogChunk{
 		ID:            strconv.FormatInt(chunk.Seq, 10),
-		RunID:         ids.MustFromPG(chunk.RunID).String(),
-		SessionID:     ids.MustFromPG(chunk.SessionID).String(),
+		RunID:         pgvalue.MustUUIDValue(chunk.RunID).String(),
+		SessionID:     pgvalue.MustUUIDValue(chunk.SessionID).String(),
 		AttemptNumber: chunk.AttemptNumber,
 		Stream:        string(chunk.Stream),
 		ContentBase64: base64.StdEncoding.EncodeToString(chunk.Content),
 		Bytes:         chunk.SizeBytes,
 		ObservedSeq:   chunk.ObservedSeq,
-		At:            pgTime(chunk.CreatedAt),
+		At:            pgvalue.Time(chunk.CreatedAt),
 	}
 }

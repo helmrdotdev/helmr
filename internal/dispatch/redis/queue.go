@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
-	dispatch "github.com/helmrdotdev/helmr/internal/dispatch"
-	goredis "github.com/redis/go-redis/v9"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -25,7 +25,7 @@ const (
 )
 
 type Queue struct {
-	client        goredis.Cmdable
+	client        redis.Cmdable
 	prefix        string
 	leaseTimeout  time.Duration
 	generationTTL time.Duration
@@ -34,7 +34,7 @@ type Queue struct {
 
 type Option func(*Queue)
 
-func New(client goredis.Cmdable, opts ...Option) (*Queue, error) {
+func New(client redis.Cmdable, opts ...Option) (*Queue, error) {
 	if client == nil {
 		return nil, errors.New("redis client is required")
 	}

@@ -24,7 +24,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5"
@@ -573,7 +572,7 @@ func (s *Server) effectiveDevicePollEvery() time.Duration {
 }
 
 func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {
-	id, err := ids.Parse(chi.URLParam(r, name))
+	id, err := uuid.Parse(chi.URLParam(r, name))
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("%s must be a UUID", name)
 	}

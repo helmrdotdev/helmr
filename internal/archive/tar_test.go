@@ -212,6 +212,31 @@ func TestExtractTarRejectsUnsafeSymlinks(t *testing.T) {
 	}
 }
 
+func TestExtractTarRejectsSymlinkParent(t *testing.T) {
+	var body bytes.Buffer
+	writer := tar.NewWriter(&body)
+	if err := writer.WriteHeader(&tar.Header{Name: "link/file.txt", Typeflag: tar.TypeReg, Mode: 0o644, Size: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	destination := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(destination, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ExtractTar(bytes.NewReader(body.Bytes()), destination); err == nil {
+		t.Fatal("expected symlink parent to be rejected")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "file.txt")); !os.IsNotExist(err) {
+		t.Fatalf("file escaped through symlink parent, stat err = %v", err)
+	}
+}
+
 func TestExtractTarRejectsOversizedRegularFile(t *testing.T) {
 	var body bytes.Buffer
 	writer := tar.NewWriter(&body)
@@ -235,7 +260,7 @@ func TestExtractTarRejectsOversizedRegularFile(t *testing.T) {
 func TestExtractTarRejectsTooManyEntries(t *testing.T) {
 	var body bytes.Buffer
 	writer := tar.NewWriter(&body)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if err := writer.WriteHeader(&tar.Header{Name: fmt.Sprintf("dirs/entry-%d", i), Typeflag: tar.TypeDir, Mode: 0o755}); err != nil {
 			t.Fatal(err)
 		}

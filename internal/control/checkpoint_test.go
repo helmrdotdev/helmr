@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -123,7 +124,7 @@ func testWorkerCheckpointManifest(runID string, waitpointID string, checkpointID
 				KernelDigest:    capabilities.KernelDigest,
 				InitramfsDigest: capabilities.InitramfsDigest,
 				RootfsDigest:    capabilities.RootfsDigest,
-				ConfigDigest:    cas.DigestBytes(runtimeConfig),
+				ConfigDigest:    sha256sum.DigestBytes(runtimeConfig),
 			},
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{

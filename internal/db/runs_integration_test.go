@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -17,7 +18,7 @@ import (
 func TestListScopedRunSummariesRunningFilterIncludesRunningRuns(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
@@ -65,7 +66,7 @@ func TestListScopedRunSummariesRunningFilterIncludesRunningRuns(t *testing.T) {
 func TestExpireQueuedRunsHandlesMultipleRuns(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runs := make([]pgtype.UUID, 0, 2)
@@ -96,12 +97,12 @@ UPDATE runs
 func TestRunOperationTerminalStateCannotBeOverwritten(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
-		ID:             ids.ToPG(ids.New()),
+		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          orgID,
 		ProjectID:      scope.ProjectID,
 		EnvironmentID:  scope.EnvironmentID,
@@ -142,12 +143,12 @@ func TestRunOperationTerminalStateCannotBeOverwritten(t *testing.T) {
 func TestCancelRunRejectsNonCancelOperationWithoutMutation(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
-		ID:             ids.ToPG(ids.New()),
+		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          orgID,
 		ProjectID:      scope.ProjectID,
 		EnvironmentID:  scope.EnvironmentID,
@@ -197,12 +198,12 @@ SELECT status
 func TestCreateScopedRunAllowsReplayOperationOwnedBySourceRun(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	sourceRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
-		ID:             ids.ToPG(ids.New()),
+		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          orgID,
 		ProjectID:      scope.ProjectID,
 		EnvironmentID:  scope.EnvironmentID,
@@ -218,7 +219,7 @@ func TestCreateScopedRunAllowsReplayOperationOwnedBySourceRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancelOperation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
-		ID:             ids.ToPG(ids.New()),
+		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          orgID,
 		ProjectID:      scope.ProjectID,
 		EnvironmentID:  scope.EnvironmentID,
@@ -253,7 +254,7 @@ SELECT deployment_id, deployment_task_id
 		t.Fatal(err)
 	}
 	_, err = queries.CreateScopedRun(ctx, db.CreateScopedRunParams{
-		ID:                      ids.ToPG(ids.New()),
+		ID:                      pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                   orgID,
 		ProjectID:               scope.ProjectID,
 		EnvironmentID:           scope.EnvironmentID,
@@ -287,7 +288,7 @@ SELECT deployment_id, deployment_task_id
 		t.Fatal("CreateScopedRun with cancel replay_operation_id error = nil, want error")
 	}
 
-	replayedRunID := ids.ToPG(ids.New())
+	replayedRunID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	replayed, err := queries.CreateScopedRun(ctx, db.CreateScopedRunParams{
 		ID:                      replayedRunID,
 		OrgID:                   orgID,

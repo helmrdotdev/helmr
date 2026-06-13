@@ -22,11 +22,11 @@ import (
 	"testing"
 	"time"
 
-	fc "github.com/firecracker-microvm/firecracker-go-sdk"
+	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
-	fcvsock "github.com/firecracker-microvm/firecracker-go-sdk/vsock"
-	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/firecracker-microvm/firecracker-go-sdk/vsock"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -34,11 +34,11 @@ import (
 
 func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 	cfg := (Config{}).WithDefaults()
-	machine := &fc.Machine{
-		Cfg: fc.Config{
-			NetworkInterfaces: fc.NetworkInterfaces{{
-				StaticConfiguration: &fc.StaticNetworkConfiguration{
-					IPConfiguration: &fc.IPConfiguration{
+	machine := &firecracker.Machine{
+		Cfg: firecracker.Config{
+			NetworkInterfaces: firecracker.NetworkInterfaces{{
+				StaticConfiguration: &firecracker.StaticNetworkConfiguration{
+					IPConfiguration: &firecracker.IPConfiguration{
 						IPAddr: net.IPNet{
 							IP:   net.IPv4(192, 168, 127, 2),
 							Mask: net.CIDRMask(24, 32),
@@ -57,8 +57,8 @@ func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if digest != cas.DigestBytes(manifestBytes) {
-		t.Fatalf("digest = %q, want %q", digest, cas.DigestBytes(manifestBytes))
+	if digest != sha256sum.DigestBytes(manifestBytes) {
+		t.Fatalf("digest = %q, want %q", digest, sha256sum.DigestBytes(manifestBytes))
 	}
 	var manifest snapshotManifest
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
@@ -131,7 +131,7 @@ func TestSnapshotRuntimeConfigRequiresCNIIP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = snapshotRuntimeConfig(cfg, &fc.Machine{}, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs")
+	_, _, err = snapshotRuntimeConfig(cfg, &firecracker.Machine{}, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs")
 	if err == nil {
 		t.Fatal("expected missing guest IP error")
 	}
@@ -330,7 +330,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				KernelDigest:        kernelDigest,
 				InitramfsDigest:     initramfsDigest,
 				RootfsDigest:        rootfsDigest,
-				RuntimeConfigDigest: cas.DigestBytes(manifestBytes),
+				RuntimeConfigDigest: sha256sum.DigestBytes(manifestBytes),
 			}
 			if tt.editIdentity != nil {
 				tt.editIdentity(&identity)
@@ -386,7 +386,7 @@ func TestWaitForHealthRetriesTransientReadFailure(t *testing.T) {
 	defer func() { dialVsock = previousDial }()
 
 	attempts := 0
-	dialVsock = func(context.Context, string, uint32, ...fcvsock.DialOption) (net.Conn, error) {
+	dialVsock = func(context.Context, string, uint32, ...vsock.DialOption) (net.Conn, error) {
 		attempts++
 		client, server := net.Pipe()
 		if attempts == 1 {
@@ -487,44 +487,44 @@ func TestWithJailedRestoreFilesLinksScratchDiskAndRewritesDrivePaths(t *testing.
 		}
 	}
 
-	machine := &fc.Machine{
-		Cfg: fc.Config{
-			JailerCfg: &fc.JailerConfig{
+	machine := &firecracker.Machine{
+		Cfg: firecracker.Config{
+			JailerCfg: &firecracker.JailerConfig{
 				ExecFile:      "/usr/bin/firecracker",
 				ChrootBaseDir: chrootBase,
 				ID:            vmID,
-				UID:           fc.Int(os.Getuid()),
-				GID:           fc.Int(os.Getgid()),
+				UID:           firecracker.Int(os.Getuid()),
+				GID:           firecracker.Int(os.Getgid()),
 			},
 			Drives: []models.Drive{{
-				DriveID:    fc.String("rootfs"),
-				PathOnHost: fc.String(rootfsPath),
+				DriveID:    firecracker.String("rootfs"),
+				PathOnHost: firecracker.String(rootfsPath),
 			}, {
-				DriveID:    fc.String("scratch"),
-				PathOnHost: fc.String(scratchDiskPath),
+				DriveID:    firecracker.String("scratch"),
+				PathOnHost: firecracker.String(scratchDiskPath),
 			}},
-			Snapshot: fc.SnapshotConfig{},
+			Snapshot: firecracker.SnapshotConfig{},
 		},
-		Handlers: fc.Handlers{
-			FcInit: fc.HandlerList{}.Append(fc.Handler{
-				Name: fc.CreateLogFilesHandlerName,
-				Fn: func(context.Context, *fc.Machine) error {
+		Handlers: firecracker.Handlers{
+			FcInit: firecracker.HandlerList{}.Append(firecracker.Handler{
+				Name: firecracker.CreateLogFilesHandlerName,
+				Fn: func(context.Context, *firecracker.Machine) error {
 					return nil
 				},
 			}),
 		},
 	}
-	fc.WithLogger(logrus.NewEntry(logrus.New()))(machine)
+	firecracker.WithLogger(logrus.NewEntry(logrus.New()))(machine)
 	opt := withJailedRestoreFiles(rootfsPath, scratchDiskPath, memoryPath, statePath)
 	opt(machine)
 	if err := machine.Handlers.FcInit.Run(context.Background(), machine); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := fc.StringValue(machine.Cfg.Drives[0].PathOnHost); got != filepath.Base(rootfsPath) {
+	if got := firecracker.StringValue(machine.Cfg.Drives[0].PathOnHost); got != filepath.Base(rootfsPath) {
 		t.Fatalf("rootfs drive path = %q", got)
 	}
-	if got := fc.StringValue(machine.Cfg.Drives[1].PathOnHost); got != scratchDiskName {
+	if got := firecracker.StringValue(machine.Cfg.Drives[1].PathOnHost); got != scratchDiskName {
 		t.Fatalf("scratch drive path = %q", got)
 	}
 	for _, name := range []string{filepath.Base(rootfsPath), scratchDiskName, filepath.Base(memoryPath), filepath.Base(statePath)} {
@@ -535,8 +535,8 @@ func TestWithJailedRestoreFilesLinksScratchDiskAndRewritesDrivePaths(t *testing.
 }
 
 func TestWithSnapshotRestoreSkipsVsockReconfiguration(t *testing.T) {
-	machine := &fc.Machine{}
-	fc.WithLogger(logrus.NewEntry(logrus.New()))(machine)
+	machine := &firecracker.Machine{}
+	firecracker.WithLogger(logrus.NewEntry(logrus.New()))(machine)
 
 	withSnapshotRestore("/checkpoint.mem", "/checkpoint.vmstate")(machine)
 
@@ -546,10 +546,10 @@ func TestWithSnapshotRestoreSkipsVsockReconfiguration(t *testing.T) {
 	if machine.Cfg.Snapshot.SnapshotPath != "/checkpoint.vmstate" {
 		t.Fatalf("state path = %q", machine.Cfg.Snapshot.SnapshotPath)
 	}
-	if !machine.Handlers.FcInit.Has(fc.LoadSnapshotHandlerName) {
+	if !machine.Handlers.FcInit.Has(firecracker.LoadSnapshotHandlerName) {
 		t.Fatal("expected snapshot load handler")
 	}
-	if machine.Handlers.FcInit.Has(fc.AddVsocksHandlerName) {
+	if machine.Handlers.FcInit.Has(firecracker.AddVsocksHandlerName) {
 		t.Fatal("restore must not re-add vsock devices after loading a snapshot")
 	}
 }

@@ -7,10 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,7 +20,7 @@ import (
 func TestDeploymentsPromoteCurrentBundleWithoutArchivingHistory(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
 	firstDeploymentID := createTestDeployment(t, ctx, queries, pool, orgID, scope.ProjectID, scope.EnvironmentID, "sha256:"+strings.Repeat("1", 64), "hello-world")
@@ -82,13 +83,13 @@ func TestDeploymentsPromoteCurrentBundleWithoutArchivingHistory(t *testing.T) {
 func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	digest := "sha256:" + strings.Repeat("3", 64)
 	sourceArtifact := createTestArtifact(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, digest, db.ArtifactKindDeploymentSource, api.DeploymentSourceArtifactMediaType)
 	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 
-	firstID := ids.ToPG(ids.New())
+	firstID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	first, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                         firstID,
 		OrgID:                      orgID,
@@ -146,9 +147,9 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 func TestCreateDeploymentRejectsCrossEnvironmentArtifact(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
-	otherEnvironmentID := ids.ToPG(ids.New())
+	otherEnvironmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
 		ID:        otherEnvironmentID,
 		OrgID:     orgID,
@@ -164,7 +165,7 @@ func TestCreateDeploymentRejectsCrossEnvironmentArtifact(t *testing.T) {
 	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 
 	_, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:                         ids.ToPG(ids.New()),
+		ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                      orgID,
 		ProjectID:                  scope.ProjectID,
 		EnvironmentID:              scope.EnvironmentID,
@@ -185,14 +186,14 @@ func TestCreateDeploymentRejectsCrossEnvironmentArtifact(t *testing.T) {
 func TestDeploymentReusableBuildAndLeaseAreScopedByWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	digest := "sha256:" + strings.Repeat("9", 64)
 	sourceArtifact := createTestArtifact(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, digest, db.ArtifactKindDeploymentSource, api.DeploymentSourceArtifactMediaType)
 	defaultGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 	secondGroupID := createPostgresTestWorkerGroup(t, ctx, pool, "deployment-secondary")
 
-	firstID := ids.ToPG(ids.New())
+	firstID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                         firstID,
 		OrgID:                      orgID,
@@ -247,13 +248,13 @@ func TestDeploymentReusableBuildAndLeaseAreScopedByWorkerGroup(t *testing.T) {
 func TestCreateDeploymentRetriesFailedContentHashBuild(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	digest := "sha256:" + strings.Repeat("4", 64)
 	sourceArtifact := createTestArtifact(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, digest, db.ArtifactKindDeploymentSource, api.DeploymentSourceArtifactMediaType)
 	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 
-	failedID := ids.ToPG(ids.New())
+	failedID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                         failedID,
 		OrgID:                      orgID,
@@ -283,7 +284,7 @@ UPDATE deployments
 		t.Fatal(err)
 	}
 
-	retryID := ids.ToPG(ids.New())
+	retryID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	retry, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                         retryID,
 		OrgID:                      orgID,
@@ -312,7 +313,7 @@ UPDATE deployments
 func TestCreateDeploymentDoesNotReuseDeployedContentHashBuild(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	digest := "sha256:" + strings.Repeat("5", 64)
 
@@ -328,7 +329,7 @@ func TestCreateDeploymentDoesNotReuseDeployedContentHashBuild(t *testing.T) {
 	}
 
 	sourceArtifact := createTestArtifact(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, digest, db.ArtifactKindDeploymentSource, api.DeploymentSourceArtifactMediaType)
-	rebuildID := ids.ToPG(ids.New())
+	rebuildID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	rebuild, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                         rebuildID,
 		OrgID:                      orgID,
@@ -357,14 +358,14 @@ func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries
 	bundleArtifact := createTestArtifact(t, ctx, queries, orgID, projectID, environmentID, testDigest("6"), db.ArtifactKindTaskBundle, api.TaskBundleArtifactMediaType)
 	buildManifestArtifact := createTestArtifact(t, ctx, queries, orgID, projectID, environmentID, testDigest("7"), db.ArtifactKindBuildManifest, api.BuildManifestArtifactMediaType)
 	deploymentManifestArtifact := createTestArtifact(t, ctx, queries, orgID, projectID, environmentID, testDigest("8"), db.ArtifactKindDeploymentManifest, api.DeploymentManifestArtifactMediaType)
-	deploymentID := ids.ToPG(ids.New())
+	deploymentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                         deploymentID,
 		OrgID:                      orgID,
 		ProjectID:                  projectID,
 		EnvironmentID:              environmentID,
-		Version:                    ids.MustFromPG(deploymentID).String(),
+		Version:                    pgvalue.MustUUIDValue(deploymentID).String(),
 		ApiVersion:                 api.CurrentAPIVersion,
 		BundleFormatVersion:        api.CurrentBundleFormatVersion,
 		WorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
@@ -376,7 +377,7 @@ func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries
 		t.Fatal(err)
 	}
 	if _, err := queries.CreateDeploymentTask(ctx, db.CreateDeploymentTaskParams{
-		ID:                   ids.ToPG(ids.New()),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                orgID,
 		ProjectID:            projectID,
 		EnvironmentID:        environmentID,
@@ -413,7 +414,7 @@ UPDATE deployments
 		t.Fatal(err)
 	}
 	if _, err := queries.PromoteDeployment(ctx, db.PromoteDeploymentParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
@@ -435,7 +436,7 @@ func createTestArtifact(t *testing.T, ctx context.Context, queries *db.Queries, 
 		t.Fatal(err)
 	}
 	artifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,

@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/robfig/cron/v3"
 )
@@ -60,7 +60,7 @@ func RetryDelay(attempt int32) time.Duration {
 }
 
 func TriggerIdempotencyKey(instanceID pgtype.UUID, generation int64, scheduledAt pgtype.Timestamptz) string {
-	return fmt.Sprintf("schedule:%s:%d:%s", ids.MustFromPG(instanceID), generation, scheduledAt.Time.UTC().Format(time.RFC3339Nano))
+	return fmt.Sprintf("schedule:%s:%d:%s", pgvalue.MustUUIDValue(instanceID), generation, scheduledAt.Time.UTC().Format(time.RFC3339Nano))
 }
 
 func RunRequestFromTriggerCandidate(row db.GetScheduleTriggerCandidateRow) (api.CreateRunRequest, error) {
@@ -83,8 +83,8 @@ func runRequestFromScheduleSnapshot(projectID pgtype.UUID, environmentID pgtype.
 		}
 	}
 	return api.CreateRunRequest{
-		ProjectID:     ids.MustFromPG(projectID).String(),
-		EnvironmentID: ids.MustFromPG(environmentID).String(),
+		ProjectID:     pgvalue.MustUUIDValue(projectID).String(),
+		EnvironmentID: pgvalue.MustUUIDValue(environmentID).String(),
 		TaskID:        taskID,
 		Payload:       append(json.RawMessage(nil), payload...),
 		Options:       options,
@@ -101,7 +101,7 @@ func scheduledTaskPayload(row db.GetScheduleTriggerCandidateRow, now time.Time) 
 	payload := map[string]any{
 		"timestamp":    row.NextFireAt.Time.UTC().Format(time.RFC3339Nano),
 		"timezone":     api.NormalizeTimezone(row.Timezone),
-		"scheduleId":   ids.MustFromPG(row.ScheduleID).String(),
+		"scheduleId":   pgvalue.MustUUIDValue(row.ScheduleID).String(),
 		"scheduleType": string(row.ScheduleType),
 	}
 	if row.LastFireAt.Valid {

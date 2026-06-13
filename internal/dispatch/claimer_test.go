@@ -6,18 +6,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 	ctx := context.Background()
-	orgID := ids.New()
-	runID := ids.New()
-	hostID := ids.New()
+	orgID := uuid.Must(uuid.NewV7())
+	runID := uuid.Must(uuid.NewV7())
+	hostID := uuid.Must(uuid.NewV7())
 	expiresAt := time.Now().Add(time.Minute).UTC()
 	queue := &fakeClaimerQueue{
 		leases: []Lease{{
@@ -35,11 +36,11 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 		}},
 	}
 	store := &fakeClaimerStore{dispatch: db.RunQueueItem{
-		OrgID:                      ids.ToPG(orgID),
-		RunID:                      ids.ToPG(runID),
+		OrgID:                      pgvalue.UUID(orgID),
+		RunID:                      pgvalue.UUID(runID),
 		Status:                     db.RunQueueStatusReserved,
 		DispatchMessageID:          pgtype.Text{String: "message-1", Valid: true},
-		ReservedByWorkerInstanceID: ids.ToPG(hostID),
+		ReservedByWorkerInstanceID: pgvalue.UUID(hostID),
 		ReservationExpiresAt:       pgtype.Timestamptz{Time: expiresAt, Valid: true},
 		QueueName:                  "queue-a",
 		Priority:                   0,
@@ -67,7 +68,7 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 	if result.Lease.MessageID != "message-1" || result.Entry.Status != db.RunQueueStatusReserved {
 		t.Fatalf("claim result = %+v", result)
 	}
-	if store.marked.DispatchMessageID.String != "message-1" || store.marked.WorkerInstanceID != ids.ToPG(hostID) {
+	if store.marked.DispatchMessageID.String != "message-1" || store.marked.WorkerInstanceID != pgvalue.UUID(hostID) {
 		t.Fatalf("marked params = %+v", store.marked)
 	}
 	if len(queue.requeued) != 0 {
@@ -77,9 +78,9 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 
 func TestClaimNacksActiveLeaseConflictWithoutDeletingMessage(t *testing.T) {
 	ctx := context.Background()
-	orgID := ids.New()
-	runID := ids.New()
-	hostID := ids.New()
+	orgID := uuid.Must(uuid.NewV7())
+	runID := uuid.Must(uuid.NewV7())
+	hostID := uuid.Must(uuid.NewV7())
 	queue := &fakeClaimerQueue{
 		leases: []Lease{{
 			ID:        "lease-1",
@@ -118,9 +119,9 @@ func TestClaimNacksActiveLeaseConflictWithoutDeletingMessage(t *testing.T) {
 
 func TestClaimRetriesWhenLeaseConflictProbeFails(t *testing.T) {
 	ctx := context.Background()
-	orgID := ids.New()
-	runID := ids.New()
-	hostID := ids.New()
+	orgID := uuid.Must(uuid.NewV7())
+	runID := uuid.Must(uuid.NewV7())
+	hostID := uuid.Must(uuid.NewV7())
 	queue := &fakeClaimerQueue{
 		leases: []Lease{{
 			ID:        "lease-1",
@@ -160,9 +161,9 @@ func TestClaimRetriesWhenLeaseConflictProbeFails(t *testing.T) {
 
 func TestClaimDeletesStaleNonReservableMessage(t *testing.T) {
 	ctx := context.Background()
-	orgID := ids.New()
-	runID := ids.New()
-	hostID := ids.New()
+	orgID := uuid.Must(uuid.NewV7())
+	runID := uuid.Must(uuid.NewV7())
+	hostID := uuid.Must(uuid.NewV7())
 	queue := &fakeClaimerQueue{
 		leases: []Lease{{
 			ID:        "lease-1",
@@ -201,14 +202,14 @@ func TestClaimDeletesStaleNonReservableMessage(t *testing.T) {
 
 func TestClaimDeletesInvalidDispatchLease(t *testing.T) {
 	ctx := context.Background()
-	hostID := ids.New()
+	hostID := uuid.Must(uuid.NewV7())
 	queue := &fakeClaimerQueue{
 		leases: []Lease{{
 			ID:        "lease-1",
 			MessageID: "message-invalid",
 			Message: Message{
 				OrgID:        "not-a-uuid",
-				RunID:        ids.New().String(),
+				RunID:        uuid.Must(uuid.NewV7()).String(),
 				QueueName:    "queue-a",
 				Requirements: compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
@@ -223,7 +224,7 @@ func TestClaimDeletesInvalidDispatchLease(t *testing.T) {
 	}
 
 	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
-		OrgID:            ids.New().String(),
+		OrgID:            uuid.Must(uuid.NewV7()).String(),
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
@@ -239,9 +240,9 @@ func TestClaimDeletesInvalidDispatchLease(t *testing.T) {
 
 func TestClaimDeadLettersAfterMaxAttempts(t *testing.T) {
 	ctx := context.Background()
-	orgID := ids.New()
-	runID := ids.New()
-	hostID := ids.New()
+	orgID := uuid.Must(uuid.NewV7())
+	runID := uuid.Must(uuid.NewV7())
+	hostID := uuid.Must(uuid.NewV7())
 	lease := Lease{
 		ID:        "lease-1",
 		MessageID: "message-dead",
@@ -275,7 +276,7 @@ func TestClaimDeadLettersAfterMaxAttempts(t *testing.T) {
 	if store.marked.DispatchMessageID.Valid {
 		t.Fatalf("marked leased params = %+v", store.marked)
 	}
-	if store.deadLettered.DispatchMessageID.String != "message-dead" || store.deadLettered.RunID != ids.ToPG(runID) {
+	if store.deadLettered.DispatchMessageID.String != "message-dead" || store.deadLettered.RunID != pgvalue.UUID(runID) {
 		t.Fatalf("dead letter params = %+v", store.deadLettered)
 	}
 	if store.deadLettered.EventKind != "run.dead_lettered" || len(store.deadLettered.EventPayload) == 0 {
@@ -291,9 +292,9 @@ func TestClaimDeadLettersAfterMaxAttempts(t *testing.T) {
 
 func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 	ctx := context.Background()
-	orgID := ids.New()
-	runID := ids.New()
-	hostID := ids.New()
+	orgID := uuid.Must(uuid.NewV7())
+	runID := uuid.Must(uuid.NewV7())
+	hostID := uuid.Must(uuid.NewV7())
 	expiresAt := time.Now().Add(time.Minute).UTC()
 	queue := &fakeClaimerQueue{
 		leases: []Lease{{
@@ -311,11 +312,11 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 		}},
 	}
 	store := &fakeClaimerStore{dispatch: db.RunQueueItem{
-		OrgID:                      ids.ToPG(orgID),
-		RunID:                      ids.ToPG(runID),
+		OrgID:                      pgvalue.UUID(orgID),
+		RunID:                      pgvalue.UUID(runID),
 		Status:                     db.RunQueueStatusReserved,
 		DispatchMessageID:          pgtype.Text{String: "message-1", Valid: true},
-		ReservedByWorkerInstanceID: ids.ToPG(hostID),
+		ReservedByWorkerInstanceID: pgvalue.UUID(hostID),
 		ReservationExpiresAt:       pgtype.Timestamptz{Time: expiresAt, Valid: true},
 		QueueName:                  "queue-a",
 		Priority:                   0,

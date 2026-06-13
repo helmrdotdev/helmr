@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -71,8 +71,8 @@ func TestCreateInvitationRejectsExistingActiveMemberEmail(t *testing.T) {
 func TestCreateInvitationRejectsAdminReplacingOwnerInvite(t *testing.T) {
 	store := newMemberManagementStore(db.OrgMemberRoleAdmin)
 	store.pendingInvitation = db.GetPendingInvitationByEmailRow{
-		ID:           ids.ToPG(ids.New()),
-		OrgID:        ids.ToPG(store.orgID),
+		ID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:        pgvalue.UUID(store.orgID),
 		InviteeEmail: "owner@example.test",
 		Role:         db.OrgMemberRoleOwner,
 	}
@@ -92,10 +92,10 @@ func TestCreateInvitationRejectsAdminReplacingOwnerInvite(t *testing.T) {
 
 func TestRevokeInvitationRejectsAdminRevokingOwnerInvite(t *testing.T) {
 	store := newMemberManagementStore(db.OrgMemberRoleAdmin)
-	invitationID := ids.New()
+	invitationID := uuid.Must(uuid.NewV7())
 	store.revocableInvitation = db.GetRevocableInvitationRow{
-		ID:           ids.ToPG(invitationID),
-		OrgID:        ids.ToPG(store.orgID),
+		ID:           pgvalue.UUID(invitationID),
+		OrgID:        pgvalue.UUID(store.orgID),
 		InviteeEmail: "owner@example.test",
 		Role:         db.OrgMemberRoleOwner,
 	}
@@ -115,10 +115,10 @@ func TestRevokeInvitationRejectsAdminRevokingOwnerInvite(t *testing.T) {
 
 func TestUpdateMemberRoleRejectsLastOwnerDemotion(t *testing.T) {
 	store := newMemberManagementStore(db.OrgMemberRoleOwner)
-	store.targetMember = managedMember(store.orgID, ids.New(), db.OrgMemberRoleOwner)
+	store.targetMember = managedMember(store.orgID, uuid.Must(uuid.NewV7()), db.OrgMemberRoleOwner)
 	store.activeOwners = 1
 	server := newMemberManagementServer(store)
-	req := memberManagementRequest(http.MethodPatch, "/api/members/"+ids.MustFromPG(store.targetMember.UserID).String(), `{"role":"admin","expected_role":"owner"}`)
+	req := memberManagementRequest(http.MethodPatch, "/api/members/"+pgvalue.MustUUIDValue(store.targetMember.UserID).String(), `{"role":"admin","expected_role":"owner"}`)
 	rec := httptest.NewRecorder()
 
 	server.ServeHTTP(rec, req)
@@ -151,7 +151,7 @@ func TestUpdateMemberRoleRejectsSelfDemotionBelowAdmin(t *testing.T) {
 
 func TestUpdateMemberRoleRejectsStaleExpectedRole(t *testing.T) {
 	store := newMemberManagementStore(db.OrgMemberRoleOwner)
-	targetUserID := ids.New()
+	targetUserID := uuid.Must(uuid.NewV7())
 	store.targetMember = managedMember(store.orgID, targetUserID, db.OrgMemberRoleDeveloper)
 	server := newMemberManagementServer(store)
 	req := memberManagementRequest(http.MethodPatch, "/api/members/"+targetUserID.String(), `{"role":"viewer","expected_role":"admin"}`)
@@ -169,7 +169,7 @@ func TestUpdateMemberRoleRejectsStaleExpectedRole(t *testing.T) {
 
 func TestUpdateMemberRoleRejectsAdminOwnerPromotion(t *testing.T) {
 	store := newMemberManagementStore(db.OrgMemberRoleAdmin)
-	targetUserID := ids.New()
+	targetUserID := uuid.Must(uuid.NewV7())
 	store.targetMember = managedMember(store.orgID, targetUserID, db.OrgMemberRoleAdmin)
 	store.activeOwners = 1
 	server := newMemberManagementServer(store)
@@ -206,7 +206,7 @@ func TestRemoveMemberRejectsSelf(t *testing.T) {
 
 func TestRemoveMemberRejectsAdminRemovingOwner(t *testing.T) {
 	store := newMemberManagementStore(db.OrgMemberRoleAdmin)
-	targetUserID := ids.New()
+	targetUserID := uuid.Must(uuid.NewV7())
 	store.targetMember = managedMember(store.orgID, targetUserID, db.OrgMemberRoleOwner)
 	store.activeOwners = 2
 	server := newMemberManagementServer(store)
@@ -225,7 +225,7 @@ func TestRemoveMemberRejectsAdminRemovingOwner(t *testing.T) {
 
 func TestRemoveMemberRevokesSessions(t *testing.T) {
 	store := newMemberManagementStore(db.OrgMemberRoleOwner)
-	targetUserID := ids.New()
+	targetUserID := uuid.Must(uuid.NewV7())
 	store.targetMember = managedMember(store.orgID, targetUserID, db.OrgMemberRoleDeveloper)
 	store.activeOwners = 1
 	server := newMemberManagementServer(store)
@@ -237,10 +237,10 @@ func TestRemoveMemberRevokesSessions(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.disabledMember.UserID != ids.ToPG(targetUserID) {
+	if store.disabledMember.UserID != pgvalue.UUID(targetUserID) {
 		t.Fatalf("disabled member = %+v", store.disabledMember)
 	}
-	if store.revokedSessionUserID != ids.ToPG(targetUserID) {
+	if store.revokedSessionUserID != pgvalue.UUID(targetUserID) {
 		t.Fatalf("revoked session user = %+v", store.revokedSessionUserID)
 	}
 }
@@ -279,9 +279,9 @@ type memberManagementStore struct {
 
 func newMemberManagementStore(role db.OrgMemberRole) *memberManagementStore {
 	return &memberManagementStore{
-		orgID:     ids.New(),
-		userID:    ids.New(),
-		sessionID: ids.New(),
+		orgID:     uuid.Must(uuid.NewV7()),
+		userID:    uuid.Must(uuid.NewV7()),
+		sessionID: uuid.Must(uuid.NewV7()),
 		role:      role,
 	}
 }
@@ -302,11 +302,11 @@ func memberManagementRequest(method string, path string, body string) *http.Requ
 
 func (s *memberManagementStore) GetSessionByTokenHash(context.Context, []byte) (db.GetSessionByTokenHashRow, error) {
 	return db.GetSessionByTokenHashRow{
-		ID:        ids.ToPG(s.sessionID),
-		OrgID:     ids.ToPG(s.orgID),
-		UserID:    ids.ToPG(s.userID),
+		ID:        pgvalue.UUID(s.sessionID),
+		OrgID:     pgvalue.UUID(s.orgID),
+		UserID:    pgvalue.UUID(s.userID),
 		Role:      string(s.role),
-		ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	}, nil
 }
 
@@ -427,8 +427,8 @@ func (s *memberManagementStore) RevokeSessionsForUser(_ context.Context, userID 
 
 func managedMember(orgID uuid.UUID, userID uuid.UUID, role db.OrgMemberRole) db.GetOrgMemberForManagementRow {
 	return db.GetOrgMemberForManagementRow{
-		OrgID:        ids.ToPG(orgID),
-		UserID:       ids.ToPG(userID),
+		OrgID:        pgvalue.UUID(orgID),
+		UserID:       pgvalue.UUID(userID),
 		Role:         role,
 		DisplayName:  pgtype.Text{String: "Member", Valid: true},
 		PrimaryEmail: pgtype.Text{String: "member@example.test", Valid: true},

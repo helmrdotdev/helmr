@@ -12,20 +12,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestIdempotentReplayRunReturnsAppliedOperationRun(t *testing.T) {
-	runID := ids.ToPG(ids.New())
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{run: db.Run{
 		ID:            runID,
-		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:     testProjectID(),
 		EnvironmentID: testEnvironmentID(),
 		TaskID:        "deploy",
@@ -38,7 +39,7 @@ func TestIdempotentReplayRunReturnsAppliedOperationRun(t *testing.T) {
 	run, err := server.idempotentReplayRun(context.Background(), auth.Actor{OrgID: dbtest.DefaultOrgID}, db.RunOperation{
 		Status:  db.RunOperationStatusApplied,
 		Request: []byte(`{"payload":{"a":1,"b":2},"idempotency_key":"same"}`),
-		Result:  []byte(`{"run_id":"` + ids.MustFromPG(runID).String() + `"}`),
+		Result:  []byte(`{"run_id":"` + pgvalue.MustUUIDValue(runID).String() + `"}`),
 	}, requestBody)
 	if err != nil {
 		t.Fatal(err)
@@ -61,11 +62,11 @@ func TestIdempotentReplayRunRejectsMismatchedRequest(t *testing.T) {
 }
 
 func TestCancelRunReturnsAppliedOperationAfterNoRowsRace(t *testing.T) {
-	runID := ids.ToPG(ids.New())
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
 		run: db.Run{
 			ID:               runID,
-			OrgID:            ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -79,7 +80,7 @@ func TestCancelRunReturnsAppliedOperationAfterNoRowsRace(t *testing.T) {
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+ids.MustFromPG(runID).String()+"/cancel", strings.NewReader(`{"reason":"stop"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+pgvalue.MustUUIDValue(runID).String()+"/cancel", strings.NewReader(`{"reason":"stop"}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -103,12 +104,12 @@ func TestCancelRunReturnsAppliedOperationAfterNoRowsRace(t *testing.T) {
 }
 
 func TestCancelRunRejectsMismatchedIdempotencyRequest(t *testing.T) {
-	runID := ids.ToPG(ids.New())
-	operationID := ids.ToPG(ids.New())
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	operationID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
 		run: db.Run{
 			ID:               runID,
-			OrgID:            ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -120,7 +121,7 @@ func TestCancelRunRejectsMismatchedIdempotencyRequest(t *testing.T) {
 		},
 		runOperation: db.RunOperation{
 			ID:             operationID,
-			OrgID:          ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:          pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:      testProjectID(),
 			EnvironmentID:  testEnvironmentID(),
 			RunID:          runID,
@@ -133,7 +134,7 @@ func TestCancelRunRejectsMismatchedIdempotencyRequest(t *testing.T) {
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+ids.MustFromPG(runID).String()+"/cancel", strings.NewReader(`{"reason":"stop","force":true,"idempotency_key":"cancel-key"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+pgvalue.MustUUIDValue(runID).String()+"/cancel", strings.NewReader(`{"reason":"stop","force":true,"idempotency_key":"cancel-key"}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -148,7 +149,7 @@ func TestCancelRunRejectsMismatchedIdempotencyRequest(t *testing.T) {
 
 func TestReplayCreateRunRequestPreservesEffectiveOptions(t *testing.T) {
 	original := db.Run{
-		ID:                 ids.ToPG(ids.New()),
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ProjectID:          testProjectID(),
 		EnvironmentID:      testEnvironmentID(),
 		DeploymentID:       testDeploymentID(),
@@ -179,7 +180,7 @@ func TestReplayCreateRunRequestPreservesEffectiveOptions(t *testing.T) {
 }
 
 func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) {
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	store := &fakeStore{deploymentTasks: []db.DeploymentTask{{
 		ID:                   testDeploymentTaskID(),
 		OrgID:                orgID,

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
 func tarEntryIsRootDir(header *tar.Header) bool {
@@ -26,16 +28,8 @@ func tarEntryPath(name string) (string, error) {
 	if strings.TrimSpace(name) == "" {
 		return "", errors.New("tar path is empty")
 	}
-	if filepath.IsAbs(name) || strings.HasPrefix(filepath.FromSlash(name), string(filepath.Separator)) {
-		return "", fmt.Errorf("unsafe tar path %q", name)
-	}
-	for _, part := range strings.Split(filepath.ToSlash(name), "/") {
-		if part == ".." {
-			return "", fmt.Errorf("unsafe tar path %q", name)
-		}
-	}
-	relative := filepath.ToSlash(filepath.Clean(filepath.FromSlash(name)))
-	if relative == "." || relative == ".." || strings.HasPrefix(relative, "../") {
+	relative, err := safepath.CleanSlash(name, safepath.CleanOptions{})
+	if err != nil {
 		return "", fmt.Errorf("unsafe tar path %q", name)
 	}
 	return relative, nil
@@ -49,40 +43,10 @@ func mkdirAllNoSymlink(root, relative string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	current := root
-	for _, part := range strings.Split(clean, "/") {
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir(current, mode); err != nil && !errors.Is(err, os.ErrExist) {
-				return err
-			}
-			info, err = os.Lstat(current)
-		}
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return fmt.Errorf("unsafe tar parent %q", current)
-		}
+	if err := safepath.MkdirAllNoSymlink(root, clean, mode); err != nil {
+		return fmt.Errorf("unsafe tar parent: %w", err)
 	}
 	return nil
-}
-
-func safeJoin(root, name string) (string, error) {
-	clean := filepath.Clean("/" + filepath.FromSlash(name))
-	if clean == "/" {
-		return root, nil
-	}
-	target := filepath.Join(root, strings.TrimPrefix(clean, string(filepath.Separator)))
-	rel, err := filepath.Rel(root, target)
-	if err != nil {
-		return "", err
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("tar path escapes destination: %s", name)
-	}
-	return target, nil
 }
 
 func copyTreeSkipping(sourceRoot, destinationRoot string, skip func(rel string, isDir bool) bool) error {
@@ -103,9 +67,9 @@ func copyTreeSkipping(sourceRoot, destinationRoot string, skip func(rel string, 
 			}
 			return nil
 		}
-		target, err := safeJoin(destinationRoot, filepath.ToSlash(rel))
+		target, err := safepath.JoinSlash(destinationRoot, filepath.ToSlash(rel))
 		if err != nil {
-			return err
+			return fmt.Errorf("tar path escapes destination: %s", filepath.ToSlash(rel))
 		}
 		info, err := entry.Info()
 		if err != nil {

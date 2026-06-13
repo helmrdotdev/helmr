@@ -2,13 +2,13 @@
 
 package firecracker
 
-import fc "github.com/firecracker-microvm/firecracker-go-sdk"
+import "github.com/firecracker-microvm/firecracker-go-sdk"
 
 type Machine struct {
-	inner *fc.Machine
+	inner *firecracker.Machine
 }
 
-func Wrap(machine *fc.Machine) *Machine {
+func Wrap(machine *firecracker.Machine) *Machine {
 	return &Machine{inner: machine}
 }
 

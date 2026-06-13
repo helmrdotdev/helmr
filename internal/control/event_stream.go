@@ -13,9 +13,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
-	goredis "github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -31,10 +31,10 @@ const (
 type EventStream struct {
 	log   *slog.Logger
 	db    db.Querier
-	redis goredis.Cmdable
+	redis redis.Cmdable
 }
 
-func NewEventStream(log *slog.Logger, queries db.Querier, redis goredis.Cmdable) (*EventStream, error) {
+func NewEventStream(log *slog.Logger, queries db.Querier, redis redis.Cmdable) (*EventStream, error) {
 	if queries == nil {
 		return nil, errors.New("event stream database is required")
 	}
@@ -55,7 +55,7 @@ func (s *EventStream) RunPublisher(ctx context.Context) error {
 		}
 		claimed, err := s.db.ClaimEventOutbox(ctx, db.ClaimEventOutboxParams{
 			RowLimit:      eventOutboxBatchSize,
-			LeaseDuration: pgInterval(eventOutboxLeaseDuration),
+			LeaseDuration: pgvalue.Interval(eventOutboxLeaseDuration),
 		})
 		if err != nil {
 			consecutiveFailures++
@@ -78,7 +78,7 @@ func (s *EventStream) RunPublisher(ctx context.Context) error {
 				if markErr := s.db.MarkEventOutboxFailed(ctx, db.MarkEventOutboxFailedParams{
 					ID:         row.OutboxID,
 					LastError:  err.Error(),
-					RetryAfter: pgInterval(eventPublisherBackoff(int(row.Attempts))),
+					RetryAfter: pgvalue.Interval(eventPublisherBackoff(int(row.Attempts))),
 				}); markErr != nil {
 					s.log.Warn("mark event outbox failed", "outbox_id", row.OutboxID, "error", markErr)
 					if sleepErr := sleepWithContext(ctx, eventPublisherBackoff(int(row.Attempts))); sleepErr != nil {
@@ -105,7 +105,7 @@ func (s *EventStream) publishOutboxRow(ctx context.Context, row db.ClaimEventOut
 	}
 	id := redisEventID(row.Seq)
 	add := func() error {
-		return s.redis.XAdd(ctx, &goredis.XAddArgs{
+		return s.redis.XAdd(ctx, &redis.XAddArgs{
 			Stream: row.StreamKey,
 			MaxLen: eventStreamMaxLen,
 			Approx: true,
@@ -170,12 +170,12 @@ func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectT
 		if hasMore {
 			continue
 		}
-		streams, err := s.redis.XRead(ctx, &goredis.XReadArgs{
+		streams, err := s.redis.XRead(ctx, &redis.XReadArgs{
 			Streams: []string{streamKey, redisEventID(cursor)},
 			Count:   int64(runEventsPageSize),
 			Block:   eventStreamBlockEvery,
 		}).Result()
-		if errors.Is(err, goredis.Nil) {
+		if errors.Is(err, redis.Nil) {
 			if onIdle != nil {
 				if idleErr := onIdle(); idleErr != nil {
 					return idleErr
@@ -211,9 +211,9 @@ func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectT
 
 func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, subjectType db.EventSubjectType, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error) (int64, bool, error) {
 	events, err := s.db.ListSubjectEvents(ctx, db.ListSubjectEventsParams{
-		OrgID:       ids.ToPG(orgID),
+		OrgID:       pgvalue.UUID(orgID),
 		SubjectType: subjectType,
-		SubjectID:   ids.ToPG(subjectID),
+		SubjectID:   pgvalue.UUID(subjectID),
 		Seq:         cursor,
 		RowLimit:    runEventsPageSize,
 	})
@@ -296,22 +296,22 @@ func eventResponseFromRecord(event db.Event) api.RunEvent {
 func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, sessionID pgtype.UUID, attemptID pgtype.UUID, attemptNumberValue pgtype.Int4, traceIDValue pgtype.Text, spanIDValue pgtype.Text, traceparentValue pgtype.Text, category string, severity string, source string, rawKind string, message string, payload []byte, redactionClass string, createdAt pgtype.Timestamptz, occurredAt pgtype.Timestamptz) api.RunEvent {
 	var runIDValue *string
 	if runID.Valid {
-		value := ids.MustFromPG(runID).String()
+		value := pgvalue.MustUUIDValue(runID).String()
 		runIDValue = &value
 	}
 	var deploymentIDValue *string
 	if deploymentID.Valid {
-		value := ids.MustFromPG(deploymentID).String()
+		value := pgvalue.MustUUIDValue(deploymentID).String()
 		deploymentIDValue = &value
 	}
 	var sessionIDValue *string
 	if sessionID.Valid {
-		value := ids.MustFromPG(sessionID).String()
+		value := pgvalue.MustUUIDValue(sessionID).String()
 		sessionIDValue = &value
 	}
 	var attemptIDValue *string
 	if attemptID.Valid {
-		value := ids.MustFromPG(attemptID).String()
+		value := pgvalue.MustUUIDValue(attemptID).String()
 		attemptIDValue = &value
 	}
 	var attemptNumber *int32
@@ -354,8 +354,8 @@ func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, se
 		Source:         source,
 		Kind:           kind,
 		Message:        firstNonEmptyString(message, rawKind),
-		At:             pgTime(createdAt),
-		OccurredAt:     pgTime(occurredAt),
+		At:             pgvalue.Time(createdAt),
+		OccurredAt:     pgvalue.Time(occurredAt),
 		RedactionClass: redactionClass,
 		Attributes:     attributes,
 	}

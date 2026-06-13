@@ -5,9 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -15,17 +16,17 @@ import (
 func TestDeletedProjectSlugCanBeReused(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
-	projectID := ids.ToPG(ids.New())
+	projectID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
 		ID:                   projectID,
 		OrgID:                orgID,
 		Slug:                 "reusable",
 		Name:                 "Reusable",
-		EnvironmentID:        ids.ToPG(ids.New()),
-		StagingEnvironmentID: ids.ToPG(ids.New()),
+		EnvironmentID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		StagingEnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -36,12 +37,12 @@ func TestDeletedProjectSlugCanBeReused(t *testing.T) {
 		t.Fatal(err)
 	}
 	recreated, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
-		ID:                   ids.ToPG(ids.New()),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                orgID,
 		Slug:                 "reusable",
 		Name:                 "Reusable Again",
-		EnvironmentID:        ids.ToPG(ids.New()),
-		StagingEnvironmentID: ids.ToPG(ids.New()),
+		EnvironmentID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		StagingEnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -54,10 +55,10 @@ func TestDeletedProjectSlugCanBeReused(t *testing.T) {
 func TestDeletedEnvironmentSlugCanBeReused(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
-	environmentID := ids.ToPG(ids.New())
+	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
 		ID:        environmentID,
 		OrgID:     orgID,
@@ -76,7 +77,7 @@ func TestDeletedEnvironmentSlugCanBeReused(t *testing.T) {
 		t.Fatal(err)
 	}
 	recreated, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
-		ID:        ids.ToPG(ids.New()),
+		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:     orgID,
 		ProjectID: scope.ProjectID,
 		Slug:      "qa",
@@ -94,11 +95,11 @@ func TestDeletedEnvironmentSlugCanBeReused(t *testing.T) {
 func TestCreateProjectWithDefaultEnvironmentCreatesProductionAndStaging(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
-	projectID := ids.ToPG(ids.New())
-	productionID := ids.ToPG(ids.New())
-	stagingID := ids.ToPG(ids.New())
+	projectID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	productionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	stagingID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 
 	if _, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
 		ID:                   projectID,
@@ -135,17 +136,17 @@ func TestCreateProjectWithDefaultEnvironmentCreatesProductionAndStaging(t *testi
 func TestDeleteProjectAllowsOnlyProjectInSQL(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
 
-	projectID := ids.ToPG(ids.New())
+	projectID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
 		ID:                   projectID,
 		OrgID:                orgID,
 		Slug:                 "only",
 		Name:                 "Only",
-		EnvironmentID:        ids.ToPG(ids.New()),
-		StagingEnvironmentID: ids.ToPG(ids.New()),
+		EnvironmentID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		StagingEnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,7 @@ func TestDeleteProjectAllowsOnlyProjectInSQL(t *testing.T) {
 func TestDeleteEnvironmentProtectsProductionAndStagingInSQL(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
 	_, err := queries.DeleteEnvironment(ctx, db.DeleteEnvironmentParams{OrgID: orgID, ProjectID: scope.ProjectID, ID: scope.EnvironmentID})
@@ -186,7 +187,7 @@ func TestDeleteEnvironmentProtectsProductionAndStagingInSQL(t *testing.T) {
 func TestDeleteProjectCascadesDeploymentAndRunGraph(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	scopedRows := seedScopedDeletionRows(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "project-delete")
@@ -207,9 +208,9 @@ func TestDeleteProjectCascadesDeploymentAndRunGraph(t *testing.T) {
 func TestDeleteEnvironmentCascadesDeploymentAndRunGraph(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(dbtest.DefaultOrgID)
+	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
-	environmentID := ids.ToPG(ids.New())
+	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
 		ID:        environmentID,
 		OrgID:     orgID,
@@ -247,7 +248,7 @@ type scopedDeletionRows struct {
 func seedScopedDeletionRows(t *testing.T, ctx context.Context, queries *db.Queries, orgID, projectID, environmentID pgtype.UUID, suffix string) scopedDeletionRows {
 	t.Helper()
 	if _, err := queries.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
-		ID:              ids.ToPG(ids.New()),
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           orgID,
 		ProjectID:       projectID,
 		EnvironmentID:   environmentID,
@@ -260,7 +261,7 @@ func seedScopedDeletionRows(t *testing.T, ctx context.Context, queries *db.Queri
 	}); err != nil {
 		t.Fatal(err)
 	}
-	scheduleID := ids.ToPG(ids.New())
+	scheduleID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
 		ScheduleID:    scheduleID,
 		OrgID:         orgID,
@@ -272,13 +273,13 @@ func seedScopedDeletionRows(t *testing.T, ctx context.Context, queries *db.Queri
 		Timezone:      "UTC",
 		RunOptions:    []byte(`{}`),
 		Active:        true,
-		InstanceID:    ids.ToPG(ids.New()),
+		InstanceID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: environmentID,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	apiKey, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
-		ID:            ids.ToPG(ids.New()),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         orgID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
@@ -291,7 +292,7 @@ func seedScopedDeletionRows(t *testing.T, ctx context.Context, queries *db.Queri
 		t.Fatal(err)
 	}
 	grant, err := queries.CreateAPIKeyGrant(ctx, db.CreateAPIKeyGrantParams{
-		ID:         ids.ToPG(ids.New()),
+		ID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:      orgID,
 		ApiKeyID:   apiKey.ID,
 		Permission: "runs:read",

@@ -15,7 +15,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -37,29 +38,29 @@ func (s *Server) workerAcknowledgeRestore(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	runWaitID, err := ids.Parse(request.RunWaitID)
+	runWaitID, err := uuid.Parse(request.RunWaitID)
 	if err != nil {
 		writeError(w, badRequest(errors.New("run_wait_id must be a UUID")))
 		return
 	}
-	waitpointID, err := ids.Parse(request.WaitpointID)
+	waitpointID, err := uuid.Parse(request.WaitpointID)
 	if err != nil {
 		writeError(w, badRequest(errors.New("waitpoint_id must be a UUID")))
 		return
 	}
-	checkpointID, err := ids.Parse(request.CheckpointID)
+	checkpointID, err := uuid.Parse(request.CheckpointID)
 	if err != nil {
 		writeError(w, badRequest(errors.New("checkpoint_id must be a UUID")))
 		return
 	}
 	waitpoint, err := s.db.AcknowledgeRestore(r.Context(), db.AcknowledgeRestoreParams{
-		OrgID:            ids.ToPG(leaseIDs.orgID),
-		RunID:            ids.ToPG(leaseIDs.runID),
-		SessionID:        ids.ToPG(leaseIDs.sessionID),
-		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
-		CheckpointID:     ids.ToPG(checkpointID),
-		RunWaitID:        ids.ToPG(runWaitID),
-		WaitpointID:      ids.ToPG(waitpointID),
+		OrgID:            pgvalue.UUID(leaseIDs.orgID),
+		RunID:            pgvalue.UUID(leaseIDs.runID),
+		SessionID:        pgvalue.UUID(leaseIDs.sessionID),
+		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		CheckpointID:     pgvalue.UUID(checkpointID),
+		RunWaitID:        pgvalue.UUID(runWaitID),
+		WaitpointID:      pgvalue.UUID(waitpointID),
 	})
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("worker restore acknowledgement is stale")))
@@ -72,9 +73,9 @@ func (s *Server) workerAcknowledgeRestore(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusOK, api.WorkerAcknowledgeRestoreResponse{
 		RunID:        request.Lease.RunID,
-		RunWaitID:    ids.MustFromPG(waitpoint.RunWaitID).String(),
-		WaitpointID:  ids.MustFromPG(waitpoint.ID).String(),
-		CheckpointID: ids.MustFromPG(waitpoint.CheckpointID).String(),
+		RunWaitID:    pgvalue.MustUUIDValue(waitpoint.RunWaitID).String(),
+		WaitpointID:  pgvalue.MustUUIDValue(waitpoint.ID).String(),
+		CheckpointID: pgvalue.MustUUIDValue(waitpoint.CheckpointID).String(),
 	})
 }
 
@@ -104,17 +105,17 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("worker run lease belongs to another worker")))
 		return
 	}
-	runWaitID, err := ids.Parse(request.RunWaitID)
+	runWaitID, err := uuid.Parse(request.RunWaitID)
 	if err != nil {
 		writeError(w, badRequest(errors.New("run_wait_id must be a UUID")))
 		return
 	}
-	waitpointID, err := ids.Parse(request.WaitpointID)
+	waitpointID, err := uuid.Parse(request.WaitpointID)
 	if err != nil {
 		writeError(w, badRequest(errors.New("waitpoint_id must be a UUID")))
 		return
 	}
-	checkpointID, err := ids.Parse(request.CheckpointID)
+	checkpointID, err := uuid.Parse(request.CheckpointID)
 	if err != nil {
 		writeError(w, badRequest(errors.New("checkpoint_id must be a UUID")))
 		return
@@ -135,10 +136,10 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runtimeRelease, err := s.db.GetRunExecutionSessionRuntimeRelease(r.Context(), db.GetRunExecutionSessionRuntimeReleaseParams{
-		OrgID:            ids.ToPG(leaseIDs.orgID),
-		RunID:            ids.ToPG(leaseIDs.runID),
-		SessionID:        ids.ToPG(leaseIDs.sessionID),
-		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
+		OrgID:            pgvalue.UUID(leaseIDs.orgID),
+		RunID:            pgvalue.UUID(leaseIDs.runID),
+		SessionID:        pgvalue.UUID(leaseIDs.sessionID),
+		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 	})
 	if isNoRows(err) {
 		s.log.Warn("checkpoint ready runtime release missing", "run_id", request.Lease.RunID, "session_id", request.Lease.ID, "checkpoint_id", request.CheckpointID)
@@ -168,7 +169,7 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, conflict(err))
 		return
 	}
-	waitpoint, resumed, err := s.markWaitpointCheckpointReady(r.Context(), ids.ToPG(leaseIDs.orgID), ids.ToPG(waitpointID), params)
+	waitpoint, resumed, err := s.markWaitpointCheckpointReady(r.Context(), pgvalue.UUID(leaseIDs.orgID), pgvalue.UUID(waitpointID), params)
 	if isNoRows(err) {
 		s.log.Warn(
 			"checkpoint ready rejected",
@@ -186,15 +187,15 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("mark checkpoint ready"))
 		return
 	}
-	s.ackWorkerQueueLease(r.Context(), ids.ToPG(leaseIDs.runID), lease)
+	s.ackWorkerQueueLease(r.Context(), pgvalue.UUID(leaseIDs.runID), lease)
 	if waitpoint.Status == db.RunWaitStatusWaiting && !resumed {
 		go s.notifyPendingWaitpoint(context.Background(), checkpointReadyWaitpoint(waitpoint))
 	}
 	writeJSON(w, http.StatusOK, api.WorkerCreateWaitpointResponse{
 		RunID:        request.Lease.RunID,
-		RunWaitID:    ids.MustFromPG(waitpoint.RunWaitID).String(),
-		WaitpointID:  ids.MustFromPG(waitpoint.ID).String(),
-		CheckpointID: ids.MustFromPG(waitpoint.CheckpointID).String(),
+		RunWaitID:    pgvalue.MustUUIDValue(waitpoint.RunWaitID).String(),
+		WaitpointID:  pgvalue.MustUUIDValue(waitpoint.ID).String(),
+		CheckpointID: pgvalue.MustUUIDValue(waitpoint.CheckpointID).String(),
 	})
 }
 
@@ -327,17 +328,17 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 		writeError(w, errors.New("get queue lease"))
 		return
 	}
-	runWaitID, err := ids.Parse(request.RunWaitID)
+	runWaitID, err := uuid.Parse(request.RunWaitID)
 	if err != nil {
 		writeError(w, badRequest(errors.New("run_wait_id must be a UUID")))
 		return
 	}
-	waitpointID, err := ids.Parse(request.WaitpointID)
+	waitpointID, err := uuid.Parse(request.WaitpointID)
 	if err != nil {
 		writeError(w, badRequest(errors.New("waitpoint_id must be a UUID")))
 		return
 	}
-	checkpointID, err := ids.Parse(request.CheckpointID)
+	checkpointID, err := uuid.Parse(request.CheckpointID)
 	if err != nil {
 		writeError(w, badRequest(errors.New("checkpoint_id must be a UUID")))
 		return
@@ -347,13 +348,13 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 		message = "checkpoint failed"
 	}
 	waitpoint, err := s.db.MarkWaitpointCheckpointFailed(r.Context(), db.MarkWaitpointCheckpointFailedParams{
-		OrgID:            ids.ToPG(leaseIDs.orgID),
-		RunID:            ids.ToPG(leaseIDs.runID),
-		CheckpointID:     ids.ToPG(checkpointID),
-		RunWaitID:        ids.ToPG(runWaitID),
-		WaitpointID:      ids.ToPG(waitpointID),
-		SessionID:        ids.ToPG(leaseIDs.sessionID),
-		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
+		OrgID:            pgvalue.UUID(leaseIDs.orgID),
+		RunID:            pgvalue.UUID(leaseIDs.runID),
+		CheckpointID:     pgvalue.UUID(checkpointID),
+		RunWaitID:        pgvalue.UUID(runWaitID),
+		WaitpointID:      pgvalue.UUID(waitpointID),
+		SessionID:        pgvalue.UUID(leaseIDs.sessionID),
+		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		ErrorMessage:     pgtype.Text{String: message, Valid: true},
 	})
 	if isNoRows(err) {
@@ -367,9 +368,9 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, api.WorkerCreateWaitpointResponse{
 		RunID:        request.Lease.RunID,
-		RunWaitID:    ids.MustFromPG(waitpoint.RunWaitID).String(),
-		WaitpointID:  ids.MustFromPG(waitpoint.ID).String(),
-		CheckpointID: ids.MustFromPG(waitpoint.CheckpointID).String(),
+		RunWaitID:    pgvalue.MustUUIDValue(waitpoint.RunWaitID).String(),
+		WaitpointID:  pgvalue.MustUUIDValue(waitpoint.ID).String(),
+		CheckpointID: pgvalue.MustUUIDValue(waitpoint.CheckpointID).String(),
 	})
 }
 
@@ -487,10 +488,10 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, fmt.Errorf("encode checkpoint event: %w", err)
 	}
 	return db.MarkWaitpointCheckpointDurableReadyParams{
-		OrgID:                      ids.ToPG(orgID),
-		RunID:                      ids.ToPG(leaseIDs.runID),
-		SessionID:                  ids.ToPG(leaseIDs.sessionID),
-		WorkerInstanceID:           ids.ToPG(workerInstanceID),
+		OrgID:                      pgvalue.UUID(orgID),
+		RunID:                      pgvalue.UUID(leaseIDs.runID),
+		SessionID:                  pgvalue.UUID(leaseIDs.sessionID),
+		WorkerInstanceID:           pgvalue.UUID(workerInstanceID),
 		CheckpointArtifacts:        checkpointArtifactsJSON,
 		Manifest:                   manifest,
 		RuntimeBackend:             runtimeInfo.Backend,
@@ -500,21 +501,21 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		KernelDigest:               runtimeInfo.KernelDigest,
 		InitramfsDigest:            runtimeInfo.InitramfsDigest,
 		RootfsDigest:               runtimeInfo.RootfsDigest,
-		RuntimeVcpus:               pgInt4Ptr(runtimeSpec.VCPUCount),
-		RuntimeMemoryMib:           pgInt4Ptr(runtimeSpec.MemoryMiB),
-		RuntimeScratchDiskMib:      pgInt4Ptr(runtimeSpec.ScratchDiskMiB),
+		RuntimeVcpus:               pgvalue.Int4Ptr(runtimeSpec.VCPUCount),
+		RuntimeMemoryMib:           pgvalue.Int4Ptr(runtimeSpec.MemoryMiB),
+		RuntimeScratchDiskMib:      pgvalue.Int4Ptr(runtimeSpec.ScratchDiskMiB),
 		CniProfile:                 *runtimeSpec.CNIProfile,
-		ImageKey:                   pgTextPtr(runtimeInfo.ImageKey),
-		WorkspaceArtifactDigest:    pgTextPtr(optionalTrimmedString(workspace.ArtifactDigest)),
+		ImageKey:                   pgvalue.TextPtr(runtimeInfo.ImageKey),
+		WorkspaceArtifactDigest:    pgvalue.TextPtr(optionalTrimmedString(workspace.ArtifactDigest)),
 		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: workspace.ArtifactSizeBytes, Valid: true},
-		WorkspaceArtifactMediaType: pgTextPtr(optionalTrimmedString(workspace.ArtifactMediaType)),
-		WorkspaceArtifactEncoding:  pgTextPtr(optionalTrimmedString(workspace.ArtifactEncoding)),
-		WorkspaceMountPath:         pgTextPtr(optionalTrimmedString(workspace.MountPath)),
-		WorkspaceVolumeKind:        pgTextPtr(optionalTrimmedString(workspace.VolumeKind)),
+		WorkspaceArtifactMediaType: pgvalue.TextPtr(optionalTrimmedString(workspace.ArtifactMediaType)),
+		WorkspaceArtifactEncoding:  pgvalue.TextPtr(optionalTrimmedString(workspace.ArtifactEncoding)),
+		WorkspaceMountPath:         pgvalue.TextPtr(optionalTrimmedString(workspace.MountPath)),
+		WorkspaceVolumeKind:        pgvalue.TextPtr(optionalTrimmedString(workspace.VolumeKind)),
 		ActiveDurationMs:           request.ActiveDurationMs,
-		CheckpointID:               ids.ToPG(checkpointID),
-		RunWaitID:                  ids.ToPG(runWaitID),
-		WaitpointID:                ids.ToPG(waitpointID),
+		CheckpointID:               pgvalue.UUID(checkpointID),
+		RunWaitID:                  pgvalue.UUID(runWaitID),
+		WaitpointID:                pgvalue.UUID(waitpointID),
 		CheckpointPayload:          checkpointPayload,
 	}, nil
 }
@@ -529,7 +530,7 @@ func validateCheckpointRecoveryPoint(recovery api.WorkerCheckpointRecoveryPoint,
 	if strings.TrimSpace(recovery.WaitpointID) != waitpointID.String() {
 		return fmt.Errorf("manifest.recovery_point.waitpoint_id must match waitpoint_id %s", waitpointID.String())
 	}
-	if strings.TrimSpace(recovery.Runtime.ConfigDigest) != cas.DigestBytes(runtimeConfig) {
+	if strings.TrimSpace(recovery.Runtime.ConfigDigest) != sha256sum.DigestBytes(runtimeConfig) {
 		return fmt.Errorf("manifest.recovery_point.runtime.config_digest must match manifest.runtime_state.config digest")
 	}
 	return nil

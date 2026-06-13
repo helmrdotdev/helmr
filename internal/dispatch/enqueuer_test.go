@@ -7,16 +7,17 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestEnqueueRunPublishesPreparedMessageAndMarksEnqueued(t *testing.T) {
 	ctx := context.Background()
-	runID := ids.ToPG(ids.New())
-	orgID := ids.ToPG(ids.New())
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeEnqueuerStore{
 		prepare: testPreparedRunQueueItem(orgID, runID),
 	}
@@ -36,7 +37,7 @@ func TestEnqueueRunPublishesPreparedMessageAndMarksEnqueued(t *testing.T) {
 		t.Fatalf("result = %+v messages = %+v", result, queue.messages)
 	}
 	message := queue.messages[0]
-	if message.OrgID != ids.MustFromPG(orgID).String() || message.RunID != ids.MustFromPG(runID).String() || message.QueueName == "" {
+	if message.OrgID != pgvalue.MustUUIDValue(orgID).String() || message.RunID != pgvalue.MustUUIDValue(runID).String() || message.QueueName == "" {
 		t.Fatalf("message ids = %+v", message)
 	}
 	if err := message.Validate(); err != nil {
@@ -55,8 +56,8 @@ func TestEnqueueRunPublishesPreparedMessageAndMarksEnqueued(t *testing.T) {
 
 func TestEnqueueRunMarksQueueErrors(t *testing.T) {
 	ctx := context.Background()
-	runID := ids.ToPG(ids.New())
-	orgID := ids.ToPG(ids.New())
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeEnqueuerStore{
 		prepare: testPreparedRunQueueItem(orgID, runID),
 	}
@@ -86,12 +87,12 @@ func TestTruncateErrorPreservesUTF8(t *testing.T) {
 
 func TestReconcileQueueScopeContinuesAfterFailures(t *testing.T) {
 	ctx := context.Background()
-	orgID := ids.ToPG(ids.New())
-	projectID := ids.ToPG(ids.New())
-	environmentID := ids.ToPG(ids.New())
+	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	projectID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	scope := QueueScope{OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, QueueName: "queue-a"}
-	firstRunID := ids.ToPG(ids.New())
-	secondRunID := ids.ToPG(ids.New())
+	firstRunID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	secondRunID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeEnqueuerStore{
 		prepareByRun: map[pgtype.UUID]db.PrepareQueuedRunQueueItemRow{
 			firstRunID:  testPreparedRunQueueItemWithScope(orgID, projectID, environmentID, firstRunID),
@@ -105,7 +106,7 @@ func TestReconcileQueueScopeContinuesAfterFailures(t *testing.T) {
 	queue := &fakeEnqueuerQueue{
 		result: EnqueueResult{QueueName: "queue-a", MessageID: "message-1", Depth: 1},
 		errByRun: map[string]error{
-			ids.MustFromPG(secondRunID).String(): errors.New("redis unavailable"),
+			pgvalue.MustUUIDValue(secondRunID).String(): errors.New("redis unavailable"),
 		},
 	}
 	enqueuer, err := NewEnqueuer(store, queue)
@@ -130,11 +131,11 @@ func TestReconcileQueueScopeContinuesAfterFailures(t *testing.T) {
 
 func TestReconcileQueueScopeSkipsQueuedRunWhenRedisReadyMessageExists(t *testing.T) {
 	ctx := context.Background()
-	orgID := ids.ToPG(ids.New())
-	projectID := ids.ToPG(ids.New())
-	environmentID := ids.ToPG(ids.New())
+	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	projectID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	scope := QueueScope{OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, QueueName: "queue-a"}
-	runID := ids.ToPG(ids.New())
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeEnqueuerStore{
 		prepare: testPreparedRunQueueItemWithScope(orgID, projectID, environmentID, runID),
 		candidates: []db.ListQueuedRunQueueItemCandidatesForScopeRow{
@@ -161,11 +162,11 @@ func TestReconcileQueueScopeSkipsQueuedRunWhenRedisReadyMessageExists(t *testing
 
 func TestReconcileQueueScopeReenqueuesQueuedRunWhenRedisMessageMissing(t *testing.T) {
 	ctx := context.Background()
-	orgID := ids.ToPG(ids.New())
-	projectID := ids.ToPG(ids.New())
-	environmentID := ids.ToPG(ids.New())
+	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	projectID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	scope := QueueScope{OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, QueueName: "queue-a"}
-	runID := ids.ToPG(ids.New())
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeEnqueuerStore{
 		prepare: testPreparedRunQueueItemWithScope(orgID, projectID, environmentID, runID),
 		candidates: []db.ListQueuedRunQueueItemCandidatesForScopeRow{
@@ -192,11 +193,11 @@ func TestReconcileQueueScopeReenqueuesQueuedRunWhenRedisMessageMissing(t *testin
 
 func TestReconcileQueueScopeReenqueuesQueuedRunWhenRedisMessageInvalidated(t *testing.T) {
 	ctx := context.Background()
-	orgID := ids.ToPG(ids.New())
-	projectID := ids.ToPG(ids.New())
-	environmentID := ids.ToPG(ids.New())
+	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	projectID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	scope := QueueScope{OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, QueueName: "queue-a"}
-	runID := ids.ToPG(ids.New())
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeEnqueuerStore{
 		prepare: testPreparedRunQueueItemWithScope(orgID, projectID, environmentID, runID),
 		candidates: []db.ListQueuedRunQueueItemCandidatesForScopeRow{
@@ -227,7 +228,7 @@ func TestEnqueueRunReturnsNoCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := enqueuer.EnqueueRun(ctx, ids.ToPG(ids.New()), ids.ToPG(ids.New())); !errors.Is(err, ErrNoEnqueueCandidate) {
+	if _, err := enqueuer.EnqueueRun(ctx, pgvalue.UUID(uuid.Must(uuid.NewV7())), pgvalue.UUID(uuid.Must(uuid.NewV7()))); !errors.Is(err, ErrNoEnqueueCandidate) {
 		t.Fatalf("enqueue error = %v, want no queue candidate", err)
 	}
 }
@@ -322,7 +323,7 @@ func (f *fakeEnqueuerQueue) Renew(_ context.Context, lease Lease, expiresAt time
 }
 
 func testPreparedRunQueueItem(orgID pgtype.UUID, runID pgtype.UUID) db.PrepareQueuedRunQueueItemRow {
-	return testPreparedRunQueueItemWithScope(orgID, ids.ToPG(ids.New()), ids.ToPG(ids.New()), runID)
+	return testPreparedRunQueueItemWithScope(orgID, pgvalue.UUID(uuid.Must(uuid.NewV7())), pgvalue.UUID(uuid.Must(uuid.NewV7())), runID)
 }
 
 func testPreparedRunQueueItemWithScope(orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, runID pgtype.UUID) db.PrepareQueuedRunQueueItemRow {
@@ -354,7 +355,7 @@ var _ EnqueuerStore = (*fakeEnqueuerStore)(nil)
 var _ Queue = (*fakeEnqueuerQueue)(nil)
 
 func TestRequirementsFromRowRejectsInvalidJSON(t *testing.T) {
-	row := testPreparedRunQueueItem(ids.ToPG(ids.New()), ids.ToPG(ids.New()))
+	row := testPreparedRunQueueItem(pgvalue.UUID(uuid.Must(uuid.NewV7())), pgvalue.UUID(uuid.Must(uuid.NewV7())))
 	row.NetworkPolicy = []byte(`{`)
 	if _, err := queueMessage(row); err == nil {
 		t.Fatal("queueMessage error = nil")

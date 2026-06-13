@@ -10,17 +10,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var scopeSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
-var environmentColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
 func protectedEnvironmentSlug(slug string) bool {
 	return slug == "production" || slug == "staging"
@@ -40,7 +40,7 @@ func (s *Server) failDeletionJob(ctx context.Context, orgID pgtype.UUID, jobID p
 		ID:      jobID,
 		Failure: failure.Error(),
 	}); err != nil && s.log != nil {
-		s.log.Error("fail deletion job", "job_id", ids.MustFromPG(jobID).String(), "error", err)
+		s.log.Error("fail deletion job", "job_id", pgvalue.MustUUIDValue(jobID).String(), "error", err)
 	}
 }
 
@@ -54,7 +54,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("organization is required")))
 		return
 	}
-	projects, err := s.db.ListProjects(r.Context(), ids.ToPG(actor.OrgID))
+	projects, err := s.db.ListProjects(r.Context(), pgvalue.UUID(actor.OrgID))
 	if err != nil {
 		writeError(w, errors.New("list projects"))
 		return
@@ -91,8 +91,8 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := actorFromContext(r.Context())
 	project, err := s.db.GetProject(r.Context(), db.GetProjectParams{
-		OrgID: ids.ToPG(actor.OrgID),
-		ID:    ids.ToPG(projectID),
+		OrgID: pgvalue.UUID(actor.OrgID),
+		ID:    pgvalue.UUID(projectID),
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("project not found")))
@@ -127,13 +127,13 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := actorFromContext(r.Context())
 	project, err := s.db.CreateProjectWithDefaultEnvironment(r.Context(), db.CreateProjectWithDefaultEnvironmentParams{
-		ID:                   ids.ToPG(ids.New()),
-		OrgID:                ids.ToPG(actor.OrgID),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                pgvalue.UUID(actor.OrgID),
 		Slug:                 slug,
 		Name:                 name,
 		IsDefault:            false,
-		EnvironmentID:        ids.ToPG(ids.New()),
-		StagingEnvironmentID: ids.ToPG(ids.New()),
+		EnvironmentID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		StagingEnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -181,8 +181,8 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := actorFromContext(r.Context())
 	project, err := s.db.UpdateProjectDetails(r.Context(), db.UpdateProjectDetailsParams{
-		OrgID: ids.ToPG(actor.OrgID),
-		ID:    ids.ToPG(projectID),
+		OrgID: pgvalue.UUID(actor.OrgID),
+		ID:    pgvalue.UUID(projectID),
 		Slug:  slug,
 		Name:  name,
 	})
@@ -213,8 +213,8 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := actorFromContext(r.Context())
 	project, err := s.db.GetProject(r.Context(), db.GetProjectParams{
-		OrgID: ids.ToPG(actor.OrgID),
-		ID:    ids.ToPG(projectID),
+		OrgID: pgvalue.UUID(actor.OrgID),
+		ID:    pgvalue.UUID(projectID),
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("project not found")))
@@ -229,10 +229,10 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(err))
 		return
 	}
-	orgID := ids.ToPG(actor.OrgID)
-	targetProjectID := ids.ToPG(projectID)
+	orgID := pgvalue.UUID(actor.OrgID)
+	targetProjectID := pgvalue.UUID(projectID)
 	job, err := s.db.CreateDeletionJob(r.Context(), db.CreateDeletionJobParams{
-		ID:                   ids.ToPG(ids.New()),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                orgID,
 		TargetType:           "project",
 		TargetID:             targetProjectID,
@@ -387,8 +387,8 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := actorFromContext(r.Context())
 	if _, err := s.db.GetProject(r.Context(), db.GetProjectParams{
-		OrgID: ids.ToPG(actor.OrgID),
-		ID:    ids.ToPG(projectID),
+		OrgID: pgvalue.UUID(actor.OrgID),
+		ID:    pgvalue.UUID(projectID),
 	}); isNoRows(err) {
 		writeError(w, notFound(errors.New("project not found")))
 		return
@@ -397,9 +397,9 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	environment, err := s.db.CreateEnvironment(r.Context(), db.CreateEnvironmentParams{
-		ID:        ids.ToPG(ids.New()),
-		OrgID:     ids.ToPG(actor.OrgID),
-		ProjectID: ids.ToPG(projectID),
+		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:     pgvalue.UUID(actor.OrgID),
+		ProjectID: pgvalue.UUID(projectID),
 		Slug:      slug,
 		Name:      name,
 		ColorHex:  colorHex,
@@ -433,9 +433,9 @@ func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := actorFromContext(r.Context())
 	environment, err := s.db.GetEnvironment(r.Context(), db.GetEnvironmentParams{
-		OrgID:     ids.ToPG(actor.OrgID),
-		ProjectID: ids.ToPG(projectID),
-		ID:        ids.ToPG(environmentID),
+		OrgID:     pgvalue.UUID(actor.OrgID),
+		ProjectID: pgvalue.UUID(projectID),
+		ID:        pgvalue.UUID(environmentID),
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("environment not found")))
@@ -480,9 +480,9 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := actorFromContext(r.Context())
 	current, err := s.db.GetEnvironment(r.Context(), db.GetEnvironmentParams{
-		OrgID:     ids.ToPG(actor.OrgID),
-		ProjectID: ids.ToPG(projectID),
-		ID:        ids.ToPG(environmentID),
+		OrgID:     pgvalue.UUID(actor.OrgID),
+		ProjectID: pgvalue.UUID(projectID),
+		ID:        pgvalue.UUID(environmentID),
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("environment not found")))
@@ -497,9 +497,9 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	environment, err := s.db.UpdateEnvironmentDetails(r.Context(), db.UpdateEnvironmentDetailsParams{
-		OrgID:     ids.ToPG(actor.OrgID),
-		ProjectID: ids.ToPG(projectID),
-		ID:        ids.ToPG(environmentID),
+		OrgID:     pgvalue.UUID(actor.OrgID),
+		ProjectID: pgvalue.UUID(projectID),
+		ID:        pgvalue.UUID(environmentID),
 		Slug:      slug,
 		Name:      name,
 		ColorHex:  colorHex,
@@ -536,9 +536,9 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := actorFromContext(r.Context())
 	environment, err := s.db.GetEnvironment(r.Context(), db.GetEnvironmentParams{
-		OrgID:     ids.ToPG(actor.OrgID),
-		ProjectID: ids.ToPG(projectID),
-		ID:        ids.ToPG(environmentID),
+		OrgID:     pgvalue.UUID(actor.OrgID),
+		ProjectID: pgvalue.UUID(projectID),
+		ID:        pgvalue.UUID(environmentID),
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("environment not found")))
@@ -557,11 +557,11 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(err))
 		return
 	}
-	orgID := ids.ToPG(actor.OrgID)
-	targetProjectID := ids.ToPG(projectID)
-	targetEnvironmentID := ids.ToPG(environmentID)
+	orgID := pgvalue.UUID(actor.OrgID)
+	targetProjectID := pgvalue.UUID(projectID)
+	targetEnvironmentID := pgvalue.UUID(environmentID)
 	job, err := s.db.CreateDeletionJob(r.Context(), db.CreateDeletionJobParams{
-		ID:                   ids.ToPG(ids.New()),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                orgID,
 		TargetType:           "environment",
 		TargetID:             targetEnvironmentID,
@@ -653,11 +653,11 @@ func normalizeScopeCreateInput(slug string, name string) (string, string, error)
 }
 
 func normalizeEnvironmentColorHex(colorHex string) (string, error) {
-	colorHex = strings.TrimSpace(colorHex)
-	if !environmentColorPattern.MatchString(colorHex) {
+	normalized, err := api.NormalizeEnvironmentColorHex(colorHex)
+	if err != nil {
 		return "", errors.New("color_hex must be a #RRGGBB color")
 	}
-	return strings.ToUpper(colorHex), nil
+	return normalized, nil
 }
 
 type projectRecord struct {
@@ -683,12 +683,12 @@ type environmentRecord struct {
 
 func projectResponse(project projectRecord) api.ProjectSummary {
 	return api.ProjectSummary{
-		ID:        ids.MustFromPG(project.id).String(),
+		ID:        pgvalue.MustUUIDValue(project.id).String(),
 		Slug:      project.slug,
 		Name:      project.name,
 		IsDefault: project.isDefault,
-		CreatedAt: pgTime(project.createdAt),
-		UpdatedAt: pgTime(project.updatedAt),
+		CreatedAt: pgvalue.Time(project.createdAt),
+		UpdatedAt: pgvalue.Time(project.updatedAt),
 	}
 }
 
@@ -710,14 +710,14 @@ func (s *Server) projectResponseWithEnvironments(ctx context.Context, project pr
 
 func environmentResponse(environment environmentRecord) api.EnvironmentSummary {
 	return api.EnvironmentSummary{
-		ID:        ids.MustFromPG(environment.id).String(),
-		ProjectID: ids.MustFromPG(environment.projectID).String(),
+		ID:        pgvalue.MustUUIDValue(environment.id).String(),
+		ProjectID: pgvalue.MustUUIDValue(environment.projectID).String(),
 		Slug:      environment.slug,
 		Name:      environment.name,
 		ColorHex:  environment.colorHex,
 		IsDefault: environment.isDefault,
-		CreatedAt: pgTime(environment.createdAt),
-		UpdatedAt: pgTime(environment.updatedAt),
+		CreatedAt: pgvalue.Time(environment.createdAt),
+		UpdatedAt: pgvalue.Time(environment.updatedAt),
 	}
 }
 

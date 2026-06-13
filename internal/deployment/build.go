@@ -18,7 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
-	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/task"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -160,10 +160,7 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		if err != nil {
 			return failedDeploymentBuild(fmt.Errorf("task %q max duration: %w", taskID, err))
 		}
-		schedules, err := deploymentTaskSchedules(bundle)
-		if err != nil {
-			return failedDeploymentBuild(fmt.Errorf("task %q schedules: %w", taskID, err))
-		}
+		schedules := deploymentTaskSchedules(bundle)
 		body, err := proto.Marshal(bundle)
 		if err != nil {
 			return failedDeploymentBuild(fmt.Errorf("marshal task %q bundle: %w", taskID, err))
@@ -403,9 +400,9 @@ func deploymentTaskRetryPolicy(bundle *bundlev0.Bundle) json.RawMessage {
 	return json.RawMessage(retryPolicy)
 }
 
-func deploymentTaskSchedules(bundle *bundlev0.Bundle) ([]api.WorkerDeploymentTaskSchedule, error) {
+func deploymentTaskSchedules(bundle *bundlev0.Bundle) []api.WorkerDeploymentTaskSchedule {
 	if bundle == nil || bundle.GetTask() == nil {
-		return nil, nil
+		return nil
 	}
 	specs := bundle.GetTask().GetSchedules()
 	schedules := make([]api.WorkerDeploymentTaskSchedule, 0, len(specs))
@@ -420,7 +417,7 @@ func deploymentTaskSchedules(bundle *bundlev0.Bundle) ([]api.WorkerDeploymentTas
 			Active:   spec.Active,
 		})
 	}
-	return schedules, nil
+	return schedules
 }
 
 func parseMemoryMiB(input string) (int64, error) {

@@ -8,10 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func (s *Server) startDeviceCode(w http.ResponseWriter, r *http.Request) {
@@ -37,10 +38,10 @@ func (s *Server) startDeviceCode(w http.ResponseWriter, r *http.Request) {
 	ttl := s.effectiveDeviceCodeTTL()
 	pollEvery := s.effectiveDevicePollEvery()
 	_, err = s.db.CreateDeviceCode(r.Context(), db.CreateDeviceCodeParams{
-		ID:                  ids.ToPG(ids.New()),
+		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		UserCodeHash:        userHash,
 		DeviceCodeHash:      deviceHash,
-		ExpiresAt:           pgTimeToPG(time.Now().Add(ttl)),
+		ExpiresAt:           pgvalue.Timestamptz(time.Now().Add(ttl)),
 		PollIntervalSeconds: int32(pollEvery.Seconds()),
 	})
 	if err != nil {
@@ -67,7 +68,7 @@ func (s *Server) deviceStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, api.DeviceStatusResponse{
 		Status:    deviceStatus(device),
-		ExpiresAt: pgTime(device.ExpiresAt).Format(time.RFC3339),
+		ExpiresAt: pgvalue.Time(device.ExpiresAt).Format(time.RFC3339),
 	})
 }
 
@@ -103,14 +104,14 @@ func (s *Server) resolveDeviceCode(w http.ResponseWriter, r *http.Request, appro
 	var device db.DeviceCode
 	if approve {
 		device, err = s.db.ApproveDeviceCode(r.Context(), db.ApproveDeviceCodeParams{
-			OrgID:        ids.ToPG(actor.OrgID),
-			UserID:       ids.ToPG(actor.UserID),
+			OrgID:        pgvalue.UUID(actor.OrgID),
+			UserID:       pgvalue.UUID(actor.UserID),
 			UserCodeHash: hash,
 		})
 	} else {
 		device, err = s.db.DenyDeviceCode(r.Context(), db.DenyDeviceCodeParams{
-			OrgID:        ids.ToPG(actor.OrgID),
-			UserID:       ids.ToPG(actor.UserID),
+			OrgID:        pgvalue.UUID(actor.OrgID),
+			UserID:       pgvalue.UUID(actor.UserID),
 			UserCodeHash: hash,
 		})
 	}
@@ -204,7 +205,7 @@ func (s *Server) lookupDeviceCodeByUserCode(w http.ResponseWriter, r *http.Reque
 }
 
 func deviceStatus(device db.DeviceCode) string {
-	if device.Status == db.DeviceCodeStatusPending && time.Now().After(pgTime(device.ExpiresAt)) {
+	if device.Status == db.DeviceCodeStatusPending && time.Now().After(pgvalue.Time(device.ExpiresAt)) {
 		return "expired"
 	}
 	return string(device.Status)

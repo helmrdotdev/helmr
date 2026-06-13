@@ -4,12 +4,12 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 func TestUnpackOCIImageAppliesLayersAndConfig(t *testing.T) {
@@ -247,7 +247,6 @@ func tarLayerEntries(t *testing.T, headers []tar.Header) []byte {
 	var buf bytes.Buffer
 	writer := tar.NewWriter(&buf)
 	for _, header := range headers {
-		header := header
 		if err := writer.WriteHeader(&header); err != nil {
 			t.Fatal(err)
 		}
@@ -305,8 +304,7 @@ func mustJSON(t *testing.T, value any) []byte {
 }
 
 func sha256Hex(body []byte) string {
-	sum := sha256.Sum256(body)
-	return hex.EncodeToString(sum[:])
+	return sha256sum.HexBytes(body)
 }
 
 func readText(t *testing.T, path string) string {

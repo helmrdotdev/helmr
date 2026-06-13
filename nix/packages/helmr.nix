@@ -23,8 +23,10 @@ let
     ../../internal/client
     ../../internal/compute
     ../../internal/db
-    ../../internal/ids
+    ../../internal/pgvalue
+    ../../internal/safepath
     ../../internal/secret
+    ../../internal/sha256sum
     ../../internal/version
   ];
   runtimeFiles = lib.fileset.intersection packageFiles (

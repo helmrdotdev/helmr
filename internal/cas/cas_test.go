@@ -6,17 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-)
 
-func TestDigestReader(t *testing.T) {
-	_, digest, err := DigestReader(strings.NewReader("helmr"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if digest != "sha256:9d06c282b54c131bd2981a2e45b4345c1f3d52d83fddac0fba7d616cc0d61cd3" {
-		t.Fatalf("digest = %s", digest)
-	}
-}
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
+)
 
 func TestObjectKey(t *testing.T) {
 	key, err := ObjectKey("tenant-a", "sha256:7b927bbd759163db342b22ac0329b49998afa33e911c060e112998b1a7d5339e")
@@ -126,7 +118,7 @@ func TestFileStageCommitPublishesFinalDigestAndCleansStage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if object.Digest != DigestBytes([]byte("hello")) || object.SizeBytes != 5 || object.MediaType != "text/plain" {
+	if object.Digest != sha256sum.DigestBytes([]byte("hello")) || object.SizeBytes != 5 || object.MediaType != "text/plain" {
 		t.Fatalf("object = %+v", object)
 	}
 	if object.Key != "sha256/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
@@ -163,7 +155,7 @@ func TestFileStageCommitDoesNotPublishDataWithoutMetadata(t *testing.T) {
 	if _, err := stage.Write(content); err != nil {
 		t.Fatal(err)
 	}
-	key, err := ObjectKey("", DigestBytes(content))
+	key, err := ObjectKey("", sha256sum.DigestBytes(content))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +198,7 @@ func TestFileStageAbortCleansTempAndDoesNotPublish(t *testing.T) {
 	if _, err := os.Stat(stagedPath); !os.IsNotExist(err) {
 		t.Fatalf("staged file stat error = %v", err)
 	}
-	if _, err := store.Stat(t.Context(), DigestBytes(content)); err == nil {
+	if _, err := store.Stat(t.Context(), sha256sum.DigestBytes(content)); err == nil {
 		t.Fatal("expected aborted object to be missing")
 	}
 }

@@ -1,6 +1,13 @@
 package api
 
-import "time"
+import (
+	"errors"
+	"regexp"
+	"strings"
+	"time"
+)
+
+var environmentColorHexPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
 type ProjectSummary struct {
 	ID           string               `json:"id"`
@@ -47,6 +54,14 @@ type UpdateEnvironmentRequest struct {
 	Slug     string `json:"slug"`
 	Name     string `json:"name"`
 	ColorHex string `json:"color_hex"`
+}
+
+func NormalizeEnvironmentColorHex(colorHex string) (string, error) {
+	colorHex = strings.TrimSpace(colorHex)
+	if !environmentColorHexPattern.MatchString(colorHex) {
+		return "", errors.New("must be a #RRGGBB color")
+	}
+	return strings.ToUpper(colorHex), nil
 }
 
 type CreateDeploymentRequest struct {

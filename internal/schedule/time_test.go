@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -31,24 +32,24 @@ func TestRetryDelayCapsAtOneHour(t *testing.T) {
 }
 
 func TestJitterStaysWithinWindow(t *testing.T) {
-	got := Jitter(ids.New(), 30*time.Second)
+	got := Jitter(uuid.Must(uuid.NewV7()), 30*time.Second)
 	if got < 0 || got >= 30*time.Second {
 		t.Fatalf("jitter outside window: %s", got)
 	}
 }
 
 func TestRunRequestFromTriggerCandidateBuildsScheduledPayload(t *testing.T) {
-	scheduleID := ids.New()
-	instanceID := ids.New()
-	projectID := ids.New()
-	environmentID := ids.New()
+	scheduleID := uuid.Must(uuid.NewV7())
+	instanceID := uuid.Must(uuid.NewV7())
+	projectID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.Must(uuid.NewV7())
 	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	lastFireAt := scheduledAt.Add(-24 * time.Hour)
 	request, err := RunRequestFromTriggerCandidateAt(db.GetScheduleTriggerCandidateRow{
-		ScheduleID:    ids.ToPG(scheduleID),
-		InstanceID:    ids.ToPG(instanceID),
-		ProjectID:     ids.ToPG(projectID),
-		EnvironmentID: ids.ToPG(environmentID),
+		ScheduleID:    pgvalue.UUID(scheduleID),
+		InstanceID:    pgvalue.UUID(instanceID),
+		ProjectID:     pgvalue.UUID(projectID),
+		EnvironmentID: pgvalue.UUID(environmentID),
 		ScheduleType:  db.TaskScheduleTypeImperative,
 		TaskID:        "daily-report",
 		ExternalID:    pgtype.Text{String: "customer-1", Valid: true},
@@ -88,10 +89,10 @@ func TestRunRequestFromTriggerCandidateBuildsScheduledPayload(t *testing.T) {
 func TestRunRequestFromTriggerCandidateSkipsPastUpcomingSlots(t *testing.T) {
 	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	request, err := RunRequestFromTriggerCandidateAt(db.GetScheduleTriggerCandidateRow{
-		ScheduleID:    ids.ToPG(ids.New()),
-		InstanceID:    ids.ToPG(ids.New()),
-		ProjectID:     ids.ToPG(ids.New()),
-		EnvironmentID: ids.ToPG(ids.New()),
+		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		InstanceID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ProjectID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ScheduleType:  db.TaskScheduleTypeDeclarative,
 		TaskID:        "daily-report",
 		Cron:          "0 9 * * *",

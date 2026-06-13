@@ -3,7 +3,6 @@ package archive
 import (
 	"archive/tar"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -11,8 +10,12 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/safepath"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 const (
@@ -92,7 +95,7 @@ func CreateTarWithOptions(root, tempDir string, options TarOptions) (Tar, func()
 	}
 	return Tar{
 		Path:       path,
-		Digest:     "sha256:" + hex.EncodeToString(hash.Sum(nil)),
+		Digest:     sha256sum.DigestHash(hash),
 		SizeBytes:  info.Size(),
 		EntryCount: stats.entries,
 	}, cleanup, nil
@@ -143,13 +146,13 @@ func extractTar(body io.Reader, destination string, options ExtractOptions) (Ext
 		if err := validateHeaderSize(header, &extractedBytes, options.MaxBytes); err != nil {
 			return ExtractStats{}, err
 		}
-		name, err := cleanArchiveName(header.Name)
+		name, err := safepath.CleanSlash(header.Name, safepath.CleanOptions{})
 		if err != nil {
-			return ExtractStats{}, err
+			return ExtractStats{}, fmt.Errorf("unsafe tar path %q", header.Name)
 		}
-		target, err := safeTarget(destination, name)
+		target, err := safepath.JoinSlash(destination, name)
 		if err != nil {
-			return ExtractStats{}, err
+			return ExtractStats{}, fmt.Errorf("unsafe tar path %q", name)
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
@@ -338,10 +341,8 @@ func excludedRelativePath(rel string, excludeMatchers []*regexp.Regexp) bool {
 		targets = append(targets, rel+"/")
 	}
 	for _, matcher := range excludeMatchers {
-		for _, target := range targets {
-			if matcher.MatchString(target) {
-				return true
-			}
+		if slices.ContainsFunc(targets, matcher.MatchString) {
+			return true
 		}
 	}
 	return false
@@ -398,37 +399,6 @@ func globPatternSource(pattern string) string {
 	return source.String()
 }
 
-func cleanArchiveName(raw string) (string, error) {
-	if strings.ContainsRune(raw, '\x00') {
-		return "", fmt.Errorf("tar archive entry %q contains NUL", raw)
-	}
-	if raw == "" || path.IsAbs(raw) {
-		return "", fmt.Errorf("unsafe tar path %q", raw)
-	}
-	for _, part := range strings.Split(filepath.ToSlash(raw), "/") {
-		if part == ".." {
-			return "", fmt.Errorf("unsafe tar path %q", raw)
-		}
-	}
-	clean := path.Clean(raw)
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("unsafe tar path %q", raw)
-	}
-	return clean, nil
-}
-
-func safeTarget(destination, name string) (string, error) {
-	target := filepath.Join(destination, filepath.FromSlash(name))
-	rel, err := filepath.Rel(destination, target)
-	if err != nil {
-		return "", err
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("unsafe tar path %q", name)
-	}
-	return target, nil
-}
-
 func validateSymlinkTarget(destination string, target string, linkname string) error {
 	if strings.ContainsRune(linkname, '\x00') {
 		return errors.New("target contains NUL")
@@ -452,28 +422,8 @@ func mkdirAllSafe(root, dir string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	if rel == "." {
-		return nil
-	}
-	current := root
-	for _, part := range strings.Split(rel, string(filepath.Separator)) {
-		if part == "" {
-			continue
-		}
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir(current, mode); err != nil && !errors.Is(err, os.ErrExist) {
-				return err
-			}
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("unsafe tar parent %q", current)
-		}
+	if err := safepath.MkdirAllNoSymlink(root, filepath.ToSlash(rel), mode); err != nil {
+		return fmt.Errorf("unsafe tar parent: %w", err)
 	}
 	return nil
 }

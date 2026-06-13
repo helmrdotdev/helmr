@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -68,7 +69,7 @@ func TestWaitpointRequestLinkedIDAllowsArbitraryJSON(t *testing.T) {
 }
 
 func TestWaitpointRequestLinkedIDExtractsStringID(t *testing.T) {
-	waitpointID := ids.New()
+	waitpointID := uuid.Must(uuid.NewV7())
 	id, ok, err := waitpointRequestLinkedID(db.WaitpointKindHuman, []byte(`{"waitpoint_id":"`+waitpointID.String()+`"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +80,7 @@ func TestWaitpointRequestLinkedIDExtractsStringID(t *testing.T) {
 }
 
 func TestWaitpointRequestLinkedIDExtractsCamelCaseStringID(t *testing.T) {
-	waitpointID := ids.New()
+	waitpointID := uuid.Must(uuid.NewV7())
 	id, ok, err := waitpointRequestLinkedID(db.WaitpointKindHuman, []byte(`{"waitpointId":"`+waitpointID.String()+`"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -108,10 +109,10 @@ func TestCreateRunIdempotencyHitIncludesPendingWaitpoint(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	waitpointID := ids.New()
+	waitpointID := uuid.Must(uuid.NewV7())
 	store.run.Status = db.RunStatusWaiting
 	store.waitpoint = fakeWaitpoint{
-		ID:          ids.ToPG(waitpointID),
+		ID:          pgvalue.UUID(waitpointID),
 		OrgID:       store.run.OrgID,
 		RunID:       store.run.ID,
 		Kind:        db.WaitpointKindHuman,
@@ -137,16 +138,16 @@ func TestCreateRunIdempotencyHitIncludesPendingWaitpoint(t *testing.T) {
 }
 
 func TestListRunsIncludesPendingWaitpointDeliveries(t *testing.T) {
-	runID := ids.ToPG(ids.New())
-	runWaitID := ids.ToPG(ids.New())
-	waitpointID := ids.ToPG(ids.New())
-	matchingDeliveryID := ids.ToPG(ids.New())
-	ignoredDeliveryID := ids.ToPG(ids.New())
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runWaitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	waitpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	matchingDeliveryID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	ignoredDeliveryID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	createdAt := testTime()
 	store := &fakeStore{
 		run: db.Run{
 			ID:               runID,
-			OrgID:            ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -159,7 +160,7 @@ func TestListRunsIncludesPendingWaitpointDeliveries(t *testing.T) {
 		waitpoint: fakeWaitpoint{
 			ID:            waitpointID,
 			RunWaitID:     runWaitID,
-			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			RunID:         runID,
@@ -173,10 +174,10 @@ func TestListRunsIncludesPendingWaitpointDeliveries(t *testing.T) {
 		waitpointDeliveries: []db.WaitpointDelivery{
 			{
 				ID:            ignoredDeliveryID,
-				OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+				OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 				RunID:         runID,
 				RunWaitID:     runWaitID,
-				WaitpointID:   ids.ToPG(ids.New()),
+				WaitpointID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				Channel:       "email",
 				RecipientKind: "user",
 				Recipient:     "ignored@example.test",
@@ -186,7 +187,7 @@ func TestListRunsIncludesPendingWaitpointDeliveries(t *testing.T) {
 			},
 			{
 				ID:            matchingDeliveryID,
-				OrgID:         ids.ToPG(dbtest.DefaultOrgID),
+				OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 				RunID:         runID,
 				RunWaitID:     runWaitID,
 				WaitpointID:   waitpointID,
@@ -220,10 +221,10 @@ func TestListRunsIncludesPendingWaitpointDeliveries(t *testing.T) {
 	if len(deliveries) != 1 {
 		t.Fatalf("deliveries = %+v", deliveries)
 	}
-	if deliveries[0].ID != ids.MustFromPG(matchingDeliveryID).String() || deliveries[0].Recipient != "reviewer@example.test" || deliveries[0].Status != string(db.WaitpointDeliveryStatusSent) {
+	if deliveries[0].ID != pgvalue.MustUUIDValue(matchingDeliveryID).String() || deliveries[0].Recipient != "reviewer@example.test" || deliveries[0].Status != string(db.WaitpointDeliveryStatusSent) {
 		t.Fatalf("delivery = %+v", deliveries[0])
 	}
-	if deliveries[0].ID == ids.MustFromPG(ignoredDeliveryID).String() {
+	if deliveries[0].ID == pgvalue.MustUUIDValue(ignoredDeliveryID).String() {
 		t.Fatalf("included non-matching delivery: %+v", deliveries)
 	}
 }
@@ -231,8 +232,8 @@ func TestListRunsIncludesPendingWaitpointDeliveries(t *testing.T) {
 func TestWorkerWaitpointLifecycle(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
-			ID:                 ids.ToPG(ids.New()),
-			OrgID:              ids.ToPG(dbtest.DefaultOrgID),
+			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
@@ -422,21 +423,21 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runID := ids.New()
-			waitpointID := ids.New()
+			runID := uuid.Must(uuid.NewV7())
+			waitpointID := uuid.Must(uuid.NewV7())
 			store := &fakeStore{
 				run: db.Run{
-					ID:        ids.ToPG(runID),
-					OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+					ID:        pgvalue.UUID(runID),
+					OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 					TaskID:    "deploy",
 					Status:    db.RunStatusWaiting,
 					CreatedAt: testTime(),
 					UpdatedAt: testTime(),
 				},
 				waitpoint: fakeWaitpoint{
-					ID:          ids.ToPG(waitpointID),
-					OrgID:       ids.ToPG(dbtest.DefaultOrgID),
-					RunID:       ids.ToPG(runID),
+					ID:          pgvalue.UUID(waitpointID),
+					OrgID:       pgvalue.UUID(dbtest.DefaultOrgID),
+					RunID:       pgvalue.UUID(runID),
 					Kind:        tt.waitpointKind,
 					Status:      db.RunWaitStatusWaiting,
 					RequestedAt: testTime(),
@@ -470,21 +471,21 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 }
 
 func TestRespondWaitpointReplayIsIdempotent(t *testing.T) {
-	runID := ids.New()
-	waitpointID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
+	waitpointID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		run: db.Run{
-			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+			ID:        pgvalue.UUID(runID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusWaiting,
 			CreatedAt: testTime(),
 			UpdatedAt: testTime(),
 		},
 		waitpoint: fakeWaitpoint{
-			ID:          ids.ToPG(waitpointID),
-			OrgID:       ids.ToPG(dbtest.DefaultOrgID),
-			RunID:       ids.ToPG(runID),
+			ID:          pgvalue.UUID(waitpointID),
+			OrgID:       pgvalue.UUID(dbtest.DefaultOrgID),
+			RunID:       pgvalue.UUID(runID),
 			Kind:        db.WaitpointKindHuman,
 			Status:      db.RunWaitStatusWaiting,
 			RequestedAt: testTime(),
@@ -509,21 +510,21 @@ func TestRespondWaitpointReplayIsIdempotent(t *testing.T) {
 }
 
 func TestRespondWaitpointRejectsNonRespondableKindInResolvePath(t *testing.T) {
-	runID := ids.New()
-	waitpointID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
+	waitpointID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		run: db.Run{
-			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+			ID:        pgvalue.UUID(runID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusWaiting,
 			CreatedAt: testTime(),
 			UpdatedAt: testTime(),
 		},
 		waitpoint: fakeWaitpoint{
-			ID:          ids.ToPG(waitpointID),
-			OrgID:       ids.ToPG(dbtest.DefaultOrgID),
-			RunID:       ids.ToPG(runID),
+			ID:          pgvalue.UUID(waitpointID),
+			OrgID:       pgvalue.UUID(dbtest.DefaultOrgID),
+			RunID:       pgvalue.UUID(runID),
 			Kind:        db.WaitpointKindDelay,
 			Status:      db.RunWaitStatusWaiting,
 			RequestedAt: testTime(),
@@ -543,21 +544,21 @@ func TestRespondWaitpointRejectsNonRespondableKindInResolvePath(t *testing.T) {
 }
 
 func TestResolveWaitpointReturnsAcceptedWhenRunWaitIsNotResuming(t *testing.T) {
-	runID := ids.New()
-	waitpointID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
+	waitpointID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		run: db.Run{
-			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+			ID:        pgvalue.UUID(runID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusWaiting,
 			CreatedAt: testTime(),
 			UpdatedAt: testTime(),
 		},
 		waitpoint: fakeWaitpoint{
-			ID:          ids.ToPG(waitpointID),
-			OrgID:       ids.ToPG(dbtest.DefaultOrgID),
-			RunID:       ids.ToPG(runID),
+			ID:          pgvalue.UUID(waitpointID),
+			OrgID:       pgvalue.UUID(dbtest.DefaultOrgID),
+			RunID:       pgvalue.UUID(runID),
 			Kind:        db.WaitpointKindHuman,
 			Status:      db.RunWaitStatusWaiting,
 			RequestedAt: testTime(),
@@ -693,10 +694,8 @@ func (f *fakeStore) ListPendingWaitpointsForRuns(_ context.Context, arg db.ListP
 	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.Status != db.RunWaitStatusWaiting {
 		return nil, nil
 	}
-	for _, runID := range arg.RunIds {
-		if f.waitpoint.RunID == runID {
-			return []db.ListPendingWaitpointsForRunsRow{fakeWaitpointListRow(f.waitpoint)}, nil
-		}
+	if slices.Contains(arg.RunIds, f.waitpoint.RunID) {
+		return []db.ListPendingWaitpointsForRunsRow{fakeWaitpointListRow(f.waitpoint)}, nil
 	}
 	return nil, nil
 }
@@ -796,8 +795,8 @@ func (f *fakeStore) UnblockRunWaitsForWaitpoint(_ context.Context, arg db.Unbloc
 	f.run.CurrentSessionID = pgtype.UUID{}
 	f.run.UpdatedAt = testTime()
 	payload, _ := json.Marshal(map[string]any{
-		"run_id":          ids.MustFromPG(f.waitpoint.RunID).String(),
-		"waitpoint_id":    ids.MustFromPG(f.waitpoint.ID).String(),
+		"run_id":          pgvalue.MustUUIDValue(f.waitpoint.RunID).String(),
+		"waitpoint_id":    pgvalue.MustUUIDValue(f.waitpoint.ID).String(),
 		"kind":            string(f.waitpoint.Kind),
 		"resolution_kind": f.waitpoint.ResolutionKind.String,
 		"result":          json.RawMessage(f.waitpoint.Output),

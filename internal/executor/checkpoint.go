@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,7 +16,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"golang.org/x/sync/errgroup"
@@ -58,7 +58,7 @@ func (r GuestRunner) materializeCheckpointObject(ctx context.Context, digest str
 		_ = os.Remove(path)
 		return "", fmt.Errorf("close checkpoint object %s: %w", digest, closeErr)
 	}
-	actual := "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	actual := sha256sum.DigestHash(hash)
 	if actual != digest {
 		_ = os.Remove(path)
 		return "", fmt.Errorf("checkpoint object digest mismatch: expected %s, got %s", digest, actual)

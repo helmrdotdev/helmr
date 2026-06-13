@@ -7,7 +7,7 @@ CONSOLE_OUT := $(CURDIR)/internal/console/out
 
 MIGRATE_VERSION ?= v4.19.1
 
-.PHONY: all tools generate proto sqlc fmt test test-race test-linux-compile lint build console-build verify dev dev-console-stack images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
+.PHONY: all tools generate proto sqlc fmt modernize modernize-check test test-race test-linux-compile lint build console-build verify dev dev-console-stack images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
 
 all: verify
 
@@ -28,6 +28,12 @@ GO_CONSOLE_TAGS := -tags embed_console
 fmt:
 	$(GO) fmt ./...
 
+modernize:
+	$(GO) fix ./...
+
+modernize-check:
+	$(GO) fix -diff ./...
+
 test: console-build
 	$(GO) test $(GO_CONSOLE_TAGS) ./...
 
@@ -44,7 +50,9 @@ test-linux-compile:
 	rm -f /tmp/helmr-guestd-linux-amd64.test /tmp/helmr-firecracker-linux-amd64.test /tmp/helmr-worker-linux-amd64.test /tmp/helmr-guestd-linux-arm64.test /tmp/helmr-firecracker-linux-arm64.test /tmp/helmr-worker-linux-arm64.test
 
 lint: console-build
-	$(GO) vet $(GO_CONSOLE_TAGS) ./...
+	$(GO) vet -all $(GO_CONSOLE_TAGS) ./...
+	staticcheck $(GO_CONSOLE_TAGS) ./...
+	unparam ./...
 
 build: console-build
 	$(GO) build $(GO_CONSOLE_TAGS) ./cmd/...

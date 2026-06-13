@@ -11,13 +11,14 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	goredis "github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestTerminalRunEventDoesNotTrustWorkerFailureKind(t *testing.T) {
@@ -170,7 +171,7 @@ func TestWorkerEventPayloadJSONShapes(t *testing.T) {
 	}
 	assertJSONBytes(t, payload, `{"content":{"step":"build"},"type":"deploy.progress"}`)
 
-	params := workerInstanceHeartbeatParams(workerActor{WorkerInstanceID: ids.New(), WorkerGroupID: ids.MustFromPG(testWorkerGroupID()), ResourceID: "worker-resource"}, api.WorkerCapabilities{
+	params := workerInstanceHeartbeatParams(workerActor{WorkerInstanceID: uuid.Must(uuid.NewV7()), WorkerGroupID: pgvalue.MustUUIDValue(testWorkerGroupID()), ResourceID: "worker-resource"}, api.WorkerCapabilities{
 		ProtocolVersion:           api.CurrentWorkerProtocolVersion,
 		SupportedProtocolVersions: api.SupportedWorkerProtocolVersions,
 		RuntimeID:                 "sha256:runtime",
@@ -185,11 +186,11 @@ func TestWorkerEventPayloadJSONShapes(t *testing.T) {
 }
 
 func TestRunEventsPaginationUsesLookahead(t *testing.T) {
-	runID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		run: db.Run{
-			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
+			ID:        pgvalue.UUID(runID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusQueued,
 			CreatedAt: testTime(),
@@ -199,8 +200,8 @@ func TestRunEventsPaginationUsesLookahead(t *testing.T) {
 	for i := int64(1); i <= 201; i++ {
 		store.events = append(store.events, db.Event{
 			Seq:       i,
-			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
-			RunID:     ids.ToPG(runID),
+			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
+			RunID:     pgvalue.UUID(runID),
 			Kind:      "run.created",
 			Payload:   []byte(`{}`),
 			CreatedAt: testTime(),
@@ -268,12 +269,12 @@ func TestEventCursorPrefersLastEventID(t *testing.T) {
 }
 
 func TestEventStreamTreatsTrimmedOlderDuplicateAsPublished(t *testing.T) {
-	runID := ids.New()
+	runID := uuid.Must(uuid.NewV7())
 	redisServer := miniredis.RunT(t)
-	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
 	streamKey := eventStreamKey(dbtest.DefaultOrgID, db.EventSubjectTypeRun, runID)
-	if err := redisClient.XAdd(context.Background(), &goredis.XAddArgs{
+	if err := redisClient.XAdd(context.Background(), &redis.XAddArgs{
 		Stream: streamKey,
 		ID:     "2-0",
 		Values: map[string]any{"event": `{"id":"2","kind":"run.completed"}`},
@@ -285,10 +286,10 @@ func TestEventStreamTreatsTrimmedOlderDuplicateAsPublished(t *testing.T) {
 		OutboxID:       1,
 		StreamKey:      streamKey,
 		Seq:            1,
-		OrgID:          ids.ToPG(dbtest.DefaultOrgID),
-		RunID:          ids.ToPG(runID),
+		OrgID:          pgvalue.UUID(dbtest.DefaultOrgID),
+		RunID:          pgvalue.UUID(runID),
 		SubjectType:    db.EventSubjectTypeRun,
-		SubjectID:      ids.ToPG(runID),
+		SubjectID:      pgvalue.UUID(runID),
 		Kind:           "run.created",
 		Message:        "run.created",
 		Payload:        []byte(`{}`),

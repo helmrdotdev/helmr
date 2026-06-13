@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 type actorContextKey struct{}
@@ -186,17 +186,17 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 		}
 		return auth.Actor{}, err
 	}
-	sessionID, err := ids.FromPG(row.ID)
+	sessionID, err := pgvalue.UUIDValue(row.ID)
 	if err != nil {
 		return auth.Actor{}, err
 	}
-	userID, err := ids.FromPG(row.UserID)
+	userID, err := pgvalue.UUIDValue(row.UserID)
 	if err != nil {
 		return auth.Actor{}, err
 	}
 	if err := s.db.RefreshSession(r.Context(), db.RefreshSessionParams{
 		ID:        row.ID,
-		ExpiresAt: pgTimeToPG(time.Now().Add(s.effectiveSessionTTL())),
+		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(s.effectiveSessionTTL())),
 	}); err != nil {
 		return auth.Actor{}, err
 	}
@@ -206,7 +206,7 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 		Kind:      auth.ActorKindSession,
 	}
 	if row.OrgID.Valid {
-		orgID, err := ids.FromPG(row.OrgID)
+		orgID, err := pgvalue.UUIDValue(row.OrgID)
 		if err != nil {
 			return auth.Actor{}, err
 		}
@@ -232,19 +232,19 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		credentialID, err := ids.Parse(payload.CredentialID)
+		credentialID, err := uuid.Parse(payload.CredentialID)
 		if err != nil {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		workerInstanceID, err := ids.Parse(payload.WorkerInstanceID)
+		workerInstanceID, err := uuid.Parse(payload.WorkerInstanceID)
 		if err != nil {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
 		row, err := s.db.AuthorizeWorkerInstanceCredential(r.Context(), db.AuthorizeWorkerInstanceCredentialParams{
-			CredentialID:     ids.ToPG(credentialID),
-			WorkerInstanceID: ids.ToPG(workerInstanceID),
+			CredentialID:     pgvalue.UUID(credentialID),
+			WorkerInstanceID: pgvalue.UUID(workerInstanceID),
 		})
 		if isNoRows(err) {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
@@ -257,10 +257,10 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 		}
 		worker := workerActor{
 			WorkerInstanceID: workerInstanceID,
-			WorkerGroupID:    ids.MustFromPG(row.WorkerGroupID),
+			WorkerGroupID:    pgvalue.MustUUIDValue(row.WorkerGroupID),
 			ResourceID:       strings.TrimSpace(row.ResourceID),
 		}
-		if ids.MustFromPG(row.WorkerInstanceID) != workerInstanceID {
+		if pgvalue.MustUUIDValue(row.WorkerInstanceID) != workerInstanceID {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}

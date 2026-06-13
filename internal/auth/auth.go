@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -69,15 +69,15 @@ func (a DBAuthenticator) Authenticate(ctx context.Context, bearerToken string) (
 		}
 		return Actor{}, fmt.Errorf("verify api key: %w", err)
 	}
-	orgID, err := ids.FromPG(row.OrgID)
+	orgID, err := pgvalue.UUIDValue(row.OrgID)
 	if err != nil {
 		return Actor{}, fmt.Errorf("api key org id: %w", err)
 	}
-	projectID, err := ids.FromPG(row.ProjectID)
+	projectID, err := pgvalue.UUIDValue(row.ProjectID)
 	if err != nil {
 		return Actor{}, fmt.Errorf("api key project id: %w", err)
 	}
-	environmentID, err := ids.FromPG(row.EnvironmentID)
+	environmentID, err := pgvalue.UUIDValue(row.EnvironmentID)
 	if err != nil {
 		return Actor{}, fmt.Errorf("api key environment id: %w", err)
 	}
@@ -85,7 +85,7 @@ func (a DBAuthenticator) Authenticate(ctx context.Context, bearerToken string) (
 	if err != nil {
 		return Actor{}, fmt.Errorf("api key grants: %w", err)
 	}
-	apiKeyID, err := ids.FromPG(row.ID)
+	apiKeyID, err := pgvalue.UUIDValue(row.ID)
 	if err != nil {
 		return Actor{}, fmt.Errorf("api key id: %w", err)
 	}

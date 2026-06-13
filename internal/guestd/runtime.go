@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	pathpkg "path"
+	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
 const (
@@ -21,7 +23,7 @@ func installAdapterBundle(adapterBundlePath, imageRoot string) error {
 	if err := mkdirAllNoSymlink(imageRoot, "opt", 0o755); err != nil {
 		return err
 	}
-	target, err := safeJoin(imageRoot, "opt/helmr")
+	target, err := safepath.JoinSlash(imageRoot, "opt/helmr")
 	if err != nil {
 		return err
 	}
@@ -35,15 +37,15 @@ func installAdapterBundle(adapterBundlePath, imageRoot string) error {
 }
 
 func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, launchCwd string, runtimeUser *resolvedRuntimeUser) (string, error) {
-	runtimePath := pathpkg.Join(launchCwd, ".helmr", "deployment-source")
+	runtimePath := path.Join(launchCwd, ".helmr", "deployment-source")
 	if isReservedRuntimePath(runtimePath) {
 		return "", fmt.Errorf("deployment source path %s conflicts with reserved runtime paths", runtimePath)
 	}
-	parent := pathpkg.Join(strings.TrimPrefix(runtimePath, "/"), "..")
+	parent := path.Join(strings.TrimPrefix(runtimePath, "/"), "..")
 	if err := mkdirAllNoSymlink(imageRoot, parent, 0o755); err != nil {
 		return "", err
 	}
-	target, err := safeJoin(imageRoot, strings.TrimPrefix(runtimePath, "/"))
+	target, err := safepath.JoinSlash(imageRoot, strings.TrimPrefix(runtimePath, "/"))
 	if err != nil {
 		return "", err
 	}
@@ -65,8 +67,8 @@ func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, 
 }
 
 func isDeploymentSourceRuntimeExcluded(rel string, isDir bool) bool {
-	parts := strings.Split(filepath.ToSlash(rel), "/")
-	for _, part := range parts {
+	parts := strings.SplitSeq(filepath.ToSlash(rel), "/")
+	for part := range parts {
 		if part == "node_modules" {
 			return true
 		}
@@ -82,7 +84,7 @@ func imageNodeRuntimeCommand(imageRoot string, imageConfig ociRuntimeConfig) (st
 			pathValue = value
 		}
 	}
-	for _, dir := range strings.Split(pathValue, ":") {
+	for dir := range strings.SplitSeq(pathValue, ":") {
 		dir = strings.TrimSpace(dir)
 		if dir == "" {
 			continue
@@ -90,11 +92,11 @@ func imageNodeRuntimeCommand(imageRoot string, imageConfig ociRuntimeConfig) (st
 		if !strings.HasPrefix(dir, "/") {
 			continue
 		}
-		runtimePath := pathpkg.Clean(pathpkg.Join(dir, "node"))
+		runtimePath := path.Clean(path.Join(dir, "node"))
 		if isReservedRuntimePath(runtimePath) {
 			continue
 		}
-		hostPath, err := safeJoin(imageRoot, strings.TrimPrefix(runtimePath, "/"))
+		hostPath, err := safepath.JoinSlash(imageRoot, strings.TrimPrefix(runtimePath, "/"))
 		if err != nil {
 			return "", err
 		}

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 )
 
 func TestRequiredBuildSecretsValidatesSecretMounts(t *testing.T) {
