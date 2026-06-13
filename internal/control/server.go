@@ -18,7 +18,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/asyncbus"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -27,6 +26,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/schedule"
+	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -59,7 +59,7 @@ type Server struct {
 	runEnqueuer         RunEnqueuer
 	dispatchQueue       dispatch.Queue
 	scheduleEngine      ScheduleRegistrar
-	asyncPublisher      asyncbus.Publisher
+	waitpoints          *waitpoint.Notifier
 	eventStream         *EventStream
 	workerLeaseScanSeed atomic.Uint64
 	workerTokenSecret   []byte
@@ -122,7 +122,7 @@ type ServerConfig struct {
 	RunEnqueuer    RunEnqueuer
 	DispatchQueue  dispatch.Queue
 	ScheduleEngine ScheduleRegistrar
-	AsyncPublisher asyncbus.Publisher
+	Waitpoints     *waitpoint.Notifier
 	EventStream    *EventStream
 	Mailer         email.Sender
 	AuthProvider   AuthProvider
@@ -180,7 +180,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		runEnqueuer:         cfg.RunEnqueuer,
 		dispatchQueue:       cfg.DispatchQueue,
 		scheduleEngine:      cfg.ScheduleEngine,
-		asyncPublisher:      cfg.AsyncPublisher,
+		waitpoints:          cfg.Waitpoints,
 		eventStream:         cfg.EventStream,
 		workerTokenSecret:   cfg.WorkerTokenSecret,
 		workerTokenTTL:      workerTokenTTL,

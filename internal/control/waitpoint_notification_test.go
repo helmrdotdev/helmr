@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -22,7 +23,7 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 	runID := ids.New()
 	waitpointID := ids.New()
 	tokenID := ids.New()
-	waitpoint := waitpointView{
+	view := waitpointView{
 		ID:             ids.ToPG(waitpointID),
 		OrgID:          ids.ToPG(ids.DefaultOrgID),
 		ProjectID:      testProjectID(),
@@ -35,7 +36,7 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 		RequestedAt:    testTime(),
 	}
 	store := &notificationStore{
-		waitpoint: waitpoint,
+		waitpoint: view,
 		tokenID:   ids.ToPG(tokenID),
 		run: db.GetRunSummaryRow{
 			ID:            ids.ToPG(runID),
@@ -53,14 +54,8 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 		},
 	}
 	sender := &recordingEmailSender{}
-	server := &Server{
-		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		db:         store,
-		mailer:     sender,
-		authSecret: []byte("01234567890123456789012345678901"),
-		publicURL:  mustParseURL(t, "https://helmr.example.test"),
-	}
-	server.notifyPendingWaitpoint(context.Background(), waitpoint)
+	notifier := newTestWaitpointNotifier(t, store, sender)
+	notifier.NotifyPending(context.Background(), pendingWaitpoint(view))
 
 	if len(sender.messages) != 0 {
 		t.Fatalf("messages were sent synchronously = %+v", sender.messages)
@@ -73,7 +68,7 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 	}
 
 	deliveryID := ids.MustFromPG(store.createdDeliveries[0].ID)
-	if err := server.SendQueuedWaitpointDelivery(context.Background(), deliveryID); err != nil {
+	if err := notifier.SendQueuedDelivery(context.Background(), deliveryID); err != nil {
 		t.Fatalf("send queued delivery: %v", err)
 	}
 	if len(sender.messages) != 1 {
@@ -105,15 +100,9 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 func TestSendQueuedWaitpointDeliveryMarksObsoleteDelivery(t *testing.T) {
 	store := &notificationStore{}
 	sender := &recordingEmailSender{}
-	server := &Server{
-		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		db:         store,
-		mailer:     sender,
-		authSecret: []byte("01234567890123456789012345678901"),
-		publicURL:  mustParseURL(t, "https://helmr.example.test"),
-	}
+	notifier := newTestWaitpointNotifier(t, store, sender)
 
-	if err := server.SendQueuedWaitpointDelivery(context.Background(), ids.New()); err != nil {
+	if err := notifier.SendQueuedDelivery(context.Background(), ids.New()); err != nil {
 		t.Fatalf("send queued delivery: %v", err)
 	}
 	if store.obsoleteDeliveries != 1 {
@@ -166,15 +155,9 @@ func TestSendQueuedWaitpointDeliveryDoesNotSwallowSupersededSentMark(t *testing.
 		markSentErr: pgx.ErrNoRows,
 	}
 	sender := &recordingEmailSender{}
-	server := &Server{
-		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		db:         store,
-		mailer:     sender,
-		authSecret: []byte("01234567890123456789012345678901"),
-		publicURL:  mustParseURL(t, "https://helmr.example.test"),
-	}
+	notifier := newTestWaitpointNotifier(t, store, sender)
 
-	err := server.SendQueuedWaitpointDelivery(context.Background(), deliveryID)
+	err := notifier.SendQueuedDelivery(context.Background(), deliveryID)
 	if err == nil {
 		t.Fatal("send queued delivery error = nil, want superseded claim error")
 	}
@@ -451,6 +434,23 @@ func TestWaitpointTokenCompletionReturnsAcceptedWhenResolveDoesNotResume(t *test
 	}
 }
 
+func newTestWaitpointNotifier(t *testing.T, store *notificationStore, sender email.Sender) *waitpoint.Notifier {
+	t.Helper()
+	notifier, err := waitpoint.NewNotifier(waitpoint.Config{
+		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Store:      store,
+		Mailer:     sender,
+		PublicURL:  mustParseURL(t, "https://helmr.example.test"),
+		AuthSecret: []byte("01234567890123456789012345678901"),
+	})
+	if err != nil {
+		t.Fatalf("new waitpoint notifier: %v", err)
+	}
+	return notifier
+}
+
+var _ waitpoint.Store = (*notificationStore)(nil)
+
 type notificationStore struct {
 	db.Querier
 	run                db.GetRunSummaryRow
@@ -648,6 +648,17 @@ func (s *notificationStore) MarkWaitpointDeliveryFailed(_ context.Context, arg d
 	}, nil
 }
 
+func (s *notificationStore) MarkWaitpointDeliverySignaled(_ context.Context, arg db.MarkWaitpointDeliverySignaledParams) (db.WaitpointDelivery, error) {
+	return db.WaitpointDelivery{
+		ID:            arg.DeliveryID,
+		OrgID:         arg.OrgID,
+		Status:        db.WaitpointDeliveryStatusQueued,
+		NextAttemptAt: arg.NextAttemptAt,
+		CreatedAt:     testTime(),
+		UpdatedAt:     testTime(),
+	}, nil
+}
+
 func (s *notificationStore) MarkObsoleteWaitpointDeliveryFailed(_ context.Context, deliveryID pgtype.UUID) (db.WaitpointDelivery, error) {
 	s.obsoleteDeliveries++
 	return db.WaitpointDelivery{
@@ -656,6 +667,14 @@ func (s *notificationStore) MarkObsoleteWaitpointDeliveryFailed(_ context.Contex
 		CreatedAt: testTime(),
 		UpdatedAt: testTime(),
 	}, nil
+}
+
+func (s *notificationStore) RequeueStaleSendingWaitpointDeliveries(context.Context, db.RequeueStaleSendingWaitpointDeliveriesParams) error {
+	return nil
+}
+
+func (s *notificationStore) ListDueWaitpointDeliveries(context.Context, int32) ([]db.WaitpointDelivery, error) {
+	return nil, nil
 }
 
 func (s *notificationStore) GetWaitpointResponseTokenForRespond(_ context.Context, arg db.GetWaitpointResponseTokenForRespondParams) (db.GetWaitpointResponseTokenForRespondRow, error) {

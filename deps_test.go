@@ -40,7 +40,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"compute":         {"cas"},
 		"config":          {"auth"},
 		"console":         {},
-		"control":         {"api", "archive", "asyncbus", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "ids", "schedule", "secret", "tracing"},
+		"control":         {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "ids", "schedule", "secret", "tracing", "waitpoint"},
 		"db":              {},
 		"db/schema":       {},
 		"deployment":      {"api", "archive", "builder", "cas", "compute", "proto/bundle/v0", "schedule", "secret", "task", "transport", "vm"},
@@ -60,6 +60,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"transport":       {"proto/run/v0"},
 		"version":         {},
 		"vm":              {"compute"},
+		"waitpoint":       {"api", "asyncbus", "auth", "db", "email", "ids"},
 		"worker":          {"api", "client", "compute"},
 		"workspace":       {},
 	}

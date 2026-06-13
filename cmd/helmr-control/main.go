@@ -27,6 +27,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -100,6 +101,22 @@ func run(log *slog.Logger) error {
 			return fmt.Errorf("configure async bus: %w", err)
 		}
 	}
+	publicURL, err := url.Parse(cfg.PublicURL)
+	if err != nil {
+		return fmt.Errorf("parse public URL: %w", err)
+	}
+	mailer := configuredEmailSender(log, cfg)
+	waitpoints, err := waitpoint.NewNotifier(waitpoint.Config{
+		Log:        log,
+		Store:      queries,
+		Mailer:     mailer,
+		Publisher:  asyncPublisher,
+		PublicURL:  publicURL,
+		AuthSecret: []byte(cfg.AuthSecret),
+	})
+	if err != nil {
+		return fmt.Errorf("configure waitpoint notifier: %w", err)
+	}
 	eventStream, err := control.NewEventStream(log, queries, redisClient)
 	if err != nil {
 		return fmt.Errorf("configure event stream: %w", err)
@@ -132,10 +149,6 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
-	publicURL, err := url.Parse(cfg.PublicURL)
-	if err != nil {
-		return fmt.Errorf("parse public URL: %w", err)
-	}
 	var authProvider control.AuthProvider
 	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
 		authProvider = control.NewGitHubOAuthProvider(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
@@ -152,9 +165,9 @@ func run(log *slog.Logger) error {
 		RunEnqueuer:         runEnqueuer,
 		DispatchQueue:       dispatchQueue,
 		ScheduleEngine:      scheduleEngine,
-		AsyncPublisher:      asyncPublisher,
+		Waitpoints:          waitpoints,
 		EventStream:         eventStream,
-		Mailer:              configuredEmailSender(log, cfg),
+		Mailer:              mailer,
 		AuthProvider:        authProvider,
 		WorkerTokenSecret:   []byte(cfg.WorkerTokenSigningKey),
 		WorkerRegisterToken: cfg.WorkerBootstrapToken,

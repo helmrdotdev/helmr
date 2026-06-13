@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/mail"
 	"regexp"
 	"strings"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -269,7 +269,7 @@ func validateWaitpointPolicyConfig(config api.WaitpointPolicyConfig) error {
 	for _, reviewer := range config.Reviewers {
 		switch reviewer.Type {
 		case "email":
-			if err := validateEmailRecipient(reviewer.Address); err != nil {
+			if err := waitpoint.ValidateEmailRecipient(reviewer.Address); err != nil {
 				return errors.New("email reviewer address is required")
 			}
 		case "helmr_role":
@@ -289,7 +289,7 @@ func validateWaitpointPolicyConfig(config api.WaitpointPolicyConfig) error {
 				return errors.New("email delivery must include at least one recipient")
 			}
 			for _, recipient := range delivery.To {
-				if err := validateEmailRecipient(recipient); err != nil {
+				if err := waitpoint.ValidateEmailRecipient(recipient); err != nil {
 					return fmt.Errorf("invalid email delivery recipient %q", recipient)
 				}
 			}
@@ -364,42 +364,4 @@ func waitpointPolicyResponse(policy db.WaitpointPolicy) api.WaitpointPolicyRespo
 		CreatedAt:     pgTime(policy.CreatedAt),
 		UpdatedAt:     pgTime(policy.UpdatedAt),
 	}
-}
-
-func waitpointPolicyEmailRecipients(config api.WaitpointPolicyConfig) []string {
-	seen := map[string]struct{}{}
-	recipients := []string{}
-	for _, delivery := range config.Deliveries {
-		if delivery.Type != "email" {
-			continue
-		}
-		for _, raw := range delivery.To {
-			recipient := normalizeEmailRecipient(raw)
-			if recipient == "" {
-				continue
-			}
-			if _, ok := seen[recipient]; ok {
-				continue
-			}
-			seen[recipient] = struct{}{}
-			recipients = append(recipients, recipient)
-		}
-	}
-	return recipients
-}
-
-func normalizeEmailRecipient(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
-}
-
-func validateEmailRecipient(value string) error {
-	normalized := normalizeEmailRecipient(value)
-	if normalized == "" {
-		return errors.New("email is required")
-	}
-	address, err := mail.ParseAddress(normalized)
-	if err != nil || address.Address != normalized {
-		return errors.New("email is invalid")
-	}
-	return nil
 }

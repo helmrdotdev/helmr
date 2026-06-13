@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -527,4 +528,48 @@ func decodeOptionalJSON(r io.Reader, out any) error {
 		return err
 	}
 	return nil
+}
+
+type waitpointView struct {
+	ID             pgtype.UUID
+	RunWaitID      pgtype.UUID
+	OrgID          pgtype.UUID
+	ProjectID      pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	RunID          pgtype.UUID
+	SessionID      pgtype.UUID
+	CheckpointID   pgtype.UUID
+	CorrelationID  string
+	Kind           db.WaitpointKind
+	Request        []byte
+	DisplayText    string
+	TimeoutSeconds pgtype.Int4
+	PolicyName     pgtype.Text
+	PolicySnapshot []byte
+	Status         db.RunWaitStatus
+	ResolutionKind pgtype.Text
+	Resolution     []byte
+	CreatedAt      pgtype.Timestamptz
+	RequestedAt    pgtype.Timestamptz
+	ResolvedAt     pgtype.Timestamptz
+}
+
+func (s *Server) notifyPendingWaitpoint(ctx context.Context, view waitpointView) {
+	if s.waitpoints == nil {
+		return
+	}
+	s.waitpoints.NotifyPending(ctx, pendingWaitpoint(view))
+}
+
+func pendingWaitpoint(view waitpointView) waitpoint.Pending {
+	return waitpoint.Pending{
+		ID:             view.ID,
+		RunWaitID:      view.RunWaitID,
+		OrgID:          view.OrgID,
+		RunID:          view.RunID,
+		Kind:           view.Kind,
+		DisplayText:    view.DisplayText,
+		PolicySnapshot: view.PolicySnapshot,
+		RequestedAt:    view.RequestedAt,
+	}
 }

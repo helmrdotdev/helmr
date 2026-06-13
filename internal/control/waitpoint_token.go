@@ -16,13 +16,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgtype"
-)
-
-const (
-	waitpointResponseTokenPrefix     = "hlmr_wpt_"
-	waitpointResponseTokenBytes      = 32
-	defaultWaitpointResponseTokenTTL = 24 * time.Hour
 )
 
 type waitpointResponseData struct {
@@ -33,13 +28,8 @@ type waitpointResponseData struct {
 	Metadata       []byte
 }
 
-func waitpointKindExternallyCompletable(kind db.WaitpointKind) bool {
-	switch kind {
-	case db.WaitpointKindHuman:
-		return true
-	default:
-		return false
-	}
+func (s *Server) waitpointResponseTokensConfigured() bool {
+	return s.db != nil && auth.ValidateTokenSecret(s.authSecret) == nil
 }
 
 func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +52,7 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	expiresAt, err := waitpointTokenExpiry(now, request.ExpiresAt, request.ExpiresInSeconds, defaultWaitpointResponseTokenTTL, "expires")
+	expiresAt, err := waitpointTokenExpiry(now, request.ExpiresAt, request.ExpiresInSeconds, waitpoint.DefaultResponseTokenTTL, "expires")
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -73,7 +63,7 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	waitpoint, err := s.db.GetWaitpointForResponseTokenCreation(r.Context(), db.GetWaitpointForResponseTokenCreationParams{
+	pending, err := s.db.GetWaitpointForResponseTokenCreation(r.Context(), db.GetWaitpointForResponseTokenCreationParams{
 		OrgID:       ids.ToPG(actor.OrgID),
 		WaitpointID: ids.ToPG(waitpointID),
 	})
@@ -88,10 +78,10 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 	}
 	scope := auth.Scope{
 		OrgID:         actor.OrgID,
-		ProjectID:     ids.MustFromPG(waitpoint.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(waitpoint.EnvironmentID).String(),
+		ProjectID:     ids.MustFromPG(pending.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(pending.EnvironmentID).String(),
 	}
-	if err := s.requireActorScopeForRecord(r, actor, waitpoint.ProjectID, waitpoint.EnvironmentID); err != nil {
+	if err := s.requireActorScopeForRecord(r, actor, pending.ProjectID, pending.EnvironmentID); err != nil {
 		if isNoRows(err) {
 			writeError(w, notFound(errors.New("pending waitpoint not found")))
 			return
@@ -103,16 +93,16 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	if !waitpointKindExternallyCompletable(waitpoint.Kind) {
+	if !waitpoint.KindExternallyCompletable(pending.Kind) {
 		writeError(w, badRequest(errors.New("waitpoint kind cannot be responded to externally")))
 		return
 	}
-	rawToken, tokenHash, err := s.generateWaitpointResponseToken()
+	rawToken, tokenHash, err := waitpoint.NewResponseToken(s.authSecret)
 	if err != nil {
 		writeError(w, errors.New("generate waitpoint token"))
 		return
 	}
-	row, err := s.db.CreateWaitpointResponseToken(r.Context(), db.CreateWaitpointResponseTokenParams{
+	token, err := s.db.CreateWaitpointResponseToken(r.Context(), db.CreateWaitpointResponseTokenParams{
 		ID:              ids.ToPG(ids.New()),
 		OrgID:           ids.ToPG(actor.OrgID),
 		WaitpointID:     ids.ToPG(waitpointID),
@@ -130,7 +120,7 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("create waitpoint token"))
 		return
 	}
-	writeJSON(w, http.StatusCreated, s.waitpointTokenResponseFromCreate(row, rawToken))
+	writeJSON(w, http.StatusCreated, s.waitpointTokenResponseFromCreate(token, rawToken))
 }
 
 func (s *Server) respondWaitpointToken(w http.ResponseWriter, r *http.Request) {
@@ -158,7 +148,7 @@ func (s *Server) respondWaitpointToken(w http.ResponseWriter, r *http.Request) {
 			rawToken = bearer
 		}
 	}
-	tokenHash, err := s.hashWaitpointResponseToken(rawToken)
+	tokenHash, err := waitpoint.HashResponseToken(s.authSecret, rawToken)
 	if err != nil {
 		writeError(w, unauthorized(errors.New("invalid token")))
 		return
@@ -176,7 +166,7 @@ func (s *Server) respondWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("respond with waitpoint token"))
 		return
 	}
-	if !waitpointKindExternallyCompletable(token.WaitpointKind) {
+	if !waitpoint.KindExternallyCompletable(token.WaitpointKind) {
 		writeError(w, conflict(errors.New("waitpoint kind cannot be responded to externally")))
 		return
 	}
@@ -336,27 +326,6 @@ func waitpointFormValue(raw string) (json.RawMessage, error) {
 	return json.RawMessage(encoded), nil
 }
 
-func (s *Server) generateWaitpointResponseToken() (string, []byte, error) {
-	raw, err := auth.GenerateOpaqueToken(waitpointResponseTokenBytes)
-	if err != nil {
-		return "", nil, err
-	}
-	token := waitpointResponseTokenPrefix + raw
-	hash, err := s.hashWaitpointResponseToken(token)
-	if err != nil {
-		return "", nil, err
-	}
-	return token, hash, nil
-}
-
-func (s *Server) hashWaitpointResponseToken(raw string) ([]byte, error) {
-	raw = strings.TrimSpace(raw)
-	if !strings.HasPrefix(raw, waitpointResponseTokenPrefix) {
-		return nil, auth.ErrUnauthenticated
-	}
-	return auth.HashToken(s.authSecret, raw)
-}
-
 func waitpointTokenExpiry(now time.Time, expiresAt *time.Time, expiresInSeconds *int32, defaultTTL time.Duration, name string) (time.Time, error) {
 	if expiresAt != nil && expiresInSeconds != nil {
 		return time.Time{}, fmt.Errorf("%s_at and %s_in_seconds cannot both be set", name, name)
@@ -431,7 +400,7 @@ func waitpointTokenPrincipal(token db.GetWaitpointResponseTokenForRespondRow, ex
 }
 
 func waitpointResponsePayload(kind db.WaitpointKind, principal string, value json.RawMessage, metadata json.RawMessage, now time.Time) (waitpointResponseData, error) {
-	if !waitpointKindExternallyCompletable(kind) {
+	if !waitpoint.KindExternallyCompletable(kind) {
 		return waitpointResponseData{}, errors.New("waitpoint kind cannot be responded to externally")
 	}
 	responseMetadata, err := normalizeWaitpointTokenMetadata(metadata)
@@ -490,9 +459,9 @@ func waitpointResponseRequestHash(value json.RawMessage, _ string, metadata json
 }
 
 func (s *Server) waitpointTokenURL(id string, token string) string {
-	confirmation, err := s.waitpointConfirmationURL(id, token)
+	confirmation, err := waitpoint.ConfirmationURL(s.publicURL, id, token)
 	if err == nil {
 		return confirmation
 	}
-	return waitpointConfirmationPath(id, token)
+	return waitpoint.ConfirmationPath(id, token)
 }
