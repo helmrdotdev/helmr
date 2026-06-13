@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 	"unicode"
 
@@ -14,8 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
-
-var environmentColorFlagPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
 func projectCommand() *cobra.Command {
 	project := &cobra.Command{
@@ -554,11 +551,11 @@ func writeEnvironment(w io.Writer, environment api.EnvironmentSummary) error {
 }
 
 func normalizeEnvironmentColorFlag(colorHex string) (string, error) {
-	colorHex = strings.TrimSpace(colorHex)
-	if !environmentColorFlagPattern.MatchString(colorHex) {
+	normalized, err := api.NormalizeEnvironmentColorHex(colorHex)
+	if err != nil {
 		return "", errors.New("environment color must be a #RRGGBB color")
 	}
-	return strings.ToUpper(colorHex), nil
+	return normalized, nil
 }
 
 func defaultEnvironmentColorHex(slug string) string {

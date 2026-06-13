@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
+	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
 // WorkspaceArtifact is the product-managed artifact used to seed a writable
@@ -70,11 +70,11 @@ func validateRootInside(root string, trustedRoot string) error {
 	if strings.TrimSpace(trustedRoot) == "" {
 		return errors.New("trusted workspace root is required")
 	}
-	rel, err := filepath.Rel(trustedRoot, root)
+	inside, err := safepath.Contains(trustedRoot, root)
 	if err != nil {
 		return fmt.Errorf("resolve workspace root: %w", err)
 	}
-	if strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
+	if !inside {
 		return errors.New("workspace root must be inside trusted root")
 	}
 	return nil

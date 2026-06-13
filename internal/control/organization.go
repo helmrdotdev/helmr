@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -136,6 +137,6 @@ func organizationResponse(org db.Organization) api.OrganizationSummary {
 		ID:        ids.MustFromPG(org.ID).String(),
 		Slug:      org.Slug,
 		Name:      org.Name,
-		CreatedAt: pgTime(org.CreatedAt),
+		CreatedAt: pgvalue.Time(org.CreatedAt),
 	}
 }

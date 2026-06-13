@@ -8,6 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -34,7 +35,7 @@ func TestScheduleRepairEntriesAndCursorAdvance(t *testing.T) {
 		Active:        true,
 		InstanceID:    instanceID,
 		EnvironmentID: scope.EnvironmentID,
-		NextFireAt:    pgTime(scheduledAt),
+		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +45,7 @@ func TestScheduleRepairEntriesAndCursorAdvance(t *testing.T) {
 	}
 
 	indexRows, err := queries.ListScheduleRepairEntries(ctx, db.ListScheduleRepairEntriesParams{
-		AvailableBefore: pgTime(time.Now().UTC().Add(time.Hour)),
+		AvailableBefore: pgvalue.Timestamptz(time.Now().UTC().Add(time.Hour)),
 		RowLimit:        10,
 	})
 	if err != nil {
@@ -57,7 +58,7 @@ func TestScheduleRepairEntriesAndCursorAdvance(t *testing.T) {
 	candidate, err := queries.GetScheduleTriggerCandidate(ctx, db.GetScheduleTriggerCandidateParams{
 		InstanceID:  instanceID,
 		Generation:  created.Generation,
-		ScheduledAt: pgTime(scheduledAt),
+		ScheduledAt: pgvalue.Timestamptz(scheduledAt),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,8 +71,8 @@ func TestScheduleRepairEntriesAndCursorAdvance(t *testing.T) {
 	advanced, err := queries.AdvanceScheduleInstance(ctx, db.AdvanceScheduleInstanceParams{
 		InstanceID:       instanceID,
 		Generation:       created.Generation,
-		LastFireAt:       pgTime(scheduledAt),
-		NextFireAt:       pgTime(next),
+		LastFireAt:       pgvalue.Timestamptz(scheduledAt),
+		NextFireAt:       pgvalue.Timestamptz(next),
 		LastTriggerRunID: ids.ToPG(ids.New()),
 	})
 	if err != nil {
@@ -84,7 +85,7 @@ func TestScheduleRepairEntriesAndCursorAdvance(t *testing.T) {
 	_, err = queries.GetScheduleTriggerCandidate(ctx, db.GetScheduleTriggerCandidateParams{
 		InstanceID:  instanceID,
 		Generation:  created.Generation,
-		ScheduledAt: pgTime(scheduledAt),
+		ScheduledAt: pgvalue.Timestamptz(scheduledAt),
 	})
 	if err == nil {
 		t.Fatal("stale scheduled_at candidate still matched")
@@ -116,7 +117,7 @@ func TestScheduleTriggerFailurePersistsRetryAndExhausts(t *testing.T) {
 		Active:        true,
 		InstanceID:    instanceID,
 		EnvironmentID: scope.EnvironmentID,
-		NextFireAt:    pgTime(scheduledAt),
+		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -126,10 +127,10 @@ func TestScheduleTriggerFailurePersistsRetryAndExhausts(t *testing.T) {
 	if affected, err := queries.MarkScheduleInstanceTriggerFailed(ctx, db.MarkScheduleInstanceTriggerFailedParams{
 		InstanceID:   instanceID,
 		Generation:   created.Generation,
-		ScheduledAt:  pgTime(scheduledAt),
+		ScheduledAt:  pgvalue.Timestamptz(scheduledAt),
 		ErrorKind:    "trigger_failed",
 		ErrorMessage: "transient",
-		RetryAfter:   pgTime(retryAt),
+		RetryAfter:   pgvalue.Timestamptz(retryAt),
 	}); err != nil {
 		t.Fatal(err)
 	} else if affected != 1 {
@@ -151,7 +152,7 @@ func TestScheduleTriggerFailurePersistsRetryAndExhausts(t *testing.T) {
 	if _, err := queries.GetScheduleTriggerCandidate(ctx, db.GetScheduleTriggerCandidateParams{
 		InstanceID:  instanceID,
 		Generation:  created.Generation,
-		ScheduledAt: pgTime(scheduledAt),
+		ScheduledAt: pgvalue.Timestamptz(scheduledAt),
 	}); err == nil {
 		t.Fatal("candidate matched before retry_after")
 	} else if err != pgx.ErrNoRows {
@@ -161,10 +162,10 @@ func TestScheduleTriggerFailurePersistsRetryAndExhausts(t *testing.T) {
 	if affected, err := queries.MarkScheduleInstanceTriggerFailed(ctx, db.MarkScheduleInstanceTriggerFailedParams{
 		InstanceID:   instanceID,
 		Generation:   created.Generation,
-		ScheduledAt:  pgTime(scheduledAt),
+		ScheduledAt:  pgvalue.Timestamptz(scheduledAt),
 		ErrorKind:    "trigger_failed",
 		ErrorMessage: "exhausted",
-		RetryAfter:   pgTime(time.Now().UTC().Add(time.Minute)),
+		RetryAfter:   pgvalue.Timestamptz(time.Now().UTC().Add(time.Minute)),
 	}); err != nil {
 		t.Fatal(err)
 	} else if affected != 1 {
@@ -188,8 +189,8 @@ func TestScheduleTriggerFailurePersistsRetryAndExhausts(t *testing.T) {
 	if _, err := queries.SkipScheduleInstanceTrigger(ctx, db.SkipScheduleInstanceTriggerParams{
 		InstanceID: instanceID,
 		Generation: created.Generation,
-		LastFireAt: pgTime(scheduledAt),
-		NextFireAt: pgTime(next),
+		LastFireAt: pgvalue.Timestamptz(scheduledAt),
+		NextFireAt: pgvalue.Timestamptz(next),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +231,7 @@ func TestStopScheduleInstanceTriggerClearsCursorAndKeepsError(t *testing.T) {
 		Active:        true,
 		InstanceID:    instanceID,
 		EnvironmentID: scope.EnvironmentID,
-		NextFireAt:    pgTime(scheduledAt),
+		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -238,10 +239,10 @@ func TestStopScheduleInstanceTriggerClearsCursorAndKeepsError(t *testing.T) {
 	if affected, err := queries.MarkScheduleInstanceTriggerFailed(ctx, db.MarkScheduleInstanceTriggerFailedParams{
 		InstanceID:   instanceID,
 		Generation:   created.Generation,
-		ScheduledAt:  pgTime(scheduledAt),
+		ScheduledAt:  pgvalue.Timestamptz(scheduledAt),
 		ErrorKind:    "trigger_failed",
 		ErrorMessage: "cron has no future occurrences",
-		RetryAfter:   pgTime(retryAt),
+		RetryAfter:   pgvalue.Timestamptz(retryAt),
 	}); err != nil {
 		t.Fatal(err)
 	} else if affected != 1 {
@@ -250,7 +251,7 @@ func TestStopScheduleInstanceTriggerClearsCursorAndKeepsError(t *testing.T) {
 	if affected, err := queries.StopScheduleInstanceTrigger(ctx, db.StopScheduleInstanceTriggerParams{
 		InstanceID:  instanceID,
 		Generation:  created.Generation,
-		ScheduledAt: pgTime(scheduledAt),
+		ScheduledAt: pgvalue.Timestamptz(scheduledAt),
 	}); err != nil {
 		t.Fatal(err)
 	} else if affected != 1 {
@@ -291,7 +292,7 @@ func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 		Active:        true,
 		InstanceID:    ids.ToPG(ids.New()),
 		EnvironmentID: scope.EnvironmentID,
-		NextFireAt:    pgTime(scheduledAt),
+		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -341,7 +342,7 @@ func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 		Active:        true,
 		InstanceID:    ids.ToPG(ids.New()),
 		EnvironmentID: scope.EnvironmentID,
-		NextFireAt:    pgTime(scheduledAt),
+		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -360,7 +361,7 @@ func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 		Active:        true,
 		InstanceID:    ids.ToPG(ids.New()),
 		EnvironmentID: environmentID,
-		NextFireAt:    pgTime(scheduledAt),
+		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +435,7 @@ func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstanc
 		Active:        true,
 		InstanceID:    ids.ToPG(ids.New()),
 		EnvironmentID: scope.EnvironmentID,
-		NextFireAt:    pgTime(firstScheduledAt),
+		NextFireAt:    pgvalue.Timestamptz(firstScheduledAt),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -455,7 +456,7 @@ func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstanc
 		Active:        false,
 		InstanceID:    ids.ToPG(ids.New()),
 		EnvironmentID: environmentID,
-		NextFireAt:    pgTime(secondScheduledAt),
+		NextFireAt:    pgvalue.Timestamptz(secondScheduledAt),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -519,7 +520,7 @@ func TestScheduleDedupKeysAreNamespacedByScheduleType(t *testing.T) {
 		Active:        true,
 		InstanceID:    ids.ToPG(ids.New()),
 		EnvironmentID: scope.EnvironmentID,
-		NextFireAt:    pgTime(scheduledAt),
+		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -538,7 +539,7 @@ func TestScheduleDedupKeysAreNamespacedByScheduleType(t *testing.T) {
 		Active:        true,
 		InstanceID:    ids.ToPG(ids.New()),
 		EnvironmentID: scope.EnvironmentID,
-		NextFireAt:    pgTime(scheduledAt.Add(time.Hour)),
+		NextFireAt:    pgvalue.Timestamptz(scheduledAt.Add(time.Hour)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -582,7 +583,7 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 		Active:        true,
 		InstanceID:    ids.ToPG(ids.New()),
 		EnvironmentID: scope.EnvironmentID,
-		NextFireAt:    pgTime(scheduledAt),
+		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -601,7 +602,7 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 		Active:        true,
 		InstanceID:    ids.ToPG(ids.New()),
 		EnvironmentID: environmentID,
-		NextFireAt:    pgTime(scheduledAt),
+		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -610,10 +611,10 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 	if affected, err := queries.MarkScheduleInstanceTriggerFailed(ctx, db.MarkScheduleInstanceTriggerFailedParams{
 		InstanceID:   second.InstanceID,
 		Generation:   second.Generation,
-		ScheduledAt:  pgTime(scheduledAt),
+		ScheduledAt:  pgvalue.Timestamptz(scheduledAt),
 		ErrorKind:    "trigger_failed",
 		ErrorMessage: "keep retry",
-		RetryAfter:   pgTime(retryAt),
+		RetryAfter:   pgvalue.Timestamptz(retryAt),
 	}); err != nil {
 		t.Fatal(err)
 	} else if affected != 1 {
@@ -631,7 +632,7 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		ScheduleID:    first.ScheduleID,
-		NextFireAt:    pgTime(scheduledAt),
+		NextFireAt:    pgvalue.Timestamptz(scheduledAt),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -660,7 +661,7 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		ScheduleID:    first.ScheduleID,
-		NextFireAt:    pgTime(nextFireAt),
+		NextFireAt:    pgvalue.Timestamptz(nextFireAt),
 	}); err != nil {
 		t.Fatal(err)
 	}

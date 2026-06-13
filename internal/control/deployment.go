@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -960,11 +961,11 @@ func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceA
 		DeploymentManifestDigest: deploymentManifestDigest,
 		Status:                   string(deployment.Status),
 		Error:                    deploymentErrorResponse(deployment.Failure),
-		CreatedAt:                pgTime(deployment.CreatedAt),
-		BuildingAt:               pgTime(deployment.BuildingAt),
-		BuiltAt:                  pgTime(deployment.BuiltAt),
-		DeployedAt:               pgTime(deployment.DeployedAt),
-		FailedAt:                 pgTime(deployment.FailedAt),
+		CreatedAt:                pgvalue.Time(deployment.CreatedAt),
+		BuildingAt:               pgvalue.Time(deployment.BuildingAt),
+		BuiltAt:                  pgvalue.Time(deployment.BuiltAt),
+		DeployedAt:               pgvalue.Time(deployment.DeployedAt),
+		FailedAt:                 pgvalue.Time(deployment.FailedAt),
 	}
 }
 
@@ -1078,9 +1079,9 @@ func deploymentTaskResponse(task db.DeploymentTask, artifact db.Artifact) api.De
 		HandlerEntrypoint: task.HandlerEntrypoint,
 		BundleDigest:      artifact.Digest,
 		QueueName:         task.QueueName,
-		ConcurrencyLimit:  pgInt4Response(task.QueueConcurrencyLimit),
+		ConcurrencyLimit:  pgvalue.Int4Response(task.QueueConcurrencyLimit),
 		TTL:               task.Ttl,
-		CreatedAt:         pgTime(task.CreatedAt),
+		CreatedAt:         pgvalue.Time(task.CreatedAt),
 	}
 }
 

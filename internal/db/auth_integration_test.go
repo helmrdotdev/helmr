@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -484,7 +485,7 @@ func TestDisableOrgMemberAndRevokeOrgSessionsRevokesGlobalSession(t *testing.T) 
 		ID:        sessionID,
 		UserID:    userID,
 		TokenHash: []byte("global-session-token"),
-		ExpiresAt: pgTime(time.Now().Add(time.Hour)),
+		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -27,6 +27,7 @@ import (
 	fcvsock "github.com/firecracker-microvm/firecracker-go-sdk/vsock"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -57,8 +58,8 @@ func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if digest != cas.DigestBytes(manifestBytes) {
-		t.Fatalf("digest = %q, want %q", digest, cas.DigestBytes(manifestBytes))
+	if digest != sha256sum.DigestBytes(manifestBytes) {
+		t.Fatalf("digest = %q, want %q", digest, sha256sum.DigestBytes(manifestBytes))
 	}
 	var manifest snapshotManifest
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
@@ -330,7 +331,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				KernelDigest:        kernelDigest,
 				InitramfsDigest:     initramfsDigest,
 				RootfsDigest:        rootfsDigest,
-				RuntimeConfigDigest: cas.DigestBytes(manifestBytes),
+				RuntimeConfigDigest: sha256sum.DigestBytes(manifestBytes),
 			}
 			if tt.editIdentity != nil {
 				tt.editIdentity(&identity)

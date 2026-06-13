@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -400,7 +401,7 @@ func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
 	}
 	requireIdempotencyHashChanged("queue name", queueHash)
 	changedScheduling = scheduling
-	changedScheduling.concurrencyKey = pgText("deploy:prod")
+	changedScheduling.concurrencyKey = pgvalue.Text("deploy:prod")
 	concurrencyHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, retryPolicy, metadata, tags, changedScheduling)
 	if err != nil {
 		t.Fatal(err)

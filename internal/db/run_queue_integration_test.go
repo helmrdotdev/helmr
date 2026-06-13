@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -33,10 +34,10 @@ func TestLeaseRunExecutionSessionSeparatesWorkerGroupsWithinSharedQueue(t *testi
 		RunID:             runB,
 		WorkerInstanceID:  instanceA.ID,
 		SessionID:         ids.ToPG(ids.New()),
-		DispatchMessageID: pgText("message-shared-b"),
+		DispatchMessageID: pgvalue.Text("message-shared-b"),
 		DispatchLeaseID:   "lease-shared-b",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("cross-group lease error = %v, want no rows", err)
@@ -46,10 +47,10 @@ func TestLeaseRunExecutionSessionSeparatesWorkerGroupsWithinSharedQueue(t *testi
 		RunID:             runA,
 		WorkerInstanceID:  instanceA.ID,
 		SessionID:         ids.ToPG(ids.New()),
-		DispatchMessageID: pgText("message-shared-a"),
+		DispatchMessageID: pgvalue.Text("message-shared-a"),
 		DispatchLeaseID:   "lease-shared-a",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -74,10 +75,10 @@ func TestLeaseRunExecutionSessionHonorsQueuedExpiry(t *testing.T) {
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         ids.ToPG(ids.New()),
-		DispatchMessageID: pgText("message-expired"),
+		DispatchMessageID: pgvalue.Text("message-expired"),
 		DispatchLeaseID:   "lease-expired",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -138,10 +139,10 @@ UPDATE runs
 				RunID:             attempt.runID,
 				WorkerInstanceID:  instance.ID,
 				SessionID:         attempt.execID,
-				DispatchMessageID: pgText(attempt.messageID),
+				DispatchMessageID: pgvalue.Text(attempt.messageID),
 				DispatchLeaseID:   attempt.leaseID,
 				DispatchAttempt:   1,
-				LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+				LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 				SessionSpanID:     "0123456789abcdef",
 			})
 			results <- leaseResult{attempt: attempt, err: err}
@@ -202,10 +203,10 @@ UPDATE runs
 		RunID:             blocked.runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         ids.ToPG(ids.New()),
-		DispatchMessageID: pgText(blocked.messageID),
+		DispatchMessageID: pgvalue.Text(blocked.messageID),
 		DispatchLeaseID:   blocked.leaseID,
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -227,10 +228,10 @@ func TestCancelRequeuedLeasedRunFinalizesQueueItem(t *testing.T) {
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-requeue-cancel"),
+		DispatchMessageID: pgvalue.Text("message-requeue-cancel"),
 		DispatchLeaseID:   "lease-requeue-cancel",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -305,10 +306,10 @@ func TestRequeueExpiredLeasedRunExecutionSessionsHandlesMultipleRuns(t *testing.
 			RunID:             runID,
 			WorkerInstanceID:  instance.ID,
 			SessionID:         sessionID,
-			DispatchMessageID: pgText(messageID),
+			DispatchMessageID: pgvalue.Text(messageID),
 			DispatchLeaseID:   "lease-expired-leased-multi-" + suffix,
 			DispatchAttempt:   1,
-			LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+			LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 			SessionSpanID:     "0123456789abcdef",
 		}); err != nil {
 			t.Fatal(err)
@@ -417,7 +418,7 @@ func TestDeadLetterRunQueueItemFailsQueuedRun(t *testing.T) {
 	deadLettered, err := queries.DeadLetterRunQueueItem(ctx, db.DeadLetterRunQueueItemParams{
 		OrgID:             orgID,
 		RunID:             runID,
-		DispatchMessageID: pgText("dead-letter-message"),
+		DispatchMessageID: pgvalue.Text("dead-letter-message"),
 		LastError:         "delivery exhausted",
 		EventKind:         "run.dead_lettered",
 		EventPayload:      []byte(`{"reason":"max_dispatch_attempts_exceeded"}`),

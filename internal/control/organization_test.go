@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -170,7 +171,7 @@ func createOrganizationTestSession(t *testing.T, ctx context.Context, queries *d
 		OrgID:     pgtype.UUID{},
 		UserID:    ids.ToPG(userID),
 		TokenHash: tokenHash,
-		ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	}); err != nil {
 		t.Fatal(err)
 	}

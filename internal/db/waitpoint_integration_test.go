@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -28,10 +29,10 @@ func TestFailExpiredRunningRunExecutionSessionsSweepsOpeningWaitpoint(t *testing
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-opening"),
+		DispatchMessageID: pgvalue.Text("message-opening"),
 		DispatchLeaseID:   "lease-opening",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -136,10 +137,10 @@ func TestReleaseRunExecutionSessionSeparatesCancelledWaitpointOutputAndResolutio
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText(messageID),
+		DispatchMessageID: pgvalue.Text(messageID),
 		DispatchLeaseID:   "lease-release-cancelled-waitpoint",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -189,7 +190,7 @@ UPDATE run_execution_sessions
 		DispatchLeaseID:      "lease-release-cancelled-waitpoint",
 		RunStatus:            db.RunStatusFailed,
 		AttemptStatus:        db.RunAttemptStatusFailed,
-		ErrorMessage:         pgText("worker failed"),
+		ErrorMessage:         pgvalue.Text("worker failed"),
 		TerminalEventKind:    "run.failed",
 		TerminalEventPayload: []byte(`{"failure_kind":"worker_failed"}`),
 	}); err != nil {
@@ -215,10 +216,10 @@ func TestCreateWaitpointForExecutionRequiresRunningExecution(t *testing.T) {
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-leased-waitpoint"),
+		DispatchMessageID: pgvalue.Text("message-leased-waitpoint"),
 		DispatchLeaseID:   "lease-leased-waitpoint",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -265,8 +266,8 @@ SELECT $1, $2, waitpoints.project_id, waitpoints.environment_id, $4, '\x01', now
 		OrgID:                orgID,
 		ID:                   tokenID,
 		TokenHash:            []byte{1},
-		CompletedByPrincipal: pgText("reviewer@example.com"),
-		CompletedVia:         pgText("email_token"),
+		CompletedByPrincipal: pgvalue.Text("reviewer@example.com"),
+		CompletedVia:         pgvalue.Text("email_token"),
 		Metadata:             []byte(`{}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -279,7 +280,7 @@ SELECT $1, $2, waitpoints.project_id, waitpoints.environment_id, $4, '\x01', now
 		RequestHash:    "same",
 		Action:         "respond",
 		Kind:           db.WaitpointKindHuman,
-		ResolutionKind: pgText("completed"),
+		ResolutionKind: pgvalue.Text("completed"),
 		Resolution:     approvedWaitpointResolution("reviewer@example.com"),
 		EventPayload:   []byte(`{"resolution_kind":"completed"}`),
 	}); err != nil {
@@ -308,11 +309,11 @@ func TestResolveWaitpointRecordsAndResolvesSingleResponse(t *testing.T) {
 		ID:                   ids.ToPG(ids.New()),
 		ResponseKey:          "user:admin",
 		Action:               "respond",
-		ResolutionKind:       pgText("completed"),
+		ResolutionKind:       pgvalue.Text("completed"),
 		Resolution:           approvedWaitpointResolution("admin"),
 		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
-		CompletedByPrincipal: pgText("admin"),
-		CompletedVia:         pgText("authenticated_api"),
+		CompletedByPrincipal: pgvalue.Text("admin"),
+		CompletedVia:         pgvalue.Text("authenticated_api"),
 		Metadata:             []byte(`{}`),
 		OrgID:                orgID,
 		WaitpointID:          waitpointID,
@@ -325,7 +326,7 @@ func TestResolveWaitpointRecordsAndResolvesSingleResponse(t *testing.T) {
 		OrgID:          orgID,
 		ID:             waitpointID,
 		Kind:           db.WaitpointKindHuman,
-		ResolutionKind: pgText("completed"),
+		ResolutionKind: pgvalue.Text("completed"),
 		Output:         []byte(`{"approved":true}`),
 		Resolution:     approvedWaitpointResolution("admin"),
 	}); err != nil {
@@ -397,11 +398,11 @@ func TestResolveWaitpointRequiresSuspendedQueueEntryBeforeMutating(t *testing.T)
 		ID:                   ids.ToPG(ids.New()),
 		ResponseKey:          "user:admin",
 		Action:               "respond",
-		ResolutionKind:       pgText("completed"),
+		ResolutionKind:       pgvalue.Text("completed"),
 		Resolution:           []byte(`{"value":{"approved":true}}`),
 		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
-		CompletedByPrincipal: pgText("admin"),
-		CompletedVia:         pgText("authenticated_api"),
+		CompletedByPrincipal: pgvalue.Text("admin"),
+		CompletedVia:         pgvalue.Text("authenticated_api"),
 		Metadata:             []byte(`{}`),
 		OrgID:                orgID,
 		WaitpointID:          waitpointID,
@@ -566,10 +567,10 @@ func TestMarkWaitpointDeliverySentWinsSameAttemptStaleRequeue(t *testing.T) {
 		RunID:            runID,
 		WaitpointID:      waitpointID,
 		TokenHash:        []byte{1},
-		ExpiresAt:        pgTime(future),
+		ExpiresAt:        pgvalue.Timestamptz(future),
 		Recipient:        "owner@example.test",
 		TokenMetadata:    []byte(`{}`),
-		MessageID:        pgText("<waitpoint-delivery@example.test>"),
+		MessageID:        pgvalue.Text("<waitpoint-delivery@example.test>"),
 		DeliveryMetadata: []byte(`{"source":"test"}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -579,7 +580,7 @@ func TestMarkWaitpointDeliverySentWinsSameAttemptStaleRequeue(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := queries.RequeueStaleSendingWaitpointDeliveries(ctx, db.RequeueStaleSendingWaitpointDeliveriesParams{
-		StaleBefore: pgTime(future),
+		StaleBefore: pgvalue.Timestamptz(future),
 		MaxAttempts: 3,
 	}); err != nil {
 		t.Fatal(err)

@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
@@ -180,6 +181,6 @@ func runLogChunkResponse(chunk db.RunLogChunk) api.RunLogChunk {
 		ContentBase64: base64.StdEncoding.EncodeToString(chunk.Content),
 		Bytes:         chunk.SizeBytes,
 		ObservedSeq:   chunk.ObservedSeq,
-		At:            pgTime(chunk.CreatedAt),
+		At:            pgvalue.Time(chunk.CreatedAt),
 	}
 }

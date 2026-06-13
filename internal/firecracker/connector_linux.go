@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +30,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
@@ -204,8 +204,8 @@ func (c *Connector) validateRestoreIdentity(checkpointID string, manifestBytes [
 	if identity.RootfsDigest != rootfsDigest {
 		return manifest, fmt.Errorf("checkpoint rootfs digest %s does not match worker rootfs digest %s", identity.RootfsDigest, rootfsDigest)
 	}
-	if identity.RuntimeConfigDigest != cas.DigestBytes(manifestBytes) {
-		return manifest, fmt.Errorf("checkpoint runtime config digest %s does not match checkpoint manifest digest %s", identity.RuntimeConfigDigest, cas.DigestBytes(manifestBytes))
+	if identity.RuntimeConfigDigest != sha256sum.DigestBytes(manifestBytes) {
+		return manifest, fmt.Errorf("checkpoint runtime config digest %s does not match checkpoint manifest digest %s", identity.RuntimeConfigDigest, sha256sum.DigestBytes(manifestBytes))
 	}
 	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
 		Arch:            runtime.GOARCH,
@@ -856,7 +856,7 @@ func digestFile(path string) (string, error) {
 	if _, err := io.Copy(hash, file); err != nil {
 		return "", err
 	}
-	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+	return sha256sum.DigestHash(hash), nil
 }
 
 type snapshotManifest struct {
@@ -945,7 +945,7 @@ func snapshotRuntimeConfig(cfg Config, machine *fc.Machine, checkpointID string,
 	if err != nil {
 		return "", nil, fmt.Errorf("encode firecracker snapshot manifest: %w", err)
 	}
-	return cas.DigestBytes(manifest), manifest, nil
+	return sha256sum.DigestBytes(manifest), manifest, nil
 }
 
 func snapshotNetworkConfig(cfg Config, machine *fc.Machine) snapshotNetworkManifest {

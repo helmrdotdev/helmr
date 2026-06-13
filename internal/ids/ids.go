@@ -34,3 +34,14 @@ func MustFromPG(value pgtype.UUID) uuid.UUID {
 	}
 	return id
 }
+
+func StringFromPG(value pgtype.UUID) string {
+	if !value.Valid {
+		return ""
+	}
+	id, err := FromPG(value)
+	if err != nil {
+		return ""
+	}
+	return id.String()
+}

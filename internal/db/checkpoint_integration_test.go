@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -42,10 +43,10 @@ func TestRequeueExpiredLeasedRunExecutionSessionRestoresDispatchContract(t *test
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-expired-leased"),
+		DispatchMessageID: pgvalue.Text("message-expired-leased"),
 		DispatchLeaseID:   "lease-expired-leased",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -129,10 +130,10 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-restored-next"),
+		DispatchMessageID: pgvalue.Text("message-restored-next"),
 		DispatchLeaseID:   "lease-restored-next",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -218,12 +219,12 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactDigest:    pgvalue.Text(testDigest("5")),
 		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
-		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
-		WorkspaceArtifactEncoding:  pgText("tar"),
-		WorkspaceMountPath:         pgText("/workspace"),
-		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		WorkspaceArtifactMediaType: pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
+		WorkspaceMountPath:         pgvalue.Text("/workspace"),
+		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
 		ActiveDurationMs:           10000,
 		CheckpointPayload:          []byte(`{"checkpoint_id":"next"}`),
 	}); err != nil {
@@ -241,7 +242,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		OrgID:          orgID,
 		ID:             nextWaitpointID,
 		Kind:           db.WaitpointKindHuman,
-		ResolutionKind: pgText("completed"),
+		ResolutionKind: pgvalue.Text("completed"),
 		Output:         []byte(`{"approved":true}`),
 		Resolution:     approvedWaitpointResolution("admin"),
 	}); err != nil {
@@ -257,10 +258,10 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         resumedSessionID,
-		DispatchMessageID: pgText("message-restored-final"),
+		DispatchMessageID: pgvalue.Text("message-restored-final"),
 		DispatchLeaseID:   "lease-restored-final",
 		DispatchAttempt:   2,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -291,7 +292,7 @@ UPDATE run_execution_sessions
 		DispatchLeaseID:         "lease-restored-final",
 		RunStatus:               db.RunStatusFailed,
 		AttemptStatus:           db.RunAttemptStatusFailed,
-		ErrorMessage:            pgText("worker failed after resume"),
+		ErrorMessage:            pgvalue.Text("worker failed after resume"),
 		ReleaseActiveDurationMs: 0,
 		TerminalEventKind:       "run.failed",
 		TerminalEventPayload:    []byte(`{"failure_kind":"worker_failed"}`),
@@ -316,10 +317,10 @@ func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-checkpoint-runtime"),
+		DispatchMessageID: pgvalue.Text("message-checkpoint-runtime"),
 		DispatchLeaseID:   "lease-checkpoint-runtime",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -369,12 +370,12 @@ func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactDigest:    pgvalue.Text(testDigest("5")),
 		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
-		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
-		WorkspaceArtifactEncoding:  pgText("tar"),
-		WorkspaceMountPath:         pgText("/workspace"),
-		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		WorkspaceArtifactMediaType: pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
+		WorkspaceMountPath:         pgvalue.Text("/workspace"),
+		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
 		ActiveDurationMs:           100,
 		CheckpointPayload:          []byte(`{"checkpoint_id":"mismatch"}`),
 	})
@@ -401,10 +402,10 @@ func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-checkpoint-backend"),
+		DispatchMessageID: pgvalue.Text("message-checkpoint-backend"),
 		DispatchLeaseID:   "lease-checkpoint-backend",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -454,12 +455,12 @@ func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactDigest:    pgvalue.Text(testDigest("5")),
 		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
-		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
-		WorkspaceArtifactEncoding:  pgText("tar"),
-		WorkspaceMountPath:         pgText("/workspace"),
-		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		WorkspaceArtifactMediaType: pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
+		WorkspaceMountPath:         pgvalue.Text("/workspace"),
+		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
 		ActiveDurationMs:           100,
 		CheckpointPayload:          []byte(`{"checkpoint_id":"unsupported-backend"}`),
 	})
@@ -487,10 +488,10 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText(messageID),
+		DispatchMessageID: pgvalue.Text(messageID),
 		DispatchLeaseID:   "lease-checkpoint-failed",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -530,7 +531,7 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 		RunWaitID:        runWaitID,
 		WaitpointID:      waitpointID,
 		CheckpointID:     checkpointID,
-		ErrorMessage:     pgText("snapshot upload failed"),
+		ErrorMessage:     pgvalue.Text("snapshot upload failed"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -566,10 +567,10 @@ func TestLeaseRunExecutionSessionRequiresRestoreRuntimeSnapshot(t *testing.T) {
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         ids.ToPG(ids.New()),
-		DispatchMessageID: pgText("message-missing-runtime"),
+		DispatchMessageID: pgvalue.Text("message-missing-runtime"),
 		DispatchLeaseID:   "lease-missing-runtime",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -592,7 +593,7 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 		EnvironmentID:         scope.EnvironmentID,
 		Request:               []byte(`{"message":"approve"}`),
 		DisplayText:           "approve",
-		ExpiresAt:             pgTime(time.Now().Add(time.Hour)),
+		ExpiresAt:             pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		IdempotencyKeyOptions: []byte(`{}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -605,11 +606,11 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 		RequestHash:          "same-request",
 		Action:               "respond",
 		Kind:                 db.WaitpointKindHuman,
-		ResolutionKind:       pgText("completed"),
+		ResolutionKind:       pgvalue.Text("completed"),
 		Resolution:           approvedWaitpointResolution("owner@example.com"),
 		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
-		CompletedByPrincipal: pgText("owner@example.com"),
-		CompletedVia:         pgText("authenticated_api"),
+		CompletedByPrincipal: pgvalue.Text("owner@example.com"),
+		CompletedVia:         pgvalue.Text("authenticated_api"),
 		Metadata:             []byte(`{}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -630,10 +631,10 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-pre-respond"),
+		DispatchMessageID: pgvalue.Text("message-pre-respond"),
 		DispatchLeaseID:   "lease-pre-respond",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -682,12 +683,12 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		WorkspaceArtifactDigest:    pgText(testDigest("7")),
+		WorkspaceArtifactDigest:    pgvalue.Text(testDigest("7")),
 		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
-		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
-		WorkspaceArtifactEncoding:  pgText("tar"),
-		WorkspaceMountPath:         pgText("/workspace"),
-		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		WorkspaceArtifactMediaType: pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
+		WorkspaceMountPath:         pgvalue.Text("/workspace"),
+		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
 		ActiveDurationMs:           100,
 		CheckpointPayload:          []byte(`{"checkpoint_id":"pre-respond"}`),
 	}); err != nil {
@@ -723,10 +724,10 @@ func TestReleaseRestoredExecutionFailureInvalidatesRestoreCheckpoint(t *testing.
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText("message-restored-failure"),
+		DispatchMessageID: pgvalue.Text("message-restored-failure"),
 		DispatchLeaseID:   "lease-restored-failure",
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -748,7 +749,7 @@ func TestReleaseRestoredExecutionFailureInvalidatesRestoreCheckpoint(t *testing.
 		DispatchLeaseID:      "lease-restored-failure",
 		RunStatus:            db.RunStatusFailed,
 		AttemptStatus:        db.RunAttemptStatusFailed,
-		ErrorMessage:         pgText("restore failed"),
+		ErrorMessage:         pgvalue.Text("restore failed"),
 		TerminalEventKind:    "run.failed",
 		TerminalEventPayload: []byte(`{"failure_kind":"worker_failed"}`),
 	}); err != nil {

@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -193,7 +194,7 @@ func (s *Server) createPendingMagicLink(r *http.Request, purpose db.MagicLinkPur
 	count, err := queries.CountRecentMagicLinks(r.Context(), db.CountRecentMagicLinksParams{
 		Purpose: purpose,
 		Email:   email,
-		Since:   pgTimeToPG(time.Now().Add(-magicLinkRateLimitWindow)),
+		Since:   pgvalue.Timestamptz(time.Now().Add(-magicLinkRateLimitWindow)),
 	})
 	if err != nil {
 		return db.MagicLink{}, "", time.Time{}, false, err
@@ -225,7 +226,7 @@ func (s *Server) createPendingMagicLink(r *http.Request, purpose db.MagicLinkPur
 		OrgID:         orgID,
 		InvitationID:  invitationID,
 		RedirectAfter: redirect,
-		ExpiresAt:     pgTimeToPG(expiresAt),
+		ExpiresAt:     pgvalue.Timestamptz(expiresAt),
 	})
 	if err != nil {
 		return db.MagicLink{}, "", time.Time{}, false, err

@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -291,7 +292,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			NetworkPolicy:         networkPolicy,
 			ScheduleDeclarations:  scheduleDeclarations,
 			QueueName:             strings.TrimSpace(task.QueueName),
-			QueueConcurrencyLimit: pgInt4Ptr(task.ConcurrencyLimit),
+			QueueConcurrencyLimit: pgvalue.Int4Ptr(task.ConcurrencyLimit),
 			Ttl:                   strings.TrimSpace(task.TTL),
 			MaxDurationSeconds:    task.MaxDurationSeconds,
 			RetryPolicy:           retryPolicy,

@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -500,7 +501,7 @@ func runOperationResponse(operation db.RunOperation) api.RunOperationResponse {
 		Kind:      string(operation.Kind),
 		Status:    string(operation.Status),
 		Reason:    operation.Reason,
-		CreatedAt: pgTime(operation.CreatedAt),
+		CreatedAt: pgvalue.Time(operation.CreatedAt),
 		AppliedAt: appliedAt,
 	}
 }

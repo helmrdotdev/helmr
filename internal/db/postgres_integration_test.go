@@ -220,11 +220,3 @@ func freePort(t *testing.T) int {
 	defer listener.Close()
 	return listener.Addr().(*net.TCPAddr).Port
 }
-
-func pgTime(value time.Time) pgtype.Timestamptz {
-	return pgtype.Timestamptz{Time: value, Valid: true}
-}
-
-func pgText(value string) pgtype.Text {
-	return pgtype.Text{String: value, Valid: true}
-}

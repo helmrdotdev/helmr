@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -94,7 +95,7 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 		if err != nil {
 			return nil, err
 		}
-		nextFireAt := pgTimeToPG(next)
+		nextFireAt := pgvalue.Timestamptz(next)
 		if row, ok := current[spec.DedupKey]; ok {
 			if declarativeScheduleCurrent(row, spec, runOptionsJSON) {
 				continue
@@ -218,8 +219,8 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 
 func declarativeScheduleDedupKey(orgID pgtype.UUID, projectID pgtype.UUID, taskID string, scheduleID string) string {
 	parts := []string{
-		uuidFromPG(orgID).String(),
-		uuidFromPG(projectID).String(),
+		ids.MustFromPG(orgID).String(),
+		ids.MustFromPG(projectID).String(),
 		taskID,
 		scheduleID,
 	}

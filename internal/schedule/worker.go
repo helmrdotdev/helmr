@@ -169,10 +169,3 @@ func triggerErrorKind(err error) string {
 	}
 	return "trigger_failed"
 }
-
-func pgTimeToPG(value time.Time) pgtype.Timestamptz {
-	if value.IsZero() {
-		return pgtype.Timestamptz{}
-	}
-	return pgtype.Timestamptz{Time: value.UTC(), Valid: true}
-}

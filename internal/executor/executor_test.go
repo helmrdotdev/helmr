@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -264,7 +265,7 @@ func (f *artifactCAS) Put(_ context.Context, mediaType string, body io.Reader) (
 	if err != nil {
 		return cas.Object{}, err
 	}
-	digest := cas.DigestBytes(content)
+	digest := sha256sum.DigestBytes(content)
 	f.objects[digest] = append([]byte(nil), content...)
 	f.mediaTypes[digest] = mediaType
 	return cas.Object{Digest: digest, SizeBytes: int64(len(content)), MediaType: mediaType}, nil

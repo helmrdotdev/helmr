@@ -16,6 +16,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -500,17 +502,17 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		KernelDigest:               runtimeInfo.KernelDigest,
 		InitramfsDigest:            runtimeInfo.InitramfsDigest,
 		RootfsDigest:               runtimeInfo.RootfsDigest,
-		RuntimeVcpus:               pgInt4Ptr(runtimeSpec.VCPUCount),
-		RuntimeMemoryMib:           pgInt4Ptr(runtimeSpec.MemoryMiB),
-		RuntimeScratchDiskMib:      pgInt4Ptr(runtimeSpec.ScratchDiskMiB),
+		RuntimeVcpus:               pgvalue.Int4Ptr(runtimeSpec.VCPUCount),
+		RuntimeMemoryMib:           pgvalue.Int4Ptr(runtimeSpec.MemoryMiB),
+		RuntimeScratchDiskMib:      pgvalue.Int4Ptr(runtimeSpec.ScratchDiskMiB),
 		CniProfile:                 *runtimeSpec.CNIProfile,
-		ImageKey:                   pgTextPtr(runtimeInfo.ImageKey),
-		WorkspaceArtifactDigest:    pgTextPtr(optionalTrimmedString(workspace.ArtifactDigest)),
+		ImageKey:                   pgvalue.TextPtr(runtimeInfo.ImageKey),
+		WorkspaceArtifactDigest:    pgvalue.TextPtr(optionalTrimmedString(workspace.ArtifactDigest)),
 		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: workspace.ArtifactSizeBytes, Valid: true},
-		WorkspaceArtifactMediaType: pgTextPtr(optionalTrimmedString(workspace.ArtifactMediaType)),
-		WorkspaceArtifactEncoding:  pgTextPtr(optionalTrimmedString(workspace.ArtifactEncoding)),
-		WorkspaceMountPath:         pgTextPtr(optionalTrimmedString(workspace.MountPath)),
-		WorkspaceVolumeKind:        pgTextPtr(optionalTrimmedString(workspace.VolumeKind)),
+		WorkspaceArtifactMediaType: pgvalue.TextPtr(optionalTrimmedString(workspace.ArtifactMediaType)),
+		WorkspaceArtifactEncoding:  pgvalue.TextPtr(optionalTrimmedString(workspace.ArtifactEncoding)),
+		WorkspaceMountPath:         pgvalue.TextPtr(optionalTrimmedString(workspace.MountPath)),
+		WorkspaceVolumeKind:        pgvalue.TextPtr(optionalTrimmedString(workspace.VolumeKind)),
 		ActiveDurationMs:           request.ActiveDurationMs,
 		CheckpointID:               ids.ToPG(checkpointID),
 		RunWaitID:                  ids.ToPG(runWaitID),
@@ -529,7 +531,7 @@ func validateCheckpointRecoveryPoint(recovery api.WorkerCheckpointRecoveryPoint,
 	if strings.TrimSpace(recovery.WaitpointID) != waitpointID.String() {
 		return fmt.Errorf("manifest.recovery_point.waitpoint_id must match waitpoint_id %s", waitpointID.String())
 	}
-	if strings.TrimSpace(recovery.Runtime.ConfigDigest) != cas.DigestBytes(runtimeConfig) {
+	if strings.TrimSpace(recovery.Runtime.ConfigDigest) != sha256sum.DigestBytes(runtimeConfig) {
 		return fmt.Errorf("manifest.recovery_point.runtime.config_digest must match manifest.runtime_state.config digest")
 	}
 	return nil

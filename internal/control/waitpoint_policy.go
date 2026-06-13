@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -361,7 +362,7 @@ func waitpointPolicyResponse(policy db.WaitpointPolicy) api.WaitpointPolicyRespo
 		Name:          policy.Name,
 		Label:         policy.Label,
 		Config:        append(json.RawMessage(nil), policy.Config...),
-		CreatedAt:     pgTime(policy.CreatedAt),
-		UpdatedAt:     pgTime(policy.UpdatedAt),
+		CreatedAt:     pgvalue.Time(policy.CreatedAt),
+		UpdatedAt:     pgvalue.Time(policy.UpdatedAt),
 	}
 }

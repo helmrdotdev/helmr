@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -175,14 +176,14 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	if request.Active != nil {
 		active = *request.Active
 	}
-	nextFireAt := pgTimeToPG(next)
+	nextFireAt := pgvalue.Timestamptz(next)
 	runOptionsJSON, err := json.Marshal(runOptions)
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
 	return s.db.UpdateSchedule(ctx, db.UpdateScheduleParams{
 		TaskID:        request.Task,
-		ExternalID:    nullableText(strings.TrimSpace(request.ExternalID)),
+		ExternalID:    pgvalue.Text(strings.TrimSpace(request.ExternalID)),
 		Cron:          cronExpression,
 		Timezone:      timezone,
 		RunOptions:    runOptionsJSON,
@@ -249,7 +250,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	}
 	scheduleID := ids.New()
 	instanceID := ids.New()
-	nextFireAt := pgTimeToPG(next)
+	nextFireAt := pgvalue.Timestamptz(next)
 	runOptionsJSON, err := json.Marshal(runOptions)
 	if err != nil {
 		return db.CreateScheduleRow{}, err
@@ -262,7 +263,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		TaskID:        request.Task,
 		DedupKey:      userDedupKey,
 		UserDedupKey:  userDedupKeyParam,
-		ExternalID:    nullableText(strings.TrimSpace(request.ExternalID)),
+		ExternalID:    pgvalue.Text(strings.TrimSpace(request.ExternalID)),
 		Cron:          cronExpression,
 		Timezone:      timezone,
 		RunOptions:    runOptionsJSON,
@@ -359,7 +360,7 @@ func (s *Server) setScheduleState(w http.ResponseWriter, r *http.Request, active
 			writeError(w, badRequest(err))
 			return
 		}
-		nextFireAt = pgTimeToPG(next)
+		nextFireAt = pgvalue.Timestamptz(next)
 	}
 	updated, err := s.db.UpdateScheduleState(r.Context(), db.UpdateScheduleStateParams{
 		Active:        active,
@@ -629,7 +630,7 @@ func updatedScheduleView(row db.UpdateScheduleRow) scheduleView {
 func scheduleResponse(row scheduleView) api.ScheduleResponse {
 	deduplicationKey := ""
 	if row.ScheduleType == db.TaskScheduleTypeImperative {
-		deduplicationKey = pgTextValue(row.UserDedupKey)
+		deduplicationKey = pgvalue.TextValue(row.UserDedupKey)
 	}
 	response := api.ScheduleResponse{
 		ID:               ids.MustFromPG(row.ScheduleID).String(),
@@ -638,17 +639,17 @@ func scheduleResponse(row scheduleView) api.ScheduleResponse {
 		EnvironmentID:    ids.MustFromPG(row.EnvironmentID).String(),
 		Task:             row.TaskID,
 		DeduplicationKey: deduplicationKey,
-		ExternalID:       pgTextValue(row.ExternalID),
+		ExternalID:       pgvalue.TextValue(row.ExternalID),
 		Cron:             row.Cron,
 		Timezone:         row.Timezone,
 		Active:           row.ScheduleActive && row.InstanceActive,
 		Status:           scheduleStatus(row),
 		LastError:        row.TriggerError,
-		CreatedAt:        pgTime(row.CreatedAt),
-		UpdatedAt:        pgTime(row.UpdatedAt),
+		CreatedAt:        pgvalue.Time(row.CreatedAt),
+		UpdatedAt:        pgvalue.Time(row.UpdatedAt),
 	}
-	response.NextFireAt = pgTimePtr(row.NextFireAt)
-	response.LastFireAt = pgTimePtr(row.LastFireAt)
+	response.NextFireAt = pgvalue.TimePtr(row.NextFireAt)
+	response.LastFireAt = pgvalue.TimePtr(row.LastFireAt)
 	return response
 }
 

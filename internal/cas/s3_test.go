@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"io"
 	"os"
 	"sync"
@@ -229,7 +230,7 @@ func TestS3GetVerifiesDigest(t *testing.T) {
 	client := &fakeS3Client{getObjectBody: content}
 	store := &S3{client: client, bucket: "bucket"}
 
-	body, err := store.Get(t.Context(), DigestBytes(content))
+	body, err := store.Get(t.Context(), sha256sum.DigestBytes(content))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +250,7 @@ func TestS3GetRejectsDigestMismatch(t *testing.T) {
 	client := &fakeS3Client{getObjectBody: []byte("HELLO")}
 	store := &S3{client: client, bucket: "bucket"}
 
-	body, err := store.Get(t.Context(), DigestBytes([]byte("hello")))
+	body, err := store.Get(t.Context(), sha256sum.DigestBytes([]byte("hello")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +265,7 @@ func TestS3GetRejectsDigestMismatch(t *testing.T) {
 func TestVerifyingReadCloserCloseDrainsPartialBody(t *testing.T) {
 	content := []byte("hello world")
 	raw := &trackingReadCloser{Reader: bytes.NewReader(content)}
-	body := newVerifyingReadCloser(raw, DigestBytes(content))
+	body := newVerifyingReadCloser(raw, sha256sum.DigestBytes(content))
 
 	buf := make([]byte, 5)
 	n, err := body.Read(buf)
@@ -290,7 +291,7 @@ func TestVerifyingReadCloserCloseRejectsPartialDigestMismatch(t *testing.T) {
 	expected := []byte("hello world")
 	actual := []byte("HELLO world")
 	raw := &trackingReadCloser{Reader: bytes.NewReader(actual)}
-	body := newVerifyingReadCloser(raw, DigestBytes(expected))
+	body := newVerifyingReadCloser(raw, sha256sum.DigestBytes(expected))
 
 	buf := make([]byte, 5)
 	if _, err := body.Read(buf); err != nil {

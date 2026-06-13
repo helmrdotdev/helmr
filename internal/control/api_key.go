@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -96,7 +97,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 			writeError(w, badRequest(errors.New("expires_in_days must be 30, 90, or 365")))
 			return
 		}
-		expiresAt = pgTimeToPG(time.Now().AddDate(0, 0, *input.ExpiresInDays))
+		expiresAt = pgvalue.Timestamptz(time.Now().AddDate(0, 0, *input.ExpiresInDays))
 	}
 	generated, err := auth.GenerateAPIKey()
 	if err != nil {
@@ -362,9 +363,9 @@ func apiKeySummary(id pgtype.UUID, name string, keyPrefix string, projectID pgty
 		ProjectID:     parsedProjectID.String(),
 		EnvironmentID: parsedEnvironmentID.String(),
 		Status:        status,
-		CreatedAt:     pgTime(createdAt),
-		LastUsedAt:    pgTimePtr(lastUsedAt),
-		ExpiresAt:     pgTimePtr(expiresAt),
-		RevokedAt:     pgTimePtr(revokedAt),
+		CreatedAt:     pgvalue.Time(createdAt),
+		LastUsedAt:    pgvalue.TimePtr(lastUsedAt),
+		ExpiresAt:     pgvalue.TimePtr(expiresAt),
+		RevokedAt:     pgvalue.TimePtr(revokedAt),
 	}, nil
 }

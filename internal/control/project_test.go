@@ -22,6 +22,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -174,7 +176,7 @@ func TestProjectRoutesAcceptBearerSession(t *testing.T) {
 			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			UserID:    ids.ToPG(ids.New()),
 			Role:      string(db.OrgMemberRoleOwner),
-			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+			ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		},
 		project: db.Project{
 			ID:        ids.ToPG(projectID),
@@ -346,16 +348,12 @@ func TestProjectManagementRejectsDeletingProtectedEnvironment(t *testing.T) {
 	}
 }
 
-func idsMustString(value pgtype.UUID) string {
-	return ids.MustFromPG(value).String()
-}
-
 func deploymentRequest(body []byte, contentType string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/deployments", bytes.NewReader(body))
 	req.Header.Set("content-type", contentType)
 	routeContext := chi.NewRouteContext()
-	routeContext.URLParams.Add("projectID", idsMustString(testProjectID()))
-	routeContext.URLParams.Add("environmentID", idsMustString(testEnvironmentID()))
+	routeContext.URLParams.Add("projectID", ids.MustFromPG(testProjectID()).String())
+	routeContext.URLParams.Add("environmentID", ids.MustFromPG(testEnvironmentID()).String())
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
 	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: dbtest.DefaultOrgID, Role: auth.RoleOwner, Kind: auth.ActorKindSession})
 	return req.WithContext(ctx)
@@ -421,7 +419,7 @@ func (f *fakeStore) GetDeployment(_ context.Context, arg db.GetDeploymentParams)
 func deploymentMultipart(t *testing.T, metadata api.CreateDeploymentRequest, source []byte) ([]byte, string) {
 	t.Helper()
 	if strings.TrimSpace(metadata.ContentHash) == "" {
-		metadata.ContentHash = cas.DigestBytes(source)
+		metadata.ContentHash = sha256sum.DigestBytes(source)
 	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)

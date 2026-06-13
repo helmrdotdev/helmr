@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -124,10 +125,10 @@ func (n *Notifier) createQueuedEmailDelivery(ctx context.Context, pending Pendin
 		RunID:            pending.RunID,
 		WaitpointID:      pending.ID,
 		TokenHash:        tokenHash,
-		ExpiresAt:        pgTimeToPG(time.Now().UTC().Add(DefaultResponseTokenTTL)),
+		ExpiresAt:        pgvalue.Timestamptz(time.Now().UTC().Add(DefaultResponseTokenTTL)),
 		Recipient:        recipient,
 		TokenMetadata:    tokenMetadata,
-		MessageID:        pgText(messageID),
+		MessageID:        pgvalue.Text(messageID),
 		DeliveryMetadata: deliveryMetadata,
 	})
 	if err != nil {
@@ -215,8 +216,8 @@ func (n *Notifier) markClaimedDeliveryError(ctx context.Context, delivery db.Wai
 	}
 	delay := deliveryRetryDelay(delivery.AttemptCount)
 	if _, err := n.store.MarkWaitpointDeliveryRetrying(ctx, db.MarkWaitpointDeliveryRetryingParams{
-		LastError:        pgText(cause.Error()),
-		NextAttemptAt:    pgTimeToPG(time.Now().UTC().Add(delay)),
+		LastError:        pgvalue.Text(cause.Error()),
+		NextAttemptAt:    pgvalue.Timestamptz(time.Now().UTC().Add(delay)),
 		OrgID:            delivery.OrgID,
 		DeliveryID:       delivery.ID,
 		AttemptCount:     delivery.AttemptCount,
@@ -230,7 +231,7 @@ func (n *Notifier) markClaimedDeliveryError(ctx context.Context, delivery db.Wai
 
 func (n *Notifier) markDeliverySignaled(ctx context.Context, delivery db.WaitpointDelivery, nextAttemptAt time.Time) {
 	_, err := n.store.MarkWaitpointDeliverySignaled(ctx, db.MarkWaitpointDeliverySignaledParams{
-		NextAttemptAt: pgTimeToPG(nextAttemptAt),
+		NextAttemptAt: pgvalue.Timestamptz(nextAttemptAt),
 		OrgID:         delivery.OrgID,
 		DeliveryID:    delivery.ID,
 	})
@@ -284,8 +285,8 @@ func (n *Notifier) createEmailDelivery(ctx context.Context, pending Pending, tok
 		RecipientKind:   "email",
 		Recipient:       recipient,
 		Status:          status,
-		MessageID:       pgText(DeliveryMessageID(deliveryID, n.publicURL)),
-		LastError:       pgText(lastError),
+		MessageID:       pgvalue.Text(DeliveryMessageID(deliveryID, n.publicURL)),
+		LastError:       pgvalue.Text(lastError),
 		Metadata:        metadata,
 	})
 	if err != nil {
@@ -323,7 +324,7 @@ func (n *Notifier) markDeliveryFailed(ctx context.Context, delivery db.Waitpoint
 	if _, err := n.store.MarkWaitpointDeliveryFailed(ctx, db.MarkWaitpointDeliveryFailedParams{
 		OrgID:            delivery.OrgID,
 		DeliveryID:       delivery.ID,
-		LastError:        pgText(reason),
+		LastError:        pgvalue.Text(reason),
 		AttemptCount:     delivery.AttemptCount,
 		SendingStartedAt: delivery.SendingStartedAt,
 	}); isNoRows(err) {
@@ -359,7 +360,7 @@ func notificationEmail(to string, run RunInfo, pending Pending, link string) ema
 		runID,
 		waitpointID,
 		pending.Kind,
-		pgTime(pending.RequestedAt).Format(time.RFC3339),
+		pgvalue.Time(pending.RequestedAt).Format(time.RFC3339),
 		pending.DisplayText,
 		link,
 	)

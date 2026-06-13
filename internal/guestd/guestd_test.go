@@ -20,8 +20,9 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
-	"github.com/helmrdotdev/helmr/internal/cas"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/safepath"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
 )
 
@@ -576,7 +577,7 @@ func TestHandleRunConnectionRejectsWorkspaceArtifactBodyDigestMismatch(t *testin
 	}
 	request := testRunTaskRequest()
 	request.RunId = "run-1"
-	request.Workspace.Artifact.Digest = cas.DigestBytes([]byte("not the tar body"))
+	request.Workspace.Artifact.Digest = sha256sum.DigestBytes([]byte("not the tar body"))
 	request.Workspace.Artifact.SizeBytes = uint64(len(source))
 	request.Workspace.Artifact.EntryCount = 1
 	if err := transport.WriteProtoFrame(&input, request); err != nil {
@@ -618,7 +619,7 @@ func TestHandleRunConnectionAcceptsEmptyWorkspaceArtifact(t *testing.T) {
 	request := testRunTaskRequest()
 	request.RunId = "run-1"
 	request.ModulePath = "task.ts"
-	request.Workspace.Artifact.Digest = cas.DigestBytes(workspaceArtifact)
+	request.Workspace.Artifact.Digest = sha256sum.DigestBytes(workspaceArtifact)
 	request.Workspace.Artifact.SizeBytes = uint64(len(workspaceArtifact))
 	request.Workspace.Artifact.EntryCount = 0
 	if err := transport.WriteProtoFrame(&input, request); err != nil {
@@ -2256,7 +2257,7 @@ func TestInstallAdapterBundleRejectsSymlinkedOptParent(t *testing.T) {
 
 func TestSafeJoinStaysUnderRoot(t *testing.T) {
 	root := t.TempDir()
-	path, err := safeJoin(root, "../outside")
+	path, err := safepath.JoinSlash(root, "../outside")
 	if err != nil {
 		t.Fatal(err)
 	}

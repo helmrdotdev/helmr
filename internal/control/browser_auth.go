@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -288,7 +289,7 @@ func (s *Server) issueSessionForOrg(r *http.Request, queries db.Querier, userID 
 		OrgID:     orgID,
 		UserID:    userID,
 		TokenHash: hash,
-		ExpiresAt: pgTimeToPG(time.Now().Add(s.effectiveSessionTTL())),
+		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(s.effectiveSessionTTL())),
 	})
 	if err != nil {
 		return "", err

@@ -9,6 +9,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -126,13 +127,13 @@ func (e *Engine) Fire(ctx context.Context, lease IndexLease) error {
 	candidate, err := e.db.GetScheduleTriggerCandidate(ctx, db.GetScheduleTriggerCandidateParams{
 		InstanceID:  ids.ToPG(lease.Entry.InstanceID),
 		Generation:  lease.Entry.Generation,
-		ScheduledAt: pgTimeToPG(lease.Entry.ScheduledAt),
+		ScheduledAt: pgvalue.TimestamptzUTCZeroInvalid(lease.Entry.ScheduledAt),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		retryAfter, retryErr := e.db.GetScheduleRetryAfter(ctx, db.GetScheduleRetryAfterParams{
 			InstanceID:  ids.ToPG(lease.Entry.InstanceID),
 			Generation:  lease.Entry.Generation,
-			ScheduledAt: pgTimeToPG(lease.Entry.ScheduledAt),
+			ScheduledAt: pgvalue.TimestamptzUTCZeroInvalid(lease.Entry.ScheduledAt),
 		})
 		if retryErr == nil && retryAfter.Valid {
 			return e.index.Nack(ctx, lease, retryAfter.Time.UTC())
@@ -163,7 +164,7 @@ func (e *Engine) Fire(ctx context.Context, lease IndexLease) error {
 		InstanceID:       candidate.InstanceID,
 		Generation:       candidate.Generation,
 		CurrentFireAt:    candidate.NextFireAt,
-		NextFireAt:       pgTimeToPG(next),
+		NextFireAt:       pgvalue.TimestamptzUTCZeroInvalid(next),
 		LastTriggerRunID: runID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -222,7 +223,7 @@ func (e *Engine) Repair(ctx context.Context) error {
 			}
 		}()
 	}
-	availableBefore := pgTimeToPG(e.now().Add(e.lookahead))
+	availableBefore := pgvalue.TimestamptzUTCZeroInvalid(e.now().Add(e.lookahead))
 	var afterAvailableAt pgtype.Timestamptz
 	var afterInstanceID pgtype.UUID
 	for {
@@ -262,7 +263,7 @@ func (e *Engine) markTriggerFailed(ctx context.Context, lease IndexLease, row db
 	_, err := e.db.MarkScheduleInstanceTriggerFailed(ctx, db.MarkScheduleInstanceTriggerFailedParams{
 		ErrorKind:    triggerErrorKind(cause),
 		ErrorMessage: cause.Error(),
-		RetryAfter:   pgTimeToPG(retryAt),
+		RetryAfter:   pgvalue.TimestamptzUTCZeroInvalid(retryAt),
 		InstanceID:   row.InstanceID,
 		Generation:   row.Generation,
 		ScheduledAt:  row.NextFireAt,
@@ -299,7 +300,7 @@ func (e *Engine) skipFailedFire(ctx context.Context, lease IndexLease, row db.Ge
 		return err
 	}
 	skipped, err := e.db.SkipScheduleInstanceTrigger(ctx, db.SkipScheduleInstanceTriggerParams{
-		NextFireAt: pgTimeToPG(next),
+		NextFireAt: pgvalue.TimestamptzUTCZeroInvalid(next),
 		InstanceID: row.InstanceID,
 		Generation: row.Generation,
 		LastFireAt: row.NextFireAt,

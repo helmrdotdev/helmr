@@ -8,7 +8,6 @@ import (
 	"net/mail"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -142,23 +141,4 @@ func ValidateEmailRecipient(value string) error {
 		return errors.New("email is invalid")
 	}
 	return nil
-}
-
-func pgText(value string) pgtype.Text {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return pgtype.Text{}
-	}
-	return pgtype.Text{String: value, Valid: true}
-}
-
-func pgTime(value pgtype.Timestamptz) time.Time {
-	if !value.Valid {
-		return time.Time{}
-	}
-	return value.Time
-}
-
-func pgTimeToPG(value time.Time) pgtype.Timestamptz {
-	return pgtype.Timestamptz{Time: value, Valid: true}
 }

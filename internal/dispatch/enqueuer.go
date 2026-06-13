@@ -2,7 +2,6 @@ package dispatch
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"unicode/utf8"
@@ -181,41 +180,21 @@ func queueMessage(row db.PrepareQueuedRunQueueItemRow) (Message, error) {
 }
 
 func requirementsFromRow(row db.PrepareQueuedRunQueueItemRow) (compute.RunRuntimeRequirements, error) {
-	network := compute.DefaultNetworkPolicy()
-	if len(row.NetworkPolicy) > 0 {
-		if err := json.Unmarshal(row.NetworkPolicy, &network); err != nil {
-			return compute.RunRuntimeRequirements{}, fmt.Errorf("network policy: %w", err)
-		}
-	}
-	var placement compute.Placement
-	if len(row.Placement) > 0 {
-		if err := json.Unmarshal(row.Placement, &placement); err != nil {
-			return compute.RunRuntimeRequirements{}, fmt.Errorf("placement: %w", err)
-		}
-	}
-	requirements := compute.RunRuntimeRequirements{
-		Resources: compute.ResourceVector{
-			MilliCPU:  row.RequestedMilliCpu,
-			MemoryMiB: row.RequestedMemoryMib,
-			DiskMiB:   row.RequestedDiskMib,
-			Slots:     row.RequestedExecutionSlots,
-		},
-		Runtime: compute.RuntimeSelector{
-			ID:              row.RuntimeID,
-			Arch:            row.RuntimeArch,
-			ABI:             row.RuntimeABI,
-			KernelDigest:    row.KernelDigest,
-			InitramfsDigest: row.InitramfsDigest,
-			RootfsDigest:    row.RootfsDigest,
-			CNIProfile:      row.CniProfile,
-		},
-		Network:   network,
-		Placement: placement,
-	}
-	if err := requirements.Validate(); err != nil {
-		return compute.RunRuntimeRequirements{}, err
-	}
-	return requirements, nil
+	return compute.RunRuntimeRequirementsFromFields(compute.RunRuntimeRequirementFields{
+		RequestedMilliCPU:       row.RequestedMilliCpu,
+		RequestedMemoryMiB:      row.RequestedMemoryMib,
+		RequestedDiskMiB:        row.RequestedDiskMib,
+		RequestedExecutionSlots: row.RequestedExecutionSlots,
+		RuntimeID:               row.RuntimeID,
+		RuntimeArch:             row.RuntimeArch,
+		RuntimeABI:              row.RuntimeABI,
+		KernelDigest:            row.KernelDigest,
+		InitramfsDigest:         row.InitramfsDigest,
+		RootfsDigest:            row.RootfsDigest,
+		CNIProfile:              row.CniProfile,
+		NetworkPolicyJSON:       row.NetworkPolicy,
+		PlacementJSON:           row.Placement,
+	})
 }
 
 func pgUUIDString(value pgtype.UUID) (string, error) {

@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 func TestClientErrorUsesServerMessage(t *testing.T) {
@@ -311,7 +312,7 @@ func TestCreateDeploymentSendsContentHash(t *testing.T) {
 	if response.ID != "deployment-1" {
 		t.Fatalf("response = %+v", response)
 	}
-	if metadata.ProjectID != "" || metadata.EnvironmentID != "" || metadata.ContentHash != cas.DigestBytes(source) {
+	if metadata.ProjectID != "" || metadata.EnvironmentID != "" || metadata.ContentHash != sha256sum.DigestBytes(source) {
 		t.Fatalf("metadata = %+v", metadata)
 	}
 	if !bytes.Equal(uploaded, source) {

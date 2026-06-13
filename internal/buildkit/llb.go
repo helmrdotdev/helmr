@@ -10,6 +10,7 @@ import (
 
 	"github.com/containerd/platforms"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
+	"github.com/helmrdotdev/helmr/internal/safepath"
 	"github.com/moby/buildkit/client/llb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/tonistiigi/fsutil"
@@ -387,17 +388,11 @@ func rejectSymlinkComponents(root, relative string) error {
 }
 
 func normalizeRelative(raw string) (string, error) {
-	if raw == "" {
+	if strings.TrimSpace(raw) == "" {
 		return "", errors.New("source ref path is empty")
 	}
-	if filepath.IsAbs(raw) {
-		return "", fmt.Errorf("source ref path escapes root: %s", raw)
-	}
-	clean := filepath.Clean(raw)
-	if clean == "." {
-		return ".", nil
-	}
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	clean, err := safepath.CleanLocal(raw, safepath.CleanOptions{AllowDot: true})
+	if err != nil {
 		return "", fmt.Errorf("source ref path escapes root: %s", raw)
 	}
 	return clean, nil

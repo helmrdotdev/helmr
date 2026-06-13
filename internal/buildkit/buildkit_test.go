@@ -181,6 +181,23 @@ func TestPlanImageRejectsEscapingSource(t *testing.T) {
 	}
 }
 
+func TestPlanImageRejectsParentComponentSource(t *testing.T) {
+	sourceRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "b", "package.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := planImage(image(
+		from("debian:trixie-slim"),
+		copySourceFile("/app/package.json", "a/../b/package.json"),
+	), nil, sourceRoot, defaultPlatform, defaultCacheNS)
+	if err == nil || !strings.Contains(err.Error(), "escapes root") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestCacheIDUsesNamespace(t *testing.T) {
 	planner := imagePlanner{cacheNS: "org_1"}
 	if got := planner.cacheID("npm/cache"); got != "org_1/npm_cache" {

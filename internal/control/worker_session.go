@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -358,7 +359,7 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 			SpanID:      renewed.SpanID,
 			Traceparent: renewed.Traceparent,
 		},
-		ExpiresAt: pgTime(renewed.LeaseExpiresAt),
+		ExpiresAt: pgvalue.Time(renewed.LeaseExpiresAt),
 	}
 	writeJSON(w, http.StatusOK, api.WorkerRenewResponse{Lease: lease})
 }
@@ -819,7 +820,7 @@ func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, l
 		MessageID:        row.DispatchMessageID,
 		WorkerInstanceID: worker.WorkerInstanceID.String(),
 		AttemptNumber:    row.DispatchAttempt,
-		ExpiresAt:        pgTime(row.LeaseExpiresAt),
+		ExpiresAt:        pgvalue.Time(row.LeaseExpiresAt),
 		Message: dispatch.Message{
 			OrgID:     leaseIDs.orgID.String(),
 			RunID:     ids.MustFromPG(row.RunID).String(),
@@ -939,7 +940,7 @@ func workerRunLeaseResponse(row db.LeaseRunExecutionSessionRow) api.WorkerRunLea
 			SpanID:      row.SessionSpanID,
 			Traceparent: row.SessionTraceparent,
 		},
-		ExpiresAt: pgTime(row.SessionLeaseExpiresAt),
+		ExpiresAt: pgvalue.Time(row.SessionLeaseExpiresAt),
 	}
 }
 
@@ -981,7 +982,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 		AttemptID:             ids.MustFromPG(row.CurrentAttemptID).String(),
 		SessionID:             ids.MustFromPG(row.SessionID).String(),
 		SnapshotVersion:       row.StateVersion,
-		ReplayedFromRunID:     nullableUUIDString(row.ReplayedFromRunID),
+		ReplayedFromRunID:     ids.StringFromPG(row.ReplayedFromRunID),
 		TaskID:                row.TaskID,
 		Payload:               json.RawMessage(row.Payload),
 		Secrets:               resolvedSecrets,
@@ -1011,38 +1012,23 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 }
 
 func workerRunRequirementsFromLease(row db.LeaseRunExecutionSessionRow) (compute.RunRuntimeRequirements, error) {
-	network := compute.DefaultNetworkPolicy()
-	if len(row.RequirementsNetworkPolicy) > 0 {
-		if err := json.Unmarshal(row.RequirementsNetworkPolicy, &network); err != nil {
-			return compute.RunRuntimeRequirements{}, fmt.Errorf("worker run network policy: %w", err)
-		}
-	}
-	var placement compute.Placement
-	if len(row.RequirementsPlacement) > 0 {
-		if err := json.Unmarshal(row.RequirementsPlacement, &placement); err != nil {
-			return compute.RunRuntimeRequirements{}, fmt.Errorf("worker run placement: %w", err)
-		}
-	}
-	requirements := compute.RunRuntimeRequirements{
-		Resources: compute.ResourceVector{
-			MilliCPU:  row.RequestedMilliCpu,
-			MemoryMiB: row.RequestedMemoryMib,
-			DiskMiB:   row.RequestedDiskMib,
-			Slots:     row.RequestedExecutionSlots,
-		},
-		Runtime: compute.RuntimeSelector{
-			ID:              row.RequirementsRuntimeID,
-			Arch:            row.RequirementsRuntimeArch,
-			ABI:             row.RequirementsRuntimeAbi,
-			KernelDigest:    row.RequirementsKernelDigest,
-			InitramfsDigest: row.RequirementsInitramfsDigest,
-			RootfsDigest:    row.RequirementsRootfsDigest,
-			CNIProfile:      row.RequirementsCniProfile,
-		},
-		Network:   network,
-		Placement: placement,
-	}
-	return requirements, requirements.Validate()
+	return compute.RunRuntimeRequirementsFromFields(compute.RunRuntimeRequirementFields{
+		RequestedMilliCPU:       row.RequestedMilliCpu,
+		RequestedMemoryMiB:      row.RequestedMemoryMib,
+		RequestedDiskMiB:        row.RequestedDiskMib,
+		RequestedExecutionSlots: row.RequestedExecutionSlots,
+		RuntimeID:               row.RequirementsRuntimeID,
+		RuntimeArch:             row.RequirementsRuntimeArch,
+		RuntimeABI:              row.RequirementsRuntimeAbi,
+		KernelDigest:            row.RequirementsKernelDigest,
+		InitramfsDigest:         row.RequirementsInitramfsDigest,
+		RootfsDigest:            row.RequirementsRootfsDigest,
+		CNIProfile:              row.RequirementsCniProfile,
+		NetworkPolicyJSON:       row.RequirementsNetworkPolicy,
+		NetworkPolicyLabel:      "worker run network policy",
+		PlacementJSON:           row.RequirementsPlacement,
+		PlacementLabel:          "worker run placement",
+	})
 }
 
 func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunExecutionSessionRow) (*api.WorkerRestore, error) {

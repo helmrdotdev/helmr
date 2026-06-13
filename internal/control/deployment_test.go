@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -47,7 +48,7 @@ func TestCreateDeploymentQueuesDeploymentSourceForBuild(t *testing.T) {
 	if len(store.artifacts) != 1 || store.artifacts[0].Digest != artifactStore.object.Digest {
 		t.Fatalf("artifacts = %+v", store.artifacts)
 	}
-	if store.deployment.ContentHash != cas.DigestBytes(validDeploymentSourceTar(t)) {
+	if store.deployment.ContentHash != sha256sum.DigestBytes(validDeploymentSourceTar(t)) {
 		t.Fatalf("deployment content_hash = %q", store.deployment.ContentHash)
 	}
 	if store.deployment.Status != db.DeploymentStatusQueued {
@@ -72,7 +73,7 @@ func TestCreateDeploymentQueuesDeploymentSourceForBuild(t *testing.T) {
 			t.Fatalf("legacy field %q present in response: %s", oldField, rec.Body.String())
 		}
 	}
-	if response.ContentHash != cas.DigestBytes(validDeploymentSourceTar(t)) {
+	if response.ContentHash != sha256sum.DigestBytes(validDeploymentSourceTar(t)) {
 		t.Fatalf("content hash = %q", response.ContentHash)
 	}
 	if response.DeploymentSource.Digest != artifactStore.object.Digest || response.DeploymentSource.MediaType != api.DeploymentSourceArtifactMediaType {

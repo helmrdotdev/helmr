@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -164,7 +165,7 @@ func secretResponse(projectID pgtype.UUID, environmentID pgtype.UUID, name strin
 		ProjectID:     ids.MustFromPG(projectID).String(),
 		EnvironmentID: ids.MustFromPG(environmentID).String(),
 		Name:          name,
-		CreatedAt:     pgTime(createdAt),
-		UpdatedAt:     pgTime(updatedAt),
+		CreatedAt:     pgvalue.Time(createdAt),
+		UpdatedAt:     pgvalue.Time(updatedAt),
 	}
 }

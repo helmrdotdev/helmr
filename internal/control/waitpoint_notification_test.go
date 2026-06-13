@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -149,7 +150,7 @@ func TestSendQueuedWaitpointDeliveryDoesNotSwallowSupersededSentMark(t *testing.
 			RecipientKind:   "email",
 			Recipient:       "owner@example.test",
 			Status:          db.WaitpointDeliveryStatusQueued,
-			MessageID:       pgText("<waitpoint-delivery@example.test>"),
+			MessageID:       pgvalue.Text("<waitpoint-delivery@example.test>"),
 			CreatedAt:       testTime(),
 			UpdatedAt:       testTime(),
 		}},
@@ -193,7 +194,7 @@ func TestWaitpointConfirmationPageAndFormCompletion(t *testing.T) {
 			EnvironmentID:        testEnvironmentID(),
 			WaitpointID:          ids.ToPG(waitpointID),
 			Status:               db.WaitpointResponseTokenStatusPending,
-			ExpiresAt:            pgTimeToPG(testTime().Time.Add(time.Hour)),
+			ExpiresAt:            pgvalue.Timestamptz(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),
 			WaitpointKind:        db.WaitpointKindHuman,
 			WaitpointDisplayText: "Approve production deployment?",
@@ -241,7 +242,7 @@ func TestWaitpointConfirmationPageRespondsToHumanWaitpoint(t *testing.T) {
 			EnvironmentID:        testEnvironmentID(),
 			WaitpointID:          ids.ToPG(waitpointID),
 			Status:               db.WaitpointResponseTokenStatusPending,
-			ExpiresAt:            pgTimeToPG(testTime().Time.Add(time.Hour)),
+			ExpiresAt:            pgvalue.Timestamptz(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),
 			WaitpointKind:        db.WaitpointKindHuman,
 			WaitpointDisplayText: "provide payload",
@@ -300,7 +301,7 @@ func TestWaitpointTokenRespondRespondsToHumanWaitpoint(t *testing.T) {
 			EnvironmentID:        testEnvironmentID(),
 			WaitpointID:          ids.ToPG(waitpointID),
 			Status:               db.WaitpointResponseTokenStatusPending,
-			ExpiresAt:            pgTimeToPG(testTime().Time.Add(time.Hour)),
+			ExpiresAt:            pgvalue.Timestamptz(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),
 			WaitpointKind:        db.WaitpointKindHuman,
 			WaitpointDisplayText: "provide payload",
@@ -346,7 +347,7 @@ func TestWaitpointTokenCompletionRejectsInvalidMetadata(t *testing.T) {
 			EnvironmentID:        testEnvironmentID(),
 			WaitpointID:          ids.ToPG(waitpointID),
 			Status:               db.WaitpointResponseTokenStatusPending,
-			ExpiresAt:            pgTimeToPG(testTime().Time.Add(time.Hour)),
+			ExpiresAt:            pgvalue.Timestamptz(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),
 			WaitpointKind:        db.WaitpointKindHuman,
 			WaitpointDisplayText: "Approve production deployment?",
@@ -380,7 +381,7 @@ func TestWaitpointTokenCompletionUsesRequestSubjectWhenTokenHasNone(t *testing.T
 			EnvironmentID:        testEnvironmentID(),
 			WaitpointID:          ids.ToPG(waitpointID),
 			Status:               db.WaitpointResponseTokenStatusPending,
-			ExpiresAt:            pgTimeToPG(testTime().Time.Add(time.Hour)),
+			ExpiresAt:            pgvalue.Timestamptz(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{}`),
 			WaitpointKind:        db.WaitpointKindHuman,
 			WaitpointDisplayText: "Approve production deployment?",
@@ -414,7 +415,7 @@ func TestWaitpointTokenCompletionReturnsAcceptedWhenResolveDoesNotResume(t *test
 			EnvironmentID:        testEnvironmentID(),
 			WaitpointID:          ids.ToPG(waitpointID),
 			Status:               db.WaitpointResponseTokenStatusPending,
-			ExpiresAt:            pgTimeToPG(testTime().Time.Add(time.Hour)),
+			ExpiresAt:            pgvalue.Timestamptz(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),
 			WaitpointKind:        db.WaitpointKindHuman,
 			WaitpointDisplayText: "Approve production deployment?",
@@ -560,7 +561,7 @@ func (s *notificationStore) CreateQueuedWaitpointEmailDelivery(_ context.Context
 		WaitpointID:     arg.WaitpointID,
 		TokenHash:       arg.TokenHash,
 		ExpiresAt:       arg.ExpiresAt,
-		ExternalSubject: pgText(arg.Recipient),
+		ExternalSubject: pgvalue.Text(arg.Recipient),
 		Metadata:        arg.TokenMetadata,
 	})
 	delivery := db.WaitpointDelivery{

@@ -14,13 +14,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var scopeSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
-var environmentColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
 func protectedEnvironmentSlug(slug string) bool {
 	return slug == "production" || slug == "staging"
@@ -653,11 +653,11 @@ func normalizeScopeCreateInput(slug string, name string) (string, string, error)
 }
 
 func normalizeEnvironmentColorHex(colorHex string) (string, error) {
-	colorHex = strings.TrimSpace(colorHex)
-	if !environmentColorPattern.MatchString(colorHex) {
+	normalized, err := api.NormalizeEnvironmentColorHex(colorHex)
+	if err != nil {
 		return "", errors.New("color_hex must be a #RRGGBB color")
 	}
-	return strings.ToUpper(colorHex), nil
+	return normalized, nil
 }
 
 type projectRecord struct {
@@ -687,8 +687,8 @@ func projectResponse(project projectRecord) api.ProjectSummary {
 		Slug:      project.slug,
 		Name:      project.name,
 		IsDefault: project.isDefault,
-		CreatedAt: pgTime(project.createdAt),
-		UpdatedAt: pgTime(project.updatedAt),
+		CreatedAt: pgvalue.Time(project.createdAt),
+		UpdatedAt: pgvalue.Time(project.updatedAt),
 	}
 }
 
@@ -716,8 +716,8 @@ func environmentResponse(environment environmentRecord) api.EnvironmentSummary {
 		Name:      environment.name,
 		ColorHex:  environment.colorHex,
 		IsDefault: environment.isDefault,
-		CreatedAt: pgTime(environment.createdAt),
-		UpdatedAt: pgTime(environment.updatedAt),
+		CreatedAt: pgvalue.Time(environment.createdAt),
+		UpdatedAt: pgvalue.Time(environment.updatedAt),
 	}
 }
 

@@ -850,7 +850,7 @@ func (s *Server) resolveRunScheduling(options api.CreateRunOptions, task db.GetD
 	}
 	queuedExpiresAt := pgtype.Timestamptz{}
 	if ttl != "" {
-		duration, err := parsePositiveDuration(ttl, "ttl")
+		duration, err := api.ParsePositiveDuration(ttl, "ttl")
 		if err != nil {
 			return runScheduling{}, err
 		}

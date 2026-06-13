@@ -17,6 +17,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/safepath"
+
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"google.golang.org/protobuf/proto"
@@ -286,7 +288,7 @@ func runtimeSourceHostPath(imageRoot string, runtimePath string, imageMode bool)
 	if !imageMode {
 		return runtimePath, nil
 	}
-	return safeJoin(imageRoot, strings.TrimPrefix(runtimePath, "/"))
+	return safepath.JoinSlash(imageRoot, strings.TrimPrefix(runtimePath, "/"))
 }
 
 type adapterParseError struct {

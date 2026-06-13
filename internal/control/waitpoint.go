@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -91,7 +92,7 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 			writeError(w, errors.New("encode waitpoint policy"))
 			return
 		}
-		policyName = pgText(policy.Name)
+		policyName = pgvalue.Text(policy.Name)
 		policySnapshot = snapshot
 	}
 	runWaitID := ids.New()
@@ -179,7 +180,7 @@ func (s *Server) createWaitpoint(w http.ResponseWriter, r *http.Request) {
 			writeError(w, badRequest(err))
 			return
 		}
-		idempotencyKeyExpiresAt = pgTimeToPG(expiresAt)
+		idempotencyKeyExpiresAt = pgvalue.Timestamptz(expiresAt)
 	}
 	waitpoint, err := s.db.CreateHumanWaitpoint(r.Context(), db.CreateHumanWaitpointParams{
 		ID:                      ids.ToPG(ids.New()),
@@ -188,8 +189,8 @@ func (s *Server) createWaitpoint(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID:           environmentID,
 		Request:                 requestJSON,
 		DisplayText:             strings.TrimSpace(request.DisplayText),
-		ExpiresAt:               pgTimeToPG(request.ExpiresAt.UTC()),
-		IdempotencyKey:          pgText(idempotencyKey),
+		ExpiresAt:               pgvalue.Timestamptz(request.ExpiresAt.UTC()),
+		IdempotencyKey:          pgvalue.Text(idempotencyKey),
 		IdempotencyRequestHash:  idempotencyKeyHash,
 		IdempotencyKeyExpiresAt: idempotencyKeyExpiresAt,
 		IdempotencyKeyOptions:   []byte(`{}`),
@@ -313,7 +314,7 @@ type waitpointResolveOutcome struct {
 }
 
 func waitpointResponseFromCreate(row db.CreateHumanWaitpointRow) api.WaitpointResponse {
-	expiresAt := pgTime(row.ExpiresAt)
+	expiresAt := pgvalue.Time(row.ExpiresAt)
 	var expiresAtPtr *time.Time
 	if row.ExpiresAt.Valid {
 		expiresAtPtr = &expiresAt
@@ -327,7 +328,7 @@ func waitpointResponseFromCreate(row db.CreateHumanWaitpointRow) api.WaitpointRe
 		Request:       row.Request,
 		DisplayText:   row.DisplayText,
 		ExpiresAt:     expiresAtPtr,
-		CreatedAt:     pgTime(row.CreatedAt),
+		CreatedAt:     pgvalue.Time(row.CreatedAt),
 	}
 }
 
@@ -363,7 +364,7 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 		EventPayload:         eventJSON,
 		CompletedByPrincipal: pgtype.Text{String: resolution.Principal, Valid: true},
 		CompletedVia:         pgtype.Text{String: "authenticated_api", Valid: true},
-		ExternalSubject:      pgText(resolution.ExternalSubject),
+		ExternalSubject:      pgvalue.Text(resolution.ExternalSubject),
 		Metadata:             resolution.Metadata,
 		OrgID:                ids.ToPG(resolution.OrgID),
 		WaitpointID:          ids.ToPG(waitpointID),

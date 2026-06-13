@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -55,7 +56,7 @@ func (s *EventStream) RunPublisher(ctx context.Context) error {
 		}
 		claimed, err := s.db.ClaimEventOutbox(ctx, db.ClaimEventOutboxParams{
 			RowLimit:      eventOutboxBatchSize,
-			LeaseDuration: pgInterval(eventOutboxLeaseDuration),
+			LeaseDuration: pgvalue.Interval(eventOutboxLeaseDuration),
 		})
 		if err != nil {
 			consecutiveFailures++
@@ -78,7 +79,7 @@ func (s *EventStream) RunPublisher(ctx context.Context) error {
 				if markErr := s.db.MarkEventOutboxFailed(ctx, db.MarkEventOutboxFailedParams{
 					ID:         row.OutboxID,
 					LastError:  err.Error(),
-					RetryAfter: pgInterval(eventPublisherBackoff(int(row.Attempts))),
+					RetryAfter: pgvalue.Interval(eventPublisherBackoff(int(row.Attempts))),
 				}); markErr != nil {
 					s.log.Warn("mark event outbox failed", "outbox_id", row.OutboxID, "error", markErr)
 					if sleepErr := sleepWithContext(ctx, eventPublisherBackoff(int(row.Attempts))); sleepErr != nil {
@@ -354,8 +355,8 @@ func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, se
 		Source:         source,
 		Kind:           kind,
 		Message:        firstNonEmptyString(message, rawKind),
-		At:             pgTime(createdAt),
-		OccurredAt:     pgTime(occurredAt),
+		At:             pgvalue.Time(createdAt),
+		OccurredAt:     pgvalue.Time(occurredAt),
 		RedactionClass: redactionClass,
 		Attributes:     attributes,
 	}

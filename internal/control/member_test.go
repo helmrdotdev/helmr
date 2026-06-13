@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -306,7 +307,7 @@ func (s *memberManagementStore) GetSessionByTokenHash(context.Context, []byte) (
 		OrgID:     ids.ToPG(s.orgID),
 		UserID:    ids.ToPG(s.userID),
 		Role:      string(s.role),
-		ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	}, nil
 }
 

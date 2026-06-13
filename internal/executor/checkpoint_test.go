@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"google.golang.org/protobuf/proto"
@@ -447,7 +448,7 @@ func (c *checkpointCAS) Stage(_ context.Context, mediaType string) (cas.Stage, e
 
 func (c *checkpointCAS) put(mediaType string, content []byte) (cas.Object, error) {
 	object := cas.Object{
-		Digest:    cas.DigestBytes(content),
+		Digest:    sha256sum.DigestBytes(content),
 		SizeBytes: int64(len(content)),
 		MediaType: mediaType,
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -433,7 +434,7 @@ func newMagicLinkFinishDBTX(purpose db.MagicLinkPurpose) *magicLinkFinishDBTX {
 			OrgID:         ids.ToPG(orgID),
 			InvitationID:  invitationID,
 			RedirectAfter: pgtype.Text{String: "/runs", Valid: true},
-			ExpiresAt:     pgTimeToPG(time.Now().Add(time.Minute)),
+			ExpiresAt:     pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		},
 	}
 }

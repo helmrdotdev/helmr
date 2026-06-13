@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -923,10 +924,10 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		SessionID:         sessionID,
-		DispatchMessageID: pgText(messageID),
+		DispatchMessageID: pgvalue.Text(messageID),
 		DispatchLeaseID:   "lease-" + suffix,
 		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
@@ -976,12 +977,12 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactDigest:    pgvalue.Text(testDigest("5")),
 		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
-		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
-		WorkspaceArtifactEncoding:  pgText("tar"),
-		WorkspaceMountPath:         pgText("/workspace"),
-		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		WorkspaceArtifactMediaType: pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
+		WorkspaceMountPath:         pgvalue.Text("/workspace"),
+		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
 		ActiveDurationMs:           100,
 		CheckpointPayload:          []byte(`{"checkpoint_id":"next"}`),
 	}); err != nil {
@@ -1015,8 +1016,8 @@ func respondWaitpointToken(ctx context.Context, queries *db.Queries, orgID, wait
 		OrgID:                orgID,
 		ID:                   tokenID,
 		TokenHash:            tokenHash,
-		CompletedByPrincipal: pgText(responseKey),
-		CompletedVia:         pgText("email_token"),
+		CompletedByPrincipal: pgvalue.Text(responseKey),
+		CompletedVia:         pgvalue.Text("email_token"),
 		Metadata:             []byte(`{}`),
 	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
@@ -1029,11 +1030,11 @@ func respondWaitpointToken(ctx context.Context, queries *db.Queries, orgID, wait
 		RequestHash:          responseKey,
 		Action:               "respond",
 		Kind:                 db.WaitpointKindHuman,
-		ResolutionKind:       pgText("completed"),
+		ResolutionKind:       pgvalue.Text("completed"),
 		Resolution:           approvedWaitpointResolution(responseKey),
 		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
-		CompletedByPrincipal: pgText(responseKey),
-		CompletedVia:         pgText("email_token"),
+		CompletedByPrincipal: pgvalue.Text(responseKey),
+		CompletedVia:         pgvalue.Text("email_token"),
 		Metadata:             []byte(`{}`),
 	}); err != nil {
 		return err
@@ -1050,7 +1051,7 @@ func resolveApprovedWaitpointParams(orgID, runID, waitpointID pgtype.UUID) db.Re
 		OrgID:          orgID,
 		ID:             waitpointID,
 		Kind:           db.WaitpointKindHuman,
-		ResolutionKind: pgText("completed"),
+		ResolutionKind: pgvalue.Text("completed"),
 		Output:         []byte(`{"approved":true}`),
 		Resolution:     approvedWaitpointResolution("reviewer@example.com"),
 	}
@@ -1114,8 +1115,8 @@ func seedLeasableRunQueueItem(t *testing.T, ctx context.Context, queries *db.Que
 		OrgID:             orgID,
 		Priority:          10,
 		QueueName:         queueName,
-		QueueTimestamp:    pgTime(time.Now()),
-		DispatchMessageID: pgText(messageID),
+		QueueTimestamp:    pgvalue.Timestamptz(time.Now()),
+		DispatchMessageID: pgvalue.Text(messageID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1125,8 +1126,8 @@ func seedLeasableRunQueueItem(t *testing.T, ctx context.Context, queries *db.Que
 		OrgID:                orgID,
 		RunID:                runID,
 		WorkerInstanceID:     instance.ID,
-		DispatchMessageID:    pgText(messageID),
-		ReservationExpiresAt: pgTime(time.Now().Add(time.Minute)),
+		DispatchMessageID:    pgvalue.Text(messageID),
+		ReservationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 	}); err != nil {
 		t.Fatal(err)
 	}

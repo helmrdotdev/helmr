@@ -5,6 +5,8 @@ package guestd
 import (
 	"fmt"
 	"path/filepath"
+
+	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
 func mountImageRuntimeFilesystems(imageRoot string) (func(), error) {
@@ -12,7 +14,7 @@ func mountImageRuntimeFilesystems(imageRoot string) (func(), error) {
 		if err := mkdirAllNoSymlink(imageRoot, rel, 0o755); err != nil {
 			return func() {}, err
 		}
-		if _, err := safeJoin(imageRoot, filepath.ToSlash(rel)); err != nil {
+		if _, err := safepath.JoinSlash(imageRoot, filepath.ToSlash(rel)); err != nil {
 			return func() {}, err
 		}
 	}
@@ -23,18 +25,18 @@ func imageRuntimeMountTarget(imageRoot, rel string) (string, error) {
 	if err := mkdirAllNoSymlink(imageRoot, rel, 0o755); err != nil {
 		return "", err
 	}
-	return safeJoin(imageRoot, filepath.ToSlash(rel))
+	return safepath.JoinSlash(imageRoot, filepath.ToSlash(rel))
 }
 
 func imageRuntimeDeviceTarget(imageRoot, name string) (string, error) {
 	if err := mkdirAllNoSymlink(imageRoot, "dev", 0o755); err != nil {
 		return "", err
 	}
-	target, err := safeJoin(imageRoot, filepath.ToSlash(filepath.Join("dev", name)))
+	target, err := safepath.JoinSlash(imageRoot, filepath.ToSlash(filepath.Join("dev", name)))
 	if err != nil {
 		return "", err
 	}
-	parent, err := safeJoin(imageRoot, "dev")
+	parent, err := safepath.JoinSlash(imageRoot, "dev")
 	if err != nil {
 		return "", err
 	}

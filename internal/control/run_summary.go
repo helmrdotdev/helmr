@@ -9,12 +9,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
-
-func isTerminalRunStatus(status db.RunStatus) bool {
-	return status == db.RunStatusSucceeded || status == db.RunStatusFailed || status == db.RunStatusCancelled || status == db.RunStatusExpired
-}
 
 type runSummary struct {
 	ID                   pgtype.UUID
@@ -252,8 +249,8 @@ func runResponse(run runSummary) api.RunResponse {
 		AttemptNumber:     attemptNumber,
 		ExitCode:          exitCode,
 		Output:            output,
-		CreatedAt:         pgTime(run.CreatedAt),
-		UpdatedAt:         pgTime(run.UpdatedAt),
+		CreatedAt:         pgvalue.Time(run.CreatedAt),
+		UpdatedAt:         pgvalue.Time(run.UpdatedAt),
 	}
 }
 
@@ -381,7 +378,7 @@ func pendingWaitpointResponse(waitpoint waitpointView) (api.PendingWaitpoint, er
 		WaitpointID: ids.MustFromPG(waitpoint.ID).String(),
 		Request:     waitpoint.Request,
 		DisplayText: waitpoint.DisplayText,
-		RequestedAt: pgTime(waitpoint.RequestedAt),
+		RequestedAt: pgvalue.Time(waitpoint.RequestedAt),
 	}
 	if waitpoint.TimeoutSeconds.Valid {
 		response.Timeout = &waitpoint.TimeoutSeconds.Int32
@@ -453,7 +450,7 @@ func waitpointDeliveryResponse(delivery db.WaitpointDelivery) api.WaitpointDeliv
 	}
 	var sentAt *time.Time
 	if delivery.SentAt.Valid {
-		value := pgTime(delivery.SentAt)
+		value := pgvalue.Time(delivery.SentAt)
 		sentAt = &value
 	}
 	return api.WaitpointDeliveryResponse{
@@ -464,7 +461,7 @@ func waitpointDeliveryResponse(delivery db.WaitpointDelivery) api.WaitpointDeliv
 		Status:        string(delivery.Status),
 		LastError:     lastError,
 		SentAt:        sentAt,
-		CreatedAt:     pgTime(delivery.CreatedAt),
-		UpdatedAt:     pgTime(delivery.UpdatedAt),
+		CreatedAt:     pgvalue.Time(delivery.CreatedAt),
+		UpdatedAt:     pgvalue.Time(delivery.UpdatedAt),
 	}
 }

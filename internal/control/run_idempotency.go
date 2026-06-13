@@ -143,11 +143,7 @@ func parseIdempotencyKeyTTL(raw string) (time.Duration, error) {
 	if raw == "" {
 		return defaultIdempotencyKeyTTL, nil
 	}
-	return parsePositiveDuration(raw, "idempotency_key_ttl")
-}
-
-func parsePositiveDuration(raw string, label string) (time.Duration, error) {
-	return api.ParsePositiveDuration(raw, label)
+	return api.ParsePositiveDuration(raw, "idempotency_key_ttl")
 }
 
 func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, requestHash string, source runSource, allowTerminalClear bool) (runSummary, bool, error) {
@@ -165,7 +161,7 @@ func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, pro
 		return runSummary{}, false, err
 	}
 	expired := existing.IdempotencyKeyExpiresAt.Valid && !time.Now().Before(existing.IdempotencyKeyExpiresAt.Time)
-	if allowTerminalClear && (existing.Status == db.RunStatusFailed || existing.Status == db.RunStatusExpired || (expired && isTerminalRunStatus(existing.Status))) {
+	if allowTerminalClear && (existing.Status == db.RunStatusFailed || existing.Status == db.RunStatusExpired || (expired && api.RunStatusIsTerminal(string(existing.Status)))) {
 		if err := s.db.ClearRunIdempotencyKey(ctx, db.ClearRunIdempotencyKeyParams{
 			OrgID:         ids.ToPG(orgID),
 			ProjectID:     projectID,

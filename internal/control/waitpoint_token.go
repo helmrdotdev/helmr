@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -107,7 +108,7 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		OrgID:           ids.ToPG(actor.OrgID),
 		WaitpointID:     ids.ToPG(waitpointID),
 		TokenHash:       tokenHash,
-		ExpiresAt:       pgTimeToPG(expiresAt),
+		ExpiresAt:       pgvalue.Timestamptz(expiresAt),
 		ExternalSubject: pgtype.Text{},
 		Metadata:        metadata,
 	})
@@ -196,7 +197,7 @@ func (s *Server) respondWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		EventPayload:         eventJSON,
 		CompletedByPrincipal: pgtype.Text{String: principal, Valid: true},
 		CompletedVia:         pgtype.Text{String: "waitpoint_response_token", Valid: true},
-		ExternalSubject:      pgText(externalSubject),
+		ExternalSubject:      pgvalue.Text(externalSubject),
 		Metadata:             response.Metadata,
 	}
 	resolveParams := db.ResolveWaitpointParams{
@@ -213,7 +214,7 @@ func (s *Server) respondWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		TokenHash:            tokenHash,
 		CompletedByPrincipal: pgtype.Text{String: principal, Valid: true},
 		CompletedVia:         pgtype.Text{String: "waitpoint_response_token", Valid: true},
-		ExternalSubject:      pgText(externalSubject),
+		ExternalSubject:      pgvalue.Text(externalSubject),
 		Metadata:             response.Metadata,
 	}
 	outcome, err := s.respondWithWaitpointToken(r.Context(), markParams, recordParams, resolveParams)
@@ -361,7 +362,7 @@ func normalizeWaitpointTokenMetadata(metadata json.RawMessage) ([]byte, error) {
 }
 
 func (s *Server) waitpointTokenResponseFromCreate(row db.WaitpointResponseToken, rawToken string) api.WaitpointTokenResponse {
-	expiresAt := pgTime(row.ExpiresAt)
+	expiresAt := pgvalue.Time(row.ExpiresAt)
 	var expiresAtPtr *time.Time
 	if row.ExpiresAt.Valid {
 		expiresAtPtr = &expiresAt

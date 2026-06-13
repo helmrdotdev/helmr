@@ -11,6 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 )
 
@@ -67,7 +68,7 @@ func (s *Server) loadWaitpointConfirmationView(r *http.Request) (waitpointConfir
 		WaitpointID: ids.MustFromPG(token.WaitpointID).String(),
 		Kind:        token.WaitpointKind,
 		DisplayText: token.WaitpointDisplayText,
-		ExpiresAt:   pgTime(token.ExpiresAt),
+		ExpiresAt:   pgvalue.Time(token.ExpiresAt),
 	}, nil
 }
 

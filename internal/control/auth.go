@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 type actorContextKey struct{}
@@ -196,7 +197,7 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 	}
 	if err := s.db.RefreshSession(r.Context(), db.RefreshSessionParams{
 		ID:        row.ID,
-		ExpiresAt: pgTimeToPG(time.Now().Add(s.effectiveSessionTTL())),
+		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(s.effectiveSessionTTL())),
 	}); err != nil {
 		return auth.Actor{}, err
 	}

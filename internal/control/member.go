@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -149,7 +150,7 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 		Role:            role,
 		InvitedByUserID: ids.ToPG(actor.UserID),
 		TokenHash:       tokenHash,
-		ExpiresAt:       pgTimeToPG(time.Now().AddDate(0, 0, expiresInDays)),
+		ExpiresAt:       pgvalue.Timestamptz(time.Now().AddDate(0, 0, expiresInDays)),
 	})
 	if err != nil {
 		if isNoRows(err) {
@@ -436,9 +437,9 @@ func memberSummaryFromListRow(row db.ListOrgMembersRow) (api.MemberSummary, erro
 		Email:       email,
 		Role:        string(row.Role),
 		Status:      status,
-		CreatedAt:   pgTime(row.CreatedAt),
-		UpdatedAt:   pgTime(row.UpdatedAt),
-		DisabledAt:  pgTimePtr(disabledAt),
+		CreatedAt:   pgvalue.Time(row.CreatedAt),
+		UpdatedAt:   pgvalue.Time(row.UpdatedAt),
+		DisabledAt:  pgvalue.TimePtr(disabledAt),
 	}, nil
 }
 
@@ -469,9 +470,9 @@ func memberSummaryFromOrgMember(member db.OrgMember, displayName pgtype.Text, em
 		Email:       emailValue,
 		Role:        string(member.Role),
 		Status:      status,
-		CreatedAt:   pgTime(member.CreatedAt),
-		UpdatedAt:   pgTime(member.UpdatedAt),
-		DisabledAt:  pgTimePtr(disabledAt),
+		CreatedAt:   pgvalue.Time(member.CreatedAt),
+		UpdatedAt:   pgvalue.Time(member.UpdatedAt),
+		DisabledAt:  pgvalue.TimePtr(disabledAt),
 	}, nil
 }
 
@@ -523,12 +524,12 @@ func invitationSummary(id pgtype.UUID, email string, role db.OrgMemberRole, invi
 		Email:            email,
 		Role:             string(role),
 		Status:           status,
-		InvitedByUserID:  nullableUUIDString(invitedByUserID),
-		AcceptedByUserID: nullableUUIDString(acceptedByUserID),
-		RevokedByUserID:  nullableUUIDString(revokedByUserID),
-		CreatedAt:        pgTime(createdAt),
-		ExpiresAt:        pgTime(expiresAt),
-		AcceptedAt:       pgTimePtr(acceptedAt),
-		RevokedAt:        pgTimePtr(revokedAt),
+		InvitedByUserID:  ids.StringFromPG(invitedByUserID),
+		AcceptedByUserID: ids.StringFromPG(acceptedByUserID),
+		RevokedByUserID:  ids.StringFromPG(revokedByUserID),
+		CreatedAt:        pgvalue.Time(createdAt),
+		ExpiresAt:        pgvalue.Time(expiresAt),
+		AcceptedAt:       pgvalue.TimePtr(acceptedAt),
+		RevokedAt:        pgvalue.TimePtr(revokedAt),
 	}, nil
 }

@@ -7,6 +7,8 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
 const (
@@ -21,7 +23,7 @@ func installAdapterBundle(adapterBundlePath, imageRoot string) error {
 	if err := mkdirAllNoSymlink(imageRoot, "opt", 0o755); err != nil {
 		return err
 	}
-	target, err := safeJoin(imageRoot, "opt/helmr")
+	target, err := safepath.JoinSlash(imageRoot, "opt/helmr")
 	if err != nil {
 		return err
 	}
@@ -43,7 +45,7 @@ func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, 
 	if err := mkdirAllNoSymlink(imageRoot, parent, 0o755); err != nil {
 		return "", err
 	}
-	target, err := safeJoin(imageRoot, strings.TrimPrefix(runtimePath, "/"))
+	target, err := safepath.JoinSlash(imageRoot, strings.TrimPrefix(runtimePath, "/"))
 	if err != nil {
 		return "", err
 	}
@@ -94,7 +96,7 @@ func imageNodeRuntimeCommand(imageRoot string, imageConfig ociRuntimeConfig) (st
 		if isReservedRuntimePath(runtimePath) {
 			continue
 		}
-		hostPath, err := safeJoin(imageRoot, strings.TrimPrefix(runtimePath, "/"))
+		hostPath, err := safepath.JoinSlash(imageRoot, strings.TrimPrefix(runtimePath, "/"))
 		if err != nil {
 			return "", err
 		}

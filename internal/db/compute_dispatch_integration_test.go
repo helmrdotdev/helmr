@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -42,7 +43,7 @@ func TestPrepareQueuedRunQueueItemBuildsRequirementsFromDeploymentTask(t *testin
 	marked, err := queries.MarkRunQueueItemEnqueued(ctx, db.MarkRunQueueItemEnqueuedParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
-		DispatchMessageID:          pgText("redis-message-1"),
+		DispatchMessageID:          pgvalue.Text("redis-message-1"),
 		ExpectedDispatchGeneration: prepared.DispatchGeneration,
 	})
 	if err != nil {
@@ -323,7 +324,7 @@ func TestQueuedRunQueueItemWithMessageIDCanBeReenqueued(t *testing.T) {
 	marked, err := queries.MarkRunQueueItemEnqueued(ctx, db.MarkRunQueueItemEnqueuedParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
-		DispatchMessageID:          pgText("redis-message-before-loss"),
+		DispatchMessageID:          pgvalue.Text("redis-message-before-loss"),
 		ExpectedDispatchGeneration: prepared.DispatchGeneration,
 	})
 	if err != nil {
@@ -354,8 +355,8 @@ func TestQueuedRunQueueItemWithMessageIDCanBeReenqueued(t *testing.T) {
 		OrgID:                orgID,
 		RunID:                runID,
 		WorkerInstanceID:     instance.ID,
-		DispatchMessageID:    pgText("redis-message-before-loss"),
-		ReservationExpiresAt: pgTime(time.Now().Add(time.Minute)),
+		DispatchMessageID:    pgvalue.Text("redis-message-before-loss"),
+		ReservationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +364,7 @@ func TestQueuedRunQueueItemWithMessageIDCanBeReenqueued(t *testing.T) {
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		DispatchMessageID: pgText("redis-message-before-loss"),
+		DispatchMessageID: pgvalue.Text("redis-message-before-loss"),
 		LastError:         "redis lease lost",
 	})
 	if err != nil {
@@ -442,8 +443,8 @@ func TestListQueueScopesReturnsEveryQueueForEnvironment(t *testing.T) {
 			OrgID:             orgID,
 			Priority:          1,
 			QueueName:         row.queue,
-			QueueTimestamp:    pgTime(time.Now()),
-			DispatchMessageID: pgText("message-" + row.queue),
+			QueueTimestamp:    pgvalue.Timestamptz(time.Now()),
+			DispatchMessageID: pgvalue.Text("message-" + row.queue),
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -492,7 +493,7 @@ func TestRunQueueItemFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	if _, err := queries.MarkRunQueueItemEnqueued(ctx, db.MarkRunQueueItemEnqueuedParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
-		DispatchMessageID:          pgText("message-a"),
+		DispatchMessageID:          pgvalue.Text("message-a"),
 		ExpectedDispatchGeneration: prepared.DispatchGeneration + 1,
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale enqueue error = %v, want no rows", err)
@@ -500,7 +501,7 @@ func TestRunQueueItemFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	_, err = queries.MarkRunQueueItemEnqueued(ctx, db.MarkRunQueueItemEnqueuedParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
-		DispatchMessageID:          pgText("message-a"),
+		DispatchMessageID:          pgvalue.Text("message-a"),
 		ExpectedDispatchGeneration: prepared.DispatchGeneration,
 	})
 	if err != nil {
@@ -510,8 +511,8 @@ func TestRunQueueItemFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 		OrgID:                orgID,
 		RunID:                runID,
 		WorkerInstanceID:     instance.ID,
-		DispatchMessageID:    pgText("message-a"),
-		ReservationExpiresAt: pgTime(time.Now().Add(time.Minute)),
+		DispatchMessageID:    pgvalue.Text("message-a"),
+		ReservationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -522,7 +523,7 @@ func TestRunQueueItemFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		DispatchMessageID: pgText("message-a"),
+		DispatchMessageID: pgvalue.Text("message-a"),
 	}); err == nil {
 		t.Fatal("expected expired queue lease ack to fail")
 	}
@@ -641,7 +642,7 @@ func publishTestRunQueueItem(t *testing.T, ctx context.Context, queries *db.Quer
 	published, err := queries.MarkRunQueueItemEnqueued(ctx, db.MarkRunQueueItemEnqueuedParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
-		DispatchMessageID:          pgText(queueMessageID),
+		DispatchMessageID:          pgvalue.Text(queueMessageID),
 		ExpectedDispatchGeneration: entry.DispatchGeneration,
 	})
 	if err != nil {

@@ -26,6 +26,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -425,7 +426,7 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 		QueueName:             deploymentTask.QueueName,
 		QueueConcurrencyLimit: deploymentTask.QueueConcurrencyLimit,
 		Priority:              0,
-		QueueTimestamp:        pgTimeToPG(time.Now()),
+		QueueTimestamp:        pgvalue.Timestamptz(time.Now()),
 		Ttl:                   deploymentTask.Ttl,
 		MaxDurationSeconds:    3600,
 		TraceID:               traceID,

@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -38,7 +39,7 @@ func TestDeviceTokenIssuesSessionToken(t *testing.T) {
 			DeviceCodeHash:  deviceHash,
 			DecidedByUserID: ids.ToPG(userID),
 			Status:          db.DeviceCodeStatusApproved,
-			ExpiresAt:       pgTimeToPG(time.Now().Add(time.Minute)),
+			ExpiresAt:       pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		},
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte(authSecret), PublicURL: mustParseTestURL("https://helmr.example.test"), SessionTTL: time.Hour})
@@ -109,7 +110,7 @@ func TestBearerActorAcceptsSessionToken(t *testing.T) {
 			UserID:      ids.ToPG(userID),
 			Role:        string(db.OrgMemberRoleDeveloper),
 			DisplayName: "CLI User",
-			ExpiresAt:   pgTimeToPG(time.Now().Add(time.Hour)),
+			ExpiresAt:   pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		},
 	}
 	server := &Server{
@@ -148,7 +149,7 @@ func TestRequireActorAcceptsBearerSessionWithoutAPIKeyAuthenticator(t *testing.T
 			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			UserID:    ids.ToPG(ids.New()),
 			Role:      string(db.OrgMemberRoleDeveloper),
-			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+			ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		},
 	}
 	server := &Server{
@@ -190,7 +191,7 @@ func TestRequireSessionAcceptsBearerSession(t *testing.T) {
 			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			UserID:    ids.ToPG(ids.New()),
 			Role:      string(db.OrgMemberRoleOwner),
-			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+			ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		},
 	}
 	server := &Server{
@@ -248,7 +249,7 @@ func TestLogoutRevokesBearerSession(t *testing.T) {
 			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			UserID:    ids.ToPG(ids.New()),
 			Role:      string(db.OrgMemberRoleDeveloper),
-			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+			ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		},
 	}
 	server := &Server{
