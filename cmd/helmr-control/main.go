@@ -15,7 +15,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/asyncbus"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/config"
@@ -27,6 +26,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/sqs"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
@@ -94,11 +94,11 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure schedule index: %w", err)
 	}
-	var asyncPublisher asyncbus.Publisher
+	var asyncPublisher waitpoint.Publisher
 	if cfg.AsyncBusURI != "" {
-		asyncPublisher, err = asyncbus.Open(ctx, cfg.AsyncBusURI)
+		asyncPublisher, err = sqs.Open(ctx, cfg.AsyncBusURI)
 		if err != nil {
-			return fmt.Errorf("configure async bus: %w", err)
+			return fmt.Errorf("configure sqs bus: %w", err)
 		}
 	}
 	publicURL, err := url.Parse(cfg.PublicURL)

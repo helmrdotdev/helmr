@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/asyncbus"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/sqs"
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/sync/errgroup"
 )
@@ -150,8 +150,8 @@ func (w *Worker) reconcileOnce(ctx context.Context, sendDirect bool) error {
 	}
 }
 
-func deliveryAsyncMessage(delivery db.WaitpointDelivery) asyncbus.Message {
-	return asyncbus.Message{
+func deliveryAsyncMessage(delivery db.WaitpointDelivery) sqs.Message {
+	return sqs.Message{
 		Type:        deliveryMessageType,
 		Version:     asyncMessageVersionV0,
 		ID:          ids.MustFromPG(delivery.ID).String(),
@@ -159,7 +159,7 @@ func deliveryAsyncMessage(delivery db.WaitpointDelivery) asyncbus.Message {
 	}
 }
 
-func deliveryIDFromAsyncMessage(message asyncbus.Message) uuid.UUID {
+func deliveryIDFromAsyncMessage(message sqs.Message) uuid.UUID {
 	if message.Type != deliveryMessageType || message.Version != asyncMessageVersionV0 {
 		return uuid.Nil
 	}

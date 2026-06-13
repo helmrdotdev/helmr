@@ -25,7 +25,6 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"adapter":         {},
 		"api":             {"compute"},
 		"archive":         {},
-		"asyncbus":        {},
 		"auth":            {"db", "ids"},
 		"builder":         {"proto/bundle/v0", "secret"},
 		"buildkit":        {"builder", "proto/bundle/v0", "secret"},
@@ -59,7 +58,8 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"transport":       {"proto/run/v0"},
 		"version":         {},
 		"vm":              {"compute"},
-		"waitpoint":       {"api", "asyncbus", "auth", "db", "email", "ids"},
+		"sqs":             {},
+		"waitpoint":       {"api", "auth", "db", "email", "ids", "sqs"},
 		"worker":          {"api", "client", "compute"},
 		"workspace":       {"archive"},
 	}

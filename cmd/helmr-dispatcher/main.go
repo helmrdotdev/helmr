@@ -11,7 +11,6 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/helmrdotdev/helmr/internal/asyncbus"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -20,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/sqs"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
@@ -109,12 +109,15 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure schedule reconcile lock: %w", err)
 	}
-	var asyncSubscriber asyncbus.Subscriber
+	var asyncPublisher waitpoint.Publisher
+	var asyncSubscriber waitpoint.Subscriber
 	if cfg.AsyncBusURI != "" {
-		asyncSubscriber, err = asyncbus.Open(ctx, cfg.AsyncBusURI)
+		asyncBus, err := sqs.Open(ctx, cfg.AsyncBusURI)
 		if err != nil {
-			return fmt.Errorf("configure async bus: %w", err)
+			return fmt.Errorf("configure sqs bus: %w", err)
 		}
+		asyncPublisher = asyncBus
+		asyncSubscriber = asyncBus
 	}
 	publicURL, err := url.Parse(cfg.PublicURL)
 	if err != nil {
@@ -125,7 +128,7 @@ func run(log *slog.Logger) error {
 		Log:        log,
 		Store:      queries,
 		Mailer:     mailer,
-		Publisher:  asyncSubscriber,
+		Publisher:  asyncPublisher,
 		PublicURL:  publicURL,
 		AuthSecret: []byte(cfg.AuthSecret),
 	})

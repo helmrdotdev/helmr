@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/asyncbus"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/email"
+	"github.com/helmrdotdev/helmr/internal/sqs"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -42,12 +42,12 @@ type Store interface {
 }
 
 type Publisher interface {
-	Publish(context.Context, asyncbus.Message) (string, error)
+	Publish(context.Context, sqs.Message) (string, error)
 }
 
 type Subscriber interface {
-	Receive(context.Context) ([]asyncbus.ReceivedMessage, error)
-	Delete(context.Context, asyncbus.ReceivedMessage) error
+	Receive(context.Context) ([]sqs.ReceivedMessage, error)
+	Delete(context.Context, sqs.ReceivedMessage) error
 }
 
 type Notifier struct {
