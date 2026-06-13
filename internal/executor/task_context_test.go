@@ -3,12 +3,11 @@ package executor
 import (
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/checkout"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 func TestTaskContextJSON(t *testing.T) {
-	workspaceProto, err := runTaskWorkspaceProto("/workspace", checkout.WorkspaceArtifact{
+	workspaceProto, err := runTaskWorkspaceProto("/workspace", workspace.WorkspaceArtifact{
 		Digest:     "sha256:workspace",
 		MediaType:  workspace.ArtifactMediaType,
 		Encoding:   workspace.ArtifactEncoding,

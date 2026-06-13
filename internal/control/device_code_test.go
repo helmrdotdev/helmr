@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -33,7 +34,7 @@ func TestDeviceTokenIssuesSessionToken(t *testing.T) {
 		deviceHash: deviceHash,
 		device: db.DeviceCode{
 			ID:              ids.ToPG(ids.New()),
-			OrgID:           ids.ToPG(ids.DefaultOrgID),
+			OrgID:           ids.ToPG(dbtest.DefaultOrgID),
 			DeviceCodeHash:  deviceHash,
 			DecidedByUserID: ids.ToPG(userID),
 			Status:          db.DeviceCodeStatusApproved,
@@ -104,7 +105,7 @@ func TestBearerActorAcceptsSessionToken(t *testing.T) {
 		sessionHash: sessionHash,
 		session: db.GetSessionByTokenHashRow{
 			ID:          ids.ToPG(ids.New()),
-			OrgID:       ids.ToPG(ids.DefaultOrgID),
+			OrgID:       ids.ToPG(dbtest.DefaultOrgID),
 			UserID:      ids.ToPG(userID),
 			Role:        string(db.OrgMemberRoleDeveloper),
 			DisplayName: "CLI User",
@@ -125,7 +126,7 @@ func TestBearerActorAcceptsSessionToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if actor.Kind != auth.ActorKindSession || actor.UserID != userID || actor.OrgID != ids.DefaultOrgID {
+	if actor.Kind != auth.ActorKindSession || actor.UserID != userID || actor.OrgID != dbtest.DefaultOrgID {
 		t.Fatalf("actor = %+v", actor)
 	}
 	if !store.refreshedSession.Valid {
@@ -144,7 +145,7 @@ func TestRequireActorAcceptsBearerSessionWithoutAPIKeyAuthenticator(t *testing.T
 		sessionHash: sessionHash,
 		session: db.GetSessionByTokenHashRow{
 			ID:        ids.ToPG(ids.New()),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			UserID:    ids.ToPG(ids.New()),
 			Role:      string(db.OrgMemberRoleDeveloper),
 			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
@@ -186,7 +187,7 @@ func TestRequireSessionAcceptsBearerSession(t *testing.T) {
 		sessionHash: sessionHash,
 		session: db.GetSessionByTokenHashRow{
 			ID:        ids.ToPG(ids.New()),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			UserID:    ids.ToPG(ids.New()),
 			Role:      string(db.OrgMemberRoleOwner),
 			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
@@ -244,7 +245,7 @@ func TestLogoutRevokesBearerSession(t *testing.T) {
 		sessionHash: sessionHash,
 		session: db.GetSessionByTokenHashRow{
 			ID:        ids.ToPG(ids.New()),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			UserID:    ids.ToPG(ids.New()),
 			Role:      string(db.OrgMemberRoleDeveloper),
 			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),

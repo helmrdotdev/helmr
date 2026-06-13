@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -14,7 +15,7 @@ import (
 func TestDeletedProjectSlugCanBeReused(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
 	projectID := ids.ToPG(ids.New())
@@ -53,7 +54,7 @@ func TestDeletedProjectSlugCanBeReused(t *testing.T) {
 func TestDeletedEnvironmentSlugCanBeReused(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
 	environmentID := ids.ToPG(ids.New())
@@ -93,7 +94,7 @@ func TestDeletedEnvironmentSlugCanBeReused(t *testing.T) {
 func TestCreateProjectWithDefaultEnvironmentCreatesProductionAndStaging(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
 	projectID := ids.ToPG(ids.New())
 	productionID := ids.ToPG(ids.New())
@@ -134,7 +135,7 @@ func TestCreateProjectWithDefaultEnvironmentCreatesProductionAndStaging(t *testi
 func TestDeleteProjectAllowsOnlyProjectInSQL(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
 
 	projectID := ids.ToPG(ids.New())
@@ -160,7 +161,7 @@ func TestDeleteProjectAllowsOnlyProjectInSQL(t *testing.T) {
 func TestDeleteEnvironmentProtectsProductionAndStagingInSQL(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
 	_, err := queries.DeleteEnvironment(ctx, db.DeleteEnvironmentParams{OrgID: orgID, ProjectID: scope.ProjectID, ID: scope.EnvironmentID})
@@ -185,7 +186,7 @@ func TestDeleteEnvironmentProtectsProductionAndStagingInSQL(t *testing.T) {
 func TestDeleteProjectCascadesDeploymentAndRunGraph(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	scopedRows := seedScopedDeletionRows(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "project-delete")
@@ -206,7 +207,7 @@ func TestDeleteProjectCascadesDeploymentAndRunGraph(t *testing.T) {
 func TestDeleteEnvironmentCascadesDeploymentAndRunGraph(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	environmentID := ids.ToPG(ids.New())
 	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{

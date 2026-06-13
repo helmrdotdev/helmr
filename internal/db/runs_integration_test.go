@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -16,7 +17,7 @@ import (
 func TestListScopedRunSummariesRunningFilterIncludesRunningRuns(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
@@ -64,7 +65,7 @@ func TestListScopedRunSummariesRunningFilterIncludesRunningRuns(t *testing.T) {
 func TestExpireQueuedRunsHandlesMultipleRuns(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runs := make([]pgtype.UUID, 0, 2)
@@ -95,7 +96,7 @@ UPDATE runs
 func TestRunOperationTerminalStateCannotBeOverwritten(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
@@ -141,7 +142,7 @@ func TestRunOperationTerminalStateCannotBeOverwritten(t *testing.T) {
 func TestCancelRunRejectsNonCancelOperationWithoutMutation(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
@@ -196,7 +197,7 @@ SELECT status
 func TestCreateScopedRunAllowsReplayOperationOwnedBySourceRun(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	sourceRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)

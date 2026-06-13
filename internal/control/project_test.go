@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -183,7 +184,7 @@ func TestCreateDeploymentReusesDeployedContentHashWithoutPromotion(t *testing.T)
 	store := &fakeStore{
 		createDeploymentResult: &db.Deployment{
 			ID:                         testDeploymentID(),
-			OrgID:                      ids.ToPG(ids.DefaultOrgID),
+			OrgID:                      ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:                  testProjectID(),
 			EnvironmentID:              testEnvironmentID(),
 			ContentHash:                digest,
@@ -196,7 +197,7 @@ func TestCreateDeploymentReusesDeployedContentHashWithoutPromotion(t *testing.T)
 		},
 		artifacts: []db.Artifact{{
 			ID:            testArtifactID(),
-			OrgID:         ids.ToPG(ids.DefaultOrgID),
+			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Digest:        digest,
@@ -315,7 +316,7 @@ func TestProjectManagementDeletesProject(t *testing.T) {
 	store := &projectManagementStore{
 		project: db.Project{
 			ID:        ids.ToPG(projectID),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			Slug:      "main",
 			Name:      "Main",
 			IsDefault: true,
@@ -326,7 +327,7 @@ func TestProjectManagementDeletesProject(t *testing.T) {
 	server := &Server{db: store}
 	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID.String(), nil)
 	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
-		OrgID:  ids.DefaultOrgID,
+		OrgID:  dbtest.DefaultOrgID,
 		UserID: ids.New(),
 		Role:   auth.RoleOwner,
 		Kind:   auth.ActorKindSession,
@@ -354,7 +355,7 @@ func TestProjectManagementMarksDeletionJobFailedWhenDeleteFails(t *testing.T) {
 	store := &projectManagementStore{
 		project: db.Project{
 			ID:        ids.ToPG(projectID),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			Slug:      "main",
 			Name:      "Main",
 			IsDefault: true,
@@ -366,7 +367,7 @@ func TestProjectManagementMarksDeletionJobFailedWhenDeleteFails(t *testing.T) {
 	server := &Server{db: store}
 	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID.String(), nil)
 	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
-		OrgID:  ids.DefaultOrgID,
+		OrgID:  dbtest.DefaultOrgID,
 		UserID: ids.New(),
 		Role:   auth.RoleOwner,
 		Kind:   auth.ActorKindSession,
@@ -396,7 +397,7 @@ func TestProjectManagementPromotesSiblingWhenDeletingDefaultProject(t *testing.T
 		projects: []db.Project{
 			{
 				ID:        ids.ToPG(defaultProjectID),
-				OrgID:     ids.ToPG(ids.DefaultOrgID),
+				OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 				Slug:      "main",
 				Name:      "Main",
 				IsDefault: true,
@@ -405,7 +406,7 @@ func TestProjectManagementPromotesSiblingWhenDeletingDefaultProject(t *testing.T
 			},
 			{
 				ID:        ids.ToPG(siblingProjectID),
-				OrgID:     ids.ToPG(ids.DefaultOrgID),
+				OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 				Slug:      "next",
 				Name:      "Next",
 				IsDefault: false,
@@ -417,7 +418,7 @@ func TestProjectManagementPromotesSiblingWhenDeletingDefaultProject(t *testing.T
 	server := &Server{db: store}
 	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+defaultProjectID.String(), nil)
 	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
-		OrgID:  ids.DefaultOrgID,
+		OrgID:  dbtest.DefaultOrgID,
 		UserID: ids.New(),
 		Role:   auth.RoleOwner,
 		Kind:   auth.ActorKindSession,
@@ -455,14 +456,14 @@ func TestProjectRoutesAcceptBearerSession(t *testing.T) {
 		sessionHash: sessionHash,
 		session: db.GetSessionByTokenHashRow{
 			ID:        ids.ToPG(ids.New()),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			UserID:    ids.ToPG(ids.New()),
 			Role:      string(db.OrgMemberRoleOwner),
 			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
 		},
 		project: db.Project{
 			ID:        ids.ToPG(projectID),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			Slug:      "main",
 			Name:      "Main",
 			IsDefault: true,
@@ -508,13 +509,13 @@ func TestProjectManagementUpdatesEnvironment(t *testing.T) {
 	store := &projectManagementStore{
 		project: db.Project{
 			ID:    ids.ToPG(projectID),
-			OrgID: ids.ToPG(ids.DefaultOrgID),
+			OrgID: ids.ToPG(dbtest.DefaultOrgID),
 			Slug:  "main",
 			Name:  "Main",
 		},
 		environment: db.Environment{
 			ID:        ids.ToPG(environmentID),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID: ids.ToPG(projectID),
 			Slug:      "dev",
 			Name:      "Dev",
@@ -526,7 +527,7 @@ func TestProjectManagementUpdatesEnvironment(t *testing.T) {
 	server := &Server{db: store}
 	req := httptest.NewRequest(http.MethodPatch, "/api/projects/"+projectID.String()+"/environments/"+environmentID.String(), strings.NewReader(`{"slug":"qa","name":"QA","color_hex":"#f59e0b"}`))
 	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
-		OrgID: ids.DefaultOrgID,
+		OrgID: dbtest.DefaultOrgID,
 		Role:  auth.RoleOwner,
 		Kind:  auth.ActorKindSession,
 	}))
@@ -559,7 +560,7 @@ func TestProjectManagementRejectsInvalidEnvironmentColor(t *testing.T) {
 	store := &projectManagementStore{
 		environment: db.Environment{
 			ID:        ids.ToPG(environmentID),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID: ids.ToPG(projectID),
 			Slug:      "dev",
 			Name:      "Dev",
@@ -571,7 +572,7 @@ func TestProjectManagementRejectsInvalidEnvironmentColor(t *testing.T) {
 	server := &Server{db: store}
 	req := httptest.NewRequest(http.MethodPatch, "/api/projects/"+projectID.String()+"/environments/"+environmentID.String(), strings.NewReader(`{"slug":"qa","name":"QA","color_hex":"blue"}`))
 	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
-		OrgID: ids.DefaultOrgID,
+		OrgID: dbtest.DefaultOrgID,
 		Role:  auth.RoleOwner,
 		Kind:  auth.ActorKindSession,
 	}))
@@ -597,7 +598,7 @@ func TestProjectManagementRejectsDeletingProtectedEnvironment(t *testing.T) {
 	store := &projectManagementStore{
 		environment: db.Environment{
 			ID:        ids.ToPG(environmentID),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID: ids.ToPG(projectID),
 			Slug:      "production",
 			Name:      "Production",
@@ -610,7 +611,7 @@ func TestProjectManagementRejectsDeletingProtectedEnvironment(t *testing.T) {
 	server := &Server{db: store}
 	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID.String()+"/environments/"+environmentID.String(), nil)
 	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
-		OrgID: ids.DefaultOrgID,
+		OrgID: dbtest.DefaultOrgID,
 		Role:  auth.RoleOwner,
 		Kind:  auth.ActorKindSession,
 	}))
@@ -635,7 +636,7 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 	store := &fakeStore{
 		deployment: db.Deployment{
 			ID:                         testDeploymentID(),
-			OrgID:                      ids.ToPG(ids.DefaultOrgID),
+			OrgID:                      ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:                  testProjectID(),
 			EnvironmentID:              testEnvironmentID(),
 			DeploymentSourceArtifactID: testArtifactID(),
@@ -646,7 +647,7 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 		deploymentTasks: []db.DeploymentTask{
 			{
 				ID:               testDeploymentTaskID(),
-				OrgID:            ids.ToPG(ids.DefaultOrgID),
+				OrgID:            ids.ToPG(dbtest.DefaultOrgID),
 				ProjectID:        testProjectID(),
 				EnvironmentID:    testEnvironmentID(),
 				DeploymentID:     testDeploymentID(),
@@ -705,7 +706,7 @@ func TestGetDeploymentReturnsFailedDeploymentError(t *testing.T) {
 	store := &fakeStore{
 		deployment: db.Deployment{
 			ID:                         testDeploymentID(),
-			OrgID:                      ids.ToPG(ids.DefaultOrgID),
+			OrgID:                      ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:                  testProjectID(),
 			EnvironmentID:              testEnvironmentID(),
 			DeploymentSourceArtifactID: testArtifactID(),
@@ -746,7 +747,7 @@ func TestGetDeploymentAllowsDeployPermission(t *testing.T) {
 	store := &fakeStore{
 		deployment: db.Deployment{
 			ID:                         testDeploymentID(),
-			OrgID:                      ids.ToPG(ids.DefaultOrgID),
+			OrgID:                      ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:                  testProjectID(),
 			EnvironmentID:              testEnvironmentID(),
 			DeploymentSourceArtifactID: testArtifactID(),
@@ -762,7 +763,7 @@ func TestGetDeploymentAllowsDeployPermission(t *testing.T) {
 	routeContext.URLParams.Add("deploymentID", id.String())
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
 	ctx := context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
-		OrgID:         ids.DefaultOrgID,
+		OrgID:         dbtest.DefaultOrgID,
 		Role:          auth.RoleDeveloper,
 		Kind:          auth.ActorKindAPIKey,
 		ProjectID:     testProjectIDString(),
@@ -793,7 +794,7 @@ func TestGetDeploymentReturnsTasksWhenDeployed(t *testing.T) {
 	store := &fakeStore{
 		deployment: db.Deployment{
 			ID:                           testDeploymentID(),
-			OrgID:                        ids.ToPG(ids.DefaultOrgID),
+			OrgID:                        ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:                    testProjectID(),
 			EnvironmentID:                testEnvironmentID(),
 			DeploymentSourceArtifactID:   sourceArtifactID,
@@ -806,7 +807,7 @@ func TestGetDeploymentReturnsTasksWhenDeployed(t *testing.T) {
 		deploymentTasks: []db.DeploymentTask{
 			{
 				ID:               testDeploymentTaskID(),
-				OrgID:            ids.ToPG(ids.DefaultOrgID),
+				OrgID:            ids.ToPG(dbtest.DefaultOrgID),
 				ProjectID:        testProjectID(),
 				EnvironmentID:    testEnvironmentID(),
 				DeploymentID:     testDeploymentID(),
@@ -853,7 +854,7 @@ func TestPromoteDeploymentResolvesVersionInPathScope(t *testing.T) {
 	store := &fakeStore{
 		deployment: db.Deployment{
 			ID:                         testDeploymentID(),
-			OrgID:                      ids.ToPG(ids.DefaultOrgID),
+			OrgID:                      ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:                  testProjectID(),
 			EnvironmentID:              environmentID,
 			Version:                    "20260101.2",
@@ -968,7 +969,7 @@ func deploymentRequest(body []byte, contentType string) *http.Request {
 	routeContext.URLParams.Add("projectID", idsMustString(testProjectID()))
 	routeContext.URLParams.Add("environmentID", idsMustString(testEnvironmentID()))
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
-	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: ids.DefaultOrgID, Role: auth.RoleOwner, Kind: auth.ActorKindSession})
+	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: dbtest.DefaultOrgID, Role: auth.RoleOwner, Kind: auth.ActorKindSession})
 	return req.WithContext(ctx)
 }
 
@@ -978,14 +979,14 @@ func currentDeploymentRequest() *http.Request {
 	routeContext.URLParams.Add("projectID", testProjectIDString())
 	routeContext.URLParams.Add("environmentID", testEnvironmentIDString())
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
-	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: ids.DefaultOrgID, Role: auth.RoleViewer, Kind: auth.ActorKindSession})
+	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: dbtest.DefaultOrgID, Role: auth.RoleViewer, Kind: auth.ActorKindSession})
 	return req.WithContext(ctx)
 }
 
 func testScopedArtifact(id pgtype.UUID, kind db.ArtifactKind, digest string, mediaType string) db.Artifact {
 	return db.Artifact{
 		ID:            id,
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:     testProjectID(),
 		EnvironmentID: testEnvironmentID(),
 		Digest:        digest,
@@ -1004,7 +1005,7 @@ func deploymentStatusRequest(deploymentID pgtype.UUID) *http.Request {
 	routeContext.URLParams.Add("environmentID", testEnvironmentIDString())
 	routeContext.URLParams.Add("deploymentID", id.String())
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
-	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: ids.DefaultOrgID, Role: auth.RoleViewer, Kind: auth.ActorKindSession})
+	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: dbtest.DefaultOrgID, Role: auth.RoleViewer, Kind: auth.ActorKindSession})
 	return req.WithContext(ctx)
 }
 
@@ -1015,7 +1016,7 @@ func promoteDeploymentRequest(deploymentRef string, body string) *http.Request {
 	routeContext.URLParams.Add("environmentID", testEnvironmentIDString())
 	routeContext.URLParams.Add("deployment", deploymentRef)
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
-	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: ids.DefaultOrgID, UserID: ids.New(), Role: auth.RoleOwner, Kind: auth.ActorKindSession})
+	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: dbtest.DefaultOrgID, UserID: ids.New(), Role: auth.RoleOwner, Kind: auth.ActorKindSession})
 	return req.WithContext(ctx)
 }
 

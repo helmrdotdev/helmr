@@ -3,6 +3,7 @@ package schedule
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -98,13 +99,20 @@ func (e *Engine) RegisterNext(ctx context.Context, instance Instance) error {
 	if !instance.Active || !instance.NextFireAt.Valid {
 		return nil
 	}
-	instanceID := ids.MustFromPG(instance.InstanceID)
+	instanceID, err := ids.FromPG(instance.InstanceID)
+	if err != nil {
+		return fmt.Errorf("schedule instance id is invalid: %v", err)
+	}
 	nextFireAt := instance.NextFireAt.Time.UTC()
+	availableAt, err := e.availableAt(instance.InstanceID, instance.NextFireAt, instance.RetryAfter)
+	if err != nil {
+		return err
+	}
 	return e.index.Enqueue(ctx, IndexEntry{
 		InstanceID:  instanceID,
 		Generation:  instance.Generation,
 		ScheduledAt: nextFireAt,
-		AvailableAt: e.availableAt(instance.InstanceID, instance.NextFireAt, instance.RetryAfter),
+		AvailableAt: availableAt,
 	})
 }
 
@@ -321,9 +329,13 @@ func (e *Engine) nextFireAt(cronExpr string, timezone string, nextFireAt pgtype.
 	return NextCronTime(cronExpr, timezone, anchor)
 }
 
-func (e *Engine) availableAt(instanceID pgtype.UUID, scheduledAt pgtype.Timestamptz, retryAfter pgtype.Timestamptz) time.Time {
+func (e *Engine) availableAt(instanceID pgtype.UUID, scheduledAt pgtype.Timestamptz, retryAfter pgtype.Timestamptz) (time.Time, error) {
 	if retryAfter.Valid {
-		return retryAfter.Time.UTC()
+		return retryAfter.Time.UTC(), nil
 	}
-	return scheduledAt.Time.UTC().Add(Jitter(ids.MustFromPG(instanceID), e.jitter))
+	id, err := ids.FromPG(instanceID)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("schedule instance id is invalid: %v", err)
+	}
+	return scheduledAt.Time.UTC().Add(Jitter(id, e.jitter)), nil
 }

@@ -154,8 +154,12 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 	}
 	request.Options.IdempotencyKey = schedule.TriggerIdempotencyKey(row.InstanceID, row.Generation, row.NextFireAt)
 	request.Options.IdempotencyKeyTTL = schedule.TriggerIdempotencyKeyTTL
+	orgID, err := ids.FromPG(row.OrgID)
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("schedule trigger org id is invalid: %v", err)
+	}
 	run, _, err := s.createRunFromRequest(ctx, auth.Actor{
-		OrgID: ids.MustFromPG(row.OrgID),
+		OrgID: orgID,
 		Kind:  auth.ActorKindSystem,
 		Role:  auth.RoleOwner,
 	}, request, runSource{
@@ -224,7 +228,15 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		if s.secrets == nil {
 			return runSummary{}, false, errors.New("secret store is not configured")
 		}
-		if err := s.secrets.CheckScopedNames(ctx, actor.OrgID, ids.MustFromPG(projectID), ids.MustFromPG(environmentID), secretNames); err != nil {
+		projectUUID, err := ids.FromPG(projectID)
+		if err != nil {
+			return runSummary{}, false, fmt.Errorf("project id is invalid: %v", err)
+		}
+		environmentUUID, err := ids.FromPG(environmentID)
+		if err != nil {
+			return runSummary{}, false, fmt.Errorf("environment id is invalid: %v", err)
+		}
+		if err := s.secrets.CheckScopedNames(ctx, actor.OrgID, projectUUID, environmentUUID, secretNames); err != nil {
 			return runSummary{}, false, err
 		}
 	}

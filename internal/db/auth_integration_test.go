@@ -8,6 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -191,7 +192,7 @@ SELECT count(*)
 func TestOwnerExistsIgnoresDisabledUsers(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	userID := ids.ToPG(ids.New())
 
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
@@ -233,7 +234,7 @@ func TestOwnerExistsIgnoresDisabledUsers(t *testing.T) {
 func TestTouchActiveAPIKeyUsesStoredKeyRole(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
@@ -308,7 +309,7 @@ func TestTouchActiveAPIKeyUsesStoredKeyRole(t *testing.T) {
 func TestIssueAPIKeyRevokesSameNameOnlyInScope(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
@@ -400,7 +401,7 @@ SELECT revoked_at IS NOT NULL
 func TestWaitpointPolicyNameIsScopedToEnvironment(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
@@ -468,7 +469,7 @@ func TestWaitpointPolicyNameIsScopedToEnvironment(t *testing.T) {
 func TestDisableOrgMemberAndRevokeOrgSessionsRevokesGlobalSession(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	userID := ids.ToPG(ids.New())
 	sessionID := ids.ToPG(ids.New())
 

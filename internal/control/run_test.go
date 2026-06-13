@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
@@ -634,7 +635,7 @@ func TestExistingIdempotentRunKeepsScheduledTerminalRun(t *testing.T) {
 	store := &fakeStore{}
 	store.run = db.Run{
 		ID:                     runID,
-		OrgID:                  ids.ToPG(ids.DefaultOrgID),
+		OrgID:                  ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:              testProjectID(),
 		EnvironmentID:          testEnvironmentID(),
 		DeploymentID:           testDeploymentID(),
@@ -650,7 +651,7 @@ func TestExistingIdempotentRunKeepsScheduledTerminalRun(t *testing.T) {
 
 	existing, hit, err := server.existingIdempotentRun(
 		context.Background(),
-		ids.DefaultOrgID,
+		dbtest.DefaultOrgID,
 		testProjectID(),
 		testEnvironmentID(),
 		"deploy",
@@ -685,7 +686,7 @@ func TestCreateScheduleRunUsesDeclaredTaskSecrets(t *testing.T) {
 		runEnqueuer: runEnqueuer,
 	}
 	runID, err := server.CreateScheduleRun(context.Background(), db.GetScheduleTriggerCandidateRow{
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:     testProjectID(),
 		EnvironmentID: testEnvironmentID(),
 		ScheduleID:    ids.ToPG(scheduleID),
@@ -726,7 +727,7 @@ func TestExistingIdempotentRunAllowsScheduledHashMismatch(t *testing.T) {
 	store := &fakeStore{}
 	store.run = db.Run{
 		ID:                     runID,
-		OrgID:                  ids.ToPG(ids.DefaultOrgID),
+		OrgID:                  ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:              testProjectID(),
 		EnvironmentID:          testEnvironmentID(),
 		DeploymentID:           testDeploymentID(),
@@ -745,7 +746,7 @@ func TestExistingIdempotentRunAllowsScheduledHashMismatch(t *testing.T) {
 
 	existing, hit, err := server.existingIdempotentRun(
 		context.Background(),
-		ids.DefaultOrgID,
+		dbtest.DefaultOrgID,
 		testProjectID(),
 		testEnvironmentID(),
 		"deploy",
@@ -770,7 +771,7 @@ func TestExistingIdempotentRunRejectsScheduledSourceMismatch(t *testing.T) {
 	store := &fakeStore{}
 	store.run = db.Run{
 		ID:                     ids.ToPG(ids.New()),
-		OrgID:                  ids.ToPG(ids.DefaultOrgID),
+		OrgID:                  ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:              testProjectID(),
 		EnvironmentID:          testEnvironmentID(),
 		DeploymentID:           testDeploymentID(),
@@ -789,7 +790,7 @@ func TestExistingIdempotentRunRejectsScheduledSourceMismatch(t *testing.T) {
 
 	_, _, err := server.existingIdempotentRun(
 		context.Background(),
-		ids.DefaultOrgID,
+		dbtest.DefaultOrgID,
 		testProjectID(),
 		testEnvironmentID(),
 		"deploy",
@@ -811,7 +812,7 @@ func TestIdempotentReplayRunReturnsAppliedOperationRun(t *testing.T) {
 	runID := ids.ToPG(ids.New())
 	store := &fakeStore{run: db.Run{
 		ID:            runID,
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:     testProjectID(),
 		EnvironmentID: testEnvironmentID(),
 		TaskID:        "deploy",
@@ -821,7 +822,7 @@ func TestIdempotentReplayRunReturnsAppliedOperationRun(t *testing.T) {
 	}}
 	server := &Server{db: store}
 	requestBody := []byte(`{"idempotency_key":"same","payload":{"b":2,"a":1}}`)
-	run, err := server.idempotentReplayRun(context.Background(), auth.Actor{OrgID: ids.DefaultOrgID}, db.RunOperation{
+	run, err := server.idempotentReplayRun(context.Background(), auth.Actor{OrgID: dbtest.DefaultOrgID}, db.RunOperation{
 		Status:  db.RunOperationStatusApplied,
 		Request: []byte(`{"payload":{"a":1,"b":2},"idempotency_key":"same"}`),
 		Result:  []byte(`{"run_id":"` + ids.MustFromPG(runID).String() + `"}`),
@@ -836,7 +837,7 @@ func TestIdempotentReplayRunReturnsAppliedOperationRun(t *testing.T) {
 
 func TestIdempotentReplayRunRejectsMismatchedRequest(t *testing.T) {
 	server := &Server{db: &fakeStore{}}
-	_, err := server.idempotentReplayRun(context.Background(), auth.Actor{OrgID: ids.DefaultOrgID}, db.RunOperation{
+	_, err := server.idempotentReplayRun(context.Background(), auth.Actor{OrgID: dbtest.DefaultOrgID}, db.RunOperation{
 		Status:  db.RunOperationStatusApplied,
 		Request: []byte(`{"idempotency_key":"same","payload":{"n":9007199254740993}}`),
 		Result:  []byte(`{"run_id":"00000000-0000-0000-0000-000000000001"}`),
@@ -851,7 +852,7 @@ func TestCancelRunReturnsAppliedOperationAfterNoRowsRace(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:               runID,
-			OrgID:            ids.ToPG(ids.DefaultOrgID),
+			OrgID:            ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -894,7 +895,7 @@ func TestCancelRunRejectsMismatchedIdempotencyRequest(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:               runID,
-			OrgID:            ids.ToPG(ids.DefaultOrgID),
+			OrgID:            ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -906,7 +907,7 @@ func TestCancelRunRejectsMismatchedIdempotencyRequest(t *testing.T) {
 		},
 		runOperation: db.RunOperation{
 			ID:             operationID,
-			OrgID:          ids.ToPG(ids.DefaultOrgID),
+			OrgID:          ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:      testProjectID(),
 			EnvironmentID:  testEnvironmentID(),
 			RunID:          runID,
@@ -978,7 +979,7 @@ func TestValidatedRetryPolicyRejectsUnsupportedFields(t *testing.T) {
 }
 
 func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) {
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	store := &fakeStore{deploymentTasks: []db.DeploymentTask{{
 		ID:                   testDeploymentTaskID(),
 		OrgID:                orgID,
@@ -1218,7 +1219,7 @@ func TestListRunsQuery(t *testing.T) {
 	runID := ids.New()
 	store.run = db.Run{
 		ID:               ids.ToPG(runID),
-		OrgID:            ids.ToPG(ids.DefaultOrgID),
+		OrgID:            ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:        testProjectID(),
 		EnvironmentID:    testEnvironmentID(),
 		DeploymentID:     testDeploymentID(),
@@ -1255,7 +1256,7 @@ func TestAPIKeyListRunsUsesActorEnvironmentScope(t *testing.T) {
 	runID := ids.New()
 	store.run = db.Run{
 		ID:               ids.ToPG(runID),
-		OrgID:            ids.ToPG(ids.DefaultOrgID),
+		OrgID:            ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:        testProjectID(),
 		EnvironmentID:    testEnvironmentID(),
 		DeploymentID:     testDeploymentID(),
@@ -1290,7 +1291,7 @@ func TestListRunsIncludesPendingWaitpointDeliveries(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:               runID,
-			OrgID:            ids.ToPG(ids.DefaultOrgID),
+			OrgID:            ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -1303,7 +1304,7 @@ func TestListRunsIncludesPendingWaitpointDeliveries(t *testing.T) {
 		waitpoint: fakeWaitpoint{
 			ID:            waitpointID,
 			RunWaitID:     runWaitID,
-			OrgID:         ids.ToPG(ids.DefaultOrgID),
+			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			RunID:         runID,
@@ -1317,7 +1318,7 @@ func TestListRunsIncludesPendingWaitpointDeliveries(t *testing.T) {
 		waitpointDeliveries: []db.WaitpointDelivery{
 			{
 				ID:            ignoredDeliveryID,
-				OrgID:         ids.ToPG(ids.DefaultOrgID),
+				OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 				RunID:         runID,
 				RunWaitID:     runWaitID,
 				WaitpointID:   ids.ToPG(ids.New()),
@@ -1330,7 +1331,7 @@ func TestListRunsIncludesPendingWaitpointDeliveries(t *testing.T) {
 			},
 			{
 				ID:            matchingDeliveryID,
-				OrgID:         ids.ToPG(ids.DefaultOrgID),
+				OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 				RunID:         runID,
 				RunWaitID:     runWaitID,
 				WaitpointID:   waitpointID,
@@ -1392,7 +1393,7 @@ func TestListRunsRunningFilterReturnsLeasedAsPublicRunning(t *testing.T) {
 			store := &fakeStore{
 				run: db.Run{
 					ID:               ids.ToPG(runID),
-					OrgID:            ids.ToPG(ids.DefaultOrgID),
+					OrgID:            ids.ToPG(dbtest.DefaultOrgID),
 					ProjectID:        testProjectID(),
 					EnvironmentID:    testEnvironmentID(),
 					DeploymentID:     testDeploymentID(),
@@ -1466,7 +1467,7 @@ func TestGetRunLogs(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusRunning,
 			CreatedAt: testTime(),
@@ -1503,7 +1504,7 @@ func TestGetRunLogsReportsTruncatedSnapshot(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusRunning,
 			CreatedAt: testTime(),
@@ -1542,7 +1543,7 @@ func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusSucceeded,
 			CreatedAt: testTime(),
@@ -1550,7 +1551,7 @@ func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
 		},
 		logChunks: []db.RunLogChunk{
 			{
-				OrgID:         ids.ToPG(ids.DefaultOrgID),
+				OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 				RunID:         ids.ToPG(runID),
 				SessionID:     ids.ToPG(sessionID),
 				AttemptNumber: 1,
@@ -1602,7 +1603,7 @@ func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusSucceeded,
 			CreatedAt: testTime(),
@@ -1611,7 +1612,7 @@ func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
 		deferLogChunksUntilSecondList: true,
 		logChunks: []db.RunLogChunk{
 			{
-				OrgID:         ids.ToPG(ids.DefaultOrgID),
+				OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 				RunID:         ids.ToPG(runID),
 				SessionID:     ids.ToPG(sessionID),
 				AttemptNumber: 1,
@@ -1878,7 +1879,7 @@ func TestGetSecretReturnsMetadataOnly(t *testing.T) {
 	store := &fakeStore{
 		secret: db.GetScopedSecretMetadataByNameRow{
 			ID:            ids.ToPG(ids.New()),
-			OrgID:         ids.ToPG(ids.DefaultOrgID),
+			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Name:          "github-token",
@@ -1962,7 +1963,7 @@ func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
 	store := &fakeStore{
 		secret: db.GetScopedSecretMetadataByNameRow{
 			ID:            ids.ToPG(ids.New()),
-			OrgID:         ids.ToPG(ids.DefaultOrgID),
+			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Name:          "github-token",
@@ -2057,7 +2058,7 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:                 ids.ToPG(ids.New()),
-			OrgID:              ids.ToPG(ids.DefaultOrgID),
+			OrgID:              ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:          testProjectID(),
 			EnvironmentID:      testEnvironmentID(),
 			DeploymentID:       testDeploymentID(),
@@ -2258,7 +2259,7 @@ func TestWorkerReleaseRejectsUnknownFields(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:                 ids.ToPG(ids.New()),
-			OrgID:              ids.ToPG(ids.DefaultOrgID),
+			OrgID:              ids.ToPG(dbtest.DefaultOrgID),
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
@@ -2311,7 +2312,7 @@ func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:               ids.ToPG(runID),
-			OrgID:            ids.ToPG(ids.DefaultOrgID),
+			OrgID:            ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -2333,7 +2334,7 @@ func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
 	body, err := json.Marshal(api.WorkerReleaseRequest{
 		Lease: api.WorkerRunLease{
 			ID:                sessionID.String(),
-			OrgID:             ids.DefaultOrgID.String(),
+			OrgID:             dbtest.DefaultOrgID.String(),
 			RunID:             runID.String(),
 			WorkerInstanceID:  workerID.String(),
 			AttemptNumber:     1,
@@ -2367,7 +2368,7 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:               ids.ToPG(runID),
-			OrgID:            ids.ToPG(ids.DefaultOrgID),
+			OrgID:            ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -2390,7 +2391,7 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 	body, err := json.Marshal(api.WorkerReleaseRequest{
 		Lease: api.WorkerRunLease{
 			ID:                sessionID.String(),
-			OrgID:             ids.DefaultOrgID.String(),
+			OrgID:             dbtest.DefaultOrgID.String(),
 			RunID:             runID.String(),
 			WorkerInstanceID:  workerID.String(),
 			AttemptNumber:     1,
@@ -2597,7 +2598,7 @@ func TestWorkerRestoreClaimDoesNotRequireWorkspaceSourceBinding(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:                 runID,
-			OrgID:              ids.ToPG(ids.DefaultOrgID),
+			OrgID:              ids.ToPG(dbtest.DefaultOrgID),
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
@@ -2608,14 +2609,14 @@ func TestWorkerRestoreClaimDoesNotRequireWorkspaceSourceBinding(t *testing.T) {
 		},
 		checkpoint: db.Checkpoint{
 			ID:       checkpointID,
-			OrgID:    ids.ToPG(ids.DefaultOrgID),
+			OrgID:    ids.ToPG(dbtest.DefaultOrgID),
 			RunID:    runID,
 			Status:   db.CheckpointStatusReady,
 			Manifest: []byte(`{}`),
 		},
 		waitpoint: fakeWaitpoint{
 			ID:             waitpointID,
-			OrgID:          ids.ToPG(ids.DefaultOrgID),
+			OrgID:          ids.ToPG(dbtest.DefaultOrgID),
 			RunID:          runID,
 			CheckpointID:   checkpointID,
 			Kind:           db.WaitpointKindHuman,
@@ -2655,7 +2656,7 @@ func TestWorkerRunLeaseFailsRunWhenSecretUnavailable(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:                 ids.ToPG(ids.New()),
-			OrgID:              ids.ToPG(ids.DefaultOrgID),
+			OrgID:              ids.ToPG(dbtest.DefaultOrgID),
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
@@ -2787,7 +2788,7 @@ func TestWorkerRunLeaseRejectsMismatchedWorkerID(t *testing.T) {
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000402")
 	claim := api.WorkerRunLease{
 		ID:                ids.New().String(),
-		OrgID:             ids.DefaultOrgID.String(),
+		OrgID:             dbtest.DefaultOrgID.String(),
 		RunID:             ids.New().String(),
 		WorkerInstanceID:  "00000000-0000-0000-0000-000000000401",
 		AttemptNumber:     1,
@@ -2813,7 +2814,7 @@ func TestWorkerRunLeaseRejectsMissingAttemptNumber(t *testing.T) {
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 	claim := api.WorkerRunLease{
 		ID:                ids.New().String(),
-		OrgID:             ids.DefaultOrgID.String(),
+		OrgID:             dbtest.DefaultOrgID.String(),
 		RunID:             ids.New().String(),
 		WorkerInstanceID:  "00000000-0000-0000-0000-000000000401",
 		DispatchMessageID: "message-1",
@@ -2839,7 +2840,7 @@ func TestWorkerRunLeaseRejectsMismatchedAttemptNumber(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:                 ids.ToPG(runID),
-			OrgID:              ids.ToPG(ids.DefaultOrgID),
+			OrgID:              ids.ToPG(dbtest.DefaultOrgID),
 			TaskID:             "deploy",
 			Status:             db.RunStatusRunning,
 			Payload:            []byte(`{}`),
@@ -2855,7 +2856,7 @@ func TestWorkerRunLeaseRejectsMismatchedAttemptNumber(t *testing.T) {
 	workerBearer := mintTestWorkerToken(t, server, workerID.String())
 	body, err := json.Marshal(api.WorkerRenewRequest{Lease: api.WorkerRunLease{
 		ID:                sessionID.String(),
-		OrgID:             ids.DefaultOrgID.String(),
+		OrgID:             dbtest.DefaultOrgID.String(),
 		RunID:             runID.String(),
 		WorkerInstanceID:  workerID.String(),
 		AttemptNumber:     2,
@@ -2879,7 +2880,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:                 ids.ToPG(ids.New()),
-			OrgID:              ids.ToPG(ids.DefaultOrgID),
+			OrgID:              ids.ToPG(dbtest.DefaultOrgID),
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
@@ -2999,7 +3000,7 @@ func TestRunEventsPaginationUsesLookahead(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusQueued,
 			CreatedAt: testTime(),
@@ -3009,7 +3010,7 @@ func TestRunEventsPaginationUsesLookahead(t *testing.T) {
 	for i := int64(1); i <= 201; i++ {
 		store.events = append(store.events, db.Event{
 			Seq:       i,
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			RunID:     ids.ToPG(runID),
 			Kind:      "run.created",
 			Payload:   []byte(`{}`),
@@ -3082,7 +3083,7 @@ func TestEventStreamTreatsTrimmedOlderDuplicateAsPublished(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
-	streamKey := eventStreamKey(ids.DefaultOrgID, db.EventSubjectTypeRun, runID)
+	streamKey := eventStreamKey(dbtest.DefaultOrgID, db.EventSubjectTypeRun, runID)
 	if err := redisClient.XAdd(context.Background(), &goredis.XAddArgs{
 		Stream: streamKey,
 		ID:     "2-0",
@@ -3095,7 +3096,7 @@ func TestEventStreamTreatsTrimmedOlderDuplicateAsPublished(t *testing.T) {
 		OutboxID:       1,
 		StreamKey:      streamKey,
 		Seq:            1,
-		OrgID:          ids.ToPG(ids.DefaultOrgID),
+		OrgID:          ids.ToPG(dbtest.DefaultOrgID),
 		RunID:          ids.ToPG(runID),
 		SubjectType:    db.EventSubjectTypeRun,
 		SubjectID:      ids.ToPG(runID),
@@ -3115,7 +3116,7 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:                 ids.ToPG(ids.New()),
-			OrgID:              ids.ToPG(ids.DefaultOrgID),
+			OrgID:              ids.ToPG(dbtest.DefaultOrgID),
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
@@ -3310,7 +3311,7 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 			store := &fakeStore{
 				run: db.Run{
 					ID:        ids.ToPG(runID),
-					OrgID:     ids.ToPG(ids.DefaultOrgID),
+					OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 					TaskID:    "deploy",
 					Status:    db.RunStatusWaiting,
 					CreatedAt: testTime(),
@@ -3318,7 +3319,7 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 				},
 				waitpoint: fakeWaitpoint{
 					ID:          ids.ToPG(waitpointID),
-					OrgID:       ids.ToPG(ids.DefaultOrgID),
+					OrgID:       ids.ToPG(dbtest.DefaultOrgID),
 					RunID:       ids.ToPG(runID),
 					Kind:        tt.waitpointKind,
 					Status:      db.RunWaitStatusWaiting,
@@ -3358,7 +3359,7 @@ func TestRespondWaitpointReplayIsIdempotent(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusWaiting,
 			CreatedAt: testTime(),
@@ -3366,7 +3367,7 @@ func TestRespondWaitpointReplayIsIdempotent(t *testing.T) {
 		},
 		waitpoint: fakeWaitpoint{
 			ID:          ids.ToPG(waitpointID),
-			OrgID:       ids.ToPG(ids.DefaultOrgID),
+			OrgID:       ids.ToPG(dbtest.DefaultOrgID),
 			RunID:       ids.ToPG(runID),
 			Kind:        db.WaitpointKindHuman,
 			Status:      db.RunWaitStatusWaiting,
@@ -3397,7 +3398,7 @@ func TestRespondWaitpointRejectsNonRespondableKindInResolvePath(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusWaiting,
 			CreatedAt: testTime(),
@@ -3405,7 +3406,7 @@ func TestRespondWaitpointRejectsNonRespondableKindInResolvePath(t *testing.T) {
 		},
 		waitpoint: fakeWaitpoint{
 			ID:          ids.ToPG(waitpointID),
-			OrgID:       ids.ToPG(ids.DefaultOrgID),
+			OrgID:       ids.ToPG(dbtest.DefaultOrgID),
 			RunID:       ids.ToPG(runID),
 			Kind:        db.WaitpointKindDelay,
 			Status:      db.RunWaitStatusWaiting,
@@ -3431,7 +3432,7 @@ func TestResolveWaitpointReturnsAcceptedWhenRunWaitIsNotResuming(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
 			ID:        ids.ToPG(runID),
-			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 			TaskID:    "deploy",
 			Status:    db.RunStatusWaiting,
 			CreatedAt: testTime(),
@@ -3439,7 +3440,7 @@ func TestResolveWaitpointReturnsAcceptedWhenRunWaitIsNotResuming(t *testing.T) {
 		},
 		waitpoint: fakeWaitpoint{
 			ID:          ids.ToPG(waitpointID),
-			OrgID:       ids.ToPG(ids.DefaultOrgID),
+			OrgID:       ids.ToPG(dbtest.DefaultOrgID),
 			RunID:       ids.ToPG(runID),
 			Kind:        db.WaitpointKindHuman,
 			Status:      db.RunWaitStatusWaiting,
@@ -4485,7 +4486,7 @@ func (f *fakeStore) ListSubjectEvents(_ context.Context, arg db.ListSubjectEvent
 func (f *fakeStore) ListQueueScopes(_ context.Context, arg db.ListQueueScopesParams) ([]db.ListQueueScopesRow, error) {
 	f.listQueueScopes = arg
 	return []db.ListQueueScopesRow{{
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:     fakeRunProjectID(f.run),
 		EnvironmentID: fakeRunEnvironmentID(f.run),
 		QueueName:     "queue-a",
@@ -4567,7 +4568,7 @@ func (f *fakeStore) Dequeue(_ context.Context, request dispatch.DequeueRequest) 
 		MessageID:        "message-1",
 		WorkerInstanceID: request.WorkerInstanceID,
 		Message: dispatch.Message{
-			OrgID:     ids.DefaultOrgID.String(),
+			OrgID:     dbtest.DefaultOrgID.String(),
 			RunID:     ids.MustFromPG(f.run.ID).String(),
 			QueueName: "queue-a",
 		},
@@ -5520,7 +5521,7 @@ func (f fakeAuth) Authenticate(context.Context, string) (auth.Actor, error) {
 		environmentID = testEnvironmentIDString()
 	}
 	return auth.Actor{
-		OrgID:         ids.DefaultOrgID,
+		OrgID:         dbtest.DefaultOrgID,
 		UserID:        userID,
 		APIKeyID:      apiKeyID,
 		ProjectID:     projectID,

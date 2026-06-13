@@ -23,6 +23,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/tracing"
@@ -97,7 +98,7 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	}, http.StatusConflict)
 
 	events, err := queries.ListSubjectEvents(ctx, db.ListSubjectEventsParams{
-		OrgID:       ids.ToPG(ids.DefaultOrgID),
+		OrgID:       ids.ToPG(dbtest.DefaultOrgID),
 		SubjectType: db.EventSubjectTypeRun,
 		SubjectID:   run.ID,
 		RowLimit:    100,
@@ -111,7 +112,7 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 			t.Fatalf("stale event persisted: %+v", event)
 		}
 	}
-	updated, err := queries.GetRun(ctx, db.GetRunParams{OrgID: ids.ToPG(ids.DefaultOrgID), ID: run.ID})
+	updated, err := queries.GetRun(ctx, db.GetRunParams{OrgID: ids.ToPG(dbtest.DefaultOrgID), ID: run.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +135,7 @@ func TestWorkerCompleteDeploymentBuildRejectsStaleLeaseBeforeRecordingArtifactsW
 	}
 	sourceArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Digest:        sourceDigest,
@@ -152,7 +153,7 @@ func TestWorkerCompleteDeploymentBuildRejectsStaleLeaseBeforeRecordingArtifactsW
 	deploymentID := ids.ToPG(ids.New())
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                         deploymentID,
-		OrgID:                      ids.ToPG(ids.DefaultOrgID),
+		OrgID:                      ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:                  scope.ProjectID,
 		EnvironmentID:              scope.EnvironmentID,
 		Version:                    ids.MustFromPG(deploymentID).String(),
@@ -412,7 +413,7 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 	}
 	created, err := queries.CreateScopedRun(ctx, db.CreateScopedRunParams{
 		ID:                    ids.ToPG(ids.New()),
-		OrgID:                 ids.ToPG(ids.DefaultOrgID),
+		OrgID:                 ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:             scope.ProjectID,
 		EnvironmentID:         scope.EnvironmentID,
 		DeploymentID:          deploymentTask.DeploymentID,
@@ -525,7 +526,7 @@ func upsertWorkerHeartbeatForCapabilities(t *testing.T, ctx context.Context, que
 
 func seedServerTestConfiguredScope(t *testing.T, ctx context.Context, queries *db.Queries) db.GetDefaultProjectEnvironmentRow {
 	t.Helper()
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	if _, err := queries.CreateOrganization(ctx, db.CreateOrganizationParams{
 		ID:   orgID,
 		Name: "Test Organization",
@@ -576,7 +577,7 @@ func seedServerTestWorkerBootstrapToken(t *testing.T, ctx context.Context, _ *pg
 func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, scope db.GetDefaultProjectEnvironmentRow) db.GetCurrentDeploymentTaskRow {
 	t.Helper()
 	deploymentTask, err := queries.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		TaskID:        "deploy",
@@ -603,7 +604,7 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 	}
 	sourceArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Digest:        taskDeploymentSourceDigest,
@@ -616,7 +617,7 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 	}
 	bundleArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Digest:        taskBundleDigest,
@@ -629,7 +630,7 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 	}
 	buildManifestArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Digest:        buildManifestDigest,
@@ -642,7 +643,7 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 	}
 	deploymentManifestArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Digest:        deploymentManifestDigest,
@@ -661,7 +662,7 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 	}
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                         deploymentID,
-		OrgID:                      ids.ToPG(ids.DefaultOrgID),
+		OrgID:                      ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:                  scope.ProjectID,
 		EnvironmentID:              scope.EnvironmentID,
 		Version:                    deploymentVersion,
@@ -678,7 +679,7 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 	taskID := ids.ToPG(ids.New())
 	if _, err := queries.CreateDeploymentTask(ctx, db.CreateDeploymentTaskParams{
 		ID:                   taskID,
-		OrgID:                ids.ToPG(ids.DefaultOrgID),
+		OrgID:                ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:            scope.ProjectID,
 		EnvironmentID:        scope.EnvironmentID,
 		DeploymentID:         deploymentID,
@@ -710,12 +711,12 @@ UPDATE deployments
    AND project_id = $4
    AND environment_id = $5
    AND id = $6
-`, buildManifestArtifact.ID, deploymentManifestArtifact.ID, ids.ToPG(ids.DefaultOrgID), scope.ProjectID, scope.EnvironmentID, deploymentID); err != nil {
+`, buildManifestArtifact.ID, deploymentManifestArtifact.ID, ids.ToPG(dbtest.DefaultOrgID), scope.ProjectID, scope.EnvironmentID, deploymentID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.PromoteDeployment(ctx, db.PromoteDeploymentParams{
 		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		DeploymentID:  deploymentID,
@@ -724,7 +725,7 @@ UPDATE deployments
 		t.Fatal(err)
 	}
 	deploymentTask, err = queries.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		TaskID:        "deploy",

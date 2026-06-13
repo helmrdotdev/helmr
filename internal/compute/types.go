@@ -1,13 +1,13 @@
 package compute
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
 	"strings"
-
-	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
 var ErrNoCapacity = errors.New("no compute capacity available")
@@ -97,7 +97,12 @@ func RuntimeIdentityDigest(runtime RuntimeSelector) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return cas.DigestBytes(payload), nil
+	return digestBytes(payload), nil
+}
+
+func digestBytes(bytes []byte) string {
+	sum := sha256.Sum256(bytes)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 type NetworkPolicy struct {

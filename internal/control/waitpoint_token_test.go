@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -104,7 +105,7 @@ func newWaitpointTokenCreationStore(runID uuid.UUID, waitpointID uuid.UUID, kind
 	return &waitpointTokenCreationStore{
 		run: db.GetRunSummaryRow{
 			ID:               ids.ToPG(runID),
-			OrgID:            ids.ToPG(ids.DefaultOrgID),
+			OrgID:            ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -116,7 +117,7 @@ func newWaitpointTokenCreationStore(runID uuid.UUID, waitpointID uuid.UUID, kind
 		},
 		waitpoint: db.GetWaitpointForResponseTokenCreationRow{
 			ID:            ids.ToPG(waitpointID),
-			OrgID:         ids.ToPG(ids.DefaultOrgID),
+			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Kind:          kind,

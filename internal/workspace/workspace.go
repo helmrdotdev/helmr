@@ -1,4 +1,4 @@
-package checkout
+package workspace
 
 import (
 	"errors"
@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 // WorkspaceArtifact is the product-managed artifact used to seed a writable
@@ -50,8 +49,8 @@ func createWorkspaceArtifactFromRoot(root string, tempDir string, trustedRoot st
 	}
 	tarArchive, cleanup, err := archive.CreateTarWithOptions(root, tempDir, archive.TarOptions{
 		ExcludePatterns: []string{"**/.git/**"},
-		MaxBytes:        workspace.MaxArtifactExtractedBytes,
-		MaxEntries:      workspace.MaxArtifactEntries,
+		MaxBytes:        MaxArtifactExtractedBytes,
+		MaxEntries:      MaxArtifactEntries,
 	})
 	if err != nil {
 		return WorkspaceArtifact{}, func() {}, fmt.Errorf("create workspace artifact: %w", err)
@@ -59,9 +58,9 @@ func createWorkspaceArtifactFromRoot(root string, tempDir string, trustedRoot st
 	return WorkspaceArtifact{
 		Path:       tarArchive.Path,
 		Digest:     tarArchive.Digest,
-		MediaType:  workspace.ArtifactMediaType,
-		Encoding:   workspace.ArtifactEncoding,
-		VolumeKind: workspace.VolumeKind,
+		MediaType:  ArtifactMediaType,
+		Encoding:   ArtifactEncoding,
+		VolumeKind: VolumeKind,
 		SizeBytes:  tarArchive.SizeBytes,
 		EntryCount: tarArchive.EntryCount,
 	}, cleanup, nil

@@ -7,8 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var DefaultOrgID = uuid.MustParse("00000000-0000-0000-0000-000000000000")
-
+// New returns a UUIDv7 for persisted Helmr identifiers; ephemeral identifiers may use uuid directly.
 func New() uuid.UUID {
 	return uuid.Must(uuid.NewV7())
 }

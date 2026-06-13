@@ -20,7 +20,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/checkout"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
@@ -785,7 +784,7 @@ func TestGuestRunnerRejectsMissingResolvedSecrets(t *testing.T) {
 			Secrets: api.ResolvedSecrets{},
 		},
 		Artifact: builder.Artifact{ImageTarPath: imagePath},
-		Workspace: checkout.WorkspaceArtifact{
+		Workspace: workspace.WorkspaceArtifact{
 			Digest:     "sha256:" + string(bytes.Repeat([]byte{'0'}, 64)),
 			MediaType:  workspace.ArtifactMediaType,
 			Encoding:   workspace.ArtifactEncoding,
@@ -1233,7 +1232,7 @@ func runtimeBundle() *bundlev0.Bundle {
 	}
 }
 
-func testWorkspaceArtifact(t *testing.T, checkoutRoot, projectRoot string) checkout.WorkspaceArtifact {
+func testWorkspaceArtifact(t *testing.T, checkoutRoot, projectRoot string) workspace.WorkspaceArtifact {
 	t.Helper()
 	rel, err := filepath.Rel(checkoutRoot, projectRoot)
 	if err != nil {
@@ -1251,7 +1250,7 @@ func testWorkspaceArtifact(t *testing.T, checkoutRoot, projectRoot string) check
 		t.Fatal(err)
 	}
 	t.Cleanup(cleanup)
-	return checkout.WorkspaceArtifact{
+	return workspace.WorkspaceArtifact{
 		Path:       tarArchive.Path,
 		Digest:     tarArchive.Digest,
 		MediaType:  workspace.ArtifactMediaType,

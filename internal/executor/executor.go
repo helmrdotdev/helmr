@@ -15,9 +15,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/checkout"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/task"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 var ErrRunnerRequired = errors.New("runtime runner is required")
@@ -46,7 +46,7 @@ type Request struct {
 	Run              ResolvedRun
 	Artifact         builder.Artifact
 	DeploymentSource builder.Source
-	Workspace        checkout.WorkspaceArtifact
+	Workspace        workspace.WorkspaceArtifact
 	WaitHandler      WaitHandler
 }
 
@@ -89,7 +89,7 @@ func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api
 		return failedResult(err)
 	}
 	if resolved.Restore != nil {
-		return e.runRuntime(ctx, claim, resolved, builder.Artifact{}, builder.Source{}, checkout.WorkspaceArtifact{})
+		return e.runRuntime(ctx, claim, resolved, builder.Artifact{}, builder.Source{}, workspace.WorkspaceArtifact{})
 	}
 	buildEngine := e.Builder
 	if buildEngine == nil {
@@ -126,7 +126,7 @@ func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api
 	if err != nil {
 		return failedResult(fmt.Errorf("build run: %w", err))
 	}
-	workspaceArtifact, cleanupWorkspaceArtifact, err := checkout.CreateEmptyWorkspaceArtifact(e.tempDir())
+	workspaceArtifact, cleanupWorkspaceArtifact, err := workspace.CreateEmptyWorkspaceArtifact(e.tempDir())
 	if err != nil {
 		return failedResult(err)
 	}
@@ -186,7 +186,7 @@ func buildCacheScope(repository string, taskID string) string {
 	return repository + "/" + taskID
 }
 
-func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, resolved ResolvedRun, artifact builder.Artifact, deploymentSource builder.Source, workspace checkout.WorkspaceArtifact) api.WorkerReleaseResult {
+func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, resolved ResolvedRun, artifact builder.Artifact, deploymentSource builder.Source, ws workspace.WorkspaceArtifact) api.WorkerReleaseResult {
 	runner := e.Runner
 	if runner == nil {
 		return failedResult(ErrRunnerRequired)
@@ -196,7 +196,7 @@ func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, reso
 		Run:              resolved,
 		Artifact:         artifact,
 		DeploymentSource: deploymentSource,
-		Workspace:        workspace,
+		Workspace:        ws,
 		WaitHandler:      e.Waitpoints,
 	})
 	if err != nil {
@@ -212,7 +212,7 @@ func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, reso
 	return release
 }
 
-func (e Executor) publishWorkspaceArtifact(ctx context.Context, artifact checkout.WorkspaceArtifact) error {
+func (e Executor) publishWorkspaceArtifact(ctx context.Context, artifact workspace.WorkspaceArtifact) error {
 	if e.CAS == nil {
 		return errors.New("workspace artifact CAS is required")
 	}
