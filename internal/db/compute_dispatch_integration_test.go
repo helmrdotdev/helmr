@@ -8,6 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -18,7 +19,7 @@ import (
 func TestPrepareQueuedRunQueueItemBuildsRequirementsFromDeploymentTask(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	upsertTestWorkerInstance(t, ctx, queries, "instance-runtime-release")
@@ -244,7 +245,7 @@ SELECT runtime_id, kernel_digest, available_execution_slots, available_milli_cpu
 func TestRuntimeReleaseSelectionControlsPreparedRequirements(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	firstRuntime := runtimeReleaseFields{
@@ -290,7 +291,7 @@ func TestRuntimeReleaseSelectionControlsPreparedRequirements(t *testing.T) {
 func TestPrepareQueuedRunQueueItemRequiresRuntimeReleaseSelection(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 3000, 4096, 32768)
@@ -306,7 +307,7 @@ func TestPrepareQueuedRunQueueItemRequiresRuntimeReleaseSelection(t *testing.T) 
 func TestQueuedRunQueueItemWithMessageIDCanBeReenqueued(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 3000, 4096)
@@ -376,7 +377,7 @@ func TestQueuedRunQueueItemWithMessageIDCanBeReenqueued(t *testing.T) {
 func TestListQueueScopesReturnsEveryQueueForEnvironment(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	siblingEnvironment, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
@@ -475,7 +476,7 @@ func TestListQueueScopesReturnsEveryQueueForEnvironment(t *testing.T) {
 func TestRunQueueItemFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 1000, 1024)

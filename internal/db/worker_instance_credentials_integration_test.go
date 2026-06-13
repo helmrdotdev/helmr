@@ -5,13 +5,14 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
 func TestCreateWorkerInstanceCredentialFromBootstrapRotatesExistingHostCredential(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	tokenHash := []byte("bootstrap-token-hash")
 	workerInstanceID := ids.ToPG(ids.New())
 
@@ -71,7 +72,7 @@ SELECT count(*)
 func TestWorkerInstanceResourceIdentifierIsScopedByWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	firstTokenHash := []byte("first-group-bootstrap-token-hash")
 	secondTokenHash := []byte("second-group-bootstrap-token-hash")
 
@@ -132,7 +133,7 @@ func TestWorkerInstanceResourceIdentifierIsScopedByWorkerGroup(t *testing.T) {
 func TestWorkerBootstrapTokenConflictIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	tokenHash := []byte("stable-bootstrap-token-hash")
 
 	seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)

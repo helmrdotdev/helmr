@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -41,7 +42,7 @@ func TestListAPIKeysFiltersAndShapesResponse(t *testing.T) {
 		keys: []db.ListAPIKeysRow{
 			{
 				ID:            ids.ToPG(activeID),
-				OrgID:         ids.ToPG(ids.DefaultOrgID),
+				OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 				ProjectID:     testProjectID(),
 				EnvironmentID: testEnvironmentID(),
 				Name:          "active key",
@@ -50,7 +51,7 @@ func TestListAPIKeysFiltersAndShapesResponse(t *testing.T) {
 			},
 			{
 				ID:            ids.ToPG(revokedID),
-				OrgID:         ids.ToPG(ids.DefaultOrgID),
+				OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 				ProjectID:     testProjectID(),
 				EnvironmentID: testEnvironmentID(),
 				Name:          "revoked key",
@@ -260,7 +261,7 @@ type apiKeyStore struct {
 func (s *apiKeyStore) GetSessionByTokenHash(context.Context, []byte) (db.GetSessionByTokenHashRow, error) {
 	return db.GetSessionByTokenHashRow{
 		ID:        ids.ToPG(ids.New()),
-		OrgID:     ids.ToPG(ids.DefaultOrgID),
+		OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 		UserID:    ids.ToPG(ids.New()),
 		Role:      string(s.role),
 		ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
@@ -328,7 +329,7 @@ func (s *apiKeyStore) GetProject(_ context.Context, arg db.GetProjectParams) (db
 	}
 	return db.Project{
 		ID:        testProjectID(),
-		OrgID:     ids.ToPG(ids.DefaultOrgID),
+		OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 		Slug:      "helmr",
 		Name:      "Helmr",
 		IsDefault: true,
@@ -343,7 +344,7 @@ func (s *apiKeyStore) GetDefaultEnvironment(_ context.Context, arg db.GetDefault
 	}
 	return db.Environment{
 		ID:        testEnvironmentID(),
-		OrgID:     ids.ToPG(ids.DefaultOrgID),
+		OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID: testProjectID(),
 		Slug:      "production",
 		Name:      "Production",
@@ -359,7 +360,7 @@ func (s *apiKeyStore) GetEnvironment(_ context.Context, arg db.GetEnvironmentPar
 	}
 	return db.Environment{
 		ID:        testEnvironmentID(),
-		OrgID:     ids.ToPG(ids.DefaultOrgID),
+		OrgID:     ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID: testProjectID(),
 		Slug:      "production",
 		Name:      "Production",

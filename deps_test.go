@@ -40,6 +40,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"console":         {},
 		"control":         {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "ids", "schedule", "secret", "tracing", "waitpoint"},
 		"db":              {},
+		"db/dbtest":       {},
 		"db/schema":       {},
 		"deployment":      {"api", "archive", "builder", "cas", "compute", "proto/bundle/v0", "schedule", "secret", "task", "transport", "vm"},
 		"dispatch":        {"compute", "db", "ids"},

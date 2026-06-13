@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -14,7 +15,7 @@ import (
 func TestScheduleRepairEntriesAndCursorAdvance(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	scheduleID := ids.ToPG(ids.New())
 	instanceID := ids.ToPG(ids.New())
@@ -96,7 +97,7 @@ func TestScheduleRepairEntriesAndCursorAdvance(t *testing.T) {
 func TestScheduleTriggerFailurePersistsRetryAndExhausts(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	scheduleID := ids.ToPG(ids.New())
 	instanceID := ids.ToPG(ids.New())
@@ -209,7 +210,7 @@ func TestScheduleTriggerFailurePersistsRetryAndExhausts(t *testing.T) {
 func TestStopScheduleInstanceTriggerClearsCursorAndKeepsError(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	scheduleID := ids.ToPG(ids.New())
 	instanceID := ids.ToPG(ids.New())
@@ -273,7 +274,7 @@ func TestStopScheduleInstanceTriggerClearsCursorAndKeepsError(t *testing.T) {
 func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	scheduledAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 
@@ -403,7 +404,7 @@ func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstances(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	environmentID := ids.ToPG(ids.New())
 	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
@@ -501,7 +502,7 @@ func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstanc
 func TestScheduleDedupKeysAreNamespacedByScheduleType(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	scheduledAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 
@@ -553,7 +554,7 @@ func TestScheduleDedupKeysAreNamespacedByScheduleType(t *testing.T) {
 func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
+	orgID := ids.ToPG(dbtest.DefaultOrgID)
 	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	staging, err := queries.GetEnvironmentBySlug(ctx, db.GetEnvironmentBySlugParams{
 		OrgID:     orgID,

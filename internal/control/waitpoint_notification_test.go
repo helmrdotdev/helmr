@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/waitpoint"
@@ -25,7 +26,7 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 	tokenID := ids.New()
 	view := waitpointView{
 		ID:             ids.ToPG(waitpointID),
-		OrgID:          ids.ToPG(ids.DefaultOrgID),
+		OrgID:          ids.ToPG(dbtest.DefaultOrgID),
 		ProjectID:      testProjectID(),
 		EnvironmentID:  testEnvironmentID(),
 		Kind:           db.WaitpointKindHuman,
@@ -40,7 +41,7 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 		tokenID:   ids.ToPG(tokenID),
 		run: db.GetRunSummaryRow{
 			ID:            ids.ToPG(runID),
-			OrgID:         ids.ToPG(ids.DefaultOrgID),
+			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			TaskID:        "deploy-prod",
@@ -121,7 +122,7 @@ func TestSendQueuedWaitpointDeliveryDoesNotSwallowSupersededSentMark(t *testing.
 	store := &notificationStore{
 		waitpoint: waitpointView{
 			ID:            ids.ToPG(waitpointID),
-			OrgID:         ids.ToPG(ids.DefaultOrgID),
+			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Kind:          db.WaitpointKindHuman,
@@ -131,7 +132,7 @@ func TestSendQueuedWaitpointDeliveryDoesNotSwallowSupersededSentMark(t *testing.
 		},
 		run: db.GetRunSummaryRow{
 			ID:            ids.ToPG(runID),
-			OrgID:         ids.ToPG(ids.DefaultOrgID),
+			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			TaskID:        "deploy-prod",
@@ -141,7 +142,7 @@ func TestSendQueuedWaitpointDeliveryDoesNotSwallowSupersededSentMark(t *testing.
 		},
 		createdDeliveries: []db.WaitpointDelivery{{
 			ID:              ids.ToPG(deliveryID),
-			OrgID:           ids.ToPG(ids.DefaultOrgID),
+			OrgID:           ids.ToPG(dbtest.DefaultOrgID),
 			WaitpointID:     ids.ToPG(waitpointID),
 			ResponseTokenID: ids.ToPG(tokenID),
 			Channel:         "email",
@@ -177,7 +178,7 @@ func TestWaitpointConfirmationPageAndFormCompletion(t *testing.T) {
 		tokenID: ids.ToPG(tokenID),
 		run: db.GetRunSummaryRow{
 			ID:            ids.ToPG(runID),
-			OrgID:         ids.ToPG(ids.DefaultOrgID),
+			OrgID:         ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			TaskID:        "deploy-prod",
@@ -187,7 +188,7 @@ func TestWaitpointConfirmationPageAndFormCompletion(t *testing.T) {
 		},
 		activeToken: db.GetWaitpointResponseTokenForRespondRow{
 			ID:                   ids.ToPG(tokenID),
-			OrgID:                ids.ToPG(ids.DefaultOrgID),
+			OrgID:                ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:            testProjectID(),
 			EnvironmentID:        testEnvironmentID(),
 			WaitpointID:          ids.ToPG(waitpointID),
@@ -235,7 +236,7 @@ func TestWaitpointConfirmationPageRespondsToHumanWaitpoint(t *testing.T) {
 		tokenID: ids.ToPG(tokenID),
 		activeToken: db.GetWaitpointResponseTokenForRespondRow{
 			ID:                   ids.ToPG(tokenID),
-			OrgID:                ids.ToPG(ids.DefaultOrgID),
+			OrgID:                ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:            testProjectID(),
 			EnvironmentID:        testEnvironmentID(),
 			WaitpointID:          ids.ToPG(waitpointID),
@@ -294,7 +295,7 @@ func TestWaitpointTokenRespondRespondsToHumanWaitpoint(t *testing.T) {
 		tokenID: ids.ToPG(tokenID),
 		activeToken: db.GetWaitpointResponseTokenForRespondRow{
 			ID:                   ids.ToPG(tokenID),
-			OrgID:                ids.ToPG(ids.DefaultOrgID),
+			OrgID:                ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:            testProjectID(),
 			EnvironmentID:        testEnvironmentID(),
 			WaitpointID:          ids.ToPG(waitpointID),
@@ -340,7 +341,7 @@ func TestWaitpointTokenCompletionRejectsInvalidMetadata(t *testing.T) {
 		tokenID: ids.ToPG(tokenID),
 		activeToken: db.GetWaitpointResponseTokenForRespondRow{
 			ID:                   ids.ToPG(tokenID),
-			OrgID:                ids.ToPG(ids.DefaultOrgID),
+			OrgID:                ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:            testProjectID(),
 			EnvironmentID:        testEnvironmentID(),
 			WaitpointID:          ids.ToPG(waitpointID),
@@ -374,7 +375,7 @@ func TestWaitpointTokenCompletionUsesRequestSubjectWhenTokenHasNone(t *testing.T
 		tokenID: ids.ToPG(tokenID),
 		activeToken: db.GetWaitpointResponseTokenForRespondRow{
 			ID:                   ids.ToPG(tokenID),
-			OrgID:                ids.ToPG(ids.DefaultOrgID),
+			OrgID:                ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:            testProjectID(),
 			EnvironmentID:        testEnvironmentID(),
 			WaitpointID:          ids.ToPG(waitpointID),
@@ -408,7 +409,7 @@ func TestWaitpointTokenCompletionReturnsAcceptedWhenResolveDoesNotResume(t *test
 		tokenID: ids.ToPG(tokenID),
 		activeToken: db.GetWaitpointResponseTokenForRespondRow{
 			ID:                   ids.ToPG(tokenID),
-			OrgID:                ids.ToPG(ids.DefaultOrgID),
+			OrgID:                ids.ToPG(dbtest.DefaultOrgID),
 			ProjectID:            testProjectID(),
 			EnvironmentID:        testEnvironmentID(),
 			WaitpointID:          ids.ToPG(waitpointID),

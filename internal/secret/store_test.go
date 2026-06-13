@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -220,8 +221,8 @@ type fakeSecretDB struct {
 
 func (f *fakeSecretDB) GetDefaultProjectEnvironment(context.Context, pgtype.UUID) (db.GetDefaultProjectEnvironmentRow, error) {
 	return db.GetDefaultProjectEnvironmentRow{
-		ProjectID:     ids.ToPG(ids.DefaultOrgID),
-		EnvironmentID: ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     ids.ToPG(dbtest.DefaultOrgID),
+		EnvironmentID: ids.ToPG(dbtest.DefaultOrgID),
 	}, nil
 }
 
