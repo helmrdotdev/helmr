@@ -1,10 +1,12 @@
 import { query, type Options as ClaudeOptions } from "@anthropic-ai/claude-agent-sdk"
 import { Agent } from "@cursor/sdk"
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
-import { spawn } from "node:child_process"
-import { runCodex as runCodexTurn, type CodexThreadOptions } from "./integrations/codex"
-import { renderAgentGuideInstruction } from "./integrations/guides"
-import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "./models"
+import { writeFile } from "node:fs/promises"
+import { runCodex as runCodexTurn, type CodexThreadOptions } from "../lib/agents/codex-app-server"
+import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "../lib/agents/models"
+import { baseAgentEnv } from "../lib/env"
+import { renderAgentGuideInstruction } from "../lib/guides"
+import { runCommand } from "../lib/process"
 import { z } from "zod"
 
 const dependencyInputs = source.directory(".", {
@@ -12,7 +14,7 @@ const dependencyInputs = source.directory(".", {
 })
 const guideInputs = source.directory("guides")
 
-const base = image("helmr-toolchain-check")
+const base = image("helmr-agent-toolchain-smoke")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
   .copy("/workspace", dependencyInputs)
@@ -40,10 +42,10 @@ const base = image("helmr-toolchain-check")
   .env("PATH", "/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .run(["bun", "install", "--frozen-lockfile"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("toolchain-check-bun") }],
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("agent-toolchain-smoke-bun") }],
   })
 
-const sbx = sandbox("helmr-toolchain-check")
+const sbx = sandbox("helmr-agent-toolchain-smoke")
   .image(base)
   .resources({ cpu: 2, memory: "4Gi", disk: "32Gi" })
 
@@ -64,13 +66,13 @@ const payload = z.object({
 }).strict()
 
 interface CheckResult {
-  readonly command: string
-  readonly ok: true
-  readonly output: string
+  readonly name: string
+  readonly ok: boolean
+  readonly detail: unknown
 }
 
-export const toolchainCheck = task({
-  id: "toolchain-check",
+export const agentToolchainSmoke = task({
+  id: "agent-toolchain-smoke",
   sandbox: sbx,
   maxDuration: 1800,
   secrets: [
@@ -86,41 +88,58 @@ export const toolchainCheck = task({
     assertRepository(repository)
     assertGitRef(ref)
 
-    const checks: CheckResult[] = []
-    checks.push(await checkCommand(["test", "-f", "/opt/helmr-dev-workflows/guides/INDEX.md"]))
-    checks.push(await checkCommand(["nix", "--version"]))
-    checks.push(await checkCommand(["git", "--version"]))
-    checks.push(await checkCommand(["gh", "--version"]))
-    checks.push(await checkCommand(["gh", "repo", "view", repository, "--json", "nameWithOwner,defaultBranchRef,isPrivate"], ghEnv()))
-    await ensureGitCheckout(repository, ref)
-    checks.push(await checkCommand(["git", "rev-parse", "--verify", "HEAD^{commit}"]))
-    checks.push(await checkCommand(["git", "status", "--short"]))
-    checks.push(await checkCommand(["git", "rev-parse", "--short", "HEAD"]))
-    checks.push(await checkCommand(["sh", "-ceu", "test -c /dev/tty && mountpoint -q /dev/pts && mountpoint -q /dev/shm && printf DEV_RUNTIME_OK"]))
-    checks.push(await checkCommand(["sh", "-ceu", "unshare --mount true && unshare --uts true && unshare --ipc true && unshare --net true && unshare --pid --fork true && unshare --user true && printf NAMESPACE_OK"]))
-    checks.push(await checkCommand(["sh", "-ceu", "nix show-config | grep -q '^sandbox = true$' && nix show-config | grep -q '^sandbox-fallback = false$' && printf NIX_SANDBOX_OK"]))
-    checks.push(await checkCommand(["nix", "develop", "--accept-flake-config", "-c", "sh", "-ceu", "command -v git >/dev/null && command -v rg >/dev/null && printf NIX_DEVELOP_OK"]))
+    const checks: CheckResult[] = [
+      await collectCheck("guide-mounted", () => checkCommand("guide-mounted", ["test", "-f", "/opt/helmr-dev-workflows/guides/INDEX.md"])),
+      await collectCheck("nix-version", () => checkCommand("nix-version", ["nix", "--version"])),
+      await collectCheck("git-version", () => checkCommand("git-version", ["git", "--version"])),
+      await collectCheck("gh-version", () => checkCommand("gh-version", ["gh", "--version"])),
+      await collectCheck("github-access", () => checkCommand("github-access", ["gh", "repo", "view", repository, "--json", "nameWithOwner,defaultBranchRef,isPrivate"], ghEnv())),
+      await collectCheck("dev-runtime-mounts", () => checkCommand("dev-runtime-mounts", ["sh", "-ceu", "test -c /dev/tty && mountpoint -q /dev/pts && mountpoint -q /dev/shm && printf DEV_RUNTIME_OK"])),
+      await collectCheck("namespace-unshare", () => checkCommand("namespace-unshare", ["sh", "-ceu", "unshare --mount true && unshare --uts true && unshare --ipc true && unshare --net true && unshare --pid --fork true && unshare --user true && printf NAMESPACE_OK"])),
+      await collectCheck("nix-sandbox-config", () => checkCommand("nix-sandbox-config", ["sh", "-ceu", "nix show-config | grep -q '^sandbox = true$' && nix show-config | grep -q '^sandbox-fallback = false$' && printf NIX_SANDBOX_OK"])),
+    ]
 
-    const sdk = {
-      claude: await runClaude(payload.claudeModel?.trim() || DEFAULT_CLAUDE_MODEL),
-      codex: await runCodex(payload.codexModel?.trim() || DEFAULT_CODEX_MODEL),
-      cursor: await runCursor(payload.cursorModel?.trim() || DEFAULT_CURSOR_MODEL),
+    const checkout = await collectCheck("github-checkout", () => ensureGitCheckout(repository, ref))
+    checks.push(checkout)
+    if (checkout.ok) {
+      checks.push(await collectCheck("checkout-commit", () => checkCommand("checkout-commit", ["git", "rev-parse", "--verify", "HEAD^{commit}"])))
+      checks.push(await collectCheck("checkout-status", () => checkCommand("checkout-status", ["git", "status", "--short"])))
+      checks.push(await collectCheck("checkout-short-sha", () => checkCommand("checkout-short-sha", ["git", "rev-parse", "--short", "HEAD"])))
+      checks.push(await collectCheck("nix-develop", () => checkCommand("nix-develop", ["nix", "develop", "--accept-flake-config", "-c", "sh", "-ceu", "command -v git >/dev/null && command -v rg >/dev/null && printf NIX_DEVELOP_OK"])))
+    } else {
+      checks.push(skippedCheck("checkout-commit", "github-checkout failed"))
+      checks.push(skippedCheck("checkout-status", "github-checkout failed"))
+      checks.push(skippedCheck("checkout-short-sha", "github-checkout failed"))
+      checks.push(skippedCheck("nix-develop", "github-checkout failed"))
     }
 
-    ctx.log.info({
-      phase: "toolchain-check",
-      repository,
-      ref,
-      commandChecks: checks.length,
-      sdk,
-    })
-
-    return {
+    const sdk = {
+      claude: await collectCheck("claude-sdk", () => runClaude(payload.claudeModel?.trim() || DEFAULT_CLAUDE_MODEL).then((marker) => sdkResult("claude-sdk", marker))),
+      codex: await collectCheck("codex-sdk", () => runCodex(payload.codexModel?.trim() || DEFAULT_CODEX_MODEL).then((marker) => sdkResult("codex-sdk", marker))),
+      cursor: await collectCheck("cursor-sdk", () => runCursor(payload.cursorModel?.trim() || DEFAULT_CURSOR_MODEL).then((marker) => sdkResult("cursor-sdk", marker))),
+    }
+    const failures = [...checks, ...Object.values(sdk)].filter((check) => !check.ok)
+    const report = {
+      ok: failures.length === 0,
       repository,
       ref,
       checks,
       sdk,
     }
+
+    ctx.log.info({
+      phase: "agent-toolchain-smoke",
+      repository,
+      ref,
+      commandChecks: checks.length,
+      sdk,
+    })
+    await writeFile("agent-toolchain-smoke-report.json", `${JSON.stringify(report, null, 2)}\n`)
+    if (failures.length > 0) {
+      ctx.log.error({ phase: "agent-toolchain-smoke", repository, ref, failures })
+      throw new Error(`agent toolchain smoke failed ${failures.length} check(s): ${failureSummary(failures)}`)
+    }
+    return report
   },
 })
 
@@ -134,7 +153,7 @@ async function runClaude(model: string): Promise<string> {
     env: {
       ...baseEnv(),
       ANTHROPIC_API_KEY: requiredEnv("ANTHROPIC_API_KEY"),
-      CLAUDE_AGENT_SDK_CLIENT_APP: "helmr-dev-workflows/toolchain-check",
+      CLAUDE_AGENT_SDK_CLIENT_APP: "helmr-dev-workflows/agent-toolchain-smoke",
     },
   }
   const stream = query({
@@ -196,55 +215,82 @@ function renderToolchainAgentPrompt(marker: string): string {
   return [
     "You are running the Helmr toolchain check.",
     "Do not modify files. Do not create branches, commits, pushes, issues, pull requests, or external side effects.",
-    renderAgentGuideInstruction("toolchain check", ["nix-validation.md", "scope-security.md"]),
+    renderAgentGuideInstruction("agent toolchain smoke", ["nix-validation.md", "scope-security.md"]),
     "If accessible, read `/opt/helmr-dev-workflows/guides/INDEX.md` and `/opt/helmr-dev-workflows/guides/nix-validation.md`.",
     `Reply with ${marker} only.`,
   ].join("\n")
 }
 
-async function ensureGitCheckout(repository: string, ref: string): Promise<void> {
-  const checkoutPath = `${process.cwd()}/.helmr-toolchain-checkout`
-  await checkCommand(["rm", "-rf", checkoutPath])
-  await checkCommand(["git", "clone", "--filter=blob:none", "--no-checkout", `https://github.com/${repository}.git`, checkoutPath], ghEnv())
+async function ensureGitCheckout(repository: string, ref: string): Promise<CheckResult> {
+  const checkoutPath = `${process.cwd()}/.agent-toolchain-smoke-checkout`
+  await runCommand(["rm", "-rf", checkoutPath])
+  await runCommand(["git", "clone", "--filter=blob:none", "--no-checkout", `https://github.com/${repository}.git`, checkoutPath], ghEnv())
   process.chdir(checkoutPath)
-  await checkCommand(["git", "fetch", "--depth", "1", "origin", ref], ghEnv())
-  await checkCommand(["git", "checkout", "--detach", "FETCH_HEAD"])
-}
-
-async function checkCommand(command: readonly string[], env: Record<string, string> = baseEnv()): Promise<CheckResult> {
-  const output = await run(command, env)
+  await runCommand(["git", "fetch", "--depth", "1", "origin", ref], ghEnv())
+  await runCommand(["git", "checkout", "--detach", "FETCH_HEAD"])
   return {
-    command: command.join(" "),
+    name: "github-checkout",
     ok: true,
-    output: output.trim().slice(0, 2000),
+    detail: {
+      repository,
+      ref,
+      checkoutPath,
+    },
   }
 }
 
-function run(command: readonly string[], env: Record<string, string>): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(command[0] ?? "", command.slice(1), {
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    })
-    let stdout = ""
-    let stderr = ""
-    proc.stdout.setEncoding("utf8")
-    proc.stderr.setEncoding("utf8")
-    proc.stdout.on("data", (chunk: string) => {
-      stdout += chunk
-    })
-    proc.stderr.on("data", (chunk: string) => {
-      stderr += chunk
-    })
-    proc.on("error", reject)
-    proc.on("close", (exitCode) => {
-      if (exitCode !== 0) {
-        reject(new Error(`${command.join(" ")} exited ${exitCode}: ${stderr.trim()}`))
-        return
-      }
-      resolve(stdout || stderr)
-    })
-  })
+async function collectCheck(name: string, run: () => Promise<CheckResult>): Promise<CheckResult> {
+  try {
+    return await run()
+  } catch (error) {
+    return {
+      name,
+      ok: false,
+      detail: error instanceof Error ? { message: error.message, name: error.name } : { message: String(error) },
+    }
+  }
+}
+
+function skippedCheck(name: string, reason: string): CheckResult {
+  return {
+    name,
+    ok: false,
+    detail: {
+      skipped: true,
+      reason,
+    },
+  }
+}
+
+function sdkResult(name: string, marker: string): CheckResult {
+  return {
+    name,
+    ok: true,
+    detail: {
+      marker,
+    },
+  }
+}
+
+function failureSummary(failures: readonly CheckResult[]): string {
+  return failures.map((failure) => {
+    const message = typeof failure.detail === "object" && failure.detail !== null && "message" in failure.detail
+      ? String((failure.detail as { readonly message?: unknown }).message)
+      : JSON.stringify(failure.detail)
+    return `${failure.name}: ${message.slice(0, 500)}`
+  }).join("; ")
+}
+
+async function checkCommand(name: string, command: readonly string[], env: Record<string, string> = baseEnv()): Promise<CheckResult> {
+  const output = await runCommand(command, env)
+  return {
+    name,
+    ok: true,
+    detail: {
+      command: command.join(" "),
+      output: output.trim().slice(0, 2000),
+    },
+  }
 }
 
 function ghEnv(): Record<string, string> {
@@ -256,12 +302,7 @@ function ghEnv(): Record<string, string> {
 }
 
 function baseEnv(): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const key of ["HOME", "PATH", "TMPDIR", "USER", "LOGNAME", "LANG", "LC_ALL"]) {
-    const value = process.env[key]
-    if (typeof value === "string") env[key] = value
-  }
-  return env
+  return baseAgentEnv()
 }
 
 function compactEnv(env: NodeJS.ProcessEnv): Record<string, string> {

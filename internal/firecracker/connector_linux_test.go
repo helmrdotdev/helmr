@@ -412,6 +412,52 @@ func TestWaitForHealthRetriesTransientReadFailure(t *testing.T) {
 	}
 }
 
+func TestConnectReadyGuestWaitsForHealthBeforeGuestPort(t *testing.T) {
+	previousDial := dialVsock
+	defer func() { dialVsock = previousDial }()
+
+	var ports []uint32
+	dialVsock = func(_ context.Context, _ string, port uint32, _ ...vsock.DialOption) (net.Conn, error) {
+		ports = append(ports, port)
+		client, server := net.Pipe()
+		if port == uint32((Config{}).WithDefaults().HealthPort) {
+			if len(ports) == 1 {
+				_ = server.Close()
+				return client, nil
+			}
+			go func() {
+				defer server.Close()
+				if _, err := http.ReadRequest(bufio.NewReader(server)); err != nil {
+					return
+				}
+				_, _ = io.WriteString(server, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 36\r\nConnection: close\r\n\r\n{\"status\":\"ok\",\"component\":\"guestd\"}")
+			}()
+			return client, nil
+		}
+		go func() {
+			<-time.After(10 * time.Millisecond)
+			_ = server.Close()
+		}()
+		return client, nil
+	}
+
+	connector := &Connector{cfg: (Config{HealthTimeout: time.Second}).WithDefaults()}
+	conn, err := connector.connectReadyGuest(context.Background(), "vsock.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+	want := []uint32{uint32(connector.cfg.HealthPort), uint32(connector.cfg.HealthPort), uint32(connector.cfg.GuestPort)}
+	if len(ports) != len(want) {
+		t.Fatalf("ports = %v, want %v", ports, want)
+	}
+	for i := range want {
+		if ports[i] != want[i] {
+			t.Fatalf("ports = %v, want %v", ports, want)
+		}
+	}
+}
+
 func TestCopySparseRangeRejectsShortRead(t *testing.T) {
 	dir := t.TempDir()
 	inputPath := filepath.Join(dir, "input.raw")
