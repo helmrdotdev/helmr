@@ -95,10 +95,6 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 	}, nil
 }
 
-func commandAvailable(path string) bool {
-	return checkCommand(filepath.Base(path), path) == nil
-}
-
 func (c *Connector) Connect(ctx context.Context, network compute.NetworkPolicy) (vm.Session, error) {
 	return c.start(ctx, "", "", "", nil, network)
 }
