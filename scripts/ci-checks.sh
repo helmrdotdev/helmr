@@ -9,6 +9,7 @@ scripts/build-embedded-adapter.sh
 git diff --exit-code -- internal/adapter/js
 test -z "$(git status --porcelain -- internal/adapter/js)"
 bun audit
+actionlint
 scripts/security-checks.sh
 bash tests/install_test.sh
 bash tests/release_manifest_test.sh
@@ -20,4 +21,5 @@ bun run test:ts
 make verify
 make test-race
 make test-linux-compile
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 staticcheck -tags embed_console ./...
 git diff --exit-code

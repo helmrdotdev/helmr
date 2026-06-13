@@ -8,16 +8,21 @@ Prefer keeping reusable product logic in Go packages, generated code, or image b
 
 ## CI parity
 
-GitHub-hosted CI installs Go, Buf, and Bun, then runs the Go verification path:
+GitHub-hosted CI runs repository checks as separate jobs so failures point at a
+single responsibility. The aggregate local entrypoint still runs the full suite:
 
 ```sh
-make verify
-make test-linux-compile
+nix run .#ci-checks
 ```
 
-`make test-linux-compile` cross-compiles the Linux-only Firecracker worker
-packages without trying to launch a VM. Firecracker execution smoke tests need a
-real Linux host with KVM and are intentionally kept out of GitHub-hosted CI.
+Use the narrower Nix apps when iterating on one CI area: `ci-policy`,
+`ci-generated`, `ci-typescript`, `ci-go-test`, `ci-go-lint`, `ci-go-build`,
+`ci-go-race`, `ci-linux-compile`, `ci-linux-lint`, `ci-postgres`, and
+`ci-buildkit`.
+
+`ci-linux-compile` cross-compiles the Linux-only Firecracker worker packages
+without trying to launch a VM. Firecracker execution smoke tests need a real
+Linux host with KVM and are intentionally kept out of GitHub-hosted CI.
 
 ## AWS dev smoke
 

@@ -7,7 +7,7 @@ CONSOLE_OUT := $(CURDIR)/internal/console/out
 
 MIGRATE_VERSION ?= v4.19.1
 
-.PHONY: all tools generate proto sqlc fmt modernize modernize-check test test-race test-linux-compile lint build console-build verify dev dev-console-stack images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
+.PHONY: all tools generate proto sqlc fmt modernize modernize-check test go-test test-race go-test-race test-linux-compile lint go-lint build go-build console-build verify dev dev-console-stack images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
 
 all: verify
 
@@ -34,10 +34,14 @@ modernize:
 modernize-check:
 	$(GO) fix -diff ./...
 
-test: console-build
+test: go-test
+
+go-test: | console-build
 	$(GO) test $(GO_CONSOLE_TAGS) ./...
 
-test-race: console-build
+test-race: go-test-race
+
+go-test-race: | console-build
 	CGO_ENABLED=1 $(GO) test -race $(GO_CONSOLE_TAGS) ./...
 
 test-linux-compile:
@@ -49,12 +53,16 @@ test-linux-compile:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) test -c -o /tmp/helmr-worker-linux-arm64.test ./cmd/helmr-worker
 	rm -f /tmp/helmr-guestd-linux-amd64.test /tmp/helmr-firecracker-linux-amd64.test /tmp/helmr-worker-linux-amd64.test /tmp/helmr-guestd-linux-arm64.test /tmp/helmr-firecracker-linux-arm64.test /tmp/helmr-worker-linux-arm64.test
 
-lint: console-build
+lint: go-lint
+
+go-lint: | console-build
 	$(GO) vet -all $(GO_CONSOLE_TAGS) ./...
 	staticcheck $(GO_CONSOLE_TAGS) ./...
 	unparam ./...
 
-build: console-build
+build: go-build
+
+go-build: | console-build
 	$(GO) build $(GO_CONSOLE_TAGS) ./cmd/...
 
 console-build:

@@ -29,9 +29,31 @@ jobs:
 
       - run: nix flake check --show-trace
 
-  repo-checks:
-    name: repo checks
+  repo:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: repo policy
+            app: ci-policy
+          - name: generated
+            app: ci-generated
+          - name: typescript
+            app: ci-typescript
+          - name: go test
+            app: ci-go-test
+          - name: go lint
+            app: ci-go-lint
+          - name: go build
+            app: ci-go-build
+          - name: go race
+            app: ci-go-race
+          - name: linux compile
+            app: ci-linux-compile
+          - name: linux lint
+            app: ci-linux-lint
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -42,7 +64,7 @@ jobs:
           cache-name: ${{ vars.CACHIX_CACHE_NAME }}
           cachix-auth-token: ${{ github.event_name != 'pull_request' && secrets.CACHIX_AUTH_TOKEN || '' }}
 
-      - run: nix run .#ci-checks
+      - run: nix run .#${{ matrix.app }}
 
   postgres:
     name: postgres
@@ -73,3 +95,35 @@ jobs:
           cachix-auth-token: ${{ github.event_name != 'pull_request' && secrets.CACHIX_AUTH_TOKEN || '' }}
 
       - run: nix run .#ci-buildkit
+
+  ci-complete:
+    name: ci complete
+    runs-on: ubuntu-24.04
+    needs:
+      - nix-flake
+      - repo
+      - postgres
+      - buildkit
+    if: always()
+    steps:
+      - name: Check required CI jobs
+        run: |
+          failed=0
+          for result in \
+            "${{ needs.nix-flake.result }}" \
+            "${{ needs.repo.result }}" \
+            "${{ needs.postgres.result }}" \
+            "${{ needs.buildkit.result }}"
+          do
+            if [ "$result" != "success" ]; then
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            printf 'CI dependency results: nix-flake=%s repo=%s postgres=%s buildkit=%s\n' \
+              "${{ needs.nix-flake.result }}" \
+              "${{ needs.repo.result }}" \
+              "${{ needs.postgres.result }}" \
+              "${{ needs.buildkit.result }}" >&2
+            exit 1
+          fi
