@@ -106,6 +106,8 @@ in
   ci-linux-lint =
     app "ci-linux-lint" "run Linux-targeted Go static analysis for CI" toolsets.ciChecks
       ''
+        bun install --frozen-lockfile --ignore-scripts
+        make console-build
         CGO_ENABLED=0 GOOS=linux GOARCH=amd64 staticcheck -tags embed_console ./...
       '';
   test = app "test" "run the full Helmr test recipe" toolsets.appRuntime "make test";
