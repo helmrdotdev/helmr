@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/asyncbus"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
+	"github.com/helmrdotdev/helmr/internal/waitpoint"
 )
 
 type testServerConfig struct {
@@ -31,7 +31,7 @@ type testServerConfig struct {
 	RunEnqueuer         RunEnqueuer
 	DispatchQueue       dispatch.Queue
 	ScheduleEngine      ScheduleRegistrar
-	AsyncPublisher      asyncbus.Publisher
+	Waitpoints          *waitpoint.Notifier
 	EventStream         *EventStream
 	WorkerTokenSecret   []byte
 	WorkerTokenTTL      time.Duration
@@ -89,8 +89,8 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	if testCfg.ScheduleEngine != nil {
 		cfg.ScheduleEngine = testCfg.ScheduleEngine
 	}
-	if testCfg.AsyncPublisher != nil {
-		cfg.AsyncPublisher = testCfg.AsyncPublisher
+	if testCfg.Waitpoints != nil {
+		cfg.Waitpoints = testCfg.Waitpoints
 	}
 	if testCfg.EventStream != nil {
 		cfg.EventStream = testCfg.EventStream

@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -119,17 +120,19 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("parse public URL: %w", err)
 	}
-	notificationWorker, err := control.NewWaitpointNotificationWorker(
-		log,
-		queries,
-		asyncSubscriber,
-		configuredEmailSender(log, cfg),
-		[]byte(cfg.AuthSecret),
-		publicURL,
-	)
+	mailer := configuredEmailSender(log, cfg)
+	notifier, err := waitpoint.NewNotifier(waitpoint.Config{
+		Log:        log,
+		Store:      queries,
+		Mailer:     mailer,
+		Publisher:  asyncSubscriber,
+		PublicURL:  publicURL,
+		AuthSecret: []byte(cfg.AuthSecret),
+	})
 	if err != nil {
-		return fmt.Errorf("configure waitpoint notification worker: %w", err)
+		return fmt.Errorf("configure waitpoint notifier: %w", err)
 	}
+	notificationWorker := waitpoint.NewWorker(notifier, asyncSubscriber, log)
 	scheduleRunCreator, err := control.NewScheduleRunCreator(log, pool, secretStore, enqueuer)
 	if err != nil {
 		return fmt.Errorf("configure schedule run creator: %w", err)

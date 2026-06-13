@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -97,6 +98,16 @@ func main() {
 		log.Error("parse public URL", "error", err)
 		os.Exit(1)
 	}
+	waitpoints, err := waitpoint.NewNotifier(waitpoint.Config{
+		Log:        log,
+		Store:      queries,
+		PublicURL:  publicURL,
+		AuthSecret: []byte(cfg.authSecret),
+	})
+	if err != nil {
+		log.Error("configure waitpoint notifier", "error", err)
+		os.Exit(1)
+	}
 	app, err := control.NewServer(control.ServerConfig{
 		Log:                 log,
 		DeploymentMode:      cfg.deploymentMode,
@@ -111,6 +122,7 @@ func main() {
 		SetupToken:          cfg.setupToken,
 		AuthSecret:          []byte(cfg.authSecret),
 		PublicURL:           publicURL,
+		Waitpoints:          waitpoints,
 	})
 	if err != nil {
 		log.Error("configure control server", "error", err)
