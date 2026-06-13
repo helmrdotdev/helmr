@@ -194,7 +194,7 @@ func validateSecretPath(path string) error {
 	if clean == "." || clean == string(filepath.Separator) {
 		return fmt.Errorf("secret path must target a file or directory: %q", path)
 	}
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+	for part := range strings.SplitSeq(filepath.ToSlash(path), "/") {
 		if part == ".." {
 			return fmt.Errorf("secret path must not contain parent components: %q", path)
 		}

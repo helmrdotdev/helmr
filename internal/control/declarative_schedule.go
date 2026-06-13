@@ -37,25 +37,25 @@ type declarativeScheduleSpec struct {
 
 func promoteDeploymentAndSyncSchedules(ctx context.Context, store interface {
 	PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
-}, params db.PromoteDeploymentParams) (db.PromoteDeploymentRow, []scheduleView, error) {
+}, params db.PromoteDeploymentParams) ([]scheduleView, error) {
 	syncStore, ok := store.(declarativeScheduleSyncStore)
 	if ok {
 		if err := validateDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID); err != nil {
-			return db.PromoteDeploymentRow{}, nil, err
+			return nil, err
 		}
 	}
-	row, err := store.PromoteDeployment(ctx, params)
+	_, err := store.PromoteDeployment(ctx, params)
 	if err != nil {
-		return db.PromoteDeploymentRow{}, nil, err
+		return nil, err
 	}
 	if !ok {
-		return row, nil, nil
+		return nil, nil
 	}
 	changed, err := syncDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID)
 	if err != nil {
-		return db.PromoteDeploymentRow{}, nil, err
+		return nil, err
 	}
-	return row, changed, nil
+	return changed, nil
 }
 
 func validateDeclarativeSchedulesForDeployment(ctx context.Context, store declarativeScheduleSyncStore, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID) error {
@@ -176,7 +176,7 @@ func deploymentDeclarativeScheduleSpecs(ctx context.Context, store declarativeSc
 			}
 		}
 		for _, item := range schedules {
-			spec, err := normalizeDeclarativeScheduleSpec(orgID, projectID, environmentID, task.TaskID, item)
+			spec, err := normalizeDeclarativeScheduleSpec(orgID, projectID, task.TaskID, item)
 			if err != nil {
 				return nil, err
 			}
@@ -186,7 +186,7 @@ func deploymentDeclarativeScheduleSpecs(ctx context.Context, store declarativeSc
 	return specs, nil
 }
 
-func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, item api.WorkerDeploymentTaskSchedule) (declarativeScheduleSpec, error) {
+func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, taskID string, item api.WorkerDeploymentTaskSchedule) (declarativeScheduleSpec, error) {
 	taskID = strings.TrimSpace(taskID)
 	if err := api.ValidateTaskID(taskID); err != nil {
 		return declarativeScheduleSpec{}, err

@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -340,10 +341,8 @@ func excludedRelativePath(rel string, excludeMatchers []*regexp.Regexp) bool {
 		targets = append(targets, rel+"/")
 	}
 	for _, matcher := range excludeMatchers {
-		for _, target := range targets {
-			if matcher.MatchString(target) {
-				return true
-			}
+		if slices.ContainsFunc(targets, matcher.MatchString) {
+			return true
 		}
 	}
 	return false

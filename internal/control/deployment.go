@@ -93,7 +93,7 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, scope)
+	projectID, environmentID, err := runScopeIDs(scope)
 	if err != nil {
 		s.log.Error("resolve deployment scope failed", "error", err)
 		writeError(w, errors.New("get deployment"))
@@ -180,7 +180,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, scope)
+	projectID, environmentID, err := runScopeIDs(scope)
 	if err != nil {
 		writeError(w, errors.New("get deployment events"))
 		return
@@ -298,7 +298,7 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, scope)
+	projectID, environmentID, err := runScopeIDs(scope)
 	if err != nil {
 		s.log.Error("resolve deployment scope failed", "error", err)
 		writeError(w, errors.New("get current deployment"))
@@ -426,7 +426,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 		defer tx.Rollback(r.Context())
 		promoteStore = db.New(tx)
-		_, changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
+		changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
 		if isNoRows(err) {
 			writeError(w, badRequest(errors.New("deployment is not deployable")))
 			return
@@ -452,7 +452,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	_, changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
+	changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
 	if isNoRows(err) {
 		writeError(w, badRequest(errors.New("deployment is not deployable")))
 		return

@@ -23,7 +23,7 @@ func CleanSlash(raw string, options CleanOptions) (string, error) {
 		return "", fmt.Errorf("unsafe path %q", raw)
 	}
 	slashed := filepath.ToSlash(raw)
-	for _, part := range strings.Split(slashed, "/") {
+	for part := range strings.SplitSeq(slashed, "/") {
 		if part == ".." {
 			return "", fmt.Errorf("unsafe path %q", raw)
 		}
@@ -82,7 +82,7 @@ func MkdirAllNoSymlink(root, relative string, mode os.FileMode) error {
 		return err
 	}
 	current := root
-	for _, part := range strings.Split(clean, "/") {
+	for part := range strings.SplitSeq(clean, "/") {
 		if part == "" {
 			continue
 		}

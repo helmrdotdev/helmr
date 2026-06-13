@@ -265,7 +265,7 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 		writeMemberManagementError(w, errMemberRoleChanged)
 		return
 	}
-	if err := s.authorizeMemberRoleChange(r, actor, target, expectedRole, newRole); err != nil {
+	if err := s.authorizeMemberRoleChange(actor, target, expectedRole, newRole); err != nil {
 		writeMemberManagementError(w, err)
 		return
 	}
@@ -349,7 +349,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) authorizeMemberRoleChange(r *http.Request, actor auth.Actor, target db.GetOrgMemberForManagementRow, expectedRole db.OrgMemberRole, newRole db.OrgMemberRole) error {
+func (s *Server) authorizeMemberRoleChange(actor auth.Actor, target db.GetOrgMemberForManagementRow, expectedRole db.OrgMemberRole, newRole db.OrgMemberRole) error {
 	targetUserID, err := pgvalue.UUIDValue(target.UserID)
 	if err != nil {
 		return err

@@ -247,7 +247,6 @@ func tarLayerEntries(t *testing.T, headers []tar.Header) []byte {
 	var buf bytes.Buffer
 	writer := tar.NewWriter(&buf)
 	for _, header := range headers {
-		header := header
 		if err := writer.WriteHeader(&header); err != nil {
 			t.Fatal(err)
 		}

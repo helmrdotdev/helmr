@@ -48,6 +48,8 @@ rec {
     goPackage
     pkgsUnstable.gopls
     pkgs.gotools
+    helmrPackages.staticcheck
+    helmrPackages.unparam
     helmrPackages.bun
     pkgs.nodejs
     pkgs.buf

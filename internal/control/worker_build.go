@@ -163,11 +163,11 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 	defer tx.Rollback(r.Context())
 	queries := db.New(tx)
 	buildWorkerInstanceID := pgvalue.UUID(worker.WorkerInstanceID)
-	failBuild := func(message string) bool {
+	failBuild := func(message string) {
 		payload, err := json.Marshal(workerMessagePayload{Message: strings.TrimSpace(message)})
 		if err != nil {
 			writeError(w, errors.New("marshal deployment build error"))
-			return false
+			return
 		}
 		row, err := queries.FailDeploymentBuild(r.Context(), db.FailDeploymentBuildParams{
 			Failure:               payload,
@@ -180,22 +180,21 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		})
 		if isNoRows(err) {
 			writeError(w, conflict(errors.New("deployment build lease is stale")))
-			return false
+			return
 		}
 		if err != nil {
 			writeError(w, errors.New("mark deployment build failed"))
-			return false
+			return
 		}
 		if err := appendDeploymentLifecycleEvent(r.Context(), queries, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.failed", "error", "worker", "failed", strings.TrimSpace(message)); err != nil {
 			writeError(w, errors.New("record deployment event"))
-			return false
+			return
 		}
 		if err := tx.Commit(r.Context()); err != nil {
 			writeError(w, errors.New("commit deployment build failure"))
-			return false
+			return
 		}
 		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)})
-		return true
 	}
 	if request.Result.Error != nil {
 		failBuild(*request.Result.Error)

@@ -351,7 +351,7 @@ func (s *Server) completeMagicLink(r *http.Request, tokenHash []byte) (string, s
 	case db.MagicLinkPurposeInviteAccept:
 		rawSession, userID, err = s.completeMagicLinkInvite(r, queries, link, identity)
 	case db.MagicLinkPurposeLogin:
-		rawSession, userID, err = s.completeMagicLinkLogin(r, queries, link, identity)
+		rawSession, userID, err = s.completeMagicLinkLogin(r, queries, identity)
 	default:
 		err = errors.New("unknown magic link purpose")
 	}
@@ -439,7 +439,7 @@ func (s *Server) completeMagicLinkInvite(r *http.Request, queries db.Querier, li
 	return rawSession, user.ID, nil
 }
 
-func (s *Server) completeMagicLinkLogin(r *http.Request, queries db.Querier, link db.GetActiveMagicLinkByTokenHashRow, identity authIdentity) (string, pgtype.UUID, error) {
+func (s *Server) completeMagicLinkLogin(r *http.Request, queries db.Querier, identity authIdentity) (string, pgtype.UUID, error) {
 	user, err := s.upsertMagicLinkAuthIdentity(r, queries, identity)
 	if err != nil {
 		return "", pgtype.UUID{}, err

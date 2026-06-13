@@ -6,6 +6,7 @@ import (
 	"os"
 	pathpkg "path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/containerd/platforms"
@@ -324,10 +325,8 @@ func (p *imagePlanner) subImage(copy *bundlev0.CopyFromImage, stack []string) (*
 	if copy == nil || strings.TrimSpace(copy.SrcImageKey) == "" {
 		return nil, errors.New("copy_from_image src_image_key is required")
 	}
-	for _, key := range stack {
-		if key == copy.SrcImageKey {
-			return nil, fmt.Errorf("copy_from_image sub-image graph contains a cycle at %s", copy.SrcImageKey)
-		}
+	if slices.Contains(stack, copy.SrcImageKey) {
+		return nil, fmt.Errorf("copy_from_image sub-image graph contains a cycle at %s", copy.SrcImageKey)
 	}
 	image := p.subImages[copy.SrcImageKey]
 	if image == nil {
@@ -371,7 +370,7 @@ func resolveSourcePath(root, raw string) (string, string, error) {
 
 func rejectSymlinkComponents(root, relative string) error {
 	path := root
-	for _, component := range strings.Split(filepath.ToSlash(relative), "/") {
+	for component := range strings.SplitSeq(filepath.ToSlash(relative), "/") {
 		if component == "" || component == "." {
 			continue
 		}
@@ -399,7 +398,7 @@ func normalizeRelative(raw string) (string, error) {
 }
 
 func isBuildInputHardExcluded(relative string) bool {
-	for _, component := range strings.Split(filepath.ToSlash(relative), "/") {
+	for component := range strings.SplitSeq(filepath.ToSlash(relative), "/") {
 		if component == ".git" {
 			return true
 		}

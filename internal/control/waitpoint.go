@@ -68,7 +68,7 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("request must be valid JSON")))
 		return
 	}
-	kind, displayText, err := waitpointRequestFields(request.Kind, requestJSON, request.DisplayText)
+	kind, displayText, err := waitpointRequestFields(request.Kind, request.DisplayText)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -433,7 +433,7 @@ func waitpointActorResponseIdentity(actor auth.Actor) (string, string, error) {
 	}
 }
 
-func waitpointRequestFields(kind api.WorkerWaitpointKind, request json.RawMessage, displayText string) (db.WaitpointKind, string, error) {
+func waitpointRequestFields(kind api.WorkerWaitpointKind, displayText string) (db.WaitpointKind, string, error) {
 	displayText = strings.TrimSpace(displayText)
 	switch kind {
 	case api.WorkerWaitpointKindHuman:
@@ -457,15 +457,9 @@ func waitpointRequestLinkedID(kind db.WaitpointKind, request json.RawMessage) (u
 	if err := json.Unmarshal(trimmed, &payload); err != nil {
 		return uuid.Nil, false, err
 	}
-	raw, ok, err := optionalStringField(payload, "waitpoint_id")
-	if err != nil {
-		return uuid.Nil, false, err
-	}
+	raw, ok := optionalStringField(payload, "waitpoint_id")
 	if !ok {
-		raw, _, err = optionalStringField(payload, "waitpointId")
-		if err != nil {
-			return uuid.Nil, false, err
-		}
+		raw, _ = optionalStringField(payload, "waitpointId")
 	}
 	if raw == "" {
 		return uuid.Nil, false, nil
@@ -477,16 +471,16 @@ func waitpointRequestLinkedID(kind db.WaitpointKind, request json.RawMessage) (u
 	return id, true, nil
 }
 
-func optionalStringField(payload map[string]json.RawMessage, name string) (string, bool, error) {
+func optionalStringField(payload map[string]json.RawMessage, name string) (string, bool) {
 	rawJSON, ok := payload[name]
 	if !ok {
-		return "", false, nil
+		return "", false
 	}
 	var value string
 	if err := json.Unmarshal(rawJSON, &value); err != nil {
-		return "", false, nil
+		return "", false
 	}
-	return strings.TrimSpace(value), true, nil
+	return strings.TrimSpace(value), true
 }
 
 func waitpointTimeout(kind db.WaitpointKind, timeoutSeconds *int32) (pgtype.Int4, error) {

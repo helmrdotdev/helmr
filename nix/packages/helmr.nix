@@ -24,6 +24,7 @@ let
     ../../internal/compute
     ../../internal/db
     ../../internal/pgvalue
+    ../../internal/safepath
     ../../internal/secret
     ../../internal/sha256sum
     ../../internal/version

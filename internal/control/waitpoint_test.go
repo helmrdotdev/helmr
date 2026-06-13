@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -693,10 +694,8 @@ func (f *fakeStore) ListPendingWaitpointsForRuns(_ context.Context, arg db.ListP
 	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.Status != db.RunWaitStatusWaiting {
 		return nil, nil
 	}
-	for _, runID := range arg.RunIds {
-		if f.waitpoint.RunID == runID {
-			return []db.ListPendingWaitpointsForRunsRow{fakeWaitpointListRow(f.waitpoint)}, nil
-		}
+	if slices.Contains(arg.RunIds, f.waitpoint.RunID) {
+		return []db.ListPendingWaitpointsForRunsRow{fakeWaitpointListRow(f.waitpoint)}, nil
 	}
 	return nil, nil
 }

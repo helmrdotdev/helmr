@@ -26,7 +26,7 @@ func (s *Server) requestEnvironmentScope(ctx context.Context, actor auth.Actor, 
 		if !ok {
 			return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("API key is not bound to an environment")
 		}
-		scopeProjectID, scopeEnvironmentID, err := s.runScopeIDs(ctx, actor.OrgID, scope)
+		scopeProjectID, scopeEnvironmentID, err := runScopeIDs(scope)
 		if err != nil {
 			return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
 		}
@@ -130,7 +130,7 @@ func (s *Server) requestedRunListScope(r *http.Request, actor auth.Actor) (auth.
 	return auth.Scope{}, errors.New("session environment scoped requests must use the project environment path")
 }
 
-func (s *Server) runScopeIDs(ctx context.Context, orgID uuid.UUID, scope auth.Scope) (pgtype.UUID, pgtype.UUID, error) {
+func runScopeIDs(scope auth.Scope) (pgtype.UUID, pgtype.UUID, error) {
 	projectID, err := uuid.Parse(scope.ProjectID)
 	if err != nil {
 		return pgtype.UUID{}, pgtype.UUID{}, err
@@ -222,7 +222,7 @@ func (s *Server) secretRequestScope(ctx context.Context, orgID uuid.UUID, projec
 	if err != nil {
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	scopeProjectID, scopeEnvironmentID, err := s.runScopeIDs(ctx, orgID, scope)
+	scopeProjectID, scopeEnvironmentID, err := runScopeIDs(scope)
 	if err != nil {
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}

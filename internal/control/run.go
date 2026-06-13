@@ -675,7 +675,7 @@ func (s *Server) listRunSummaries(r *http.Request, actor auth.Actor, statusFilte
 	if !actor.HasPermission(auth.PermissionRunsRead, requestedScope) {
 		return nil, errPermissionRequired
 	}
-	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, requestedScope)
+	projectID, environmentID, err := runScopeIDs(requestedScope)
 	if err != nil {
 		return nil, err
 	}
@@ -704,7 +704,7 @@ func (s *Server) countRunStatuses(r *http.Request, actor auth.Actor) (api.RunCou
 	if !actor.HasPermission(auth.PermissionRunsRead, requestedScope) {
 		return api.RunCountsResponse{}, errPermissionRequired
 	}
-	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, requestedScope)
+	projectID, environmentID, err := runScopeIDs(requestedScope)
 	if err != nil {
 		return api.RunCountsResponse{}, err
 	}

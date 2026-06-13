@@ -19,7 +19,7 @@ func resolveLaunchCwd(raw string, fallback string) (string, error) {
 	if !strings.HasPrefix(cwd, "/") {
 		cwd = "/" + cwd
 	}
-	for _, part := range strings.Split(cwd, "/") {
+	for part := range strings.SplitSeq(cwd, "/") {
 		if part == ".." {
 			return "", fmt.Errorf("OCI WorkingDir %q contains unsafe path components", raw)
 		}

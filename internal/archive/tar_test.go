@@ -260,7 +260,7 @@ func TestExtractTarRejectsOversizedRegularFile(t *testing.T) {
 func TestExtractTarRejectsTooManyEntries(t *testing.T) {
 	var body bytes.Buffer
 	writer := tar.NewWriter(&body)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if err := writer.WriteHeader(&tar.Header{Name: fmt.Sprintf("dirs/entry-%d", i), Typeflag: tar.TypeDir, Mode: 0o755}); err != nil {
 			t.Fatal(err)
 		}

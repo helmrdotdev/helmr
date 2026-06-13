@@ -500,7 +500,7 @@ func validateSymlinkTarget(linkPath, target string) error {
 	if filepath.Dir(linkPath) == "." {
 		depth = 0
 	}
-	for _, part := range strings.Split(filepath.Clean(target), string(filepath.Separator)) {
+	for part := range strings.SplitSeq(filepath.Clean(target), string(filepath.Separator)) {
 		switch part {
 		case ".", "":
 		case "..":

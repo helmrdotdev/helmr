@@ -67,8 +67,8 @@ func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, 
 }
 
 func isDeploymentSourceRuntimeExcluded(rel string, isDir bool) bool {
-	parts := strings.Split(filepath.ToSlash(rel), "/")
-	for _, part := range parts {
+	parts := strings.SplitSeq(filepath.ToSlash(rel), "/")
+	for part := range parts {
 		if part == "node_modules" {
 			return true
 		}
@@ -84,7 +84,7 @@ func imageNodeRuntimeCommand(imageRoot string, imageConfig ociRuntimeConfig) (st
 			pathValue = value
 		}
 	}
-	for _, dir := range strings.Split(pathValue, ":") {
+	for dir := range strings.SplitSeq(pathValue, ":") {
 		dir = strings.TrimSpace(dir)
 		if dir == "" {
 			continue
