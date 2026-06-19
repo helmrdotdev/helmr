@@ -1,4 +1,4 @@
-import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { cache, image, logger, sandbox, source, task } from "@helmr/sdk"
 
 const base = image("task-secrets")
   .from("node:24-bookworm-slim")
@@ -22,7 +22,7 @@ export const useSecret = task({
     if (!process.env.API_TOKEN) {
       throw new Error("API_TOKEN was not injected")
     }
-    ctx.log.info({ secret: "API_TOKEN", available: true })
+    logger.info({ secret: "API_TOKEN", available: true })
     return { ok: true }
   },
 })

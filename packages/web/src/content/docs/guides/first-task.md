@@ -47,9 +47,10 @@ export const hello = task({
 
 Tasks declare their runtime before they run: image, sandbox, workspace mount, resources, secrets, max duration, payload type, and return value.
 
-Use `ctx` for runtime interaction:
+Use `ctx` for read-only execution context and module-level APIs for operations:
 
 ```ts
+import { logger } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -65,7 +66,7 @@ export const hello = task({
   run: async (payload, ctx) => {
     const greeting = `hello ${payload.name?.trim() || "Helmr"}`
     await writeFile("hello.txt", `${greeting}\nrun=${ctx.run.id}\n`)
-    ctx.log.info({ message: "wrote greeting", path: "hello.txt" })
+    logger.info({ message: "wrote greeting", path: "hello.txt" })
     return { greeting, runId: ctx.run.id }
   },
 })

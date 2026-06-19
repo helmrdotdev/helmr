@@ -1,0 +1,13 @@
+{
+  "name": "slack-approval",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.10",
+  "version": "0.1.0",
+  "scripts": {
+    "bridge": "bun run bridge/server.ts"
+  },
+  "dependencies": {
+    "@helmr/sdk": "latest"
+  }
+}

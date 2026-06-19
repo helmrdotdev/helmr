@@ -8,7 +8,7 @@ order: 155
 
 # Schedules
 
-A schedule creates runs for a deployed task from a 5-field cron expression. The logical schedule is scoped to a project. Each environment gets its own schedule instance, which stores run options, active state, and trigger cursor state.
+A schedule starts task sessions for a deployed task from a 5-field cron expression. The logical schedule is scoped to a project. Each environment gets its own schedule instance, which stores run options, active state, and next-fire cursor state.
 
 Schedules are not arbitrary payload templates. Helmr generates the scheduled task payload at fire time so every scheduled run receives consistent schedule metadata:
 
@@ -30,7 +30,7 @@ Use `timestamp` as the scheduled fire time. Use `lastTimestamp` to compare with 
 Declarative schedules are defined once in task source with `schedules.task()`. They are deployed with the task and reconciled into the selected project environment when a deployment is promoted.
 
 ```ts
-import { cache, image, sandbox, schedules, source } from "@helmr/sdk"
+import { cache, image, logger, sandbox, schedules, source } from "@helmr/sdk"
 
 const runtime = image("nightly-maintenance")
   .from("node:24-bookworm-slim")
@@ -46,8 +46,8 @@ export const nightlyMaintenance = schedules.task({
   sandbox: sandbox("nightly-maintenance").image(runtime),
   secrets: [{ name: "API_TOKEN", env: "API_TOKEN" }],
   cron: { pattern: "0 2 * * *", timezone: "UTC" },
-  run: async (payload, ctx) => {
-    ctx.log.info("scheduled slot", payload.timestamp.toISOString())
+  run: async (payload) => {
+    logger.info("scheduled slot", payload.timestamp.toISOString())
   },
 })
 ```
@@ -77,7 +77,7 @@ Imperative schedules can be listed, retrieved, updated, activated, deactivated, 
 
 The database is the durable source of truth for schedule definitions, schedule instances, and the exact next fire timestamp. Redis/Valkey stores a replaceable one-next-fire entry per schedule instance so dispatchers can lease due entries quickly. The dispatcher repairs Redis from the database, but steady-state create, update, activation, deployment promotion, and successful fires enqueue the next fire directly. Each created run uses a schedule-derived idempotency key so the same schedule fire is not duplicated by retries or dispatcher restarts.
 
-When a schedule fires, the run uses the selected environment instance snapshot: the task id, cron, and timezone come from the logical schedule; run options, active state, and cursor state come from the environment instance. The task's sandbox controls the empty writable workspace mount. If the trigger fails, the dispatcher retries with backoff up to the configured attempt limit. If the schedule is changed or deleted before a leased slot completes, stale leases are superseded.
+When a schedule fires, the run uses the selected environment instance snapshot: the task id, cron, and timezone come from the logical schedule; run options, active state, and cursor state come from the environment instance. The task's sandbox controls the empty writable workspace mount. If the scheduled start fails, the dispatcher retries with backoff up to the configured attempt limit. If the schedule is changed or deleted before a leased slot completes, stale leases are superseded.
 
 Schedules do not backfill every missed cron slot after downtime or dispatcher backlog. Helmr fires the leased slot once, then advances to the next future cron occurrence. The generated `upcoming` payload contains future slots only.
 

@@ -1,11 +1,13 @@
 package control
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -55,5 +57,27 @@ func TestWriteCreateScheduleErrorClassifiesFailures(t *testing.T) {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.want)
 			}
 		})
+	}
+}
+
+func TestCreateScheduleRejectsDeploymentSelection(t *testing.T) {
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &fakeStore{}, Auth: fakeAuth{}})
+	body := []byte(`{
+		"deduplication_key":"inspect-main",
+		"task":"deploy",
+		"cron":"0 * * * *",
+		"options":{"deployment_id":"00000000-0000-0000-0000-000000000001"}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/schedules", bytes.NewReader(body))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "deployment_id is not accepted for scheduled task starts") {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }

@@ -16,15 +16,15 @@ func TestRunTable(t *testing.T) {
 		TaskID: "build",
 		Status: "running",
 		PendingWaitpoint: &api.PendingWaitpoint{
-			Kind:        "human",
-			WaitpointID: "wait-1",
+			Kind: "token",
+			ID:   "wait-1",
 		},
 	}}
 
 	RunTable(&out, runs)
 
 	got := out.String()
-	if !strings.Contains(got, "RUN ID") || !strings.Contains(got, "1234567890ab") || !strings.Contains(got, "human:wait-1") {
+	if !strings.Contains(got, "RUN ID") || !strings.Contains(got, "1234567890ab") || !strings.Contains(got, "token:wait-1") {
 		t.Fatalf("RunTable() = %q", got)
 	}
 }

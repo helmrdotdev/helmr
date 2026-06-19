@@ -6,23 +6,28 @@ import (
 )
 
 type CreateWaitpointTokenRequest struct {
-	WaitpointID      string          `json:"waitpoint_id"`
-	ExpiresAt        *time.Time      `json:"expires_at,omitempty"`
-	ExpiresInSeconds *int32          `json:"expires_in_seconds,omitempty"`
+	TimeoutAt        *time.Time      `json:"timeout_at,omitempty"`
+	TimeoutInSeconds *int32          `json:"timeout_in_seconds,omitempty"`
+	Tags             []string        `json:"tags,omitempty"`
 	Metadata         json.RawMessage `json:"metadata,omitempty"`
 }
 
 type WaitpointTokenResponse struct {
-	ID          string     `json:"id"`
-	WaitpointID string     `json:"waitpoint_id"`
-	URL         string     `json:"url"`
-	Token       string     `json:"token,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at"`
+	ID                string          `json:"id"`
+	Status            string          `json:"status,omitempty"`
+	CallbackURL       string          `json:"callback_url"`
+	PublicAccessToken string          `json:"public_access_token,omitempty"`
+	TimeoutAt         *time.Time      `json:"timeout_at"`
+	Data              json.RawMessage `json:"data,omitempty"`
+	Tags              []string        `json:"tags,omitempty"`
+	Metadata          json.RawMessage `json:"metadata,omitempty"`
 }
 
-type RespondWaitpointRequest struct {
-	Token           string          `json:"token,omitempty"`
-	Value           json.RawMessage `json:"value,omitempty"`
-	ExternalSubject string          `json:"external_subject,omitempty"`
-	Metadata        json.RawMessage `json:"metadata,omitempty"`
+type ListWaitpointTokensResponse struct {
+	Tokens     []WaitpointTokenResponse `json:"tokens"`
+	NextCursor *string                  `json:"next_cursor,omitempty"`
+}
+
+type CompleteWaitpointTokenRequest struct {
+	Data json.RawMessage `json:"data,omitempty"`
 }

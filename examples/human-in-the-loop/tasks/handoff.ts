@@ -1,5 +1,47 @@
-import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { cache, image, sandbox, source, task, wait, type PayloadSchema } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
+
+interface ApprovalDecision {
+  readonly approved: boolean
+}
+
+interface HandoffMessage {
+  readonly text: string
+}
+
+const approvalDecision: PayloadSchema<ApprovalDecision> = {
+  "~standard": {
+    version: 1,
+    vendor: "human-in-the-loop.approval",
+    validate(value) {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return { issues: [{ message: "expected object" }] }
+      }
+      const record = value as Record<string, unknown>
+      if (typeof record.approved !== "boolean") {
+        return { issues: [{ message: "expected boolean", path: ["approved"] }] }
+      }
+      return { value: { approved: record.approved } }
+    },
+  },
+}
+
+const handoffMessage: PayloadSchema<HandoffMessage> = {
+  "~standard": {
+    version: 1,
+    vendor: "human-in-the-loop.message",
+    validate(value) {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return { issues: [{ message: "expected object" }] }
+      }
+      const record = value as Record<string, unknown>
+      if (typeof record.text !== "string" || record.text.length === 0) {
+        return { issues: [{ message: "expected non-empty string", path: ["text"] }] }
+      }
+      return { value: { text: record.text } }
+    },
+  },
+}
 
 const base = image("human-in-the-loop")
   .from("node:24-bookworm-slim")
@@ -19,16 +61,20 @@ export const handoff = task({
   sandbox: sbx,
   maxDuration: 900,
   run: async (ctx) => {
-    const decision = await ctx.wait.human<{ approved: boolean }>({
-      displayText: "Continue and ask for a handoff note?",
-    })
+    const decisionToken = await wait.createToken({ timeout: 900 })
+    const decision = await wait.forToken(decisionToken, {
+      schema: approvalDecision,
+      metadata: { prompt: "Continue and ask for a handoff note?" },
+    }).unwrap()
     if (!decision.approved) {
       return { approved: false }
     }
 
-    const reply = await ctx.wait.human<{ text: string }>({
-      displayText: "What should this run write to handoff.txt?",
-    })
+    const replyToken = await wait.createToken({ timeout: 900 })
+    const reply = await wait.forToken(replyToken, {
+      schema: handoffMessage,
+      metadata: { prompt: "What should this run write to handoff.txt?" },
+    }).unwrap()
     await writeFile("handoff.txt", `${reply.text}\n`)
     return {
       approved: true,

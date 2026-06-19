@@ -250,7 +250,7 @@ func (c *Client) requestWorkerToken(ctx context.Context) (string, time.Time, err
 		return "", time.Time{}, err
 	}
 	if response.Token == "" {
-		return "", time.Time{}, fmt.Errorf("worker auth response token is empty")
+		return "", time.Time{}, fmt.Errorf("worker auth token is empty")
 	}
 	if response.ExpiresInSeconds <= 0 {
 		return "", time.Time{}, fmt.Errorf("worker auth response expires_in_seconds must be positive")
@@ -358,13 +358,21 @@ func (c *Client) doJSON(req *http.Request, out any) error {
 }
 
 func decodeError(resp *http.Response) error {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read error response: %w", err)
+	}
+	return decodeErrorBody(resp.StatusCode, resp.Status, body)
+}
+
+func decodeErrorBody(statusCode int, status string, body []byte) error {
 	var payload struct {
 		Error string `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err == nil && payload.Error != "" {
-		return &HTTPError{StatusCode: resp.StatusCode, Status: resp.Status, Message: payload.Error}
+	if err := json.Unmarshal(body, &payload); err == nil && payload.Error != "" {
+		return &HTTPError{StatusCode: statusCode, Status: status, Message: payload.Error}
 	}
-	return &HTTPError{StatusCode: resp.StatusCode, Status: resp.Status}
+	return &HTTPError{StatusCode: statusCode, Status: status}
 }
 
 func joinPath(basePath string, path string) string {

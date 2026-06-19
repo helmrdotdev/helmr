@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,52 +13,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
-
-func TestIdempotentReplayRunReturnsAppliedOperationRun(t *testing.T) {
-	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &fakeStore{run: db.Run{
-		ID:            runID,
-		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-		ProjectID:     testProjectID(),
-		EnvironmentID: testEnvironmentID(),
-		TaskID:        "deploy",
-		Status:        db.RunStatusQueued,
-		CreatedAt:     testTime(),
-		UpdatedAt:     testTime(),
-	}}
-	server := &Server{db: store}
-	requestBody := []byte(`{"idempotency_key":"same","payload":{"b":2,"a":1}}`)
-	run, err := server.idempotentReplayRun(context.Background(), auth.Actor{OrgID: dbtest.DefaultOrgID}, db.RunOperation{
-		Status:  db.RunOperationStatusApplied,
-		Request: []byte(`{"payload":{"a":1,"b":2},"idempotency_key":"same"}`),
-		Result:  []byte(`{"run_id":"` + pgvalue.MustUUIDValue(runID).String() + `"}`),
-	}, requestBody)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if run.ID != runID {
-		t.Fatalf("idempotent replay run id = %v, want %v", run.ID, runID)
-	}
-}
-
-func TestIdempotentReplayRunRejectsMismatchedRequest(t *testing.T) {
-	server := &Server{db: &fakeStore{}}
-	_, err := server.idempotentReplayRun(context.Background(), auth.Actor{OrgID: dbtest.DefaultOrgID}, db.RunOperation{
-		Status:  db.RunOperationStatusApplied,
-		Request: []byte(`{"idempotency_key":"same","payload":{"n":9007199254740993}}`),
-		Result:  []byte(`{"run_id":"00000000-0000-0000-0000-000000000001"}`),
-	}, []byte(`{"idempotency_key":"same","payload":{"n":9007199254740992}}`))
-	if !errors.Is(err, errIdempotencyKeyConflict) {
-		t.Fatalf("err = %v, want idempotency conflict", err)
-	}
-}
 
 func TestCancelRunReturnsAppliedOperationAfterNoRowsRace(t *testing.T) {
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
@@ -147,38 +105,6 @@ func TestCancelRunRejectsMismatchedIdempotencyRequest(t *testing.T) {
 	}
 }
 
-func TestReplayCreateRunRequestPreservesEffectiveOptions(t *testing.T) {
-	original := db.Run{
-		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		ProjectID:          testProjectID(),
-		EnvironmentID:      testEnvironmentID(),
-		DeploymentID:       testDeploymentID(),
-		TaskID:             "deploy",
-		Payload:            []byte(`{"old":true}`),
-		Metadata:           []byte(`{"team":"ops"}`),
-		Tags:               []string{"prod"},
-		LockedRetryPolicy:  []byte(`{"maxAttempts":3,"backoff":{"minMs":1000,"maxMs":1000,"jitter":"none"}}`),
-		QueueName:          "critical",
-		ConcurrencyKey:     pgtype.Text{String: "deploy-prod", Valid: true},
-		Priority:           42,
-		Ttl:                "30m",
-		MaxDurationSeconds: 600,
-	}
-	request, err := replayCreateRunRequest(original, api.ReplayRunRequest{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if request.Options.Queue == nil || request.Options.Queue.Name != "critical" {
-		t.Fatalf("queue = %+v, want critical", request.Options.Queue)
-	}
-	if request.Options.ConcurrencyKey != "deploy-prod" || request.Options.Priority != 42 || request.Options.TTL != "30m" || request.Options.MaxDurationSeconds != 600 {
-		t.Fatalf("options = %+v, want effective original options", request.Options)
-	}
-	if string(request.Options.Retry) != string(original.LockedRetryPolicy) {
-		t.Fatalf("retry = %s, want %s", request.Options.Retry, original.LockedRetryPolicy)
-	}
-}
-
 func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) {
 	orgID := pgvalue.UUID(dbtest.DefaultOrgID)
 	store := &fakeStore{deploymentTasks: []db.DeploymentTask{{
@@ -201,12 +127,11 @@ func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) 
 		CreatedAt:            testTime(),
 	}}}
 	runEnqueuer := &fakeRunEnqueuer{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
 
-	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:  "deploy",
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.CreateRunOptions{
+		Options: api.TaskStartOptions{
 			Queue:          &api.RunQueueOption{Name: "reports"},
 			IdempotencyKey: "deploy-prod",
 		},
@@ -214,31 +139,31 @@ func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var first api.RunResponse
+	var first api.TaskStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
 		t.Fatal(err)
 	}
 	store.deploymentTasks[0].QueueName = "default"
 
-	req = httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var second api.RunResponse
+	var second api.TaskStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.ID != first.ID || !second.IdempotencyHit {
+	if second.Run.ID != first.Run.ID || !second.IsCached {
 		t.Fatalf("second response = %+v first=%+v", second, first)
 	}
 	if runEnqueuer.count != 1 || len(store.events) != 1 {
@@ -286,6 +211,11 @@ func (f *fakeStore) CancelRun(_ context.Context, arg db.CancelRunParams) (db.Can
 		return db.CancelRunRow{}, f.cancelRunErr
 	}
 	f.run.Status = db.RunStatusCancelled
+	if f.run.ExecutionStatus == db.RunExecutionStatusExecuting && !arg.Force {
+		f.run.ExecutionStatus = db.RunExecutionStatusPendingCancel
+	} else {
+		f.run.ExecutionStatus = db.RunExecutionStatusFinished
+	}
 	f.runOperation.Status = db.RunOperationStatusApplied
 	f.runOperation.Result = []byte(`{"status":"cancelled"}`)
 	f.runOperation.AppliedAt = testTime()
@@ -296,6 +226,7 @@ func (f *fakeStore) CancelRun(_ context.Context, arg db.CancelRunParams) (db.Can
 		EnvironmentID:        f.run.EnvironmentID,
 		DeploymentID:         fakeRunDeploymentID(f.run),
 		DeploymentTaskID:     fakeRunDeploymentTaskID(f.run),
+		TaskSessionID:        fakeRunTaskSessionID(f.run),
 		DeploymentVersion:    f.run.DeploymentVersion,
 		ApiVersion:           f.run.ApiVersion,
 		SdkVersion:           f.run.SdkVersion,
@@ -307,7 +238,6 @@ func (f *fakeStore) CancelRun(_ context.Context, arg db.CancelRunParams) (db.Can
 		Metadata:             f.run.Metadata,
 		Tags:                 f.run.Tags,
 		LockedRetryPolicy:    f.run.LockedRetryPolicy,
-		ReplayedFromRunID:    f.run.ReplayedFromRunID,
 		CurrentAttemptNumber: f.run.CurrentAttemptNumber,
 		ExitCode:             f.run.ExitCode,
 		Output:               f.run.Output,

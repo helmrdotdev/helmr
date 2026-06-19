@@ -14,23 +14,24 @@ import (
 )
 
 type ResolvedRun struct {
-	RunID             string
-	AttemptID         string
-	AttemptNumber     int32
-	SessionID         string
-	SnapshotVersion   int64
-	ReplayedFromRunID string
-	TaskID            string
-	Bundle            *bundlev0.Bundle
-	Payload           json.RawMessage
-	Secrets           api.ResolvedSecrets
-	DeploymentSource  api.DeploymentSourceArtifact
-	DeploymentTask    api.WorkerDeploymentTask
-	Requirements      compute.RunRuntimeRequirements
-	Restore           *api.WorkerRestore
-	MaxDuration       time.Duration
-	ActiveUsed        time.Duration
-	Trace             api.TraceContext
+	RunID            string
+	AttemptID        string
+	AttemptNumber    int32
+	RunLeaseID       string
+	SnapshotVersion  int64
+	TaskSessionID    string
+	TaskID           string
+	Bundle           *bundlev0.Bundle
+	Payload          json.RawMessage
+	Secrets          api.ResolvedSecrets
+	DeploymentSource api.DeploymentSourceArtifact
+	DeploymentTask   api.WorkerDeploymentTask
+	Workspace        api.WorkerWorkspace
+	Requirements     compute.RunRuntimeRequirements
+	Restore          *api.WorkerRestore
+	MaxDuration      time.Duration
+	ActiveUsed       time.Duration
+	Trace            api.TraceContext
 }
 
 const maxActiveDurationMilliseconds = int64(1<<63-1) / int64(time.Millisecond)
@@ -48,11 +49,14 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 	if run.AttemptNumber <= 0 {
 		return ResolvedRun{}, errors.New("worker run attempt_number must be positive")
 	}
-	if run.SessionID == "" {
-		return ResolvedRun{}, errors.New("worker run session_id is required")
+	if run.RunLeaseID == "" {
+		return ResolvedRun{}, errors.New("worker run run_lease_id is required")
 	}
 	if run.SnapshotVersion <= 0 {
 		return ResolvedRun{}, errors.New("worker run snapshot_version must be positive")
+	}
+	if strings.TrimSpace(run.TaskSessionID) == "" {
+		return ResolvedRun{}, errors.New("worker run task_session_id is required")
 	}
 	payload := defaultJSON(run.Payload)
 	if !json.Valid(payload) {
@@ -75,23 +79,33 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 	}
 
 	return ResolvedRun{
-		RunID:             run.ID,
-		AttemptID:         run.AttemptID,
-		AttemptNumber:     run.AttemptNumber,
-		SessionID:         run.SessionID,
-		SnapshotVersion:   run.SnapshotVersion,
-		ReplayedFromRunID: run.ReplayedFromRunID,
-		TaskID:            run.TaskID,
-		Payload:           payload,
-		Secrets:           cloneSecrets(run.Secrets),
-		DeploymentSource:  run.DeploymentSource,
-		DeploymentTask:    run.DeploymentTask,
-		Requirements:      run.Requirements,
-		Restore:           run.Restore,
-		MaxDuration:       time.Duration(maxDurationSeconds) * time.Second,
-		ActiveUsed:        time.Duration(run.ActiveDurationMs) * time.Millisecond,
-		Trace:             run.Trace,
+		RunID:            run.ID,
+		AttemptID:        run.AttemptID,
+		AttemptNumber:    run.AttemptNumber,
+		RunLeaseID:       run.RunLeaseID,
+		SnapshotVersion:  run.SnapshotVersion,
+		TaskSessionID:    run.TaskSessionID,
+		TaskID:           run.TaskID,
+		Payload:          payload,
+		Secrets:          cloneSecrets(run.Secrets),
+		DeploymentSource: run.DeploymentSource,
+		DeploymentTask:   run.DeploymentTask,
+		Workspace:        cloneWorkspace(run.Workspace),
+		Requirements:     run.Requirements,
+		Restore:          run.Restore,
+		MaxDuration:      time.Duration(maxDurationSeconds) * time.Second,
+		ActiveUsed:       time.Duration(run.ActiveDurationMs) * time.Millisecond,
+		Trace:            run.Trace,
 	}, nil
+}
+
+func cloneWorkspace(value api.WorkerWorkspace) api.WorkerWorkspace {
+	clone := value
+	if value.Artifact != nil {
+		artifact := *value.Artifact
+		clone.Artifact = &artifact
+	}
+	return clone
 }
 
 func cloneSecrets(values api.ResolvedSecrets) api.ResolvedSecrets {

@@ -75,4 +75,4 @@ helmr logs RUN_ID
 helmr events RUN_ID
 ```
 
-If a run is waiting on a human waitpoint, find it with `helmr waitpoint list` and respond with `helmr waitpoint respond WAITPOINT_ID --value JSON`.
+If a run is waiting on a waitpoint, inspect it with `helmr waitpoint list`. For a token-backed waitpoint, complete the token from an authenticated app or bridge with `helmr waitpoint token complete TOKEN_ID --data JSON`, or call `/api/waitpoints/tokens/{tokenId}/complete` with the token's `publicAccessToken` bearer.

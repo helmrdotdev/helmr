@@ -15,10 +15,10 @@ for contributors, early adopters, and self-hosted evaluation.
 
 ## What Helmr provides
 
-- TypeScript tasks that declare images, sandboxes, resources, secrets, inputs,
+- TypeScript tasks that declare images, sandboxes, resources, secrets, waitpoints,
   and run logic
 - Empty writable workspaces mounted inside isolated Linux guests
-- Approval waitpoints before reviews, patches, or other side effects
+- Operator waitpoints before reviews, patches, or other side effects
 - Run status, logs, events, payloads, and history in the control plane
 - Task-declared secrets injected only at run time
 - A runtime boundary you own: your AWS account, your integrations, your workers
@@ -74,14 +74,19 @@ Use that URL to create a local owner session and inspect seeded runs.
 ## Define a task
 
 A task binds a sandbox, TypeScript run logic, declared secrets, and optional
-human approval points. The code inside the task can call any agent SDK or tool;
+operator waitpoints. The code inside the task can call any agent SDK or tool;
 Helmr owns the adapter protocol around it.
 
 Create a task project with `helmr.config.ts` and one or more task modules:
 
 ```ts
-import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { cache, image, sandbox, source, task, wait } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
+import { z } from "zod"
+
+const payload = z.object({
+  prNumber: z.number().int().positive(),
+})
 
 const base = image("repo-agent")
   .from("node:24-bookworm-slim")
@@ -106,7 +111,8 @@ export const reviewPr = task({
   sandbox: sbx,
   maxDuration: 900,
   secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }],
-  run: async (event: { prNumber: number }, ctx) => {
+  payload,
+  run: async (event, ctx) => {
     // Call your agent SDK or review tooling here.
     const summary = await reviewPullRequest({
       cwd: process.cwd(),
@@ -114,9 +120,14 @@ export const reviewPr = task({
       token: process.env.OPENAI_API_KEY ?? "",
     })
 
-    const decision = await ctx.wait.human<{ approved: boolean }>({
-      displayText: "Post this review to GitHub?",
-    })
+    const decisionToken = await wait.createToken({ timeout: 900 })
+    const decision = await wait.forToken(decisionToken, {
+      schema: z.object({ approved: z.boolean() }),
+      metadata: {
+        summary,
+        prompt: "Post this review to GitHub?",
+      },
+    }).unwrap()
     if (decision.approved) {
       await writeFile("review-summary.txt", `${summary}\n`)
     }
@@ -137,8 +148,8 @@ Tasks start in the checked-out workspace directory. Use relative paths for
 workspace files; absolute paths keep normal Linux container semantics.
 
 See [examples/](examples/) for deployable task projects, including dependency
-caching, CLI tooling, human input waitpoints, task secrets, and GitHub PR
-review flows.
+caching, CLI tooling, operator waitpoints, task secrets, and GitHub PR review
+flows.
 
 ## Run A Task
 

@@ -4,6 +4,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { Select, type SelectOption } from "../ui/Select";
 import { formatRelative, StatusBadge } from "../features/runs/display";
 import { runHref, useRunRowNavigation } from "../features/runs/navigation";
+import { sessionHref } from "../features/sessions/navigation";
 import { ApiError } from "../lib/api";
 import { countRuns, listRuns, type Run, type RunFilter } from "../lib/runs";
 import { useScope } from "../lib/scope";
@@ -46,6 +47,11 @@ function RunRow(props: { run: Run; environmentName: string }) {
       </td>
       <td><span class={ui.muted}>{formatRelative(props.run.created_at)}</span></td>
       <td><span class={ui.muted}>{formatRelative(props.run.updated_at)}</span></td>
+      <td>
+        <A href={sessionHref(props.run.task_session_id, props.run.project_id, props.run.environment_id)} class={"font-mono text-[11.5px] text-console-accent hover:text-console-accent-hover"}>
+          {props.run.task_session_id.slice(0, 8)}
+        </A>
+      </td>
       <td><code>{props.run.id.slice(0, 8)}</code></td>
     </tr>
   );
@@ -55,16 +61,16 @@ function RunsOnboarding() {
   return (
     <div class={"border border-console-border-strong bg-console-surface"}>
       <div class={"border-b border-console-border bg-console-bg-panel px-4 py-3"}>
-        <h2 class={ui.h2}>Start your first run</h2>
+        <h2 class={ui.h2}>Start your first session</h2>
         <p class={ui.pageSubtitle}>
-          Run a deployment task, then inspect status and logs from this page.
+          Start a deployment task session, then inspect execution status and logs from this page.
         </p>
       </div>
       <div class={"grid gap-0 divide-y divide-console-border-soft"}>
         <section class={"grid gap-2 px-4 py-3"}>
           <div class={"flex items-center gap-2"}>
             <span class={"grid size-5 shrink-0 place-items-center border border-console-border bg-console-bg-panel font-mono text-[10.5px] font-medium text-console-muted"}>1</span>
-            <h3 class={"m-0 text-[13px] font-medium text-console-text"}>Start a deployment task</h3>
+            <h3 class={"m-0 text-[13px] font-medium text-console-text"}>Start a task session</h3>
           </div>
           <code class={"block overflow-x-auto whitespace-pre border border-console-border bg-console-bg-panel px-3 py-2 font-mono text-[12px] leading-relaxed text-console-text"}>{`helmr run hello`}</code>
         </section>
@@ -126,7 +132,7 @@ export function Runs() {
         <div>
           <h1 class={ui.h1}>Runs</h1>
           <p class={ui.pageSubtitle}>
-            Execution state, waitpoints, and terminal outcomes for the selected environment.
+            Execution attempts for task sessions in the selected environment.
           </p>
         </div>
       </div>
@@ -185,6 +191,7 @@ export function Runs() {
                   <th>Wait</th>
                   <th>Created</th>
                   <th>Updated</th>
+                  <th>Session</th>
                   <th>ID</th>
                 </tr>
               </thead>

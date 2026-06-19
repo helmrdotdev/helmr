@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
@@ -58,18 +57,5 @@ func TestAPIKeyScopeDoesNotMatchOrgScope(t *testing.T) {
 	}
 	if concreteActor.HasPermission(PermissionRunsRead, Scope{OrgID: orgID}) {
 		t.Fatal("environment-scoped api key matched an org-level scope")
-	}
-}
-
-func TestPermissionsFromAPIKeyIncludesWaitpointPolicies(t *testing.T) {
-	permissions, err := permissionsFromAPIKey(json.RawMessage(`[{"permission":"waitpoint_policies.manage"}]`))
-	if err != nil {
-		t.Fatalf("permissionsFromAPIKey returned error: %v", err)
-	}
-	if len(permissions) != 1 {
-		t.Fatalf("got %d permissions, want 1", len(permissions))
-	}
-	if permissions[0] != PermissionWaitpointPolicies {
-		t.Fatalf("got permission %q, want %q", permissions[0], PermissionWaitpointPolicies)
 	}
 }

@@ -11,9 +11,9 @@ import {
   type TaskRunOptions,
   type TaskOutput,
   type TaskPayload,
-  type TaskTriggerPayload,
+  type TaskStartPayload,
 } from "./internal"
-import { triggerTask } from "./trigger"
+import { startTask } from "./start"
 import type {
   PayloadSchema,
   PayloadSchemaInput,
@@ -36,8 +36,8 @@ export function task(
   config: TaskConfigWithPayload<PayloadSchema<any, any>, any, SecretDecls> | TaskConfigWithoutPayload<any, SecretDecls>,
 ): AnyTask {
   const marked = markTask(config)
-  Object.defineProperty(marked, "trigger", {
-    value: (...args: readonly unknown[]) => (triggerTask as (...values: readonly unknown[]) => unknown)(marked, ...args),
+  Object.defineProperty(marked, "start", {
+    value: (...args: readonly unknown[]) => (startTask as (...values: readonly unknown[]) => unknown)(marked, ...args),
   })
   return marked
 }
@@ -46,4 +46,4 @@ export function queue(config: TaskQueueConfig): TaskQueueConfig {
   return Object.freeze({ ...config })
 }
 
-export type { NoPayload, Task, TaskConfig, TaskOutput, TaskPayload, TaskQueueConfig, TaskRunOptions, TaskTriggerPayload }
+export type { NoPayload, Task, TaskConfig, TaskOutput, TaskPayload, TaskQueueConfig, TaskRunOptions, TaskStartPayload }

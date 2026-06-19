@@ -24,14 +24,15 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
 	defaultAddr                = ":8080"
 	defaultPublicURL           = "http://127.0.0.1:3000"
+	defaultRedisURL            = "redis://127.0.0.1:6379/0"
 	defaultAuthSecret          = "helmr-dev-auth-secret-32-byte-value"
 	defaultSetupToken          = "dev-setup-token"
 	defaultWorkerTokenSecret   = "helmr-dev-worker-token-secret-32"
@@ -72,6 +73,27 @@ func main() {
 	}
 	defer pool.Close()
 	queries := db.New(pool)
+	redisOptions, err := redis.ParseURL(cfg.redisURL)
+	if err != nil {
+		log.Error("parse redis URL", "error", err)
+		os.Exit(1)
+	}
+	redisClient := redis.NewClient(redisOptions)
+	defer redisClient.Close()
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		log.Error("ping redis", "error", err)
+		os.Exit(1)
+	}
+	eventStream, err := control.NewEventStream(log, queries, redisClient)
+	if err != nil {
+		log.Error("configure event stream", "error", err)
+		os.Exit(1)
+	}
+	go func() {
+		if err := eventStream.RunPublisher(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("event stream publisher stopped", "error", err)
+		}
+	}()
 	keyring, err := secret.KeyringFromBase64(cfg.secretEncryptionKey, cfg.secretEncryptionKeyOld)
 	if err != nil {
 		log.Error("load secret encryption key", "error", err)
@@ -98,16 +120,6 @@ func main() {
 		log.Error("parse public URL", "error", err)
 		os.Exit(1)
 	}
-	waitpoints, err := waitpoint.NewNotifier(waitpoint.Config{
-		Log:        log,
-		Store:      queries,
-		PublicURL:  publicURL,
-		AuthSecret: []byte(cfg.authSecret),
-	})
-	if err != nil {
-		log.Error("configure waitpoint notifier", "error", err)
-		os.Exit(1)
-	}
 	app, err := control.NewServer(control.ServerConfig{
 		Log:                 log,
 		DeploymentMode:      cfg.deploymentMode,
@@ -122,7 +134,7 @@ func main() {
 		SetupToken:          cfg.setupToken,
 		AuthSecret:          []byte(cfg.authSecret),
 		PublicURL:           publicURL,
-		Waitpoints:          waitpoints,
+		EventStream:         eventStream,
 	})
 	if err != nil {
 		log.Error("configure control server", "error", err)
@@ -160,6 +172,7 @@ type devConfig struct {
 	addr                   string
 	deploymentMode         string
 	databaseURL            string
+	redisURL               string
 	casDir                 string
 	publicURL              string
 	authSecret             string
@@ -176,6 +189,7 @@ func loadConfig() (devConfig, error) {
 		addr:                   env("HELMR_CONTROL_ADDR", defaultAddr),
 		deploymentMode:         env("HELMR_DEPLOYMENT_MODE", "self-hosted"),
 		databaseURL:            os.Getenv("HELMR_DATABASE_URL"),
+		redisURL:               env("HELMR_REDIS_URL", defaultRedisURL),
 		casDir:                 env("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
 		publicURL:              env("HELMR_PUBLIC_URL", defaultPublicURL),
 		authSecret:             env("HELMR_AUTH_SECRET", defaultAuthSecret),

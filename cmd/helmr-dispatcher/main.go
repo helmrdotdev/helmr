@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"os/signal"
 	"sync"
@@ -16,11 +15,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
-	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/sqs"
-	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -68,6 +64,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure dispatch enqueuer: %w", err)
 	}
+	eventStream, err := control.NewEventStream(log, queries, redisClient)
+	if err != nil {
+		return fmt.Errorf("configure event stream: %w", err)
+	}
 	scheduleIndex, err := schedule.NewRedisIndex(redisClient)
 	if err != nil {
 		return fmt.Errorf("configure schedule index: %w", err)
@@ -109,34 +109,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure schedule reconcile lock: %w", err)
 	}
-	var asyncPublisher waitpoint.Publisher
-	var asyncSubscriber waitpoint.Subscriber
-	if cfg.AsyncBusURI != "" {
-		asyncBus, err := sqs.Open(ctx, cfg.AsyncBusURI)
-		if err != nil {
-			return fmt.Errorf("configure sqs bus: %w", err)
-		}
-		asyncPublisher = asyncBus
-		asyncSubscriber = asyncBus
-	}
-	publicURL, err := url.Parse(cfg.PublicURL)
-	if err != nil {
-		return fmt.Errorf("parse public URL: %w", err)
-	}
-	mailer := configuredEmailSender(log, cfg)
-	notifier, err := waitpoint.NewNotifier(waitpoint.Config{
-		Log:        log,
-		Store:      queries,
-		Mailer:     mailer,
-		Publisher:  asyncPublisher,
-		PublicURL:  publicURL,
-		AuthSecret: []byte(cfg.AuthSecret),
-	})
-	if err != nil {
-		return fmt.Errorf("configure waitpoint notifier: %w", err)
-	}
-	notificationWorker := waitpoint.NewWorker(notifier, asyncSubscriber, log)
-	scheduleRunCreator, err := control.NewScheduleRunCreator(log, pool, secretStore, enqueuer)
+	scheduleRunCreator, err := control.NewScheduleRunCreator(log, pool, secretStore, enqueuer, eventStream)
 	if err != nil {
 		return fmt.Errorf("configure schedule run creator: %w", err)
 	}
@@ -170,9 +143,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errc := make(chan error, 4)
+	errc := make(chan error, 3)
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		errc <- sweeper.Run(runCtx)
@@ -180,10 +153,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go func() {
 		defer wg.Done()
 		errc <- queueReconciler.Run(runCtx)
-	}()
-	go func() {
-		defer wg.Done()
-		errc <- notificationWorker.Run(runCtx)
 	}()
 	go func() {
 		defer wg.Done()
@@ -214,17 +183,4 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 	}
 	return firstErr
-}
-
-func configuredEmailSender(log *slog.Logger, cfg config.Dispatcher) email.Sender {
-	switch cfg.EmailProvider {
-	case config.EmailProviderSMTP:
-		return email.NewSMTPSender(cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.EmailFrom)
-	case config.EmailProviderResend:
-		return email.NewResendSender(cfg.ResendAPIKey, cfg.EmailFrom)
-	case config.EmailProviderLog:
-		return email.LogSender{Log: log}
-	default:
-		return email.Unconfigured{}
-	}
 }

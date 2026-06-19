@@ -1,59 +1,46 @@
 package waitpoint
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"errors"
+	"net/url"
 	"strings"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
 )
 
 const (
-	responseTokenPrefix = "hlmr_wpt_"
-	responseTokenBytes  = 32
-
-	DefaultResponseTokenTTL = 24 * time.Hour
+	callbackSecretPrefix = "hlmr_wpc_"
+	tokenBytes           = 32
 )
 
-func NewResponseToken(authSecret []byte) (string, []byte, error) {
-	raw, err := auth.GenerateOpaqueToken(responseTokenBytes)
+func NewCallbackSecret(authSecret []byte) (string, []byte, error) {
+	raw, err := auth.GenerateOpaqueToken(tokenBytes)
 	if err != nil {
 		return "", nil, err
 	}
-	token := responseTokenPrefix + raw
-	hash, err := HashResponseToken(authSecret, token)
+	token := callbackSecretPrefix + raw
+	hash, err := HashCallbackSecret(authSecret, token)
 	if err != nil {
 		return "", nil, err
 	}
 	return token, hash, nil
 }
 
-func HashResponseToken(authSecret []byte, raw string) ([]byte, error) {
+func HashCallbackSecret(authSecret []byte, raw string) ([]byte, error) {
 	raw = strings.TrimSpace(raw)
-	if !strings.HasPrefix(raw, responseTokenPrefix) {
+	if !strings.HasPrefix(raw, callbackSecretPrefix) {
 		return nil, auth.ErrUnauthenticated
 	}
 	return auth.HashToken(authSecret, raw)
 }
 
-func NewEmailResponseToken(authSecret []byte, tokenID uuid.UUID) (string, []byte, error) {
-	if tokenID == uuid.Nil {
-		return "", nil, errors.New("waitpoint response token id is required")
+func IsCallbackSecret(raw string) bool {
+	return strings.HasPrefix(strings.TrimSpace(raw), callbackSecretPrefix)
+}
+
+func CallbackURL(publicURL *url.URL, tokenID string, callbackSecret string) string {
+	path := "/api/waitpoints/tokens/" + url.PathEscape(tokenID) + "/callback/" + url.PathEscape(callbackSecret)
+	if publicURL == nil {
+		return path
 	}
-	if err := auth.ValidateTokenSecret(authSecret); err != nil {
-		return "", nil, err
-	}
-	mac := hmac.New(sha256.New, authSecret)
-	_, _ = mac.Write([]byte("helmr/waitpoint/email-response-token/v0/"))
-	_, _ = mac.Write([]byte(tokenID.String()))
-	raw := responseTokenPrefix + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	hash, err := HashResponseToken(authSecret, raw)
-	if err != nil {
-		return "", nil, err
-	}
-	return raw, hash, nil
+	return publicURL.ResolveReference(&url.URL{Path: path}).String()
 }

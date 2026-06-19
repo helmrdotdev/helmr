@@ -1,11 +1,11 @@
-import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { cache, channels, image, logger, metadata, sandbox, source, task, wait } from "@helmr/sdk"
 import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { checkCommand as checkProcessCommand } from "../lib/process"
 import { z } from "zod"
 
 const dependencyInputs = source.directory(".", {
-  ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
+  ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json", "!vendor", "!vendor/**"],
 })
 const guideInputs = source.directory("guides")
 
@@ -37,11 +37,17 @@ const payload = z.object({
   marker: z.string().optional(),
   expectedEnvironment: z.enum(["production", "staging", "unknown"]).default("unknown"),
   exerciseWaitpoint: z.boolean().default(false),
+  waitpointTokenId: z.string().optional(),
   waitpointTimeout: z.number().int().positive().max(900).default(120),
   largeFileKiB: z.number().int().min(1).max(4096).default(256),
 }).strict()
 
 type Payload = z.infer<typeof payload>
+
+const approvalDecision = z.object({
+  approved: z.boolean(),
+  note: z.string().optional(),
+})
 
 interface Check {
   readonly name: string
@@ -66,9 +72,9 @@ export const runtimeSmoke = task({
         taskId: ctx.task.id,
         attemptId: ctx.run.attemptId ?? null,
         attemptNumber: ctx.run.attemptNumber ?? null,
-        sessionId: ctx.run.sessionId ?? null,
+        sessionId: ctx.session.id,
         snapshotVersion: ctx.run.snapshotVersion ?? null,
-        workspace: ctx.workspace,
+        workspace: ctx.session.workspace,
       },
     })
 
@@ -78,25 +84,40 @@ export const runtimeSmoke = task({
     checks.push(await collectCheck("bun-version", () => checkCommand("bun-version", ["bun", "--version"])))
     checks.push(await collectCheck("ripgrep-json", () => checkCommand("ripgrep-json", ["rg", "--json", "Helmr", "/opt/helmr-dev-workflows/guides"])))
 
-    ctx.emit({
-      type: "helmr.dev.runtime_smoke.progress",
-      content: [{ type: "text", text: `completed ${checks.length} smoke checks for ${marker}` }],
+    await metadata.set("runtimeSmoke", {
+      marker,
+      completedChecks: checks.length,
+      expectedEnvironment: input.expectedEnvironment,
     })
-    ctx.log.info({
+    logger.info({
       phase: "runtime-smoke",
       scenario: input.scenario,
       expectedEnvironment: input.expectedEnvironment,
       marker,
       checks: checks.map((check) => check.name),
     })
+    await ctx.session.output(channels.output("runtime-smoke.progress", { schema: z.unknown() })).append({
+      marker,
+      scenario: input.scenario,
+      completedChecks: checks.length,
+    })
 
     let waitpoint: unknown = null
     if (input.exerciseWaitpoint) {
       checks.push(await collectCheck("human-waitpoint", async () => {
-        waitpoint = await ctx.wait.human<{ approved: boolean, note?: string }>({
-          displayText: `Approve Helmr product smoke marker ${marker}`,
+        const token = input.waitpointTokenId === undefined
+          ? await wait.createToken({
+              timeout: input.waitpointTimeout,
+              tags: ["smoke", "runtime"],
+              metadata: { marker, subject: `Approve Helmr product smoke marker ${marker}` },
+            })
+          : { id: input.waitpointTokenId }
+        waitpoint = await wait.forToken(token, {
+          schema: approvalDecision,
           timeout: input.waitpointTimeout,
-        })
+          tags: ["smoke", "runtime"],
+          metadata: { marker, subject: `Approve Helmr product smoke marker ${marker}` },
+        }).unwrap()
         return {
           name: "human-waitpoint",
           ok: true,
@@ -115,8 +136,9 @@ export const runtimeSmoke = task({
       checks,
     }
     await writeFile("runtime-smoke-report.json", `${JSON.stringify(report, null, 2)}\n`)
+    await ctx.session.output(channels.output("runtime-smoke.report", { schema: z.unknown() })).append(report, { contentType: "application/vnd.helmr.runtime-smoke+json" })
     if (failures.length > 0) {
-      ctx.log.error({ phase: "runtime-smoke", marker, failures })
+      logger.error({ phase: "runtime-smoke", marker, failures })
       throw new Error(`runtime smoke failed ${failures.length} check(s): ${failures.map((check) => check.name).join(", ")}`)
     }
     return report

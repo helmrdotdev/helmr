@@ -4,7 +4,7 @@ This task project contains reusable Helmr product diagnostics. Keep these
 workflows focused on behavior a release candidate must prove in both
 self-hosted and managed-cloud deployments: task authoring, image builds,
 sandboxed execution, payload validation, declared secrets, writable workspaces,
-logs/events, waitpoints, and agent SDK integration.
+logs, events, session channels, waitpoints, and agent SDK integration.
 
 Company operating workflows live in `../../../company/automation`, not in this
 product repo.
@@ -13,11 +13,11 @@ product repo.
 
 | Task | Purpose |
 |------|---------|
-| `runtime-smoke` | Broad runtime smoke covering run context, workspace writes, source bundling, command execution, emitted events, logs, and optional waitpoints. |
+| `runtime-smoke` | Broad runtime smoke covering run context, workspace writes, source bundling, command execution, session channel output, metadata, logs, and optional waitpoints. |
 | `secret-smoke` | Secret-injection smoke for environments that intentionally contain provider/API credentials. Returns only presence, never secret values. |
 | `edge-smoke` | Focused edge diagnostics for concurrent wait rejection, workspace overwrite behavior, and intentionally failed runs. Missing-secret and invalid-payload cases are external CLI/API assertions because they fail before task code runs. |
 | `agent-toolchain-smoke` | Validates the task image, Nix, GitHub access, Claude/Codex/Cursor SDKs, and namespace/runtime assumptions. |
-| `waitpoint-checkpoint-smoke` | Exercises human waitpoints across checkpoint restore boundaries. |
+| `waitpoint-checkpoint-smoke` | Exercises operator waitpoints across checkpoint restore boundaries. |
 
 ## Environment Strategy
 

@@ -18,7 +18,6 @@ const SETTINGS_NAV: NavGroup[] = [
     label: "Security",
     links: [
       { href: "/settings/api-keys", label: "API keys" },
-      { href: "/settings/waitpoint-policies", label: "Waitpoint policies" },
       { href: "/settings/secrets", label: "Secrets" },
     ],
   },

@@ -25,7 +25,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
-	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -58,7 +57,6 @@ type Server struct {
 	runEnqueuer         RunEnqueuer
 	dispatchQueue       dispatch.Queue
 	scheduleEngine      ScheduleRegistrar
-	waitpoints          *waitpoint.Notifier
 	eventStream         *EventStream
 	workerLeaseScanSeed atomic.Uint64
 	workerTokenSecret   []byte
@@ -96,6 +94,7 @@ type RunEnqueuer interface {
 
 type ScheduleRegistrar interface {
 	RegisterNext(context.Context, schedule.Instance) error
+	DeleteInstance(context.Context, pgtype.UUID) error
 }
 
 type TxBeginner interface {
@@ -121,7 +120,6 @@ type ServerConfig struct {
 	RunEnqueuer    RunEnqueuer
 	DispatchQueue  dispatch.Queue
 	ScheduleEngine ScheduleRegistrar
-	Waitpoints     *waitpoint.Notifier
 	EventStream    *EventStream
 	Mailer         email.Sender
 	AuthProvider   AuthProvider
@@ -179,7 +177,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		runEnqueuer:         cfg.RunEnqueuer,
 		dispatchQueue:       cfg.DispatchQueue,
 		scheduleEngine:      cfg.ScheduleEngine,
-		waitpoints:          cfg.Waitpoints,
 		eventStream:         cfg.EventStream,
 		workerTokenSecret:   cfg.WorkerTokenSecret,
 		workerTokenTTL:      workerTokenTTL,
@@ -200,7 +197,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	router.Use(otelhttp.NewMiddleware("helmr-control"))
 	router.Get("/healthz", server.healthz)
 	router.Get("/readyz", server.readyz)
-	router.Get("/waitpoints/respond", server.waitpointConfirmationPage)
 	router.Route("/api", server.mountAPIRoutes)
 	router.NotFound(server.notFound)
 	return router, nil
@@ -254,6 +250,7 @@ func (s *Server) mountAPIRoutes(r chi.Router) {
 	s.mountAuthRoutes(r)
 	s.mountWaitpointTokenRoutes(r)
 	s.mountOwnerRoutes(r)
+	s.mountPublicRootTaskSessionChannelRoutes(r)
 	s.mountRunRoutes(r)
 	s.mountScheduleRoutes(r)
 	s.mountWorkerRoutes(r)
@@ -347,13 +344,16 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/events", s.getDeploymentEvents)
 		r.Post("/projects/{projectID}/environments/{environmentID}/deployments/{deployment}/promote", s.promoteDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs", s.listRuns)
-		r.Post("/projects/{projectID}/environments/{environmentID}/runs", s.createRun)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/counts", s.countRuns)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}", s.getRun)
 		r.Post("/projects/{projectID}/environments/{environmentID}/runs/{id}/cancel", s.cancelRun)
-		r.Post("/projects/{projectID}/environments/{environmentID}/runs/{id}/replay", s.replayRun)
+		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}/waitpoints", s.listRunWaitpoints)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}/events", s.getRunEvents)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}/logs", s.getRunLogs)
+		s.mountTaskSessionRoutes(r, "/projects/{projectID}/environments/{environmentID}")
+		r.Post("/projects/{projectID}/environments/{environmentID}/waitpoints/tokens", s.createWaitpointToken)
+		r.Get("/projects/{projectID}/environments/{environmentID}/waitpoints/tokens", s.listWaitpointTokens)
+		r.Get("/projects/{projectID}/environments/{environmentID}/waitpoints/tokens/{tokenID}", s.getWaitpointToken)
 		r.Get("/projects/{projectID}/environments/{environmentID}/schedules", s.listSchedules)
 		r.Post("/projects/{projectID}/environments/{environmentID}/schedules", s.createSchedule)
 		r.Get("/projects/{projectID}/environments/{environmentID}/schedules/{id}", s.getSchedule)
@@ -365,14 +365,6 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.getSecret)
 		r.Put("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.setSecret)
 		r.Delete("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.deleteSecret)
-		r.Post("/projects/{projectID}/environments/{environmentID}/waitpoints", s.createWaitpoint)
-		r.Post("/projects/{projectID}/environments/{environmentID}/waitpoints/{waitpointID}/respond", s.respondWaitpoint)
-		r.Post("/projects/{projectID}/environments/{environmentID}/waitpoints/tokens", s.createWaitpointToken)
-		r.Get("/projects/{projectID}/environments/{environmentID}/waitpoint-policies", s.listWaitpointPolicies)
-		r.Post("/projects/{projectID}/environments/{environmentID}/waitpoint-policies", s.createWaitpointPolicy)
-		r.Get("/projects/{projectID}/environments/{environmentID}/waitpoint-policies/{name}", s.getWaitpointPolicy)
-		r.Patch("/projects/{projectID}/environments/{environmentID}/waitpoint-policies/{name}", s.updateWaitpointPolicy)
-		r.Delete("/projects/{projectID}/environments/{environmentID}/waitpoint-policies/{name}", s.deleteWaitpointPolicy)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -384,14 +376,6 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Post("/projects/{projectID}/environments", s.createEnvironment)
 		r.Patch("/projects/{projectID}/environments/{environmentID}", s.updateEnvironment)
 		r.Delete("/projects/{projectID}/environments/{environmentID}", s.deleteEnvironment)
-	})
-	r.Group(func(r chi.Router) {
-		r.Use(s.requireActor)
-		r.Get("/waitpoint-policies", s.listWaitpointPolicies)
-		r.Post("/waitpoint-policies", s.createWaitpointPolicy)
-		r.Get("/waitpoint-policies/{name}", s.getWaitpointPolicy)
-		r.Patch("/waitpoint-policies/{name}", s.updateWaitpointPolicy)
-		r.Delete("/waitpoint-policies/{name}", s.deleteWaitpointPolicy)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)
@@ -413,25 +397,56 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 func (s *Server) mountRunRoutes(r chi.Router) {
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)
-		r.Post("/runs", s.createRun)
+		s.mountTaskSessionRoutes(r, "")
 		r.Get("/runs", s.listRuns)
 		r.Get("/runs/counts", s.countRuns)
 		r.Get("/runs/{id}", s.getRun)
 		r.Post("/runs/{id}/cancel", s.cancelRun)
-		r.Post("/runs/{id}/replay", s.replayRun)
+		r.Get("/runs/{id}/waitpoints", s.listRunWaitpoints)
 		r.Get("/runs/{id}/events", s.getRunEvents)
 		r.Get("/runs/{id}/logs", s.getRunLogs)
+		r.Post("/waitpoints/tokens", s.createWaitpointToken)
+		r.Get("/waitpoints/tokens", s.listWaitpointTokens)
+		r.Get("/waitpoints/tokens/{tokenID}", s.getWaitpointToken)
+		r.Post("/public-access-tokens", s.createPublicAccessToken)
 	})
 }
 
+func (s *Server) mountTaskSessionRoutes(r chi.Router, prefix string) {
+	r.Post(prefix+"/tasks/{taskID}/start", s.startTask)
+	r.Post(prefix+"/tasks/{taskID}/start-and-wait", s.startTaskAndWait)
+	r.Get(prefix+"/sessions", s.listTaskSessions)
+	r.Get(prefix+"/sessions/{sessionID}", s.getTaskSession)
+	r.Patch(prefix+"/sessions/{sessionID}", s.patchTaskSession)
+	r.Post(prefix+"/sessions/{sessionID}/wait", s.waitTaskSession)
+	r.Post(prefix+"/sessions/{sessionID}/close", s.closeTaskSession)
+	r.Post(prefix+"/sessions/{sessionID}/cancel", s.cancelTaskSession)
+	r.Get(prefix+"/sessions/{sessionID}/runs", s.listTaskSessionRuns)
+	r.Get(prefix+"/sessions/{sessionID}/workspace", s.getTaskSessionWorkspace)
+	r.Get(prefix+"/sessions/{sessionID}/channels", s.listTaskSessionChannels)
+	if prefix == "" {
+		return
+	}
+	r.Post(prefix+"/sessions/{sessionID}/channels/{channel}/inputs", s.appendTaskSessionChannelInput)
+	r.Get(prefix+"/sessions/{sessionID}/channels/{channel}/inputs", s.listTaskSessionChannelInputs)
+	r.Get(prefix+"/sessions/{sessionID}/channels/{channel}/outputs", s.listTaskSessionChannelOutputs)
+	r.Get(prefix+"/sessions/{sessionID}/channels/{channel}/outputs/stream", s.streamTaskSessionChannelOutputs)
+}
+
+func (s *Server) mountPublicRootTaskSessionChannelRoutes(r chi.Router) {
+	r.Options("/sessions/{sessionID}/channels/{channel}/inputs", s.optionsTaskSessionChannelRecords)
+	r.Options("/sessions/{sessionID}/channels/{channel}/outputs", s.optionsTaskSessionChannelRecords)
+	r.Options("/sessions/{sessionID}/channels/{channel}/outputs/stream", s.optionsTaskSessionChannelRecords)
+	r.Post("/sessions/{sessionID}/channels/{channel}/inputs", s.appendTaskSessionChannelInputEntry)
+	r.Get("/sessions/{sessionID}/channels/{channel}/inputs", s.listTaskSessionChannelInputsEntry)
+	r.Get("/sessions/{sessionID}/channels/{channel}/outputs", s.listTaskSessionChannelOutputsEntry)
+	r.Get("/sessions/{sessionID}/channels/{channel}/outputs/stream", s.streamTaskSessionChannelOutputsEntry)
+}
+
 func (s *Server) mountWaitpointTokenRoutes(r chi.Router) {
-	r.Post("/waitpoints/tokens/{tokenID}/respond", s.respondWaitpointToken)
-	r.Group(func(r chi.Router) {
-		r.Use(s.requireActor)
-		r.Post("/waitpoints", s.createWaitpoint)
-		r.Post("/waitpoints/{waitpointID}/respond", s.respondWaitpoint)
-		r.Post("/waitpoints/tokens", s.createWaitpointToken)
-	})
+	r.Options("/waitpoints/tokens/{tokenID}/complete", s.optionsCompleteWaitpointToken)
+	r.Post("/waitpoints/tokens/{tokenID}/complete", s.completeWaitpointToken)
+	r.Post("/waitpoints/tokens/{tokenID}/callback/{callbackSecret}", s.callbackWaitpointToken)
 }
 
 func (s *Server) mountWorkerRoutes(r chi.Router) {
@@ -445,17 +460,19 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Get("/status", s.workerStatus)
 			r.Post("/deployments/lease", s.workerLeaseDeploymentBuild)
 			r.Post("/deployments/complete", s.workerCompleteDeploymentBuild)
-			r.Post("/sessions/lease", s.workerLease)
-			r.Post("/sessions/start", s.workerStart)
-			r.Post("/sessions/restores/ack", s.workerAcknowledgeRestore)
-			r.Post("/sessions/renew", s.workerRenew)
-			r.Post("/sessions/release", s.workerRelease)
-			r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/sessions/logs", s.workerAppendLogs)
-			r.Post("/sessions/log-entries", s.workerRecordLogEntry)
-			r.Post("/sessions/events", s.workerEmitEvent)
-			r.Post("/sessions/waitpoints", s.workerCreateWaitpoint)
-			r.Post("/sessions/checkpoints/ready", s.workerCheckpointReady)
-			r.Post("/sessions/checkpoints/failed", s.workerCheckpointFailed)
+			r.Post("/leases/lease", s.workerLease)
+			r.Post("/leases/start", s.workerStart)
+			r.Post("/leases/restores/ack", s.workerAcknowledgeRestore)
+			r.Post("/leases/renew", s.workerRenew)
+			r.Post("/leases/release", s.workerRelease)
+			r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/logs", s.workerAppendLogs)
+			r.Post("/leases/log-entries", s.workerRecordLogEntry)
+			r.Post("/leases/channels", s.workerWriteOutput)
+			r.Post("/leases/metadata", s.workerUpdateRunMetadata)
+			r.Post("/leases/waitpoints", s.workerCreateWaitpoint)
+			r.Post("/leases/waitpoint-tokens", s.workerCreateWaitpointToken)
+			r.Post("/leases/checkpoints/ready", s.workerCheckpointReady)
+			r.Post("/leases/checkpoints/failed", s.workerCheckpointFailed)
 		})
 	})
 }

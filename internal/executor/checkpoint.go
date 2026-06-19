@@ -175,7 +175,7 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := transport.WriteProtoFrame(c.stream, &runv0.SuspendForCheckpoint{
+	if err := transport.WriteProtoFrame(c.stream, &runv0.CheckpointPauseRequest{
 		WaitpointId:  request.WaitpointID,
 		CheckpointId: request.CheckpointID,
 	}); err != nil {
@@ -194,14 +194,14 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	return nil
 }
 
-func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) (*runv0.PauseReady, error) {
+func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) (*runv0.CheckpointPauseReady, error) {
 	type pauseReadyResult struct {
-		ready *runv0.PauseReady
+		ready *runv0.CheckpointPauseReady
 		err   error
 	}
 	result := make(chan pauseReadyResult, 1)
 	go func() {
-		parsed := &runv0.PauseReady{}
+		parsed := &runv0.CheckpointPauseReady{}
 		err := c.readPauseReady(ctx, reader, request, parsed)
 		result <- pauseReadyResult{
 			ready: parsed,
@@ -220,7 +220,7 @@ func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *
 	}
 }
 
-func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.Reader, request CheckpointRequest, ready *runv0.PauseReady) error {
+func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.Reader, request CheckpointRequest, ready *runv0.CheckpointPauseReady) error {
 	for {
 		prefix, err := reader.Peek(4)
 		if err != nil {

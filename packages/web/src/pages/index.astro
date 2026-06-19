@@ -3,8 +3,9 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { pixelsFromRows } from "../lib/pixels";
 import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
-const runtimeCode = `import { cache, image, sandbox, source, task } from "@helmr/sdk"
+const runtimeCode = `import { cache, image, sandbox, source, task, wait } from "@helmr/sdk"
 import { Codex } from "@openai/codex-sdk"
+import { z } from "zod"
 
 const base = image("repo-agent")
   .from("node:24-bookworm-slim")
@@ -30,9 +31,15 @@ export const reviewPr = task({
     const turn = await thread.run("Review this PR and propose a patch.")
 
     // The microVM freezes here — filesystem, memory, process.
-    const decision = await ctx.wait.human<{ approved: boolean }>({
-      displayText: "Post this review to GitHub?"
+    const token = await wait.createToken({
+      timeout: "30m",
+      tags: ["approval", "github-review"],
+      metadata: { subject: "Post this review to GitHub?" }
     })
+    await sendSlackApproval(token)
+    const decision = await wait.forToken(token, {
+      schema: z.object({ approved: z.boolean() })
+    }).unwrap()
     if (decision.approved) await postReview(event.prNumber, turn.finalResponse)
   }
 })`;
@@ -80,10 +87,10 @@ const highlightTypeScript = (value: string) => {
 };
 
 const codeRegions = [
-  { label: "image", from: 4, to: 11, tone: "blue", strong: "#5079e4" },
-  { label: "sandbox", from: 13, to: 15, tone: "green", strong: "#3c8a59" },
-  { label: "task", from: 17, to: 25, tone: "pink", strong: "#da5992" },
-  { label: "waitpoint", from: 27, to: 30, tone: "yellow", strong: "#dfa400" },
+  { label: "image", from: 5, to: 12, tone: "blue", strong: "#5079e4" },
+  { label: "sandbox", from: 14, to: 16, tone: "green", strong: "#3c8a59" },
+  { label: "task", from: 18, to: 26, tone: "pink", strong: "#da5992" },
+  { label: "waitpoint", from: 29, to: 38, tone: "yellow", strong: "#dfa400" },
 ] as const;
 
 const codeLines = runtimeCode.split("\n").map((line, index) => ({
@@ -139,7 +146,7 @@ const pixelIcons = {
     ".##.......",
     "..........",
   ],
-  replay: [
+  resume: [
     "...####...",
     "..#...###.",
     ".#....###.",
@@ -196,8 +203,8 @@ const hourglassPixels = pixelsFromRows(pixelIcons.hourglass);
 const heroChips = [
   { icon: "pause", label: "pause", tone: "yellow" },
   { icon: "clock", label: "schedule", tone: "blue" },
-  { icon: "bolt", label: "trigger", tone: "pink" },
-  { icon: "replay", label: "replay", tone: "green" },
+  { icon: "bolt", label: "start", tone: "pink" },
+  { icon: "resume", label: "resume", tone: "green" },
 ] as const;
 
 const renderedHeroChips = heroChips.map((chip) => ({
@@ -214,15 +221,21 @@ const codeTags = codeRegions.map((region) => ({
 
 const features = [
   {
-    label: "ctx.wait.human",
+    label: "wait.forToken",
     icon: "pause",
     tone: "yellow",
     title: "Pause for a human",
     caption:
       "The microVM freezes whole and costs nothing while it waits. Approval resumes it mid-instruction.",
-    code: `const decision = await ctx.wait.human<{ approved: boolean }>({
-  displayText: "Post this review to GitHub?"
-})`,
+    code: `const token = await wait.createToken({
+  timeout: "30m",
+  tags: ["approval", "github-review"]
+})
+
+await sendSlackApproval(token)
+const decision = await wait.forToken(token, {
+  schema: z.object({ approved: z.boolean() })
+}).unwrap()`,
     lang: "ts",
   },
   {
@@ -233,30 +246,35 @@ const features = [
     caption: "Cron lives in the task definition and deploys with it. One file owns the code and the schedule.",
     code: `export const nightly = schedules.task({
   id: "nightly-audit",
-  cron: { pattern: "0 9 * * 1-5", timezone: "Asia/Tokyo" },
-  run: async (event, ctx) => runAudit(ctx)
+  cron: {
+    pattern: "0 9 * * 1-5",
+    timezone: "Asia/Tokyo"
+  },
+  run: async (event, ctx) => {
+    return runAudit(ctx)
+  }
 })`,
     lang: "ts",
   },
   {
-    label: "task.trigger",
+    label: "task.start",
     icon: "bolt",
     tone: "pink",
-    title: "Trigger from anywhere",
+    title: "Start from anywhere",
     caption: "Your product, a webhook, CI, or another task — deduplicated with idempotency keys.",
-    code: `const handle = await reviewPr.trigger(
+    code: `const handle = await reviewPr.start(
   { prNumber: 482 },
   { idempotencyKey: pr.head.sha }
 )`,
     lang: "ts",
   },
   {
-    label: "helmr replay",
-    icon: "replay",
+    label: "sessions",
+    icon: "resume",
     tone: "green",
-    title: "Replay any run",
-    caption: "Re-run against the original deployment or the latest. Logs and events stream live.",
-    code: `$ helmr replay run_8f3a --version latest
+    title: "Continue durable work",
+    caption: "Use task sessions for stateful workflows. Inputs, outputs, logs, and events stay attached.",
+    code: `$ helmr run review-pr --payload pr=482
 $ helmr logs run_8f3a --follow`,
     lang: "sh",
   },
@@ -272,7 +290,7 @@ const renderedFeatures = features.map((feature) => ({
 <BaseLayout
   title="Helmr — The durable runtime for AI agents"
   socialTitle="The durable runtime for AI agents"
-  description="The durable runtime for AI agents. Each run is a Firecracker microVM checkpointed whole at approval points — pause, resume, schedule, replay in plain TypeScript. On our cloud or in your AWS."
+  description="The durable runtime for AI agents. Define TypeScript tasks, start durable sessions, and keep inputs, outputs, waits, logs, and events attached across Firecracker microVM runs."
   path="/"
   jsonLd={[softwareJsonLd(), breadcrumbJsonLd([{ name: "Home", path: "/" }])]}
 >
@@ -285,7 +303,7 @@ const renderedFeatures = features.map((feature) => ({
           </h1>
           <p class="hero-lede">
             Define tasks in plain TypeScript. Each run gets its own microVM,
-            checkpointed whole at approval points &mdash; pause, resume, replay.
+            checkpointed whole at approval points, then resumes with every input and output attached.
           </p>
           <div class="hero-actions">
             <a class="btn btn-dark" href="/docs/start/quickstart">Start building</a>
@@ -331,8 +349,8 @@ const renderedFeatures = features.map((feature) => ({
             <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr run review-pr --payload prNumber=482</span></p>
             <p class="t-line">run_8f3a</p>
             <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr ps</span></p>
-            <p class="t-line t-dim">RUN ID    TASK       STATUS   WAIT</p>
-            <p class="t-line">run_8f3a  review-pr  <span class="t-wait">waiting</span>  <span class="t-accent">human:wp_c91d</span></p>
+            <p class="t-line t-dim">RUN ID    TASK       STATUS   INPUT REQUEST</p>
+            <p class="t-line">run_8f3a  review-pr  <span class="t-wait">waiting</span>  <span class="t-accent">approval:ir_c91d</span></p>
             <p class="t-line t-gap" data-cursor><span class="t-prompt">$</span> <span class="t-cursor"></span></p>
           </div>
           <div class="term-foot" data-term-foot>
@@ -342,7 +360,7 @@ const renderedFeatures = features.map((feature) => ({
                   <rect x={pixel.x} y={pixel.y} width="1" height="1" />
                 ))}
               </svg>
-              run_8f3a waiting on wp_c91d
+              run_8f3a waiting on ir_c91d
             </span>
             <button
               class="term-approve"
@@ -389,7 +407,7 @@ const renderedFeatures = features.map((feature) => ({
     <section id="primitives" class="features" aria-label="What it looks like in code">
       <div class="section-head">
         <h2 class="headline section-title">
-          Pause. Schedule. Trigger. Replay.
+          Pause. Schedule. Start. Resume.
           <span class="faint">Each one is a few lines.</span>
         </h2>
       </div>
@@ -518,7 +536,7 @@ const renderedFeatures = features.map((feature) => ({
       return line;
     };
 
-    const replayBoot = async () => {
+    const resumeBoot = async () => {
       if (!term) return;
       const lines = Array.from(term.querySelectorAll<HTMLElement>(".t-line"));
       term.style.minHeight = `${term.offsetHeight}px`;
@@ -581,8 +599,8 @@ const renderedFeatures = features.map((feature) => ({
     approveButton?.addEventListener("click", async () => {
       if (!term || waitpointResolved) return;
       waitpointResolved = true;
-      landing?.setAttribute("data-wp-resolved", "");
-      term.setAttribute("data-resolved", "");
+      landing?.setAttribute("data-waitpoint-completed", "");
+      term.setAttribute("data-completed", "");
       termFoot?.removeAttribute("data-ready");
       // Pin the height so the page doesn't shift; old lines scroll out like a real terminal.
       term.style.height = `${term.offsetHeight}px`;
@@ -594,14 +612,14 @@ const renderedFeatures = features.map((feature) => ({
       cursorLine?.removeAttribute("data-cursor");
       const respondCommand = document.createElement("span");
       cursorLine?.appendChild(respondCommand);
-      await typeInto(respondCommand, "helmr waitpoint respond wp_c91d --value '{\"approved\":true}'");
+      await typeInto(respondCommand, "curl -sS -H 'authorization: Bearer $SESSION_INPUT_TOKEN' -H 'content-type: application/json' -d '{\"data\":{\"approved\":true}}' $HELMR_API_URL/api/sessions/sess_9d2c/channels/approval/inputs");
       await sleep(reduceMotion ? 0 : 500);
 
       const psLine = appendLine('<span class="t-prompt">$</span> <span class="t-cmd"></span>', "t-line t-gap");
       const psCommand = psLine?.querySelector(".t-cmd");
       if (psCommand) await typeInto(psCommand, "helmr ps");
       await sleep(reduceMotion ? 0 : 350);
-      appendLine("RUN ID    TASK       STATUS     WAIT", "t-line t-dim");
+      appendLine("RUN ID    TASK       STATUS", "t-line t-dim");
       appendLine('run_8f3a  review-pr  <span class="t-ok">succeeded</span>', "t-line");
       await sleep(reduceMotion ? 0 : 250);
       appendLine('<span class="t-prompt">$</span> <span class="t-cursor"></span>', "t-line t-gap");
@@ -610,7 +628,7 @@ const renderedFeatures = features.map((feature) => ({
 
     const startDemo = async () => {
       if (!term || !termFoot) return;
-      if (!reduceMotion) await replayBoot();
+      if (!reduceMotion) await resumeBoot();
       landing?.setAttribute("data-circuit-ready", "");
       termFoot.setAttribute("data-ready", "");
       runStarted = true;
@@ -646,7 +664,7 @@ const renderedFeatures = features.map((feature) => ({
     }
 
     .landing[data-circuit-ready] .circuit { opacity: 1; }
-    .landing[data-wp-resolved] .circuit { opacity: 0; }
+    .landing[data-waitpoint-completed] .circuit { opacity: 0; }
 
     .circuit-edge-out {
       position: absolute;
@@ -905,7 +923,7 @@ const renderedFeatures = features.map((feature) => ({
     to { background-position: -200% 0; }
   }
 
-  .term[data-resolved] :global(.t-wait) {
+  .term[data-completed] :global(.t-wait) {
     animation: none;
     background: none;
     -webkit-text-fill-color: currentColor;
@@ -937,7 +955,7 @@ const renderedFeatures = features.map((feature) => ({
   }
 
   /* The row is always laid out so the panel never changes height;
-     only its content fades in once the boot replay reaches the waitpoint. */
+     only its content fades in once the boot sequence reaches the waitpoint. */
   .term-foot > * {
     visibility: hidden;
     opacity: 0;

@@ -1,19 +1,32 @@
-import type { HelmrClient, WaitpointResponseToken } from "./client"
-import type { PendingDelayWaitpoint, PendingHumanWaitpoint, RunHandle, RunSnapshot } from "./run"
+import type { ChannelRecord, PublicAccessToken, TaskSessionSnapshot, TaskStartResult, HelmrClient, WaitpointToken } from "./client"
+import type { PendingWaitpoint, RunEventRecord, RunHandle, RunSnapshot } from "./run"
 import type { Task } from "../internal"
-import { idempotencyKeys, image, sandbox, schedules, source, task } from "../index"
+import { idempotencyKeys, image, sandbox, schedules, source, task, wait } from "../index"
 
 declare const client: HelmrClient
 declare const handle: RunHandle
 declare const snapshot: RunSnapshot
-declare const pendingHuman: PendingHumanWaitpoint
-declare const pendingDelay: PendingDelayWaitpoint
-declare const triggerTask: Task<{ issue: number }, { issue: number }, readonly []>
-declare const schemaTriggerTask: Task<{ issue: number }, { parsed: number }, readonly [], { issue: string }>
+declare const pendingWaitpoint: PendingWaitpoint
+declare const startTask: Task<{ issue: number }, { issue: number }, readonly []>
+declare const schemaStartTask: Task<{ issue: number }, { parsed: number }, readonly [], { issue: string }>
 declare const signal: AbortSignal
 
 if (false) {
-  const triggered: Promise<RunHandle> = client.tasks.trigger<typeof triggerTask>(
+  const started: Promise<TaskStartResult<{ issue: number }>> = client.tasks.start<typeof startTask>(
+    "inspect",
+    { issue: 123 },
+    {
+      externalId: "case-123",
+      idempotencyKey: "issue-123",
+      idempotencyKeyTTL: "24h",
+    },
+  )
+  const startAndWait: Promise<TaskSessionSnapshot<{ issue: number }>> = client.tasks.startAndWait<typeof startTask>(
+    "inspect",
+    { issue: 123 },
+    { timeoutSeconds: 30 },
+  )
+  const startedAgain: Promise<TaskStartResult<{ issue: number }>> = client.tasks.start<typeof startTask>(
     "inspect",
     { issue: 123 },
     {
@@ -22,16 +35,49 @@ if (false) {
     },
   )
   const helperKey = idempotencyKeys.create(["issue", "123"], { scope: "global" })
-  const schemaTriggered: Promise<RunHandle<{ parsed: number }>> = schemaTriggerTask.trigger(
+  const schemaStartedRun: Promise<TaskStartResult<{ parsed: number }>> = schemaStartTask.start(
     { issue: "123" },
-    { idempotencyKey: helperKey },
+    { projectId: "project-1", environmentId: "env-1", idempotencyKey: helperKey },
   )
   const noPayloadTask = task({
     id: "no-payload",
     sandbox: sandbox("no-payload").image(image("no-payload").from("debian:trixie-slim")),
     run: async (ctx) => ({ runId: ctx.run.id }),
   })
-  const noPayloadTriggered: Promise<RunHandle<{ runId: string }>> = noPayloadTask.trigger({})
+  const rawLeaseEventRecord: RunEventRecord = {
+    id: "event-1",
+    run_id: "run-1",
+    run_lease_id: "lease-1",
+    kind: "run",
+    message: "run.started",
+    at: "2026-04-28T00:00:00Z",
+    attributes: {},
+  }
+  const noPayloadStartedRun: Promise<TaskStartResult<{ runId: string }>> = noPayloadTask.start({})
+  const session = client.sessions.open<{ ok: boolean }>("session-1")
+  const sessionSnapshot: Promise<TaskSessionSnapshot<{ ok: boolean }>> = session.retrieve()
+  const waitedSession: Promise<TaskSessionSnapshot<{ ok: boolean }>> = client.sessions.wait("session-1", { timeoutSeconds: 30 })
+  const inputRecord: Promise<ChannelRecord<{ approved: boolean }>> = session.input("approval").send({ approved: true }, {
+    correlationId: "thread-1",
+  })
+  const outputRecords: Promise<ChannelRecord<{ text: string }>[]> = session.output("agent.report").list({ cursor: 1 })
+  const outputStream: Promise<AsyncIterable<ChannelRecord<{ text: string }>>> = session.output("agent.report").stream()
+  const outputToken: Promise<PublicAccessToken> = client.auth.createPublicToken({
+    scope: {
+      type: "session.output.read",
+      sessionId: "session-1",
+      channel: "agent.report",
+      correlationId: "thread-1",
+    },
+    maxUses: 10,
+  })
+  const inputToken: Promise<PublicAccessToken> = client.auth.createPublicToken({
+    scope: {
+      type: "session.input.append",
+      sessionId: session.id,
+      channel: "approval",
+    },
+  })
   const retrievedFromHandle: Promise<RunSnapshot> = client.runs.retrieve(handle)
   const retrievedFromId: Promise<RunSnapshot> = client.runs.retrieve("run-1")
   const waitedFromHandle: Promise<RunSnapshot> = client.runs.wait(handle, {
@@ -68,46 +114,52 @@ if (false) {
     cron: { pattern: "0 9 * * *", timezone: "Asia/Tokyo" },
     run: async (payload, ctx) => `${payload.scheduleId}:${ctx.run.id}`,
   })
-  client.waitpoints.respond(pendingHuman, { value: { approved: true } })
-  client.waitpoints.respond("waitpoint-1", { value: { approved: true } })
-  const delegatedToken: Promise<WaitpointResponseToken> = client.waitpoints.tokens.create(pendingHuman, {
-    expiresInSeconds: 3600,
+  client.runs.waitpoints.list(handle)
+  client.runs.waitpoints.listPage(handle, { status: "pending" })
+  const delegatedToken: Promise<WaitpointToken> = wait.createToken({
+    timeoutInSeconds: 3600,
     metadata: { recipient: "reviewer@example.com" },
   })
-  const delegatedById = client.waitpoints.tokens.create(
-    { waitpointId: "waitpoint-1" },
-    { expiresAt: "2026-04-20T00:00:00Z" },
-  )
-  client.waitpoints.tokens.create("waitpoint-1")
-  client.waitpoints.tokens.respond({
+  const clientToken: Promise<WaitpointToken> = client.waitpoints.tokens.create({ timeoutInSeconds: 3600 })
+  const delegatedById = wait.createToken({ timeoutAt: "2026-04-20T00:00:00Z" })
+  wait.completeToken({
     id: "token-1",
-    waitpointId: "waitpoint-1",
-    url: "https://api.example.test/waitpoints/respond?id=token-1&token=raw-token",
-    token: "raw-token",
-    expiresAt: null,
-  }, {
-    value: { approved: true },
-    externalSubject: "alice@example.com",
-    metadata: { source: "email" },
-  })
-  client.waitpoints.tokens.respond("token-1", "raw-token", { value: { approved: false } })
+    callbackUrl: "https://api.example.test/api/waitpoints/tokens/token-1/callback/raw-token",
+    publicAccessToken: "raw-token",
+    timeoutAt: "2026-04-20T00:00:00Z",
+  }, { approved: true })
+  wait.completeToken("token-1", { approved: false })
+  wait.completeToken("token-1", { approved: true }, { publicAccessToken: "raw-token" })
   snapshot.pendingWaitpoint?.kind
 
   // Keep the declared promises live without executing this block.
-  triggered.then
+  startedAgain.then
   retrievedFromHandle.then
   retrievedFromId.then
   waitedFromHandle.then
   waitedFromId.then
   delegatedToken.then
   delegatedById.then
-  schemaTriggered.then
-  noPayloadTriggered.then
+  clientToken.then
+  schemaStartedRun.then
+  started.then
+  startAndWait.then
+  noPayloadStartedRun.then
+  sessionSnapshot.then
+  waitedSession.then
+  inputRecord.then
+  outputRecords.then
+  outputStream.then
+  outputToken.then
+  inputToken.then
+  rawLeaseEventRecord.id
 
   // @ts-expect-error runs.retrieve accepts a run id string or RunHandle only.
   client.runs.retrieve({ taskId: "inspect" })
   // @ts-expect-error runs.retrieve does not accept arbitrary id-only objects.
   client.runs.retrieve({ id: "run-1" })
+  // @ts-expect-error completion metadata belongs in the completion data payload.
+  wait.completeToken("token-1", { approved: true }, { metadata: { actor: "alice@example.com" } })
   // @ts-expect-error runs.wait accepts a run id string or RunHandle only.
   client.runs.wait({ taskId: "inspect" })
   // @ts-expect-error runs.wait does not accept arbitrary id-only objects.
@@ -126,33 +178,62 @@ if (false) {
   client.runs.list({ status: "leased" })
   // @ts-expect-error events.list uses pageSize because it follows every page.
   client.runs.events.list(handle, { limit: 50 })
-  // @ts-expect-error delay waitpoints cannot be responded to by a caller.
-  client.waitpoints.respond(pendingDelay, { value: "done" })
-  // @ts-expect-error token creation is only for caller-completable waitpoints.
-  client.waitpoints.tokens.create(pendingDelay)
-  // @ts-expect-error respond options do not accept action-specific fields.
-  client.waitpoints.respond("waitpoint-1", { reason: "ok" })
+  const rawEventRecord: RunEventRecord = {
+    id: "event-1",
+    run_id: "run-1",
+    run_lease_id: "lease-1",
+    kind: "run",
+    message: "run.started",
+    at: "2026-04-28T00:00:00Z",
+    attributes: {},
+  }
+  rawEventRecord.id
   // @ts-expect-error token create options do not accept response actions.
-  client.waitpoints.tokens.create(pendingHuman, { actions: ["skip"] })
-  // @ts-expect-error token creation accepts expiresInSeconds or expiresAt, not both.
-  client.waitpoints.tokens.create(pendingHuman, {
-    expiresInSeconds: 3600,
-    expiresAt: "2026-04-20T00:00:00Z",
+  wait.createToken({ actions: ["skip"] })
+  wait.createToken({
+    timeoutInSeconds: 3600,
+    // @ts-expect-error token creation accepts timeoutInSeconds or timeoutAt, not both.
+    timeoutAt: "2026-04-20T00:00:00Z",
   })
-  // @ts-expect-error token response by id requires a token secret and options object.
-  client.waitpoints.tokens.respond("token-1", "raw-token")
-  // @ts-expect-error token response options do not accept action-specific fields.
-  client.waitpoints.tokens.respond("token-1", "raw-token", { reason: "ok" })
-  client.tasks.trigger<typeof triggerTask>("inspect", { issue: 123 }, {
-    // @ts-expect-error trigger options do not accept source inputs.
+  // @ts-expect-error token complete options do not accept action-specific fields.
+  wait.completeToken("token-1", { approved: true }, { reason: "ok" })
+  client.tasks.start<typeof startTask>("inspect", { issue: 123 }, {
+    // @ts-expect-error start options do not accept source inputs.
     source: source.file("README.md"),
   })
-  schemaTriggerTask.trigger(
-    // @ts-expect-error schema-backed triggers accept schema input, not parsed run payload.
+  client.tasks.start<typeof startTask>("inspect", { issue: 123 }, {
+    externalId: "case-123",
+    idempotencyKey: "request-123",
+  })
+  client.tasks.start<typeof startTask>(
+    "inspect",
+    // @ts-expect-error task payload and session input are distinct surfaces.
+    { input: { approved: true } },
+    {},
+  )
+  session.input("approval").send({ approved: true })
+  // @ts-expect-error session input appends do not accept task start idempotency keys.
+  session.input("approval").send({ approved: true }, { idempotencyKey: "start-key" })
+  client.auth.createPublicToken({
+    scope: {
+      // @ts-expect-error public token scopes are closed.
+      type: "sessions:*",
+      sessionId: "session-1",
+      channel: "approval",
+    },
+  })
+  // @ts-expect-error sessions.open requires a session id string or session handle.
+  client.sessions.open({ runId: "run-1" })
+  // @ts-expect-error run replay is not exposed.
+  client.runs.replay("run-1")
+  // @ts-expect-error old task trigger client surface is not exposed.
+  client.tasks.trigger("inspect", { issue: 123 }, {})
+  schemaStartTask.start(
+    // @ts-expect-error schema-backed start accepts schema input, not parsed run payload.
     { issue: 123 },
     {},
   )
-  noPayloadTask.trigger(
+  noPayloadTask.start(
     {},
     // @ts-expect-error no-payload tasks accept options as the first argument, not payload.
     { idempotencyKey: "payload-not-options" },

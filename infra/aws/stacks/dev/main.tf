@@ -50,6 +50,7 @@ module "control" {
   secret_encryption_key_old_arn              = var.secret_encryption_key_old_arn
   secret_encryption_key_old_kms_key_arns     = var.secret_encryption_key_old_kms_key_arns
   database_backup_retention_days             = var.database_backup_retention_days
+  database_engine_version                    = var.database_engine_version
   database_deletion_protection               = var.database_deletion_protection
   database_skip_final_snapshot               = var.database_skip_final_snapshot
   control_repository_force_delete            = var.control_repository_force_delete

@@ -74,7 +74,6 @@ Common optional environment:
                      Set to 1 to print AMIs that would be deleted.
   WORKER_IMAGE_CLEANUP_FORCE
                      Set to 1 to allow deleting AMIs referenced by the current worker ASG.
-
 Run commands from the Nix infra shell so AWS CLI, OpenTofu, and jq are supplied by Nix:
 
   AWS_PROFILE=<profile> nix develop .#infra -c scripts/aws-dev-debug.sh status
@@ -706,7 +705,7 @@ hotpatch_guestd() {
   node_version="$(node --version)"
   cat >"${adapter_bundle_dir}/adapter/manifest.json" <<EOF
 {
-  "runtime_contract_version": 1,
+  "runtime_contract_version": 0,
   "adapter_hash": "sha256:${adapter_hash}",
   "proto_schema_hash": "sha256:${proto_hash}",
   "node_version": "${node_version}",

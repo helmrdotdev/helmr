@@ -46,7 +46,7 @@ fi
 
 cat > "$tmp_dir/adapter/manifest.json" <<EOF
 {
-  "runtime_contract_version": 1,
+  "runtime_contract_version": 0,
   "adapter_files": {
     "main.js": "sha256:$main_hash",
     "register.mjs": "sha256:$register_hash",

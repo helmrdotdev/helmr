@@ -387,7 +387,7 @@ func (f *fakeClaimerStore) IsRunQueueLeaseConflict(context.Context, db.IsRunQueu
 	return f.leaseConflict, nil
 }
 
-func (f *fakeClaimerStore) RunExecutionSessionDispatchAttemptsExhausted(_ context.Context, _ db.RunExecutionSessionDispatchAttemptsExhaustedParams) (bool, error) {
+func (f *fakeClaimerStore) RunLeaseDispatchAttemptsExhausted(_ context.Context, _ db.RunLeaseDispatchAttemptsExhaustedParams) (bool, error) {
 	if f.exhaustedErr != nil {
 		return false, f.exhaustedErr
 	}

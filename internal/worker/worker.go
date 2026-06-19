@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -23,11 +24,32 @@ type ControlClient interface {
 }
 
 type Executor interface {
-	Execute(ctx context.Context, lease api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult
+	Execute(ctx context.Context, leases api.WorkerRunLeaseProvider, run api.WorkerRun) api.WorkerReleaseResult
 }
 
 type DeploymentBuilder interface {
 	BuildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) api.WorkerDeploymentBuildResult
+}
+
+type runLeaseState struct {
+	mu    sync.RWMutex
+	lease api.WorkerRunLease
+}
+
+func newRunLeaseState(lease api.WorkerRunLease) *runLeaseState {
+	return &runLeaseState{lease: lease}
+}
+
+func (s *runLeaseState) CurrentWorkerRunLease() api.WorkerRunLease {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lease
+}
+
+func (s *runLeaseState) set(lease api.WorkerRunLease) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lease = lease
 }
 
 type Runner struct {
@@ -191,16 +213,17 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 		return true, fmt.Errorf("start run %s: %w", lease.RunID, err)
 	}
 
+	leaseState := newRunLeaseState(lease)
 	execCtx, cancelExec := context.WithCancel(ctx)
 	defer cancelExec()
 	renewDone := make(chan *renewError, 1)
 	go func() {
-		renewDone <- r.renewUntilDone(execCtx, lease)
+		renewDone <- r.renewUntilDone(execCtx, leaseState)
 	}()
 
 	resultDone := make(chan api.WorkerReleaseResult, 1)
 	go func() {
-		resultDone <- r.executor.Execute(execCtx, lease, run)
+		resultDone <- r.executor.Execute(execCtx, leaseState, run)
 	}()
 
 	var result api.WorkerReleaseResult
@@ -256,7 +279,7 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 
-	if err := r.release(lease, result); err != nil {
+	if err := r.release(leaseState.CurrentWorkerRunLease(), result); err != nil {
 		cancelExec()
 		if !renewObserved {
 			<-renewDone
@@ -325,7 +348,7 @@ func (e *renewError) Unwrap() error {
 	return e.err
 }
 
-func (r *Runner) renewUntilDone(ctx context.Context, lease api.WorkerRunLease) *renewError {
+func (r *Runner) renewUntilDone(ctx context.Context, leaseState *runLeaseState) *renewError {
 	ticker := time.NewTicker(r.renewEvery)
 	defer ticker.Stop()
 
@@ -335,7 +358,7 @@ func (r *Runner) renewUntilDone(ctx context.Context, lease api.WorkerRunLease) *
 			return nil
 		case <-ticker.C:
 			renewCtx, cancelRenew := context.WithTimeout(ctx, r.renewWait)
-			renewed, err := r.client.RenewRun(renewCtx, lease)
+			renewed, err := r.client.RenewRun(renewCtx, leaseState.CurrentWorkerRunLease())
 			timedOut := errors.Is(renewCtx.Err(), context.DeadlineExceeded)
 			cancelRenew()
 			if err != nil {
@@ -350,7 +373,10 @@ func (r *Runner) renewUntilDone(ctx context.Context, lease api.WorkerRunLease) *
 				}
 				return &renewError{kind: renewFailed, err: err}
 			}
-			lease = renewed.Lease
+			if strings.TrimSpace(renewed.Lease.ID) == "" {
+				return &renewError{kind: renewFailed, err: errors.New("renew run response did not include a lease")}
+			}
+			leaseState.set(renewed.Lease)
 		}
 	}
 }

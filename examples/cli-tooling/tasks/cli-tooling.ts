@@ -1,4 +1,4 @@
-import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { cache, image, logger, sandbox, source, task } from "@helmr/sdk"
 import { spawn } from "node:child_process"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
@@ -53,7 +53,7 @@ export const cliTooling = task({
 
     const report = { runId: ctx.run.id, tool: "ripgrep", pattern, matches }
     await writeFile("cli-tooling-report.json", `${JSON.stringify(report, null, 2)}\n`)
-    ctx.log.info({ report: "cli-tooling-report.json", matches: matches.length })
+    logger.info({ report: "cli-tooling-report.json", matches: matches.length })
     return report
   },
 })

@@ -14,6 +14,16 @@ func TestValidateLeaseRequirementsAcceptsDefaultNetwork(t *testing.T) {
 	}
 }
 
+func TestValidateLeaseRequirementsRejectsMismatchedWorkerProtocol(t *testing.T) {
+	capabilities := testCapabilities()
+	capabilities.ProtocolVersion = "helmr.worker.future"
+
+	err := validateLeaseRequirements(capabilities, testLease(), testRun(testRequirements()))
+	if err == nil || !strings.Contains(err.Error(), "worker protocol") {
+		t.Fatalf("err = %v, want worker protocol mismatch", err)
+	}
+}
+
 func TestValidateLeaseRequirementsRejectsUnsupportedNetworkPolicy(t *testing.T) {
 	tests := map[string]struct {
 		mutateCapabilities func(*api.WorkerCapabilities)
@@ -84,6 +94,7 @@ func testLease() api.WorkerRunLease {
 func testRun(requirements compute.RunRuntimeRequirements) api.WorkerRun {
 	return api.WorkerRun{
 		ID:                    "run-1",
+		RunLeaseID:            "lease-1",
 		TaskID:                "deploy",
 		WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
 		AttemptNumber:         1,

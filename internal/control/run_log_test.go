@@ -115,7 +115,7 @@ func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
 			{
 				OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 				RunID:         pgvalue.UUID(runID),
-				SessionID:     pgvalue.UUID(sessionID),
+				RunLeaseID:    pgvalue.UUID(sessionID),
 				AttemptNumber: 1,
 				Stream:        db.RunLogStreamStdout,
 				Seq:           8,
@@ -176,7 +176,7 @@ func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
 			{
 				OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 				RunID:         pgvalue.UUID(runID),
-				SessionID:     pgvalue.UUID(sessionID),
+				RunLeaseID:    pgvalue.UUID(sessionID),
 				AttemptNumber: 1,
 				Stream:        db.RunLogStreamStderr,
 				Seq:           12,
@@ -225,7 +225,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour, EventStream: eventStream})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -244,29 +244,13 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/worker/sessions/logs", bytes.NewReader(logBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/leases/logs", bytes.NewReader(logBody))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("logs status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	emitBody, err := json.Marshal(api.WorkerEmitEventRequest{
-		Lease:     *claimResponse.Lease,
-		EventType: "deploy.progress",
-		Content:   json.RawMessage(`{"step":"build"}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req = httptest.NewRequest(http.MethodPost, "/api/worker/sessions/events", bytes.NewReader(emitBody))
-	req.Header.Set("authorization", "Bearer "+workerBearer)
-	rec = httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("event status = %d body=%s", rec.Code, rec.Body.String())
-	}
-
 	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+pgvalue.MustUUIDValue(store.run.ID).String()+"/events", nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
@@ -278,14 +262,11 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &events); err != nil {
 		t.Fatal(err)
 	}
-	if len(events.Events) != 2 || events.Events[0].Message != "log.stdout" || events.Events[1].Message != "emit.deploy.progress" {
+	if len(events.Events) != 1 || events.Events[0].Message != "log.stdout" {
 		t.Fatalf("events = %+v", events)
 	}
 	if string(events.Events[0].Attributes) != `{"redacted":true}` || events.Events[0].RedactionClass != "sensitive" {
 		t.Fatalf("log event redaction = class %q attributes %s", events.Events[0].RedactionClass, events.Events[0].Attributes)
-	}
-	if events.Events[1].RedactionClass != "internal" || !strings.Contains(string(events.Events[1].Attributes), "build") {
-		t.Fatalf("emit event redaction = class %q attributes %s", events.Events[1].RedactionClass, events.Events[1].Attributes)
 	}
 	if events.NextCursor != nil {
 		t.Fatalf("next cursor = %v, want nil for final page", *events.NextCursor)
@@ -326,7 +307,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 }
 
 func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChunkParams) (db.AppendRunLogChunkRow, error) {
-	if f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+	if f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.AppendRunLogChunkRow{}, pgx.ErrNoRows
 	}
 	switch arg.Stream {
@@ -339,7 +320,7 @@ func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChun
 		Seq:            int64(len(f.events) + 1),
 		OrgID:          arg.OrgID,
 		RunID:          arg.RunID,
-		SessionID:      arg.SessionID,
+		RunLeaseID:     arg.RunLeaseID,
 		AttemptNumber:  pgtype.Int4{Int32: 1, Valid: true},
 		Kind:           arg.Kind,
 		Payload:        arg.Payload,
@@ -349,7 +330,7 @@ func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChun
 	f.events = append(f.events, event)
 	return db.AppendRunLogChunkRow{
 		RunID:         arg.RunID,
-		SessionID:     arg.SessionID,
+		RunLeaseID:    arg.RunLeaseID,
 		AttemptNumber: 1,
 		Stream:        arg.Stream,
 		Seq:           int64(len(f.events)),

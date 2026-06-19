@@ -10,16 +10,19 @@ import (
 type Permission string
 
 const (
-	PermissionAPIKeysManage     Permission = "api_keys.manage"
-	PermissionMembersManage     Permission = "members.manage"
-	PermissionProjectsManage    Permission = "projects.manage"
-	PermissionRunsCreate        Permission = "runs.create"
-	PermissionRunsRead          Permission = "runs.read"
-	PermissionRunsManage        Permission = "runs.manage"
-	PermissionSecretsWrite      Permission = "secrets.write"
-	PermissionTasksDeploy       Permission = "tasks.deploy"
-	PermissionWaitpointPolicies Permission = "waitpoint_policies.manage"
-	PermissionWaitpointsRespond Permission = "waitpoints.respond"
+	PermissionAPIKeysManage           Permission = "api_keys.manage"
+	PermissionMembersManage           Permission = "members.manage"
+	PermissionProjectsManage          Permission = "projects.manage"
+	PermissionRunsCreate              Permission = "runs.create"
+	PermissionRunsRead                Permission = "runs.read"
+	PermissionRunsManage              Permission = "runs.manage"
+	PermissionRunWaitpointsRead       Permission = "waitpoints.read"
+	PermissionWaitpointTokensCreate   Permission = "waitpoint_tokens.create"
+	PermissionWaitpointTokensRead     Permission = "waitpoint_tokens.read"
+	PermissionWaitpointTokensComplete Permission = "waitpoint_tokens.complete"
+	PermissionChannelsWrite           Permission = "channels.write"
+	PermissionSecretsWrite            Permission = "secrets.write"
+	PermissionTasksDeploy             Permission = "tasks.deploy"
 )
 
 type Scope struct {
@@ -52,13 +55,26 @@ func RoleAllows(role Role, permission Permission) bool {
 		return true
 	case RoleDeveloper:
 		switch permission {
-		case PermissionRunsCreate, PermissionRunsRead, PermissionRunsManage, PermissionTasksDeploy, PermissionWaitpointsRespond:
+		case PermissionRunsCreate,
+			PermissionRunsRead,
+			PermissionRunsManage,
+			PermissionRunWaitpointsRead,
+			PermissionWaitpointTokensCreate,
+			PermissionWaitpointTokensRead,
+			PermissionWaitpointTokensComplete,
+			PermissionChannelsWrite,
+			PermissionTasksDeploy:
 			return true
 		default:
 			return false
 		}
 	case RoleViewer:
-		return permission == PermissionRunsRead
+		switch permission {
+		case PermissionRunsRead, PermissionRunWaitpointsRead, PermissionWaitpointTokensRead:
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}

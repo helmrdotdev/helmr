@@ -159,7 +159,7 @@ cat > "$sdk_pkg/package.json" <<EOF
 {
   "name": "@helmr/sdk",
   "version": "$version",
-  "description": "TypeScript SDK for authoring and triggering Helmr tasks.",
+  "description": "TypeScript SDK for authoring and starting Helmr tasks.",
   "type": "module",
   "license": "Apache-2.0",
   "main": "./dist/index.js",

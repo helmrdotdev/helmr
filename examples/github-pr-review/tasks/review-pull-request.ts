@@ -1,4 +1,4 @@
-import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { cache, image, logger, sandbox, source, task, wait } from "@helmr/sdk"
 import { z } from "zod"
 
 const base = image("github-pr-review")
@@ -54,11 +54,13 @@ export const reviewPullRequest = task({
       ...files.slice(0, 10).map((file) => `- ${file.filename} (+${file.additions}/-${file.deletions})`),
     ].join("\n")
 
-    ctx.log.info({ pullRequest: target.prNumber, filesChanged: files.length })
+    logger.info({ pullRequest: target.prNumber, filesChanged: files.length })
 
-    const decision = await ctx.wait.human<{ approved: boolean }>({
-      displayText: `Post this review summary?\n\n${summary}`,
-    })
+    const waitpointToken = await wait.createToken({ timeout: 600 })
+    const decision = await wait.forToken(waitpointToken, {
+      schema: z.object({ approved: z.boolean() }),
+      metadata: { prompt: "Post this review summary?", summary },
+    }).unwrap()
     if (!decision.approved) {
       return { status: "skipped" }
     }

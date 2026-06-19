@@ -1,4 +1,4 @@
-import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { cache, image, logger, sandbox, source, task } from "@helmr/sdk"
 import { readFile, writeFile } from "node:fs/promises"
 
 const deps = image("dependency-cache-deps")
@@ -33,7 +33,7 @@ export const dependencyCache = task({
       runId: ctx.run.id,
     }
     await writeFile("dependency-cache-report.json", `${JSON.stringify(report, null, 2)}\n`)
-    ctx.log.info({ report: "dependency-cache-report.json" })
+    logger.info({ report: "dependency-cache-report.json" })
     return report
   },
 })

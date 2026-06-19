@@ -29,6 +29,7 @@ type RunCreator interface {
 
 type Index interface {
 	Enqueue(context.Context, IndexEntry) error
+	Delete(context.Context, uuid.UUID) error
 	Dequeue(context.Context, DequeueRequest) ([]IndexLease, error)
 	Ack(context.Context, IndexLease) error
 	Nack(context.Context, IndexLease, time.Time) error

@@ -15,7 +15,7 @@ Use schedules for recurring task runs. A scheduled task receives schedule metada
 Use `schedules.task()` when the schedule should travel with the deployed task definition:
 
 ```ts
-import { cache, image, sandbox, schedules, source } from "@helmr/sdk"
+import { cache, image, logger, sandbox, schedules, source } from "@helmr/sdk"
 
 const runtime = image("daily-report")
   .from("node:24-bookworm-slim")
@@ -36,8 +36,8 @@ export const dailyReport = schedules.task({
   sandbox: sb,
   secrets: [{ name: "REPORT_API_KEY", env: "REPORT_API_KEY" }],
   cron: { pattern: "0 9 * * *", timezone: "America/New_York" },
-  run: async (payload, ctx) => {
-    ctx.log.info("running scheduled report", {
+  run: async (payload) => {
+    logger.info("running scheduled report", {
       scheduledAt: payload.timestamp.toISOString(),
       previous: payload.lastTimestamp?.toISOString(),
       upcoming: payload.upcoming.map((date) => date.toISOString()),

@@ -100,7 +100,7 @@ export function Login() {
         }
       >
         <AuthTitle>Sign in</AuthTitle>
-        <AuthCopy>Choose a sign-in method to access runs, approvals, and credentials.</AuthCopy>
+        <AuthCopy>Choose a sign-in method to access runs, waitpoints, and credentials.</AuthCopy>
         <button
           class={ui.button}
           type="button"

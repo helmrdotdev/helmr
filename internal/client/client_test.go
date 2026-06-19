@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,12 +32,19 @@ func TestClientErrorUsesServerMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.CreateRun(context.Background(), api.CreateRunRequest{TaskID: "deploy"})
+	_, err = client.StartTask(context.Background(), "deploy", api.TaskStartRequest{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "bad source") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestTaskStartPendingRetryDelayClampsPastHTTPDate(t *testing.T) {
+	raw := time.Now().Add(-time.Second).UTC().Format(http.TimeFormat)
+	if got := taskStartPendingRetryDelay(raw); got != taskStartPendingDefaultDelay {
+		t.Fatalf("delay = %v, want %v", got, taskStartPendingDefaultDelay)
 	}
 }
 
@@ -77,11 +85,11 @@ func TestClientSendsPinnedVersionHeaders(t *testing.T) {
 		if got := r.Header.Get(api.SDKVersionHeader); got != "" {
 			t.Fatalf("%s = %q", api.SDKVersionHeader, got)
 		}
-		_ = json.NewEncoder(w).Encode(api.RunResponse{
+		_ = json.NewEncoder(w).Encode(api.TaskStartResponse{Run: api.RunResponse{
 			ID:     "run-1",
 			TaskID: "deploy",
 			Status: "queued",
-		})
+		}})
 	}))
 	defer server.Close()
 
@@ -89,7 +97,7 @@ func TestClientSendsPinnedVersionHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreateRun(context.Background(), api.CreateRunRequest{TaskID: "deploy"}); err != nil {
+	if _, err := client.StartTask(context.Background(), "deploy", api.TaskStartRequest{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -105,11 +113,11 @@ func TestClientSendsSDKVersionHeaderForSDKIdentity(t *testing.T) {
 		if got := r.Header.Get(api.CLIVersionHeader); got != "" {
 			t.Fatalf("%s = %q", api.CLIVersionHeader, got)
 		}
-		_ = json.NewEncoder(w).Encode(api.RunResponse{
+		_ = json.NewEncoder(w).Encode(api.TaskStartResponse{Run: api.RunResponse{
 			ID:     "run-1",
 			TaskID: "deploy",
 			Status: "queued",
-		})
+		}})
 	}))
 	defer server.Close()
 
@@ -117,14 +125,14 @@ func TestClientSendsSDKVersionHeaderForSDKIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreateRun(context.Background(), api.CreateRunRequest{TaskID: "deploy"}); err != nil {
+	if _, err := client.StartTask(context.Background(), "deploy", api.TaskStartRequest{}); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://helmr.example/api/runs", http.StatusTemporaryRedirect)
+		http.Redirect(w, r, "http://helmr.example/api/tasks/deploy/start", http.StatusTemporaryRedirect)
 	}))
 	defer server.Close()
 
@@ -132,16 +140,16 @@ func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.CreateRun(context.Background(), api.CreateRunRequest{TaskID: "deploy"})
+	_, err = client.StartTask(context.Background(), "deploy", api.TaskStartRequest{})
 	if err == nil || !strings.Contains(err.Error(), "plaintext non-loopback") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestCreateRun(t *testing.T) {
+func TestStartTask(t *testing.T) {
 	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/runs" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		body, err := io.ReadAll(r.Body)
@@ -155,20 +163,17 @@ func TestCreateRun(t *testing.T) {
 		if _, ok := raw["source"]; ok {
 			t.Fatalf("request JSON included source: %s", body)
 		}
-		var request api.CreateRunRequest
+		var request api.TaskStartRequest
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatal(err)
 		}
-		if request.TaskID != "deploy" {
-			t.Fatalf("request = %+v", request)
-		}
-		_ = json.NewEncoder(w).Encode(api.RunResponse{
+		_ = json.NewEncoder(w).Encode(api.TaskStartResponse{Run: api.RunResponse{
 			ID:        "run-1",
-			TaskID:    request.TaskID,
+			TaskID:    "deploy",
 			Status:    "queued",
 			CreatedAt: now,
 			UpdatedAt: now,
-		})
+		}})
 	}))
 	defer server.Close()
 
@@ -176,15 +181,102 @@ func TestCreateRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := client.CreateRun(context.Background(), api.CreateRunRequest{
-		TaskID:  "deploy",
+	started, err := client.StartTask(context.Background(), "deploy", api.TaskStartRequest{
 		Payload: json.RawMessage(`{"env":"prod"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.ID != "run-1" || run.Status != "queued" {
-		t.Fatalf("run = %+v", run)
+	if started.Run.ID != "run-1" || started.Run.Status != "queued" {
+		t.Fatalf("started = %+v", started)
+	}
+}
+
+func TestStartTaskReturnsAcceptedAsPendingError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Retry-After", "11")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"code":"idempotency_pending","error":"task_start_pending"}`))
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.StartTask(context.Background(), "deploy", api.TaskStartRequest{})
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusAccepted || !strings.Contains(httpErr.Message, "task_start_pending") {
+		t.Fatalf("err = %#v, want 202 pending HTTPError", err)
+	}
+}
+
+func TestStartTaskDoesNotRetryNonPendingAccepted(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"error":"accepted elsewhere"}`))
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.StartTask(context.Background(), "deploy", api.TaskStartRequest{})
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusAccepted || !strings.Contains(httpErr.Message, "accepted elsewhere") {
+		t.Fatalf("err = %#v, want non-pending 202 HTTPError", err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+}
+
+func TestStartTaskUsesSessionScopedRoute(t *testing.T) {
+	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-1/environments/env-1/tasks/deploy/start" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		var request api.TaskStartRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.ProjectID != "" || request.EnvironmentID != "" {
+			t.Fatalf("scoped route leaked body scope: %+v", request)
+		}
+		_ = json.NewEncoder(w).Encode(api.TaskStartResponse{Run: api.RunResponse{
+			ID:        "run-1",
+			TaskID:    "deploy",
+			Status:    "queued",
+			CreatedAt: now,
+			UpdatedAt: now,
+		}})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithSessionScopedRoutes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := client.StartTask(context.Background(), "deploy", api.TaskStartRequest{
+		ProjectID:     "project-1",
+		EnvironmentID: "env-1",
+		Payload:       json.RawMessage(`{"env":"prod"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.Run.ID != "run-1" || started.Run.Status != "queued" {
+		t.Fatalf("started = %+v", started)
 	}
 }
 
@@ -204,21 +296,6 @@ func TestRunOperations(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.CancelRunResponse{
 				Run:       api.RunResponse{ID: "run-1", Status: "cancelled"},
 				Operation: api.RunOperationResponse{ID: "op-1", RunID: "run-1", Kind: "cancel", Status: "applied"},
-			})
-		case "/api/runs/run-1/replay":
-			var request api.ReplayRunRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			if request.Version != "latest" || request.Reason != "retry deploy" || request.IdempotencyKey != "replay-1" {
-				t.Fatalf("replay request = %+v", request)
-			}
-			if string(request.Payload) != `{"env":"prod"}` {
-				t.Fatalf("payload = %s", request.Payload)
-			}
-			_ = json.NewEncoder(w).Encode(api.ReplayRunResponse{
-				Run:       api.RunResponse{ID: "run-2", Status: "queued"},
-				Operation: api.RunOperationResponse{ID: "op-2", RunID: "run-1", Kind: "replay", Status: "applied"},
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -241,19 +318,7 @@ func TestRunOperations(t *testing.T) {
 	if cancelled.Run.Status != "cancelled" || cancelled.Operation.Kind != "cancel" {
 		t.Fatalf("cancelled = %+v", cancelled)
 	}
-	replayed, err := client.ReplayRun(context.Background(), "run-1", api.ReplayRunRequest{
-		Version:        "latest",
-		Payload:        json.RawMessage(`{"env":"prod"}`),
-		Reason:         "retry deploy",
-		IdempotencyKey: "replay-1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replayed.Run.ID != "run-2" || replayed.Operation.Kind != "replay" {
-		t.Fatalf("replayed = %+v", replayed)
-	}
-	if got := strings.Join(paths, ","); got != "POST /api/runs/run-1/cancel,POST /api/runs/run-1/replay" {
+	if got := strings.Join(paths, ","); got != "POST /api/runs/run-1/cancel" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -467,7 +532,7 @@ func TestFollowRunLogsSendsCursorAndDecodesChunks(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.RunLogChunk{
 			ID:            "9",
 			RunID:         "run-1",
-			SessionID:     "session-1",
+			RunLeaseID:    "run-lease-1",
 			AttemptNumber: 1,
 			Stream:        "stdout",
 			ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
@@ -529,7 +594,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				Token:            workerToken,
 				ExpiresInSeconds: int64(time.Hour / time.Second),
 			})
-		case "/api/worker/sessions/lease":
+		case "/api/worker/leases/lease":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
@@ -575,17 +640,17 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				t.Fatalf("worker auth = %s", got)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: api.WorkerStatusDraining, ActiveExecutions: 1})
-		case "/api/worker/sessions/start":
+		case "/api/worker/leases/start":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerStartResponse{RunID: claim.RunID, Status: "running"})
-		case "/api/worker/sessions/renew":
+		case "/api/worker/leases/renew":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerRenewResponse{Lease: claim})
-		case "/api/worker/sessions/logs":
+		case "/api/worker/leases/logs":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
@@ -601,7 +666,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				t.Fatalf("log request = %+v content=%q", request, content)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerEventResponse{RunID: claim.RunID})
-		case "/api/worker/sessions/log-entries":
+		case "/api/worker/leases/log-entries":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
@@ -613,19 +678,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				t.Fatalf("log entry request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerEventResponse{RunID: claim.RunID})
-		case "/api/worker/sessions/events":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
-				t.Fatalf("worker auth = %s", got)
-			}
-			var request api.WorkerEmitEventRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			if request.Lease.ID != claim.ID || request.EventType != "deploy.progress" || string(request.Content) != `{"step":1}` {
-				t.Fatalf("event request = %+v", request)
-			}
-			_ = json.NewEncoder(w).Encode(api.WorkerEventResponse{RunID: claim.RunID})
-		case "/api/worker/sessions/release":
+		case "/api/worker/leases/release":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
@@ -668,14 +721,11 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if _, err := client.RecordLogEntry(context.Background(), *leased.Lease, "building"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.EmitEvent(context.Background(), *leased.Lease, "deploy.progress", json.RawMessage(`{"step":1}`)); err != nil {
-		t.Fatal(err)
-	}
 	exitCode := int32(0)
 	if _, err := client.ReleaseRun(context.Background(), *leased.Lease, api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode}); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/sessions/lease,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/sessions/start,/api/worker/sessions/renew,/api/worker/sessions/logs,/api/worker/sessions/log-entries,/api/worker/sessions/events,/api/worker/sessions/release" {
+	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/leases/lease,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/leases/start,/api/worker/leases/renew,/api/worker/leases/logs,/api/worker/leases/log-entries,/api/worker/leases/release" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -750,45 +800,45 @@ func TestWorkerWaitpointClient(t *testing.T) {
 			t.Fatalf("worker auth = %s", got)
 		}
 		switch r.URL.Path {
-		case "/api/worker/sessions/waitpoints":
+		case "/api/worker/leases/waitpoints":
 			var request api.WorkerCreateWaitpointRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Lease.ID != claim.ID || request.CorrelationID != "corr-1" || request.Kind != api.WorkerWaitpointKindHuman || string(request.Request) != `{"prompt":"ship?"}` {
-				t.Fatalf("create waitpoint request = %+v", request)
+			if request.Lease.ID != claim.ID || request.CorrelationID != "corr-1" || request.Kind != api.WorkerWaitpointKindToken || string(request.Params) != `{"prompt":"ship?"}` {
+				t.Fatalf("create waitpoint = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, RunWaitID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
-		case "/api/worker/sessions/checkpoints/ready":
+			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, RunSuspensionID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
+		case "/api/worker/leases/checkpoints/ready":
 			var request api.WorkerCheckpointReadyRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Lease.ID != claim.ID || request.RunWaitID != "run-wait-1" || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" || request.ActiveDurationMs != 123 {
+			if request.Lease.ID != claim.ID || request.RunSuspensionID != "run-wait-1" || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" || request.ActiveDurationMs != 123 {
 				t.Fatalf("checkpoint ready request = %+v", request)
 			}
 			if request.Manifest.RecoveryPoint.Runtime.KernelDigest != kernelDigest || request.Manifest.RecoveryPoint.Runtime.RootfsDigest != rootfsDigest {
 				t.Fatalf("checkpoint manifest = %+v", request.Manifest)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, RunWaitID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
-		case "/api/worker/sessions/restores/ack":
+			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, RunSuspensionID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
+		case "/api/worker/leases/restores/ack":
 			var request api.WorkerAcknowledgeRestoreRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Lease.ID != claim.ID || request.RunWaitID != "run-wait-1" || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" {
+			if request.Lease.ID != claim.ID || request.RunSuspensionID != "run-wait-1" || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" {
 				t.Fatalf("restore attach request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerAcknowledgeRestoreResponse{RunID: claim.RunID, RunWaitID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
-		case "/api/worker/sessions/checkpoints/failed":
+			_ = json.NewEncoder(w).Encode(api.WorkerAcknowledgeRestoreResponse{RunID: claim.RunID, RunSuspensionID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
+		case "/api/worker/leases/checkpoints/failed":
 			var request api.WorkerCheckpointFailedRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Lease.ID != claim.ID || request.RunWaitID != "run-wait-1" || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" || request.Error != "snapshot failed" {
+			if request.Lease.ID != claim.ID || request.RunSuspensionID != "run-wait-1" || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" || request.Error != "snapshot failed" {
 				t.Fatalf("checkpoint failed request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, RunWaitID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
+			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, RunSuspensionID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -802,19 +852,18 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	created, err := client.CreateWaitpoint(context.Background(), api.WorkerCreateWaitpointRequest{
 		Lease:         claim,
 		CorrelationID: "corr-1",
-		Kind:          api.WorkerWaitpointKindHuman,
-		Request:       json.RawMessage(`{"prompt":"ship?"}`),
-		DisplayText:   "ship?",
+		Kind:          api.WorkerWaitpointKindToken,
+		Params:        json.RawMessage(`{"prompt":"ship?"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.RunWaitID != "run-wait-1" || created.WaitpointID != "waitpoint-1" || created.CheckpointID != "checkpoint-1" {
+	if created.RunSuspensionID != "run-wait-1" || created.WaitpointID != "waitpoint-1" || created.CheckpointID != "checkpoint-1" {
 		t.Fatalf("created = %+v", created)
 	}
 	ready, err := client.MarkCheckpointReady(context.Background(), api.WorkerCheckpointReadyRequest{
 		Lease:            claim,
-		RunWaitID:        created.RunWaitID,
+		RunSuspensionID:  created.RunSuspensionID,
 		WaitpointID:      "waitpoint-1",
 		CheckpointID:     "checkpoint-1",
 		ActiveDurationMs: 123,
@@ -827,10 +876,10 @@ func TestWorkerWaitpointClient(t *testing.T) {
 		t.Fatalf("ready = %+v", ready)
 	}
 	acknowledged, err := client.AcknowledgeRestore(context.Background(), api.WorkerAcknowledgeRestoreRequest{
-		Lease:        claim,
-		RunWaitID:    created.RunWaitID,
-		WaitpointID:  "waitpoint-1",
-		CheckpointID: "checkpoint-1",
+		Lease:           claim,
+		RunSuspensionID: created.RunSuspensionID,
+		WaitpointID:     "waitpoint-1",
+		CheckpointID:    "checkpoint-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -839,11 +888,11 @@ func TestWorkerWaitpointClient(t *testing.T) {
 		t.Fatalf("acknowledged = %+v", acknowledged)
 	}
 	failed, err := client.MarkCheckpointFailed(context.Background(), api.WorkerCheckpointFailedRequest{
-		Lease:        claim,
-		RunWaitID:    created.RunWaitID,
-		WaitpointID:  "waitpoint-1",
-		CheckpointID: "checkpoint-1",
-		Error:        "snapshot failed",
+		Lease:           claim,
+		RunSuspensionID: created.RunSuspensionID,
+		WaitpointID:     "waitpoint-1",
+		CheckpointID:    "checkpoint-1",
+		Error:           "snapshot failed",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -851,7 +900,7 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	if failed.CheckpointID != "checkpoint-1" {
 		t.Fatalf("failed = %+v", failed)
 	}
-	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/sessions/waitpoints,/api/worker/sessions/checkpoints/ready,/api/worker/sessions/restores/ack,/api/worker/sessions/checkpoints/failed" {
+	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/leases/waitpoints,/api/worker/leases/checkpoints/ready,/api/worker/leases/restores/ack,/api/worker/leases/checkpoints/failed" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -883,19 +932,18 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 
 func workerClientCapabilities() api.WorkerCapabilities {
 	return api.WorkerCapabilities{
-		ProtocolVersion:           api.CurrentWorkerProtocolVersion,
-		SupportedProtocolVersions: api.SupportedWorkerProtocolVersions,
-		RuntimeID:                 "sha256:runtime",
-		RuntimeArch:               "arm64",
-		RuntimeABI:                "helmr.firecracker.snapshot.v0",
-		KernelDigest:              "sha256:kernel",
-		InitramfsDigest:           "sha256:initramfs",
-		RootfsDigest:              "sha256:rootfs",
-		CNIProfile:                "helmr/v0",
-		MaxVCPUs:                  2,
-		MaxMemoryMiB:              2048,
-		MaxDiskMiB:                20480,
-		ExecutionSlotsAvailable:   1,
+		ProtocolVersion:         api.CurrentWorkerProtocolVersion,
+		RuntimeID:               "sha256:runtime",
+		RuntimeArch:             "arm64",
+		RuntimeABI:              "helmr.firecracker.snapshot.v0",
+		KernelDigest:            "sha256:kernel",
+		InitramfsDigest:         "sha256:initramfs",
+		RootfsDigest:            "sha256:rootfs",
+		CNIProfile:              "helmr/v0",
+		MaxVCPUs:                2,
+		MaxMemoryMiB:            2048,
+		MaxDiskMiB:              20480,
+		ExecutionSlotsAvailable: 1,
 		Network: api.WorkerNetworkCapabilities{
 			Internet:      true,
 			BlockInternet: true,

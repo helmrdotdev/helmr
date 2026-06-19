@@ -4,10 +4,14 @@ export type ApiKeyStatus = "active" | "expired" | "revoked";
 
 export type ApiKeyScope =
   | "runs:create"
-  | "runs:read"
-  | "secrets:write"
-  | "waitpoints:respond"
-  | "waitpoint-policies:manage"
+	| "runs:read"
+	| "runs:manage"
+	| "run-waitpoints:read"
+	| "channels:write"
+	| "secrets:write"
+  | "waitpoint-tokens:create"
+  | "waitpoint-tokens:read"
+  | "waitpoint-tokens:complete"
   | "tasks:deploy";
 
 type ApiKeyPermissionGrant = {

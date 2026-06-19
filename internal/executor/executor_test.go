@@ -17,8 +17,21 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
+
+type staticRunLeaseProvider struct {
+	lease api.WorkerRunLease
+}
+
+func staticLease(lease api.WorkerRunLease) staticRunLeaseProvider {
+	return staticRunLeaseProvider{lease: lease}
+}
+
+func (p staticRunLeaseProvider) CurrentWorkerRunLease() api.WorkerRunLease {
+	return p.lease
+}
 
 func TestExecutorBuildsMaterializedSources(t *testing.T) {
 	workDir := t.TempDir()
@@ -32,7 +45,7 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 		CAS:     store,
 		Builder: builder,
 		Runner:  runner,
-	}.Execute(context.Background(), api.WorkerRunLease{}, validRun())
+	}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), validRun())
 
 	if result.Kind != "completed" || result.ExitCode == nil || *result.ExitCode != 0 {
 		t.Fatalf("result = %+v", result)
@@ -77,6 +90,60 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 	}
 }
 
+func TestExecutorReturnsWorkspaceCommitForSessionRun(t *testing.T) {
+	run := validRun()
+	run.Workspace = api.WorkerWorkspace{
+		ID:           "workspace-1",
+		WriteLeaseID: "workspace-lease-1",
+		MountPath:    "/workspace",
+		VolumeKind:   workspace.VolumeKind,
+	}
+	finalWorkspace := &workspace.WorkspaceArtifact{
+		Digest:     "sha256:" + strings.Repeat("b", 64),
+		MediaType:  workspace.ArtifactMediaType,
+		Encoding:   workspace.ArtifactEncoding,
+		VolumeKind: workspace.VolumeKind,
+		SizeBytes:  123,
+		EntryCount: 2,
+	}
+	result := Executor{
+		WorkDir: t.TempDir(),
+		GitPath: fakeGit(t),
+		CAS:     deploymentSourceCAS(t),
+		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
+		Runner:  &fakeRunner{workspace: finalWorkspace},
+	}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), run)
+
+	if result.Kind != "completed" || result.Workspace == nil || result.Workspace.Artifact == nil {
+		t.Fatalf("result = %+v", result)
+	}
+	if result.Workspace.ID != "workspace-1" || result.Workspace.WriteLeaseID != "workspace-lease-1" {
+		t.Fatalf("workspace commit = %+v", result.Workspace)
+	}
+	if result.Workspace.Artifact.Digest != finalWorkspace.Digest || result.Workspace.Artifact.EntryCount != 2 {
+		t.Fatalf("workspace artifact = %+v", result.Workspace.Artifact)
+	}
+}
+
+func TestExecutorRejectsSuccessfulSessionRunWithoutWorkspaceCommit(t *testing.T) {
+	run := validRun()
+	run.Workspace = api.WorkerWorkspace{
+		ID:           "workspace-1",
+		WriteLeaseID: "workspace-lease-1",
+	}
+	result := Executor{
+		WorkDir: t.TempDir(),
+		GitPath: fakeGit(t),
+		CAS:     deploymentSourceCAS(t),
+		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
+		Runner:  &fakeRunner{},
+	}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), run)
+
+	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, "did not publish a workspace artifact") {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
 func TestExecutorPassesResolvedSecretsToBuilder(t *testing.T) {
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
 	build := &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}}
@@ -88,7 +155,7 @@ func TestExecutorPassesResolvedSecretsToBuilder(t *testing.T) {
 		CAS:     deploymentSourceCASWithBundle(t, secretBundle()),
 		Builder: build,
 		Runner:  &fakeRunner{},
-	}.Execute(context.Background(), api.WorkerRunLease{}, run)
+	}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), run)
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
 	}
@@ -107,7 +174,7 @@ func TestExecutorLoadsDeploymentTaskBundleFromCAS(t *testing.T) {
 		CAS:     deploymentSourceCAS(t),
 		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
 		Runner:  &fakeRunner{},
-	}.Execute(context.Background(), api.WorkerRunLease{}, run)
+	}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), run)
 
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
@@ -152,7 +219,7 @@ func TestExecutorMaterializesDeploymentSourceArtifactFromCAS(t *testing.T) {
 		CAS:     deploymentSourceCASWithObjects(t, map[string][]byte{tarArchive.Digest: content}),
 		Builder: build,
 		Runner:  &fakeRunner{},
-	}.Execute(context.Background(), api.WorkerRunLease{}, run)
+	}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), run)
 
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
@@ -168,16 +235,16 @@ func TestExecutorRestoresWithoutCheckoutOrBuild(t *testing.T) {
 	run.Restore = &api.WorkerRestore{
 		CheckpointID: "checkpoint-1",
 		Waitpoint: api.WorkerRestoreWaitpoint{
-			ID:         "waitpoint-1",
-			RunWaitID:  "run-wait-1",
-			ResumeKind: "completed",
+			ID:              "waitpoint-1",
+			RunSuspensionID: "run-wait-1",
+			ResumeKind:      "completed",
 		},
 	}
 	result := Executor{
 		WorkDir: t.TempDir(),
 		GitPath: "/missing/git",
 		Runner:  runner,
-	}.Execute(context.Background(), api.WorkerRunLease{}, run)
+	}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), run)
 
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
@@ -190,7 +257,7 @@ func TestExecutorRestoresWithoutCheckoutOrBuild(t *testing.T) {
 func TestExecutorReturnsBuildBoundaryError(t *testing.T) {
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
 
-	result := Executor{WorkDir: t.TempDir(), GitPath: fakeGit(t)}.Execute(context.Background(), api.WorkerRunLease{}, validRun())
+	result := Executor{WorkDir: t.TempDir(), GitPath: fakeGit(t)}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), validRun())
 	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, ErrBuilderRequired.Error()) {
 		t.Fatalf("result = %+v", result)
 	}
@@ -204,7 +271,7 @@ func TestExecutorReturnsRuntimeBoundaryError(t *testing.T) {
 		GitPath: fakeGit(t),
 		CAS:     deploymentSourceCAS(t),
 		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
-	}.Execute(context.Background(), api.WorkerRunLease{}, validRun())
+	}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), validRun())
 	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, ErrRunnerRequired.Error()) {
 		t.Fatalf("result = %+v", result)
 	}
@@ -220,7 +287,7 @@ func TestExecutorRequiresTaskBundle(t *testing.T) {
 		GitPath: fakeGit(t),
 		CAS:     deploymentSourceCAS(t),
 		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
-	}.Execute(context.Background(), api.WorkerRunLease{}, run)
+	}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), run)
 	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, "bundle_digest is required") {
 		t.Fatalf("result = %+v", result)
 	}
@@ -241,10 +308,11 @@ func (b *fakeBuilder) Build(_ context.Context, request builder.Request) (builder
 }
 
 type fakeRunner struct {
-	request  Request
-	exitCode int32
-	output   json.RawMessage
-	err      error
+	request   Request
+	exitCode  int32
+	output    json.RawMessage
+	workspace *workspace.WorkspaceArtifact
+	err       error
 }
 
 func (r *fakeRunner) Run(_ context.Context, request Request) (Result, error) {
@@ -252,7 +320,7 @@ func (r *fakeRunner) Run(_ context.Context, request Request) (Result, error) {
 	if r.err != nil {
 		return Result{}, r.err
 	}
-	return Result{ExitCode: r.exitCode, Output: r.output}, nil
+	return Result{ExitCode: r.exitCode, Output: r.output, Workspace: r.workspace}, nil
 }
 
 type artifactCAS struct {

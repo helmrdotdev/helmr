@@ -8,40 +8,60 @@ order: 330
 
 # Human input
 
-Use waitpoints before side effects such as posting to GitHub, deploying, or changing infrastructure.
+Use waitpoint tokens before side effects such as posting to GitHub, deploying,
+or changing infrastructure. Helmr creates the durable waitpoint; your Slack,
+email, Linear, or app-server bridge delivers the token and completes it.
 
 ```ts
-const decision = await ctx.wait.human<{ approved: boolean }>({
-  displayText: "Post this review summary?",
+import { task, wait } from "@helmr/sdk"
+
+export const publishReview = task({
+  id: "publish-review",
+  run: async () => {
+    const token = await wait.createToken({
+      timeout: "30m",
+      tags: ["approval", "github"],
+      metadata: { action: "publish-review" },
+    })
+
+    await sendSlackApproval({
+      tokenId: token.id,
+    })
+
+    const decision = await wait.forToken(token, {
+      schema: approvalDecisionSchema,
+    }).unwrap()
+
+    if (!decision.approved) return { status: "skipped" }
+    await postReview()
+    return { status: "posted" }
+  },
 })
-if (!decision.approved) {
-  return { status: "skipped" }
-}
 ```
 
-Ask for operator input with another human waitpoint:
+Complete the token from a userland bridge:
 
 ```ts
-import { writeFile } from "node:fs/promises"
-
-const reply = await ctx.wait.human<{ text: string }>({
-  displayText: "What should this run write to handoff.txt?",
+await wait.completeToken(token.id, {
+  approved: true,
+  actor: "slack:U123",
 })
-await writeFile("handoff.txt", `${reply.text}\n`)
 ```
 
-Human waitpoints accept a timeout in seconds:
+Browser or raw HTTP action handlers can complete the same token with
+`Authorization: Bearer ${token.publicAccessToken}` on
+`/api/waitpoints/tokens/{tokenId}/complete`. Server-to-server webhook handlers
+can use `token.callbackUrl` when a pre-signed completion URL is a better fit.
 
-```ts
-await ctx.wait.human({ displayText: "Continue?", timeout: 600 })
-```
-
-Resolve waitpoints from the dashboard or CLI:
+The CLI exposes the same primitive:
 
 ```sh
-helmr waitpoint list
-helmr waitpoint respond WAITPOINT_ID --value '{"approved":true}'
-helmr waitpoint respond WAITPOINT_ID --value '{"text":"Use the smaller rollout."}'
+helmr waitpoint list \
+  --project PROJECT_ID \
+  --env ENV_ID
+helmr waitpoint token complete TOKEN_ID \
+  --data '{"approved":true}'
 ```
 
-Only one `ctx.wait.*` call can be active at a time in a task. Await each waitpoint before starting the next one.
+Only one blocking waitpoint or time wait can be active at a time in a task.
+Await each wait before starting the next one.

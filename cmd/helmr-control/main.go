@@ -26,8 +26,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/sqs"
-	"github.com/helmrdotdev/helmr/internal/waitpoint"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -94,29 +92,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure schedule index: %w", err)
 	}
-	var asyncPublisher waitpoint.Publisher
-	if cfg.AsyncBusURI != "" {
-		asyncPublisher, err = sqs.Open(ctx, cfg.AsyncBusURI)
-		if err != nil {
-			return fmt.Errorf("configure sqs bus: %w", err)
-		}
-	}
 	publicURL, err := url.Parse(cfg.PublicURL)
 	if err != nil {
 		return fmt.Errorf("parse public URL: %w", err)
 	}
 	mailer := configuredEmailSender(log, cfg)
-	waitpoints, err := waitpoint.NewNotifier(waitpoint.Config{
-		Log:        log,
-		Store:      queries,
-		Mailer:     mailer,
-		Publisher:  asyncPublisher,
-		PublicURL:  publicURL,
-		AuthSecret: []byte(cfg.AuthSecret),
-	})
-	if err != nil {
-		return fmt.Errorf("configure waitpoint notifier: %w", err)
-	}
 	eventStream, err := control.NewEventStream(log, queries, redisClient)
 	if err != nil {
 		return fmt.Errorf("configure event stream: %w", err)
@@ -135,7 +115,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
-	scheduleRunCreator, err := control.NewScheduleRunCreator(log, pool, secretStore, runEnqueuer)
+	scheduleRunCreator, err := control.NewScheduleRunCreator(log, pool, secretStore, runEnqueuer, eventStream)
 	if err != nil {
 		return fmt.Errorf("configure schedule run creator: %w", err)
 	}
@@ -165,7 +145,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 		RunEnqueuer:         runEnqueuer,
 		DispatchQueue:       dispatchQueue,
 		ScheduleEngine:      scheduleEngine,
-		Waitpoints:          waitpoints,
 		EventStream:         eventStream,
 		Mailer:              mailer,
 		AuthProvider:        authProvider,

@@ -32,7 +32,7 @@ func CreateEmptyWorkspaceArtifact(tempDir string) (WorkspaceArtifact, func(), er
 	if strings.TrimSpace(trustedRoot) == "" {
 		trustedRoot = os.TempDir()
 	}
-	artifact, cleanupArtifact, err := createWorkspaceArtifactFromRoot(root, tempDir, trustedRoot)
+	artifact, cleanupArtifact, err := CreateWorkspaceArtifactFromRoot(root, tempDir, trustedRoot)
 	if err != nil {
 		cleanupRoot()
 		return WorkspaceArtifact{}, func() {}, err
@@ -43,12 +43,17 @@ func CreateEmptyWorkspaceArtifact(tempDir string) (WorkspaceArtifact, func(), er
 	}, nil
 }
 
-func createWorkspaceArtifactFromRoot(root string, tempDir string, trustedRoot string) (WorkspaceArtifact, func(), error) {
+func CreateWorkspaceArtifactFromRoot(root string, tempDir string, trustedRoot string) (WorkspaceArtifact, func(), error) {
+	return CreateWorkspaceArtifactFromRootWithExcludes(root, tempDir, trustedRoot, nil)
+}
+
+func CreateWorkspaceArtifactFromRootWithExcludes(root string, tempDir string, trustedRoot string, excludePatterns []string) (WorkspaceArtifact, func(), error) {
 	if err := validateRootInside(root, trustedRoot); err != nil {
 		return WorkspaceArtifact{}, func() {}, err
 	}
+	excludes := append([]string{"**/.git/**"}, excludePatterns...)
 	tarArchive, cleanup, err := archive.CreateTarWithOptions(root, tempDir, archive.TarOptions{
-		ExcludePatterns: []string{"**/.git/**"},
+		ExcludePatterns: excludes,
 		MaxBytes:        MaxArtifactExtractedBytes,
 		MaxEntries:      MaxArtifactEntries,
 	})

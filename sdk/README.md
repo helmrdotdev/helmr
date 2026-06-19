@@ -19,7 +19,7 @@ binding maps.
 
 ## TypeScript Runtime Client
 
-External TypeScript processes create runs with `task.trigger()` or the id-based `client.tasks.trigger()`. Triggering returns a lightweight `RunHandle`; retrieve or wait on that handle to get a `RunSnapshot`.
+External TypeScript processes start tasks with `client.tasks.start()`. Starting a task creates or reuses a task session and returns both the session snapshot and the current run handle. Imported task definitions also expose `task.start()` as a local helper that validates payload before returning the same session-first start result.
 
 ```ts
 import { HelmrClient } from "@helmr/sdk"
@@ -30,44 +30,43 @@ const client = new HelmrClient({
   apiKey: process.env.HELMR_API_KEY,
 })
 
-const handle = await client.tasks.trigger<typeof impl>(
+const started = await client.tasks.start<typeof impl>(
   "impl",
   { issue: 123 },
+  {},
 )
 
-const current = await client.runs.retrieve(handle)
-const pendingWaitpoint = current.pendingWaitpoint
-if (pendingWaitpoint !== null && pendingWaitpoint.kind === "human") {
-  await client.waitpoints.respond(pendingWaitpoint, {
-    value: { approved: true },
-  })
-}
+const session = await client.sessions.wait(started.session, {
+  timeoutSeconds: 10 * 60,
+})
+const current = await client.runs.retrieve(started.run)
+const logs = await client.runs.logs.retrieve(started.run)
+const events = await client.runs.events.list(started.run)
 
-const finished = await client.runs.wait(handle, { timeoutMs: 10 * 60_000 })
-const logs = await client.runs.logs.retrieve(handle)
-const events = await client.runs.events.list(handle)
-
-for await (const event of await client.runs.events.subscribe(handle)) {
+for await (const event of await client.runs.events.subscribe(started.run)) {
   console.log(event)
 }
 
-console.log(finished.status, logs.stdout, events.length)
+console.log(session.status, current.status, logs.stdout, events.length)
 ```
 
-Waitpoint responses live on `client.waitpoints`. Pass either a pending waitpoint from a run snapshot or a waitpoint id:
+Waitpoint tokens are the external completion primitive. Create a token in task code with `wait.createToken()`, wait with `wait.forToken(token)`, and complete it from trusted server-side code or a userland bridge:
 
 ```ts
-await client.waitpoints.respond("waitpoint-456", {
-  value: { approved: true },
+const token = await wait.createToken({
+  timeoutInSeconds: 3600,
+  metadata: { recipient: "reviewer@example.com" },
 })
-await client.waitpoints.respond("waitpoint-456", {
-  value: { text: "Use the smaller rollout." },
+
+await wait.completeToken(token, {
+  approved: true,
+  reviewer: "slack:U123",
 })
 ```
 
 ## API Reference
 
-### `POST /api/runs`
+### `POST /api/tasks/{task_id}/start`
 
 `payload` is a JSON field for tasks that accept payload. Payload is audit data: Helmr persists it in plaintext in the `run.created` event, DB, and events stream. Do not put secret values (tokens, API keys, credentials, or PII) in payload; declare task secrets instead. Use payload for business context such as PR numbers, repo names, ticket ids, and other identifiers.
 

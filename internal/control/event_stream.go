@@ -286,14 +286,14 @@ func sleepWithContext(ctx context.Context, duration time.Duration) error {
 }
 
 func eventResponseFromClaim(event db.ClaimEventOutboxRow) api.RunEvent {
-	return apiEventResponse(event.Seq, event.RunID, event.DeploymentID, event.SessionID, event.AttemptID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
+	return apiEventResponse(event.Seq, event.RunID, event.DeploymentID, event.RunLeaseID, event.AttemptID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
 }
 
 func eventResponseFromRecord(event db.Event) api.RunEvent {
-	return apiEventResponse(event.Seq, event.RunID, event.DeploymentID, event.SessionID, event.AttemptID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
+	return apiEventResponse(event.Seq, event.RunID, event.DeploymentID, event.RunLeaseID, event.AttemptID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
 }
 
-func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, sessionID pgtype.UUID, attemptID pgtype.UUID, attemptNumberValue pgtype.Int4, traceIDValue pgtype.Text, spanIDValue pgtype.Text, traceparentValue pgtype.Text, category string, severity string, source string, rawKind string, message string, payload []byte, redactionClass string, createdAt pgtype.Timestamptz, occurredAt pgtype.Timestamptz) api.RunEvent {
+func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, runLeaseID pgtype.UUID, attemptID pgtype.UUID, attemptNumberValue pgtype.Int4, traceIDValue pgtype.Text, spanIDValue pgtype.Text, traceparentValue pgtype.Text, category string, severity string, source string, rawKind string, message string, payload []byte, redactionClass string, createdAt pgtype.Timestamptz, occurredAt pgtype.Timestamptz) api.RunEvent {
 	var runIDValue *string
 	if runID.Valid {
 		value := pgvalue.MustUUIDValue(runID).String()
@@ -304,10 +304,10 @@ func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, se
 		value := pgvalue.MustUUIDValue(deploymentID).String()
 		deploymentIDValue = &value
 	}
-	var sessionIDValue *string
-	if sessionID.Valid {
-		value := pgvalue.MustUUIDValue(sessionID).String()
-		sessionIDValue = &value
+	var runLeaseIDValue *string
+	if runLeaseID.Valid {
+		value := pgvalue.MustUUIDValue(runLeaseID).String()
+		runLeaseIDValue = &value
 	}
 	var attemptIDValue *string
 	if attemptID.Valid {
@@ -319,9 +319,6 @@ func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, se
 		attemptNumber = &attemptNumberValue.Int32
 	}
 	kind := rawKind
-	if strings.HasPrefix(rawKind, "emit.") {
-		kind = "emit"
-	}
 	traceID := ""
 	if traceIDValue.Valid {
 		traceID = traceIDValue.String
@@ -345,7 +342,7 @@ func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, se
 		ID:             strconv.FormatInt(seq, 10),
 		RunID:          runIDValue,
 		DeploymentID:   deploymentIDValue,
-		SessionID:      sessionIDValue,
+		RunLeaseID:     runLeaseIDValue,
 		AttemptID:      attemptIDValue,
 		AttemptNumber:  attemptNumber,
 		Trace:          api.TraceContext{TraceID: traceID, SpanID: spanID, Traceparent: traceparent},

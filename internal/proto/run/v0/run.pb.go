@@ -174,23 +174,23 @@ func (x *WorkspaceArtifact) GetEntryCount() uint32 {
 }
 
 type RunTaskRequest struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	TaskId            string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	ModulePath        string                 `protobuf:"bytes,2,opt,name=module_path,json=modulePath,proto3" json:"module_path,omitempty"`
-	Cwd               string                 `protobuf:"bytes,3,opt,name=cwd,proto3" json:"cwd,omitempty"`
-	Secrets           []*SecretInject        `protobuf:"bytes,4,rep,name=secrets,proto3" json:"secrets,omitempty"`
-	RunId             string                 `protobuf:"bytes,5,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	PayloadJson       string                 `protobuf:"bytes,6,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
-	Workspace         *RunTaskWorkspace      `protobuf:"bytes,7,opt,name=workspace,proto3" json:"workspace,omitempty"`
-	Trace             *TraceContext          `protobuf:"bytes,8,opt,name=trace,proto3" json:"trace,omitempty"`
-	AttemptId         string                 `protobuf:"bytes,9,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
-	AttemptNumber     uint32                 `protobuf:"varint,10,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
-	SessionId         string                 `protobuf:"bytes,11,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	SnapshotVersion   uint64                 `protobuf:"varint,12,opt,name=snapshot_version,json=snapshotVersion,proto3" json:"snapshot_version,omitempty"`
-	ReplayedFromRunId string                 `protobuf:"bytes,13,opt,name=replayed_from_run_id,json=replayedFromRunId,proto3" json:"replayed_from_run_id,omitempty"`
-	RetryReason       string                 `protobuf:"bytes,14,opt,name=retry_reason,json=retryReason,proto3" json:"retry_reason,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	TaskId          string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	ModulePath      string                 `protobuf:"bytes,2,opt,name=module_path,json=modulePath,proto3" json:"module_path,omitempty"`
+	Cwd             string                 `protobuf:"bytes,3,opt,name=cwd,proto3" json:"cwd,omitempty"`
+	Secrets         []*SecretInject        `protobuf:"bytes,4,rep,name=secrets,proto3" json:"secrets,omitempty"`
+	RunId           string                 `protobuf:"bytes,5,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	PayloadJson     string                 `protobuf:"bytes,6,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
+	Workspace       *RunTaskWorkspace      `protobuf:"bytes,7,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	Trace           *TraceContext          `protobuf:"bytes,8,opt,name=trace,proto3" json:"trace,omitempty"`
+	AttemptId       string                 `protobuf:"bytes,9,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	AttemptNumber   uint32                 `protobuf:"varint,10,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
+	RunLeaseId      string                 `protobuf:"bytes,11,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
+	SnapshotVersion uint64                 `protobuf:"varint,12,opt,name=snapshot_version,json=snapshotVersion,proto3" json:"snapshot_version,omitempty"`
+	TaskSessionId   string                 `protobuf:"bytes,13,opt,name=task_session_id,json=taskSessionId,proto3" json:"task_session_id,omitempty"`
+	RetryReason     string                 `protobuf:"bytes,14,opt,name=retry_reason,json=retryReason,proto3" json:"retry_reason,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *RunTaskRequest) Reset() {
@@ -293,9 +293,9 @@ func (x *RunTaskRequest) GetAttemptNumber() uint32 {
 	return 0
 }
 
-func (x *RunTaskRequest) GetSessionId() string {
+func (x *RunTaskRequest) GetRunLeaseId() string {
 	if x != nil {
-		return x.SessionId
+		return x.RunLeaseId
 	}
 	return ""
 }
@@ -307,9 +307,9 @@ func (x *RunTaskRequest) GetSnapshotVersion() uint64 {
 	return 0
 }
 
-func (x *RunTaskRequest) GetReplayedFromRunId() string {
+func (x *RunTaskRequest) GetTaskSessionId() string {
 	if x != nil {
-		return x.ReplayedFromRunId
+		return x.TaskSessionId
 	}
 	return ""
 }
@@ -719,8 +719,11 @@ type RunEvent struct {
 	//	*RunEvent_StderrChunk
 	//	*RunEvent_LogEntry
 	//	*RunEvent_TaskResult
-	//	*RunEvent_WaitRequested
-	//	*RunEvent_EmitEvent
+	//	*RunEvent_WaitpointRequested
+	//	*RunEvent_MetadataUpdated
+	//	*RunEvent_WaitpointTokenCreateRequested
+	//	*RunEvent_ChannelOutputAppended
+	//	*RunEvent_ResumeConsumed
 	Event         isRunEvent_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -799,19 +802,46 @@ func (x *RunEvent) GetTaskResult() *TaskResult {
 	return nil
 }
 
-func (x *RunEvent) GetWaitRequested() *WaitRequested {
+func (x *RunEvent) GetWaitpointRequested() *WaitpointRequested {
 	if x != nil {
-		if x, ok := x.Event.(*RunEvent_WaitRequested); ok {
-			return x.WaitRequested
+		if x, ok := x.Event.(*RunEvent_WaitpointRequested); ok {
+			return x.WaitpointRequested
 		}
 	}
 	return nil
 }
 
-func (x *RunEvent) GetEmitEvent() *EmitEvent {
+func (x *RunEvent) GetMetadataUpdated() *MetadataUpdated {
 	if x != nil {
-		if x, ok := x.Event.(*RunEvent_EmitEvent); ok {
-			return x.EmitEvent
+		if x, ok := x.Event.(*RunEvent_MetadataUpdated); ok {
+			return x.MetadataUpdated
+		}
+	}
+	return nil
+}
+
+func (x *RunEvent) GetWaitpointTokenCreateRequested() *WaitpointTokenCreateRequested {
+	if x != nil {
+		if x, ok := x.Event.(*RunEvent_WaitpointTokenCreateRequested); ok {
+			return x.WaitpointTokenCreateRequested
+		}
+	}
+	return nil
+}
+
+func (x *RunEvent) GetChannelOutputAppended() *ChannelOutputAppended {
+	if x != nil {
+		if x, ok := x.Event.(*RunEvent_ChannelOutputAppended); ok {
+			return x.ChannelOutputAppended
+		}
+	}
+	return nil
+}
+
+func (x *RunEvent) GetResumeConsumed() *ResumeConsumed {
+	if x != nil {
+		if x, ok := x.Event.(*RunEvent_ResumeConsumed); ok {
+			return x.ResumeConsumed
 		}
 	}
 	return nil
@@ -837,12 +867,24 @@ type RunEvent_TaskResult struct {
 	TaskResult *TaskResult `protobuf:"bytes,4,opt,name=task_result,json=taskResult,proto3,oneof"`
 }
 
-type RunEvent_WaitRequested struct {
-	WaitRequested *WaitRequested `protobuf:"bytes,5,opt,name=wait_requested,json=waitRequested,proto3,oneof"`
+type RunEvent_WaitpointRequested struct {
+	WaitpointRequested *WaitpointRequested `protobuf:"bytes,5,opt,name=waitpoint_requested,json=waitpointRequested,proto3,oneof"`
 }
 
-type RunEvent_EmitEvent struct {
-	EmitEvent *EmitEvent `protobuf:"bytes,6,opt,name=emit_event,json=emitEvent,proto3,oneof"`
+type RunEvent_MetadataUpdated struct {
+	MetadataUpdated *MetadataUpdated `protobuf:"bytes,7,opt,name=metadata_updated,json=metadataUpdated,proto3,oneof"`
+}
+
+type RunEvent_WaitpointTokenCreateRequested struct {
+	WaitpointTokenCreateRequested *WaitpointTokenCreateRequested `protobuf:"bytes,8,opt,name=waitpoint_token_create_requested,json=waitpointTokenCreateRequested,proto3,oneof"`
+}
+
+type RunEvent_ChannelOutputAppended struct {
+	ChannelOutputAppended *ChannelOutputAppended `protobuf:"bytes,9,opt,name=channel_output_appended,json=channelOutputAppended,proto3,oneof"`
+}
+
+type RunEvent_ResumeConsumed struct {
+	ResumeConsumed *ResumeConsumed `protobuf:"bytes,6,opt,name=resume_consumed,json=resumeConsumed,proto3,oneof"`
 }
 
 func (*RunEvent_StdoutChunk) isRunEvent_Event() {}
@@ -853,9 +895,15 @@ func (*RunEvent_LogEntry) isRunEvent_Event() {}
 
 func (*RunEvent_TaskResult) isRunEvent_Event() {}
 
-func (*RunEvent_WaitRequested) isRunEvent_Event() {}
+func (*RunEvent_WaitpointRequested) isRunEvent_Event() {}
 
-func (*RunEvent_EmitEvent) isRunEvent_Event() {}
+func (*RunEvent_MetadataUpdated) isRunEvent_Event() {}
+
+func (*RunEvent_WaitpointTokenCreateRequested) isRunEvent_Event() {}
+
+func (*RunEvent_ChannelOutputAppended) isRunEvent_Event() {}
+
+func (*RunEvent_ResumeConsumed) isRunEvent_Event() {}
 
 type TaskResult struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1001,32 +1049,34 @@ func (x *TaskError) GetDetailsJson() string {
 	return ""
 }
 
-type WaitRequested struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	RequestJson   string                 `protobuf:"bytes,3,opt,name=request_json,json=requestJson,proto3" json:"request_json,omitempty"`
-	DisplayText   *string                `protobuf:"bytes,4,opt,name=display_text,json=displayText,proto3,oneof" json:"display_text,omitempty"`
-	Timeout       *uint32                `protobuf:"varint,5,opt,name=timeout,proto3,oneof" json:"timeout,omitempty"`
-	Policy        *string                `protobuf:"bytes,6,opt,name=policy,proto3,oneof" json:"policy,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+type WaitpointRequested struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Kind           string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	ParamsJson     string                 `protobuf:"bytes,3,opt,name=params_json,json=paramsJson,proto3" json:"params_json,omitempty"`
+	MetadataJson   *string                `protobuf:"bytes,4,opt,name=metadata_json,json=metadataJson,proto3,oneof" json:"metadata_json,omitempty"`
+	Timeout        *uint32                `protobuf:"varint,5,opt,name=timeout,proto3,oneof" json:"timeout,omitempty"`
+	Tags           []string               `protobuf:"bytes,6,rep,name=tags,proto3" json:"tags,omitempty"`
+	Ordinal        uint32                 `protobuf:"varint,7,opt,name=ordinal,proto3" json:"ordinal,omitempty"`
+	AggregateCount uint32                 `protobuf:"varint,8,opt,name=aggregate_count,json=aggregateCount,proto3" json:"aggregate_count,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
-func (x *WaitRequested) Reset() {
-	*x = WaitRequested{}
+func (x *WaitpointRequested) Reset() {
+	*x = WaitpointRequested{}
 	mi := &file_run_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *WaitRequested) String() string {
+func (x *WaitpointRequested) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*WaitRequested) ProtoMessage() {}
+func (*WaitpointRequested) ProtoMessage() {}
 
-func (x *WaitRequested) ProtoReflect() protoreflect.Message {
+func (x *WaitpointRequested) ProtoReflect() protoreflect.Message {
 	mi := &file_run_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1038,75 +1088,91 @@ func (x *WaitRequested) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use WaitRequested.ProtoReflect.Descriptor instead.
-func (*WaitRequested) Descriptor() ([]byte, []int) {
+// Deprecated: Use WaitpointRequested.ProtoReflect.Descriptor instead.
+func (*WaitpointRequested) Descriptor() ([]byte, []int) {
 	return file_run_proto_rawDescGZIP(), []int{12}
 }
 
-func (x *WaitRequested) GetCorrelationId() string {
+func (x *WaitpointRequested) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *WaitRequested) GetKind() string {
+func (x *WaitpointRequested) GetKind() string {
 	if x != nil {
 		return x.Kind
 	}
 	return ""
 }
 
-func (x *WaitRequested) GetRequestJson() string {
+func (x *WaitpointRequested) GetParamsJson() string {
 	if x != nil {
-		return x.RequestJson
+		return x.ParamsJson
 	}
 	return ""
 }
 
-func (x *WaitRequested) GetDisplayText() string {
-	if x != nil && x.DisplayText != nil {
-		return *x.DisplayText
+func (x *WaitpointRequested) GetMetadataJson() string {
+	if x != nil && x.MetadataJson != nil {
+		return *x.MetadataJson
 	}
 	return ""
 }
 
-func (x *WaitRequested) GetTimeout() uint32 {
+func (x *WaitpointRequested) GetTimeout() uint32 {
 	if x != nil && x.Timeout != nil {
 		return *x.Timeout
 	}
 	return 0
 }
 
-func (x *WaitRequested) GetPolicy() string {
-	if x != nil && x.Policy != nil {
-		return *x.Policy
+func (x *WaitpointRequested) GetTags() []string {
+	if x != nil {
+		return x.Tags
 	}
-	return ""
+	return nil
 }
 
-type SuspendForCheckpoint struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	WaitpointId   string                 `protobuf:"bytes,1,opt,name=waitpoint_id,json=waitpointId,proto3" json:"waitpoint_id,omitempty"`
-	CheckpointId  string                 `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+func (x *WaitpointRequested) GetOrdinal() uint32 {
+	if x != nil {
+		return x.Ordinal
+	}
+	return 0
 }
 
-func (x *SuspendForCheckpoint) Reset() {
-	*x = SuspendForCheckpoint{}
+func (x *WaitpointRequested) GetAggregateCount() uint32 {
+	if x != nil {
+		return x.AggregateCount
+	}
+	return 0
+}
+
+type WaitpointTokenCreateRequested struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	TimeoutAt        *string                `protobuf:"bytes,1,opt,name=timeout_at,json=timeoutAt,proto3,oneof" json:"timeout_at,omitempty"`
+	TimeoutInSeconds *uint32                `protobuf:"varint,2,opt,name=timeout_in_seconds,json=timeoutInSeconds,proto3,oneof" json:"timeout_in_seconds,omitempty"`
+	Tags             []string               `protobuf:"bytes,4,rep,name=tags,proto3" json:"tags,omitempty"`
+	MetadataJson     *string                `protobuf:"bytes,5,opt,name=metadata_json,json=metadataJson,proto3,oneof" json:"metadata_json,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *WaitpointTokenCreateRequested) Reset() {
+	*x = WaitpointTokenCreateRequested{}
 	mi := &file_run_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SuspendForCheckpoint) String() string {
+func (x *WaitpointTokenCreateRequested) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SuspendForCheckpoint) ProtoMessage() {}
+func (*WaitpointTokenCreateRequested) ProtoMessage() {}
 
-func (x *SuspendForCheckpoint) ProtoReflect() protoreflect.Message {
+func (x *WaitpointTokenCreateRequested) ProtoReflect() protoreflect.Message {
 	mi := &file_run_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1118,26 +1184,192 @@ func (x *SuspendForCheckpoint) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SuspendForCheckpoint.ProtoReflect.Descriptor instead.
-func (*SuspendForCheckpoint) Descriptor() ([]byte, []int) {
+// Deprecated: Use WaitpointTokenCreateRequested.ProtoReflect.Descriptor instead.
+func (*WaitpointTokenCreateRequested) Descriptor() ([]byte, []int) {
 	return file_run_proto_rawDescGZIP(), []int{13}
 }
 
-func (x *SuspendForCheckpoint) GetWaitpointId() string {
+func (x *WaitpointTokenCreateRequested) GetTimeoutAt() string {
+	if x != nil && x.TimeoutAt != nil {
+		return *x.TimeoutAt
+	}
+	return ""
+}
+
+func (x *WaitpointTokenCreateRequested) GetTimeoutInSeconds() uint32 {
+	if x != nil && x.TimeoutInSeconds != nil {
+		return *x.TimeoutInSeconds
+	}
+	return 0
+}
+
+func (x *WaitpointTokenCreateRequested) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
+func (x *WaitpointTokenCreateRequested) GetMetadataJson() string {
+	if x != nil && x.MetadataJson != nil {
+		return *x.MetadataJson
+	}
+	return ""
+}
+
+type WaitpointTokenCreateResult struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Id                string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	CallbackUrl       string                 `protobuf:"bytes,2,opt,name=callback_url,json=callbackUrl,proto3" json:"callback_url,omitempty"`
+	PublicAccessToken *string                `protobuf:"bytes,3,opt,name=public_access_token,json=publicAccessToken,proto3,oneof" json:"public_access_token,omitempty"`
+	TimeoutAt         *string                `protobuf:"bytes,4,opt,name=timeout_at,json=timeoutAt,proto3,oneof" json:"timeout_at,omitempty"`
+	Status            *string                `protobuf:"bytes,5,opt,name=status,proto3,oneof" json:"status,omitempty"`
+	Tags              []string               `protobuf:"bytes,6,rep,name=tags,proto3" json:"tags,omitempty"`
+	MetadataJson      *string                `protobuf:"bytes,7,opt,name=metadata_json,json=metadataJson,proto3,oneof" json:"metadata_json,omitempty"`
+	ErrorMessage      *string                `protobuf:"bytes,9,opt,name=error_message,json=errorMessage,proto3,oneof" json:"error_message,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *WaitpointTokenCreateResult) Reset() {
+	*x = WaitpointTokenCreateResult{}
+	mi := &file_run_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WaitpointTokenCreateResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WaitpointTokenCreateResult) ProtoMessage() {}
+
+func (x *WaitpointTokenCreateResult) ProtoReflect() protoreflect.Message {
+	mi := &file_run_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WaitpointTokenCreateResult.ProtoReflect.Descriptor instead.
+func (*WaitpointTokenCreateResult) Descriptor() ([]byte, []int) {
+	return file_run_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *WaitpointTokenCreateResult) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *WaitpointTokenCreateResult) GetCallbackUrl() string {
+	if x != nil {
+		return x.CallbackUrl
+	}
+	return ""
+}
+
+func (x *WaitpointTokenCreateResult) GetPublicAccessToken() string {
+	if x != nil && x.PublicAccessToken != nil {
+		return *x.PublicAccessToken
+	}
+	return ""
+}
+
+func (x *WaitpointTokenCreateResult) GetTimeoutAt() string {
+	if x != nil && x.TimeoutAt != nil {
+		return *x.TimeoutAt
+	}
+	return ""
+}
+
+func (x *WaitpointTokenCreateResult) GetStatus() string {
+	if x != nil && x.Status != nil {
+		return *x.Status
+	}
+	return ""
+}
+
+func (x *WaitpointTokenCreateResult) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
+func (x *WaitpointTokenCreateResult) GetMetadataJson() string {
+	if x != nil && x.MetadataJson != nil {
+		return *x.MetadataJson
+	}
+	return ""
+}
+
+func (x *WaitpointTokenCreateResult) GetErrorMessage() string {
+	if x != nil && x.ErrorMessage != nil {
+		return *x.ErrorMessage
+	}
+	return ""
+}
+
+type CheckpointPauseRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WaitpointId   string                 `protobuf:"bytes,1,opt,name=waitpoint_id,json=waitpointId,proto3" json:"waitpoint_id,omitempty"`
+	CheckpointId  string                 `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckpointPauseRequest) Reset() {
+	*x = CheckpointPauseRequest{}
+	mi := &file_run_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckpointPauseRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckpointPauseRequest) ProtoMessage() {}
+
+func (x *CheckpointPauseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_run_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckpointPauseRequest.ProtoReflect.Descriptor instead.
+func (*CheckpointPauseRequest) Descriptor() ([]byte, []int) {
+	return file_run_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *CheckpointPauseRequest) GetWaitpointId() string {
 	if x != nil {
 		return x.WaitpointId
 	}
 	return ""
 }
 
-func (x *SuspendForCheckpoint) GetCheckpointId() string {
+func (x *CheckpointPauseRequest) GetCheckpointId() string {
 	if x != nil {
 		return x.CheckpointId
 	}
 	return ""
 }
 
-type PauseReady struct {
+type CheckpointPauseReady struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	WaitpointId   string                 `protobuf:"bytes,1,opt,name=waitpoint_id,json=waitpointId,proto3" json:"waitpoint_id,omitempty"`
 	CheckpointId  string                 `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
@@ -1145,21 +1377,21 @@ type PauseReady struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *PauseReady) Reset() {
-	*x = PauseReady{}
-	mi := &file_run_proto_msgTypes[14]
+func (x *CheckpointPauseReady) Reset() {
+	*x = CheckpointPauseReady{}
+	mi := &file_run_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *PauseReady) String() string {
+func (x *CheckpointPauseReady) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*PauseReady) ProtoMessage() {}
+func (*CheckpointPauseReady) ProtoMessage() {}
 
-func (x *PauseReady) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[14]
+func (x *CheckpointPauseReady) ProtoReflect() protoreflect.Message {
+	mi := &file_run_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1170,19 +1402,19 @@ func (x *PauseReady) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use PauseReady.ProtoReflect.Descriptor instead.
-func (*PauseReady) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{14}
+// Deprecated: Use CheckpointPauseReady.ProtoReflect.Descriptor instead.
+func (*CheckpointPauseReady) Descriptor() ([]byte, []int) {
+	return file_run_proto_rawDescGZIP(), []int{16}
 }
 
-func (x *PauseReady) GetWaitpointId() string {
+func (x *CheckpointPauseReady) GetWaitpointId() string {
 	if x != nil {
 		return x.WaitpointId
 	}
 	return ""
 }
 
-func (x *PauseReady) GetCheckpointId() string {
+func (x *CheckpointPauseReady) GetCheckpointId() string {
 	if x != nil {
 		return x.CheckpointId
 	}
@@ -1193,14 +1425,14 @@ type ResumeAttach struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CheckpointId  string                 `protobuf:"bytes,1,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
 	WaitpointId   string                 `protobuf:"bytes,2,opt,name=waitpoint_id,json=waitpointId,proto3" json:"waitpoint_id,omitempty"`
-	SessionId     string                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RunLeaseId    string                 `protobuf:"bytes,3,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ResumeAttach) Reset() {
 	*x = ResumeAttach{}
-	mi := &file_run_proto_msgTypes[15]
+	mi := &file_run_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1212,7 +1444,7 @@ func (x *ResumeAttach) String() string {
 func (*ResumeAttach) ProtoMessage() {}
 
 func (x *ResumeAttach) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[15]
+	mi := &file_run_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1225,7 +1457,7 @@ func (x *ResumeAttach) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeAttach.ProtoReflect.Descriptor instead.
 func (*ResumeAttach) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{15}
+	return file_run_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ResumeAttach) GetCheckpointId() string {
@@ -1242,25 +1474,26 @@ func (x *ResumeAttach) GetWaitpointId() string {
 	return ""
 }
 
-func (x *ResumeAttach) GetSessionId() string {
+func (x *ResumeAttach) GetRunLeaseId() string {
 	if x != nil {
-		return x.SessionId
+		return x.RunLeaseId
 	}
 	return ""
 }
 
 type ResumeDecision struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	WaitpointId       string                 `protobuf:"bytes,1,opt,name=waitpoint_id,json=waitpointId,proto3" json:"waitpoint_id,omitempty"`
-	Kind              string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	ResumePayloadJson string                 `protobuf:"bytes,3,opt,name=resume_payload_json,json=resumePayloadJson,proto3" json:"resume_payload_json,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	WaitpointId        string                 `protobuf:"bytes,1,opt,name=waitpoint_id,json=waitpointId,proto3" json:"waitpoint_id,omitempty"`
+	Kind               string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	DataJson           string                 `protobuf:"bytes,3,opt,name=data_json,json=dataJson,proto3" json:"data_json,omitempty"`
+	RequireConsumedAck bool                   `protobuf:"varint,4,opt,name=require_consumed_ack,json=requireConsumedAck,proto3" json:"require_consumed_ack,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ResumeDecision) Reset() {
 	*x = ResumeDecision{}
-	mi := &file_run_proto_msgTypes[16]
+	mi := &file_run_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1272,7 +1505,7 @@ func (x *ResumeDecision) String() string {
 func (*ResumeDecision) ProtoMessage() {}
 
 func (x *ResumeDecision) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[16]
+	mi := &file_run_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1285,7 +1518,7 @@ func (x *ResumeDecision) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeDecision.ProtoReflect.Descriptor instead.
 func (*ResumeDecision) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{16}
+	return file_run_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ResumeDecision) GetWaitpointId() string {
@@ -1302,11 +1535,18 @@ func (x *ResumeDecision) GetKind() string {
 	return ""
 }
 
-func (x *ResumeDecision) GetResumePayloadJson() string {
+func (x *ResumeDecision) GetDataJson() string {
 	if x != nil {
-		return x.ResumePayloadJson
+		return x.DataJson
 	}
 	return ""
+}
+
+func (x *ResumeDecision) GetRequireConsumedAck() bool {
+	if x != nil {
+		return x.RequireConsumedAck
+	}
+	return false
 }
 
 type ResumeAck struct {
@@ -1318,7 +1558,7 @@ type ResumeAck struct {
 
 func (x *ResumeAck) Reset() {
 	*x = ResumeAck{}
-	mi := &file_run_proto_msgTypes[17]
+	mi := &file_run_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1330,7 +1570,7 @@ func (x *ResumeAck) String() string {
 func (*ResumeAck) ProtoMessage() {}
 
 func (x *ResumeAck) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[17]
+	mi := &file_run_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1343,7 +1583,7 @@ func (x *ResumeAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeAck.ProtoReflect.Descriptor instead.
 func (*ResumeAck) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{17}
+	return file_run_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ResumeAck) GetWaitpointId() string {
@@ -1353,29 +1593,28 @@ func (x *ResumeAck) GetWaitpointId() string {
 	return ""
 }
 
-type EmitEvent struct {
+type ResumeConsumed struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
-	ContentJson   string                 `protobuf:"bytes,2,opt,name=content_json,json=contentJson,proto3" json:"content_json,omitempty"`
+	WaitpointId   string                 `protobuf:"bytes,1,opt,name=waitpoint_id,json=waitpointId,proto3" json:"waitpoint_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *EmitEvent) Reset() {
-	*x = EmitEvent{}
-	mi := &file_run_proto_msgTypes[18]
+func (x *ResumeConsumed) Reset() {
+	*x = ResumeConsumed{}
+	mi := &file_run_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *EmitEvent) String() string {
+func (x *ResumeConsumed) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*EmitEvent) ProtoMessage() {}
+func (*ResumeConsumed) ProtoMessage() {}
 
-func (x *EmitEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[18]
+func (x *ResumeConsumed) ProtoReflect() protoreflect.Message {
+	mi := &file_run_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1386,23 +1625,160 @@ func (x *EmitEvent) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use EmitEvent.ProtoReflect.Descriptor instead.
-func (*EmitEvent) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{18}
+// Deprecated: Use ResumeConsumed.ProtoReflect.Descriptor instead.
+func (*ResumeConsumed) Descriptor() ([]byte, []int) {
+	return file_run_proto_rawDescGZIP(), []int{20}
 }
 
-func (x *EmitEvent) GetType() string {
+func (x *ResumeConsumed) GetWaitpointId() string {
 	if x != nil {
-		return x.Type
+		return x.WaitpointId
 	}
 	return ""
 }
 
-func (x *EmitEvent) GetContentJson() string {
+type ChannelOutputAppended struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Channel       string                 `protobuf:"bytes,1,opt,name=channel,proto3" json:"channel,omitempty"`
+	PayloadJson   string                 `protobuf:"bytes,2,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
+	ContentType   *string                `protobuf:"bytes,3,opt,name=content_type,json=contentType,proto3,oneof" json:"content_type,omitempty"`
+	ObjectRefJson *string                `protobuf:"bytes,4,opt,name=object_ref_json,json=objectRefJson,proto3,oneof" json:"object_ref_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChannelOutputAppended) Reset() {
+	*x = ChannelOutputAppended{}
+	mi := &file_run_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChannelOutputAppended) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChannelOutputAppended) ProtoMessage() {}
+
+func (x *ChannelOutputAppended) ProtoReflect() protoreflect.Message {
+	mi := &file_run_proto_msgTypes[21]
 	if x != nil {
-		return x.ContentJson
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChannelOutputAppended.ProtoReflect.Descriptor instead.
+func (*ChannelOutputAppended) Descriptor() ([]byte, []int) {
+	return file_run_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *ChannelOutputAppended) GetChannel() string {
+	if x != nil {
+		return x.Channel
 	}
 	return ""
+}
+
+func (x *ChannelOutputAppended) GetPayloadJson() string {
+	if x != nil {
+		return x.PayloadJson
+	}
+	return ""
+}
+
+func (x *ChannelOutputAppended) GetContentType() string {
+	if x != nil && x.ContentType != nil {
+		return *x.ContentType
+	}
+	return ""
+}
+
+func (x *ChannelOutputAppended) GetObjectRefJson() string {
+	if x != nil && x.ObjectRefJson != nil {
+		return *x.ObjectRefJson
+	}
+	return ""
+}
+
+type MetadataUpdated struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Operation     string                 `protobuf:"bytes,1,opt,name=operation,proto3" json:"operation,omitempty"`
+	Key           *string                `protobuf:"bytes,2,opt,name=key,proto3,oneof" json:"key,omitempty"`
+	ValueJson     *string                `protobuf:"bytes,3,opt,name=value_json,json=valueJson,proto3,oneof" json:"value_json,omitempty"`
+	PatchJson     *string                `protobuf:"bytes,4,opt,name=patch_json,json=patchJson,proto3,oneof" json:"patch_json,omitempty"`
+	Amount        *float64               `protobuf:"fixed64,5,opt,name=amount,proto3,oneof" json:"amount,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MetadataUpdated) Reset() {
+	*x = MetadataUpdated{}
+	mi := &file_run_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetadataUpdated) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetadataUpdated) ProtoMessage() {}
+
+func (x *MetadataUpdated) ProtoReflect() protoreflect.Message {
+	mi := &file_run_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetadataUpdated.ProtoReflect.Descriptor instead.
+func (*MetadataUpdated) Descriptor() ([]byte, []int) {
+	return file_run_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *MetadataUpdated) GetOperation() string {
+	if x != nil {
+		return x.Operation
+	}
+	return ""
+}
+
+func (x *MetadataUpdated) GetKey() string {
+	if x != nil && x.Key != nil {
+		return *x.Key
+	}
+	return ""
+}
+
+func (x *MetadataUpdated) GetValueJson() string {
+	if x != nil && x.ValueJson != nil {
+		return *x.ValueJson
+	}
+	return ""
+}
+
+func (x *MetadataUpdated) GetPatchJson() string {
+	if x != nil && x.PatchJson != nil {
+		return *x.PatchJson
+	}
+	return ""
+}
+
+func (x *MetadataUpdated) GetAmount() float64 {
+	if x != nil && x.Amount != nil {
+		return *x.Amount
+	}
+	return 0
 }
 
 var File_run_proto protoreflect.FileDescriptor
@@ -1425,7 +1801,7 @@ const file_run_proto_rawDesc = "" +
 	"\n" +
 	"size_bytes\x18\x04 \x01(\x04R\tsizeBytes\x12\x1f\n" +
 	"\ventry_count\x18\x05 \x01(\rR\n" +
-	"entryCount\"\xa0\x04\n" +
+	"entryCount\"\x9a\x04\n" +
 	"\x0eRunTaskRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1f\n" +
 	"\vmodule_path\x18\x02 \x01(\tR\n" +
@@ -1439,11 +1815,11 @@ const file_run_proto_rawDesc = "" +
 	"\n" +
 	"attempt_id\x18\t \x01(\tR\tattemptId\x12%\n" +
 	"\x0eattempt_number\x18\n" +
-	" \x01(\rR\rattemptNumber\x12\x1d\n" +
-	"\n" +
-	"session_id\x18\v \x01(\tR\tsessionId\x12)\n" +
-	"\x10snapshot_version\x18\f \x01(\x04R\x0fsnapshotVersion\x12/\n" +
-	"\x14replayed_from_run_id\x18\r \x01(\tR\x11replayedFromRunId\x12!\n" +
+	" \x01(\rR\rattemptNumber\x12 \n" +
+	"\frun_lease_id\x18\v \x01(\tR\n" +
+	"runLeaseId\x12)\n" +
+	"\x10snapshot_version\x18\f \x01(\x04R\x0fsnapshotVersion\x12&\n" +
+	"\x0ftask_session_id\x18\r \x01(\tR\rtaskSessionId\x12!\n" +
 	"\fretry_reason\x18\x0e \x01(\tR\vretryReason\"d\n" +
 	"\fTraceContext\x12\x19\n" +
 	"\btrace_id\x18\x01 \x01(\tR\atraceId\x12\x17\n" +
@@ -1472,16 +1848,18 @@ const file_run_proto_rawDesc = "" +
 	"\x04mode\x18\x02 \x01(\tH\x00R\x04mode\x88\x01\x01\x12\x19\n" +
 	"\x05owner\x18\x03 \x01(\tH\x01R\x05owner\x88\x01\x01B\a\n" +
 	"\x05_modeB\b\n" +
-	"\x06_owner\"\xb9\x02\n" +
+	"\x06_owner\"\xfa\x04\n" +
 	"\bRunEvent\x12#\n" +
 	"\fstdout_chunk\x18\x01 \x01(\fH\x00R\vstdoutChunk\x12#\n" +
 	"\fstderr_chunk\x18\x02 \x01(\fH\x00R\vstderrChunk\x12\x1d\n" +
 	"\tlog_entry\x18\x03 \x01(\tH\x00R\blogEntry\x12;\n" +
 	"\vtask_result\x18\x04 \x01(\v2\x18.helmr.run.v0.TaskResultH\x00R\n" +
-	"taskResult\x12D\n" +
-	"\x0ewait_requested\x18\x05 \x01(\v2\x1b.helmr.run.v0.WaitRequestedH\x00R\rwaitRequested\x128\n" +
-	"\n" +
-	"emit_event\x18\x06 \x01(\v2\x17.helmr.run.v0.EmitEventH\x00R\temitEventB\a\n" +
+	"taskResult\x12S\n" +
+	"\x13waitpoint_requested\x18\x05 \x01(\v2 .helmr.run.v0.WaitpointRequestedH\x00R\x12waitpointRequested\x12J\n" +
+	"\x10metadata_updated\x18\a \x01(\v2\x1d.helmr.run.v0.MetadataUpdatedH\x00R\x0fmetadataUpdated\x12v\n" +
+	" waitpoint_token_create_requested\x18\b \x01(\v2+.helmr.run.v0.WaitpointTokenCreateRequestedH\x00R\x1dwaitpointTokenCreateRequested\x12]\n" +
+	"\x17channel_output_appended\x18\t \x01(\v2#.helmr.run.v0.ChannelOutputAppendedH\x00R\x15channelOutputAppended\x12G\n" +
+	"\x0fresume_consumed\x18\x06 \x01(\v2\x1c.helmr.run.v0.ResumeConsumedH\x00R\x0eresumeConsumedB\a\n" +
 	"\x05event\"\xd9\x01\n" +
 	"\n" +
 	"TaskResult\x12\x1b\n" +
@@ -1498,39 +1876,83 @@ const file_run_proto_rawDesc = "" +
 	"\x04code\x18\x02 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1c\n" +
 	"\tretryable\x18\x04 \x01(\bR\tretryable\x12!\n" +
-	"\fdetails_json\x18\x05 \x01(\tR\vdetailsJson\"\xf9\x01\n" +
-	"\rWaitRequested\x12%\n" +
+	"\fdetails_json\x18\x05 \x01(\tR\vdetailsJson\"\xae\x02\n" +
+	"\x12WaitpointRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x12\n" +
-	"\x04kind\x18\x02 \x01(\tR\x04kind\x12!\n" +
-	"\frequest_json\x18\x03 \x01(\tR\vrequestJson\x12&\n" +
-	"\fdisplay_text\x18\x04 \x01(\tH\x00R\vdisplayText\x88\x01\x01\x12\x1d\n" +
-	"\atimeout\x18\x05 \x01(\rH\x01R\atimeout\x88\x01\x01\x12\x1b\n" +
-	"\x06policy\x18\x06 \x01(\tH\x02R\x06policy\x88\x01\x01B\x0f\n" +
-	"\r_display_textB\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1f\n" +
+	"\vparams_json\x18\x03 \x01(\tR\n" +
+	"paramsJson\x12(\n" +
+	"\rmetadata_json\x18\x04 \x01(\tH\x00R\fmetadataJson\x88\x01\x01\x12\x1d\n" +
+	"\atimeout\x18\x05 \x01(\rH\x01R\atimeout\x88\x01\x01\x12\x12\n" +
+	"\x04tags\x18\x06 \x03(\tR\x04tags\x12\x18\n" +
+	"\aordinal\x18\a \x01(\rR\aordinal\x12'\n" +
+	"\x0faggregate_count\x18\b \x01(\rR\x0eaggregateCountB\x10\n" +
+	"\x0e_metadata_jsonB\n" +
 	"\n" +
-	"\b_timeoutB\t\n" +
-	"\a_policy\"^\n" +
-	"\x14SuspendForCheckpoint\x12!\n" +
-	"\fwaitpoint_id\x18\x01 \x01(\tR\vwaitpointId\x12#\n" +
-	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\"T\n" +
+	"\b_timeout\"\xec\x01\n" +
+	"\x1dWaitpointTokenCreateRequested\x12\"\n" +
 	"\n" +
-	"PauseReady\x12!\n" +
+	"timeout_at\x18\x01 \x01(\tH\x00R\ttimeoutAt\x88\x01\x01\x121\n" +
+	"\x12timeout_in_seconds\x18\x02 \x01(\rH\x01R\x10timeoutInSeconds\x88\x01\x01\x12\x12\n" +
+	"\x04tags\x18\x04 \x03(\tR\x04tags\x12(\n" +
+	"\rmetadata_json\x18\x05 \x01(\tH\x02R\fmetadataJson\x88\x01\x01B\r\n" +
+	"\v_timeout_atB\x15\n" +
+	"\x13_timeout_in_secondsB\x10\n" +
+	"\x0e_metadata_json\"\x83\x03\n" +
+	"\x1aWaitpointTokenCreateResult\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
+	"\fcallback_url\x18\x02 \x01(\tR\vcallbackUrl\x123\n" +
+	"\x13public_access_token\x18\x03 \x01(\tH\x00R\x11publicAccessToken\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"timeout_at\x18\x04 \x01(\tH\x01R\ttimeoutAt\x88\x01\x01\x12\x1b\n" +
+	"\x06status\x18\x05 \x01(\tH\x02R\x06status\x88\x01\x01\x12\x12\n" +
+	"\x04tags\x18\x06 \x03(\tR\x04tags\x12(\n" +
+	"\rmetadata_json\x18\a \x01(\tH\x03R\fmetadataJson\x88\x01\x01\x12(\n" +
+	"\rerror_message\x18\t \x01(\tH\x04R\ferrorMessage\x88\x01\x01B\x16\n" +
+	"\x14_public_access_tokenB\r\n" +
+	"\v_timeout_atB\t\n" +
+	"\a_statusB\x10\n" +
+	"\x0e_metadata_jsonB\x10\n" +
+	"\x0e_error_message\"`\n" +
+	"\x16CheckpointPauseRequest\x12!\n" +
 	"\fwaitpoint_id\x18\x01 \x01(\tR\vwaitpointId\x12#\n" +
-	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\"u\n" +
+	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\"^\n" +
+	"\x14CheckpointPauseReady\x12!\n" +
+	"\fwaitpoint_id\x18\x01 \x01(\tR\vwaitpointId\x12#\n" +
+	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\"x\n" +
 	"\fResumeAttach\x12#\n" +
 	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12!\n" +
-	"\fwaitpoint_id\x18\x02 \x01(\tR\vwaitpointId\x12\x1d\n" +
-	"\n" +
-	"session_id\x18\x03 \x01(\tR\tsessionId\"w\n" +
+	"\fwaitpoint_id\x18\x02 \x01(\tR\vwaitpointId\x12 \n" +
+	"\frun_lease_id\x18\x03 \x01(\tR\n" +
+	"runLeaseId\"\x96\x01\n" +
 	"\x0eResumeDecision\x12!\n" +
 	"\fwaitpoint_id\x18\x01 \x01(\tR\vwaitpointId\x12\x12\n" +
-	"\x04kind\x18\x02 \x01(\tR\x04kind\x12.\n" +
-	"\x13resume_payload_json\x18\x03 \x01(\tR\x11resumePayloadJson\".\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1b\n" +
+	"\tdata_json\x18\x03 \x01(\tR\bdataJson\x120\n" +
+	"\x14require_consumed_ack\x18\x04 \x01(\bR\x12requireConsumedAck\".\n" +
 	"\tResumeAck\x12!\n" +
-	"\fwaitpoint_id\x18\x01 \x01(\tR\vwaitpointId\"B\n" +
-	"\tEmitEvent\x12\x12\n" +
-	"\x04type\x18\x01 \x01(\tR\x04type\x12!\n" +
-	"\fcontent_json\x18\x02 \x01(\tR\vcontentJsonB:Z8github.com/helmrdotdev/helmr/internal/proto/run/v0;runv0b\x06proto3"
+	"\fwaitpoint_id\x18\x01 \x01(\tR\vwaitpointId\"3\n" +
+	"\x0eResumeConsumed\x12!\n" +
+	"\fwaitpoint_id\x18\x01 \x01(\tR\vwaitpointId\"\xce\x01\n" +
+	"\x15ChannelOutputAppended\x12\x18\n" +
+	"\achannel\x18\x01 \x01(\tR\achannel\x12!\n" +
+	"\fpayload_json\x18\x02 \x01(\tR\vpayloadJson\x12&\n" +
+	"\fcontent_type\x18\x03 \x01(\tH\x00R\vcontentType\x88\x01\x01\x12+\n" +
+	"\x0fobject_ref_json\x18\x04 \x01(\tH\x01R\robjectRefJson\x88\x01\x01B\x0f\n" +
+	"\r_content_typeB\x12\n" +
+	"\x10_object_ref_json\"\xdc\x01\n" +
+	"\x0fMetadataUpdated\x12\x1c\n" +
+	"\toperation\x18\x01 \x01(\tR\toperation\x12\x15\n" +
+	"\x03key\x18\x02 \x01(\tH\x00R\x03key\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"value_json\x18\x03 \x01(\tH\x01R\tvalueJson\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"patch_json\x18\x04 \x01(\tH\x02R\tpatchJson\x88\x01\x01\x12\x1b\n" +
+	"\x06amount\x18\x05 \x01(\x01H\x03R\x06amount\x88\x01\x01B\x06\n" +
+	"\x04_keyB\r\n" +
+	"\v_value_jsonB\r\n" +
+	"\v_patch_jsonB\t\n" +
+	"\a_amountB:Z8github.com/helmrdotdev/helmr/internal/proto/run/v0;runv0b\x06proto3"
 
 var (
 	file_run_proto_rawDescOnce sync.Once
@@ -1544,27 +1966,31 @@ func file_run_proto_rawDescGZIP() []byte {
 	return file_run_proto_rawDescData
 }
 
-var file_run_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_run_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_run_proto_goTypes = []any{
-	(*RunTaskWorkspace)(nil),     // 0: helmr.run.v0.RunTaskWorkspace
-	(*WorkspaceArtifact)(nil),    // 1: helmr.run.v0.WorkspaceArtifact
-	(*RunTaskRequest)(nil),       // 2: helmr.run.v0.RunTaskRequest
-	(*TraceContext)(nil),         // 3: helmr.run.v0.TraceContext
-	(*SecretInject)(nil),         // 4: helmr.run.v0.SecretInject
-	(*Placement)(nil),            // 5: helmr.run.v0.Placement
-	(*EnvPlacement)(nil),         // 6: helmr.run.v0.EnvPlacement
-	(*FilePlacement)(nil),        // 7: helmr.run.v0.FilePlacement
-	(*DirPlacement)(nil),         // 8: helmr.run.v0.DirPlacement
-	(*RunEvent)(nil),             // 9: helmr.run.v0.RunEvent
-	(*TaskResult)(nil),           // 10: helmr.run.v0.TaskResult
-	(*TaskError)(nil),            // 11: helmr.run.v0.TaskError
-	(*WaitRequested)(nil),        // 12: helmr.run.v0.WaitRequested
-	(*SuspendForCheckpoint)(nil), // 13: helmr.run.v0.SuspendForCheckpoint
-	(*PauseReady)(nil),           // 14: helmr.run.v0.PauseReady
-	(*ResumeAttach)(nil),         // 15: helmr.run.v0.ResumeAttach
-	(*ResumeDecision)(nil),       // 16: helmr.run.v0.ResumeDecision
-	(*ResumeAck)(nil),            // 17: helmr.run.v0.ResumeAck
-	(*EmitEvent)(nil),            // 18: helmr.run.v0.EmitEvent
+	(*RunTaskWorkspace)(nil),              // 0: helmr.run.v0.RunTaskWorkspace
+	(*WorkspaceArtifact)(nil),             // 1: helmr.run.v0.WorkspaceArtifact
+	(*RunTaskRequest)(nil),                // 2: helmr.run.v0.RunTaskRequest
+	(*TraceContext)(nil),                  // 3: helmr.run.v0.TraceContext
+	(*SecretInject)(nil),                  // 4: helmr.run.v0.SecretInject
+	(*Placement)(nil),                     // 5: helmr.run.v0.Placement
+	(*EnvPlacement)(nil),                  // 6: helmr.run.v0.EnvPlacement
+	(*FilePlacement)(nil),                 // 7: helmr.run.v0.FilePlacement
+	(*DirPlacement)(nil),                  // 8: helmr.run.v0.DirPlacement
+	(*RunEvent)(nil),                      // 9: helmr.run.v0.RunEvent
+	(*TaskResult)(nil),                    // 10: helmr.run.v0.TaskResult
+	(*TaskError)(nil),                     // 11: helmr.run.v0.TaskError
+	(*WaitpointRequested)(nil),            // 12: helmr.run.v0.WaitpointRequested
+	(*WaitpointTokenCreateRequested)(nil), // 13: helmr.run.v0.WaitpointTokenCreateRequested
+	(*WaitpointTokenCreateResult)(nil),    // 14: helmr.run.v0.WaitpointTokenCreateResult
+	(*CheckpointPauseRequest)(nil),        // 15: helmr.run.v0.CheckpointPauseRequest
+	(*CheckpointPauseReady)(nil),          // 16: helmr.run.v0.CheckpointPauseReady
+	(*ResumeAttach)(nil),                  // 17: helmr.run.v0.ResumeAttach
+	(*ResumeDecision)(nil),                // 18: helmr.run.v0.ResumeDecision
+	(*ResumeAck)(nil),                     // 19: helmr.run.v0.ResumeAck
+	(*ResumeConsumed)(nil),                // 20: helmr.run.v0.ResumeConsumed
+	(*ChannelOutputAppended)(nil),         // 21: helmr.run.v0.ChannelOutputAppended
+	(*MetadataUpdated)(nil),               // 22: helmr.run.v0.MetadataUpdated
 }
 var file_run_proto_depIdxs = []int32{
 	1,  // 0: helmr.run.v0.RunTaskWorkspace.artifact:type_name -> helmr.run.v0.WorkspaceArtifact
@@ -1576,14 +2002,17 @@ var file_run_proto_depIdxs = []int32{
 	7,  // 6: helmr.run.v0.Placement.file:type_name -> helmr.run.v0.FilePlacement
 	8,  // 7: helmr.run.v0.Placement.dir:type_name -> helmr.run.v0.DirPlacement
 	10, // 8: helmr.run.v0.RunEvent.task_result:type_name -> helmr.run.v0.TaskResult
-	12, // 9: helmr.run.v0.RunEvent.wait_requested:type_name -> helmr.run.v0.WaitRequested
-	18, // 10: helmr.run.v0.RunEvent.emit_event:type_name -> helmr.run.v0.EmitEvent
-	11, // 11: helmr.run.v0.TaskResult.error:type_name -> helmr.run.v0.TaskError
-	12, // [12:12] is the sub-list for method output_type
-	12, // [12:12] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	12, // 9: helmr.run.v0.RunEvent.waitpoint_requested:type_name -> helmr.run.v0.WaitpointRequested
+	22, // 10: helmr.run.v0.RunEvent.metadata_updated:type_name -> helmr.run.v0.MetadataUpdated
+	13, // 11: helmr.run.v0.RunEvent.waitpoint_token_create_requested:type_name -> helmr.run.v0.WaitpointTokenCreateRequested
+	21, // 12: helmr.run.v0.RunEvent.channel_output_appended:type_name -> helmr.run.v0.ChannelOutputAppended
+	20, // 13: helmr.run.v0.RunEvent.resume_consumed:type_name -> helmr.run.v0.ResumeConsumed
+	11, // 14: helmr.run.v0.TaskResult.error:type_name -> helmr.run.v0.TaskError
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_run_proto_init() }
@@ -1603,18 +2032,25 @@ func file_run_proto_init() {
 		(*RunEvent_StderrChunk)(nil),
 		(*RunEvent_LogEntry)(nil),
 		(*RunEvent_TaskResult)(nil),
-		(*RunEvent_WaitRequested)(nil),
-		(*RunEvent_EmitEvent)(nil),
+		(*RunEvent_WaitpointRequested)(nil),
+		(*RunEvent_MetadataUpdated)(nil),
+		(*RunEvent_WaitpointTokenCreateRequested)(nil),
+		(*RunEvent_ChannelOutputAppended)(nil),
+		(*RunEvent_ResumeConsumed)(nil),
 	}
 	file_run_proto_msgTypes[10].OneofWrappers = []any{}
 	file_run_proto_msgTypes[12].OneofWrappers = []any{}
+	file_run_proto_msgTypes[13].OneofWrappers = []any{}
+	file_run_proto_msgTypes[14].OneofWrappers = []any{}
+	file_run_proto_msgTypes[21].OneofWrappers = []any{}
+	file_run_proto_msgTypes[22].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_run_proto_rawDesc), len(file_run_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   19,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

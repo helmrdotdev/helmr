@@ -2,6 +2,7 @@ package client
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -14,25 +15,110 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-func (c *Client) CreateRun(ctx context.Context, input api.CreateRunRequest) (api.RunResponse, error) {
-	var response api.RunResponse
-	path, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/runs")
+const (
+	taskStartPendingMaxWait      = 10 * time.Second
+	taskStartPendingDefaultDelay = 250 * time.Millisecond
+)
+
+func (c *Client) StartTask(ctx context.Context, taskID string, input api.TaskStartRequest) (api.TaskStartResponse, error) {
+	taskID = strings.TrimSpace(taskID)
+	if err := api.ValidateTaskID(taskID); err != nil {
+		return api.TaskStartResponse{}, err
+	}
+	path, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/tasks/"+url.PathEscape(taskID)+"/start")
 	if err != nil {
-		return api.RunResponse{}, err
+		return api.TaskStartResponse{}, err
 	}
 	if scoped {
 		input.ProjectID = ""
 		input.EnvironmentID = ""
 	}
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.RunResponse{}, err
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(input); err != nil {
+		return api.TaskStartResponse{}, fmt.Errorf("encode request: %w", err)
 	}
-	return response, nil
+	bodyBytes := body.Bytes()
+	startedAt := time.Now()
+	for {
+		req, err := c.newRequestWithBearer(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes), c.bearer)
+		if err != nil {
+			return api.TaskStartResponse{}, err
+		}
+		req.Header.Set("content-type", "application/json")
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return api.TaskStartResponse{}, err
+		}
+		if resp.StatusCode == http.StatusAccepted {
+			body, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if readErr != nil {
+				return api.TaskStartResponse{}, fmt.Errorf("read task start pending response: %w", readErr)
+			}
+			if !taskStartPendingResponse(body) {
+				return api.TaskStartResponse{}, decodeErrorBody(resp.StatusCode, resp.Status, body)
+			}
+			delay := taskStartPendingRetryDelay(resp.Header.Get("Retry-After"))
+			if time.Since(startedAt)+delay > taskStartPendingMaxWait {
+				return api.TaskStartResponse{}, decodeErrorBody(resp.StatusCode, resp.Status, body)
+			}
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return api.TaskStartResponse{}, ctx.Err()
+			case <-timer.C:
+			}
+			continue
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return api.TaskStartResponse{}, decodeError(resp)
+		}
+		var response api.TaskStartResponse
+		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			return api.TaskStartResponse{}, fmt.Errorf("decode response: %w", err)
+		}
+		return response, nil
+	}
+}
+
+func taskStartPendingResponse(body []byte) bool {
+	var payload struct {
+		Code string `json:"code"`
+	}
+	return json.Unmarshal(body, &payload) == nil && payload.Code == "idempotency_pending"
+}
+
+func taskStartPendingRetryDelay(raw string) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return taskStartPendingDefaultDelay
+	}
+	if seconds, err := strconv.ParseFloat(raw, 64); err == nil && seconds > 0 {
+		delay := time.Duration(seconds * float64(time.Second))
+		if delay > taskStartPendingMaxWait {
+			return taskStartPendingMaxWait
+		}
+		return delay
+	}
+	if retryAt, err := http.ParseTime(raw); err == nil {
+		delay := time.Until(retryAt)
+		if delay <= 0 {
+			return taskStartPendingDefaultDelay
+		}
+		if delay > taskStartPendingMaxWait {
+			return taskStartPendingMaxWait
+		}
+		return delay
+	}
+	return taskStartPendingDefaultDelay
 }
 
 func (c *Client) ListProjects(ctx context.Context) (api.ListProjectsResponse, error) {
@@ -302,6 +388,12 @@ type SecretOptions struct {
 	EnvironmentID string
 }
 
+type WaitpointTokenOptions struct {
+	ProjectID     string
+	EnvironmentID string
+	Status        string
+}
+
 type SetSecretOptions = SecretOptions
 
 func (c *Client) ListSecrets(ctx context.Context, opts ...SecretOptions) (api.ListSecretsResponse, error) {
@@ -369,6 +461,68 @@ func (c *Client) DeleteSecret(ctx context.Context, name string, opts ...SecretOp
 	return c.doJSON(req, nil)
 }
 
+func (c *Client) CreateWaitpointToken(ctx context.Context, request api.CreateWaitpointTokenRequest, opts ...WaitpointTokenOptions) (api.WaitpointTokenResponse, error) {
+	path, err := c.waitpointTokenCollectionPath(opts...)
+	if err != nil {
+		return api.WaitpointTokenResponse{}, err
+	}
+	var response api.WaitpointTokenResponse
+	if err := c.postJSON(ctx, path, request, &response); err != nil {
+		return api.WaitpointTokenResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ListWaitpointTokens(ctx context.Context, opts ...WaitpointTokenOptions) (api.ListWaitpointTokensResponse, error) {
+	path, err := c.waitpointTokenCollectionPath(opts...)
+	if err != nil {
+		return api.ListWaitpointTokensResponse{}, err
+	}
+	if len(opts) > 0 && strings.TrimSpace(opts[0].Status) != "" {
+		values := url.Values{}
+		values.Set("status", strings.TrimSpace(opts[0].Status))
+		path += "?" + values.Encode()
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return api.ListWaitpointTokensResponse{}, err
+	}
+	var response api.ListWaitpointTokensResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.ListWaitpointTokensResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) GetWaitpointToken(ctx context.Context, tokenID string, opts ...WaitpointTokenOptions) (api.WaitpointTokenResponse, error) {
+	path, err := c.waitpointTokenCollectionPath(opts...)
+	if err != nil {
+		return api.WaitpointTokenResponse{}, err
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path+"/"+url.PathEscape(tokenID), nil)
+	if err != nil {
+		return api.WaitpointTokenResponse{}, err
+	}
+	var response api.WaitpointTokenResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.WaitpointTokenResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CompleteWaitpointToken(ctx context.Context, tokenID string, request api.CompleteWaitpointTokenRequest) error {
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(request); err != nil {
+		return fmt.Errorf("encode request: %w", err)
+	}
+	req, err := c.newRequest(ctx, http.MethodPost, "/api/waitpoints/tokens/"+url.PathEscape(tokenID)+"/complete", &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("content-type", "application/json")
+	return c.doJSON(req, nil)
+}
+
 func (c *Client) secretCollectionPath(opts ...SecretOptions) (string, error) {
 	hasScope := len(opts) > 0 && (strings.TrimSpace(opts[0].ProjectID) != "" || strings.TrimSpace(opts[0].EnvironmentID) != "")
 	if hasScope && c.sessionScopedRoutes {
@@ -381,6 +535,22 @@ func (c *Client) secretCollectionPath(opts ...SecretOptions) (string, error) {
 		return c.secretCollectionPathWithScope(SecretOptions{})
 	}
 	return "/api/secrets", nil
+}
+
+func (c *Client) waitpointTokenCollectionPath(opts ...WaitpointTokenOptions) (string, error) {
+	hasScope := len(opts) > 0 && (strings.TrimSpace(opts[0].ProjectID) != "" || strings.TrimSpace(opts[0].EnvironmentID) != "")
+	if hasScope && c.sessionScopedRoutes {
+		path, _, err := c.environmentScopedPath(opts[0].ProjectID, opts[0].EnvironmentID, "/waitpoints/tokens")
+		return path, err
+	}
+	if hasScope {
+		return "", errors.New("project and environment scope is only accepted on session-scoped API routes")
+	}
+	if c.sessionScopedRoutes {
+		path, _, err := c.environmentScopedPath("", "", "/waitpoints/tokens")
+		return path, err
+	}
+	return "/api/waitpoints/tokens", nil
 }
 
 func (c *Client) secretCollectionPathWithScope(opts SecretOptions) (string, error) {
@@ -441,18 +611,6 @@ func (c *Client) CancelRun(ctx context.Context, id string, input api.CancelRunRe
 	}
 	if err := c.postJSON(ctx, path, input, &response); err != nil {
 		return api.CancelRunResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) ReplayRun(ctx context.Context, id string, input api.ReplayRunRequest, opts ...RunScopeOptions) (api.ReplayRunResponse, error) {
-	var response api.ReplayRunResponse
-	path, err := c.runItemPath(id, "/replay", opts...)
-	if err != nil {
-		return api.ReplayRunResponse{}, err
-	}
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.ReplayRunResponse{}, err
 	}
 	return response, nil
 }
@@ -647,95 +805,4 @@ func (c *Client) FollowRunEvents(ctx context.Context, id string, cursor int64, h
 		}
 	}
 	return scanner.Err()
-}
-
-func (c *Client) RespondWaitpoint(ctx context.Context, waitpointID string, request api.RespondWaitpointRequest, scope RunScopeOptions) error {
-	basePath, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/waitpoints")
-	if err != nil {
-		return err
-	}
-	return c.postJSON(ctx, environmentScopedResourcePath(basePath, waitpointID, "/respond"), request, nil)
-}
-
-func (c *Client) ListWaitpointPolicies(ctx context.Context, scope RunScopeOptions) (api.ListWaitpointPoliciesResponse, error) {
-	path, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/waitpoint-policies")
-	if err != nil {
-		return api.ListWaitpointPoliciesResponse{}, err
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return api.ListWaitpointPoliciesResponse{}, err
-	}
-	var response api.ListWaitpointPoliciesResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.ListWaitpointPoliciesResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) GetWaitpointPolicy(ctx context.Context, name string, scope RunScopeOptions) (api.WaitpointPolicyResponse, error) {
-	basePath, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/waitpoint-policies")
-	if err != nil {
-		return api.WaitpointPolicyResponse{}, err
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, environmentScopedResourcePath(basePath, name, ""), nil)
-	if err != nil {
-		return api.WaitpointPolicyResponse{}, err
-	}
-	var response api.WaitpointPolicyResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.WaitpointPolicyResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) CreateWaitpointPolicy(ctx context.Context, request api.CreateWaitpointPolicyRequest, scope RunScopeOptions) (api.WaitpointPolicyResponse, error) {
-	var response api.WaitpointPolicyResponse
-	path, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/waitpoint-policies")
-	if err != nil {
-		return api.WaitpointPolicyResponse{}, err
-	}
-	if err := c.postJSON(ctx, path, request, &response); err != nil {
-		return api.WaitpointPolicyResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) UpdateWaitpointPolicy(ctx context.Context, name string, request api.UpdateWaitpointPolicyRequest, scope RunScopeOptions) (api.WaitpointPolicyResponse, error) {
-	var response api.WaitpointPolicyResponse
-	basePath, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/waitpoint-policies")
-	if err != nil {
-		return api.WaitpointPolicyResponse{}, err
-	}
-	if err := c.patchJSON(ctx, environmentScopedResourcePath(basePath, name, ""), request, &response); err != nil {
-		return api.WaitpointPolicyResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) ApplyWaitpointPolicy(ctx context.Context, name string, request api.UpdateWaitpointPolicyRequest, scope RunScopeOptions) (api.WaitpointPolicyResponse, error) {
-	policy, err := c.UpdateWaitpointPolicy(ctx, name, request, scope)
-	if err == nil {
-		return policy, nil
-	}
-	if !IsStatus(err, http.StatusNotFound) {
-		return api.WaitpointPolicyResponse{}, err
-	}
-	return c.CreateWaitpointPolicy(ctx, api.CreateWaitpointPolicyRequest{
-		Name:   name,
-		Label:  request.Label,
-		Config: request.Config,
-	}, scope)
-}
-
-func (c *Client) DeleteWaitpointPolicy(ctx context.Context, name string, scope RunScopeOptions) error {
-	basePath, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/waitpoint-policies")
-	if err != nil {
-		return err
-	}
-	req, err := c.newRequest(ctx, http.MethodDelete, environmentScopedResourcePath(basePath, name, ""), nil)
-	if err != nil {
-		return err
-	}
-	return c.doJSON(req, nil)
 }

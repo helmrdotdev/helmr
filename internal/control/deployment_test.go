@@ -720,7 +720,7 @@ func (f *fakeStore) ListDeclarativeScheduleSummariesForEnvironment(context.Conte
 }
 
 func (f *fakeStore) ScheduleInstanceTriggerIsCurrent(context.Context, db.ScheduleInstanceTriggerIsCurrentParams) (bool, error) {
-	return true, nil
+	return !f.scheduleTriggerNotCurrent, nil
 }
 
 func (f *fakeStore) GetEnvironment(_ context.Context, arg db.GetEnvironmentParams) (db.Environment, error) {
@@ -859,6 +859,33 @@ func (f *fakeStore) CreateArtifact(_ context.Context, arg db.CreateArtifactParam
 	}
 	f.artifacts = append(f.artifacts, artifact)
 	return artifact, nil
+}
+
+func (f *fakeStore) UpsertCasObject(_ context.Context, arg db.UpsertCasObjectParams) (db.CasObject, error) {
+	f.casObjects = append(f.casObjects, arg)
+	return db.CasObject{
+		Digest:    arg.Digest,
+		SizeBytes: arg.SizeBytes,
+		MediaType: arg.MediaType,
+		CreatedAt: testTime(),
+	}, nil
+}
+
+func (f *fakeStore) GetCasObject(_ context.Context, digest string) (db.CasObject, error) {
+	if f.getCasObjectErr != nil {
+		return db.CasObject{}, f.getCasObjectErr
+	}
+	for _, object := range f.casObjects {
+		if object.Digest == digest {
+			return db.CasObject{
+				Digest:    object.Digest,
+				SizeBytes: object.SizeBytes,
+				MediaType: object.MediaType,
+				CreatedAt: testTime(),
+			}, nil
+		}
+	}
+	return db.CasObject{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) GetArtifact(_ context.Context, arg db.GetArtifactParams) (db.Artifact, error) {
