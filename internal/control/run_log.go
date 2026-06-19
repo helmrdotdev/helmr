@@ -174,7 +174,7 @@ func runLogChunkResponse(chunk db.RunLogChunk) api.RunLogChunk {
 	return api.RunLogChunk{
 		ID:            strconv.FormatInt(chunk.Seq, 10),
 		RunID:         pgvalue.MustUUIDValue(chunk.RunID).String(),
-		SessionID:     pgvalue.MustUUIDValue(chunk.SessionID).String(),
+		RunLeaseID:    pgvalue.MustUUIDValue(chunk.RunLeaseID).String(),
 		AttemptNumber: chunk.AttemptNumber,
 		Stream:        string(chunk.Stream),
 		ContentBase64: base64.StdEncoding.EncodeToString(chunk.Content),

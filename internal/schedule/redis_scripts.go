@@ -155,3 +155,23 @@ if lease_matches_message then
 end
 return 1
 `
+
+const scheduleDeleteScript = `
+local ready = KEYS[1]
+local active = KEYS[2]
+local prefix = ARGV[1]
+local message_id = ARGV[2]
+
+local message_key = prefix .. ":message:" .. message_id
+local active_message_key = prefix .. ":message_active:" .. message_id
+local lease_id = redis.call("GET", active_message_key)
+
+redis.call("ZREM", ready, message_id)
+redis.call("DEL", message_key)
+redis.call("DEL", active_message_key)
+if lease_id then
+  redis.call("ZREM", active, lease_id)
+  redis.call("DEL", prefix .. ":lease:" .. lease_id)
+end
+return 1
+`

@@ -23,6 +23,10 @@ func adapterTaskContextJSON(request *runv0.RunTaskRequest) (string, error) {
 	if strings.TrimSpace(workspace.ProjectPath) == "" {
 		return "", errors.New("task context workspace.project_path is required")
 	}
+	taskSessionID := strings.TrimSpace(request.TaskSessionId)
+	if taskSessionID == "" {
+		return "", errors.New("task context session.id is required")
+	}
 	run := map[string]any{
 		"id": request.RunId,
 	}
@@ -32,21 +36,23 @@ func adapterTaskContextJSON(request *runv0.RunTaskRequest) (string, error) {
 	if request.AttemptNumber > 0 {
 		run["attemptNumber"] = request.AttemptNumber
 	}
-	if request.SessionId != "" {
-		run["sessionId"] = request.SessionId
+	if request.RunLeaseId != "" {
+		run["runLeaseId"] = request.RunLeaseId
 	}
 	if request.SnapshotVersion > 0 {
 		run["snapshotVersion"] = request.SnapshotVersion
 	}
-	if request.ReplayedFromRunId != "" {
-		run["replayedFromRunId"] = request.ReplayedFromRunId
+	workspaceContext := map[string]string{
+		"path":        workspace.Path,
+		"projectPath": workspace.ProjectPath,
 	}
 	payload := map[string]any{
-		"run":  run,
-		"task": map[string]string{"id": request.TaskId},
-		"workspace": map[string]string{
-			"path":        workspace.Path,
-			"projectPath": workspace.ProjectPath,
+		"run":       run,
+		"task":      map[string]string{"id": request.TaskId},
+		"workspace": workspaceContext,
+		"session": map[string]any{
+			"id":        taskSessionID,
+			"workspace": workspaceContext,
 		},
 	}
 	encoded, err := json.Marshal(payload)

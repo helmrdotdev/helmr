@@ -22,7 +22,7 @@ import (
 )
 
 func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) {
-	stream := newCheckpointStream(t, nil, &runv0.PauseReady{
+	stream := newCheckpointStream(t, nil, &runv0.CheckpointPauseReady{
 		WaitpointId:  "waitpoint-1",
 		CheckpointId: "checkpoint-1",
 	})
@@ -98,7 +98,7 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 func TestRuntimeCheckpointerProcessesRunEventsBeforePauseReady(t *testing.T) {
 	stream := newInterleavedCheckpointStream(t,
 		[]proto.Message{&runv0.RunEvent{Event: &runv0.RunEvent_LogEntry{LogEntry: "flushed before checkpoint"}}},
-		&runv0.PauseReady{
+		&runv0.CheckpointPauseReady{
 			WaitpointId:  "waitpoint-1",
 			CheckpointId: "checkpoint-1",
 		},
@@ -136,7 +136,7 @@ func TestRuntimeCheckpointerProcessesRunEventsBeforePauseReady(t *testing.T) {
 }
 
 func TestRuntimeCheckpointerRejectsPauseReadyMismatch(t *testing.T) {
-	stream := newCheckpointStream(t, nil, &runv0.PauseReady{
+	stream := newCheckpointStream(t, nil, &runv0.CheckpointPauseReady{
 		WaitpointId:  "other-waitpoint",
 		CheckpointId: "checkpoint-1",
 	})
@@ -248,7 +248,7 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stream := newCheckpointStream(t, tt.closeErr, &runv0.PauseReady{
+			stream := newCheckpointStream(t, tt.closeErr, &runv0.CheckpointPauseReady{
 				WaitpointId:  "waitpoint-1",
 				CheckpointId: "checkpoint-1",
 			})
@@ -307,7 +307,7 @@ func newCheckpointStream(t *testing.T, closeErr error, messages ...proto.Message
 	t.Helper()
 	var read bytes.Buffer
 	for _, message := range messages {
-		if ready, ok := message.(*runv0.PauseReady); ok {
+		if ready, ok := message.(*runv0.CheckpointPauseReady); ok {
 			writeCheckpointPauseReadyFrame(t, &read, ready.WaitpointId, ready.CheckpointId)
 			continue
 		}
@@ -335,7 +335,7 @@ func newInterleavedCheckpointStream(t *testing.T, beforeSnapshot []proto.Message
 		}
 	}
 	for _, message := range messages {
-		if ready, ok := message.(*runv0.PauseReady); ok {
+		if ready, ok := message.(*runv0.CheckpointPauseReady); ok {
 			writeCheckpointPauseReadyFrame(t, &read, ready.WaitpointId, ready.CheckpointId)
 			continue
 		}
@@ -546,7 +546,7 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 
 func assertSuspendFrame(t *testing.T, body []byte, waitpointID string, checkpointID string) {
 	t.Helper()
-	var suspend runv0.SuspendForCheckpoint
+	var suspend runv0.CheckpointPauseRequest
 	if err := transport.ReadProtoFrame(bytes.NewReader(body), &suspend); err != nil {
 		t.Fatal(err)
 	}

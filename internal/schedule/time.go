@@ -20,6 +20,7 @@ import (
 const TriggerIdempotencyKeyTTL = "30d"
 
 var ErrTriggerSuperseded = errors.New("schedule trigger was superseded")
+var ErrTriggerDeferred = errors.New("schedule trigger should retry without consuming attempts")
 
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
@@ -78,6 +79,11 @@ func RunRequestFromTriggerCandidateAt(row db.GetScheduleTriggerCandidateRow, now
 func runRequestFromScheduleSnapshot(projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, payload []byte, runOptions []byte) (api.CreateRunRequest, error) {
 	var options api.CreateRunOptions
 	if len(runOptions) > 0 {
+		if legacy, err := runOptionsContainDeploymentSelection(runOptions); err != nil {
+			return api.CreateRunRequest{}, err
+		} else if legacy {
+			return api.CreateRunRequest{}, errors.New("schedule run_options must not contain deployment_id or version")
+		}
 		if err := json.Unmarshal(runOptions, &options); err != nil {
 			return api.CreateRunRequest{}, err
 		}
@@ -91,7 +97,17 @@ func runRequestFromScheduleSnapshot(projectID pgtype.UUID, environmentID pgtype.
 	}, nil
 }
 
-func scheduledTaskPayload(row db.GetScheduleTriggerCandidateRow, now time.Time) ([]byte, error) {
+func runOptionsContainDeploymentSelection(runOptions []byte) (bool, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(runOptions, &raw); err != nil {
+		return false, err
+	}
+	_, hasDeploymentID := raw["deployment_id"]
+	_, hasVersion := raw["version"]
+	return hasDeploymentID || hasVersion, nil
+}
+
+func scheduledTaskPayload(row db.GetScheduleTriggerCandidateRow, _ time.Time) ([]byte, error) {
 	if !row.ScheduleID.Valid {
 		return nil, errors.New("schedule id is required")
 	}
@@ -111,9 +127,6 @@ func scheduledTaskPayload(row db.GetScheduleTriggerCandidateRow, now time.Time) 
 		payload["externalId"] = row.ExternalID.String
 	}
 	upcomingAnchor := row.NextFireAt.Time.UTC()
-	if upcomingAnchor.Before(now.UTC()) {
-		upcomingAnchor = now.UTC()
-	}
 	upcoming, err := upcomingCronTimes(row.Cron, row.Timezone, upcomingAnchor, 5)
 	if err != nil {
 		return nil, err

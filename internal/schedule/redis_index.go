@@ -113,6 +113,20 @@ func (i *RedisIndex) Enqueue(ctx context.Context, entry IndexEntry) error {
 	return nil
 }
 
+func (i *RedisIndex) Delete(ctx context.Context, instanceID uuid.UUID) error {
+	if instanceID == uuid.Nil {
+		return errors.New("schedule instance id is required")
+	}
+	messageID := indexMessageID(IndexEntry{InstanceID: instanceID})
+	if err := i.client.Eval(ctx, scheduleDeleteScript, []string{i.readyKey(), i.activeKey()},
+		i.prefix,
+		messageID,
+	).Err(); err != nil {
+		return fmt.Errorf("delete schedule index entry: %w", err)
+	}
+	return nil
+}
+
 func (i *RedisIndex) Dequeue(ctx context.Context, request DequeueRequest) ([]IndexLease, error) {
 	if request.WorkerID == uuid.Nil {
 		return nil, errors.New("worker id is required")

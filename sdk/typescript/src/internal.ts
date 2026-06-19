@@ -12,9 +12,19 @@ import {
   validateTaskId,
 } from "./schema/task"
 import type { IdempotencyKeyInput } from "./idempotency"
-import type { RunHandle } from "./runtime/run"
+import type { TaskStartResult } from "./runtime/client"
 
 export { parsePayloadWithSchema } from "./schema/payload"
+
+const CHANNEL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/
+
+export function validateChannelName(value: string, label = "channel name"): string {
+  const normalized = value.trim()
+  if (!CHANNEL_NAME_PATTERN.test(normalized)) {
+    throw new Error(`${label} must match ${CHANNEL_NAME_PATTERN}`)
+  }
+  return normalized
+}
 
 export interface CacheMount {
   readonly id: string
@@ -63,31 +73,41 @@ export type WaitJson =
   | readonly WaitJson[]
   | { readonly [key: string]: WaitJson }
 
-export interface WaitOptions {
-  readonly timeout?: number
-  readonly policy?: string
-  readonly displayText?: string
+export interface WaitpointOptions {
+  readonly params?: WaitJson
+  readonly metadata?: { readonly [key: string]: WaitJson }
+  readonly tags?: string | readonly string[]
+  readonly timeout?: WaitDurationInput
 }
 
-export interface WaitHumanOptions<TSchema extends PayloadSchema<any, any> = PayloadSchema<any, any>> extends WaitOptions {
-  readonly schema?: TSchema
+export interface WaitpointSchemaOptions<TSchema extends PayloadSchema<any, any> = PayloadSchema<any, any>> extends WaitpointOptions {
+  readonly schema: TSchema
 }
 
-export interface WaitResolution<TPayload = unknown> {
-  readonly kind: string
-  readonly payload: TPayload
-  readonly at: Date
-  readonly principal?: string
+export interface WaitpointResult<TPayload = unknown> {
+  readonly ok: boolean
+  readonly data?: TPayload
+  readonly error?: unknown
+  unwrap(): TPayload
 }
 
-export type WaitForInput =
+export interface WaitpointHandle<TPayload = unknown> extends PromiseLike<WaitpointResult<TPayload>> {
+  unwrap(): Promise<TPayload>
+}
+
+export interface WaitDelayHandle extends PromiseLike<void> {
+  unwrap(): Promise<void>
+}
+
+export type WaitDurationInput =
   | string
   | number
   | {
-      readonly seconds?: number
       readonly milliseconds?: number
+      readonly seconds?: number
+      readonly minutes?: number
+      readonly hours?: number
       readonly duration?: string
-      readonly [key: string]: WaitJson | undefined
     }
 
 export type WaitUntilInput =
@@ -95,17 +115,156 @@ export type WaitUntilInput =
   | Date
   | {
       readonly date?: string | Date
-      readonly [key: string]: WaitJson | Date | undefined
     }
 
-export interface WaitCapabilities {
-  for(input: WaitForInput, opts?: Omit<WaitOptions, "timeout" | "policy">): Promise<void>
-  until(input: WaitUntilInput, opts?: Omit<WaitOptions, "timeout" | "policy">): Promise<void>
-  human<TSchema extends PayloadSchema<any, any>>(opts: WaitHumanOptions<TSchema>): Promise<PayloadSchemaOutput<TSchema>>
-  human<TPayload = unknown>(opts?: WaitHumanOptions): Promise<TPayload>
+export interface ChannelOutputAppendOptions {
+  readonly contentType?: string
+  readonly objectRef?: WaitJson
+}
+
+export interface WaitpointToken {
+  readonly id: string
+  readonly status?: "waiting" | "completed" | "timed_out" | "cancelled"
+  readonly callbackUrl: string
+  readonly publicAccessToken?: string
+  readonly timeoutAt: string | null
+  readonly tags?: readonly string[]
+  readonly metadata?: Record<string, unknown>
+}
+
+export interface WaitpointTokenRef {
+  readonly id: string
+}
+
+export interface ChannelOutputDefinition<TPayload = unknown, TInput = TPayload> {
+  readonly id: string
+  readonly schema: PayloadSchema<TInput, TPayload>
+}
+
+export interface ChannelInputDefinition<TPayload = unknown, TInput = TPayload> {
+  readonly id: string
+  readonly schema: PayloadSchema<TInput, TPayload>
+}
+
+export interface ChannelInputWaitOptions extends Omit<WaitpointOptions, "params"> {
+  readonly correlationId?: string
+}
+
+export interface ChannelInputHandle<TPayload = unknown> {
+  readonly id: string
+  wait(opts?: ChannelInputWaitOptions): WaitpointHandle<TPayload>
+}
+
+export interface ChannelOutputHandle<TInput = unknown> {
+  readonly id: string
+  append(payload: TInput, opts?: ChannelOutputAppendOptions): Promise<void>
+  pipe(source: AsyncIterable<TInput> | Iterable<TInput>, opts?: ChannelOutputAppendOptions): Promise<void>
+}
+
+export interface RunRuntime {
+  createWaitpointToken(opts: RuntimeWaitpointTokenCreateOptions): Promise<WaitpointToken>
+  waitpoint<TPayload>(opts: RuntimeWaitpointOptions): Promise<WaitpointResult<TPayload>>
+  waitAll(operands: readonly RuntimeWaitOperand[]): Promise<readonly unknown[]>
+  channelOutputAppend(channel: string, payload: unknown, opts?: ChannelOutputAppendOptions): Promise<void>
+  waitFor(input: WaitDurationInput): Promise<void>
+  waitUntil(input: WaitUntilInput): Promise<void>
+  metadataSet(key: string, value: unknown): Promise<void>
+  metadataPatch(value: Record<string, unknown>): Promise<void>
+  metadataIncrement(key: string, amount?: number): Promise<void>
+  log(level: "info" | "warn" | "error", values: readonly unknown[]): void
+}
+
+export interface RuntimeWaitpointTokenCreateOptions {
+  readonly timeoutAt?: string
+  readonly timeoutInSeconds?: number
+  readonly tags?: readonly string[]
+  readonly metadata?: Record<string, unknown>
+}
+
+export type RuntimeWaitpointOptions = WaitpointOptions & {
+  readonly kind?: "token" | "channel"
+  readonly schema?: PayloadSchema<any, any>
+}
+
+export type RuntimeWaitOperand =
+  | { readonly type: "for"; readonly input: WaitDurationInput }
+  | { readonly type: "until"; readonly input: WaitUntilInput }
+  | { readonly type: "waitpoint"; readonly options: RuntimeWaitpointOptions }
+  | {
+      readonly type: "channel"
+      readonly channel: string
+      readonly schema?: PayloadSchema<any, any>
+      readonly options?: ChannelInputWaitOptions
+    }
+
+export const runtimeWaitOperand = Symbol.for("helmr.sdk.runtimeWaitOperand")
+
+export type RuntimeWaitOperandCarrier = {
+  readonly [runtimeWaitOperand]?: RuntimeWaitOperand
+}
+
+export function getRuntimeWaitOperand(value: unknown): RuntimeWaitOperand | undefined {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) {
+    return undefined
+  }
+  return (value as RuntimeWaitOperandCarrier)[runtimeWaitOperand]
+}
+
+const runRuntimeSlot = Symbol.for("helmr.sdk.runRuntime")
+
+type RuntimeGlobal = typeof globalThis & {
+  [runRuntimeSlot]?: RunRuntime
+}
+
+export function enterRunRuntime(runtime: RunRuntime): () => void {
+  const global = globalThis as RuntimeGlobal
+  if (global[runRuntimeSlot] !== undefined) {
+    throw new Error("Helmr run runtime is already active")
+  }
+  global[runRuntimeSlot] = runtime
+  return () => {
+    if (global[runRuntimeSlot] === runtime) {
+      delete global[runRuntimeSlot]
+    }
+  }
+}
+
+export function getRunRuntime(): RunRuntime {
+  const runtime = (globalThis as RuntimeGlobal)[runRuntimeSlot]
+  if (runtime === undefined) {
+    throw new Error("Helmr run APIs can only be used while a task is running")
+  }
+  return runtime
+}
+
+export class WaitpointResultImpl<TPayload> implements WaitpointResult<TPayload> {
+  readonly ok: boolean
+  readonly data?: TPayload
+  readonly error?: unknown
+
+  constructor(ok: boolean, data?: TPayload, error?: unknown) {
+    this.ok = ok
+    if (data !== undefined) {
+      this.data = data
+    }
+    if (error !== undefined) {
+      this.error = error
+    }
+  }
+
+  unwrap(): TPayload {
+    if (this.ok) {
+      return this.data as TPayload
+    }
+    if (this.error instanceof Error) {
+      throw this.error
+    }
+    throw new Error(String(this.error ?? "waitpoint failed"))
+  }
 }
 
 const concurrentWaitErrorBrand = Symbol.for("helmr.sdk.ConcurrentWaitError")
+const waitTimeoutErrorBrand = Symbol.for("helmr.sdk.WaitTimeoutError")
 
 export class ConcurrentWaitError extends Error {
   constructor(message: string) {
@@ -120,6 +279,26 @@ export class ConcurrentWaitError extends Error {
       typeof value === "object" &&
       value !== null &&
       concurrentWaitErrorBrand in value
+    )
+  }
+}
+
+export class WaitTimeoutError extends Error {
+  readonly timeout: number | undefined
+
+  constructor(message: string, timeout?: number) {
+    super(message)
+    this.name = "WaitTimeoutError"
+    this.timeout = timeout
+    Object.defineProperty(this, waitTimeoutErrorBrand, { value: true })
+  }
+
+  static override [Symbol.hasInstance](value: unknown): boolean {
+    return (
+      this === WaitTimeoutError &&
+      typeof value === "object" &&
+      value !== null &&
+      waitTimeoutErrorBrand in value
     )
   }
 }
@@ -213,36 +392,30 @@ function normalizeWorkspaceMountPath(raw: string): string {
 }
 
 export interface TaskContext {
-  readonly wait: WaitCapabilities
-  emit(event: EmitEvent): void
-  readonly log: {
-    info(...args: unknown[]): void
-    warn(...args: unknown[]): void
-    error(...args: unknown[]): void
-  }
   readonly signal: AbortSignal
   readonly run: {
     readonly id: string
     readonly attemptId?: string
     readonly attemptNumber?: number
-    readonly sessionId?: string
+    readonly runLeaseId?: string
     readonly snapshotVersion?: number
-    readonly replayedFromRunId?: string
   }
   readonly task: { readonly id: string }
   readonly workspace: TaskWorkspace
+  readonly session: TaskSessionContext
 }
 
-export type EmitContent =
-  | { readonly type: "text"; readonly text: string }
-  | { readonly type: "image"; readonly data: string; readonly mimeType?: string }
-  | { readonly type: "tool_use"; readonly name: string; readonly input?: unknown }
-  | { readonly type: "tool_result"; readonly name?: string; readonly result?: unknown }
-  | { readonly type: string; readonly [key: string]: unknown }
-
-export interface EmitEvent {
-  readonly type: string
-  readonly content: readonly EmitContent[]
+export interface TaskSessionContext {
+  readonly id: string
+  readonly workspace: TaskWorkspace
+  input<TSchema extends PayloadSchema<any, any>>(
+    definition: ChannelInputDefinition<PayloadSchemaOutput<TSchema>, PayloadSchemaInput<TSchema>> & { readonly schema: TSchema },
+  ): ChannelInputHandle<PayloadSchemaOutput<TSchema>>
+  input(channel: string): ChannelInputHandle<unknown>
+  output<TSchema extends PayloadSchema<any, any>>(
+    definition: ChannelOutputDefinition<PayloadSchemaOutput<TSchema>, PayloadSchemaInput<TSchema>> & { readonly schema: TSchema },
+  ): ChannelOutputHandle<PayloadSchemaInput<TSchema>>
+  output(channel: string): ChannelOutputHandle<unknown>
 }
 
 export type MaybePromise<T> = T | Promise<T>
@@ -276,8 +449,8 @@ export interface InternalTaskScheduleConfig {
 }
 
 export type TaskRunOptions<TSecrets extends SecretDecls> = {
-  readonly deploymentId?: string
-  readonly version?: string
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly queue?: string
   readonly concurrencyKey?: string
   readonly priority?: number
@@ -285,8 +458,11 @@ export type TaskRunOptions<TSecrets extends SecretDecls> = {
   readonly retry?: RetryPolicy
   readonly metadata?: Record<string, unknown>
   readonly tags?: readonly string[]
+  readonly externalId?: string
+  readonly expiresAt?: string | Date
   readonly idempotencyKey?: IdempotencyKeyInput
   readonly idempotencyKeyTTL?: string
+  readonly signal?: AbortSignal
 }
 
 export type RetryPolicy =
@@ -301,13 +477,13 @@ export type RetryPolicy =
       }
     }
 
-export type TaskDirectTrigger<
+export type TaskDirectStart<
   TPayloadInput,
   TOutput,
   TSecrets extends SecretDecls,
 > = [TPayloadInput] extends [NoPayload]
-  ? (opts: TaskRunOptions<TSecrets>) => Promise<RunHandle<Awaited<TOutput>>>
-  : (payload: TPayloadInput, opts: TaskRunOptions<TSecrets>) => Promise<RunHandle<Awaited<TOutput>>>
+  ? (opts: TaskRunOptions<TSecrets>) => Promise<TaskStartResult<Awaited<TOutput>>>
+  : (payload: TPayloadInput, opts: TaskRunOptions<TSecrets>) => Promise<TaskStartResult<Awaited<TOutput>>>
 
 export type TaskConfigWithPayload<
   TPayloadSchema extends PayloadSchema<any, any>,
@@ -352,7 +528,7 @@ export type Task<
   readonly run: [TPayloadInput] extends [NoPayload]
     ? (ctx: TaskContext) => MaybePromise<TOutput>
     : (payload: TPayload, ctx: TaskContext) => MaybePromise<TOutput>
-  readonly trigger: TaskDirectTrigger<TPayloadInput, TOutput, TSecrets>
+  readonly start: TaskDirectStart<TPayloadInput, TOutput, TSecrets>
 }
 export type AnyTask = TaskConfigBase<SecretDecls> & {
   readonly schedule?: InternalTaskScheduleConfig
@@ -364,14 +540,14 @@ export type AnyTask = TaskConfigBase<SecretDecls> & {
   }
   readonly payload?: PayloadSchema<any, any>
   readonly run: (...args: any[]) => MaybePromise<any>
-  readonly trigger: (...args: any[]) => Promise<RunHandle<any>>
+  readonly start: (...args: any[]) => Promise<TaskStartResult<any>>
 }
 
 export type TaskPayload<TTask> =
   TTask extends { readonly "~types"?: { readonly payload: infer TPayload } }
     ? [TPayload] extends [NoPayload] ? never : TPayload
     : never
-export type TaskTriggerPayload<TTask> =
+export type TaskStartPayload<TTask> =
   TTask extends { readonly "~types"?: { readonly payloadInput: infer TPayloadInput } } ? TPayloadInput : never
 export type TaskOutput<TTask> =
   TTask extends { readonly "~types"?: { readonly output: infer TOutput } } ? Awaited<TOutput> : never

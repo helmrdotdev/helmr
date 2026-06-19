@@ -73,7 +73,7 @@ func TestDeviceTokenIssuesSessionToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(hash, store.createdSession.TokenHash) {
-		t.Fatal("response token does not match created session")
+		t.Fatal("session token does not match created session")
 	}
 }
 

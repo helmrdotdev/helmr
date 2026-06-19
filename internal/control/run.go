@@ -19,7 +19,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -36,68 +35,6 @@ const (
 	runEventsPageSize             = int32(200)
 	runEventsFollowMaxDuration    = 30 * time.Minute
 )
-
-var errIdempotencyKeyConflict = errors.New("idempotency_key was already used with different run parameters")
-
-func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
-	actor := actorFromContext(r.Context())
-	var request api.CreateRunRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid run request JSON: %w", err)))
-		return
-	}
-	projectID, environmentID, err := environmentScopeRefsFromRequest(r, actor, request.ProjectID, request.EnvironmentID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	request.ProjectID = projectID
-	request.EnvironmentID = environmentID
-	run, idempotencyHit, err := s.createRunFromRequest(contextWithRequestVersionMetadata(r.Context(), r), actor, request, runSource{})
-	if err != nil {
-		if errors.Is(err, errIdempotencyKeyConflict) {
-			writeError(w, conflict(err))
-			return
-		}
-		var upstreamErr createRunUpstreamError
-		if errors.As(err, &upstreamErr) {
-			writeError(w, badGateway(upstreamErr))
-			return
-		}
-		if isCreateRunConfigError(err) {
-			writeError(w, unavailable(err))
-			return
-		}
-		if errors.Is(err, errPermissionRequired) {
-			writeError(w, forbidden(err))
-			return
-		}
-		var runDeploymentErr runDeploymentSelectionError
-		if errors.As(err, &runDeploymentErr) {
-			writeError(w, badRequest(runDeploymentErr))
-			return
-		}
-		if isCreateRunClientError(err) {
-			writeError(w, badRequest(err))
-			return
-		}
-		s.log.Error("create run failed", "error", err)
-		writeError(w, errors.New("create run"))
-		return
-	}
-	response, err := s.runResponse(r.Context(), run)
-	if err != nil {
-		s.log.Error("build run response failed", "error", err)
-		writeError(w, errors.New("build run response"))
-		return
-	}
-	if idempotencyHit {
-		response.IdempotencyHit = true
-		writeJSON(w, http.StatusOK, response)
-		return
-	}
-	writeJSON(w, http.StatusCreated, response)
-}
 
 func isCreateRunConfigError(err error) bool {
 	message := err.Error()
@@ -123,18 +60,6 @@ func isCreateRunClientError(err error) bool {
 		strings.Contains(message, "not declared")
 }
 
-type runSource struct {
-	scheduleID            pgtype.UUID
-	scheduleInstanceID    pgtype.UUID
-	scheduleGeneration    int64
-	scheduleOrgID         pgtype.UUID
-	scheduleProjectID     pgtype.UUID
-	scheduleEnvironmentID pgtype.UUID
-	scheduledAt           pgtype.Timestamptz
-	replayedFromRunID     pgtype.UUID
-	replayOperationID     pgtype.UUID
-}
-
 type createRunUpstreamError struct {
 	err error
 }
@@ -152,17 +77,32 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 	if err != nil {
 		return pgtype.UUID{}, err
 	}
-	request.Options.IdempotencyKey = schedule.TriggerIdempotencyKey(row.InstanceID, row.Generation, row.NextFireAt)
-	request.Options.IdempotencyKeyTTL = schedule.TriggerIdempotencyKeyTTL
+	startRequest := api.TaskStartRequest{
+		ProjectID:     request.ProjectID,
+		EnvironmentID: request.EnvironmentID,
+		Payload:       request.Payload,
+		Options: api.TaskStartOptions{
+			Queue:              request.Options.Queue,
+			ConcurrencyKey:     request.Options.ConcurrencyKey,
+			Priority:           request.Options.Priority,
+			TTL:                request.Options.TTL,
+			MaxDurationSeconds: request.Options.MaxDurationSeconds,
+			Retry:              request.Options.Retry,
+			Metadata:           request.Options.Metadata,
+			Tags:               request.Options.Tags,
+			IdempotencyKey:     schedule.TriggerIdempotencyKey(row.InstanceID, row.Generation, row.NextFireAt),
+			IdempotencyKeyTTL:  schedule.TriggerIdempotencyKeyTTL,
+		},
+	}
 	orgID, err := pgvalue.UUIDValue(row.OrgID)
 	if err != nil {
 		return pgtype.UUID{}, fmt.Errorf("schedule trigger org id is invalid: %v", err)
 	}
-	run, _, err := s.createRunFromRequest(ctx, auth.Actor{
+	started, err := s.startTaskSessionFromRequest(ctx, auth.Actor{
 		OrgID: orgID,
 		Kind:  auth.ActorKindSystem,
 		Role:  auth.RoleOwner,
-	}, request, runSource{
+	}, request.TaskID, startRequest, taskStartSource{
 		scheduleID:            row.ScheduleID,
 		scheduleInstanceID:    row.InstanceID,
 		scheduleGeneration:    row.Generation,
@@ -172,234 +112,17 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 		scheduledAt:           row.NextFireAt,
 	})
 	if err != nil {
+		if errors.Is(err, errTaskStartPending) || errors.Is(err, errTaskStartCoordinationUnavailable) {
+			return pgtype.UUID{}, fmt.Errorf("%w: %w", schedule.ErrTriggerDeferred, err)
+		}
 		return pgtype.UUID{}, err
 	}
-	return run.ID, nil
-}
-
-func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, request api.CreateRunRequest, source runSource) (runSummary, bool, error) {
-	if s.db == nil {
-		return runSummary{}, false, errors.New("run storage is not configured")
-	}
-	request.TaskID = strings.TrimSpace(request.TaskID)
-	if err := api.ValidateTaskID(request.TaskID); err != nil {
-		return runSummary{}, false, err
-	}
-	deploymentSelection, err := normalizeRunDeploymentSelection(request.Options.DeploymentID, request.Options.Version)
-	if err != nil {
-		return runSummary{}, false, err
-	}
-	scope, projectID, environmentID, err := s.requestEnvironmentScope(ctx, actor, request.ProjectID, request.EnvironmentID)
-	if err != nil {
-		return runSummary{}, false, err
-	}
-	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
-		return runSummary{}, false, errPermissionRequired
-	}
-	idempotency, err := normalizeRunIdempotency(request.Options)
-	if err != nil {
-		return runSummary{}, false, err
-	}
-	payload := request.Payload
-	if len(payload) == 0 {
-		payload = json.RawMessage(`{}`)
-	}
-	if !json.Valid(payload) {
-		return runSummary{}, false, errors.New("payload must be valid JSON")
-	}
-	if request.Options.MaxDurationSeconds != 0 {
-		if _, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, defaultRunMaxDurationSeconds); err != nil {
-			return runSummary{}, false, err
-		}
-	}
-	idempotencyRequestHash := pgtype.Text{}
-	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, projectID, environmentID, request.TaskID, deploymentSelection)
-	if isNoRows(err) {
-		return runSummary{}, false, fmt.Errorf("task %q is not deployed in the selected deployment", request.TaskID)
-	}
-	if err != nil {
-		return runSummary{}, false, err
-	}
-	secretNames, err := deploymentTaskSecretNames(deploymentTask.SecretDeclarations)
-	if err != nil {
-		return runSummary{}, false, err
-	}
-	if len(secretNames) > 0 {
-		if s.secrets == nil {
-			return runSummary{}, false, errors.New("secret store is not configured")
-		}
-		projectUUID, err := pgvalue.UUIDValue(projectID)
-		if err != nil {
-			return runSummary{}, false, fmt.Errorf("project id is invalid: %v", err)
-		}
-		environmentUUID, err := pgvalue.UUIDValue(environmentID)
-		if err != nil {
-			return runSummary{}, false, fmt.Errorf("environment id is invalid: %v", err)
-		}
-		if err := s.secrets.CheckScopedNames(ctx, actor.OrgID, projectUUID, environmentUUID, secretNames); err != nil {
-			return runSummary{}, false, err
-		}
-	}
-	maxDurationSeconds, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, deploymentTask.MaxDurationSeconds)
-	if err != nil {
-		return runSummary{}, false, err
-	}
-	lockedRetryPolicy, err := resolvedRetryPolicy(request.Options.Retry, deploymentTask.RetryPolicy)
-	if err != nil {
-		return runSummary{}, false, err
-	}
-	metadata, err := normalizedJSONObject(request.Options.Metadata, "metadata")
-	if err != nil {
-		return runSummary{}, false, err
-	}
-	tags, err := normalizedRunTags(request.Options.Tags)
-	if err != nil {
-		return runSummary{}, false, err
-	}
-	scheduling, err := s.resolveRunScheduling(request.Options, deploymentTask)
-	if err != nil {
-		return runSummary{}, false, err
-	}
-	if idempotency.key.Valid {
-		idempotencyRequestHash, err = runIdempotencyRequestHash(request, payload, deploymentTask, maxDurationSeconds, lockedRetryPolicy, metadata, tags, scheduling)
-		if err != nil {
-			return runSummary{}, false, err
-		}
-		existing, hit, err := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, source, !source.scheduleInstanceID.Valid && !source.replayOperationID.Valid)
-		if err != nil {
-			return runSummary{}, false, err
-		}
-		if hit {
-			current, err := s.scheduleRunSourceCurrent(ctx, source)
-			if err != nil {
-				return runSummary{}, false, err
-			}
-			if !current {
-				return runSummary{}, false, schedule.ErrTriggerSuperseded
-			}
-			return existing, true, nil
-		}
-	}
-	scheduling, err = s.validateRunQueueOverride(ctx, actor.OrgID, projectID, environmentID, request.Options, deploymentTask, scheduling)
-	if err != nil {
-		return runSummary{}, false, err
-	}
-	versionMetadata := requestVersionMetadataFromContext(ctx)
-	runID := uuid.Must(uuid.NewV7())
-	traceID, err := tracing.NewTraceID()
-	if err != nil {
-		return runSummary{}, false, fmt.Errorf("generate run trace id: %w", err)
-	}
-	rootSpanID, err := tracing.NewSpanID()
-	if err != nil {
-		return runSummary{}, false, fmt.Errorf("generate run root span id: %w", err)
-	}
-	createdPayload, err := runCreatedEventPayload(request.TaskID, payload, maxDurationSeconds, secretNames, lockedRetryPolicy, metadata, tags)
-	if err != nil {
-		return runSummary{}, false, fmt.Errorf("encode run created event: %w", err)
-	}
-	run, err := s.db.CreateScopedRun(ctx, db.CreateScopedRunParams{
-		ID:                      pgvalue.UUID(runID),
-		OrgID:                   pgvalue.UUID(actor.OrgID),
-		ProjectID:               projectID,
-		EnvironmentID:           environmentID,
-		DeploymentID:            deploymentTask.DeploymentID,
-		DeploymentTaskID:        deploymentTask.ID,
-		DeploymentVersion:       deploymentTask.DeploymentVersion,
-		ApiVersion:              versionMetadata.APIVersion,
-		SdkVersion:              firstNonEmptyString(versionMetadata.SDKVersion, deploymentTask.SdkVersion),
-		CliVersion:              firstNonEmptyString(versionMetadata.CLIVersion, deploymentTask.CliVersion),
-		TaskID:                  request.TaskID,
-		Payload:                 payload,
-		Metadata:                metadata,
-		Tags:                    tags,
-		IdempotencyKey:          idempotency.key,
-		IdempotencyKeyExpiresAt: idempotency.expiresAt,
-		IdempotencyKeyOptions:   idempotency.options,
-		IdempotencyRequestHash:  idempotencyRequestHash,
-		LockedRetryPolicy:       lockedRetryPolicy,
-		ReplayedFromRunID:       source.replayedFromRunID,
-		ReplayOperationID:       source.replayOperationID,
-		QueueName:               scheduling.queueName,
-		QueueConcurrencyLimit:   scheduling.queueConcurrencyLimit,
-		ConcurrencyKey:          scheduling.concurrencyKey,
-		Priority:                scheduling.priority,
-		QueueTimestamp:          scheduling.queueTimestamp,
-		Ttl:                     scheduling.ttl,
-		QueuedExpiresAt:         scheduling.queuedExpiresAt,
-		MaxDurationSeconds:      maxDurationSeconds,
-		TraceID:                 traceID,
-		RootSpanID:              rootSpanID,
-		EventPayload:            createdPayload,
-		ScheduleID:              source.scheduleID,
-		ScheduleInstanceID:      source.scheduleInstanceID,
-		ScheduleGeneration:      pgtype.Int8{Int64: source.scheduleGeneration, Valid: source.scheduleInstanceID.Valid},
-		ScheduledAt:             source.scheduledAt,
-	})
-	if err != nil {
-		if isNoRows(err) && source.scheduleInstanceID.Valid {
-			return runSummary{}, false, schedule.ErrTriggerSuperseded
-		}
-		if idempotency.key.Valid && isUniqueViolation(err) {
-			existing, hit, lookupErr := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, source, !source.scheduleInstanceID.Valid && !source.replayOperationID.Valid)
-			if lookupErr == nil && hit {
-				current, currentErr := s.scheduleRunSourceCurrent(ctx, source)
-				if currentErr != nil {
-					return runSummary{}, false, currentErr
-				}
-				if !current {
-					return runSummary{}, false, schedule.ErrTriggerSuperseded
-				}
-				return existing, true, nil
-			}
-			if lookupErr != nil {
-				return runSummary{}, false, lookupErr
-			}
-		}
-		return runSummary{}, false, err
-	}
-	if s.runEnqueuer != nil {
-		if _, err := s.runEnqueuer.EnqueueRun(ctx, run.OrgID, run.ID); err != nil {
-			s.log.Error("enqueue run queue item failed", "run_id", pgvalue.MustUUIDValue(run.ID).String(), "error", err)
-		}
-	}
-	return createScopedRunSummary(run), false, nil
-}
-
-func (s *Server) scheduleRunSourceCurrent(ctx context.Context, source runSource) (bool, error) {
-	if !source.scheduleInstanceID.Valid {
-		return true, nil
-	}
-	return s.db.ScheduleInstanceTriggerIsCurrent(ctx, db.ScheduleInstanceTriggerIsCurrentParams{
-		InstanceID:    source.scheduleInstanceID,
-		Generation:    source.scheduleGeneration,
-		ScheduledAt:   source.scheduledAt,
-		ScheduleID:    source.scheduleID,
-		OrgID:         source.scheduleOrgID,
-		ProjectID:     source.scheduleProjectID,
-		EnvironmentID: source.scheduleEnvironmentID,
-	})
+	return started.run.ID, nil
 }
 
 type runDeploymentSelection struct {
 	deploymentID pgtype.UUID
 	version      string
-}
-
-func normalizeRunDeploymentSelection(deploymentID string, version string) (runDeploymentSelection, error) {
-	deploymentID = strings.TrimSpace(deploymentID)
-	version = strings.TrimSpace(version)
-	if deploymentID != "" && version != "" {
-		return runDeploymentSelection{}, errors.New("deployment_id and version cannot be combined")
-	}
-	if deploymentID != "" {
-		parsedID, err := uuid.Parse(deploymentID)
-		if err != nil {
-			return runDeploymentSelection{}, errors.New("deployment_id must be a UUID")
-		}
-		return runDeploymentSelection{deploymentID: pgvalue.UUID(parsedID)}, nil
-	}
-	return runDeploymentSelection{version: version}, nil
 }
 
 type runDeploymentSelectionError struct {

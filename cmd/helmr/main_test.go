@@ -3,7 +3,6 @@ package main
 import (
 	"archive/tar"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cli/session"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/zalando/go-keyring"
@@ -213,16 +211,13 @@ func TestResumeCommandIsNotRegistered(t *testing.T) {
 	}
 }
 
-func assertWaitpointPolicyRequest(t *testing.T, label string, configJSON json.RawMessage, wantLabel string, wantEmails []string) {
-	t.Helper()
-	if label != wantLabel {
-		t.Fatalf("label = %q", label)
-	}
-	var config api.WaitpointPolicyConfig
-	if err := json.Unmarshal(configJSON, &config); err != nil {
-		t.Fatal(err)
-	}
-	if len(config.Deliveries) != 1 || config.Deliveries[0].Type != "email" || strings.Join(config.Deliveries[0].To, ",") != strings.Join(wantEmails, ",") {
-		t.Fatalf("deliveries = %+v", config.Deliveries)
+func TestReplayCommandIsNotRegistered(t *testing.T) {
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"replay", "run-1"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), `unknown command "replay"`) {
+		t.Fatalf("err = %v", err)
 	}
 }

@@ -11,5 +11,3 @@ const (
 	CurrentWorkerProtocolVersion = "helmr.worker.v0"
 	CurrentBundleFormatVersion   = 1
 )
-
-var SupportedWorkerProtocolVersions = []string{CurrentWorkerProtocolVersion}

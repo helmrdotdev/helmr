@@ -21,7 +21,7 @@ func (c *Client) RegisterWorker(ctx context.Context, bootstrapToken string, reso
 
 func (c *Client) LeaseRun(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerRunLeaseResponse, error) {
 	var response api.WorkerRunLeaseResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/sessions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, &response); err != nil {
 		return api.WorkerRunLeaseResponse{}, err
 	}
 	return response, nil
@@ -61,7 +61,7 @@ func (c *Client) GetWorkerStatus(ctx context.Context) (api.WorkerStatusResponse,
 
 func (c *Client) StartRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerStartResponse, error) {
 	var response api.WorkerStartResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/sessions/start", api.WorkerStartRequest{Lease: lease}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/start", api.WorkerStartRequest{Lease: lease}, &response); err != nil {
 		return api.WorkerStartResponse{}, err
 	}
 	return response, nil
@@ -69,7 +69,7 @@ func (c *Client) StartRun(ctx context.Context, lease api.WorkerRunLease) (api.Wo
 
 func (c *Client) AcknowledgeRestore(ctx context.Context, request api.WorkerAcknowledgeRestoreRequest) (api.WorkerAcknowledgeRestoreResponse, error) {
 	var response api.WorkerAcknowledgeRestoreResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/sessions/restores/ack", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/restores/ack", request, &response); err != nil {
 		return api.WorkerAcknowledgeRestoreResponse{}, err
 	}
 	return response, nil
@@ -77,7 +77,7 @@ func (c *Client) AcknowledgeRestore(ctx context.Context, request api.WorkerAckno
 
 func (c *Client) RenewRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerRenewResponse, error) {
 	var response api.WorkerRenewResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/sessions/renew", api.WorkerRenewRequest{Lease: lease}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/renew", api.WorkerRenewRequest{Lease: lease}, &response); err != nil {
 		return api.WorkerRenewResponse{}, err
 	}
 	return response, nil
@@ -85,7 +85,7 @@ func (c *Client) RenewRun(ctx context.Context, lease api.WorkerRunLease) (api.Wo
 
 func (c *Client) ReleaseRun(ctx context.Context, lease api.WorkerRunLease, result api.WorkerReleaseResult) (api.WorkerReleaseResponse, error) {
 	var response api.WorkerReleaseResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/sessions/release", api.WorkerReleaseRequest{Lease: lease, Result: result}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/release", api.WorkerReleaseRequest{Lease: lease, Result: result}, &response); err != nil {
 		return api.WorkerReleaseResponse{}, err
 	}
 	return response, nil
@@ -101,7 +101,7 @@ func (c *Client) CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDe
 
 func (c *Client) AppendLog(ctx context.Context, lease api.WorkerRunLease, stream api.WorkerLogStream, observedSeq uint64, content []byte) (api.WorkerEventResponse, error) {
 	var response api.WorkerEventResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/sessions/logs", api.WorkerAppendLogRequest{
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/logs", api.WorkerAppendLogRequest{
 		Lease:         lease,
 		Stream:        stream,
 		ObservedSeq:   observedSeq,
@@ -114,7 +114,7 @@ func (c *Client) AppendLog(ctx context.Context, lease api.WorkerRunLease, stream
 
 func (c *Client) RecordLogEntry(ctx context.Context, lease api.WorkerRunLease, entry string) (api.WorkerEventResponse, error) {
 	var response api.WorkerEventResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/sessions/log-entries", api.WorkerRecordLogEntryRequest{
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/log-entries", api.WorkerRecordLogEntryRequest{
 		Lease: lease,
 		Entry: entry,
 	}, &response); err != nil {
@@ -123,24 +123,36 @@ func (c *Client) RecordLogEntry(ctx context.Context, lease api.WorkerRunLease, e
 	return response, nil
 }
 
-func (c *Client) EmitEvent(ctx context.Context, lease api.WorkerRunLease, eventType string, content json.RawMessage) (api.WorkerEventResponse, error) {
+func (c *Client) WriteOutput(ctx context.Context, request api.WorkerWriteOutputRequest) (api.WorkerEventResponse, error) {
 	var response api.WorkerEventResponse
-	if len(content) == 0 {
-		content = json.RawMessage(`null`)
+	if len(request.Payload) == 0 {
+		request.Payload = json.RawMessage(`null`)
 	}
-	if err := c.postWorkerJSON(ctx, "/api/worker/sessions/events", api.WorkerEmitEventRequest{
-		Lease:     lease,
-		EventType: eventType,
-		Content:   content,
-	}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/channels", request, &response); err != nil {
 		return api.WorkerEventResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) UpdateRunMetadata(ctx context.Context, request api.WorkerUpdateRunMetadataRequest) (api.WorkerEventResponse, error) {
+	var response api.WorkerEventResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/metadata", request, &response); err != nil {
+		return api.WorkerEventResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CreateRuntimeWaitpointToken(ctx context.Context, request api.WorkerCreateWaitpointTokenRequest) (api.WaitpointTokenResponse, error) {
+	var response api.WaitpointTokenResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/waitpoint-tokens", request, &response); err != nil {
+		return api.WaitpointTokenResponse{}, err
 	}
 	return response, nil
 }
 
 func (c *Client) CreateWaitpoint(ctx context.Context, request api.WorkerCreateWaitpointRequest) (api.WorkerCreateWaitpointResponse, error) {
 	var response api.WorkerCreateWaitpointResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/sessions/waitpoints", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/waitpoints", request, &response); err != nil {
 		return api.WorkerCreateWaitpointResponse{}, err
 	}
 	return response, nil
@@ -148,7 +160,7 @@ func (c *Client) CreateWaitpoint(ctx context.Context, request api.WorkerCreateWa
 
 func (c *Client) MarkCheckpointReady(ctx context.Context, request api.WorkerCheckpointReadyRequest) (api.WorkerCreateWaitpointResponse, error) {
 	var response api.WorkerCreateWaitpointResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/sessions/checkpoints/ready", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/checkpoints/ready", request, &response); err != nil {
 		return api.WorkerCreateWaitpointResponse{}, err
 	}
 	return response, nil
@@ -156,7 +168,7 @@ func (c *Client) MarkCheckpointReady(ctx context.Context, request api.WorkerChec
 
 func (c *Client) MarkCheckpointFailed(ctx context.Context, request api.WorkerCheckpointFailedRequest) (api.WorkerCreateWaitpointResponse, error) {
 	var response api.WorkerCreateWaitpointResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/sessions/checkpoints/failed", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/checkpoints/failed", request, &response); err != nil {
 		return api.WorkerCreateWaitpointResponse{}, err
 	}
 	return response, nil

@@ -6,7 +6,7 @@ This fixture is used by the gated CLI integration tests for the full-rootfs runt
 - `agent-user` verifies named user launch with the same image env contract and non-root edits to existing checkout paths.
 - `default-root` and `default-workdir-path` verify the root user, workspace cwd, and default `PATH` behavior when `.user()`, `.workdir()`, and `.env("PATH", ...)` are not specified.
 - `failure-boundary` writes both workspace and rootfs-side files before failing so tests can verify failure-path filesystem boundaries.
-- `approval` verifies the `ctx.wait.human` request/response relay.
+- `approval` verifies the `wait.createToken(...)` and `wait.forToken(...)` token completion relay.
 - `impl` is the source/image fixture. Its image copies only `source.file("package.json")`, runs an install-like image layer with a cache mount, and uses the workspace mounted at `/workspace`. The gated E2E harness uses it to verify fresh build, same dependency input cache hit, code-only source changes, dependency input image-key changes, and 10-way singleflight.
 - `alpine-starts` and `distroless-starts` verify that the product adapter starts with the Node runtime provided by Alpine and shell-less/distroless-style rootfs images.
 

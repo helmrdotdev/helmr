@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"slices"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -12,8 +11,8 @@ import (
 )
 
 func validateLeaseRequirements(capabilities api.WorkerCapabilities, lease api.WorkerRunLease, run api.WorkerRun) error {
-	if !slices.Contains(capabilities.SupportedProtocolVersions, lease.ProtocolVersion) {
-		return fmt.Errorf("worker protocol %q is not supported by this worker", lease.ProtocolVersion)
+	if strings.TrimSpace(capabilities.ProtocolVersion) != strings.TrimSpace(lease.ProtocolVersion) {
+		return fmt.Errorf("worker protocol %q does not match lease protocol %q", capabilities.ProtocolVersion, lease.ProtocolVersion)
 	}
 	if strings.TrimSpace(run.WorkerProtocolVersion) != strings.TrimSpace(lease.ProtocolVersion) {
 		return fmt.Errorf("run worker protocol %q does not match lease protocol %q", run.WorkerProtocolVersion, lease.ProtocolVersion)

@@ -239,10 +239,16 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeRunsRead, true
 	case string(api.APIKeyScopeRunsManage):
 		return api.APIKeyScopeRunsManage, true
-	case string(api.APIKeyScopeWaitpointsRespond):
-		return api.APIKeyScopeWaitpointsRespond, true
-	case string(api.APIKeyScopeWaitpointPolicies):
-		return api.APIKeyScopeWaitpointPolicies, true
+	case string(api.APIKeyScopeRunWaitpointsRead):
+		return api.APIKeyScopeRunWaitpointsRead, true
+	case string(api.APIKeyScopeChannelsWrite):
+		return api.APIKeyScopeChannelsWrite, true
+	case string(api.APIKeyScopeWaitpointTokensCreate):
+		return api.APIKeyScopeWaitpointTokensCreate, true
+	case string(api.APIKeyScopeWaitpointTokensRead):
+		return api.APIKeyScopeWaitpointTokensRead, true
+	case string(api.APIKeyScopeWaitpointTokensComplete):
+		return api.APIKeyScopeWaitpointTokensComplete, true
 	case string(api.APIKeyScopeSecretsWrite):
 		return api.APIKeyScopeSecretsWrite, true
 	case string(api.APIKeyScopeTasksDeploy):
@@ -260,10 +266,16 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionRunsRead, true
 	case api.APIKeyScopeRunsManage:
 		return auth.PermissionRunsManage, true
-	case api.APIKeyScopeWaitpointsRespond:
-		return auth.PermissionWaitpointsRespond, true
-	case api.APIKeyScopeWaitpointPolicies:
-		return auth.PermissionWaitpointPolicies, true
+	case api.APIKeyScopeRunWaitpointsRead:
+		return auth.PermissionRunWaitpointsRead, true
+	case api.APIKeyScopeChannelsWrite:
+		return auth.PermissionChannelsWrite, true
+	case api.APIKeyScopeWaitpointTokensCreate:
+		return auth.PermissionWaitpointTokensCreate, true
+	case api.APIKeyScopeWaitpointTokensRead:
+		return auth.PermissionWaitpointTokensRead, true
+	case api.APIKeyScopeWaitpointTokensComplete:
+		return auth.PermissionWaitpointTokensComplete, true
 	case api.APIKeyScopeSecretsWrite:
 		return auth.PermissionSecretsWrite, true
 	case api.APIKeyScopeTasksDeploy:
@@ -281,10 +293,16 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeRunsRead, true
 	case string(auth.PermissionRunsManage):
 		return api.APIKeyScopeRunsManage, true
-	case string(auth.PermissionWaitpointsRespond):
-		return api.APIKeyScopeWaitpointsRespond, true
-	case string(auth.PermissionWaitpointPolicies):
-		return api.APIKeyScopeWaitpointPolicies, true
+	case string(auth.PermissionRunWaitpointsRead):
+		return api.APIKeyScopeRunWaitpointsRead, true
+	case string(auth.PermissionChannelsWrite):
+		return api.APIKeyScopeChannelsWrite, true
+	case string(auth.PermissionWaitpointTokensCreate):
+		return api.APIKeyScopeWaitpointTokensCreate, true
+	case string(auth.PermissionWaitpointTokensRead):
+		return api.APIKeyScopeWaitpointTokensRead, true
+	case string(auth.PermissionWaitpointTokensComplete):
+		return api.APIKeyScopeWaitpointTokensComplete, true
 	case string(auth.PermissionSecretsWrite):
 		return api.APIKeyScopeSecretsWrite, true
 	case string(auth.PermissionTasksDeploy):

@@ -15,16 +15,11 @@ created AS (
         sdk_version,
         cli_version,
         task_id,
+        task_session_id,
         payload,
         metadata,
         tags,
-        idempotency_key,
-        idempotency_key_expires_at,
-        idempotency_key_options,
-        idempotency_request_hash,
         locked_retry_policy,
-        replayed_from_run_id,
-        replay_operation_id,
         queue_name,
         queue_concurrency_limit,
         concurrency_key,
@@ -52,16 +47,11 @@ created AS (
            sqlc.arg(sdk_version),
            sqlc.arg(cli_version),
            sqlc.arg(task_id),
+           sqlc.arg(task_session_id),
            sqlc.arg(payload),
            coalesce(sqlc.arg(metadata)::jsonb, '{}'::jsonb),
            coalesce(sqlc.arg(tags)::text[], '{}'::text[]),
-           sqlc.narg(idempotency_key),
-           sqlc.narg(idempotency_key_expires_at),
-           coalesce(sqlc.arg(idempotency_key_options)::jsonb, '{}'::jsonb),
-           sqlc.narg(idempotency_request_hash),
            coalesce(sqlc.arg(locked_retry_policy)::jsonb, 'false'::jsonb),
-           sqlc.narg(replayed_from_run_id),
-           sqlc.narg(replay_operation_id),
            sqlc.arg(queue_name),
            sqlc.narg(queue_concurrency_limit),
            sqlc.narg(concurrency_key),
@@ -99,16 +89,15 @@ created AS (
                AND task_schedules.project_id = sqlc.arg(project_id)
                AND task_schedules.active
         )
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, replayed_from_run_id, replay_operation_id, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
 ),
 created_attempt AS (
-    INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status, cause)
+    INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
     SELECT created.current_attempt_id,
            created.org_id,
            created.id,
            created.current_attempt_number,
-           'queued',
-           CASE WHEN created.replayed_from_run_id IS NULL THEN 'original' ELSE 'replay' END
+           'queued'
       FROM created
     RETURNING id, org_id, run_id, attempt_number
 ),
@@ -170,7 +159,7 @@ created_event_outbox AS (
       FROM created_event
     RETURNING id
 )
-SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.execution_status, created.terminal_outcome, created.metadata, created.tags, created.locked_retry_policy, created.replayed_from_run_id, created.current_attempt_number, created.exit_code, created.output, created.created_at, created.updated_at
+SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.task_session_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.execution_status, created.terminal_outcome, created.metadata, created.tags, created.locked_retry_policy, created.current_attempt_number, created.exit_code, created.output, created.created_at, created.updated_at
   FROM created
   JOIN created_snapshot ON true
   JOIN created_event_outbox ON true;
@@ -179,35 +168,33 @@ SELECT created.id, created.org_id, created.project_id, created.environment_id, c
 SELECT * FROM runs
 WHERE org_id = $1 AND id = $2;
 
--- name: GetScopedRunByIdempotencyKey :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, replayed_from_run_id, current_attempt_number, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash, schedule_id, schedule_instance_id, scheduled_at
-FROM runs
-WHERE org_id = sqlc.arg(org_id)
-  AND project_id = sqlc.arg(project_id)
-  AND environment_id = sqlc.arg(environment_id)
-  AND task_id = sqlc.arg(task_id)
-  AND idempotency_key = sqlc.arg(idempotency_key);
-
--- name: ClearRunIdempotencyKey :exec
-UPDATE runs
-   SET idempotency_key = NULL,
-       idempotency_key_expires_at = NULL,
-       idempotency_key_options = '{}'::jsonb,
-       idempotency_request_hash = NULL
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(id);
-
 -- name: ExpireQueuedRuns :exec
-WITH eligible AS (
-    SELECT runs.id, runs.org_id
+WITH locked_task_sessions AS MATERIALIZED (
+    SELECT task_sessions.id
       FROM runs
+      JOIN task_sessions
+        ON task_sessions.org_id = runs.org_id
+       AND task_sessions.project_id = runs.project_id
+       AND task_sessions.environment_id = runs.environment_id
+       AND task_sessions.id = runs.task_session_id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.status = 'queued'
-       AND runs.current_session_id IS NULL
+       AND runs.current_run_lease_id IS NULL
        AND runs.queued_expires_at IS NOT NULL
        AND runs.queued_expires_at <= now()
+     FOR UPDATE OF task_sessions
+),
+eligible AS (
+    SELECT runs.id, runs.org_id
+      FROM runs
+      LEFT JOIN locked_task_sessions
+        ON locked_task_sessions.id = runs.task_session_id
+     WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.status = 'queued'
+       AND runs.current_run_lease_id IS NULL
+       AND runs.queued_expires_at IS NOT NULL
+       AND runs.queued_expires_at <= now()
+       AND locked_task_sessions.id = runs.task_session_id
      FOR UPDATE OF runs
 ),
 expired_runs AS (
@@ -223,7 +210,42 @@ expired_runs AS (
      WHERE runs.org_id = eligible.org_id
        AND runs.id = eligible.id
        AND runs.status = 'queued'
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version, runs.ttl
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.task_session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version, runs.ttl
+),
+expired_session_runs AS (
+    UPDATE task_session_runs
+       SET ended_at = now()
+      FROM expired_runs
+     WHERE task_session_runs.org_id = expired_runs.org_id
+       AND task_session_runs.project_id = expired_runs.project_id
+       AND task_session_runs.environment_id = expired_runs.environment_id
+       AND task_session_runs.task_session_id = expired_runs.task_session_id
+       AND task_session_runs.run_id = expired_runs.id
+    RETURNING task_session_runs.id
+),
+expired_task_sessions AS (
+    UPDATE task_sessions
+       SET status = 'expired',
+           result = jsonb_build_object(
+               'ok', false,
+               'error', jsonb_build_object(
+                   'name', 'TaskExpired',
+                   'message', 'run ttl expired before execution started',
+                   'details', jsonb_build_object('origin', 'queued_ttl')
+               )
+           ),
+           terminal_reason = jsonb_build_object('origin', 'queued_ttl', 'message', 'run ttl expired before execution started'),
+           current_run_id = NULL,
+           current_run_version = task_sessions.current_run_version + 1,
+           updated_at = now()
+      FROM expired_runs
+     WHERE task_sessions.org_id = expired_runs.org_id
+       AND task_sessions.project_id = expired_runs.project_id
+       AND task_sessions.environment_id = expired_runs.environment_id
+       AND task_sessions.id = expired_runs.task_session_id
+       AND task_sessions.current_run_id = expired_runs.id
+       AND task_sessions.status = 'open'
+    RETURNING task_sessions.id
 ),
 expired_attempts AS (
     UPDATE run_attempts
@@ -313,7 +335,7 @@ SELECT expired_event.*
   JOIN expired_event_outbox ON true;
 
 -- name: GetRunSummary :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, replayed_from_run_id, current_attempt_number, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, current_attempt_number, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1 AND id = $2;
 
@@ -331,7 +353,7 @@ WHERE org_id = sqlc.arg(org_id)
   AND environment_id = sqlc.arg(environment_id);
 
 -- name: ListScopedRunSummaries :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, replayed_from_run_id, current_attempt_number, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, current_attempt_number, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = sqlc.arg(org_id)
   AND project_id = sqlc.arg(project_id)
@@ -416,13 +438,30 @@ WITH operation AS (
        AND run_operations.status = 'requested'
      FOR UPDATE
 ),
+locked_task_session AS MATERIALIZED (
+    SELECT task_sessions.id
+      FROM runs
+      JOIN operation ON operation.org_id = runs.org_id
+                    AND operation.run_id = runs.id
+      JOIN task_sessions
+        ON task_sessions.org_id = runs.org_id
+       AND task_sessions.project_id = runs.project_id
+       AND task_sessions.environment_id = runs.environment_id
+       AND task_sessions.id = runs.task_session_id
+     WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.id = sqlc.arg(run_id)
+     FOR UPDATE OF task_sessions
+),
 target AS (
     SELECT runs.*
       FROM runs
       JOIN operation ON operation.org_id = runs.org_id
                     AND operation.run_id = runs.id
+      LEFT JOIN locked_task_session
+        ON locked_task_session.id = runs.task_session_id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
+       AND locked_task_session.id = runs.task_session_id
      FOR UPDATE
 ),
 updated AS (
@@ -433,8 +472,8 @@ updated AS (
              ELSE 'finished'::run_execution_status
            END,
            terminal_outcome = 'cancelled',
-           current_session_id = CASE
-             WHEN target.execution_status = 'executing' AND NOT sqlc.arg(force)::bool THEN runs.current_session_id
+           current_run_lease_id = CASE
+             WHEN target.execution_status = 'executing' AND NOT sqlc.arg(force)::bool THEN runs.current_run_lease_id
              ELSE NULL
            END,
            error_message = COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'),
@@ -455,7 +494,7 @@ updated AS (
                AND sqlc.arg(force)::bool
            )
        )
-    RETURNING runs.*, target.current_session_id AS previous_session_id
+    RETURNING runs.*, target.current_run_lease_id AS previous_run_lease_id
 ),
 cancelled_attempt AS (
     UPDATE run_attempts
@@ -481,52 +520,88 @@ cancelled_queue AS (
       FROM updated
      WHERE run_queue_items.org_id = updated.org_id
        AND run_queue_items.run_id = updated.id
-       AND run_queue_items.status IN ('queued', 'published', 'reserved', 'suspended')
+       AND run_queue_items.status IN ('queued', 'published', 'reserved', 'parked')
        AND (updated.execution_status <> 'pending_cancel' OR sqlc.arg(force)::bool)
     RETURNING run_queue_items.run_id
 ),
-cancelled_run_waits AS (
-    UPDATE run_waits
+cancelled_run_suspensions AS (
+    UPDATE run_suspensions
        SET status = 'cancelled',
-           failure = jsonb_build_object('reason', COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'), 'source', 'cancel_operation'),
+           failure = jsonb_build_object('reason', COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'), 'origin', 'cancel_operation'),
            resolution_kind = 'cancelled',
-           resolution = jsonb_build_object('reason', COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'), 'source', 'cancel_operation'),
+           resolution = jsonb_build_object('reason', COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'), 'origin', 'cancel_operation'),
            failed_at = now(),
            updated_at = now()
       FROM updated
-     WHERE run_waits.org_id = updated.org_id
-       AND run_waits.run_id = updated.id
-       AND run_waits.status IN ('opening', 'waiting', 'resuming')
-    RETURNING run_waits.id, run_waits.org_id
+     WHERE run_suspensions.org_id = updated.org_id
+       AND run_suspensions.run_id = updated.id
+       AND run_suspensions.status IN ('opening', 'waiting', 'resuming')
+    RETURNING run_suspensions.id, run_suspensions.org_id
 ),
 cancelled_waitpoints AS (
     UPDATE waitpoints
        SET status = 'cancelled',
-           resolution_kind = 'cancelled',
-           output = 'null'::jsonb,
-           resolution = jsonb_build_object('reason', COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'), 'source', 'cancel_operation'),
-           output_is_error = true,
-           completed_at = now(),
+           data = NULL,
+           error = jsonb_build_object('reason', COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'), 'origin', 'cancel_operation'),
+           resolved_at = now(),
            updated_at = now()
-      FROM cancelled_run_waits
-      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = cancelled_run_waits.org_id
-                                AND run_wait_dependencies.run_wait_id = cancelled_run_waits.id
-     WHERE waitpoints.org_id = run_wait_dependencies.org_id
-       AND waitpoints.id = run_wait_dependencies.waitpoint_id
+      FROM cancelled_run_suspensions
+      JOIN run_suspension_waitpoints ON run_suspension_waitpoints.org_id = cancelled_run_suspensions.org_id
+                                AND run_suspension_waitpoints.run_suspension_id = cancelled_run_suspensions.id
+     WHERE waitpoints.org_id = run_suspension_waitpoints.org_id
+       AND waitpoints.id = run_suspension_waitpoints.waitpoint_id
        AND waitpoints.status = 'pending'
     RETURNING waitpoints.id
 ),
+terminal_session_runs AS (
+    UPDATE task_session_runs
+       SET ended_at = now()
+      FROM updated
+     WHERE (updated.execution_status <> 'pending_cancel' OR sqlc.arg(force)::bool)
+       AND task_session_runs.org_id = updated.org_id
+       AND task_session_runs.project_id = updated.project_id
+       AND task_session_runs.environment_id = updated.environment_id
+       AND task_session_runs.task_session_id = updated.task_session_id
+       AND task_session_runs.run_id = updated.id
+    RETURNING task_session_runs.id
+),
+terminal_task_sessions AS (
+    UPDATE task_sessions
+       SET status = 'cancelled',
+           cancelled_at = now(),
+           result = jsonb_build_object(
+               'ok', false,
+               'error', jsonb_build_object(
+                   'name', 'TaskCancelled',
+                   'message', COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'),
+                   'details', jsonb_build_object('origin', 'cancel_operation')
+               )
+           ),
+           terminal_reason = jsonb_build_object('origin', 'cancel_operation', 'reason', COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled')),
+           current_run_id = NULL,
+           current_run_version = task_sessions.current_run_version + 1,
+           updated_at = now()
+      FROM updated
+     WHERE (updated.execution_status <> 'pending_cancel' OR sqlc.arg(force)::bool)
+       AND task_sessions.org_id = updated.org_id
+       AND task_sessions.project_id = updated.project_id
+       AND task_sessions.environment_id = updated.environment_id
+       AND task_sessions.id = updated.task_session_id
+       AND task_sessions.current_run_id = updated.id
+       AND task_sessions.status = 'open'
+    RETURNING task_sessions.id
+),
 cancelled_session AS (
-    UPDATE run_execution_sessions
-       SET status = CASE WHEN updated.execution_status <> 'pending_cancel' OR sqlc.arg(force)::bool THEN 'cancelled'::run_execution_session_status ELSE run_execution_sessions.status END,
-           released_at = CASE WHEN updated.execution_status <> 'pending_cancel' OR sqlc.arg(force)::bool THEN COALESCE(run_execution_sessions.released_at, now()) ELSE run_execution_sessions.released_at END,
+    UPDATE run_leases
+       SET status = CASE WHEN updated.execution_status <> 'pending_cancel' OR sqlc.arg(force)::bool THEN 'cancelled'::run_lease_status ELSE run_leases.status END,
+           released_at = CASE WHEN updated.execution_status <> 'pending_cancel' OR sqlc.arg(force)::bool THEN COALESCE(run_leases.released_at, now()) ELSE run_leases.released_at END,
            renewed_at = now()
       FROM updated
-     WHERE run_execution_sessions.org_id = updated.org_id
-       AND run_execution_sessions.run_id = updated.id
-       AND run_execution_sessions.id = updated.previous_session_id
-       AND run_execution_sessions.status IN ('leased', 'running')
-    RETURNING run_execution_sessions.id
+     WHERE run_leases.org_id = updated.org_id
+       AND run_leases.run_id = updated.id
+       AND run_leases.id = updated.previous_run_lease_id
+       AND run_leases.status IN ('leased', 'running')
+    RETURNING run_leases.id
 ),
 released_concurrency AS (
     UPDATE run_queue_concurrency_leases
@@ -539,7 +614,7 @@ released_concurrency AS (
     RETURNING run_queue_concurrency_leases.id
 ),
 snapshot AS (
-    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, session_id, operation_id, previous_version, transition, reason)
+    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, run_lease_id, operation_id, previous_version, transition, reason)
     SELECT updated.org_id,
            updated.id,
            updated.state_version,
@@ -547,7 +622,7 @@ snapshot AS (
            updated.execution_status,
            updated.terminal_outcome,
            updated.current_attempt_id,
-           updated.current_session_id,
+           updated.current_run_lease_id,
            sqlc.arg(operation_id),
            updated.state_version - 1,
            CASE WHEN updated.execution_status = 'pending_cancel' THEN 'run.cancel_requested' ELSE 'run.cancelled' END,
@@ -570,14 +645,14 @@ event_seq AS (
     RETURNING org_id, subject_type, subject_id, last_seq
 ),
 event AS (
-    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, session_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT updated.org_id,
            updated.project_id,
            updated.environment_id,
            updated.id,
            event_seq.last_seq,
            updated.current_attempt_id,
-           updated.current_session_id,
+           updated.current_run_lease_id,
            cancelled_attempt.attempt_number,
            updated.trace_id,
            updated.root_span_id,
@@ -623,12 +698,162 @@ operation_applied AS (
        AND run_operations.status = 'requested'
     RETURNING run_operations.id
 )
-SELECT updated.id, updated.org_id, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.replayed_from_run_id, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at
+SELECT updated.id, updated.org_id, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.task_session_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at
   FROM updated
   JOIN operation_applied ON true
   JOIN event_outbox ON true
+	 WHERE (SELECT count(*) FROM cancelled_waitpoints) >= 0
+	   AND (SELECT count(*) FROM terminal_session_runs) >= 0
+	   AND (SELECT count(*) FROM terminal_task_sessions) >= 0
 UNION ALL
-SELECT target.id, target.org_id, target.project_id, target.environment_id, target.deployment_id, target.deployment_task_id, target.deployment_version, target.api_version, target.sdk_version, target.cli_version, target.task_id, target.status, target.execution_status, target.terminal_outcome, target.metadata, target.tags, target.locked_retry_policy, target.replayed_from_run_id, target.current_attempt_number, target.exit_code, target.output, target.created_at, target.updated_at
+SELECT target.id, target.org_id, target.project_id, target.environment_id, target.deployment_id, target.deployment_task_id, target.task_session_id, target.deployment_version, target.api_version, target.sdk_version, target.cli_version, target.task_id, target.status, target.execution_status, target.terminal_outcome, target.metadata, target.tags, target.locked_retry_policy, target.current_attempt_number, target.exit_code, target.output, target.created_at, target.updated_at
   FROM target
   JOIN operation_applied ON true
+ WHERE NOT EXISTS (SELECT 1 FROM updated);
+
+-- name: UpdateRunMetadataForExecution :one
+WITH current_run_lease AS (
+    SELECT runs.id,
+           runs.org_id,
+           runs.project_id,
+           runs.environment_id,
+           runs.trace_id,
+           runs.state_version,
+           run_leases.id AS run_lease_id,
+           run_leases.attempt_id,
+           run_leases.span_id,
+           run_leases.parent_span_id,
+           run_leases.traceparent,
+           run_attempts.attempt_number
+      FROM runs
+      JOIN run_leases ON run_leases.id = runs.current_run_lease_id
+                          AND run_leases.org_id = runs.org_id
+                          AND run_leases.run_id = runs.id
+      JOIN run_attempts ON run_attempts.org_id = run_leases.org_id
+                       AND run_attempts.run_id = run_leases.run_id
+                       AND run_attempts.id = run_leases.attempt_id
+     WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.id = sqlc.arg(run_id)
+       AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
+       AND runs.status = 'running'
+       AND run_leases.status IN ('leased', 'running')
+       AND run_leases.lease_expires_at > now()
+),
+updated AS (
+    UPDATE runs
+       SET metadata = CASE sqlc.arg(operation)::text
+             WHEN 'set' THEN jsonb_set(
+                 COALESCE(runs.metadata, '{}'::jsonb),
+                 ARRAY[sqlc.arg(key)::text],
+                 sqlc.arg(value)::jsonb,
+                 true
+               )
+             WHEN 'patch' THEN COALESCE(runs.metadata, '{}'::jsonb) || sqlc.arg(patch)::jsonb
+             WHEN 'increment' THEN jsonb_set(
+                 COALESCE(runs.metadata, '{}'::jsonb),
+                 ARRAY[sqlc.arg(key)::text],
+                 to_jsonb(COALESCE((runs.metadata ->> sqlc.arg(key)::text)::numeric, 0) + sqlc.arg(amount)::numeric),
+                 true
+               )
+             ELSE runs.metadata
+           END,
+           updated_at = now()
+      FROM current_run_lease
+     WHERE runs.org_id = current_run_lease.org_id
+       AND runs.id = current_run_lease.id
+       AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
+       AND runs.status = 'running'
+       AND octet_length((
+           CASE sqlc.arg(operation)::text
+             WHEN 'set' THEN jsonb_set(
+                 COALESCE(runs.metadata, '{}'::jsonb),
+                 ARRAY[sqlc.arg(key)::text],
+                 sqlc.arg(value)::jsonb,
+                 true
+               )
+             WHEN 'patch' THEN COALESCE(runs.metadata, '{}'::jsonb) || sqlc.arg(patch)::jsonb
+             WHEN 'increment' THEN jsonb_set(
+                 COALESCE(runs.metadata, '{}'::jsonb),
+                 ARRAY[sqlc.arg(key)::text],
+                 to_jsonb(COALESCE((runs.metadata ->> sqlc.arg(key)::text)::numeric, 0) + sqlc.arg(amount)::numeric),
+                 true
+               )
+             ELSE runs.metadata
+           END
+       )::text) <= sqlc.arg(max_metadata_bytes)::integer
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.metadata, runs.tags, runs.locked_retry_policy, runs.current_attempt_number, runs.exit_code, runs.output, runs.created_at, runs.updated_at
+),
+updated_with_context AS (
+    SELECT updated.*,
+           current_run_lease.run_lease_id,
+           current_run_lease.attempt_id,
+           current_run_lease.attempt_number,
+           current_run_lease.trace_id,
+           current_run_lease.span_id,
+           current_run_lease.parent_span_id,
+           current_run_lease.traceparent,
+           current_run_lease.state_version
+      FROM updated
+      JOIN current_run_lease ON current_run_lease.org_id = updated.org_id
+                           AND current_run_lease.id = updated.id
+),
+event_seq AS (
+    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+    SELECT updated_with_context.org_id,
+           'run',
+           updated_with_context.id,
+           1
+      FROM updated_with_context
+    ON CONFLICT (org_id, subject_type, subject_id)
+    DO UPDATE SET last_seq = event_subject_cursors.last_seq + 1,
+                  updated_at = now()
+    RETURNING org_id, subject_type, subject_id, last_seq
+),
+inserted_event AS (
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT updated_with_context.org_id,
+           updated_with_context.project_id,
+           updated_with_context.environment_id,
+           updated_with_context.id,
+           event_seq.last_seq,
+           updated_with_context.attempt_id,
+           updated_with_context.run_lease_id,
+           updated_with_context.attempt_number,
+           updated_with_context.trace_id,
+           updated_with_context.span_id,
+           updated_with_context.parent_span_id,
+           updated_with_context.traceparent,
+           'guest',
+           'info',
+           'worker',
+           'run.metadata.updated',
+           'run.metadata.updated',
+           jsonb_build_object(
+               'operation', sqlc.arg(operation)::text,
+               'key', NULLIF(sqlc.arg(key)::text, '')
+           ),
+           'sensitive',
+           updated_with_context.state_version
+      FROM updated_with_context
+      JOIN event_seq ON event_seq.org_id = updated_with_context.org_id
+                    AND event_seq.subject_type = 'run'
+                    AND event_seq.subject_id = updated_with_context.id
+    RETURNING id
+),
+event_outbox AS (
+    INSERT INTO event_outbox (event_record_id, stream_key)
+    SELECT inserted_event.id,
+           'helmr:events:' || updated_with_context.org_id::text || ':run:' || updated_with_context.id::text
+      FROM inserted_event
+      JOIN updated_with_context ON true
+    RETURNING id
+)
+SELECT updated.id, updated.org_id, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at, false AS metadata_too_large
+  FROM updated
+  JOIN event_outbox ON true
+UNION ALL
+SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.metadata, runs.tags, runs.locked_retry_policy, runs.current_attempt_number, runs.exit_code, runs.output, runs.created_at, runs.updated_at, true AS metadata_too_large
+  FROM current_run_lease
+  JOIN runs ON runs.org_id = current_run_lease.org_id
+           AND runs.id = current_run_lease.id
  WHERE NOT EXISTS (SELECT 1 FROM updated);

@@ -15,12 +15,33 @@ const (
 	errForbidden
 	errNotFound
 	errConflict
+	errGone
 	errTooLarge
 	errBadGateway
 	errUnavailable
 )
 
 var errRecordNotFound = errors.New("record not found")
+
+type errorCoder interface {
+	ErrorCode() string
+}
+
+type codedError struct {
+	code    string
+	message string
+}
+
+func (e codedError) Error() string {
+	if e.message != "" {
+		return e.message
+	}
+	return e.code
+}
+
+func (e codedError) ErrorCode() string {
+	return e.code
+}
 
 type apiError struct {
 	kind errKind
@@ -55,6 +76,10 @@ func conflict(err error) error {
 	return apiError{kind: errConflict, err: err}
 }
 
+func gone(err error) error {
+	return apiError{kind: errGone, err: err}
+}
+
 func tooLarge(err error) error {
 	return apiError{kind: errTooLarge, err: err}
 }
@@ -83,6 +108,8 @@ func errorStatus(err error) int {
 		return http.StatusNotFound
 	case errConflict:
 		return http.StatusConflict
+	case errGone:
+		return http.StatusGone
 	case errTooLarge:
 		return http.StatusRequestEntityTooLarge
 	case errBadGateway:
@@ -99,7 +126,12 @@ func writeError(w http.ResponseWriter, err error) {
 }
 
 func writeErrorStatus(w http.ResponseWriter, status int, err error) {
-	writeJSON(w, status, map[string]string{"error": err.Error()})
+	response := map[string]string{"error": err.Error()}
+	var coder errorCoder
+	if errors.As(err, &coder) && coder.ErrorCode() != "" {
+		response["code"] = coder.ErrorCode()
+	}
+	writeJSON(w, status, response)
 }
 
 func isNoRows(err error) bool {

@@ -1,9 +1,10 @@
-import { cache, ConcurrentWaitError, image, sandbox, source, task, type TaskContext } from "@helmr/sdk"
+import { cache, ConcurrentWaitError, image, logger, sandbox, source, task, wait } from "@helmr/sdk"
+import { randomUUID } from "node:crypto"
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { z } from "zod"
 
 const dependencyInputs = source.directory(".", {
-  ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
+  ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json", "!vendor", "!vendor/**"],
 })
 
 const base = image("helmr-edge-smoke")
@@ -27,6 +28,10 @@ const payload = z.object({
 
 type Payload = z.infer<typeof payload>
 
+const approvalDecision = z.object({
+  approved: z.boolean(),
+})
+
 export const edgeSmoke = task({
   id: "edge-smoke",
   sandbox: sbx,
@@ -34,14 +39,14 @@ export const edgeSmoke = task({
   payload,
   run: async (input: Payload, ctx) => {
     const marker = input.marker?.trim() || `edge-${ctx.run.id}`
-    ctx.log.info({ phase: "edge-smoke", mode: input.mode, marker })
+    logger.info({ phase: "edge-smoke", mode: input.mode, marker })
 
     switch (input.mode) {
       case "concurrent-wait":
         return {
           mode: input.mode,
           marker,
-          concurrentWaitRejected: await assertConcurrentWaitRejected(ctx, input.waitTimeout),
+          concurrentWaitRejected: await assertConcurrentWaitRejected(input.waitTimeout),
         }
       case "workspace-overwrite":
         return {
@@ -55,23 +60,37 @@ export const edgeSmoke = task({
   },
 })
 
-async function assertConcurrentWaitRejected(ctx: TaskContext, timeout: number): Promise<boolean> {
-  const first = ctx.wait.human<{ approved: boolean }>({
-    displayText: "Concurrent wait diagnostic first wait",
+async function assertConcurrentWaitRejected(timeout: number): Promise<boolean> {
+  const firstToken = await wait.createToken({
     timeout,
+    tags: ["smoke", "edge-case"],
+    metadata: { subject: "Concurrent wait diagnostic first wait" },
   })
+  const first = wait.forToken(firstToken, {
+    schema: approvalDecision,
+    timeout,
+    tags: ["smoke", "edge-case"],
+    metadata: { subject: "Concurrent wait diagnostic first wait" },
+  }).unwrap()
   try {
-    await ctx.wait.human<{ approved: boolean }>({
-      displayText: "Concurrent wait diagnostic second wait",
+    const secondToken = await wait.createToken({
       timeout,
+      tags: ["smoke", "edge-case"],
+      metadata: { subject: "Concurrent wait diagnostic second wait" },
     })
+    await wait.forToken(secondToken, {
+      schema: approvalDecision,
+      timeout,
+      tags: ["smoke", "edge-case"],
+      metadata: { subject: "Concurrent wait diagnostic second wait" },
+    }).unwrap()
   } catch (error) {
     if (error instanceof ConcurrentWaitError || String(error).includes("ConcurrentWaitError")) {
       return true
     }
     throw error
   } finally {
-    first.catch(() => undefined)
+    first.then(() => undefined, () => undefined)
   }
   throw new Error("second wait unexpectedly started while first wait was active")
 }

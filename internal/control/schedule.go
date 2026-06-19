@@ -146,11 +146,7 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
 		return db.UpdateScheduleRow{}, errPermissionRequired
 	}
-	deploymentSelection, err := normalizeRunDeploymentSelection(runOptions.DeploymentID, runOptions.Version)
-	if err != nil {
-		return db.UpdateScheduleRow{}, err
-	}
-	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, current.ProjectID, current.EnvironmentID, request.Task, deploymentSelection)
+	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, current.ProjectID, current.EnvironmentID, request.Task, runDeploymentSelection{})
 	if isNoRows(err) {
 		return db.UpdateScheduleRow{}, fmt.Errorf("task %q is not deployed in the selected deployment", request.Task)
 	}
@@ -218,11 +214,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
 		return db.CreateScheduleRow{}, errPermissionRequired
 	}
-	deploymentSelection, err := normalizeRunDeploymentSelection(runOptions.DeploymentID, runOptions.Version)
-	if err != nil {
-		return db.CreateScheduleRow{}, err
-	}
-	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, projectID, environmentID, request.Task, deploymentSelection)
+	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, projectID, environmentID, request.Task, runDeploymentSelection{})
 	if isNoRows(err) {
 		return db.CreateScheduleRow{}, fmt.Errorf("task %q is not deployed in the selected deployment", request.Task)
 	}
@@ -341,6 +333,7 @@ func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound(errors.New("schedule not found")))
 		return
 	}
+	s.deleteScheduleIndexEntry(r.Context(), row.ScheduleID, row.InstanceID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -406,6 +399,15 @@ func (s *Server) registerScheduleInstances(ctx context.Context, orgID pgtype.UUI
 		}); err != nil {
 			s.log.Warn("register schedule next fire failed", "schedule_id", pgvalue.MustUUIDValue(scheduleID).String(), "instance_id", pgvalue.MustUUIDValue(row.InstanceID).String(), "error", err)
 		}
+	}
+}
+
+func (s *Server) deleteScheduleIndexEntry(ctx context.Context, scheduleID pgtype.UUID, instanceID pgtype.UUID) {
+	if s.scheduleEngine == nil {
+		return
+	}
+	if err := s.scheduleEngine.DeleteInstance(ctx, instanceID); err != nil {
+		s.log.Warn("delete schedule index entry failed", "schedule_id", pgvalue.MustUUIDValue(scheduleID).String(), "instance_id", pgvalue.MustUUIDValue(instanceID).String(), "error", err)
 	}
 }
 

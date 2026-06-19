@@ -14,34 +14,40 @@ import (
 )
 
 func applySecrets(imageRoot, workspaceRoot string, request *runv0.RunTaskRequest, runtimeUser *resolvedRuntimeUser, env *[]string) error {
+	_, err := applySecretsWithWorkspacePaths(imageRoot, workspaceRoot, request, runtimeUser, env)
+	return err
+}
+
+func applySecretsWithWorkspacePaths(imageRoot, workspaceRoot string, request *runv0.RunTaskRequest, runtimeUser *resolvedRuntimeUser, env *[]string) ([]string, error) {
+	var workspaceSecretPaths []string
 	for _, secret := range request.Secrets {
 		if secret == nil {
-			return errors.New("secret injection is required")
+			return nil, errors.New("secret injection is required")
 		}
 		if secret.Placement == nil {
-			return fmt.Errorf("secret %s placement is required", secret.Name)
+			return nil, fmt.Errorf("secret %s placement is required", secret.Name)
 		}
 		switch placement := secret.Placement.Kind.(type) {
 		case *runv0.Placement_Env:
 			if placement.Env == nil || strings.TrimSpace(placement.Env.Name) == "" {
-				return fmt.Errorf("secret %s env placement name is required", secret.Name)
+				return nil, fmt.Errorf("secret %s env placement name is required", secret.Name)
 			}
 			envName := strings.TrimSpace(placement.Env.Name)
 			if isDynamicLoaderEnvKey(envName) {
-				return fmt.Errorf("secret %s env placement %q conflicts with reserved runtime environment", secret.Name, envName)
+				return nil, fmt.Errorf("secret %s env placement %q conflicts with reserved runtime environment", secret.Name, envName)
 			}
 			*env = setEnvValue(*env, envName, string(secret.ValueBytes))
 		case *runv0.Placement_File:
 			if placement.File == nil || strings.TrimSpace(placement.File.Path) == "" {
-				return fmt.Errorf("secret %s file placement path is required", secret.Name)
+				return nil, fmt.Errorf("secret %s file placement path is required", secret.Name)
 			}
 			path, err := materializedPath(imageRoot, workspaceRoot, placement.File.Path)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			uid, gid, err := secretOwner(imageRoot, runtimeUser, placement.File.Owner)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			ownSecret := shouldChownSecret(runtimeUser, placement.File.Owner)
 			parentUID, parentGID := uid, gid
@@ -49,70 +55,87 @@ func applySecrets(imageRoot, workspaceRoot string, request *runv0.RunTaskRequest
 				parentUID, parentGID = runtimeUser.UID, runtimeUser.GID
 			}
 			if err := mkdirAllOwned(filepath.Dir(path), 0o700, parentUID, parentGID, ownSecret); err != nil {
-				return err
+				return nil, err
 			}
 			mode := os.FileMode(0o600)
 			if placement.File.Mode != nil {
 				parsed, err := parseSecretMode(*placement.File.Mode)
 				if err != nil {
-					return fmt.Errorf("invalid secret file mode for %s: %w", placement.File.Path, err)
+					return nil, fmt.Errorf("invalid secret file mode for %s: %w", placement.File.Path, err)
 				}
 				mode = parsed
 			}
 			if err := writeFileNoFollow(path, secret.ValueBytes, mode); err != nil {
-				return err
+				return nil, err
 			}
 			if err := os.Chmod(path, mode); err != nil {
-				return err
+				return nil, err
 			}
 			if ownSecret {
 				if err := os.Chown(path, int(uid), int(gid)); err != nil {
-					return fmt.Errorf("chown secret file %s: %w", path, err)
+					return nil, fmt.Errorf("chown secret file %s: %w", path, err)
 				}
 			}
 			if err := ensureRuntimeCanReadSecretFile(imageRoot, workspaceRoot, path, runtimeUser); err != nil {
-				return err
+				return nil, err
+			}
+			if workspaceSecretPath(imageRoot, workspaceRoot, path) != "" {
+				workspaceSecretPaths = append(workspaceSecretPaths, path)
 			}
 		case *runv0.Placement_Dir:
 			if placement.Dir == nil || strings.TrimSpace(placement.Dir.Path) == "" {
-				return fmt.Errorf("secret %s dir placement path is required", secret.Name)
+				return nil, fmt.Errorf("secret %s dir placement path is required", secret.Name)
 			}
 			path, err := materializedPath(imageRoot, workspaceRoot, placement.Dir.Path)
 			if err != nil {
-				return err
+				return nil, err
+			}
+			if filepath.Clean(path) == filepath.Clean(workspaceRoot) {
+				return nil, fmt.Errorf("secret %s dir placement path must not target the workspace root", secret.Name)
 			}
 			uid, gid, err := secretOwner(imageRoot, runtimeUser, placement.Dir.Owner)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			mode := os.FileMode(0o700)
 			if placement.Dir.Mode != nil {
 				parsed, err := parseSecretMode(*placement.Dir.Mode)
 				if err != nil {
-					return fmt.Errorf("invalid secret dir mode for %s: %w", placement.Dir.Path, err)
+					return nil, fmt.Errorf("invalid secret dir mode for %s: %w", placement.Dir.Path, err)
 				}
 				mode = parsed
 			}
 			ownSecret := shouldChownSecret(runtimeUser, placement.Dir.Owner)
 			if err := mkdirAllOwned(path, mode, uid, gid, ownSecret); err != nil {
-				return err
+				return nil, err
 			}
 			if err := os.Chmod(path, mode); err != nil {
-				return err
+				return nil, err
 			}
 			if ownSecret {
 				if err := os.Chown(path, int(uid), int(gid)); err != nil {
-					return fmt.Errorf("chown secret dir %s: %w", path, err)
+					return nil, fmt.Errorf("chown secret dir %s: %w", path, err)
 				}
 			}
 			if err := ensureRuntimeCanTraverseSecretDir(imageRoot, workspaceRoot, path, runtimeUser); err != nil {
-				return err
+				return nil, err
+			}
+			if workspaceSecretPath(imageRoot, workspaceRoot, path) != "" {
+				workspaceSecretPaths = append(workspaceSecretPaths, path)
 			}
 		default:
-			return fmt.Errorf("secret %s placement is required", secret.Name)
+			return nil, fmt.Errorf("secret %s placement is required", secret.Name)
 		}
 	}
-	return nil
+	return workspaceSecretPaths, nil
+}
+
+func workspaceSecretPath(imageRoot, workspaceRoot, hostPath string) string {
+	root, err := materializedRoot(imageRoot, workspaceRoot, hostPath)
+	if err != nil || filepath.Clean(root) != filepath.Clean(workspaceRoot) {
+		return ""
+	}
+	return hostPath
 }
 
 func shouldChownSecret(runtimeUser *resolvedRuntimeUser, owner *string) bool {

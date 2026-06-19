@@ -47,7 +47,7 @@ func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logge
 	case transport.StreamTypeRunImage:
 		return false, handleRunConnection(ctx, conn, cfg, logger, registry, start.streamHeader, start.bodyLen)
 	default:
-		return false, fmt.Errorf("unsupported input stream type %q", start.streamHeader.Type)
+		return false, fmt.Errorf("unsupported runtime input type %q", start.streamHeader.Type)
 	}
 }
 
@@ -82,7 +82,7 @@ func readConnectionStart(conn io.Reader) (connectionStart, error) {
 }
 
 func validateResumeAttach(attach *runv0.ResumeAttach) (connectionStart, error) {
-	if strings.TrimSpace(attach.CheckpointId) == "" || strings.TrimSpace(attach.WaitpointId) == "" || strings.TrimSpace(attach.SessionId) == "" {
+	if strings.TrimSpace(attach.CheckpointId) == "" || strings.TrimSpace(attach.WaitpointId) == "" || strings.TrimSpace(attach.RunLeaseId) == "" {
 		return connectionStart{}, errors.New("resume attach is missing required fields")
 	}
 	return connectionStart{attach: attach}, nil
@@ -184,10 +184,10 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 	var image ociImage
 	runID := header.RunID
 	if strings.TrimSpace(runID) == "" {
-		return errors.New("input stream run_id is required")
+		return errors.New("runtime input run_id is required")
 	}
 	if header.Type != transport.StreamTypeRunImage {
-		return fmt.Errorf("unsupported input stream type %q", header.Type)
+		return fmt.Errorf("unsupported runtime input type %q", header.Type)
 	}
 	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
 	image, err = unpackOCIImage(body, imageRoot)
@@ -208,14 +208,14 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 		return fmt.Errorf("deployment source run_id %q does not match run image run_id %q", header.RunID, runID)
 	}
 	if header.Type != transport.StreamTypeDeploymentSource {
-		return fmt.Errorf("unsupported input stream type %q", header.Type)
+		return fmt.Errorf("unsupported runtime input type %q", header.Type)
 	}
 	body = &io.LimitedReader{R: conn, N: int64(bodyLen)}
 	if err := archive.ExtractTar(body, deploymentSourceRoot); err != nil {
 		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
 			return errors.Join(fmt.Errorf("extract deployment source: %w", err), fmt.Errorf("drain deployment source: %w", drainErr))
 		}
-		drainRemainingRunInput(conn, runID)
+		drainRemainingRuntimeInput(conn, runID)
 		return fmt.Errorf("extract deployment source: %w", err)
 	}
 	if _, err := io.Copy(io.Discard, body); err != nil {
@@ -228,7 +228,7 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 	}
 	if request.RunId != runID {
 		drainWorkspaceArtifact(conn, runID)
-		return fmt.Errorf("run request run_id %q does not match input stream run_id %q", request.RunId, runID)
+		return fmt.Errorf("run request run_id %q does not match runtime input run_id %q", request.RunId, runID)
 	}
 	mountPath, err := workspaceMountPath(&request)
 	if err != nil {
@@ -252,7 +252,7 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 		return fmt.Errorf("workspace artifact run_id %q does not match run image run_id %q", header.RunID, runID)
 	}
 	if header.Type != transport.StreamTypeWorkspaceArtifact {
-		return fmt.Errorf("unsupported input stream type %q", header.Type)
+		return fmt.Errorf("unsupported runtime input type %q", header.Type)
 	}
 	workspaceArtifactDigest := ""
 	if header.BodyDigest != nil {
@@ -295,7 +295,7 @@ func drainRunRequest(conn io.Reader) {
 	_, _ = transport.ReadMessageFrame(conn)
 }
 
-func drainRemainingRunInput(conn io.Reader, runID string) {
+func drainRemainingRuntimeInput(conn io.Reader, runID string) {
 	drainRunRequest(conn)
 	drainWorkspaceArtifact(conn, runID)
 }

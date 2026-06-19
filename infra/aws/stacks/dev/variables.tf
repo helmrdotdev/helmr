@@ -130,6 +130,13 @@ variable "database_backup_retention_days" {
   default     = 1
 }
 
+variable "database_engine_version" {
+  description = "RDS Postgres engine version. Set to null to use the AWS default for the region."
+  type        = string
+  default     = "18.2"
+  nullable    = true
+}
+
 variable "database_skip_final_snapshot" {
   description = "Skip the final RDS snapshot on destroy."
   type        = bool

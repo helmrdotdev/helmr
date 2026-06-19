@@ -1,7 +1,17 @@
-import { expect, test } from "bun:test"
+import { afterEach, expect, test } from "bun:test"
 
-import { parseTaskPayload } from "./internal"
-import { PayloadSchemaValidationError, image, queue, sandbox, schedules, task, type PayloadSchema } from "./index"
+import { enterRunRuntime, getRunRuntime, parsePayloadWithSchema, parseTaskPayload, type RunRuntime } from "./internal"
+import { PayloadSchemaValidationError, channels, image, queue, sandbox, schedules, task, type PayloadSchema } from "./index"
+import { resetDefaultClientForTest } from "./start"
+
+const originalFetch = globalThis.fetch
+const originalEnv = { ...process.env }
+
+afterEach(() => {
+  globalThis.fetch = originalFetch
+  process.env = { ...originalEnv }
+  resetDefaultClientForTest()
+})
 
 const invalidTaskIds = [
   "a/b",
@@ -28,7 +38,7 @@ test("task accepts task id boundaries", () => {
   expect(task({ id: "a", sandbox: sb, run: async () => null }).id).toBe("a")
   const max = "a".repeat(128)
   expect(task({ id: max, sandbox: sb, run: async () => null }).id).toBe(max)
-  expect(task({ id: "approvals.grant", sandbox: sb, run: async () => null }).id).toBe("approvals.grant")
+  expect(task({ id: "waitpoints.grant", sandbox: sb, run: async () => null }).id).toBe("waitpoints.grant")
 })
 
 test("task rejects zero queue concurrency limit", () => {
@@ -116,6 +126,32 @@ test("task parses payload through payload schema before run", async () => {
   })
 
   await expect(parseTaskPayload(schemaTask, { issue: "41" })).resolves.toEqual({ issue: 41 })
+})
+
+test("session output channels parse payload before appending", async () => {
+  const appended: unknown[] = []
+  const exit = enterRunRuntime(fakeRunRuntime({
+    channelOutputAppend: async (_channel, payload) => {
+      appended.push(payload)
+    },
+  }))
+  try {
+    const issueChannel = testSessionContext().output(channels.output("issues", { schema: issueStringToNumberSchema() }))
+    await issueChannel.append({ issue: "41" })
+    await issueChannel.pipe([{ issue: "42" }])
+
+    expect(appended).toEqual([{ issue: 41 }, { issue: 42 }])
+    await expect(issueChannel.append({ issue: 41 } as never)).rejects.toThrow(PayloadSchemaValidationError)
+  } finally {
+    exit()
+  }
+})
+
+test("channel waits reject names that cannot round-trip through the REST path", () => {
+  for (const id of ["release/approval", "release approval", "release%2Fapproval", ".approval", "_approval", "-approval", "å"]) {
+    expect(() => channels.input(id, { schema: issueStringToNumberSchema() })).toThrow("channel name must match")
+  }
+  expect(channels.input("release.approval", { schema: issueStringToNumberSchema() }).id).toBe("release.approval")
 })
 
 test("task payload schema failures are reported with issue paths", async () => {
@@ -221,3 +257,56 @@ test("scheduled tasks parse metadata payload dates", async () => {
     upcoming: [new Date("2026-06-03T00:00:00Z")],
   })
 })
+
+function issueStringToNumberSchema(): PayloadSchema<{ readonly issue: string }, { readonly issue: number }> {
+  return {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate(value) {
+        if (value === null || typeof value !== "object") {
+          return { issues: [{ message: "expected object" }] }
+        }
+        const issue = (value as Record<string, unknown>)["issue"]
+        if (typeof issue !== "string") {
+          return { issues: [{ message: "expected string", path: ["issue"] }] }
+        }
+        return { value: { issue: Number(issue) } }
+      },
+    },
+  }
+}
+
+function fakeRunRuntime(overrides: Partial<RunRuntime>): RunRuntime {
+  return {
+    waitpoint: async () => ({ ok: true, value: undefined, unwrap: () => undefined }),
+    channelOutputAppend: async () => {},
+    waitFor: async () => {},
+    waitUntil: async () => {},
+    metadataSet: async () => {},
+    metadataPatch: async () => {},
+    metadataIncrement: async () => {},
+    log: () => {},
+    ...overrides,
+  }
+}
+
+function testSessionContext() {
+  return {
+    output<TSchema extends PayloadSchema<any, any>>(definition: { readonly id: string; readonly schema: TSchema }) {
+      return {
+        id: definition.id,
+        append: async (payload: unknown) => {
+          const parsed = await parsePayloadWithSchema(definition.schema, payload, `channel ${JSON.stringify(definition.id)} payload`)
+          return getRunRuntime().channelOutputAppend(definition.id, parsed)
+        },
+        pipe: async (source: AsyncIterable<unknown> | Iterable<unknown>) => {
+          for await (const payload of source) {
+            const parsed = await parsePayloadWithSchema(definition.schema, payload, `channel ${JSON.stringify(definition.id)} payload`)
+            await getRunRuntime().channelOutputAppend(definition.id, parsed)
+          }
+        },
+      }
+    },
+  }
+}

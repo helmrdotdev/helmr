@@ -68,7 +68,7 @@ Optional schedule worker tuning:
 | --- | --- | --- |
 | `HELMR_SCHEDULE_REPAIR_EVERY` | `5s` | How often the dispatcher repairs schedule Redis entries from the database and drains due entries. |
 | `HELMR_SCHEDULE_REPAIR_LIMIT` | `100` | Schedule repair page size and due-entry dequeue batch size. |
-| `HELMR_SCHEDULE_TRIGGER_CONCURRENCY` | `10` | Maximum concurrent schedule trigger attempts per dispatcher. |
+| `HELMR_SCHEDULE_TRIGGER_CONCURRENCY` | `10` | Maximum concurrent scheduled task-start attempts per dispatcher. |
 | `HELMR_SCHEDULE_REPAIR_LOOKAHEAD` | `40s` | Safety-net window of upcoming next-fire entries repaired into Redis. Steady-state schedules enqueue their next fire directly. |
 | `HELMR_SCHEDULE_LEASE` | `5m` | Redis lease duration for a due schedule fire. |
 | `HELMR_SCHEDULE_MAX_ATTEMPTS` | `10` | Retry attempts before the current schedule fire is skipped. |

@@ -40,7 +40,7 @@ Helmr manages:
 - Runtime filesystems such as `/proc`, `/dev`, `/dev/pts`, `/dev/shm`, `/tmp`,
   and `/run`.
 - Basic network readiness, DNS resolver files, and hostname setup.
-- Logs, events, waitpoints, timeouts, and run status.
+- Logs, events, session channels, metadata updates, waitpoints, time waits, and run status.
 - Checkpoint and restore compatibility checks.
 
 These details are product-managed. Task code should rely on the resulting Linux
@@ -111,7 +111,7 @@ Helmr separates runtime failures by layer:
 | Guest runtime | Firecracker boot, guest agent health, filesystem mount, or network readiness issue |
 | Task process | Your task code exited non-zero or threw an error |
 | Timeout | The run exceeded its configured duration |
-| Waitpoint | A waitpoint timed out or failed to resume |
+| Waitpoint | An waitpoint timed out or failed to resume |
 
 When a run fails before task code starts, inspect run events and worker logs
 before treating it as a task bug.

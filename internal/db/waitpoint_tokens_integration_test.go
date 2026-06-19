@@ -1,0 +1,3154 @@
+package db_test
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func TestWaitpointTokenCompletionIdempotencyUsesData(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	tokenID := uuid.Must(uuid.NewV7())
+	token, err := queries.CreateWaitpointToken(ctx, db.CreateWaitpointTokenParams{
+		ID:                 pgvalue.UUID(tokenID),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		CallbackSecretHash: []byte("callback-hash-a"),
+		TimeoutAt:          pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		Metadata:           []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"approved":true,"reason":"ok"}`)
+	first, err := queries.CompleteWaitpointToken(ctx, db.CompleteWaitpointTokenParams{
+		OrgID:          token.OrgID,
+		ID:             token.ID,
+		Data:           data,
+		CompletionHash: pgvalue.Text(completionHash(t, data)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Status != db.WaitpointTokenStatusCompleted {
+		t.Fatalf("status = %s", first.Status)
+	}
+	second, err := queries.CompleteWaitpointToken(ctx, db.CompleteWaitpointTokenParams{
+		OrgID:          token.OrgID,
+		ID:             token.ID,
+		Data:           []byte(`{"reason":"ok","approved":true}`),
+		CompletionHash: pgvalue.Text(completionHash(t, []byte(`{"reason":"ok","approved":true}`))),
+	})
+	if err != nil {
+		t.Fatalf("same canonical data should be idempotent: %v", err)
+	}
+	if string(second.Metadata) != `{}` {
+		t.Fatalf("metadata = %s", second.Metadata)
+	}
+	_, err = queries.CompleteWaitpointToken(ctx, db.CompleteWaitpointTokenParams{
+		OrgID:          token.OrgID,
+		ID:             token.ID,
+		Data:           []byte(`{"approved":false}`),
+		CompletionHash: pgvalue.Text(completionHash(t, []byte(`{"approved":false}`))),
+	})
+	if err == nil {
+		t.Fatal("different completion data should conflict")
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("different data error = %v", err)
+	}
+}
+
+func TestGetWaitpointTokenForPublicCompletionRequiresEnvironmentBinding(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	tokenID := uuid.Must(uuid.NewV7())
+	token, err := queries.CreateWaitpointToken(ctx, db.CreateWaitpointTokenParams{
+		ID:                 pgvalue.UUID(tokenID),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		CallbackSecretHash: []byte("callback-hash-public-scope"),
+		TimeoutAt:          pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		Metadata:           []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.GetWaitpointTokenForPublicCompletion(ctx, db.GetWaitpointTokenForPublicCompletionParams{
+		OrgID:         token.OrgID,
+		ProjectID:     token.ProjectID,
+		EnvironmentID: token.EnvironmentID,
+		ID:            token.ID,
+	}); err != nil {
+		t.Fatalf("same environment lookup failed: %v", err)
+	}
+	_, err = queries.GetWaitpointTokenForPublicCompletion(ctx, db.GetWaitpointTokenForPublicCompletionParams{
+		OrgID:         token.OrgID,
+		ProjectID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		EnvironmentID: token.EnvironmentID,
+		ID:            token.ID,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("cross-project lookup error = %v", err)
+	}
+	_, err = queries.GetWaitpointTokenForPublicCompletion(ctx, db.GetWaitpointTokenForPublicCompletionParams{
+		OrgID:         token.OrgID,
+		ProjectID:     token.ProjectID,
+		EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:            token.ID,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("cross-environment lookup error = %v", err)
+	}
+}
+
+func TestAttachCompletedWaitpointTokenResolvesWaitpoint(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	tokenID := uuid.Must(uuid.NewV7())
+	waitpointID := uuid.Must(uuid.NewV7())
+	token, err := queries.CreateWaitpointToken(ctx, db.CreateWaitpointTokenParams{
+		ID:                 pgvalue.UUID(tokenID),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		CallbackSecretHash: []byte("callback-hash-b"),
+		TimeoutAt:          pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		Metadata:           []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"approved":true}`)
+	if _, err := queries.CompleteWaitpointToken(ctx, db.CompleteWaitpointTokenParams{
+		OrgID:          token.OrgID,
+		ID:             token.ID,
+		Data:           data,
+		CompletionHash: pgvalue.Text(completionHash(t, data)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO waitpoints (id, org_id, project_id, environment_id, run_id, kind, params)
+		VALUES ($1, $2, $3, $4, $5, 'token', '{"token_id":"external"}')
+	`, waitpointID, ids.orgID, ids.projectID, ids.environmentID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	attached, err := queries.AttachWaitpointTokenToWaitpoint(ctx, db.AttachWaitpointTokenToWaitpointParams{
+		OrgID:       pgvalue.UUID(ids.orgID),
+		WaitpointID: pgvalue.UUID(waitpointID),
+		TokenID:     token.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !attached.ResolvedWaitpoint {
+		t.Fatal("completed token did not resolve the pending waitpoint")
+	}
+	var status string
+	var resolvedData []byte
+	if err := pool.QueryRow(ctx, `SELECT status::text, data FROM waitpoints WHERE id = $1`, waitpointID).Scan(&status, &resolvedData); err != nil {
+		t.Fatal(err)
+	}
+	if status != "completed" || string(resolvedData) != `{"approved": true}` {
+		t.Fatalf("waitpoint status=%s data=%s", status, resolvedData)
+	}
+}
+
+func TestCompleteAttachedWaitpointTokenResolvesAndUnblocksRunSuspension(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	waitpointID := seedWaitingRunSuspensionForWaitpoint(t, ctx, pool, ids)
+	tokenID := uuid.Must(uuid.NewV7())
+	token, err := queries.CreateWaitpointToken(ctx, db.CreateWaitpointTokenParams{
+		ID:                 pgvalue.UUID(tokenID),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		CallbackSecretHash: []byte("callback-hash-attached"),
+		TimeoutAt:          pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		Metadata:           []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached, err := queries.AttachWaitpointTokenToWaitpoint(ctx, db.AttachWaitpointTokenToWaitpointParams{
+		OrgID:       pgvalue.UUID(ids.orgID),
+		WaitpointID: pgvalue.UUID(waitpointID),
+		TokenID:     token.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attached.ResolvedWaitpoint {
+		t.Fatal("waiting token should attach without resolving the waitpoint")
+	}
+
+	data := []byte(`{"approved":true,"note":"ship"}`)
+	completed, err := queries.CompleteWaitpointToken(ctx, db.CompleteWaitpointTokenParams{
+		OrgID:          token.OrgID,
+		ID:             token.ID,
+		Data:           data,
+		CompletionHash: pgvalue.Text(completionHash(t, data)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !completed.ResolvedWaitpoint || !completed.WaitpointID.Valid {
+		t.Fatalf("complete did not resolve attached waitpoint: resolved=%v id=%v", completed.ResolvedWaitpoint, completed.WaitpointID)
+	}
+
+	resumed, err := queries.UnblockRunWaitpointsForWaitpoint(ctx, db.UnblockRunWaitpointsForWaitpointParams{
+		OrgID:       pgvalue.UUID(ids.orgID),
+		WaitpointID: pgvalue.UUID(waitpointID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resumed) != 1 {
+		t.Fatalf("resumed rows = %d", len(resumed))
+	}
+	if resumed[0].Status != db.RunSuspensionStatusResuming {
+		t.Fatalf("run suspension status = %s", resumed[0].Status)
+	}
+	if got := canonicalJSON(t, resumed[0].Resolution); got != `{"approved":true,"note":"ship"}` {
+		t.Fatalf("run suspension resolution = %s", resumed[0].Resolution)
+	}
+
+	var runStatus string
+	if err := pool.QueryRow(ctx, `SELECT status::text FROM runs WHERE id = $1`, ids.runID).Scan(&runStatus); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus != "queued" {
+		t.Fatalf("run status = %s", runStatus)
+	}
+}
+
+func TestUnblockRunWaitpointsForWaitpointPublishesDirectCompletionData(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	waitpointID := seedWaitingRunSuspensionForWaitpoint(t, ctx, pool, ids)
+	data := []byte(`{"approved":true}`)
+	if _, err := pool.Exec(ctx, `
+		UPDATE waitpoints
+		   SET status = 'completed',
+		       data = $2::jsonb,
+		       resolved_at = now()
+		 WHERE id = $1
+	`, waitpointID, data); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := queries.UnblockRunWaitpointsForWaitpoint(ctx, db.UnblockRunWaitpointsForWaitpointParams{
+		OrgID:       pgvalue.UUID(ids.orgID),
+		WaitpointID: pgvalue.UUID(waitpointID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resumed) != 1 {
+		t.Fatalf("resumed rows = %d", len(resumed))
+	}
+	if got := canonicalJSON(t, resumed[0].Resolution); got != `{"approved":true}` {
+		t.Fatalf("run suspension resolution = %s", resumed[0].Resolution)
+	}
+	var eventPayload []byte
+	if err := pool.QueryRow(ctx, `
+		SELECT payload
+		  FROM events
+		 WHERE org_id = $1
+		   AND run_id = $2
+		   AND kind = 'waitpoint.completed'
+		 ORDER BY seq DESC
+		 LIMIT 1
+	`, ids.orgID, ids.runID).Scan(&eventPayload); err != nil {
+		t.Fatal(err)
+	}
+	var event struct {
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(eventPayload, &event); err != nil {
+		t.Fatal(err)
+	}
+	if got := canonicalJSON(t, event.Payload); got != `{"approved":true}` {
+		t.Fatalf("event payload.payload = %s", event.Payload)
+	}
+}
+
+func TestUnblockRunWaitpointsForWaitpointPublishesDirectTimeoutData(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	waitpointID := seedWaitingRunSuspensionForWaitpoint(t, ctx, pool, ids)
+	if _, err := pool.Exec(ctx, `
+		UPDATE waitpoints
+		   SET status = 'timed_out',
+		       data = NULL,
+		       error = '{"code":"timed_out"}'::jsonb,
+		       resolved_at = now()
+		 WHERE id = $1
+	`, waitpointID); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := queries.UnblockRunWaitpointsForWaitpoint(ctx, db.UnblockRunWaitpointsForWaitpointParams{
+		OrgID:       pgvalue.UUID(ids.orgID),
+		WaitpointID: pgvalue.UUID(waitpointID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resumed) != 1 {
+		t.Fatalf("resumed rows = %d", len(resumed))
+	}
+	if !resumed[0].ResolutionKind.Valid || resumed[0].ResolutionKind.String != "timed_out" {
+		t.Fatalf("resolution kind = %+v", resumed[0].ResolutionKind)
+	}
+	if got := canonicalJSON(t, resumed[0].Resolution); got != `null` {
+		t.Fatalf("run suspension resolution = %s", resumed[0].Resolution)
+	}
+}
+
+func TestResolveRunChannelWaitpointsWaitBeforeSend(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	waitpointID := seedChannelWaitpoint(t, ctx, pool, ids, "approval", 0)
+
+	if _, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":true}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "slack-action-1",
+		IdempotencyFingerprint: "test-fingerprint",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := queries.ResolveRunChannelWaitpointsForRun(ctx, db.ResolveRunChannelWaitpointsForRunParams{
+		OrgID: pgvalue.UUID(ids.orgID),
+		RunID: pgvalue.UUID(ids.runID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed) != 1 || pgvalue.MustUUIDValue(completed[0].ID) != waitpointID {
+		t.Fatalf("completed input waitpoints = %+v, want %s", completed, waitpointID)
+	}
+	resumed, err := queries.UnblockRunWaitpointsForWaitpoint(ctx, db.UnblockRunWaitpointsForWaitpointParams{
+		OrgID:       pgvalue.UUID(ids.orgID),
+		WaitpointID: pgvalue.UUID(waitpointID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resumed) != 1 {
+		t.Fatalf("resumed waits = %d, want 1", len(resumed))
+	}
+	assertChannelWaitpointData(t, ctx, pool, waitpointID, `{"channel":"approval","correlation_id":"","data":{"approved":true},"sequence":1}`)
+}
+
+func TestResolveRunChannelWaitpointsSendBeforeWait(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	seedTaskSessionForRun(t, ctx, pool, ids)
+	if _, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":false}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "test-fingerprint",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitpointID := seedChannelWaitpoint(t, ctx, pool, ids, "approval", 0)
+	completed, err := queries.ResolveRunChannelWaitpointsForRun(ctx, db.ResolveRunChannelWaitpointsForRunParams{
+		OrgID: pgvalue.UUID(ids.orgID),
+		RunID: pgvalue.UUID(ids.runID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed) != 1 || pgvalue.MustUUIDValue(completed[0].ID) != waitpointID {
+		t.Fatalf("completed input waitpoints = %+v, want %s", completed, waitpointID)
+	}
+	assertChannelWaitpointData(t, ctx, pool, waitpointID, `{"channel":"approval","correlation_id":"","data":{"approved":false},"sequence":1}`)
+}
+
+func TestResolveRunChannelWaitpointsRespectsWaitCursors(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	firstWaitpointID := seedChannelWaitpoint(t, ctx, pool, ids, "approval", 0)
+	secondWaitpointID := seedAdditionalChannelWaitpoint(t, ctx, pool, ids, "approval", 1)
+
+	if _, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":true}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "test-fingerprint",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := queries.ResolveRunChannelWaitpointsForRun(ctx, db.ResolveRunChannelWaitpointsForRunParams{
+		OrgID: pgvalue.UUID(ids.orgID),
+		RunID: pgvalue.UUID(ids.runID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed) != 1 || pgvalue.MustUUIDValue(completed[0].ID) != firstWaitpointID {
+		t.Fatalf("completed input waitpoints = %+v, want first waitpoint %s only", completed, firstWaitpointID)
+	}
+	assertChannelWaitpointData(t, ctx, pool, firstWaitpointID, `{"channel":"approval","correlation_id":"","data":{"approved":true},"sequence":1}`)
+	assertWaitpointStatus(t, ctx, pool, secondWaitpointID, "pending")
+
+	if _, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":false}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "test-fingerprint",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	completed, err = queries.ResolveRunChannelWaitpointsForRun(ctx, db.ResolveRunChannelWaitpointsForRunParams{
+		OrgID: pgvalue.UUID(ids.orgID),
+		RunID: pgvalue.UUID(ids.runID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed) != 1 || pgvalue.MustUUIDValue(completed[0].ID) != secondWaitpointID {
+		t.Fatalf("completed input waitpoints = %+v, want second waitpoint %s", completed, secondWaitpointID)
+	}
+	assertChannelWaitpointData(t, ctx, pool, secondWaitpointID, `{"channel":"approval","correlation_id":"","data":{"approved":false},"sequence":2}`)
+}
+
+func TestChannelWaitCursorAdvancesUnfilteredWaitForCorrelatedRecord(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	taskSessionID := uuid.Must(uuid.NewV7())
+	channelID := uuid.Must(uuid.NewV7())
+	waitpointID := seedWaitingRunSuspensionForWaitpoint(t, ctx, pool, ids)
+	var runSuspensionID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT run_suspension_id
+		  FROM run_suspension_waitpoints
+		 WHERE org_id = $1
+		   AND waitpoint_id = $2
+	`, ids.orgID, waitpointID).Scan(&runSuspensionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO tasks (org_id, project_id, environment_id, task_id)
+		VALUES ($1, $2, $3, 'approval-task')
+		ON CONFLICT DO NOTHING
+	`, ids.orgID, ids.projectID, ids.environmentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO task_sessions (
+			id, org_id, project_id, environment_id, task_id,
+			initial_deployment_id, active_deployment_id, current_run_id
+		)
+		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5, $6)
+	`, taskSessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET task_session_id = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, taskSessionID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO channels (id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction)
+		VALUES ($1, $2, $3, $4, $5, $6, 'approval', 'input')
+	`, channelID, ids.orgID, ids.projectID, ids.environmentID, taskSessionID, seedChannelDefinition(t, ctx, pool, ids, "approval", "input")); err != nil {
+		t.Fatal(err)
+	}
+	consumerKey := "runtime:input-wait"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO channel_wait_cursors (
+			org_id, project_id, environment_id, task_session_id, channel_id, consumer_key, correlation_id
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, NULL)
+	`, ids.orgID, ids.projectID, ids.environmentID, taskSessionID, channelID, consumerKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE waitpoints
+		   SET kind = 'channel',
+		       params = '{"channel":"approval","after_sequence":0}'::jsonb
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, waitpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO channel_waits (
+			waitpoint_id, org_id, project_id, environment_id, run_id, run_suspension_id, channel_id, after_sequence
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 0)
+	`, waitpointID, ids.orgID, ids.projectID, ids.environmentID, ids.runID, runSuspensionID, channelID); err != nil {
+		t.Fatal(err)
+	}
+	record, err := queries.AppendChannelRecord(ctx, db.AppendChannelRecordParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		ProjectID:              pgvalue.UUID(ids.projectID),
+		EnvironmentID:          pgvalue.UUID(ids.environmentID),
+		ChannelID:              pgvalue.UUID(channelID),
+		Direction:              db.ChannelDirectionInput,
+		Data:                   []byte(`{"approved":true}`),
+		CorrelationID:          "thread-1",
+		ContentType:            "application/json",
+		IdempotencyFingerprint: "test-fingerprint",
+		Actor:                  []byte(`{"type":"test"}`),
+		Source:                 "test",
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, err := queries.ResolveChannelWaitpointsForChannel(ctx, db.ResolveChannelWaitpointsForChannelParams{
+		OrgID:     pgvalue.UUID(ids.orgID),
+		ChannelID: pgvalue.UUID(channelID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed) != 1 || pgvalue.MustUUIDValue(completed[0].ID) != waitpointID {
+		t.Fatalf("completed channel waitpoints = %+v, want %s", completed, waitpointID)
+	}
+	var lastDeliveredSequence int64
+	var lastDeliveredRecordID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT last_delivered_sequence, last_delivered_record_id
+		  FROM channel_wait_cursors
+		 WHERE org_id = $1
+		   AND task_session_id = $2
+		   AND channel_id = $3
+		   AND consumer_key = $4
+		   AND correlation_id IS NULL
+	`, ids.orgID, taskSessionID, channelID, consumerKey).Scan(&lastDeliveredSequence, &lastDeliveredRecordID); err != nil {
+		t.Fatal(err)
+	}
+	if lastDeliveredSequence != 0 || lastDeliveredRecordID != uuid.Nil {
+		t.Fatalf("pre-ack cursor = (%d, %s), want unconsumed; matched record = (%d, %s)", lastDeliveredSequence, lastDeliveredRecordID, record.Sequence, pgvalue.MustUUIDValue(record.ID))
+	}
+	assertChannelWaitpointData(t, ctx, pool, waitpointID, `{"channel":"approval","correlation_id":"thread-1","data":{"approved":true},"sequence":1}`)
+}
+
+func TestCreateRunSuspensionForWaitpointUsesTaskSessionChannel(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	taskSessionID, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	channelID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO channels (id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction)
+		VALUES ($1, $2, $3, $4, $5, $6, 'approval', 'input')
+	`, channelID, ids.orgID, ids.projectID, ids.environmentID, taskSessionID, seedChannelDefinition(t, ctx, pool, ids, "approval", "input")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := queries.AppendChannelRecord(ctx, db.AppendChannelRecordParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		ProjectID:              pgvalue.UUID(ids.projectID),
+		EnvironmentID:          pgvalue.UUID(ids.environmentID),
+		ChannelID:              pgvalue.UUID(channelID),
+		Direction:              db.ChannelDirectionInput,
+		Data:                   []byte(`{"approved":true}`),
+		CorrelationID:          "thread-1",
+		ContentType:            "application/json",
+		IdempotencyFingerprint: "test-fingerprint",
+		Actor:                  []byte(`{"type":"test"}`),
+		Source:                 "test",
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRecord, err := queries.AppendChannelRecord(ctx, db.AppendChannelRecordParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		ProjectID:              pgvalue.UUID(ids.projectID),
+		EnvironmentID:          pgvalue.UUID(ids.environmentID),
+		ChannelID:              pgvalue.UUID(channelID),
+		Direction:              db.ChannelDirectionInput,
+		Data:                   []byte(`{"approved":false}`),
+		CorrelationID:          "thread-1",
+		ContentType:            "application/json",
+		IdempotencyFingerprint: "test-fingerprint-2",
+		Actor:                  []byte(`{"type":"test"}`),
+		Source:                 "test",
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitpointID := uuid.Must(uuid.NewV7())
+	waitpoint, err := queries.CreateRunSuspensionForWaitpoint(ctx, db.CreateRunSuspensionForWaitpointParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		CorrelationID:    "wait-1",
+		CheckpointID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		CheckpointReason: "waitpoint",
+		ID:               pgvalue.UUID(waitpointID),
+		Kind:             db.WaitpointKindChannel,
+		Params:           []byte(`{"channel":"approval","after_sequence":0,"correlation_id":"thread-1"}`),
+		Metadata:         []byte(`{}`),
+		Tags:             []string{},
+		RunSuspensionID:  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondWaitpointID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO waitpoints (id, org_id, project_id, environment_id, run_id, kind, status, params, data, resolved_at)
+		VALUES (
+			$1, $2, $3, $4, $5, 'channel', 'completed',
+			'{"channel":"approval","after_sequence":1,"correlation_id":"thread-1"}'::jsonb,
+			jsonb_build_object(
+				'channel', 'approval',
+				'correlation_id', 'thread-1',
+				'sequence', $6::bigint,
+				'data', $7::jsonb
+			),
+			now()
+		)
+	`, secondWaitpointID, ids.orgID, ids.projectID, ids.environmentID, ids.runID, secondRecord.Sequence, secondRecord.Data); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_suspension_waitpoints (
+			org_id, run_id, project_id, environment_id, run_suspension_id, waitpoint_id, ordinal
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, 1)
+	`, ids.orgID, ids.runID, ids.projectID, ids.environmentID, pgvalue.MustUUIDValue(waitpoint.RunSuspensionID), secondWaitpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO channel_waits (
+			waitpoint_id, org_id, project_id, environment_id, run_id, run_suspension_id, channel_id, after_sequence, correlation_id, matched_record_id, matched_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 1, 'thread-1', $8, now())
+	`, secondWaitpointID, ids.orgID, ids.projectID, ids.environmentID, ids.runID, pgvalue.MustUUIDValue(waitpoint.RunSuspensionID), channelID, pgvalue.MustUUIDValue(secondRecord.ID)); err != nil {
+		t.Fatal(err)
+	}
+	var channelTaskSessionID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT channels.task_session_id
+		  FROM channel_waits
+		  JOIN channels ON channels.org_id = channel_waits.org_id
+		               AND channels.id = channel_waits.channel_id
+		 WHERE channel_waits.org_id = $1
+		   AND channel_waits.waitpoint_id = $2
+	`, ids.orgID, waitpointID).Scan(&channelTaskSessionID); err != nil {
+		t.Fatal(err)
+	}
+	if channelTaskSessionID != taskSessionID {
+		t.Fatalf("channel task_session_id = %s, want %s", channelTaskSessionID, taskSessionID)
+	}
+	if waitpoint.Status != db.RunSuspensionStatusOpening {
+		t.Fatalf("run suspension status = %s, want opening", waitpoint.Status)
+	}
+	var checkpointStatus db.CheckpointStatus
+	if err := pool.QueryRow(ctx, `
+		SELECT status
+		  FROM checkpoints
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(waitpoint.CheckpointID)).Scan(&checkpointStatus); err != nil {
+		t.Fatal(err)
+	}
+	if checkpointStatus != db.CheckpointStatusCreating {
+		t.Fatalf("checkpoint status = %s, want creating", checkpointStatus)
+	}
+	var runtimeID string
+	if err := pool.QueryRow(ctx, `
+		SELECT runtime_id
+		  FROM run_leases
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, runLeaseID).Scan(&runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := queries.MarkRunSuspensionCheckpointReady(ctx, db.MarkRunSuspensionCheckpointReadyParams{
+		OrgID:                      pgvalue.UUID(ids.orgID),
+		RunID:                      pgvalue.UUID(ids.runID),
+		RunLeaseID:                 pgvalue.UUID(runLeaseID),
+		WorkerInstanceID:           pgvalue.UUID(workerID),
+		RunSuspensionID:            waitpoint.RunSuspensionID,
+		CheckpointID:               waitpoint.CheckpointID,
+		WaitpointID:                waitpoint.ID,
+		RuntimeBackend:             "firecracker",
+		RuntimeID:                  runtimeID,
+		RuntimeArch:                "arm64",
+		RuntimeABI:                 "test",
+		KernelDigest:               "sha256:kernel",
+		InitramfsDigest:            "sha256:initramfs",
+		RootfsDigest:               "sha256:rootfs",
+		CniProfile:                 "default",
+		CheckpointArtifacts:        []byte(`[{"role":"runtime_config","ordinal":0,"digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","size_bytes":1,"media_type":"application/json"}]`),
+		WorkspaceArtifactDigest:    pgvalue.Text("sha256:2222222222222222222222222222222222222222222222222222222222222222"),
+		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 2, Valid: true},
+		WorkspaceArtifactMediaType: pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		Manifest:                   []byte(`{"version":1}`),
+		RuntimeVcpus:               pgtype.Int4{Int32: 1, Valid: true},
+		RuntimeMemoryMib:           pgtype.Int4{Int32: 1024, Valid: true},
+		RuntimeScratchDiskMib:      pgtype.Int4{Int32: 4096, Valid: true},
+		ImageKey:                   pgvalue.Text("test-image"),
+		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
+		WorkspaceMountPath:         pgvalue.Text("/workspace"),
+		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
+		ActiveDurationMs:           10,
+		CheckpointPayload:          []byte(`{"waitpoint":"wait-1"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready.Status != db.RunSuspensionStatusWaiting {
+		t.Fatalf("ready run suspension status = %s, want waiting", ready.Status)
+	}
+	completed, err := queries.ResolveRunChannelWaitpointsForRun(ctx, db.ResolveRunChannelWaitpointsForRunParams{
+		OrgID: pgvalue.UUID(ids.orgID),
+		RunID: pgvalue.UUID(ids.runID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed) != 1 || pgvalue.MustUUIDValue(completed[0].ID) != waitpointID {
+		t.Fatalf("completed waitpoints = %+v, want %s", completed, waitpointID)
+	}
+	resumed, err := queries.UnblockRunWaitpointsForWaitpoint(ctx, db.UnblockRunWaitpointsForWaitpointParams{
+		OrgID:       pgvalue.UUID(ids.orgID),
+		WaitpointID: pgvalue.UUID(waitpointID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resumed) != 1 {
+		t.Fatalf("resumed rows = %d, want 1", len(resumed))
+	}
+	if !resumed[0].ResolutionKind.Valid || resumed[0].ResolutionKind.String != "waitpoints" {
+		t.Fatalf("resolution kind = %+v, want waitpoints", resumed[0].ResolutionKind)
+	}
+	if got := canonicalJSON(t, resumed[0].Resolution); got != `{"waitpoints":[{"channel":"approval","correlation_id":"thread-1","data":{"approved":true},"sequence":1},{"channel":"approval","correlation_id":"thread-1","data":{"approved":false},"sequence":2}]}` {
+		t.Fatalf("resolution = %s", got)
+	}
+	var lastDeliveredSequence int64
+	var lastDeliveredRecordID pgtype.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT last_delivered_sequence, last_delivered_record_id
+		  FROM channel_wait_cursors
+		 WHERE org_id = $1
+		   AND task_session_id = $2
+		   AND channel_id = $3
+		   AND consumer_key = $4
+		   AND correlation_id = 'thread-1'
+	`, ids.orgID, taskSessionID, channelID, "runtime:input-wait").Scan(&lastDeliveredSequence, &lastDeliveredRecordID); err != nil {
+		t.Fatal(err)
+	}
+	if lastDeliveredSequence != 0 || lastDeliveredRecordID.Valid {
+		t.Fatalf("pre-ack cursor = (%d, %v), want unconsumed", lastDeliveredSequence, lastDeliveredRecordID)
+	}
+	restoreLeaseID := uuid.Must(uuid.NewV7())
+	restoreDispatchMessageID := "restore-" + shortUUID(restoreLeaseID)
+	restoreDispatchLeaseID := "restore-lease-" + shortUUID(restoreLeaseID)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_leases (
+			id, org_id, run_id, attempt_id, worker_instance_id, worker_group_id, dispatch_message_id,
+			dispatch_lease_id, dispatch_attempt, status, lease_expires_at, runtime_id, trace_id,
+			span_id, parent_span_id, traceparent, restore_checkpoint_id
+		)
+		SELECT $1, runs.org_id, runs.id, runs.current_attempt_id, $2,
+		       (SELECT worker_group_id FROM worker_instances WHERE id = $2), $3, $4, 2, 'running', now() + interval '1 hour', $5,
+		       runs.trace_id, '4444444444444444', runs.root_span_id,
+		       '00-' || runs.trace_id || '-4444444444444444-01', $6
+		  FROM runs
+		 WHERE runs.org_id = $7
+		   AND runs.id = $8
+	`, restoreLeaseID, workerID, restoreDispatchMessageID, restoreDispatchLeaseID, runtimeID, pgvalue.MustUUIDValue(waitpoint.CheckpointID), ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET status = 'running',
+		       execution_status = 'executing',
+		       current_run_lease_id = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, restoreLeaseID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := queries.AcknowledgeRestore(ctx, db.AcknowledgeRestoreParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(restoreLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		RunSuspensionID:  waitpoint.RunSuspensionID,
+		CheckpointID:     waitpoint.CheckpointID,
+		WaitpointID:      waitpoint.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Status != db.RunSuspensionStatusRestored {
+		t.Fatalf("restored run suspension status = %s, want restored", restored.Status)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT last_delivered_sequence, last_delivered_record_id
+		  FROM channel_wait_cursors
+		 WHERE org_id = $1
+		   AND task_session_id = $2
+		   AND channel_id = $3
+		   AND consumer_key = $4
+		   AND correlation_id = 'thread-1'
+	`, ids.orgID, taskSessionID, channelID, "runtime:input-wait").Scan(&lastDeliveredSequence, &lastDeliveredRecordID); err != nil {
+		t.Fatal(err)
+	}
+	if lastDeliveredSequence != 2 || !lastDeliveredRecordID.Valid || pgvalue.MustUUIDValue(lastDeliveredRecordID) != pgvalue.MustUUIDValue(secondRecord.ID) {
+		t.Fatalf("post-ack cursor = (%d, %v), want (%d, %s)", lastDeliveredSequence, lastDeliveredRecordID, int64(2), pgvalue.MustUUIDValue(secondRecord.ID))
+	}
+}
+
+func TestAcknowledgeRestoreDoesNotCommitMatchedChannelCursorForTimedOutAggregate(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	taskSessionID, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	var runtimeID string
+	if err := pool.QueryRow(ctx, `
+		SELECT runtime_id
+		  FROM run_leases
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, runLeaseID).Scan(&runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	channelWaitpointID := uuid.Must(uuid.NewV7())
+	timerWaitpointID := uuid.Must(uuid.NewV7())
+	runSuspensionID := uuid.Must(uuid.NewV7())
+	checkpointID := uuid.Must(uuid.NewV7())
+	channelWaitpoint, err := queries.CreateRunSuspensionForWaitpoint(ctx, db.CreateRunSuspensionForWaitpointParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		Kind:             db.WaitpointKindChannel,
+		CorrelationID:    "aggregate-1",
+		CheckpointID:     pgvalue.UUID(checkpointID),
+		CheckpointReason: "waitpoint",
+		ID:               pgvalue.UUID(channelWaitpointID),
+		Params:           []byte(`{"channel":"approval","after_sequence":0}`),
+		Metadata:         []byte(`{}`),
+		Tags:             []string{},
+		RunSuspensionID:  pgvalue.UUID(runSuspensionID),
+		Ordinal:          0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.CreateRunSuspensionForWaitpoint(ctx, db.CreateRunSuspensionForWaitpointParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		Kind:             db.WaitpointKindToken,
+		CorrelationID:    "aggregate-1",
+		CheckpointID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		CheckpointReason: "waitpoint",
+		ID:               pgvalue.UUID(timerWaitpointID),
+		Params:           []byte(`{"token_id":"token-1"}`),
+		Metadata:         []byte(`{}`),
+		Tags:             []string{},
+		RunSuspensionID:  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		TimeoutSeconds:   pgtype.Int4{Int32: 1, Valid: true},
+		Ordinal:          1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := queries.MarkRunSuspensionCheckpointReady(ctx, db.MarkRunSuspensionCheckpointReadyParams{
+		OrgID:                      pgvalue.UUID(ids.orgID),
+		RunID:                      pgvalue.UUID(ids.runID),
+		RunLeaseID:                 pgvalue.UUID(runLeaseID),
+		WorkerInstanceID:           pgvalue.UUID(workerID),
+		RunSuspensionID:            channelWaitpoint.RunSuspensionID,
+		CheckpointID:               channelWaitpoint.CheckpointID,
+		WaitpointID:                channelWaitpoint.ID,
+		RuntimeBackend:             "firecracker",
+		RuntimeID:                  runtimeID,
+		RuntimeArch:                "arm64",
+		RuntimeABI:                 "test",
+		KernelDigest:               "sha256:kernel",
+		InitramfsDigest:            "sha256:initramfs",
+		RootfsDigest:               "sha256:rootfs",
+		CniProfile:                 "default",
+		CheckpointArtifacts:        []byte(`[{"role":"runtime_config","ordinal":0,"digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","size_bytes":1,"media_type":"application/json"}]`),
+		WorkspaceArtifactDigest:    pgvalue.Text("sha256:2222222222222222222222222222222222222222222222222222222222222222"),
+		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 2, Valid: true},
+		WorkspaceArtifactMediaType: pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		Manifest:                   []byte(`{"version":1}`),
+		RuntimeVcpus:               pgtype.Int4{Int32: 1, Valid: true},
+		RuntimeMemoryMib:           pgtype.Int4{Int32: 1024, Valid: true},
+		RuntimeScratchDiskMib:      pgtype.Int4{Int32: 4096, Valid: true},
+		ImageKey:                   pgvalue.Text("test-image"),
+		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
+		WorkspaceMountPath:         pgvalue.Text("/workspace"),
+		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
+		ActiveDurationMs:           10,
+		CheckpointPayload:          []byte(`{"waitpoint":"aggregate-1"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready.Status != db.RunSuspensionStatusWaiting {
+		t.Fatalf("run suspension status = %s, want waiting", ready.Status)
+	}
+	var channelID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT channel_id
+		  FROM channel_waits
+		 WHERE org_id = $1
+		   AND waitpoint_id = $2
+	`, ids.orgID, channelWaitpointID).Scan(&channelID); err != nil {
+		t.Fatal(err)
+	}
+	record, err := queries.AppendChannelRecord(ctx, db.AppendChannelRecordParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		ProjectID:              pgvalue.UUID(ids.projectID),
+		EnvironmentID:          pgvalue.UUID(ids.environmentID),
+		ChannelID:              pgvalue.UUID(channelID),
+		Direction:              db.ChannelDirectionInput,
+		Data:                   []byte(`{"approved":true}`),
+		CorrelationID:          "",
+		ContentType:            "application/json",
+		IdempotencyFingerprint: "aggregate-channel-match",
+		Actor:                  []byte(`{"type":"test"}`),
+		Source:                 "test",
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, err := queries.ResolveChannelWaitpointsForChannel(ctx, db.ResolveChannelWaitpointsForChannelParams{
+		OrgID:     pgvalue.UUID(ids.orgID),
+		ChannelID: pgvalue.UUID(channelID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed) != 1 || pgvalue.MustUUIDValue(completed[0].ID) != channelWaitpointID {
+		t.Fatalf("completed channel waitpoints = %+v, want %s", completed, channelWaitpointID)
+	}
+	resumed, err := queries.UnblockRunWaitpointsForWaitpoint(ctx, db.UnblockRunWaitpointsForWaitpointParams{
+		OrgID:       pgvalue.UUID(ids.orgID),
+		WaitpointID: pgvalue.UUID(channelWaitpointID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resumed) != 0 {
+		t.Fatalf("partial aggregate resumed rows = %d, want 0", len(resumed))
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE run_suspensions
+		   SET waiting_at = now() - interval '2 seconds'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(channelWaitpoint.RunSuspensionID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.ExpireDuePendingWaitpoints(ctx, pgvalue.UUID(ids.orgID)); err != nil {
+		t.Fatal(err)
+	}
+	restoreLeaseID := uuid.Must(uuid.NewV7())
+	restoreDispatchMessageID := "restore-" + shortUUID(restoreLeaseID)
+	restoreDispatchLeaseID := "restore-lease-" + shortUUID(restoreLeaseID)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_leases (
+			id, org_id, run_id, attempt_id, worker_instance_id, worker_group_id, dispatch_message_id,
+			dispatch_lease_id, dispatch_attempt, status, lease_expires_at, runtime_id, trace_id,
+			span_id, parent_span_id, traceparent, restore_checkpoint_id
+		)
+		SELECT $1, runs.org_id, runs.id, runs.current_attempt_id, $2,
+		       (SELECT worker_group_id FROM worker_instances WHERE id = $2), $3, $4, 2, 'running', now() + interval '1 hour', $5,
+		       runs.trace_id, '4444444444444444', runs.root_span_id,
+		       '00-' || runs.trace_id || '-4444444444444444-01', $6
+		  FROM runs
+		 WHERE runs.org_id = $7
+		   AND runs.id = $8
+	`, restoreLeaseID, workerID, restoreDispatchMessageID, restoreDispatchLeaseID, runtimeID, checkpointID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET status = 'running',
+		       execution_status = 'executing',
+		       current_run_lease_id = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, restoreLeaseID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := queries.AcknowledgeRestore(ctx, db.AcknowledgeRestoreParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(restoreLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		RunSuspensionID:  channelWaitpoint.RunSuspensionID,
+		CheckpointID:     channelWaitpoint.CheckpointID,
+		WaitpointID:      channelWaitpoint.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Status != db.RunSuspensionStatusRestored {
+		t.Fatalf("restored run suspension status = %s", restored.Status)
+	}
+	if !restored.ResolutionKind.Valid || restored.ResolutionKind.String != "timed_out" {
+		t.Fatalf("resolution kind = %+v, want timed_out", restored.ResolutionKind)
+	}
+	var lastDeliveredSequence int64
+	var lastDeliveredRecordID pgtype.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT last_delivered_sequence, last_delivered_record_id
+		  FROM channel_wait_cursors
+		 WHERE org_id = $1
+		   AND task_session_id = $2
+		   AND channel_id = $3
+		   AND consumer_key = 'runtime:input-wait'
+		   AND correlation_id IS NULL
+	`, ids.orgID, taskSessionID, channelID).Scan(&lastDeliveredSequence, &lastDeliveredRecordID); err != nil {
+		t.Fatal(err)
+	}
+	if lastDeliveredSequence != 0 || lastDeliveredRecordID.Valid {
+		t.Fatalf("cursor committed failed aggregate record: sequence=%d record=%v, matched record=%s", lastDeliveredSequence, lastDeliveredRecordID, pgvalue.MustUUIDValue(record.ID))
+	}
+	var releasedRecordID pgtype.UUID
+	var releasedAt pgtype.Timestamptz
+	if err := pool.QueryRow(ctx, `
+		SELECT matched_record_id, matched_at
+		  FROM channel_waits
+		 WHERE org_id = $1
+		   AND waitpoint_id = $2
+	`, ids.orgID, channelWaitpointID).Scan(&releasedRecordID, &releasedAt); err != nil {
+		t.Fatal(err)
+	}
+	if releasedRecordID.Valid || releasedAt.Valid {
+		t.Fatalf("failed aggregate kept channel record reservation: matched_record_id=%v matched_at=%v", releasedRecordID, releasedAt)
+	}
+}
+
+func TestTimerWaitpointDoesNotTimeoutAggregateWaitAll(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	channelWaitpointID := seedChannelWaitpoint(t, ctx, pool, ids, "approval", 0)
+	var runSuspensionID uuid.UUID
+	var channelID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT run_suspension_waitpoints.run_suspension_id, channel_waits.channel_id
+		  FROM run_suspension_waitpoints
+		  JOIN channel_waits ON channel_waits.org_id = run_suspension_waitpoints.org_id
+		                    AND channel_waits.waitpoint_id = run_suspension_waitpoints.waitpoint_id
+		 WHERE run_suspension_waitpoints.org_id = $1
+		   AND run_suspension_waitpoints.waitpoint_id = $2
+	`, ids.orgID, channelWaitpointID).Scan(&runSuspensionID, &channelID); err != nil {
+		t.Fatal(err)
+	}
+	timerWaitpointID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO waitpoints (id, org_id, project_id, environment_id, run_id, kind, params)
+		VALUES ($1, $2, $3, $4, $5, 'timer', '{"seconds":1}'::jsonb)
+	`, timerWaitpointID, ids.orgID, ids.projectID, ids.environmentID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_suspension_waitpoints (
+			org_id, run_id, project_id, environment_id, run_suspension_id, waitpoint_id, ordinal, timeout_seconds
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, 1, 1)
+	`, ids.orgID, ids.runID, ids.projectID, ids.environmentID, runSuspensionID, timerWaitpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE run_suspensions
+		   SET waiting_at = now() - interval '2 seconds'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, runSuspensionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.ExpireDuePendingWaitpoints(ctx, pgvalue.UUID(ids.orgID)); err != nil {
+		t.Fatal(err)
+	}
+	var runSuspensionStatus string
+	var timerStatus string
+	if err := pool.QueryRow(ctx, `
+		SELECT run_suspensions.status::text, waitpoints.status::text
+		  FROM run_suspensions
+		  JOIN waitpoints ON waitpoints.org_id = run_suspensions.org_id
+		                 AND waitpoints.id = $3
+		 WHERE run_suspensions.org_id = $1
+		   AND run_suspensions.id = $2
+	`, ids.orgID, runSuspensionID, timerWaitpointID).Scan(&runSuspensionStatus, &timerStatus); err != nil {
+		t.Fatal(err)
+	}
+	if runSuspensionStatus != "waiting" || timerStatus != "timed_out" {
+		t.Fatalf("after timer expiry suspension=%s timer=%s, want waiting/timed_out", runSuspensionStatus, timerStatus)
+	}
+	if _, err := queries.AppendChannelRecord(ctx, db.AppendChannelRecordParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		ProjectID:              pgvalue.UUID(ids.projectID),
+		EnvironmentID:          pgvalue.UUID(ids.environmentID),
+		ChannelID:              pgvalue.UUID(channelID),
+		Direction:              db.ChannelDirectionInput,
+		Data:                   []byte(`{"approved":true}`),
+		CorrelationID:          "",
+		ContentType:            "application/json",
+		IdempotencyFingerprint: "timer-aggregate-channel",
+		Actor:                  []byte(`{"type":"test"}`),
+		Source:                 "test",
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := queries.ResolveChannelWaitpointsForChannel(ctx, db.ResolveChannelWaitpointsForChannelParams{
+		OrgID:     pgvalue.UUID(ids.orgID),
+		ChannelID: pgvalue.UUID(channelID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed) != 1 || pgvalue.MustUUIDValue(completed[0].ID) != channelWaitpointID {
+		t.Fatalf("completed channel waitpoints = %+v, want %s", completed, channelWaitpointID)
+	}
+	resumed, err := queries.UnblockRunWaitpointsForWaitpoint(ctx, db.UnblockRunWaitpointsForWaitpointParams{
+		OrgID:       pgvalue.UUID(ids.orgID),
+		WaitpointID: pgvalue.UUID(channelWaitpointID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resumed) != 1 {
+		t.Fatalf("resumed rows = %d, want 1", len(resumed))
+	}
+	if !resumed[0].ResolutionKind.Valid || resumed[0].ResolutionKind.String != "waitpoints" {
+		t.Fatalf("resolution kind = %+v, want waitpoints", resumed[0].ResolutionKind)
+	}
+	if got := canonicalJSON(t, resumed[0].Resolution); got != `{"waitpoints":[{"channel":"approval","correlation_id":"","data":{"approved":true},"sequence":1},null]}` {
+		t.Fatalf("resolution = %s", got)
+	}
+}
+
+func TestAggregateWaitResumesWhenNonTimerDependencyTimesOut(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	channelWaitpointID := seedChannelWaitpoint(t, ctx, pool, ids, "approval", 0)
+	var runSuspensionID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT run_suspension_id
+		  FROM run_suspension_waitpoints
+		 WHERE org_id = $1
+		   AND waitpoint_id = $2
+	`, ids.orgID, channelWaitpointID).Scan(&runSuspensionID); err != nil {
+		t.Fatal(err)
+	}
+	tokenWaitpointID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO waitpoints (id, org_id, project_id, environment_id, run_id, kind, status, params, error, resolved_at)
+		VALUES ($1, $2, $3, $4, $5, 'token', 'timed_out', '{"token_id":"token-1"}', '{"code":"timed_out"}'::jsonb, now())
+	`, tokenWaitpointID, ids.orgID, ids.projectID, ids.environmentID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_suspension_waitpoints (
+			org_id, run_id, project_id, environment_id, run_suspension_id, waitpoint_id, ordinal, timeout_seconds
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, 1, 1)
+	`, ids.orgID, ids.runID, ids.projectID, ids.environmentID, runSuspensionID, tokenWaitpointID); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := queries.UnblockRunWaitpointsForWaitpoint(ctx, db.UnblockRunWaitpointsForWaitpointParams{
+		OrgID:       pgvalue.UUID(ids.orgID),
+		WaitpointID: pgvalue.UUID(tokenWaitpointID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resumed) != 1 {
+		t.Fatalf("resumed rows = %d, want 1", len(resumed))
+	}
+	if !resumed[0].ResolutionKind.Valid || resumed[0].ResolutionKind.String != "timed_out" {
+		t.Fatalf("resolution kind = %+v, want timed_out", resumed[0].ResolutionKind)
+	}
+	if got := canonicalJSON(t, resumed[0].Resolution); got != `null` {
+		t.Fatalf("resolution = %s, want null", got)
+	}
+}
+
+func TestReleaseRunLeaseReleasesUnconsumedChannelMatch(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	_, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+
+	channelID := seedInputChannel(t, ctx, pool, ids, "approval")
+	record, err := queries.AppendChannelRecord(ctx, db.AppendChannelRecordParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		ProjectID:              pgvalue.UUID(ids.projectID),
+		EnvironmentID:          pgvalue.UUID(ids.environmentID),
+		ChannelID:              pgvalue.UUID(channelID),
+		Direction:              db.ChannelDirectionInput,
+		Data:                   []byte(`{"approved":true}`),
+		CorrelationID:          "",
+		ContentType:            "application/json",
+		IdempotencyFingerprint: "release-unconsumed-match",
+		Actor:                  []byte(`{"type":"test"}`),
+		Source:                 "test",
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	checkpointID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO checkpoints (id, org_id, run_id, project_id, environment_id, run_lease_id, status, reason, manifest, ready_at)
+		VALUES ($1, $2, $3, $4, $5, $6, 'ready', 'waitpoint', '{}'::jsonb, now())
+	`, checkpointID, ids.orgID, ids.runID, ids.projectID, ids.environmentID, runLeaseID); err != nil {
+		t.Fatal(err)
+	}
+	waitpointID := uuid.Must(uuid.NewV7())
+	runSuspensionID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO waitpoints (id, org_id, project_id, environment_id, run_id, kind, status, params, data)
+		VALUES ($1, $2, $3, $4, $5, 'channel', 'completed', '{"channel":"approval","after_sequence":0}'::jsonb, '{"approved":true}'::jsonb)
+	`, waitpointID, ids.orgID, ids.projectID, ids.environmentID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_suspensions (
+			id, org_id, run_id, project_id, environment_id, run_lease_id, checkpoint_id,
+			correlation_id, status, waiting_at, resolution_kind, resolution
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'aggregate-1', 'resuming', now(), 'waitpoints', '{"waitpoints":[{"approved":true}]}'::jsonb)
+	`, runSuspensionID, ids.orgID, ids.runID, ids.projectID, ids.environmentID, runLeaseID, checkpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_suspension_waitpoints (org_id, run_id, project_id, environment_id, run_suspension_id, waitpoint_id, ordinal)
+		VALUES ($1, $2, $3, $4, $5, $6, 0)
+	`, ids.orgID, ids.runID, ids.projectID, ids.environmentID, runSuspensionID, waitpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO channel_waits (
+			waitpoint_id, org_id, project_id, environment_id, run_id, run_suspension_id, channel_id,
+			after_sequence, matched_record_id, matched_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, now())
+	`, waitpointID, ids.orgID, ids.projectID, ids.environmentID, ids.runID, runSuspensionID, channelID, pgvalue.MustUUIDValue(record.ID)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := queries.ReleaseRunLease(ctx, db.ReleaseRunLeaseParams{
+		RunLeaseID:              pgvalue.UUID(runLeaseID),
+		WorkerInstanceID:        pgvalue.UUID(workerID),
+		DispatchMessageID:       "dispatch-" + runLeaseID.String()[:8],
+		DispatchLeaseID:         "lease-" + runLeaseID.String()[:8],
+		OrgID:                   pgvalue.UUID(ids.orgID),
+		RunID:                   pgvalue.UUID(ids.runID),
+		RunStatus:               db.RunStatusFailed,
+		AttemptStatus:           db.RunAttemptStatusFailed,
+		ExitCode:                pgtype.Int4{Int32: 1, Valid: true},
+		Output:                  []byte(`null`),
+		ErrorMessage:            pgvalue.Text("schema validation failed"),
+		TerminalEventKind:       "run.failed",
+		TerminalEventPayload:    []byte(`{"failure_kind":"task_failed"}`),
+		ReleaseActiveDurationMs: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var matchedRecordID pgtype.UUID
+	var matchedAt pgtype.Timestamptz
+	if err := pool.QueryRow(ctx, `
+		SELECT matched_record_id, matched_at
+		  FROM channel_waits
+		 WHERE org_id = $1
+		   AND waitpoint_id = $2
+	`, ids.orgID, waitpointID).Scan(&matchedRecordID, &matchedAt); err != nil {
+		t.Fatal(err)
+	}
+	if matchedRecordID.Valid || matchedAt.Valid {
+		t.Fatalf("released failed lease kept channel match: matched_record_id=%v matched_at=%v", matchedRecordID, matchedAt)
+	}
+}
+
+func TestResolveChannelWaitpointsAssignsOneRecordPerWait(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	firstWaitpointID := seedChannelWaitpoint(t, ctx, pool, ids, "approval", 0)
+	var runSuspensionID uuid.UUID
+	var channelID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT run_suspension_waitpoints.run_suspension_id, channel_waits.channel_id
+		  FROM run_suspension_waitpoints
+		  JOIN channel_waits ON channel_waits.org_id = run_suspension_waitpoints.org_id
+		                    AND channel_waits.waitpoint_id = run_suspension_waitpoints.waitpoint_id
+		 WHERE run_suspension_waitpoints.org_id = $1
+		   AND run_suspension_waitpoints.waitpoint_id = $2
+	`, ids.orgID, firstWaitpointID).Scan(&runSuspensionID, &channelID); err != nil {
+		t.Fatal(err)
+	}
+	secondWaitpointID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO waitpoints (id, org_id, project_id, environment_id, run_id, kind, params)
+		VALUES ($1, $2, $3, $4, $5, 'channel', '{"channel":"approval","after_sequence":0}'::jsonb)
+	`, secondWaitpointID, ids.orgID, ids.projectID, ids.environmentID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_suspension_waitpoints (
+			org_id, run_id, project_id, environment_id, run_suspension_id, waitpoint_id, ordinal
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, 1)
+	`, ids.orgID, ids.runID, ids.projectID, ids.environmentID, runSuspensionID, secondWaitpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO channel_waits (
+			waitpoint_id, org_id, project_id, environment_id, run_id, run_suspension_id, channel_id, after_sequence, correlation_id
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 'thread-1')
+	`, secondWaitpointID, ids.orgID, ids.projectID, ids.environmentID, ids.runID, runSuspensionID, channelID); err != nil {
+		t.Fatal(err)
+	}
+	firstRecord, err := queries.AppendChannelRecord(ctx, db.AppendChannelRecordParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		ProjectID:              pgvalue.UUID(ids.projectID),
+		EnvironmentID:          pgvalue.UUID(ids.environmentID),
+		ChannelID:              pgvalue.UUID(channelID),
+		Direction:              db.ChannelDirectionInput,
+		Data:                   []byte(`{"step":1}`),
+		CorrelationID:          "thread-1",
+		ContentType:            "application/json",
+		IdempotencyFingerprint: "multi-channel-1",
+		Actor:                  []byte(`{"type":"test"}`),
+		Source:                 "test",
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRecord, err := queries.AppendChannelRecord(ctx, db.AppendChannelRecordParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		ProjectID:              pgvalue.UUID(ids.projectID),
+		EnvironmentID:          pgvalue.UUID(ids.environmentID),
+		ChannelID:              pgvalue.UUID(channelID),
+		Direction:              db.ChannelDirectionInput,
+		Data:                   []byte(`{"step":2}`),
+		CorrelationID:          "thread-1",
+		ContentType:            "application/json",
+		IdempotencyFingerprint: "multi-channel-2",
+		Actor:                  []byte(`{"type":"test"}`),
+		Source:                 "test",
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, err := queries.ResolveChannelWaitpointsForChannel(ctx, db.ResolveChannelWaitpointsForChannelParams{
+		OrgID:     pgvalue.UUID(ids.orgID),
+		ChannelID: pgvalue.UUID(channelID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed) != 1 || pgvalue.MustUUIDValue(completed[0].ID) != firstWaitpointID {
+		t.Fatalf("first resolve completed = %+v, want %s", completed, firstWaitpointID)
+	}
+	completed, err = queries.ResolveChannelWaitpointsForChannel(ctx, db.ResolveChannelWaitpointsForChannelParams{
+		OrgID:     pgvalue.UUID(ids.orgID),
+		ChannelID: pgvalue.UUID(channelID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed) != 1 || pgvalue.MustUUIDValue(completed[0].ID) != secondWaitpointID {
+		t.Fatalf("second resolve completed = %+v, want %s", completed, secondWaitpointID)
+	}
+	var firstMatched uuid.UUID
+	var secondMatched uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT first_wait.matched_record_id, second_wait.matched_record_id
+		  FROM channel_waits first_wait
+		  JOIN channel_waits second_wait ON second_wait.org_id = first_wait.org_id
+		                               AND second_wait.waitpoint_id = $3
+		 WHERE first_wait.org_id = $1
+		   AND first_wait.waitpoint_id = $2
+	`, ids.orgID, firstWaitpointID, secondWaitpointID).Scan(&firstMatched, &secondMatched); err != nil {
+		t.Fatal(err)
+	}
+	if firstMatched != pgvalue.MustUUIDValue(firstRecord.ID) || secondMatched != pgvalue.MustUUIDValue(secondRecord.ID) {
+		t.Fatalf("matched records = (%s, %s), want (%s, %s)", firstMatched, secondMatched, pgvalue.MustUUIDValue(firstRecord.ID), pgvalue.MustUUIDValue(secondRecord.ID))
+	}
+}
+
+func TestMarkRunSuspensionCheckpointReadyReleasesWorkspaceWriteLease(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	taskSessionID, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	var runtimeID string
+	if err := pool.QueryRow(ctx, `
+		SELECT runtime_id
+		  FROM run_leases
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, runLeaseID).Scan(&runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := queries.CreateTaskSessionWorkspace(ctx, db.CreateTaskSessionWorkspaceParams{
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(ids.orgID),
+		ProjectID:       pgvalue.UUID(ids.projectID),
+		EnvironmentID:   pgvalue.UUID(ids.environmentID),
+		TaskSessionID:   pgvalue.UUID(taskSessionID),
+		RetentionPolicy: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceLeaseID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_leases (id, org_id, workspace_id, run_id, mode, expires_at)
+		VALUES ($1, $2, $3, $4, 'write', now() + interval '1 hour')
+	`, workspaceLeaseID, ids.orgID, pgvalue.MustUUIDValue(workspace.ID), ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	waitpoint, err := queries.CreateRunSuspensionForWaitpoint(ctx, db.CreateRunSuspensionForWaitpointParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		Kind:             db.WaitpointKindToken,
+		CorrelationID:    "wait-lease-release",
+		CheckpointID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		CheckpointReason: "waitpoint",
+		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Params:           []byte(`{"token_id":"token-1"}`),
+		Metadata:         []byte(`{}`),
+		Tags:             []string{},
+		RunSuspensionID:  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := queries.MarkRunSuspensionCheckpointReady(ctx, db.MarkRunSuspensionCheckpointReadyParams{
+		OrgID:                      pgvalue.UUID(ids.orgID),
+		RunID:                      pgvalue.UUID(ids.runID),
+		RunLeaseID:                 pgvalue.UUID(runLeaseID),
+		WorkerInstanceID:           pgvalue.UUID(workerID),
+		RunSuspensionID:            waitpoint.RunSuspensionID,
+		CheckpointID:               waitpoint.CheckpointID,
+		WaitpointID:                waitpoint.ID,
+		RuntimeBackend:             "firecracker",
+		RuntimeID:                  runtimeID,
+		RuntimeArch:                "arm64",
+		RuntimeABI:                 "test",
+		KernelDigest:               "sha256:kernel",
+		InitramfsDigest:            "sha256:initramfs",
+		RootfsDigest:               "sha256:rootfs",
+		CniProfile:                 "default",
+		CheckpointArtifacts:        []byte(`[{"role":"runtime_config","ordinal":0,"digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","size_bytes":1,"media_type":"application/json"}]`),
+		WorkspaceArtifactDigest:    pgvalue.Text("sha256:2222222222222222222222222222222222222222222222222222222222222222"),
+		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 2, Valid: true},
+		WorkspaceArtifactMediaType: pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		Manifest:                   []byte(`{"version":1}`),
+		RuntimeVcpus:               pgtype.Int4{Int32: 1, Valid: true},
+		RuntimeMemoryMib:           pgtype.Int4{Int32: 1024, Valid: true},
+		RuntimeScratchDiskMib:      pgtype.Int4{Int32: 4096, Valid: true},
+		ImageKey:                   pgvalue.Text("test-image"),
+		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
+		WorkspaceMountPath:         pgvalue.Text("/workspace"),
+		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
+		ActiveDurationMs:           10,
+		CheckpointPayload:          []byte(`{"waitpoint":"token-1"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready.Status != db.RunSuspensionStatusWaiting {
+		t.Fatalf("run suspension status = %s, want waiting", ready.Status)
+	}
+	var releasedAt pgtype.Timestamptz
+	if err := pool.QueryRow(ctx, `
+		SELECT released_at
+		  FROM workspace_leases
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, workspaceLeaseID).Scan(&releasedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !releasedAt.Valid {
+		t.Fatal("workspace write lease released_at is null after checkpoint ready")
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_leases (org_id, workspace_id, run_id, mode, expires_at)
+		VALUES ($1, $2, $3, 'write', now() + interval '1 hour')
+	`, ids.orgID, pgvalue.MustUUIDValue(workspace.ID), ids.runID); err != nil {
+		t.Fatalf("second workspace write lease insert failed after checkpoint release: %v", err)
+	}
+}
+
+func TestRunTaskSessionIDCannotBeCleared(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET task_session_id = NULL
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		return
+	}
+	t.Fatal("clearing runs.task_session_id succeeded")
+}
+
+func TestAppendExecutionChannelRecordUsesTaskSessionOutputChannel(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	taskSessionID, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	record, err := queries.AppendExecutionChannelRecord(ctx, db.AppendExecutionChannelRecordParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		Channel:          "status",
+		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Payload:          []byte(`{"ok":true}`),
+		ContentType:      "application/json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var channelTaskSessionID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT task_session_id
+		  FROM channels
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(record.ChannelID)).Scan(&channelTaskSessionID); err != nil {
+		t.Fatal(err)
+	}
+	if channelTaskSessionID != taskSessionID {
+		t.Fatalf("output channel task_session_id = %s, want %s", channelTaskSessionID, taskSessionID)
+	}
+	channelRecords, err := queries.ListChannelRecords(ctx, db.ListChannelRecordsParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		ChannelID:     record.ChannelID,
+		Direction:     db.ChannelDirectionOutput,
+		LimitCount:    10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(channelRecords) != 1 || pgvalue.MustUUIDValue(channelRecords[0].ID) != pgvalue.MustUUIDValue(record.ID) {
+		t.Fatalf("public channel records = %+v, want %s", channelRecords, pgvalue.MustUUIDValue(record.ID))
+	}
+}
+
+func TestAppendExecutionChannelRecordRejectsNonCurrentSessionRun(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	taskSessionID, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	nextRunID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runs (
+			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id,
+			task_session_id, status, execution_status, payload, queue_name, max_duration_seconds, trace_id, root_span_id
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, 'approval-task', $7, 'queued', 'queued', '{}', 'default', 300,
+			'00000000000000000000000000000002', '0000000000000002')
+	`, nextRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, taskSessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE task_sessions
+		   SET current_run_id = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, nextRunID, ids.orgID, taskSessionID); err != nil {
+		t.Fatal(err)
+	}
+	_, err := queries.AppendExecutionChannelRecord(ctx, db.AppendExecutionChannelRecordParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		Channel:          "status",
+		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Payload:          []byte(`{"stale":true}`),
+		ContentType:      "application/json",
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("append stale session run error = %v, want pgx.ErrNoRows", err)
+	}
+}
+
+func TestReleaseRunLeaseFailsTaskSessionWhenResultTooLarge(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	taskSessionID, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	workspace, err := queries.CreateTaskSessionWorkspace(ctx, db.CreateTaskSessionWorkspaceParams{
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(ids.orgID),
+		ProjectID:       pgvalue.UUID(ids.projectID),
+		EnvironmentID:   pgvalue.UUID(ids.environmentID),
+		TaskSessionID:   pgvalue.UUID(taskSessionID),
+		RetentionPolicy: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceLeaseID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_leases (id, org_id, workspace_id, run_id, mode, expires_at)
+		VALUES ($1, $2, $3, $4, 'write', now() + interval '1 hour')
+	`, workspaceLeaseID, ids.orgID, pgvalue.MustUUIDValue(workspace.ID), ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	largeOutput := []byte(`"` + strings.Repeat("x", 1048577) + `"`)
+
+	_, err = queries.ReleaseRunLease(ctx, db.ReleaseRunLeaseParams{
+		RunLeaseID:                  pgvalue.UUID(runLeaseID),
+		WorkerInstanceID:            pgvalue.UUID(workerID),
+		DispatchMessageID:           "dispatch-" + runLeaseID.String()[:8],
+		DispatchLeaseID:             "lease-" + runLeaseID.String()[:8],
+		OrgID:                       pgvalue.UUID(ids.orgID),
+		RunID:                       pgvalue.UUID(ids.runID),
+		RunStatus:                   db.RunStatusSucceeded,
+		WorkspaceLeaseID:            pgvalue.UUID(workspaceLeaseID),
+		WorkspaceArtifactDigest:     pgvalue.Text("sha256:" + strings.Repeat("c", 64)),
+		WorkspaceArtifactSizeBytes:  pgtype.Int8{Int64: 123, Valid: true},
+		WorkspaceArtifactMediaType:  pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:   pgvalue.Text("tar"),
+		WorkspaceArtifactEntryCount: pgtype.Int4{Int32: 2, Valid: true},
+		WorkspaceMountPath:          pgvalue.Text("/workspace"),
+		WorkspaceVolumeKind:         pgvalue.Text("copy-on-write"),
+		AttemptStatus:               db.RunAttemptStatusSucceeded,
+		ExitCode:                    pgtype.Int4{Int32: 0, Valid: true},
+		Output:                      largeOutput,
+		TerminalEventKind:           "run.completed",
+		TerminalEventPayload:        []byte(`{}`),
+		ReleaseActiveDurationMs:     1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var status db.TaskSessionStatus
+	var completedAt pgtype.Timestamptz
+	var failedAt pgtype.Timestamptz
+	var result []byte
+	var terminalReason []byte
+	if err := pool.QueryRow(ctx, `
+		SELECT status, completed_at, failed_at, result, terminal_reason
+		  FROM task_sessions
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, taskSessionID).Scan(&status, &completedAt, &failedAt, &result, &terminalReason); err != nil {
+		t.Fatal(err)
+	}
+	if status != db.TaskSessionStatusFailed {
+		t.Fatalf("task session status = %s, want failed", status)
+	}
+	if completedAt.Valid {
+		t.Fatalf("completed_at should be null for oversized result, got %+v", completedAt)
+	}
+	if !failedAt.Valid {
+		t.Fatal("failed_at should be set for oversized result")
+	}
+	if !strings.Contains(string(result), `"ResultTooLarge"`) {
+		t.Fatalf("result = %s, want ResultTooLarge", string(result))
+	}
+	if !strings.Contains(string(terminalReason), `"ResultTooLarge"`) {
+		t.Fatalf("terminal_reason = %s, want ResultTooLarge", string(terminalReason))
+	}
+	var currentVersionID pgtype.UUID
+	var workspaceVersionCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT current_version_id
+		  FROM workspaces
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(workspace.ID)).Scan(&currentVersionID); err != nil {
+		t.Fatal(err)
+	}
+	if currentVersionID.Valid {
+		t.Fatalf("workspace current_version_id = %+v, want null for oversized session result", currentVersionID)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM workspace_versions
+		 WHERE org_id = $1
+		   AND workspace_id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(workspace.ID)).Scan(&workspaceVersionCount); err != nil {
+		t.Fatal(err)
+	}
+	if workspaceVersionCount != 0 {
+		t.Fatalf("workspace versions = %d, want 0 for oversized session result", workspaceVersionCount)
+	}
+}
+
+func TestAppendExecutionChannelRecordUsesSessionOutputChannel(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	taskSessionID := seedTaskSessionForRun(t, ctx, pool, ids)
+	runLeaseID, workerID := seedRunningRunLease(t, ctx, pool, ids)
+	record, err := queries.AppendExecutionChannelRecord(ctx, db.AppendExecutionChannelRecordParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		Channel:          "status",
+		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Payload:          []byte(`{"ok":true}`),
+		ContentType:      "application/json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var channelTaskSessionID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT task_session_id
+		  FROM channels
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(record.ChannelID)).Scan(&channelTaskSessionID); err != nil {
+		t.Fatal(err)
+	}
+	if channelTaskSessionID != taskSessionID {
+		t.Fatalf("output channel task_session_id = %s, want %s", channelTaskSessionID, taskSessionID)
+	}
+	channelRecords, err := queries.ListChannelRecords(ctx, db.ListChannelRecordsParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		ChannelID:     record.ChannelID,
+		Direction:     db.ChannelDirectionOutput,
+		LimitCount:    10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(channelRecords) != 1 || pgvalue.MustUUIDValue(channelRecords[0].ID) != pgvalue.MustUUIDValue(record.ID) {
+		t.Fatalf("public channel records = %+v, want %s", channelRecords, pgvalue.MustUUIDValue(record.ID))
+	}
+}
+
+func TestLockTaskSessionForChannelAppendReturnsTerminalSession(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	taskSessionID, _, _ := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	channelID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO channels (id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction)
+		VALUES ($1, $2, $3, $4, $5, $6, 'approval', 'input')
+	`, channelID, ids.orgID, ids.projectID, ids.environmentID, taskSessionID, seedChannelDefinition(t, ctx, pool, ids, "approval", "input")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.LockTaskSessionForChannelAppend(ctx, db.LockTaskSessionForChannelAppendParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		ChannelID:     pgvalue.UUID(channelID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE task_sessions
+		   SET status = 'closed',
+		       closed_at = now()
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, taskSessionID); err != nil {
+		t.Fatal(err)
+	}
+	lockedSession, err := queries.LockTaskSessionForChannelAppend(ctx, db.LockTaskSessionForChannelAppendParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		ChannelID:     pgvalue.UUID(channelID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lockedSession.Status != db.TaskSessionStatusClosed {
+		t.Fatalf("terminal session status = %s, want closed", lockedSession.Status)
+	}
+}
+
+func TestAppendSessionChannelInputIdempotencyReturnsExistingInput(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	seedTaskSessionForRun(t, ctx, pool, ids)
+
+	first, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":true}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "slack-action-1",
+		IdempotencyFingerprint: "test-fingerprint",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":false}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "slack-action-1",
+		IdempotencyFingerprint: "test-fingerprint",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != second.ID {
+		t.Fatalf("duplicate idempotency key returned different input: %s != %s", pgvalue.MustUUIDValue(first.ID), pgvalue.MustUUIDValue(second.ID))
+	}
+	if got := canonicalJSON(t, second.Data); got != `{"approved":true}` {
+		t.Fatalf("duplicate idempotency key rewrote data = %s", got)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM channel_records
+		  JOIN channels ON channels.org_id = channel_records.org_id
+		               AND channels.id = channel_records.channel_id
+		  JOIN runs ON runs.org_id = channels.org_id
+		           AND runs.task_session_id = channels.task_session_id
+		 WHERE channel_records.org_id = $1
+		   AND runs.id = $2
+		   AND channels.name = 'approval'
+		   AND channels.direction = 'input'
+		   AND channel_records.idempotency_key = 'slack-action-1'
+	`, ids.orgID, ids.runID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("input count for idempotency key = %d, want 1", count)
+	}
+}
+
+func TestAppendSessionChannelInputIdempotencyFingerprintMismatchReturnsNoRows(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	seedTaskSessionForRun(t, ctx, pool, ids)
+
+	if _, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":true}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "slack-action-1",
+		IdempotencyFingerprint: "test-fingerprint",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":false}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "slack-action-1",
+		IdempotencyFingerprint: "different-fingerprint",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("fingerprint mismatch error = %v, want pgx.ErrNoRows", err)
+	}
+	reason, err := queries.GetSessionChannelInputAppendConflictReason(ctx, db.GetSessionChannelInputAppendConflictReasonParams{
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		IdempotencyKey:         "slack-action-1",
+		IdempotencyFingerprint: "different-fingerprint",
+		MaxInputsPerChannel:    1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reason != "idempotency_conflict" {
+		t.Fatalf("append conflict reason = %q, want idempotency_conflict", reason)
+	}
+}
+
+func TestAppendSessionChannelInputExternalEventIDReturnsExistingInput(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	seedTaskSessionForRun(t, ctx, pool, ids)
+
+	first, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":true}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "test-fingerprint",
+		ExternalEventID:        "slack-event-1",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":false}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "test-fingerprint",
+		ExternalEventID:        "slack-event-1",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != second.ID || second.Inserted {
+		t.Fatalf("external event duplicate returned row id=%s inserted=%v, want existing %s", pgvalue.MustUUIDValue(second.ID), second.Inserted, pgvalue.MustUUIDValue(first.ID))
+	}
+	if got := canonicalJSON(t, second.Data); got != `{"approved":true}` {
+		t.Fatalf("duplicate external event rewrote data = %s", got)
+	}
+
+	_, err = queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":false}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "different-fingerprint",
+		ExternalEventID:        "slack-event-1",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("external event fingerprint mismatch error = %v, want pgx.ErrNoRows", err)
+	}
+	reason, err := queries.GetSessionChannelInputAppendConflictReason(ctx, db.GetSessionChannelInputAppendConflictReasonParams{
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "different-fingerprint",
+		ExternalEventID:        "slack-event-1",
+		MaxInputsPerChannel:    1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reason != "idempotency_conflict" {
+		t.Fatalf("append conflict reason = %q, want idempotency_conflict", reason)
+	}
+}
+
+func TestAppendSessionChannelInputRejectsAmbiguousIdempotencyIdentity(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	seedTaskSessionForRun(t, ctx, pool, ids)
+
+	if _, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"source":"idempotency"}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "slack-action-1",
+		IdempotencyFingerprint: "same-fingerprint",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"source":"event"}`),
+		ContentType:            "application/json",
+		IdempotencyFingerprint: "same-fingerprint",
+		ExternalEventID:        "slack-event-1",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"source":"both"}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "slack-action-1",
+		IdempotencyFingerprint: "same-fingerprint",
+		ExternalEventID:        "slack-event-1",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("ambiguous duplicate append error = %v, want pgx.ErrNoRows", err)
+	}
+	reason, err := queries.GetSessionChannelInputAppendConflictReason(ctx, db.GetSessionChannelInputAppendConflictReasonParams{
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		IdempotencyKey:         "slack-action-1",
+		IdempotencyFingerprint: "same-fingerprint",
+		ExternalEventID:        "slack-event-1",
+		MaxInputsPerChannel:    1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reason != "idempotency_conflict" {
+		t.Fatalf("append conflict reason = %q, want idempotency_conflict", reason)
+	}
+}
+
+func TestAppendSessionChannelInputRejectsStaleCurrentRun(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	sessionID := seedTaskSessionForRun(t, ctx, pool, ids)
+	replacementRunID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runs (
+			id, org_id, project_id, environment_id, deployment_id, deployment_task_id,
+			task_id, task_session_id, status, execution_status, payload, metadata, locked_retry_policy,
+			queue_name, max_duration_seconds, trace_id, root_span_id, created_at, updated_at
+		)
+		SELECT $1, org_id, project_id, environment_id, deployment_id, deployment_task_id,
+		       task_id, task_session_id, 'queued', 'queued', '{}', '{}', '{}',
+		       queue_name, max_duration_seconds, '00000000000000000000000000000001', '0000000000000001', now(), now()
+		  FROM runs
+		 WHERE id = $2
+	`, replacementRunID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE task_sessions
+		   SET current_run_id = $1,
+		       current_run_version = current_run_version + 1
+		 WHERE id = $2
+	`, replacementRunID, sessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":true}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "test-fingerprint",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("stale current run append error = %v, want pgx.ErrNoRows", err)
+	}
+	reason, err := queries.GetSessionChannelInputAppendConflictReason(ctx, db.GetSessionChannelInputAppendConflictReasonParams{
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "test-fingerprint",
+		MaxInputsPerChannel:    1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reason != "run_not_accepting" {
+		t.Fatalf("append conflict reason = %q, want run_not_accepting", reason)
+	}
+}
+
+func TestSessionChannelInputAppendConflictReasonReturnsInputLimit(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	seedTaskSessionForRun(t, ctx, pool, ids)
+
+	if _, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":true}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "first-fingerprint",
+		MaxInputsPerChannel:    1,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":false}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "second-fingerprint",
+		MaxInputsPerChannel:    1,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("input limit error = %v, want pgx.ErrNoRows", err)
+	}
+	var nextSequence int64
+	if err := pool.QueryRow(ctx, `
+		SELECT channels.next_sequence
+		  FROM channels
+		  JOIN task_sessions ON task_sessions.id = channels.task_session_id
+		 WHERE task_sessions.current_run_id = $1
+		   AND channels.name = 'approval'
+		   AND channels.direction = 'input'
+	`, ids.runID).Scan(&nextSequence); err != nil {
+		t.Fatal(err)
+	}
+	if nextSequence != 2 {
+		t.Fatalf("next_sequence = %d, want 2 after rejected second append", nextSequence)
+	}
+	reason, err := queries.GetSessionChannelInputAppendConflictReason(ctx, db.GetSessionChannelInputAppendConflictReasonParams{
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		RunID:                  pgvalue.UUID(ids.runID),
+		Channel:                "approval",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "second-fingerprint",
+		MaxInputsPerChannel:    1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reason != "input_limit_exceeded" {
+		t.Fatalf("append conflict reason = %q, want input_limit_exceeded", reason)
+	}
+}
+
+func TestTaskStartIdempotencyExpiredKeyCanBeReused(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	sessionID := seedTaskSessionForRun(t, ctx, pool, ids)
+
+	params := db.CreateTaskStartIdempotencyParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		TaskID:             "approval-task",
+		IdempotencyKey:     "start-key-1",
+		RequestFingerprint: "fingerprint-1",
+		TaskSessionID:      pgvalue.UUID(sessionID),
+		FirstRunID:         pgvalue.UUID(ids.runID),
+		ExpiresAt:          pgtype.Timestamptz{Time: time.Now().Add(-time.Hour), Valid: true},
+	}
+	if _, err := queries.CreateTaskStartIdempotency(ctx, params); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	txQueries := db.New(tx)
+	params.ID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	params.RequestFingerprint = "fingerprint-conflict"
+	params.ExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true}
+	if _, err := txQueries.CreateTaskStartIdempotency(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("conflicting insert err = %v, want no rows without aborting transaction", err)
+	}
+	if err := txQueries.DeleteExpiredTaskStartIdempotency(ctx, db.DeleteExpiredTaskStartIdempotencyParams{
+		OrgID:          params.OrgID,
+		ProjectID:      params.ProjectID,
+		EnvironmentID:  params.EnvironmentID,
+		TaskID:         params.TaskID,
+		IdempotencyKey: params.IdempotencyKey,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	params.ID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	params.RequestFingerprint = "fingerprint-2"
+	params.ExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true}
+	if _, err := txQueries.CreateTaskStartIdempotency(ctx, params); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tx = nil
+	row, err := queries.GetTaskStartIdempotency(ctx, db.GetTaskStartIdempotencyParams{
+		OrgID:          params.OrgID,
+		ProjectID:      params.ProjectID,
+		EnvironmentID:  params.EnvironmentID,
+		TaskID:         params.TaskID,
+		IdempotencyKey: params.IdempotencyKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.RequestFingerprint != "fingerprint-2" {
+		t.Fatalf("request fingerprint = %q, want fingerprint-2", row.RequestFingerprint)
+	}
+}
+
+func TestAppendSessionChannelInputSequenceIsScopedToRunAndChannel(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	queries := db.New(pool)
+	firstRun := seedWaitpointTokenIntegration(t, ctx, pool)
+	secondRun := seedWaitpointTokenIntegration(t, ctx, pool)
+	seedTaskSessionForRun(t, ctx, pool, firstRun)
+	seedTaskSessionForRun(t, ctx, pool, secondRun)
+
+	firstApproval, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(firstRun.orgID),
+		RunID:                  pgvalue.UUID(firstRun.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":true}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "test-fingerprint",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondApproval, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(firstRun.orgID),
+		RunID:                  pgvalue.UUID(firstRun.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":false}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "test-fingerprint",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstMessage, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(firstRun.orgID),
+		RunID:                  pgvalue.UUID(firstRun.runID),
+		Channel:                "message",
+		Data:                   []byte(`{"text":"first"}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "test-fingerprint",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherRunApproval, err := queries.AppendSessionChannelInput(ctx, db.AppendSessionChannelInputParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                  pgvalue.UUID(secondRun.orgID),
+		RunID:                  pgvalue.UUID(secondRun.runID),
+		Channel:                "approval",
+		Data:                   []byte(`{"approved":true}`),
+		ContentType:            "application/json",
+		IdempotencyKey:         "",
+		IdempotencyFingerprint: "test-fingerprint",
+		MaxInputsPerChannel:    1024,
+		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if firstApproval.Sequence != 1 || secondApproval.Sequence != 2 {
+		t.Fatalf("first run approval sequences = %d, %d; want 1, 2", firstApproval.Sequence, secondApproval.Sequence)
+	}
+	if firstMessage.Sequence != 1 {
+		t.Fatalf("first run message sequence = %d, want 1", firstMessage.Sequence)
+	}
+	if otherRunApproval.Sequence != 1 {
+		t.Fatalf("second run approval sequence = %d, want 1", otherRunApproval.Sequence)
+	}
+}
+
+func TestExpireDuePendingWaitpointsPublishesNullTimeoutData(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	waitpointID := seedWaitingRunSuspensionForWaitpoint(t, ctx, pool, ids)
+	if _, err := pool.Exec(ctx, `
+		WITH target_dependency AS (
+		    UPDATE run_suspension_waitpoints
+		       SET timeout_seconds = 1
+		     WHERE org_id = $1
+		       AND waitpoint_id = $2
+		    RETURNING run_suspension_id
+		)
+		UPDATE run_suspensions
+		   SET waiting_at = now() - interval '2 seconds'
+		  FROM target_dependency
+		 WHERE run_suspensions.org_id = $1
+		   AND run_suspensions.id = target_dependency.run_suspension_id
+	`, ids.orgID, waitpointID); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.ExpireDuePendingWaitpoints(ctx, pgvalue.UUID(ids.orgID)); err != nil {
+		t.Fatal(err)
+	}
+	var resolutionKind string
+	var resolution []byte
+	if err := pool.QueryRow(ctx, `
+		SELECT run_suspensions.resolution_kind, run_suspensions.resolution
+		  FROM run_suspensions
+		  JOIN run_suspension_waitpoints ON run_suspension_waitpoints.org_id = run_suspensions.org_id
+		                            AND run_suspension_waitpoints.run_suspension_id = run_suspensions.id
+		 WHERE run_suspensions.org_id = $1
+		   AND run_suspension_waitpoints.waitpoint_id = $2
+	`, ids.orgID, waitpointID).Scan(&resolutionKind, &resolution); err != nil {
+		t.Fatal(err)
+	}
+	if resolutionKind != "timed_out" {
+		t.Fatalf("resolution kind = %s", resolutionKind)
+	}
+	if got := canonicalJSON(t, resolution); got != `null` {
+		t.Fatalf("run suspension resolution = %s", resolution)
+	}
+}
+
+type waitpointTokenIntegrationIDs struct {
+	orgID         uuid.UUID
+	projectID     uuid.UUID
+	environmentID uuid.UUID
+	deploymentID  uuid.UUID
+	taskID        uuid.UUID
+	runID         uuid.UUID
+}
+
+func shortUUID(id uuid.UUID) string {
+	compact := strings.ReplaceAll(id.String(), "-", "")
+	return compact[len(compact)-12:]
+}
+
+func seedWaitpointTokenIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) waitpointTokenIntegrationIDs {
+	t.Helper()
+	ids := waitpointTokenIntegrationIDs{
+		orgID:         dbtest.DefaultOrgID,
+		projectID:     uuid.Must(uuid.NewV7()),
+		environmentID: uuid.Must(uuid.NewV7()),
+		deploymentID:  uuid.Must(uuid.NewV7()),
+		taskID:        uuid.Must(uuid.NewV7()),
+		runID:         uuid.Must(uuid.NewV7()),
+	}
+	artifactID := uuid.Must(uuid.NewV7())
+	digest := "sha256:" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	projectSlug := "project-" + shortUUID(ids.projectID)
+	environmentSlug := "env-" + shortUUID(ids.environmentID)
+	var workerGroupID uuid.UUID
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO organizations (id, name, slug) VALUES ($1, 'Default', 'default')
+		ON CONFLICT (id) DO NOTHING
+	`, ids.orgID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO projects (id, org_id, slug, name) VALUES ($1, $2, $3, 'Project')
+	`, ids.projectID, ids.orgID, projectSlug); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
+		VALUES ($1, $2, $3, $4, 'Env', '#3366ff')
+	`, ids.environmentID, ids.orgID, ids.projectID, environmentSlug); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO cas_objects (digest, size_bytes, media_type)
+		VALUES ($1, 1, 'application/json')
+	`, digest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, 'task_bundle', 1, 'application/json')
+	`, artifactID, ids.orgID, ids.projectID, ids.environmentID, digest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO deployments (id, org_id, project_id, environment_id, worker_group_id, version, content_hash, deployment_source_artifact_id, status)
+		VALUES ($1, $2, $3, $4, $5, 'v1', $6, $7, 'deployed')
+	`, ids.deploymentID, ids.orgID, ids.projectID, ids.environmentID, workerGroupID, digest, artifactID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO tasks (org_id, project_id, environment_id, task_id)
+		VALUES ($1, $2, $3, 'approval-task')
+		ON CONFLICT DO NOTHING
+	`, ids.orgID, ids.projectID, ids.environmentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO deployment_tasks (
+			id, org_id, project_id, environment_id, deployment_id, task_id, bundle_artifact_id,
+			queue_name, max_duration_seconds
+		)
+		VALUES ($1, $2, $3, $4, $5, 'approval-task', $6, 'default', 300)
+	`, ids.taskID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, artifactID); err != nil {
+		t.Fatal(err)
+	}
+	taskSessionID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO task_sessions (
+			id, org_id, project_id, environment_id, task_id,
+			initial_deployment_id, active_deployment_id
+		)
+		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5)
+	`, taskSessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runs (
+			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id,
+			task_session_id, status, execution_status, payload, queue_name, max_duration_seconds, trace_id, root_span_id
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, 'approval-task', $7, 'waiting', 'waiting', '{}', 'default', 300,
+			'11111111111111111111111111111111', '2222222222222222')
+	`, ids.runID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, taskSessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE task_sessions
+		   SET current_run_id = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, ids.runID, ids.orgID, taskSessionID); err != nil {
+		t.Fatal(err)
+	}
+	return ids
+}
+
+func seedTaskSessionForRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs) uuid.UUID {
+	t.Helper()
+	var taskSessionID uuid.UUID
+	err := pool.QueryRow(ctx, `
+		SELECT task_session_id
+		  FROM runs
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID).Scan(&taskSessionID)
+	if err == nil {
+		return taskSessionID
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatal(err)
+	}
+	taskSessionID = uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO tasks (org_id, project_id, environment_id, task_id)
+		VALUES ($1, $2, $3, 'approval-task')
+		ON CONFLICT DO NOTHING
+	`, ids.orgID, ids.projectID, ids.environmentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO task_sessions (
+			id, org_id, project_id, environment_id, task_id,
+			initial_deployment_id, active_deployment_id, current_run_id
+		)
+		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5, $6)
+	`, taskSessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET task_session_id = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, taskSessionID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	return taskSessionID
+}
+
+func seedRunningTaskSessionLease(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs) (taskSessionID uuid.UUID, runLeaseID uuid.UUID, workerID uuid.UUID) {
+	t.Helper()
+	taskSessionID = uuid.Must(uuid.NewV7())
+	runLeaseID = uuid.Must(uuid.NewV7())
+	attemptID := uuid.Must(uuid.NewV7())
+	workerID = uuid.Must(uuid.NewV7())
+	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	workerResourceID := "worker-" + shortUUID(workerID)
+	dispatchMessageID := "dispatch-" + runLeaseID.String()[:8]
+	dispatchLeaseID := "lease-" + runLeaseID.String()[:8]
+	var workerGroupID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO tasks (org_id, project_id, environment_id, task_id)
+		VALUES ($1, $2, $3, 'approval-task')
+		ON CONFLICT DO NOTHING
+	`, ids.orgID, ids.projectID, ids.environmentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO task_sessions (
+			id, org_id, project_id, environment_id, task_id,
+			initial_deployment_id, active_deployment_id, current_run_id
+		)
+		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5, $6)
+	`, taskSessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_releases (runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
+		VALUES ($1, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO worker_instances (
+			id, resource_id, total_milli_cpu, total_memory_mib, total_disk_mib,
+			worker_group_id,
+			total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib,
+			available_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
+			initramfs_digest, rootfs_digest, cni_profile
+		)
+		VALUES ($1, $2, 1000, 1024, 4096, $3, 1, 1000, 1024, 4096, 1,
+			$4, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, workerID, workerResourceID, workerGroupID, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
+		VALUES ($1, $2, $3, 1, 'running')
+	`, attemptID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_leases (
+			id, org_id, run_id, attempt_id, worker_instance_id, worker_group_id, dispatch_message_id,
+			dispatch_lease_id, dispatch_attempt, status, lease_expires_at, runtime_id, trace_id,
+			span_id, parent_span_id, traceparent
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+			1, 'running', now() + interval '1 hour', $9,
+			'11111111111111111111111111111111', '3333333333333333', '2222222222222222',
+			'00-11111111111111111111111111111111-3333333333333333-01')
+	`, runLeaseID, ids.orgID, ids.runID, attemptID, workerID, workerGroupID, dispatchMessageID, dispatchLeaseID, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET task_session_id = $1,
+		       current_run_lease_id = $2,
+		       current_attempt_id = $3,
+		       current_attempt_number = 1,
+		       status = 'running',
+		       execution_status = 'executing'
+		 WHERE org_id = $4
+		   AND id = $5
+	`, taskSessionID, runLeaseID, attemptID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_runtime_requirements (
+			run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
+			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
+			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
+		)
+		VALUES ($1, $2, 1000, 1024, 4096, 1, $3, 'arm64', 'test', 'sha256:kernel',
+			'sha256:initramfs', 'sha256:rootfs', 'default', $4)
+	`, ids.runID, ids.orgID, runtimeID, workerGroupID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_queue_items (
+			run_id, org_id, status, queue_name, dispatch_message_id,
+			reserved_by_worker_instance_id, reservation_expires_at
+		)
+		VALUES ($1, $2, 'reserved', 'default', $3, $4, now() + interval '1 hour')
+	`, ids.runID, ids.orgID, dispatchMessageID, workerID); err != nil {
+		t.Fatal(err)
+	}
+	return taskSessionID, runLeaseID, workerID
+}
+
+func seedRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs) (runLeaseID uuid.UUID, workerID uuid.UUID) {
+	t.Helper()
+	runLeaseID = uuid.Must(uuid.NewV7())
+	attemptID := uuid.Must(uuid.NewV7())
+	workerID = uuid.Must(uuid.NewV7())
+	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	workerResourceID := "worker-" + shortUUID(workerID)
+	dispatchMessageID := "dispatch-" + runLeaseID.String()[:8]
+	dispatchLeaseID := "lease-" + runLeaseID.String()[:8]
+	var workerGroupID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_releases (runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
+		VALUES ($1, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO worker_instances (
+			id, resource_id, total_milli_cpu, total_memory_mib, total_disk_mib,
+			worker_group_id,
+			total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib,
+			available_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
+			initramfs_digest, rootfs_digest, cni_profile
+		)
+		VALUES ($1, $2, 1000, 1024, 4096, $3, 1, 1000, 1024, 4096, 1,
+			$4, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, workerID, workerResourceID, workerGroupID, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
+		VALUES ($1, $2, $3, 1, 'running')
+	`, attemptID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_leases (
+			id, org_id, run_id, attempt_id, worker_instance_id, worker_group_id, dispatch_message_id,
+			dispatch_lease_id, dispatch_attempt, status, lease_expires_at, runtime_id, trace_id,
+			span_id, parent_span_id, traceparent
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+			1, 'running', now() + interval '1 hour', $9,
+			'11111111111111111111111111111111', '3333333333333333', '2222222222222222',
+			'00-11111111111111111111111111111111-3333333333333333-01')
+	`, runLeaseID, ids.orgID, ids.runID, attemptID, workerID, workerGroupID, dispatchMessageID, dispatchLeaseID, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET current_run_lease_id = $1,
+		       current_attempt_id = $2,
+		       current_attempt_number = 1,
+		       status = 'running',
+		       execution_status = 'executing'
+		 WHERE org_id = $3
+		   AND id = $4
+	`, runLeaseID, attemptID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_runtime_requirements (
+			run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
+			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
+			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
+		)
+		VALUES ($1, $2, 1000, 1024, 4096, 1, $3, 'arm64', 'test', 'sha256:kernel',
+			'sha256:initramfs', 'sha256:rootfs', 'default', $4)
+	`, ids.runID, ids.orgID, runtimeID, workerGroupID); err != nil {
+		t.Fatal(err)
+	}
+	return runLeaseID, workerID
+}
+
+func seedWaitingRunSuspensionForWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs) uuid.UUID {
+	t.Helper()
+	waitpointID := uuid.Must(uuid.NewV7())
+	runSuspensionID := uuid.Must(uuid.NewV7())
+	checkpointID := uuid.Must(uuid.NewV7())
+	attemptID := uuid.Must(uuid.NewV7())
+	sessionID := uuid.Must(uuid.NewV7())
+	workerID := uuid.Must(uuid.NewV7())
+	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	workerResourceID := "worker-" + shortUUID(workerID)
+	var workerGroupID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_releases (runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
+		VALUES ($1, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO worker_instances (
+			id, resource_id, total_milli_cpu, total_memory_mib, total_disk_mib,
+			worker_group_id,
+			total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib,
+			available_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
+			initramfs_digest, rootfs_digest, cni_profile
+		)
+		VALUES ($1, $2, 1000, 1024, 4096, $3, 1, 1000, 1024, 4096, 1,
+			$4, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, workerID, workerResourceID, workerGroupID, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
+		VALUES ($1, $2, $3, 1, 'waiting')
+	`, attemptID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_leases (
+			id, org_id, run_id, attempt_id, worker_instance_id, worker_group_id, dispatch_message_id,
+			dispatch_lease_id, dispatch_attempt, status, lease_expires_at, runtime_id, trace_id,
+			span_id, parent_span_id, traceparent
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, 'dispatch-1', 'lease-1', 1, 'released', now() + interval '1 hour',
+			$7, '11111111111111111111111111111111', '3333333333333333', '2222222222222222',
+			'00-11111111111111111111111111111111-3333333333333333-01')
+	`, sessionID, ids.orgID, ids.runID, attemptID, workerID, workerGroupID, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET current_attempt_id = $1,
+		       current_attempt_number = 1,
+		       status = 'waiting',
+		       execution_status = 'waiting'
+		 WHERE org_id = $2
+		   AND id = $3
+	`, attemptID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_runtime_requirements (
+			run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
+			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
+			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
+		)
+		VALUES ($1, $2, 1000, 1024, 4096, 1, $3, 'arm64', 'test', 'sha256:kernel',
+			'sha256:initramfs', 'sha256:rootfs', 'default', $4)
+	`, ids.runID, ids.orgID, runtimeID, workerGroupID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_queue_items (run_id, org_id, status, queue_name)
+		VALUES ($1, $2, 'parked', 'default')
+	`, ids.runID, ids.orgID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO checkpoints (id, org_id, run_id, project_id, environment_id, run_lease_id, status, reason, manifest, ready_at)
+		VALUES ($1, $2, $3, $4, $5, $6, 'ready', 'waitpoint', '{}'::jsonb, now())
+	`, checkpointID, ids.orgID, ids.runID, ids.projectID, ids.environmentID, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO waitpoints (id, org_id, project_id, environment_id, run_id, kind, params)
+		VALUES ($1, $2, $3, $4, $5, 'token', '{"token_id":"token-1"}')
+	`, waitpointID, ids.orgID, ids.projectID, ids.environmentID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_suspensions (
+			id, org_id, run_id, project_id, environment_id, run_lease_id, checkpoint_id,
+			correlation_id, status, waiting_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, '1', 'waiting', now())
+	`, runSuspensionID, ids.orgID, ids.runID, ids.projectID, ids.environmentID, sessionID, checkpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_suspension_waitpoints (org_id, run_id, project_id, environment_id, run_suspension_id, waitpoint_id, ordinal)
+		VALUES ($1, $2, $3, $4, $5, $6, 0)
+	`, ids.orgID, ids.runID, ids.projectID, ids.environmentID, runSuspensionID, waitpointID); err != nil {
+		t.Fatal(err)
+	}
+	return waitpointID
+}
+
+func seedChannelWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs, stream string, afterSequence int64) uuid.UUID {
+	t.Helper()
+	waitpointID := seedWaitingRunSuspensionForWaitpoint(t, ctx, pool, ids)
+	var runSuspensionID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT run_suspension_id
+		  FROM run_suspension_waitpoints
+		 WHERE org_id = $1
+		   AND waitpoint_id = $2
+	`, ids.orgID, waitpointID).Scan(&runSuspensionID); err != nil {
+		t.Fatal(err)
+	}
+	params, err := json.Marshal(map[string]any{
+		"channel":        stream,
+		"after_sequence": afterSequence,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE waitpoints
+		   SET kind = 'channel',
+		       params = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, params, ids.orgID, waitpointID); err != nil {
+		t.Fatal(err)
+	}
+	channelID := seedInputChannel(t, ctx, pool, ids, stream)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO channel_waits (
+			waitpoint_id, org_id, project_id, environment_id, run_id, run_suspension_id, channel_id, after_sequence
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, waitpointID, ids.orgID, ids.projectID, ids.environmentID, ids.runID, runSuspensionID, channelID, afterSequence); err != nil {
+		t.Fatal(err)
+	}
+	return waitpointID
+}
+
+func seedAdditionalChannelWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs, stream string, afterSequence int64) uuid.UUID {
+	t.Helper()
+	waitpointID := uuid.Must(uuid.NewV7())
+	var runSuspensionID uuid.UUID
+	var nextOrdinal int
+	if err := pool.QueryRow(ctx, `
+		SELECT run_suspensions.id,
+		       COALESCE(max(run_suspension_waitpoints.ordinal), -1) + 1
+		  FROM run_suspensions
+		  JOIN run_suspension_waitpoints
+		    ON run_suspension_waitpoints.org_id = run_suspensions.org_id
+		   AND run_suspension_waitpoints.run_suspension_id = run_suspensions.id
+		 WHERE run_suspensions.org_id = $1
+		   AND run_suspensions.run_id = $2
+		   AND run_suspensions.status = 'waiting'
+		 GROUP BY run_suspensions.id
+		 ORDER BY run_suspensions.waiting_at ASC, run_suspensions.id ASC
+		 LIMIT 1
+	`, ids.orgID, ids.runID).Scan(&runSuspensionID, &nextOrdinal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO waitpoints (id, org_id, project_id, environment_id, run_id, kind, params)
+		VALUES ($1, $2, $3, $4, $5, 'channel', $6)
+	`, waitpointID, ids.orgID, ids.projectID, ids.environmentID, ids.runID, json.RawMessage(fmt.Sprintf(`{"channel":%q,"after_sequence":%d}`, stream, afterSequence))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_suspension_waitpoints (org_id, run_id, project_id, environment_id, run_suspension_id, waitpoint_id, ordinal)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, ids.orgID, ids.runID, ids.projectID, ids.environmentID, runSuspensionID, waitpointID, nextOrdinal); err != nil {
+		t.Fatal(err)
+	}
+	channelID := seedInputChannel(t, ctx, pool, ids, stream)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO channel_waits (
+			waitpoint_id, org_id, project_id, environment_id, run_id, run_suspension_id, channel_id, after_sequence
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, waitpointID, ids.orgID, ids.projectID, ids.environmentID, ids.runID, runSuspensionID, channelID, afterSequence); err != nil {
+		t.Fatal(err)
+	}
+	return waitpointID
+}
+
+func seedInputChannel(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs, name string) uuid.UUID {
+	t.Helper()
+	taskSessionID := seedTaskSessionForRun(t, ctx, pool, ids)
+	definitionID := seedChannelDefinition(t, ctx, pool, ids, name, "input")
+	var channelID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO channels (org_id, project_id, environment_id, task_session_id, definition_id, name, direction)
+		VALUES ($1, $2, $3, $4, $5, $6, 'input')
+		ON CONFLICT (org_id, task_session_id, name, direction)
+		DO UPDATE SET next_sequence = channels.next_sequence
+		RETURNING id
+	`, ids.orgID, ids.projectID, ids.environmentID, taskSessionID, definitionID, name).Scan(&channelID); err != nil {
+		t.Fatal(err)
+	}
+	return channelID
+}
+
+func seedChannelDefinition(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs, name string, direction string) uuid.UUID {
+	t.Helper()
+	var definitionID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO channel_definitions (
+			org_id, project_id, environment_id, deployment_id, task_id, name, direction
+		)
+		VALUES ($1, $2, $3, $4, 'approval-task', $5, $6)
+		ON CONFLICT (org_id, deployment_id, task_id, name, direction)
+		DO UPDATE SET name = EXCLUDED.name
+		RETURNING id
+	`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, name, direction).Scan(&definitionID); err != nil {
+		t.Fatal(err)
+	}
+	return definitionID
+}
+
+func assertChannelWaitpointData(t *testing.T, ctx context.Context, pool *pgxpool.Pool, waitpointID uuid.UUID, want string) {
+	t.Helper()
+	var status string
+	var data []byte
+	var deliveredRecordID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT waitpoints.status::text, waitpoints.data, channel_waits.matched_record_id
+		  FROM waitpoints
+		  JOIN channel_waits ON channel_waits.org_id = waitpoints.org_id
+		                    AND channel_waits.waitpoint_id = waitpoints.id
+		 WHERE waitpoints.id = $1
+	`, waitpointID).Scan(&status, &data, &deliveredRecordID); err != nil {
+		t.Fatal(err)
+	}
+	if status != "completed" {
+		t.Fatalf("waitpoint status = %s", status)
+	}
+	if deliveredRecordID == uuid.Nil {
+		t.Fatal("matched_record_id is empty")
+	}
+	if got := canonicalJSON(t, data); got != want {
+		t.Fatalf("input waitpoint data = %s, want %s", got, want)
+	}
+}
+
+func assertWaitpointStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, waitpointID uuid.UUID, want string) {
+	t.Helper()
+	var status string
+	if err := pool.QueryRow(ctx, `
+		SELECT status::text
+		  FROM waitpoints
+		 WHERE id = $1
+	`, waitpointID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != want {
+		t.Fatalf("waitpoint %s status = %s, want %s", waitpointID, status, want)
+	}
+}
+
+func newIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
+	t.Helper()
+	dsn := strings.TrimSpace(os.Getenv("HELMR_TEST_DATABASE_URL"))
+	if dsn == "" {
+		t.Skip("HELMR_TEST_DATABASE_URL is not set")
+	}
+	admin, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var serverVersion int
+	if err := admin.QueryRow(ctx, `SELECT current_setting('server_version_num')::int`).Scan(&serverVersion); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	if serverVersion < 180000 {
+		admin.Close()
+		t.Skipf("Postgres %d does not provide uuidv7(); skipping waitpoint token integration test", serverVersion)
+	}
+	name := "helmr_waitpoint_tokens_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(context.Background(), "DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
+		admin.Close()
+	})
+	testDSN := databaseDSN(t, dsn, name)
+	if err := schema.Up(ctx, testDSN); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, testDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+func databaseDSN(t *testing.T, dsn string, database string) string {
+	t.Helper()
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.Path = "/" + database
+	return parsed.String()
+}
+
+func completionHash(t *testing.T, data []byte) string {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:])
+}
+
+func canonicalJSON(t *testing.T, data []byte) string {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(canonical)
+}

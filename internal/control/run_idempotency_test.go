@@ -15,57 +15,452 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5"
+	"github.com/helmrdotdev/helmr/internal/schedule"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestCreateRunReturnsExistingRunForActiveIdempotencyKey(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
 
-	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:  "deploy",
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.CreateRunOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "24h"},
+		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "24h"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var first api.RunResponse
+	var first api.TaskStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
 		t.Fatal(err)
 	}
-	if !store.run.IdempotencyKey.Valid || len(store.run.IdempotencyKey.String) != sha256.Size*2 {
-		t.Fatalf("stored idempotency key = %+v", store.run.IdempotencyKey)
+	if len(store.startIdempotency.IdempotencyKey) != sha256.Size*2 {
+		t.Fatalf("stored idempotency key = %q", store.startIdempotency.IdempotencyKey)
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	store.currentDeploymentMissing = true
+	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var second api.RunResponse
+	var second api.TaskStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.ID != first.ID || !second.IdempotencyHit {
+	if second.Run.ID != first.Run.ID || !second.IsCached {
 		t.Fatalf("second response = %+v first=%+v", second, first)
+	}
+	if len(store.events) != 1 || runEnqueuer.count != 1 {
+		t.Fatalf("events=%d enqueues=%d", len(store.events), runEnqueuer.count)
+	}
+}
+
+func TestCreateRunRequiresCoordinationForIdempotencyKey(t *testing.T) {
+	store := &fakeStore{}
+	runEnqueuer := &fakeRunEnqueuer{}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer})
+
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "coordination_unavailable") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	requireErrorCode(t, rec.Body.Bytes(), "coordination_unavailable")
+	if store.run.ID.Valid || store.taskSession.ID.Valid || len(store.events) != 0 || runEnqueuer.count != 0 {
+		t.Fatalf("side effects: run=%v session=%v events=%d enqueues=%d", store.run.ID.Valid, store.taskSession.ID.Valid, len(store.events), runEnqueuer.count)
+	}
+}
+
+func TestCreateRunRequiresCoordinationBeforeBindingExistingExternalIDToIdempotencyKey(t *testing.T) {
+	payload := json.RawMessage(`{"env":"prod"}`)
+	options := taskStartFingerprintTestOptions(t, api.CreateRunOptions{IdempotencyKey: "durable-key"})
+	startFingerprint, err := taskStartRequestFingerprint("deploy", payload, options, []byte(`{}`), nil, "durable-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &fakeStore{
+		taskSession: db.TaskSession{
+			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			TaskID:              "deploy",
+			InitialDeploymentID: testDeploymentID(),
+			ActiveDeploymentID:  testDeploymentID(),
+			ExternalID:          "durable-1",
+			StartFingerprint:    startFingerprint.String,
+			Status:              db.TaskSessionStatusOpen,
+			CurrentRunID:        runID,
+			Metadata:            []byte(`{}`),
+			Tags:                []string{},
+			TerminalReason:      []byte(`{}`),
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
+		},
+		run: db.Run{
+			ID:               runID,
+			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:        testProjectID(),
+			EnvironmentID:    testEnvironmentID(),
+			DeploymentID:     testDeploymentID(),
+			DeploymentTaskID: testDeploymentTaskID(),
+			TaskID:           "deploy",
+			Status:           db.RunStatusQueued,
+			ExecutionStatus:  db.RunExecutionStatusQueued,
+			CreatedAt:        testTime(),
+			UpdatedAt:        testTime(),
+		},
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
+
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+		ExternalID: "durable-1",
+		Payload:    payload,
+		Options:    api.TaskStartOptions{IdempotencyKey: "durable-key"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	requireErrorCode(t, rec.Body.Bytes(), "coordination_unavailable")
+	if store.startIdempotency.ID.Valid {
+		t.Fatalf("start idempotency binding was written without Redis coordination: %+v", store.startIdempotency)
+	}
+}
+
+func TestTaskStartExternalIDDoesNotRequireCoordination(t *testing.T) {
+	store := &fakeStore{}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
+
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+		ExternalID: "durable-1",
+		Payload:    json.RawMessage(`{"env":"prod"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !store.taskSession.ID.Valid || !store.run.ID.Valid {
+		t.Fatalf("expected task session and run to be created, got session=%v run=%v", store.taskSession.ID.Valid, store.run.ID.Valid)
+	}
+}
+
+func TestTaskStartFingerprintIncludesExpiresAt(t *testing.T) {
+	payload := json.RawMessage(`{"env":"prod"}`)
+	firstExpiresAt := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	secondExpiresAt := firstExpiresAt.Add(time.Hour)
+	first, err := taskStartRequestFingerprint("deploy", payload, taskStartFingerprintTestOptions(t, api.CreateRunOptions{}), []byte(`{}`), nil, "durable-1", &firstExpiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := taskStartRequestFingerprint("deploy", payload, taskStartFingerprintTestOptions(t, api.CreateRunOptions{}), []byte(`{}`), nil, "durable-1", &secondExpiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.String == second.String {
+		t.Fatal("fingerprint did not change when expiresAt changed")
+	}
+}
+
+func TestTaskStartFingerprintCanonicalizesRetryPolicy(t *testing.T) {
+	payload := json.RawMessage(`{"env":"prod"}`)
+	firstOptions := taskStartFingerprintTestOptions(t, api.CreateRunOptions{Retry: json.RawMessage(`{"maxAttempts":3,"backoff":{"minMs":1000,"maxMs":60000}}`)})
+	first, err := taskStartRequestFingerprint("deploy", payload, firstOptions, []byte(`{}`), nil, "durable-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondOptions := taskStartFingerprintTestOptions(t, api.CreateRunOptions{Retry: json.RawMessage(`{"backoff":{"maxMs":60000,"minMs":1000},"maxAttempts":3}`)})
+	second, err := taskStartRequestFingerprint("deploy", payload, secondOptions, []byte(`{}`), nil, "durable-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.String != second.String {
+		t.Fatalf("fingerprints differ for semantically equal retry JSON: %s != %s", first.String, second.String)
+	}
+}
+
+func TestCreateRunReturnsIdempotencyHitForTerminalTaskSession(t *testing.T) {
+	store := &fakeStore{}
+	runEnqueuer := &fakeRunEnqueuer{}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
+
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var first api.TaskStartResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	store.taskSession.Status = db.TaskSessionStatusFailed
+	store.startIdempotency.SessionStatus = db.TaskSessionStatusFailed
+
+	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var second api.TaskStartResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+	if second.Run.ID != first.Run.ID || !second.IsCached || second.Session.Status != string(db.TaskSessionStatusFailed) {
+		t.Fatalf("second response = %+v first=%+v", second, first)
+	}
+	if len(store.events) != 1 || runEnqueuer.count != 1 {
+		t.Fatalf("events=%d enqueues=%d", len(store.events), runEnqueuer.count)
+	}
+}
+
+func TestCreateScheduleRunRejectsStaleTriggerIdempotencyHit(t *testing.T) {
+	store := &fakeStore{}
+	runEnqueuer := &fakeRunEnqueuer{}
+	server := &Server{
+		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db:          store,
+		secrets:     fakeSecrets{},
+		runEnqueuer: runEnqueuer,
+		eventStream: newTestEventStream(t),
+	}
+	row := db.GetScheduleTriggerCandidateRow{
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+		ProjectID:     testProjectID(),
+		EnvironmentID: testEnvironmentID(),
+		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		InstanceID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ScheduleType:  db.TaskScheduleTypeImperative,
+		TaskID:        "deploy",
+		Cron:          "0 9 * * *",
+		Timezone:      "UTC",
+		RunOptions:    []byte(`{}`),
+		Generation:    1,
+		NextFireAt:    pgtype.Timestamptz{Time: time.Date(2026, 6, 18, 9, 0, 0, 0, time.UTC), Valid: true},
+	}
+
+	if _, err := server.CreateScheduleRun(context.Background(), row); err != nil {
+		t.Fatal(err)
+	}
+	store.scheduleTriggerNotCurrent = true
+	if _, err := server.CreateScheduleRun(context.Background(), row); !errors.Is(err, schedule.ErrTriggerSuperseded) {
+		t.Fatalf("second schedule run err = %v, want trigger superseded", err)
+	}
+	if len(store.events) != 1 || runEnqueuer.count != 1 {
+		t.Fatalf("events=%d enqueues=%d", len(store.events), runEnqueuer.count)
+	}
+}
+
+func TestCreateScheduleRunDefersTaskStartCoordinationFailures(t *testing.T) {
+	store := &fakeStore{}
+	runEnqueuer := &fakeRunEnqueuer{}
+	server := &Server{
+		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db:          store,
+		secrets:     fakeSecrets{},
+		runEnqueuer: runEnqueuer,
+	}
+	row := db.GetScheduleTriggerCandidateRow{
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+		ProjectID:     testProjectID(),
+		EnvironmentID: testEnvironmentID(),
+		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		InstanceID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ScheduleType:  db.TaskScheduleTypeImperative,
+		TaskID:        "deploy",
+		Cron:          "0 9 * * *",
+		Timezone:      "UTC",
+		RunOptions:    []byte(`{}`),
+		Generation:    1,
+		NextFireAt:    pgtype.Timestamptz{Time: time.Date(2026, 6, 18, 9, 0, 0, 0, time.UTC), Valid: true},
+	}
+
+	_, err := server.CreateScheduleRun(context.Background(), row)
+	if !errors.Is(err, schedule.ErrTriggerDeferred) || !errors.Is(err, errTaskStartCoordinationUnavailable) {
+		t.Fatalf("schedule run err = %v, want deferred coordination error", err)
+	}
+	if len(store.events) != 0 || runEnqueuer.count != 0 {
+		t.Fatalf("events=%d enqueues=%d", len(store.events), runEnqueuer.count)
+	}
+}
+
+func TestCreateRunDoesNotDuplicateWhenResolvedClaimHasNoVisibleIdempotencyRow(t *testing.T) {
+	store := &fakeStore{}
+	runEnqueuer := &fakeRunEnqueuer{}
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), redis: redisClient}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: eventStream})
+
+	runOptions := api.CreateRunOptions{IdempotencyKey: "deploy-prod"}
+	idempotency, err := normalizeRunIdempotency(runOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := taskStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idempotency", idempotency.key.String)
+	if err := redisClient.Set(context.Background(), key, "resolved:owner", taskStartClaimResolvedTTL).Err(); err != nil {
+		t.Fatal(err)
+	}
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !store.createRun.ID.Valid || len(store.events) != 1 || runEnqueuer.count != 1 {
+		t.Fatalf("run/event/enqueue = %+v/%d/%d, want created once", store.createRun.ID, len(store.events), runEnqueuer.count)
+	}
+	value, err := redisClient.Get(context.Background(), key).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value == "resolved:owner" || !strings.HasPrefix(value, "resolved:") {
+		t.Fatalf("claim value = %q, want fresh resolved owner", value)
+	}
+}
+
+func TestCreateRunPendingStartReturnsAccepted(t *testing.T) {
+	store := &fakeStore{}
+	runEnqueuer := &fakeRunEnqueuer{}
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), redis: redisClient}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: eventStream})
+
+	runOptions := api.CreateRunOptions{IdempotencyKey: "deploy-prod"}
+	idempotency, err := normalizeRunIdempotency(runOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := taskStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idempotency", idempotency.key.String)
+	if err := redisClient.Set(context.Background(), key, "pending:owner", taskStartClaimTTL).Err(); err != nil {
+		t.Fatal(err)
+	}
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Retry-After") != "1" {
+		t.Fatalf("Retry-After = %q", rec.Header().Get("Retry-After"))
+	}
+	if !strings.Contains(rec.Body.String(), "task_start_pending") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	requireErrorCode(t, rec.Body.Bytes(), "idempotency_pending")
+	if store.createRun.ID.Valid || len(store.events) != 0 || runEnqueuer.count != 0 {
+		t.Fatalf("side effects: run=%+v events=%d enqueues=%d", store.createRun.ID, len(store.events), runEnqueuer.count)
+	}
+}
+
+func TestCreateRunReleasesStartClaimAfterCreationFailure(t *testing.T) {
+	store := &fakeStore{createRunErr: errors.New("transient create run failure")}
+	runEnqueuer := &fakeRunEnqueuer{}
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), redis: redisClient}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: eventStream})
+
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("first status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	store.createRunErr = nil
+	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("second status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	if len(store.events) != 1 || runEnqueuer.count != 1 {
 		t.Fatalf("events=%d enqueues=%d", len(store.events), runEnqueuer.count)
@@ -74,17 +469,16 @@ func TestCreateRunReturnsExistingRunForActiveIdempotencyKey(t *testing.T) {
 
 func TestCreateRunRejectsIdempotencyKeyReuseWithDifferentRequest(t *testing.T) {
 	store := &fakeStore{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 
-	firstBody, err := json.Marshal(api.CreateRunRequest{
-		TaskID:  "deploy",
+	firstBody, err := json.Marshal(api.TaskStartRequest{
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.CreateRunOptions{IdempotencyKey: "deploy"},
+		Options: api.TaskStartOptions{IdempotencyKey: "deploy"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(firstBody))
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(firstBody))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -92,68 +486,198 @@ func TestCreateRunRejectsIdempotencyKeyReuseWithDifferentRequest(t *testing.T) {
 		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	secondBody, err := json.Marshal(api.CreateRunRequest{
-		TaskID:  "deploy",
+	secondBody, err := json.Marshal(api.TaskStartRequest{
 		Payload: json.RawMessage(`{"env":"staging"}`),
-		Options: api.CreateRunOptions{IdempotencyKey: "deploy"},
+		Options: api.TaskStartOptions{IdempotencyKey: "deploy"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(secondBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(secondBody))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
 	}
+	requireErrorCode(t, rec.Body.Bytes(), "idempotency_fingerprint_mismatch")
 	if len(store.events) != 1 {
 		t.Fatalf("events = %d", len(store.events))
 	}
 }
 
-func TestCreateRunReturnsActiveRunEvenWhenIdempotencyTTLExpired(t *testing.T) {
+func TestCreateRunBindsIdempotencyKeyWhenExternalIDReusesSession(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
 
-	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:  "deploy",
-		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.CreateRunOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "1s"},
+	firstBody, err := json.Marshal(api.TaskStartRequest{
+		ExternalID: "durable-1",
+		Payload:    json.RawMessage(`{"env":"prod"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(firstBody))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var first api.RunResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+	firstRunID := store.run.ID
+
+	secondBody, err := json.Marshal(api.TaskStartRequest{
+		ExternalID: "durable-1",
+		Payload:    json.RawMessage(`{"env":"prod"}`),
+		Options:    api.TaskStartOptions{IdempotencyKey: "durable-key"},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	store.run.Status = db.RunStatusRunning
-	store.run.IdempotencyKeyExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true}
-
-	req = httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(secondBody))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var second api.RunResponse
+	var second api.TaskStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.ID != first.ID || second.Status != "running" || !second.IdempotencyHit {
-		t.Fatalf("second response = %+v first=%+v", second, first)
+	if second.Run.ID != pgvalue.MustUUIDValue(firstRunID).String() || !second.IsCached {
+		t.Fatalf("second response = %+v, want cached run %s", second, pgvalue.MustUUIDValue(firstRunID))
+	}
+	if !store.startIdempotency.ID.Valid || store.startIdempotency.TaskSessionID != store.taskSession.ID || store.startIdempotency.FirstRunID != firstRunID {
+		t.Fatalf("stored idempotency = %+v session=%s run=%s", store.startIdempotency, pgvalue.MustUUIDValue(store.taskSession.ID), pgvalue.MustUUIDValue(firstRunID))
+	}
+
+	thirdBody, err := json.Marshal(api.TaskStartRequest{
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Options: api.TaskStartOptions{IdempotencyKey: "durable-key"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(thirdBody))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("third create status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	if len(store.events) != 1 || runEnqueuer.count != 1 {
+		t.Fatalf("events=%d enqueues=%d", len(store.events), runEnqueuer.count)
+	}
+}
+
+func TestCreateRunBindsIdempotencyKeyAfterExternalIDUniqueRace(t *testing.T) {
+	payload := json.RawMessage(`{"env":"prod"}`)
+	startFingerprint, err := taskStartRequestFingerprint("deploy", payload, taskStartFingerprintTestOptions(t, api.CreateRunOptions{IdempotencyKey: "durable-key"}), []byte(`{}`), nil, "durable-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &fakeStore{
+		createTaskSessionErr:             &pgconn.PgError{Code: "23505"},
+		getTaskSessionByExternalIDMisses: 1,
+		taskSession: db.TaskSession{
+			ID:                  sessionID,
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			TaskID:              "deploy",
+			InitialDeploymentID: testDeploymentID(),
+			ActiveDeploymentID:  testDeploymentID(),
+			ExternalID:          "durable-1",
+			StartFingerprint:    startFingerprint.String,
+			Status:              db.TaskSessionStatusOpen,
+			CurrentRunID:        runID,
+			Metadata:            []byte(`{}`),
+			Tags:                []string{},
+			TerminalReason:      []byte(`{}`),
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
+		},
+		run: db.Run{
+			ID:               runID,
+			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:        testProjectID(),
+			EnvironmentID:    testEnvironmentID(),
+			DeploymentID:     testDeploymentID(),
+			DeploymentTaskID: testDeploymentTaskID(),
+			TaskID:           "deploy",
+			Status:           db.RunStatusQueued,
+			ExecutionStatus:  db.RunExecutionStatusQueued,
+			CreatedAt:        testTime(),
+			UpdatedAt:        testTime(),
+		},
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+		ExternalID: "durable-1",
+		Payload:    payload,
+		Options:    api.TaskStartOptions{IdempotencyKey: "durable-key"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !store.startIdempotency.ID.Valid || store.startIdempotency.TaskSessionID != sessionID || store.startIdempotency.FirstRunID != runID {
+		t.Fatalf("idempotency binding = %+v, want session %s run %s", store.startIdempotency, pgvalue.MustUUIDValue(sessionID), pgvalue.MustUUIDValue(runID))
+	}
+}
+
+func TestCreateRunReclaimsExpiredStartIdempotency(t *testing.T) {
+	store := &fakeStore{}
+	runEnqueuer := &fakeRunEnqueuer{}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
+
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "1s"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var first api.TaskStartResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	firstID := store.run.ID
+	store.run.Status = db.RunStatusExpired
+	store.startIdempotency.ExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var second api.TaskStartResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+	if second.Run.ID == first.Run.ID || second.Run.ID == pgvalue.MustUUIDValue(firstID).String() || second.IsCached {
+		t.Fatalf("second response = %+v first=%+v", second, first)
+	}
+	if len(store.events) != 2 || runEnqueuer.count != 2 {
 		t.Fatalf("events=%d enqueues=%d", len(store.events), runEnqueuer.count)
 	}
 }
@@ -161,17 +685,16 @@ func TestCreateRunReturnsActiveRunEvenWhenIdempotencyTTLExpired(t *testing.T) {
 func TestCreateRunClearsExpiredRunIdempotencyKey(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
 
-	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:  "deploy",
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.CreateRunOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "24h", TTL: "1s"},
+		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "24h", TTL: "1s"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -180,8 +703,9 @@ func TestCreateRunClearsExpiredRunIdempotencyKey(t *testing.T) {
 	}
 	firstID := store.run.ID
 	store.run.Status = db.RunStatusExpired
+	store.startIdempotency.ExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -196,150 +720,19 @@ func TestCreateRunClearsExpiredRunIdempotencyKey(t *testing.T) {
 	}
 }
 
-func TestExistingIdempotentRunKeepsScheduledTerminalRun(t *testing.T) {
-	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &fakeStore{}
-	store.run = db.Run{
-		ID:                     runID,
-		OrgID:                  pgvalue.UUID(dbtest.DefaultOrgID),
-		ProjectID:              testProjectID(),
-		EnvironmentID:          testEnvironmentID(),
-		DeploymentID:           testDeploymentID(),
-		DeploymentTaskID:       testDeploymentTaskID(),
-		TaskID:                 "deploy",
-		Status:                 db.RunStatusFailed,
-		IdempotencyKey:         pgtype.Text{String: "schedule-key", Valid: true},
-		IdempotencyRequestHash: pgtype.Text{String: "request-hash", Valid: true},
-		CreatedAt:              testTime(),
-		UpdatedAt:              testTime(),
-	}
-	server := &Server{db: store}
-
-	existing, hit, err := server.existingIdempotentRun(
-		context.Background(),
-		dbtest.DefaultOrgID,
-		testProjectID(),
-		testEnvironmentID(),
-		"deploy",
-		"schedule-key",
-		"request-hash",
-		runSource{},
-		false,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !hit || existing.ID != runID {
-		t.Fatalf("existing=%+v hit=%v", existing, hit)
-	}
-	if !store.run.IdempotencyKey.Valid {
-		t.Fatal("scheduled idempotency key was cleared")
-	}
-}
-
-func TestExistingIdempotentRunAllowsScheduledHashMismatch(t *testing.T) {
-	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	scheduleID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	scheduleInstanceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	scheduledAt := pgtype.Timestamptz{Time: testTime().Time.Add(time.Minute), Valid: true}
-	store := &fakeStore{}
-	store.run = db.Run{
-		ID:                     runID,
-		OrgID:                  pgvalue.UUID(dbtest.DefaultOrgID),
-		ProjectID:              testProjectID(),
-		EnvironmentID:          testEnvironmentID(),
-		DeploymentID:           testDeploymentID(),
-		DeploymentTaskID:       testDeploymentTaskID(),
-		TaskID:                 "deploy",
-		Status:                 db.RunStatusQueued,
-		IdempotencyKey:         pgtype.Text{String: "schedule-key", Valid: true},
-		IdempotencyRequestHash: pgtype.Text{String: "previous-hash", Valid: true},
-		ScheduleID:             scheduleID,
-		ScheduleInstanceID:     scheduleInstanceID,
-		ScheduledAt:            scheduledAt,
-		CreatedAt:              testTime(),
-		UpdatedAt:              testTime(),
-	}
-	server := &Server{db: store}
-
-	existing, hit, err := server.existingIdempotentRun(
-		context.Background(),
-		dbtest.DefaultOrgID,
-		testProjectID(),
-		testEnvironmentID(),
-		"deploy",
-		"schedule-key",
-		"new-hash",
-		runSource{
-			scheduleID:         scheduleID,
-			scheduleInstanceID: scheduleInstanceID,
-			scheduledAt:        scheduledAt,
-		},
-		false,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !hit || existing.ID != runID {
-		t.Fatalf("existing=%+v hit=%v", existing, hit)
-	}
-}
-
-func TestExistingIdempotentRunRejectsScheduledSourceMismatch(t *testing.T) {
-	store := &fakeStore{}
-	store.run = db.Run{
-		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:                  pgvalue.UUID(dbtest.DefaultOrgID),
-		ProjectID:              testProjectID(),
-		EnvironmentID:          testEnvironmentID(),
-		DeploymentID:           testDeploymentID(),
-		DeploymentTaskID:       testDeploymentTaskID(),
-		TaskID:                 "deploy",
-		Status:                 db.RunStatusQueued,
-		IdempotencyKey:         pgtype.Text{String: "schedule-key", Valid: true},
-		IdempotencyRequestHash: pgtype.Text{String: "previous-hash", Valid: true},
-		ScheduleID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		ScheduleInstanceID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		ScheduledAt:            pgtype.Timestamptz{Time: testTime().Time.Add(time.Minute), Valid: true},
-		CreatedAt:              testTime(),
-		UpdatedAt:              testTime(),
-	}
-	server := &Server{db: store}
-
-	_, _, err := server.existingIdempotentRun(
-		context.Background(),
-		dbtest.DefaultOrgID,
-		testProjectID(),
-		testEnvironmentID(),
-		"deploy",
-		"schedule-key",
-		"new-hash",
-		runSource{
-			scheduleID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			scheduleInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			scheduledAt:        pgtype.Timestamptz{Time: testTime().Time.Add(2 * time.Minute), Valid: true},
-		},
-		false,
-	)
-	if !errors.Is(err, errIdempotencyKeyConflict) {
-		t.Fatalf("err = %v, want idempotency conflict", err)
-	}
-}
-
 func TestCreateRunHashesLiteralHexIdempotencyKeys(t *testing.T) {
 	store := &fakeStore{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 
 	rawKey := strings.Repeat("a", sha256.Size*2)
-	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:  "deploy",
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.CreateRunOptions{IdempotencyKey: rawKey},
+		Options: api.TaskStartOptions{IdempotencyKey: rawKey},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -347,80 +740,25 @@ func TestCreateRunHashesLiteralHexIdempotencyKeys(t *testing.T) {
 		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	digest := sha256.Sum256([]byte(rawKey))
-	if got, want := store.run.IdempotencyKey.String, hex.EncodeToString(digest[:]); got != want {
+	if got, want := store.startIdempotency.IdempotencyKey, hex.EncodeToString(digest[:]); got != want {
 		t.Fatalf("stored key = %s, want %s", got, want)
 	}
 }
 
-func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
-	request := api.CreateRunRequest{
-		TaskID:  "deploy",
-		Payload: json.RawMessage(`{"env":"prod"}`),
+func taskStartFingerprintTestOptions(t *testing.T, options api.CreateRunOptions) api.TaskStartOptions {
+	t.Helper()
+	return api.TaskStartOptions{
+		Queue:              options.Queue,
+		ConcurrencyKey:     options.ConcurrencyKey,
+		Priority:           options.Priority,
+		TTL:                options.TTL,
+		MaxDurationSeconds: options.MaxDurationSeconds,
+		Retry:              options.Retry,
+		Metadata:           options.Metadata,
+		Tags:               options.Tags,
+		IdempotencyKey:     options.IdempotencyKey,
+		IdempotencyKeyTTL:  options.IdempotencyKeyTTL,
 	}
-	payload := json.RawMessage(`{"env":"prod"}`)
-	deploymentTask := db.GetDeploymentTaskRow{
-		ID:                     testDeploymentTaskID(),
-		DeploymentID:           testDeploymentID(),
-		BundleDigest:           "sha256:" + strings.Repeat("b", 64),
-		FilePath:               "tasks/deploy.ts",
-		ExportName:             "deploy",
-		DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
-	}
-	scheduling := runScheduling{queueName: "task/deploy", ttl: "10m"}
-	retryPolicy := []byte("false")
-	metadata := []byte("{}")
-	tags := []string{}
-
-	base, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, retryPolicy, metadata, tags, scheduling)
-	if err != nil {
-		t.Fatal(err)
-	}
-	requireIdempotencyHashChanged := func(name string, got pgtype.Text) {
-		t.Helper()
-		if got.String == base.String {
-			t.Fatalf("%s did not affect idempotency request hash", name)
-		}
-	}
-	changedTask := deploymentTask
-	changedTask.DeploymentID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	deploymentHash, err := runIdempotencyRequestHash(request, payload, changedTask, 300, retryPolicy, metadata, tags, scheduling)
-	if err != nil {
-		t.Fatal(err)
-	}
-	requireIdempotencyHashChanged("effective deployment", deploymentHash)
-	durationHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 600, retryPolicy, metadata, tags, scheduling)
-	if err != nil {
-		t.Fatal(err)
-	}
-	requireIdempotencyHashChanged("max duration", durationHash)
-	changedScheduling := scheduling
-	changedScheduling.queueName = "task/deploy-high"
-	queueHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, retryPolicy, metadata, tags, changedScheduling)
-	if err != nil {
-		t.Fatal(err)
-	}
-	requireIdempotencyHashChanged("queue name", queueHash)
-	changedScheduling = scheduling
-	changedScheduling.concurrencyKey = pgvalue.Text("deploy:prod")
-	concurrencyHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, retryPolicy, metadata, tags, changedScheduling)
-	if err != nil {
-		t.Fatal(err)
-	}
-	requireIdempotencyHashChanged("concurrency key", concurrencyHash)
-	changedScheduling = scheduling
-	changedScheduling.priority = 100
-	priorityHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, retryPolicy, metadata, tags, changedScheduling)
-	if err != nil {
-		t.Fatal(err)
-	}
-	requireIdempotencyHashChanged("priority", priorityHash)
-	changedScheduling = scheduling
-	changedScheduling.ttl = "30m"
-	ttlHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, retryPolicy, metadata, tags, changedScheduling)
-	if err != nil {
-		t.Fatal(err)
-	}
-	requireIdempotencyHashChanged("ttl", ttlHash)
 }
 
 func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
@@ -457,6 +795,7 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 			OrgID:             dbtest.DefaultOrgID.String(),
 			RunID:             runID.String(),
 			WorkerInstanceID:  workerID.String(),
+			ProtocolVersion:   api.CurrentWorkerProtocolVersion,
 			AttemptNumber:     1,
 			DispatchMessageID: "message-1",
 			DispatchLeaseID:   "lease-1",
@@ -467,7 +806,7 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/release", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/release", bytes.NewReader(body))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -481,39 +820,4 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 	if len(store.events) != 0 {
 		t.Fatalf("events = %+v", store.events)
 	}
-}
-
-func (f *fakeStore) GetScopedRunByIdempotencyKey(_ context.Context, arg db.GetScopedRunByIdempotencyKeyParams) (db.GetScopedRunByIdempotencyKeyRow, error) {
-	if !f.run.ID.Valid || !f.run.IdempotencyKey.Valid || f.run.IdempotencyKey.String != arg.IdempotencyKey.String || f.run.TaskID != arg.TaskID {
-		return db.GetScopedRunByIdempotencyKeyRow{}, pgx.ErrNoRows
-	}
-	return db.GetScopedRunByIdempotencyKeyRow{
-		ID:                      f.run.ID,
-		OrgID:                   f.run.OrgID,
-		ProjectID:               f.run.ProjectID,
-		EnvironmentID:           f.run.EnvironmentID,
-		DeploymentID:            f.run.DeploymentID,
-		DeploymentTaskID:        f.run.DeploymentTaskID,
-		TaskID:                  f.run.TaskID,
-		Status:                  f.run.Status,
-		ExitCode:                f.run.ExitCode,
-		Output:                  f.run.Output,
-		CreatedAt:               f.run.CreatedAt,
-		UpdatedAt:               f.run.UpdatedAt,
-		IdempotencyKeyExpiresAt: f.run.IdempotencyKeyExpiresAt,
-		IdempotencyRequestHash:  f.run.IdempotencyRequestHash,
-		ScheduleID:              f.run.ScheduleID,
-		ScheduleInstanceID:      f.run.ScheduleInstanceID,
-		ScheduledAt:             f.run.ScheduledAt,
-	}, nil
-}
-
-func (f *fakeStore) ClearRunIdempotencyKey(_ context.Context, arg db.ClearRunIdempotencyKeyParams) error {
-	if f.run.ID == arg.ID {
-		f.run.IdempotencyKey = pgtype.Text{}
-		f.run.IdempotencyKeyExpiresAt = pgtype.Timestamptz{}
-		f.run.IdempotencyKeyOptions = nil
-		f.run.IdempotencyRequestHash = pgtype.Text{}
-	}
-	return nil
 }

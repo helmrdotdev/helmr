@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -19,6 +18,7 @@ type runSummary struct {
 	EnvironmentID        pgtype.UUID
 	DeploymentID         pgtype.UUID
 	DeploymentTaskID     pgtype.UUID
+	TaskSessionID        pgtype.UUID
 	DeploymentVersion    string
 	APIVersion           string
 	SDKVersion           string
@@ -30,40 +30,11 @@ type runSummary struct {
 	Metadata             []byte
 	Tags                 []string
 	LockedRetryPolicy    []byte
-	ReplayedFromRunID    pgtype.UUID
 	CurrentAttemptNumber pgtype.Int4
 	ExitCode             pgtype.Int4
 	Output               []byte
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
-}
-
-func idempotentRunSummary(run db.GetScopedRunByIdempotencyKeyRow) runSummary {
-	return runSummary{
-		ID:                   run.ID,
-		OrgID:                run.OrgID,
-		ProjectID:            run.ProjectID,
-		EnvironmentID:        run.EnvironmentID,
-		DeploymentID:         run.DeploymentID,
-		DeploymentTaskID:     run.DeploymentTaskID,
-		DeploymentVersion:    run.DeploymentVersion,
-		APIVersion:           run.ApiVersion,
-		SDKVersion:           run.SdkVersion,
-		CLIVersion:           run.CliVersion,
-		TaskID:               run.TaskID,
-		Status:               run.Status,
-		ExecutionStatus:      run.ExecutionStatus,
-		TerminalOutcome:      run.TerminalOutcome,
-		Metadata:             run.Metadata,
-		Tags:                 run.Tags,
-		LockedRetryPolicy:    run.LockedRetryPolicy,
-		ReplayedFromRunID:    run.ReplayedFromRunID,
-		CurrentAttemptNumber: run.CurrentAttemptNumber,
-		ExitCode:             run.ExitCode,
-		Output:               run.Output,
-		CreatedAt:            run.CreatedAt,
-		UpdatedAt:            run.UpdatedAt,
-	}
 }
 
 func createScopedRunSummary(run db.CreateScopedRunRow) runSummary {
@@ -74,6 +45,7 @@ func createScopedRunSummary(run db.CreateScopedRunRow) runSummary {
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
 		DeploymentTaskID:     run.DeploymentTaskID,
+		TaskSessionID:        run.TaskSessionID,
 		DeploymentVersion:    run.DeploymentVersion,
 		APIVersion:           run.ApiVersion,
 		SDKVersion:           run.SdkVersion,
@@ -85,7 +57,6 @@ func createScopedRunSummary(run db.CreateScopedRunRow) runSummary {
 		Metadata:             run.Metadata,
 		Tags:                 run.Tags,
 		LockedRetryPolicy:    run.LockedRetryPolicy,
-		ReplayedFromRunID:    run.ReplayedFromRunID,
 		CurrentAttemptNumber: run.CurrentAttemptNumber,
 		ExitCode:             run.ExitCode,
 		Output:               run.Output,
@@ -102,6 +73,7 @@ func getRunSummary(run db.GetRunSummaryRow) runSummary {
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
 		DeploymentTaskID:     run.DeploymentTaskID,
+		TaskSessionID:        run.TaskSessionID,
 		DeploymentVersion:    run.DeploymentVersion,
 		APIVersion:           run.ApiVersion,
 		SDKVersion:           run.SdkVersion,
@@ -113,7 +85,6 @@ func getRunSummary(run db.GetRunSummaryRow) runSummary {
 		Metadata:             run.Metadata,
 		Tags:                 run.Tags,
 		LockedRetryPolicy:    run.LockedRetryPolicy,
-		ReplayedFromRunID:    run.ReplayedFromRunID,
 		CurrentAttemptNumber: run.CurrentAttemptNumber,
 		ExitCode:             run.ExitCode,
 		Output:               run.Output,
@@ -130,6 +101,7 @@ func listScopedRunSummary(run db.ListScopedRunSummariesRow) runSummary {
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
 		DeploymentTaskID:     run.DeploymentTaskID,
+		TaskSessionID:        run.TaskSessionID,
 		DeploymentVersion:    run.DeploymentVersion,
 		APIVersion:           run.ApiVersion,
 		SDKVersion:           run.SdkVersion,
@@ -141,7 +113,6 @@ func listScopedRunSummary(run db.ListScopedRunSummariesRow) runSummary {
 		Metadata:             run.Metadata,
 		Tags:                 run.Tags,
 		LockedRetryPolicy:    run.LockedRetryPolicy,
-		ReplayedFromRunID:    run.ReplayedFromRunID,
 		CurrentAttemptNumber: run.CurrentAttemptNumber,
 		ExitCode:             run.ExitCode,
 		Output:               run.Output,
@@ -158,6 +129,7 @@ func cancelRunSummary(run db.CancelRunRow) runSummary {
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
 		DeploymentTaskID:     run.DeploymentTaskID,
+		TaskSessionID:        run.TaskSessionID,
 		DeploymentVersion:    run.DeploymentVersion,
 		APIVersion:           run.ApiVersion,
 		SDKVersion:           run.SdkVersion,
@@ -169,35 +141,6 @@ func cancelRunSummary(run db.CancelRunRow) runSummary {
 		Metadata:             run.Metadata,
 		Tags:                 run.Tags,
 		LockedRetryPolicy:    run.LockedRetryPolicy,
-		ReplayedFromRunID:    run.ReplayedFromRunID,
-		CurrentAttemptNumber: run.CurrentAttemptNumber,
-		ExitCode:             run.ExitCode,
-		Output:               run.Output,
-		CreatedAt:            run.CreatedAt,
-		UpdatedAt:            run.UpdatedAt,
-	}
-}
-
-func runRecordSummary(run db.Run) runSummary {
-	return runSummary{
-		ID:                   run.ID,
-		OrgID:                run.OrgID,
-		ProjectID:            run.ProjectID,
-		EnvironmentID:        run.EnvironmentID,
-		DeploymentID:         run.DeploymentID,
-		DeploymentTaskID:     run.DeploymentTaskID,
-		DeploymentVersion:    run.DeploymentVersion,
-		APIVersion:           run.ApiVersion,
-		SDKVersion:           run.SdkVersion,
-		CLIVersion:           run.CliVersion,
-		TaskID:               run.TaskID,
-		Status:               run.Status,
-		ExecutionStatus:      run.ExecutionStatus,
-		TerminalOutcome:      run.TerminalOutcome,
-		Metadata:             run.Metadata,
-		Tags:                 run.Tags,
-		LockedRetryPolicy:    run.LockedRetryPolicy,
-		ReplayedFromRunID:    run.ReplayedFromRunID,
 		CurrentAttemptNumber: run.CurrentAttemptNumber,
 		ExitCode:             run.ExitCode,
 		Output:               run.Output,
@@ -232,12 +175,17 @@ func runResponse(run runSummary) api.RunResponse {
 	if len(run.Output) > 0 {
 		output = append(json.RawMessage(nil), run.Output...)
 	}
+	metadata := json.RawMessage(run.Metadata)
+	if len(metadata) == 0 {
+		metadata = json.RawMessage(`{}`)
+	}
 	return api.RunResponse{
 		ID:                runID.String(),
 		ProjectID:         pgvalue.MustUUIDValue(run.ProjectID).String(),
 		EnvironmentID:     pgvalue.MustUUIDValue(run.EnvironmentID).String(),
 		DeploymentID:      pgvalue.MustUUIDValue(run.DeploymentID).String(),
 		DeploymentTaskID:  pgvalue.MustUUIDValue(run.DeploymentTaskID).String(),
+		TaskSessionID:     pgvalue.MustUUIDValue(run.TaskSessionID).String(),
 		Version:           run.DeploymentVersion,
 		DeploymentVersion: run.DeploymentVersion,
 		APIVersion:        run.APIVersion,
@@ -245,18 +193,13 @@ func runResponse(run runSummary) api.RunResponse {
 		CLIVersion:        run.CLIVersion,
 		TaskID:            run.TaskID,
 		Status:            publicRunStatus(run.Status),
+		Metadata:          metadata,
 		AttemptNumber:     attemptNumber,
 		ExitCode:          exitCode,
 		Output:            output,
 		CreatedAt:         pgvalue.Time(run.CreatedAt),
 		UpdatedAt:         pgvalue.Time(run.UpdatedAt),
 	}
-}
-
-type waitpointDeliveryKey struct {
-	runID       pgtype.UUID
-	runWaitID   pgtype.UUID
-	waitpointID pgtype.UUID
 }
 
 func (s *Server) runResponses(ctx context.Context, orgID pgtype.UUID, runs []runSummary) ([]api.RunResponse, error) {
@@ -280,56 +223,15 @@ func (s *Server) runResponses(ctx context.Context, orgID pgtype.UUID, runs []run
 	if err != nil {
 		return nil, fmt.Errorf("list pending waitpoints for runs: %w", err)
 	}
-	deliveryKeys := make(map[waitpointDeliveryKey]struct{}, len(waitpoints))
-	runWaitIDs := make([]pgtype.UUID, 0, len(waitpoints))
 	for _, waitpoint := range waitpoints {
 		indexes := responseIndexesByRunID[waitpoint.RunID]
 		if len(indexes) == 0 {
 			continue
 		}
-		pending, err := pendingWaitpointResponse(pendingWaitpointViewFromList(waitpoint))
-		if err != nil {
-			return nil, fmt.Errorf("build pending waitpoint response for run %s: %w", pgvalue.MustUUIDValue(waitpoint.RunID).String(), err)
-		}
+		pending := pendingWaitpointResponse(pendingWaitpointViewFromList(waitpoint))
 		for _, index := range indexes {
 			pendingCopy := pending
 			responses[index].PendingWaitpoint = &pendingCopy
-		}
-		deliveryKeys[waitpointDeliveryKey{
-			runID:       waitpoint.RunID,
-			runWaitID:   waitpoint.RunWaitID,
-			waitpointID: waitpoint.ID,
-		}] = struct{}{}
-		runWaitIDs = append(runWaitIDs, waitpoint.RunWaitID)
-	}
-	if len(deliveryKeys) == 0 {
-		return responses, nil
-	}
-	deliveries, err := s.db.ListWaitpointDeliveriesForRunWaits(ctx, db.ListWaitpointDeliveriesForRunWaitsParams{
-		OrgID:      orgID,
-		RunWaitIds: runWaitIDs,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list waitpoint deliveries for run waits: %w", err)
-	}
-	for _, delivery := range deliveries {
-		key := waitpointDeliveryKey{
-			runID:       delivery.RunID,
-			runWaitID:   delivery.RunWaitID,
-			waitpointID: delivery.WaitpointID,
-		}
-		if _, ok := deliveryKeys[key]; !ok {
-			continue
-		}
-		indexes := responseIndexesByRunID[delivery.RunID]
-		if len(indexes) == 0 {
-			continue
-		}
-		for _, index := range indexes {
-			if responses[index].PendingWaitpoint == nil {
-				continue
-			}
-			responses[index].PendingWaitpoint.Deliveries = append(responses[index].PendingWaitpoint.Deliveries, waitpointDeliveryResponse(delivery))
 		}
 	}
 	return responses, nil
@@ -350,117 +252,71 @@ func (s *Server) runResponse(ctx context.Context, run runSummary) (api.RunRespon
 	if err != nil {
 		return api.RunResponse{}, err
 	}
-	pending, err := pendingWaitpointResponse(pendingWaitpointView(waitpoint))
-	if err != nil {
-		return api.RunResponse{}, err
-	}
-	deliveries, err := s.db.ListWaitpointDeliveries(ctx, db.ListWaitpointDeliveriesParams{
-		OrgID:       waitpoint.OrgID,
-		RunID:       waitpoint.RunID,
-		RunWaitID:   waitpoint.RunWaitID,
-		WaitpointID: waitpoint.ID,
-	})
-	if err != nil {
-		return api.RunResponse{}, err
-	}
-	pending.Deliveries = make([]api.WaitpointDeliveryResponse, 0, len(deliveries))
-	for _, delivery := range deliveries {
-		pending.Deliveries = append(pending.Deliveries, waitpointDeliveryResponse(delivery))
-	}
+	pending := pendingWaitpointResponse(pendingWaitpointView(waitpoint))
 	response.PendingWaitpoint = &pending
 	return response, nil
 }
 
-func pendingWaitpointResponse(waitpoint waitpointView) (api.PendingWaitpoint, error) {
+func pendingWaitpointResponse(waitpoint waitpointView) api.PendingWaitpoint {
 	response := api.PendingWaitpoint{
-		Kind:        string(waitpoint.Kind),
-		WaitpointID: pgvalue.MustUUIDValue(waitpoint.ID).String(),
-		Request:     waitpoint.Request,
-		DisplayText: waitpoint.DisplayText,
-		RequestedAt: pgvalue.Time(waitpoint.RequestedAt),
+		ID:        pgvalue.MustUUIDValue(waitpoint.ID).String(),
+		Kind:      string(waitpoint.Kind),
+		Params:    waitpoint.Params,
+		Metadata:  waitpoint.Metadata,
+		Tags:      waitpoint.Tags,
+		Status:    waitpoint.WaitpointStatus,
+		CreatedAt: pgvalue.Time(waitpoint.CreatedAt),
 	}
 	if waitpoint.TimeoutSeconds.Valid {
 		response.Timeout = &waitpoint.TimeoutSeconds.Int32
 	}
-	if waitpoint.PolicyName.Valid {
-		policy := waitpoint.PolicyName.String
-		response.Policy = &policy
-	}
-	switch waitpoint.Kind {
-	case db.WaitpointKindHuman, db.WaitpointKindDelay:
-	default:
-		return api.PendingWaitpoint{}, fmt.Errorf("unsupported waitpoint kind %q", waitpoint.Kind)
-	}
-	return response, nil
+	return response
 }
 
 func pendingWaitpointView(waitpoint db.GetPendingWaitpointForRunRow) waitpointView {
 	return waitpointView{
-		ID:             waitpoint.ID,
-		RunWaitID:      waitpoint.RunWaitID,
-		OrgID:          waitpoint.OrgID,
-		RunID:          waitpoint.RunID,
-		SessionID:      waitpoint.SessionID,
-		CheckpointID:   waitpoint.CheckpointID,
-		CorrelationID:  waitpoint.CorrelationID,
-		Kind:           waitpoint.Kind,
-		Request:        waitpoint.Request,
-		DisplayText:    waitpoint.DisplayText,
-		TimeoutSeconds: waitpoint.TimeoutSeconds,
-		PolicyName:     waitpoint.PolicyName,
-		PolicySnapshot: waitpoint.PolicySnapshot,
-		Status:         waitpoint.Status,
-		ResolutionKind: waitpoint.ResolutionKind,
-		Resolution:     waitpoint.Resolution,
-		CreatedAt:      waitpoint.CreatedAt,
-		RequestedAt:    waitpoint.RequestedAt,
-		ResolvedAt:     waitpoint.ResolvedAt,
+		ID:              waitpoint.ID,
+		RunSuspensionID: waitpoint.RunSuspensionID,
+		OrgID:           waitpoint.OrgID,
+		RunID:           waitpoint.RunID,
+		RunLeaseID:      waitpoint.RunLeaseID,
+		CheckpointID:    waitpoint.CheckpointID,
+		CorrelationID:   waitpoint.CorrelationID,
+		Kind:            waitpoint.Kind,
+		WaitpointStatus: string(waitpoint.WaitpointStatus),
+		Params:          waitpoint.Params,
+		Metadata:        waitpoint.Metadata,
+		Tags:            waitpoint.Tags,
+		TimeoutSeconds:  waitpoint.TimeoutSeconds,
+		Status:          waitpoint.Status,
+		ResolutionKind:  waitpoint.ResolutionKind,
+		Resolution:      waitpoint.Resolution,
+		CreatedAt:       waitpoint.CreatedAt,
+		WaitingAt:       waitpoint.WaitingAt,
+		ResolvedAt:      waitpoint.ResolvedAt,
 	}
 }
 
 func pendingWaitpointViewFromList(waitpoint db.ListPendingWaitpointsForRunsRow) waitpointView {
 	return waitpointView{
-		ID:             waitpoint.ID,
-		RunWaitID:      waitpoint.RunWaitID,
-		OrgID:          waitpoint.OrgID,
-		RunID:          waitpoint.RunID,
-		SessionID:      waitpoint.SessionID,
-		CheckpointID:   waitpoint.CheckpointID,
-		CorrelationID:  waitpoint.CorrelationID,
-		Kind:           waitpoint.Kind,
-		Request:        waitpoint.Request,
-		DisplayText:    waitpoint.DisplayText,
-		TimeoutSeconds: waitpoint.TimeoutSeconds,
-		PolicyName:     waitpoint.PolicyName,
-		PolicySnapshot: waitpoint.PolicySnapshot,
-		Status:         waitpoint.Status,
-		ResolutionKind: waitpoint.ResolutionKind,
-		Resolution:     waitpoint.Resolution,
-		CreatedAt:      waitpoint.CreatedAt,
-		RequestedAt:    waitpoint.RequestedAt,
-		ResolvedAt:     waitpoint.ResolvedAt,
-	}
-}
-
-func waitpointDeliveryResponse(delivery db.WaitpointDelivery) api.WaitpointDeliveryResponse {
-	var lastError *string
-	if delivery.LastError.Valid {
-		lastError = &delivery.LastError.String
-	}
-	var sentAt *time.Time
-	if delivery.SentAt.Valid {
-		value := pgvalue.Time(delivery.SentAt)
-		sentAt = &value
-	}
-	return api.WaitpointDeliveryResponse{
-		ID:            pgvalue.MustUUIDValue(delivery.ID).String(),
-		Channel:       delivery.Channel,
-		RecipientKind: delivery.RecipientKind,
-		Recipient:     delivery.Recipient,
-		Status:        string(delivery.Status),
-		LastError:     lastError,
-		SentAt:        sentAt,
-		CreatedAt:     pgvalue.Time(delivery.CreatedAt),
-		UpdatedAt:     pgvalue.Time(delivery.UpdatedAt),
+		ID:              waitpoint.ID,
+		RunSuspensionID: waitpoint.RunSuspensionID,
+		OrgID:           waitpoint.OrgID,
+		RunID:           waitpoint.RunID,
+		RunLeaseID:      waitpoint.RunLeaseID,
+		CheckpointID:    waitpoint.CheckpointID,
+		CorrelationID:   waitpoint.CorrelationID,
+		Kind:            waitpoint.Kind,
+		WaitpointStatus: string(waitpoint.WaitpointStatus),
+		Params:          waitpoint.Params,
+		Metadata:        waitpoint.Metadata,
+		Tags:            waitpoint.Tags,
+		TimeoutSeconds:  waitpoint.TimeoutSeconds,
+		Status:          waitpoint.Status,
+		ResolutionKind:  waitpoint.ResolutionKind,
+		Resolution:      waitpoint.Resolution,
+		CreatedAt:       waitpoint.CreatedAt,
+		WaitingAt:       waitpoint.WaitingAt,
+		ResolvedAt:      waitpoint.ResolvedAt,
 	}
 }

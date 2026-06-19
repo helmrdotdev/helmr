@@ -16,7 +16,7 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr login [URL] [--no-browser]` | Start device-code auth and save a session token. Defaults to `--api-url`, `HELMR_API_URL`, saved host, or `https://helmr.dev`. |
 | `helmr logout [URL]` | Revoke the current saved session token for a host. |
 | `helmr deploy [path] [-p PROJECT] [-e ENV] [--env-file FILE] [--timeout DURATION] [--json]` | Parse `helmr.config.ts`, archive source, stream deployment progress, and create a deployment. |
-| `helmr run TASK [-p PROJECT] [-e ENV] [--json]` | Create a run for a deployed task. |
+| `helmr run TASK [-p PROJECT] [-e ENV] [--json]` | Start a task session for a deployed task. |
 | `helmr ps [--json]` | List runs. |
 | `helmr show RUN [--json]` | Show run details. |
 | `helmr logs RUN [--follow]` | Print latest stdout/stderr snapshots and optionally stream new log chunks. |
@@ -27,7 +27,10 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr secret set NAME [VALUE] [--json]` | Create or update a remote secret; reads stdin if value is omitted. |
 | `helmr secret delete NAME --yes` | Delete a remote secret. |
 | `helmr waitpoint list [--json] [--project ID] [--env ID] [--limit N]` | List open waitpoints. |
-| `helmr waitpoint respond WAITPOINT_ID [--value JSON \| --value-file FILE]` | Respond to a human waitpoint. |
+| `helmr waitpoint token create [--timeout-seconds N] [--metadata JSON] [--tag TAG]` | Create a waitpoint token. |
+| `helmr waitpoint token list [--status STATUS]` | List waitpoint tokens. |
+| `helmr waitpoint token get TOKEN_ID` | Show waitpoint token metadata. |
+| `helmr waitpoint token complete TOKEN_ID [--data JSON \| --data-file FILE]` | Complete a waitpoint token. |
 
 Common options:
 
@@ -45,4 +48,4 @@ Common options:
 
 `helmr logs --follow` prints the current log snapshot, then follows the dedicated run log stream. It reconnects with the last log cursor and exits after the run reaches a terminal state.
 
-`helmr waitpoint respond` accepts inline JSON with `--value`, reads JSON from a file with `--value-file FILE`, or reads JSON from stdin with `--value-file -`.
+`helmr waitpoint token complete` accepts inline JSON with `--data`, reads JSON from a file with `--data-file FILE`, or reads JSON from stdin with `--data-file -`.

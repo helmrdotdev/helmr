@@ -1,6 +1,6 @@
 ---
 title: Runs
-description: Execution state, logs, events, payloads, and outputs.
+description: Execution state, logs, events, payloads, channel output, and task output.
 section: Concepts
 sidebarLabel: Runs
 order: 160
@@ -8,7 +8,7 @@ order: 160
 
 # Runs
 
-A run is one execution of a deployment task in a project environment. It records the pinned deployment, pinned deployment task, task ID, payload, task-declared secret requirements, workspace state, max duration, status, output, logs, events, and pending waitpoint.
+A run is one execution of a deployment task in a project environment. It records the pinned deployment, pinned deployment task, task ID, payload, task-declared secret requirements, workspace state, max duration, status, output, logs, channel output, events, metadata, and pending waitpoint.
 
 ## Statuses
 
@@ -16,7 +16,7 @@ A run is one execution of a deployment task in a project environment. It records
 | --- | --- |
 | `queued` | The run is waiting for a worker. |
 | `running` | A worker has started or is executing the run, including checkpoint opening. |
-| `waiting` | The task is paused at a waitpoint. |
+| `waiting` | The task is paused at an waitpoint or time wait. |
 | `succeeded` | The task completed successfully. |
 | `failed` | The task failed or exceeded a limit. |
 | `cancelled` | The run was cancelled. |
@@ -41,4 +41,4 @@ helmr logs RUN_ID
 helmr events RUN_ID
 ```
 
-The SDK client can retrieve, list, wait for, and stream run events. Run logs are stored as stdout and stderr snapshots; events include logs, waitpoint requests and decisions, emitted task events, completion, failures, queued expiry, and cancellation.
+The SDK client can retrieve, list, wait for, and stream run events. Run logs are stored as stdout and stderr snapshots; events include logs, waitpoints and decisions, channel output records, metadata updates, completion, failures, queued expiry, and cancellation.

@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 
-import { HelmrClient } from "./client"
+import { HelmrClient, waitpointTokenClientMethod } from "./client"
 import { runStateBooleans } from "./run"
 import { PayloadSchemaValidationError, idempotencyKeys, image, sandbox, source, task, type PayloadSchema } from "../index"
 import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER, HELMR_SDK_VERSION, HELMR_SDK_VERSION_HEADER } from "../version"
@@ -64,20 +64,6 @@ test("sends pinned API and SDK version headers", async () => {
 
   expect(apiVersion).toBe(HELMR_API_VERSION)
   expect(sdkVersion).toBe(HELMR_SDK_VERSION)
-})
-
-test("https transport can be initialized without an api key", async () => {
-  delete process.env["HELMR_API_KEY"]
-  let authorization: string | null | undefined
-  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-    authorization = new Headers(init?.headers).get("authorization")
-    return new Response(null, { status: 204 })
-  }) as typeof fetch
-
-  const client = new HelmrClient({ url: "https://api.example.test" })
-  await client.waitpoints.tokens.respond("token-id", "raw-token", { value: { ok: true } })
-
-  expect(authorization).toBeNull()
 })
 
 test("constructor only supports http and https URLs", () => {
@@ -164,7 +150,7 @@ test("schedules create uses public field names", async () => {
     cron: "0 * * * *",
     active: false,
     options: {
-      deploymentId: "deployment-1",
+      queue: "inspect",
       maxDurationSeconds: 600,
     },
   })
@@ -176,7 +162,7 @@ test("schedules create uses public field names", async () => {
     cron: "0 * * * *",
     active: false,
     options: {
-      deployment_id: "deployment-1",
+      queue: { name: "inspect" },
       max_duration_seconds: 600,
     },
   })
@@ -262,7 +248,332 @@ test("http transport allows loopback IPv4, IPv6, and localhost", () => {
   expect(() => new HelmrClient({ url: "http://localhost:8080", apiKey: "token" })).not.toThrow()
 })
 
-test("task.trigger returns a run handle from the create-run response", async () => {
+test("tasks.start returns session and run handles from the task start response", async () => {
+  let requestedUrl: string | undefined
+  let body: unknown
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input)
+    body = JSON.parse(String(init?.body))
+    return Response.json(taskStartFixture(
+      { id: "run-1", task_id: "inspect", status: "running" },
+      { isCached: true },
+    ))
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const key = idempotencyKeys.create("case-123")
+  const started = await client.tasks.start("inspect", { issue: 123 }, {
+    projectId: "project-1",
+    environmentId: "env-1",
+    externalId: "case-123",
+    idempotencyKey: key,
+    idempotencyKeyTTL: "24h",
+    expiresAt: "2026-04-21T00:00:00Z",
+  })
+
+  expect(requestedUrl).toBe("https://api.example.test/api/tasks/inspect/start")
+  expect(body).toEqual({
+    project_id: "project-1",
+    environment_id: "env-1",
+    payload: { issue: 123 },
+    external_id: "case-123",
+    options: {
+      idempotency_key: key.value,
+      idempotency_key_ttl: "24h",
+      expires_at: "2026-04-21T00:00:00.000Z",
+    },
+  })
+  expect(started.run).toEqual({ id: "run-1", taskId: "inspect" })
+  expect(started.session.id).toBe("session-1")
+  expect(started.session.currentRunId).toBe("run-1")
+  expect(started.isCached).toBe(true)
+})
+
+test("tasks.startAndWait posts one start-and-wait request and returns the session", async () => {
+  let requestedUrl: string | undefined
+  let body: unknown
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input)
+    body = JSON.parse(String(init?.body))
+    return Response.json(taskSessionFixture({
+      status: "completed",
+      current_run_id: null,
+      result: { ok: true },
+      timed_out: false,
+    }))
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const session = await client.tasks.startAndWait("inspect", { timeoutSeconds: 30 })
+
+  expect(requestedUrl).toBe("https://api.example.test/api/tasks/inspect/start-and-wait")
+  expect(body).toEqual({ timeout_seconds: 30 })
+  expect(session.status).toBe("completed")
+  expect(session.result).toEqual({ ok: true })
+})
+
+test("tasks.startAndWait retries a pending idempotent start before returning the session", async () => {
+  const requestedUrls: string[] = []
+  let calls = 0
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requestedUrls.push(String(input))
+    calls++
+    if (calls === 1) {
+      return Response.json({ code: "idempotency_pending", retry_after_ms: 1 }, {
+        status: 202,
+        headers: { "retry-after": "0" },
+      })
+    }
+    return Response.json(taskSessionFixture({
+      status: "completed",
+      current_run_id: null,
+      result: { ok: true },
+    }))
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const session = await client.tasks.startAndWait("inspect", { idempotencyKey: "retry-key" })
+
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/tasks/inspect/start-and-wait",
+    "https://api.example.test/api/tasks/inspect/start-and-wait",
+  ])
+  expect(session.status).toBe("completed")
+  expect(session.result).toEqual({ ok: true })
+})
+
+test("sessions facade retrieves state and reads/writes session channels", async () => {
+  const requestedUrls: string[] = []
+  const bodies: unknown[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (init?.body !== undefined) {
+      bodies.push(JSON.parse(String(init.body)))
+    }
+    if (url.endsWith("/api/sessions/session-1")) {
+      return Response.json(taskSessionFixture({ id: "session-1", external_id: "case-123" }))
+    }
+    if (url.endsWith("/api/sessions/session-1/wait")) {
+      return Response.json(taskSessionFixture({ id: "session-1", status: "completed", result: { ok: true } }))
+    }
+    if (url.endsWith("/api/sessions/session-1/channels/approval/inputs")) {
+      return Response.json({
+        record: channelRecordFixture({ data: { approved: true }, correlation_id: "thread-1" }),
+        idempotency_status: "created",
+      }, { status: 201 })
+    }
+    if (url.includes("/api/sessions/session-1/channels/agent.report/outputs")) {
+      return Response.json({
+        records: [
+          channelRecordFixture({ sequence: 2, data: { text: "ready" }, content_type: "application/json" }),
+        ],
+      })
+    }
+    throw new Error(`unexpected URL ${url}`)
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const session = client.sessions.open("session-1")
+  expect((await session.retrieve()).externalId).toBe("case-123")
+  expect((await session.wait({ timeoutSeconds: 10 })).result).toEqual({ ok: true })
+  expect(await session.input("approval").send({ approved: true }, { correlationId: "thread-1" })).toMatchObject({
+    data: { approved: true },
+    correlationId: "thread-1",
+    idempotencyStatus: "created",
+  })
+  expect(await session.output("agent.report").list({ cursor: 1, limit: 10, correlationId: "thread-1" })).toEqual([
+    {
+      id: "record-1",
+      channelId: "channel-1",
+      sequence: 2,
+      data: { text: "ready" },
+      contentType: "application/json",
+      createdAt: "2026-04-20T00:00:00Z",
+    },
+  ])
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/sessions/session-1",
+    "https://api.example.test/api/sessions/session-1/wait",
+    "https://api.example.test/api/sessions/session-1/channels/approval/inputs",
+    "https://api.example.test/api/sessions/session-1/channels/agent.report/outputs?after_sequence=1&limit=10&correlation_id=thread-1",
+  ])
+  expect(bodies).toEqual([
+    { timeout_seconds: 10 },
+    { data: { approved: true }, correlation_id: "thread-1" },
+  ])
+})
+
+test("session output stream maps channel record SSE frames", async () => {
+  const encoder = new TextEncoder()
+  const requestedUrls: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (url.endsWith("/api/sessions/session-1")) {
+      return Response.json(taskSessionFixture({ status: "completed", current_run_id: null }))
+    }
+    const record = channelRecordFixture({ sequence: 7, data: { text: "done" } })
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(`id: 7\nevent: channel_output\ndata: ${JSON.stringify(record)}\n\n`))
+          controller.close()
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    )
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const records: unknown[] = []
+  for await (const record of await client.sessions.open("session-1").output("agent.report").stream({ cursor: 6, correlationId: "thread-1" })) {
+    records.push(record)
+  }
+
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/sessions/session-1/channels/agent.report/outputs/stream?after_sequence=6&correlation_id=thread-1",
+    "https://api.example.test/api/sessions/session-1",
+  ])
+  expect(records).toEqual([{
+    id: "record-1",
+    channelId: "channel-1",
+    sequence: 7,
+    data: { text: "done" },
+    contentType: "application/json",
+    createdAt: "2026-04-20T00:00:00Z",
+  }])
+})
+
+test("session output stream reconnects with the last yielded sequence", async () => {
+  const encoder = new TextEncoder()
+  const requestedUrls: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (url.endsWith("/api/sessions/session-1")) {
+      const openChecks = requestedUrls.filter((requested) => requested.endsWith("/api/sessions/session-1")).length
+      return Response.json(taskSessionFixture({
+        status: openChecks === 1 ? "open" : "completed",
+        current_run_id: openChecks === 1 ? "run-1" : null,
+      }))
+    }
+    const sequence = url.includes("after_sequence=7") ? 8 : 7
+    const record = channelRecordFixture({ id: `record-${sequence}`, sequence, data: { text: `step-${sequence}` } })
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(`id: ${sequence}\nevent: channel_output\ndata: ${JSON.stringify(record)}\n\n`))
+          controller.close()
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    )
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const records: unknown[] = []
+  for await (const record of await client.sessions.open("session-1").output("agent.report").stream({ cursor: 6 })) {
+    records.push(record)
+  }
+
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/sessions/session-1/channels/agent.report/outputs/stream?after_sequence=6",
+    "https://api.example.test/api/sessions/session-1",
+    "https://api.example.test/api/sessions/session-1/channels/agent.report/outputs/stream?after_sequence=7",
+    "https://api.example.test/api/sessions/session-1",
+  ])
+  expect(records).toMatchObject([
+    { sequence: 7, data: { text: "step-7" } },
+    { sequence: 8, data: { text: "step-8" } },
+  ])
+})
+
+test("auth.createPublicToken posts a scoped public access token request", async () => {
+  let requestedUrl: string | undefined
+  let body: unknown
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input)
+    body = JSON.parse(String(init?.body))
+    return Response.json({
+      id: "public-token-id",
+      public_access_token: "hlmr_pat_secret",
+      scope: {
+        type: "session.output.read",
+        session_id: "session-1",
+        channel: "agent.report",
+        correlation_id: "thread-1",
+      },
+      expires_at: "2026-04-20T01:00:00Z",
+      max_uses: 5,
+      created_at: "2026-04-20T00:00:00Z",
+    }, { status: 201 })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const token = await client.auth.createPublicToken({
+    scope: {
+      type: "session.output.read",
+      sessionId: "session-1",
+      channel: "agent.report",
+      correlationId: "thread-1",
+    },
+    expiresAt: new Date("2026-04-20T01:00:00Z"),
+    maxUses: 5,
+  })
+
+  expect(requestedUrl).toBe("https://api.example.test/api/public-access-tokens")
+  expect(body).toEqual({
+    scope: {
+      type: "session.output.read",
+      session_id: "session-1",
+      channel: "agent.report",
+      correlation_id: "thread-1",
+    },
+    expires_at: "2026-04-20T01:00:00.000Z",
+    max_uses: 5,
+  })
+  expect(token).toEqual({
+    id: "public-token-id",
+    publicAccessToken: "hlmr_pat_secret",
+    scope: {
+      type: "session.output.read",
+      sessionId: "session-1",
+      channel: "agent.report",
+      correlationId: "thread-1",
+    },
+    expiresAt: "2026-04-20T01:00:00Z",
+    maxUses: 5,
+    createdAt: "2026-04-20T00:00:00Z",
+  })
+})
+
+test("waitpoints token namespace exposes create and complete", async () => {
+  const requestedUrls: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrls.push(String(input))
+    if (init?.method === "POST" && String(input).endsWith("/api/waitpoints/tokens")) {
+      return Response.json({
+        id: "token-id",
+        callback_url: "https://api.example.test/api/waitpoints/tokens/token-id/callback/callback-secret",
+        public_access_token: "public-token",
+        timeout_at: null,
+      }, { status: 201 })
+    }
+    return new Response(null, { status: 204 })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const token = await client.waitpoints.tokens.create()
+  await client.waitpoints.tokens.complete(token, { approved: true })
+
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/waitpoints/tokens",
+    "https://api.example.test/api/waitpoints/tokens/token-id/complete",
+  ])
+})
+
+test("task.start returns the task start response with session and run handles", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let requestedUrl: string | undefined
@@ -271,11 +582,11 @@ test("task.trigger returns a run handle from the create-run response", async () 
     requestedUrl = String(input)
     body = JSON.parse(String(init?.body))
     return Response.json(
-      {
+      taskStartFixture({
         id: "018f0000000070008000000000000001",
         task_id: "inspect",
         status: "running",
-      },
+      }),
       {
         status: 201,
       },
@@ -287,23 +598,26 @@ test("task.trigger returns a run handle from the create-run response", async () 
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
     run: async () => undefined,
   })
-  const handle = await inspect.trigger({
+  const started = await inspect.start({
   })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/runs")
+  expect(requestedUrl).toBe("https://api.example.test/api/tasks/inspect/start")
   expect(body).toEqual({
-    task_id: "inspect",
     options: { max_duration_seconds: 900 },
   })
-  expect(handle).toEqual({ id: "018f0000000070008000000000000001", taskId: "inspect" })
+  expect(started).toMatchObject({
+    session: { id: "session-1", taskId: "inspect", currentRunId: "018f0000000070008000000000000001" },
+    run: { id: "018f0000000070008000000000000001", taskId: "inspect" },
+    isCached: false,
+  })
 })
 
-test("task.trigger posts idempotency options", async () => {
+test("task.start posts idempotency options", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
-    return Response.json({ id: "run-1", task_id: "inspect", status: "queued" }, { status: 201 })
+    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 201 })
   }) as typeof fetch
 
   const key = idempotencyKeys.create(["deploy", "prod"], { scope: "global" })
@@ -312,35 +626,39 @@ test("task.trigger posts idempotency options", async () => {
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
     run: async () => undefined,
   })
-  await inspect.trigger({
+  await inspect.start({
     idempotencyKey: key,
     idempotencyKeyTTL: "24h",
   })
 
   expect(body).toMatchObject({
-    task_id: "inspect",
     options: {
       idempotency_key: key.value,
       idempotency_key_ttl: "24h",
-      idempotency_key_options: {
-        key: ["deploy", "prod"],
-        scope: "global",
-      },
       max_duration_seconds: 900,
     },
   })
 })
 
-test("attempt-scoped idempotency keys require attempt identity", () => {
-  expect(() => idempotencyKeys.create("deploy", { scope: "attempt" } as never)).toThrow("runId and attemptNumber")
-})
-
-test("task.trigger posts scheduling options", async () => {
+test("task.start retries pending task start before returning the start response", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
-  let body: unknown
-  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-    body = JSON.parse(String(init?.body))
-    return Response.json({ id: "run-1", task_id: "inspect", status: "queued" }, { status: 201 })
+  let calls = 0
+  let pendingBodyPulls = 0
+  globalThis.fetch = (async () => {
+    calls += 1
+    if (calls === 1) {
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            pendingBodyPulls += 1
+            controller.enqueue(new TextEncoder().encode(`{"code":"idempotency_pending","error":"task_start_pending"}`))
+            controller.close()
+          },
+        }),
+        { status: 202, headers: { "retry-after": "0.001" } },
+      )
+    }
+    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 200 })
   }) as typeof fetch
 
   const inspect = task({
@@ -348,7 +666,76 @@ test("task.trigger posts scheduling options", async () => {
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
     run: async () => undefined,
   })
-  await inspect.trigger({
+
+  await expect(inspect.start({ idempotencyKey: idempotencyKeys.create("inspect") })).resolves.toMatchObject({
+    session: { id: "session-1", taskId: "inspect", currentRunId: "run-1" },
+    run: { id: "run-1", taskId: "inspect" },
+  })
+  expect(calls).toBe(2)
+  expect(pendingBodyPulls).toBe(1)
+})
+
+test("task.start does not retry non-pending accepted responses", async () => {
+  process.env["HELMR_API_URL"] = "https://api.example.test"
+  let calls = 0
+  globalThis.fetch = (async () => {
+    calls += 1
+    return Response.json({ error: "accepted elsewhere" }, { status: 202 })
+  }) as typeof fetch
+
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    run: async () => undefined,
+  })
+
+  await expect(inspect.start({ idempotencyKey: idempotencyKeys.create("inspect") })).rejects.toThrow(
+    "accepted elsewhere",
+  )
+  expect(calls).toBe(1)
+})
+
+test("task.start backs off for stale HTTP-date retry-after headers", async () => {
+  process.env["HELMR_API_URL"] = "https://api.example.test"
+  let calls = 0
+  globalThis.fetch = (async () => {
+    calls += 1
+    if (calls === 1) {
+      return Response.json(
+        { code: "idempotency_pending", error: "task_start_pending" },
+        { status: 202, headers: { "retry-after": new Date(Date.now() - 1000).toUTCString() } },
+      )
+    }
+    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 200 })
+  }) as typeof fetch
+
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    run: async () => undefined,
+  })
+
+  const startedAt = Date.now()
+  await inspect.start({ idempotencyKey: idempotencyKeys.create("inspect") })
+
+  expect(calls).toBe(2)
+  expect(Date.now() - startedAt).toBeGreaterThanOrEqual(100)
+})
+
+test("task.start posts scheduling options", async () => {
+  process.env["HELMR_API_URL"] = "https://api.example.test"
+  let body: unknown
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body))
+    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 201 })
+  }) as typeof fetch
+
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    run: async () => undefined,
+  })
+  await inspect.start({
     queue: "review/pr",
     concurrencyKey: "repo:42",
     priority: 30,
@@ -356,7 +743,6 @@ test("task.trigger posts scheduling options", async () => {
   })
 
   expect(body).toMatchObject({
-    task_id: "inspect",
     options: {
       queue: { name: "review/pr" },
       concurrency_key: "repo:42",
@@ -367,12 +753,12 @@ test("task.trigger posts scheduling options", async () => {
   })
 })
 
-test("task.trigger posts retry metadata and tags", async () => {
+test("task.start posts retry metadata and tags", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
-    return Response.json({ id: "run-1", task_id: "inspect", status: "queued" }, { status: 201 })
+    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 201 })
   }) as typeof fetch
 
   const inspect = task({
@@ -380,14 +766,13 @@ test("task.trigger posts retry metadata and tags", async () => {
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
     run: async () => undefined,
   })
-  await inspect.trigger({
+  await inspect.start({
     retry: { maxAttempts: 3, backoff: { minMs: 1000, maxMs: 30000, factor: 2, jitter: "full" } },
     metadata: { customer: "acme" },
     tags: ["nightly", "prod"],
   })
 
   expect(body).toMatchObject({
-    task_id: "inspect",
     options: {
       retry: { maxAttempts: 3, backoff: { minMs: 1000, maxMs: 30000, factor: 2, jitter: "full" } },
       metadata: { customer: "acme" },
@@ -397,7 +782,7 @@ test("task.trigger posts retry metadata and tags", async () => {
   })
 })
 
-test("task.trigger rejects unsupported retry fields before posting", async () => {
+test("task.start rejects unsupported retry fields before posting", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   let posted = false
   globalThis.fetch = (async () => {
@@ -411,7 +796,7 @@ test("task.trigger rejects unsupported retry fields before posting", async () =>
     run: async () => undefined,
   })
 
-  await expect(inspect.trigger({
+  await expect(inspect.start({
     retry: { maxAttempts: 2, retryOn: ["timeout"] } as never,
   })).rejects.toThrow("retry.retryOn is not supported")
   expect(posted).toBe(false)
@@ -453,57 +838,13 @@ test("runs.cancel posts graceful cancel intent", async () => {
   expect(run.status).toBe("cancelled")
 })
 
-test("runs.replay posts replay intent and returns the new run handle", async () => {
-  let requestedUrl: string | undefined
-  let body: unknown
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    requestedUrl = String(input)
-    body = JSON.parse(String(init?.body))
-    return Response.json({
-      run: {
-        id: "run-2",
-        task_id: "inspect",
-        status: "queued",
-      },
-      operation: {
-        id: "operation-1",
-        run_id: "run-1",
-        kind: "replay",
-        status: "applied",
-        created_at: "2026-01-01T00:00:00Z",
-      },
-    }, { status: 201 })
-  }) as typeof fetch
-
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const handle = await client.runs.replay<{ env: string }>("run-1", {
-    version: "latest",
-    payload: { env: "prod" },
-    metadata: { replay: true },
-    tags: ["manual"],
-    reason: "rerun",
-    idempotencyKey: "replay-run-1",
-  })
-
-  expect(requestedUrl).toBe("https://api.example.test/api/runs/run-1/replay")
-  expect(body).toEqual({
-    version: "latest",
-    payload: { env: "prod" },
-    metadata: { replay: true },
-    tags: ["manual"],
-    reason: "rerun",
-    idempotency_key: "replay-run-1",
-  })
-  expect(handle).toEqual({ id: "run-2", taskId: "inspect" })
-})
-
-test("task.trigger validates payload before posting the run", async () => {
+test("task.start validates payload before posting the start request", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let fetched = false
   globalThis.fetch = (async () => {
     fetched = true
-    return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
+    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
   }) as typeof fetch
   const payload: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
     "~standard": {
@@ -521,20 +862,20 @@ test("task.trigger validates payload before posting the run", async () => {
     payload,
     run: async (payload) => payload.issue,
   })
-  await expect(inspect.trigger(
+  await expect(inspect.start(
     { issue: "123" },
     {},
   )).rejects.toThrow(PayloadSchemaValidationError)
   expect(fetched).toBe(false)
 })
 
-test("task.trigger rejects undefined payload for schema-backed tasks before posting", async () => {
+test("task.start rejects undefined payload for schema-backed tasks before posting", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let fetched = false
   globalThis.fetch = (async () => {
     fetched = true
-    return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
+    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
   }) as typeof fetch
   const payload: PayloadSchema<undefined | { readonly issue: number }, { readonly issue: number }> = {
     "~standard": {
@@ -552,20 +893,20 @@ test("task.trigger rejects undefined payload for schema-backed tasks before post
     payload,
     run: async (payload) => payload.issue,
   })
-  await expect((inspect.trigger as (...args: any[]) => Promise<unknown>)(
+  await expect((inspect.start as (...args: any[]) => Promise<unknown>)(
     undefined,
     {},
   )).rejects.toThrow('task "inspect" requires payload')
   expect(fetched).toBe(false)
 })
 
-test("task.trigger rejects payload on no-payload tasks before posting", async () => {
+test("task.start rejects payload on no-payload tasks before posting", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let fetched = false
   globalThis.fetch = (async () => {
     fetched = true
-    return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
+    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
   }) as typeof fetch
 
   const inspect = task({
@@ -573,20 +914,20 @@ test("task.trigger rejects payload on no-payload tasks before posting", async ()
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
     run: async () => undefined,
   })
-  await expect((inspect.trigger as (...args: any[]) => Promise<unknown>)(
+  await expect((inspect.start as (...args: any[]) => Promise<unknown>)(
     undefined,
     {},
   )).rejects.toThrow('task "inspect" does not accept payload')
   expect(fetched).toBe(false)
 })
 
-test("task.trigger posts payload for schema-backed tasks", async () => {
+test("task.start posts payload for schema-backed tasks", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
-    return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
+    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
   }) as typeof fetch
   const payload: PayloadSchema<{ readonly issue: number }, { readonly issue: number }> = {
     "~standard": {
@@ -604,7 +945,7 @@ test("task.trigger posts payload for schema-backed tasks", async () => {
     payload,
     run: async (payload) => payload.issue,
   })
-  await inspect.trigger(
+  await inspect.start(
     { issue: 123 },
     {},
   )
@@ -612,7 +953,7 @@ test("task.trigger posts payload for schema-backed tasks", async () => {
   expect(body).toMatchObject({ payload: { issue: 123 } })
 })
 
-test("task.trigger validates payload and posts through the default client", async () => {
+test("task.start validates payload and posts through the default client", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let requestedUrl: string | undefined
@@ -632,7 +973,7 @@ test("task.trigger validates payload and posts through the default client", asyn
     requestedUrl = String(input)
     authorization = new Headers(init?.headers).get("authorization")
     body = JSON.parse(String(init?.body))
-    return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
+    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
   }) as typeof fetch
 
   const inspect = task({
@@ -641,27 +982,29 @@ test("task.trigger validates payload and posts through the default client", asyn
     payload,
     run: async (payload) => payload.issue,
   })
-  const handle = await inspect.trigger(
+  const started = await inspect.start(
     { issue: "123" },
     {},
   )
 
-  expect(requestedUrl).toBe("https://api.example.test/api/runs")
+  expect(requestedUrl).toBe("https://api.example.test/api/tasks/inspect/start")
   expect(authorization).toBe("Bearer token")
   expect(body).toMatchObject({
-    task_id: "inspect",
     payload: { issue: "123" },
     options: { max_duration_seconds: 900 },
   })
-  expect(handle).toEqual({ id: "run-1", taskId: "inspect" })
+  expect(started).toMatchObject({
+    session: { id: "session-1", taskId: "inspect", currentRunId: "run-1" },
+    run: { id: "run-1", taskId: "inspect" },
+  })
 })
 
-test("client.tasks.trigger posts id-based payload without local schema validation", async () => {
+test("client.tasks.start posts id-based payload without local schema validation", async () => {
   let validated = false
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
-    return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
+    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
   }) as typeof fetch
   const payload: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
     "~standard": {
@@ -669,7 +1012,7 @@ test("client.tasks.trigger posts id-based payload without local schema validatio
       vendor: "test",
       validate() {
         validated = true
-        return { issues: [{ message: "should not validate id-based triggers" }] }
+        return { issues: [{ message: "should not validate id-based starts" }] }
       },
     },
   }
@@ -681,7 +1024,7 @@ test("client.tasks.trigger posts id-based payload without local schema validatio
   })
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.tasks.trigger<typeof inspect>(
+  await client.tasks.start<typeof inspect>(
     "inspect",
     { issue: "123" },
     {},
@@ -689,7 +1032,6 @@ test("client.tasks.trigger posts id-based payload without local schema validatio
 
   expect(validated).toBe(false)
   expect(body).toEqual({
-    task_id: "inspect",
     payload: { issue: "123" },
   })
 })
@@ -742,11 +1084,12 @@ test("runs.retrieve accepts a run handle and returns a run snapshot", async () =
 
   expect(requestedUrl).toBe("https://api.example.test/api/runs/run-1")
   expect(run).toEqual({
-	    id: "run-1",
-	    taskId: "inspect",
-	    status: "succeeded",
-	    attemptNumber: null,
-	    exitCode: 0,
+      id: "run-1",
+      taskId: "inspect",
+      status: "succeeded",
+      attemptNumber: null,
+      metadata: {},
+      exitCode: 0,
     createdAt: "2026-05-09T00:00:00Z",
     updatedAt: "2026-05-09T00:01:00Z",
     pendingWaitpoint: null,
@@ -780,18 +1123,18 @@ test("run snapshots reject unsupported internal statuses", async () => {
   await expect(client.runs.retrieve("run-1")).rejects.toThrow('unsupported run status "leased"')
 })
 
-test("task.trigger posts a run without workspace preparation", async () => {
+test("task.start posts a task start without workspace preparation", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
     return Response.json(
-      {
+      taskStartFixture({
         id: "018f0000000070008000000000000003",
         task_id: "inspect",
         status: "running",
-      },
+      }),
       { status: 201 },
     )
   }) as typeof fetch
@@ -803,18 +1146,18 @@ test("task.trigger posts a run without workspace preparation", async () => {
       .workspace("/workspace"),
     run: async () => undefined,
   })
-  await inspect.trigger({})
+  await inspect.start({})
 
   expect(body).toMatchObject({
     options: { max_duration_seconds: 900 },
   })
 })
 
-test("tasks.trigger leaves build validation to the remote worker", async () => {
+test("tasks.start leaves build validation to the remote worker", async () => {
   let requestedUrl: string | undefined
   globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => {
     requestedUrl = String(_input)
-    return Response.json({ id: "run-1", task_id: "inspect", status: "queued" }, { status: 201 })
+    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 201 })
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
@@ -825,9 +1168,9 @@ test("tasks.trigger leaves build validation to the remote worker", async () => {
     ),
     run: async () => undefined,
   })
-  await client.tasks.trigger<typeof inspect>("inspect", {
+  await client.tasks.start<typeof inspect>("inspect", {
   })
-  expect(requestedUrl).toBe("https://api.example.test/api/runs")
+  expect(requestedUrl).toBe("https://api.example.test/api/tasks/inspect/start")
 })
 
 test("runs.events.list maps backend audit payload fields", async () => {
@@ -842,41 +1185,41 @@ test("runs.events.list maps backend audit payload fields", async () => {
           id: "1",
           run_id: "run-1",
           kind: "waitpoint",
-          message: "waitpoint.requested",
+          message: "waitpoint.created",
           at: "2026-04-28T00:00:00Z",
-          attributes: {
-            kind: "human",
-            waitpoint_id: "token-1",
-            display_text: "Approve deploy?",
-            timeout: 30,
-            request: { message: "Approve deploy?", timeout: 30 },
+            attributes: {
+              kind: "token",
+              waitpoint_id: "token-1",
+              timeout: 30,
+            params: { message: "Approve deploy?", timeout: 30 },
+            metadata: { bridge: "slack" },
+            tags: ["approval"],
           },
         },
         {
           id: "2",
           run_id: "run-1",
           kind: "waitpoint",
-          message: "waitpoint.requested",
+          message: "waitpoint.created",
           at: "2026-04-28T00:00:01Z",
-          attributes: {
-            kind: "human",
-            waitpoint_id: "token-2",
-            timeout: 60,
-            request: { prompt: "What changed?", timeout: 60 },
+            attributes: {
+              kind: "token",
+              waitpoint_id: "token-2",
+              timeout: 60,
+            params: { prompt: "What changed?", timeout: 60 },
           },
         },
         {
           id: "3",
           run_id: "run-1",
           kind: "waitpoint",
-          message: "waitpoint.resolved",
+          message: "waitpoint.completed",
           at: "2026-04-28T00:00:02Z",
           attributes: {
-            kind: "human",
+            kind: "token",
             waitpoint_id: "token-2",
-            resolution_kind: "completed",
             principal: "user",
-            result: { text: "Dependency update", attachments: [] },
+            payload: { text: "Dependency update", attachments: [] },
           },
         },
         {
@@ -933,32 +1276,33 @@ test("runs.events.list maps backend audit payload fields", async () => {
   expect(requestedUrl).toBe("https://api.example.test/api/runs/run-1/events")
   expect(events).toEqual([
     {
-      type: "waitpoint_request",
+      type: "waitpoint",
       run_id: "run-1",
       waitpoint_id: "token-1",
-      kind: "human",
-      displayText: "Approve deploy?",
-      request: { message: "Approve deploy?", timeout: 30 },
+      kind: "token",
+      params: { message: "Approve deploy?", timeout: 30 },
+      metadata: { bridge: "slack" },
+      tags: ["approval"],
       timeout: 30,
       at: "2026-04-28T00:00:00Z",
     },
     {
-      type: "waitpoint_request",
+      type: "waitpoint",
       run_id: "run-1",
       waitpoint_id: "token-2",
-      kind: "human",
-      displayText: "",
-      request: { prompt: "What changed?", timeout: 60 },
+      kind: "token",
+      params: { prompt: "What changed?", timeout: 60 },
+      metadata: {},
+      tags: [],
       timeout: 60,
       at: "2026-04-28T00:00:01Z",
     },
     {
-      type: "waitpoint_resolved",
+      type: "waitpoint_completed",
       run_id: "run-1",
       waitpoint_id: "token-2",
-      kind: "human",
-      resolutionKind: "completed",
-      value: { text: "Dependency update", attachments: [] },
+      kind: "token",
+      payload: { text: "Dependency update", attachments: [] },
       at: "2026-04-28T00:00:02Z",
     },
     {
@@ -1031,7 +1375,7 @@ test("runs.logs.retrieve decodes log snapshots", async () => {
   expect(logs).toEqual({ stdout: "hello", stderr: "warn", cursor: "3:2", truncated: false })
 })
 
-test("task.trigger posts directly without uploading source tar", async () => {
+test("task.start posts the start request directly without uploading source tar", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   const urls: string[] = []
@@ -1041,11 +1385,11 @@ test("task.trigger posts directly without uploading source tar", async () => {
     urls.push(url)
     createRunBody = JSON.parse(String(init?.body))
     return Response.json(
-      {
+      taskStartFixture({
         id: "018f0000000070008000000000000002",
         task_id: "inspect",
         status: "running",
-      },
+      }),
       { status: 201 },
     )
   }) as typeof fetch
@@ -1055,124 +1399,46 @@ test("task.trigger posts directly without uploading source tar", async () => {
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
     run: async () => undefined,
   })
-  await inspect.trigger({})
+  await inspect.start({})
 
-  expect(urls).toEqual(["https://api.example.test/api/runs"])
+  expect(urls).toEqual(["https://api.example.test/api/tasks/inspect/start"])
   expect(createRunBody).toMatchObject({
-    task_id: "inspect",
     options: { max_duration_seconds: 900 },
   })
 })
 
-test("waitpoints.respond posts to the waitpoint respond route", async () => {
-  let requestedUrl: string | undefined
-  let body: unknown
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    requestedUrl = String(input)
-    body = JSON.parse(String(init?.body))
-    return new Response(null, { status: 204 })
-  }) as typeof fetch
-
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.waitpoints.respond(
-    {
-      waitpointId: "00000000-0000-0000-0000-000000000002",
-      kind: "human",
-      request: {},
-      displayText: "Continue deploy?",
-      timeout: null,
-      requestedAt: "2026-04-20T00:00:00Z",
-    },
-    { value: { approved: true }, metadata: { reason: "looks good" } },
-  )
-
-  expect(requestedUrl).toBe(
-    "https://api.example.test/api/waitpoints/00000000-0000-0000-0000-000000000002/respond",
-  )
-  expect(body).toEqual({ value: { approved: true }, metadata: { reason: "looks good" } })
-})
-
-test("waitpoints.create posts standalone human waitpoints", async () => {
-  let requestedUrl: string | undefined
-  let body: unknown
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    requestedUrl = String(input)
-    body = JSON.parse(String(init?.body))
+test("retrieved run snapshots expose pending waitpoints", async () => {
+  globalThis.fetch = (async () => {
     return Response.json({
-      id: "waitpoint-1",
-      project_id: "project-1",
-      environment_id: "env-1",
-      kind: "human",
-      status: "pending",
-      request: { channel: "approval" },
-      display_text: "Continue?",
-      expires_at: "2026-04-20T01:00:00Z",
-      created_at: "2026-04-20T00:00:00Z",
+      id: "run-1",
+      task_id: "inspect",
+      status: "waiting",
+      exit_code: null,
+      pending_waitpoint: {
+        id: "request-1",
+        kind: "token",
+        status: "pending",
+        params: { channel: "deploy-review" },
+        metadata: {},
+        tags: [],
+        created_at: "2026-04-20T00:00:00Z",
+      },
     })
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const waitpoint = await client.waitpoints.create({
-    request: { channel: "approval" },
-    displayText: "Continue?",
-    expiresAt: "2026-04-20T01:00:00Z",
-    idempotencyKey: "approval-1",
-  })
-
-  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints")
-  expect(body).toEqual({
-    request: { channel: "approval" },
-    display_text: "Continue?",
-    expires_at: "2026-04-20T01:00:00Z",
-    idempotency_key: "approval-1",
-  })
-  expect(waitpoint).toEqual({
-    id: "waitpoint-1",
-    projectId: "project-1",
-    environmentId: "env-1",
-    kind: "human",
-    status: "pending",
-    request: { channel: "approval" },
-    displayText: "Continue?",
-    expiresAt: "2026-04-20T01:00:00Z",
-    createdAt: "2026-04-20T00:00:00Z",
-  })
-})
-
-test("retrieved run snapshots expose data-only human waitpoints", async () => {
-  let requestedUrl: string | undefined
-  let body: unknown
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (init?.method === undefined) {
-      return Response.json({
-        id: "run-1",
-        task_id: "inspect",
-        status: "waiting",
-        exit_code: null,
-        pending_waitpoint: {
-          kind: "human",
-          waitpoint_id: "token-1",
-          request: { channel: "deploy-review" },
-          display_text: "Continue?",
-          requested_at: "2026-04-20T00:00:00Z",
-        },
-      })
-    }
-    requestedUrl = String(input)
-    body = init?.body === undefined ? undefined : JSON.parse(String(init.body))
-    return new Response(null, { status: 204 })
-  }) as typeof fetch
-
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const run = await client.runs.retrieve("run-1")
-  if (run.pendingWaitpoint?.kind !== "human") throw new Error("expected human wait")
-  await client.waitpoints.respond(run.pendingWaitpoint, { value: { approved: true } })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/token-1/respond")
-  expect(body).toEqual({ value: { approved: true } })
+  expect(run.pendingWaitpoint).toMatchObject({
+    id: "request-1",
+    runId: "run-1",
+    kind: "token",
+    status: "pending",
+    params: { channel: "deploy-review" },
+  })
 })
 
-test("waitpoints.tokens.create posts to the token create route", async () => {
+test("waitpoint token method posts to the token create route", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1181,119 +1447,163 @@ test("waitpoints.tokens.create posts to the token create route", async () => {
     return Response.json(
       {
         id: "token-id",
-        waitpoint_id: "waitpoint-1",
-        url: "https://api.example.test/waitpoints/respond?id=token-id&token=secret-token",
-        token: "secret-token",
-        expires_at: "2026-04-20T01:00:00Z",
+        callback_url: "https://api.example.test/api/waitpoints/tokens/token-id/callback/callback-secret",
+        public_access_token: "secret-token",
+        timeout_at: "2026-04-20T01:00:00Z",
+        status: "waiting",
+        tags: ["prod"],
+        metadata: { recipient: "reviewer@example.com" },
       },
       { status: 201 },
     )
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const token = await client.waitpoints.tokens.create(
-    {
-      waitpointId: "waitpoint-1",
-      kind: "human",
-      request: {},
-      displayText: "Continue deploy?",
-      timeout: null,
-      requestedAt: "2026-04-20T00:00:00Z",
-    },
-    {
-      expiresInSeconds: 3600,
+  const token = await client[waitpointTokenClientMethod]({
+    operation: "create",
+    opts: {
+      timeoutInSeconds: 3600,
+      tags: ["prod"],
       metadata: { recipient: "reviewer@example.com" },
     },
-  )
+  })
 
   expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens")
   expect(body).toEqual({
-    waitpoint_id: "waitpoint-1",
-    expires_in_seconds: 3600,
+    timeout_in_seconds: 3600,
+    tags: ["prod"],
     metadata: { recipient: "reviewer@example.com" },
   })
   expect(token).toEqual({
     id: "token-id",
-    waitpointId: "waitpoint-1",
-    url: "https://api.example.test/waitpoints/respond?id=token-id&token=secret-token",
-    token: "secret-token",
-    expiresAt: "2026-04-20T01:00:00Z",
+    status: "waiting",
+    callbackUrl: "https://api.example.test/api/waitpoints/tokens/token-id/callback/callback-secret",
+    publicAccessToken: "secret-token",
+    timeoutAt: "2026-04-20T01:00:00Z",
+    tags: ["prod"],
+    metadata: { recipient: "reviewer@example.com" },
   })
 })
 
-test("waitpoints.tokens.create accepts explicit waitpoint id", async () => {
-  let body: unknown
-  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-    body = JSON.parse(String(init?.body))
+test("waitpoint token method can target an explicit environment", async () => {
+  let requestedUrl: string | undefined
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requestedUrl = String(input)
     return Response.json({
       id: "token-id",
-      run_id: "run-1",
-      waitpoint_id: "waitpoint-1",
-      url: "https://api.example.test/waitpoints/tokens/token-id",
-      token: "secret-token",
+      callback_url: "https://api.example.test/api/waitpoints/tokens/token-id/callback/callback-secret",
+      public_access_token: "secret-token",
+      timeout_at: null,
+    }, { status: 201 })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await client[waitpointTokenClientMethod]({
+    operation: "create",
+    opts: { projectId: "project-1", environmentId: "env-1" },
+  })
+
+  expect(requestedUrl).toBe("https://api.example.test/api/projects/project-1/environments/env-1/waitpoints/tokens")
+})
+
+test("waitpoint token method retrieve maps completed data", async () => {
+  let requestedUrl: string | undefined
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requestedUrl = String(input)
+    return Response.json({
+      id: "token-id",
+      callback_url: "https://api.example.test/api/waitpoints/tokens/token-id/callback/callback-secret",
+      timeout_at: "2026-04-20T01:00:00Z",
+      status: "completed",
+      data: { approved: true },
+      metadata: { channel: "slack" },
     })
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.waitpoints.tokens.create("waitpoint-1", {
-    expiresAt: "2026-04-20T01:00:00Z",
-  })
+  const token = await client[waitpointTokenClientMethod]({ operation: "retrieve", id: "token-id" })
 
-  expect(body).toEqual({
-    waitpoint_id: "waitpoint-1",
-    expires_at: "2026-04-20T01:00:00Z",
-  })
-})
-
-test("waitpoints.tokens.respond posts to the token respond route", async () => {
-  let requestedUrl: string | undefined
-  let body: unknown
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    requestedUrl = String(input)
-    body = JSON.parse(String(init?.body))
-    return new Response(null, { status: 204 })
-  }) as typeof fetch
-
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.waitpoints.tokens.respond({
+  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens/token-id")
+  expect(token).toEqual({
     id: "token-id",
-    waitpointId: "waitpoint-1",
-    url: "https://api.example.test/waitpoints/respond?id=token-id&token=raw-token",
-    token: "raw-token",
-    expiresAt: null,
-  }, {
-    value: { text: "continue" },
-    externalSubject: "reviewer@example.com",
-    metadata: { source: "email" },
-  })
-
-  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens/token-id/respond")
-  expect(body).toEqual({
-    token: "raw-token",
-    value: { text: "continue" },
-    external_subject: "reviewer@example.com",
-    metadata: { source: "email" },
+    status: "completed",
+    callbackUrl: "https://api.example.test/api/waitpoints/tokens/token-id/callback/callback-secret",
+    timeoutAt: "2026-04-20T01:00:00Z",
+    data: { approved: true },
+    metadata: { channel: "slack" },
   })
 })
 
-test("waitpoints.tokens.respond accepts explicit id and raw token", async () => {
+test("waitpoint token method complete uses token public access token when present", async () => {
   let requestedUrl: string | undefined
   let body: unknown
+  let authorization: string | null | undefined
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     requestedUrl = String(input)
+    authorization = new Headers(init?.headers).get("authorization")
     body = JSON.parse(String(init?.body))
     return new Response(null, { status: 204 })
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.waitpoints.tokens.respond("token-id", "raw-token", {
-    value: { reviewed: true },
+  await client[waitpointTokenClientMethod]({
+    operation: "complete",
+    token: {
+      id: "token-id",
+      callbackUrl: "https://api.example.test/api/waitpoints/tokens/token-id/callback/callback-secret",
+      publicAccessToken: "raw-token",
+      timeoutAt: null,
+    },
+    data: { text: "continue" },
   })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens/token-id/respond")
+  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens/token-id/complete")
+  expect(authorization).toBe("Bearer raw-token")
   expect(body).toEqual({
-    token: "raw-token",
-    value: { reviewed: true },
+    data: { text: "continue" },
+  })
+})
+
+test("waitpoint token method complete accepts explicit public access token option", async () => {
+  let authorization: string | null | undefined
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    authorization = new Headers(init?.headers).get("authorization")
+    return new Response(null, { status: 204 })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await client[waitpointTokenClientMethod]({
+    operation: "complete",
+    token: "token-id",
+    data: { reviewed: true },
+    opts: { publicAccessToken: "raw-token" },
+  })
+
+  expect(authorization).toBe("Bearer raw-token")
+})
+
+test("waitpoint token method complete accepts explicit id", async () => {
+  let requestedUrl: string | undefined
+  let body: unknown
+  let authorization: string | null | undefined
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input)
+    authorization = new Headers(init?.headers).get("authorization")
+    body = JSON.parse(String(init?.body))
+    return new Response(null, { status: 204 })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await client[waitpointTokenClientMethod]({
+    operation: "complete",
+    token: "token-id",
+    data: { reviewed: true },
+  })
+
+  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens/token-id/complete")
+  expect(authorization).toBe("Bearer token")
+  expect(body).toEqual({
+    data: { reviewed: true },
   })
 })
 
@@ -1302,14 +1612,13 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
   const event = {
     id: "1",
     kind: "audit",
-    message: "waitpoint.requested",
+    message: "waitpoint.created",
     at: "2026-04-20T00:00:00Z",
-    attributes: {
-      run_id: "run-1",
-      kind: "human",
-      waitpoint_id: "token-1",
-      display_text: "Continue?",
-      request: { subject: "deploy" },
+      attributes: {
+        run_id: "run-1",
+        kind: "token",
+        waitpoint_id: "token-1",
+        params: { subject: "deploy" },
     },
   }
   globalThis.fetch = (async () =>
@@ -1333,12 +1642,13 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
 
   expect(events).toEqual([
     {
-      type: "waitpoint_request",
+      type: "waitpoint",
       run_id: "run-1",
       waitpoint_id: "token-1",
-      kind: "human",
-      displayText: "Continue?",
-      request: { subject: "deploy" },
+      kind: "token",
+      params: { subject: "deploy" },
+      metadata: {},
+      tags: [],
       at: "2026-04-20T00:00:00Z",
     },
   ])
@@ -1430,14 +1740,13 @@ test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
   const event = {
     id: "1",
     kind: "audit",
-    message: "waitpoint.requested",
+    message: "waitpoint.created",
     at: "2026-04-20T00:00:00Z",
-    attributes: {
-      run_id: "run-1",
-      kind: "human",
-      waitpoint_id: "token-1",
-      display_text: "What changed?",
-      request: { type: "note" },
+      attributes: {
+        run_id: "run-1",
+        kind: "token",
+        waitpoint_id: "token-1",
+        params: { type: "note" },
     },
   }
   globalThis.fetch = (async () =>
@@ -1460,12 +1769,13 @@ test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
 
   expect(events).toEqual([
     {
-      type: "waitpoint_request",
+      type: "waitpoint",
       run_id: "run-1",
       waitpoint_id: "token-1",
-      kind: "human",
-      displayText: "What changed?",
-      request: { type: "note" },
+      kind: "token",
+      params: { type: "note" },
+      metadata: {},
+      tags: [],
       at: "2026-04-20T00:00:00Z",
     },
   ])
@@ -1477,13 +1787,13 @@ test("runs.events.subscribe reconnects with the last event cursor and ends after
   const first = {
     id: "1",
     kind: "audit",
-    message: "waitpoint.requested",
+    message: "waitpoint.created",
     at: "2026-04-20T00:00:00Z",
-    attributes: {
-      run_id: "run-1",
-      kind: "human",
-      waitpoint_id: "token-1",
-      display_text: "Approve?",
+      attributes: {
+        run_id: "run-1",
+        kind: "token",
+        waitpoint_id: "token-1",
+        params: {},
     },
   }
   const second = {
@@ -1535,12 +1845,13 @@ test("runs.events.subscribe reconnects with the last event cursor and ends after
   ])
   expect(events).toEqual([
     {
-      type: "waitpoint_request",
+      type: "waitpoint",
       run_id: "run-1",
       waitpoint_id: "token-1",
-      kind: "human",
-      displayText: "Approve?",
-      request: {},
+      kind: "token",
+      params: {},
+      metadata: {},
+      tags: [],
       at: "2026-04-20T00:00:00Z",
     },
     {
@@ -1618,25 +1929,30 @@ test("runs.retrieve returns a run snapshot with a discriminated pending waitpoin
       status: "waiting",
       exit_code: null,
       pending_waitpoint: {
-        kind: "human",
-        waitpoint_id: "token-1",
-        display_text: "Continue?",
-        request: { action: "deploy" },
+        kind: "token",
+        id: "token-1",
+        status: "pending",
+        params: { action: "deploy" },
+        metadata: { bridge: "slack" },
+        tags: ["approval"],
         timeout: 30 * 60,
-        requested_at: "2026-04-20T00:00:00Z",
+        created_at: "2026-04-20T00:00:00Z",
       },
     })) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const run = await client.runs.retrieve("run-1")
 
-  if (run.pendingWaitpoint?.kind === "human") {
+  if (run.pendingWaitpoint) {
     expect(run.pendingWaitpoint.runId).toBe("run-1")
-    expect(run.pendingWaitpoint.waitpointId).toBe("token-1")
-    expect(run.pendingWaitpoint.displayText).toBe("Continue?")
-    expect(run.pendingWaitpoint.request).toEqual({ action: "deploy" })
+    expect(run.pendingWaitpoint.id).toBe("token-1")
+    expect(run.pendingWaitpoint.kind).toBe("token")
+    expect(run.pendingWaitpoint.status).toBe("pending")
+    expect(run.pendingWaitpoint.params).toEqual({ action: "deploy" })
+    expect(run.pendingWaitpoint.metadata).toEqual({ bridge: "slack" })
+    expect(run.pendingWaitpoint.tags).toEqual(["approval"])
   } else {
-    throw new Error("expected token pending wait")
+    throw new Error("expected pending waitpoint")
   }
 })
 
@@ -1820,3 +2136,83 @@ test("runs.wait aborts an in-flight retrieve when timeout elapses", async () => 
     "run run-1 did not finish within 10ms",
   )
 })
+
+function taskStartFixture(run: {
+  readonly id: string
+  readonly task_id: string
+  readonly status: string
+  readonly [key: string]: unknown
+}, opts: { readonly isCached?: boolean } = {}) {
+  return {
+    session: taskSessionFixture({
+      id: "session-1",
+      task_id: run.task_id,
+      current_run_id: run.id,
+      status: "open",
+    }),
+    run,
+    ...(opts.isCached === undefined ? {} : { is_cached: opts.isCached }),
+  }
+}
+
+function taskSessionFixture(overrides: Partial<{
+  readonly id: string
+  readonly project_id: string
+  readonly environment_id: string
+  readonly task_id: string
+  readonly initial_deployment_id: string
+  readonly active_deployment_id: string
+  readonly type: string
+  readonly external_id: string
+  readonly status: string
+  readonly current_run_id: string | null
+  readonly workspace_id: string | null
+  readonly metadata: Record<string, unknown>
+  readonly tags: readonly string[]
+  readonly result: unknown
+  readonly error: unknown
+  readonly timed_out: boolean
+  readonly terminal_reason: unknown
+  readonly expires_at: string | null
+  readonly created_at: string
+  readonly updated_at: string
+}> = {}) {
+  return {
+    id: "session-1",
+    project_id: "project-1",
+    environment_id: "env-1",
+    task_id: "inspect",
+    initial_deployment_id: "deployment-1",
+    active_deployment_id: "deployment-1",
+    type: "default",
+    status: "open",
+    current_run_id: "run-1",
+    workspace_id: "workspace-1",
+    metadata: {},
+    tags: [],
+    expires_at: null,
+    created_at: "2026-04-20T00:00:00Z",
+    updated_at: "2026-04-20T00:00:00Z",
+    ...overrides,
+  }
+}
+
+function channelRecordFixture(overrides: Partial<{
+  readonly id: string
+  readonly channel_id: string
+  readonly sequence: number
+  readonly data: unknown
+  readonly correlation_id: string
+  readonly content_type: string
+  readonly created_at: string
+}> = {}) {
+  return {
+    id: "record-1",
+    channel_id: "channel-1",
+    sequence: 1,
+    data: null,
+    content_type: "application/json",
+    created_at: "2026-04-20T00:00:00Z",
+    ...overrides,
+  }
+}

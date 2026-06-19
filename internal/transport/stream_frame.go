@@ -27,6 +27,7 @@ type StreamHeader struct {
 	WaitpointID  string     `json:"waitpoint_id,omitempty"`
 	CheckpointID string     `json:"checkpoint_id,omitempty"`
 	BodyDigest   *string    `json:"body_digest,omitempty"`
+	EntryCount   *int       `json:"entry_count,omitempty"`
 }
 
 func WriteStreamFrameHeader(w io.Writer, header StreamHeader, bodyLen uint64) error {

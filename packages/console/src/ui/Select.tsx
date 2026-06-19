@@ -22,7 +22,7 @@ export function Select<T extends string>(props: {
   const [activeIndex, setActiveIndex] = createSignal(0);
   const [menuStyle, setMenuStyle] = createSignal<Record<string, string>>({});
   let wrapperRef: HTMLDivElement | undefined;
-  let triggerRef: HTMLButtonElement | undefined;
+  let buttonRef: HTMLButtonElement | undefined;
   let listboxRef: HTMLUListElement | undefined;
   let optionRefs: HTMLButtonElement[] = [];
   let typeahead = "";
@@ -50,8 +50,8 @@ export function Select<T extends string>(props: {
   };
 
   const updateMenuPosition = () => {
-    if (!triggerRef) return;
-    const rect = triggerRef.getBoundingClientRect();
+    if (!buttonRef) return;
+    const rect = buttonRef.getBoundingClientRect();
     const viewportPadding = 8;
     const minWidth = Math.ceil(rect.width);
     const measuredWidth = Math.ceil(listboxRef?.offsetWidth ?? minWidth);
@@ -79,7 +79,7 @@ export function Select<T extends string>(props: {
     if (!option) return;
     props.onChange(option.value);
     setOpen(false);
-    queueMicrotask(() => triggerRef?.focus());
+    queueMicrotask(() => buttonRef?.focus());
   };
 
   const focusByPrefix = (key: string) => {
@@ -153,7 +153,7 @@ export function Select<T extends string>(props: {
       case "Escape":
         event.preventDefault();
         setOpen(false);
-        queueMicrotask(() => triggerRef?.focus());
+        queueMicrotask(() => buttonRef?.focus());
         break;
     }
   };
@@ -169,7 +169,7 @@ export function Select<T extends string>(props: {
         event.preventDefault();
         event.stopImmediatePropagation();
         setOpen(false);
-        queueMicrotask(() => triggerRef?.focus());
+        queueMicrotask(() => buttonRef?.focus());
       }
     };
     document.addEventListener("mousedown", onMouseDown);
@@ -196,7 +196,7 @@ export function Select<T extends string>(props: {
       style={props.minWidth ? { "min-width": props.minWidth } : undefined}
     >
       <button
-        ref={triggerRef}
+        ref={buttonRef}
         type="button"
         class={ui.selectTrigger}
         data-open={open() ? "true" : "false"}

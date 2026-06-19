@@ -1,4 +1,4 @@
-import { postJson, request } from "./api";
+import { request } from "./api";
 
 export type RunStatus =
   | "queued"
@@ -13,31 +13,15 @@ export type RunFilter = RunStatus | "live" | "all";
 
 export type TaskOutput = unknown;
 
-type PendingWaitpointBase = {
-  waitpoint_id: string;
-  policy?: string | null;
-  deliveries?: WaitpointDelivery[];
-  request?: unknown;
-  display_text?: string;
-  timeout?: number;
-  requested_at: string;
-};
-
-export type PendingWaitpoint =
-  PendingWaitpointBase & {
-    kind: "human" | "delay";
-  };
-
-export type WaitpointDelivery = {
+export type PendingWaitpoint = {
   id: string;
-  channel: "email" | string;
-  recipient_kind: "email" | string;
-  recipient: string;
-  status: "queued" | "sent" | "failed" | "cancelled" | "expired" | string;
-  last_error?: string | null;
-  sent_at?: string | null;
+  kind?: string;
+  status?: string;
+  params?: unknown;
+  metadata?: unknown;
+  tags?: string[];
+  timeout?: number;
   created_at: string;
-  updated_at: string;
 };
 
 export type Run = {
@@ -46,6 +30,7 @@ export type Run = {
   environment_id: string;
   version: string;
   deployment_version: string;
+  task_session_id: string;
   api_version: string;
   sdk_version?: string;
   cli_version?: string;
@@ -75,7 +60,7 @@ export type LogSnapshot = {
 export type RunEventRecord = {
   id: string;
   run_id?: string | null;
-  session_id?: string | null;
+  run_lease_id?: string | null;
   attempt_number?: number | null;
   kind: string;
   message: string;
@@ -92,13 +77,6 @@ export type RunEventPage = {
 export type ListRunEventsOptions = {
   cursor?: number;
   limit?: number;
-};
-
-export type WaitpointResponseToken = {
-  id: string;
-  token: string;
-  url: string;
-  expires_at: string | null;
 };
 
 export type ListRunsOptions = {
@@ -133,32 +111,6 @@ export async function getRunEvents(id: string, projectID: string, environmentID:
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   const query = params.toString();
   return request<RunEventPage>(`${environmentPath(projectID, environmentID)}/runs/${encodeURIComponent(id)}/events${query ? `?${query}` : ""}`);
-}
-
-export async function respondWaitpoint(waitpointID: string, projectID: string, environmentID: string, value?: unknown): Promise<void> {
-  return postJson<{ value?: unknown }, void>(
-    `${environmentPath(projectID, environmentID)}/waitpoints/${encodeURIComponent(waitpointID)}/respond`,
-    value === undefined ? {} : { value },
-  );
-}
-
-export async function createWaitpointResponseToken(waitpointID: string, kind: PendingWaitpoint["kind"], projectID: string, environmentID: string): Promise<WaitpointResponseToken> {
-  if (kind === "delay") {
-    throw new Error("Delay waitpoints do not support confirmation links.");
-  }
-  const response = await postJson<
-    { waitpoint_id: string },
-    { id: string; token: string; expires_at: string | null }
-  >(
-    `${environmentPath(projectID, environmentID)}/waitpoints/tokens`,
-    {
-      waitpoint_id: waitpointID,
-    },
-  );
-  const url = new URL("/waitpoints/respond", window.location.origin);
-  url.searchParams.set("id", response.id);
-  url.searchParams.set("token", response.token);
-  return { ...response, url: url.toString() };
 }
 
 function environmentPath(projectID: string | undefined, environmentID: string | undefined): string {

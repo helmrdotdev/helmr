@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -184,10 +185,10 @@ func TestIssueAPIKeySupportsTasksDeploy(t *testing.T) {
 	}
 }
 
-func TestIssueAPIKeySupportsWaitpointPolicyManagement(t *testing.T) {
+func TestIssueAPIKeySupportsChannelScopes(t *testing.T) {
 	store := &apiKeyStore{role: db.OrgMemberRoleOwner}
 	server := testAPIKeyServer(store)
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", strings.NewReader(`{"name":"policy-agent","expires_in_days":30,"permissions":[{"scopes":["waitpoint-policies:manage"]}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", strings.NewReader(`{"name":"channels","expires_in_days":30,"permissions":[{"scopes":["run-waitpoints:read","channels:write","waitpoint-tokens:create"]}]}`))
 	addSessionCookie(req)
 	rec := httptest.NewRecorder()
 
@@ -196,18 +197,17 @@ func TestIssueAPIKeySupportsWaitpointPolicyManagement(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var issued api.APIKeyIssued
-	if err := json.Unmarshal(rec.Body.Bytes(), &issued); err != nil {
-		t.Fatal(err)
+	got := make([]string, 0, len(store.grants))
+	for _, grant := range store.grants {
+		got = append(got, grant.Permission)
 	}
-	if len(issued.Permissions) != 1 || len(issued.Permissions[0].Scopes) != 1 || issued.Permissions[0].Scopes[0] != api.APIKeyScopeWaitpointPolicies {
-		t.Fatalf("permissions = %+v", issued.Permissions)
+	want := []string{
+		string(auth.PermissionRunWaitpointsRead),
+		string(auth.PermissionChannelsWrite),
+		string(auth.PermissionWaitpointTokensCreate),
 	}
-	if len(store.grants) != 1 || store.grants[0].Permission != string(auth.PermissionWaitpointPolicies) {
-		t.Fatalf("grants = %+v", store.grants)
-	}
-	if store.upsert.ProjectID != testProjectID() || store.upsert.EnvironmentID != testEnvironmentID() {
-		t.Fatalf("token scope = %+v", store.upsert)
+	if !slices.Equal(got, want) {
+		t.Fatalf("grants = %+v, want %+v", got, want)
 	}
 }
 

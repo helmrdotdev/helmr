@@ -1,18 +1,27 @@
-import { task } from "@helmr/sdk"
+import { task, wait } from "@helmr/sdk"
 
 import { contractSandbox } from "../shared/sandboxes"
 import { assert, assertVisibleFile } from "./_assert"
+import { approvalDecision } from "./_waitpoint_schemas"
 
 export const approvalRestart = task({
   id: "approval-restart",
   sandbox: contractSandbox,
   maxDuration: 900,
   run: async (ctx) => {
-    const decision = await ctx.wait.human<{ approved: boolean; workspaceText: string }>({
-      displayText: "approval restart relay",
+    const token = await wait.createToken({
       timeout: 60,
+      tags: ["fixture", "approval", "restart"],
+      metadata: { prompt: "approval restart relay" },
     })
+    const decision = await wait.forToken(token, {
+      schema: approvalDecision,
+      timeout: 60,
+      tags: ["fixture", "approval", "restart"],
+      metadata: { prompt: "approval restart relay" },
+    }).unwrap()
     assert(decision.approved, "approval was denied")
+    assert(decision.workspaceText !== undefined, "workspace text was not provided")
     await new Promise((resolve) => setTimeout(resolve, 8_000))
     await assertVisibleFile("/workspace/approval-restart-workspace-write.txt", decision.workspaceText)
     console.log(JSON.stringify({ phase: "post-restart", workspaceText: decision.workspaceText }))

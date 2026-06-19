@@ -37,6 +37,7 @@ export interface RunSnapshot<TOutput = unknown> extends RunStateBooleans {
   readonly cliVersion?: string | null
   readonly attemptNumber: number | null
   readonly status: RunStatus
+  readonly metadata: Record<string, unknown>
   readonly exitCode: number | null
   readonly createdAt: string | null
   readonly updatedAt: string | null
@@ -46,37 +47,25 @@ export interface RunSnapshot<TOutput = unknown> extends RunStateBooleans {
 
 export type RunSummary<TOutput = unknown> = RunSnapshot<TOutput>
 
-export type PendingWaitpoint = PendingHumanWaitpoint | PendingDelayWaitpoint
-
-interface PendingWaitpointBase {
+export interface PendingWaitpoint {
   readonly runId: string
-  readonly waitpointId: string
+  readonly id: string
+  readonly kind: string
+  readonly status: "pending" | "completed" | "timed_out" | "cancelled" | "failed" | string
   readonly timeout: number | null
-  readonly requestedAt: string
-  readonly request: unknown
-  readonly displayText: string
-}
-
-export interface PendingHumanWaitpoint extends PendingWaitpointBase {
-  readonly kind: "human"
-}
-
-export interface PendingDelayWaitpoint extends PendingWaitpointBase {
-  readonly kind: "delay"
+  readonly createdAt: string
+  readonly params: unknown
+  readonly metadata: Record<string, unknown>
+  readonly tags: readonly string[]
 }
 
 export interface WaitpointRef {
+  readonly runId: string
   readonly waitpointId: string
   readonly kind?: never
 }
 
-export interface WaitpointRespondOptions {
-  readonly value?: unknown
-  readonly externalSubject?: string
-  readonly metadata?: Record<string, unknown>
-}
-
-export interface RunWaitOptions {
+export interface RunWaitpointOptions {
   readonly timeoutMs?: number
   readonly signal?: AbortSignal
 }
@@ -85,16 +74,6 @@ export interface CancelRunOptions {
   readonly reason?: string
   readonly force?: boolean
   readonly idempotencyKey?: string
-  readonly signal?: AbortSignal
-}
-
-export interface ReplayRunOptions<TPayload = unknown> {
-  readonly version?: "original" | "latest" | string
-  readonly payload?: TPayload
-  readonly reason?: string
-  readonly idempotencyKey?: string
-  readonly metadata?: Record<string, unknown>
-  readonly tags?: readonly string[]
   readonly signal?: AbortSignal
 }
 
@@ -129,29 +108,29 @@ export type RunEvent =
       readonly at: string
     }
   | {
-      readonly type: "waitpoint_request"
+      readonly type: "waitpoint"
       readonly run_id: string
       readonly waitpoint_id: string
       readonly kind: string
-      readonly displayText: string
-      readonly request: unknown
+      readonly params: unknown
+      readonly metadata: Record<string, unknown>
+      readonly tags: readonly string[]
       readonly timeout?: number
       readonly at: string
     }
   | {
-      readonly type: "waitpoint_resolved"
+      readonly type: "waitpoint_completed"
       readonly run_id: string
       readonly waitpoint_id: string
       readonly kind: string
-      readonly resolutionKind: string
-      readonly value: unknown
+      readonly payload: unknown
       readonly at: string
     }
   | {
-      readonly type: "emit"
+      readonly type: "waitpoint_timed_out"
       readonly run_id: string
-      readonly event_type: string
-      readonly content: unknown
+      readonly waitpoint_id: string
+      readonly kind: string
       readonly at: string
     }
   | { readonly type: "task_result"; readonly run_id: string; readonly exit_code: number; readonly at: string }
@@ -168,7 +147,7 @@ export type RunEvent =
 export interface RunEventRecord {
   readonly id: string
   readonly run_id?: string | null
-  readonly session_id?: string | null
+  readonly run_lease_id?: string | null
   readonly attempt_number?: number | null
   readonly kind: string
   readonly message: string
@@ -196,12 +175,14 @@ export interface LogSnapshot {
 }
 
 export interface PendingWaitpointResponse {
-  readonly kind: "human" | "delay"
-  readonly waitpoint_id: string
+  readonly id: string
+  readonly kind?: string
+  readonly status?: string | null
   readonly timeout?: number | null
-  readonly request?: unknown
-  readonly display_text?: string | null
-  readonly requested_at: string
+  readonly params?: unknown
+  readonly metadata?: Record<string, unknown> | null
+  readonly tags?: readonly string[] | null
+  readonly created_at: string
 }
 
 export function runHandle<TOutput = unknown>(id: string, taskId: string): RunHandle<TOutput> {
@@ -218,6 +199,7 @@ export function runSnapshot<TOutput = unknown>(snapshot: {
   readonly cliVersion?: string | null
   readonly attemptNumber?: number | null
   readonly status: string
+  readonly metadata?: Record<string, unknown> | null
   readonly exitCode?: number | null
   readonly createdAt?: string | null
   readonly updatedAt?: string | null
@@ -229,6 +211,7 @@ export function runSnapshot<TOutput = unknown>(snapshot: {
     id: snapshot.id,
     taskId: snapshot.taskId,
     status,
+    metadata: snapshot.metadata ?? {},
     exitCode: snapshot.exitCode ?? null,
     createdAt: snapshot.createdAt ?? null,
     updatedAt: snapshot.updatedAt ?? null,
@@ -254,13 +237,15 @@ export function pendingWaitpointFromResponse(
 ): PendingWaitpoint | null {
   if (wait === undefined || wait === null) return null
   return {
-    kind: wait.kind,
     runId,
-    waitpointId: wait.waitpoint_id,
+    id: wait.id,
+    kind: wait.kind ?? "token",
+    status: wait.status ?? "pending",
     timeout: wait.timeout ?? null,
-    request: wait.request === undefined ? {} : wait.request,
-    displayText: wait.display_text ?? "",
-    requestedAt: wait.requested_at,
+    params: wait.params === undefined ? {} : wait.params,
+    metadata: wait.metadata ?? {},
+    tags: wait.tags ?? [],
+    createdAt: wait.created_at,
   }
 }
 

@@ -348,6 +348,13 @@ function sampleTaskContextJSON(runId: string, taskId: string): string {
       path: "/workspace",
       projectPath: "/workspace",
     },
+    session: {
+      id: "session-1",
+      workspace: {
+        path: "/workspace",
+        projectPath: "/workspace",
+      },
+    },
   })
 }
 

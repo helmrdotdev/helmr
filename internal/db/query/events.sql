@@ -3,54 +3,54 @@ WITH event_args AS (
     SELECT sqlc.arg(kind)::text AS event_kind,
            sqlc.arg(payload)::jsonb AS event_payload
 ),
-current_session AS (
+current_run_lease AS (
     SELECT runs.id,
            runs.project_id,
            runs.environment_id,
            runs.trace_id,
            runs.state_version,
-           run_execution_sessions.id AS session_id,
-           run_execution_sessions.attempt_id,
-           run_execution_sessions.span_id,
-           run_execution_sessions.parent_span_id,
-           run_execution_sessions.traceparent,
+           run_leases.id AS run_lease_id,
+           run_leases.attempt_id,
+           run_leases.span_id,
+           run_leases.parent_span_id,
+           run_leases.traceparent,
            run_attempts.attempt_number
       FROM runs
-      JOIN run_execution_sessions ON run_execution_sessions.id = runs.current_session_id
-                          AND run_execution_sessions.org_id = runs.org_id
-                          AND run_execution_sessions.run_id = runs.id
-      JOIN run_attempts ON run_attempts.org_id = run_execution_sessions.org_id
-                       AND run_attempts.run_id = run_execution_sessions.run_id
-                       AND run_attempts.id = run_execution_sessions.attempt_id
+      JOIN run_leases ON run_leases.id = runs.current_run_lease_id
+                          AND run_leases.org_id = runs.org_id
+                          AND run_leases.run_id = runs.id
+      JOIN run_attempts ON run_attempts.org_id = run_leases.org_id
+                       AND run_attempts.run_id = run_leases.run_id
+                       AND run_attempts.id = run_leases.attempt_id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
        AND runs.status = 'running'
-       AND run_execution_sessions.id = sqlc.arg(session_id)
-       AND run_execution_sessions.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND run_execution_sessions.status IN ('leased', 'running')
-       AND run_execution_sessions.lease_expires_at > now()
+       AND run_leases.id = sqlc.arg(run_lease_id)
+       AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND run_leases.status IN ('leased', 'running')
+       AND run_leases.lease_expires_at > now()
 ),
 event_input AS (
     SELECT sqlc.arg(org_id) AS org_id,
-           current_session.project_id,
-           current_session.environment_id,
-           current_session.id AS run_id,
-           current_session.attempt_id,
-           current_session.session_id,
-           current_session.attempt_number,
-           current_session.trace_id,
-           current_session.span_id,
-           current_session.parent_span_id,
-           current_session.traceparent,
+           current_run_lease.project_id,
+           current_run_lease.environment_id,
+           current_run_lease.id AS run_id,
+           current_run_lease.attempt_id,
+           current_run_lease.run_lease_id,
+           current_run_lease.attempt_number,
+           current_run_lease.trace_id,
+           current_run_lease.span_id,
+           current_run_lease.parent_span_id,
+           current_run_lease.traceparent,
            CASE WHEN event_args.event_kind = 'log' THEN 'log' ELSE 'guest' END AS category,
            'info' AS severity,
            'worker' AS source,
            event_args.event_kind AS kind,
            event_args.event_kind AS message,
            event_args.event_payload AS payload,
-           CASE WHEN event_args.event_kind LIKE 'emit.%' THEN 'internal' ELSE 'sensitive' END AS redaction_class,
-           current_session.state_version AS snapshot_version
-  FROM current_session
+           'sensitive' AS redaction_class,
+           current_run_lease.state_version AS snapshot_version
+  FROM current_run_lease
   CROSS JOIN event_args
 ),
 event_seq AS (
@@ -66,14 +66,14 @@ event_seq AS (
     RETURNING org_id, subject_type, subject_id, last_seq
 ),
 inserted_event AS (
-    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT event_input.org_id,
            event_input.project_id,
            event_input.environment_id,
            event_input.run_id,
            event_seq.last_seq,
            event_input.attempt_id,
-           event_input.session_id,
+           event_input.run_lease_id,
            event_input.attempt_number,
            event_input.trace_id,
            event_input.span_id,
@@ -128,7 +128,7 @@ event_input AS (
            target_run.environment_id,
            target_run.id AS run_id,
            target_run.current_attempt_id AS attempt_id,
-           NULL::uuid AS session_id,
+           NULL::uuid AS run_lease_id,
            target_run.current_attempt_number AS attempt_number,
            target_run.trace_id,
            target_run.root_span_id AS span_id,
@@ -158,14 +158,14 @@ event_seq AS (
     RETURNING org_id, subject_type, subject_id, last_seq
 ),
 inserted_event AS (
-    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT event_input.org_id,
            event_input.project_id,
            event_input.environment_id,
            event_input.run_id,
            event_seq.last_seq,
            event_input.attempt_id,
-           event_input.session_id,
+           event_input.run_lease_id,
            event_input.attempt_number,
            event_input.trace_id,
            event_input.span_id,
@@ -318,7 +318,7 @@ SELECT updated.id AS outbox_id,
        events.run_id,
        events.deployment_id,
        events.attempt_id,
-       events.session_id,
+       events.run_lease_id,
        events.attempt_number,
        events.trace_id,
        events.span_id,

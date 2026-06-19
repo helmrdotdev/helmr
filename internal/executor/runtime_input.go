@@ -18,6 +18,10 @@ func runTaskRequest(request Request) (*runv0.RunTaskRequest, error) {
 	if task == nil {
 		return nil, errors.New("runtime task spec is required")
 	}
+	taskSessionID := strings.TrimSpace(request.Run.TaskSessionID)
+	if taskSessionID == "" {
+		return nil, errors.New("runtime task_session_id is required")
+	}
 	modulePath := strings.TrimSpace(task.ModulePath)
 	if modulePath == "" {
 		return nil, errors.New("runtime task module_path is required")
@@ -33,18 +37,18 @@ func runTaskRequest(request Request) (*runv0.RunTaskRequest, error) {
 		return nil, err
 	}
 	return &runv0.RunTaskRequest{
-		TaskId:            request.Run.TaskID,
-		ModulePath:        modulePath,
-		Cwd:               cwd,
-		Secrets:           secrets,
-		RunId:             request.Run.RunID,
-		PayloadJson:       string(request.Run.Payload),
-		Workspace:         workspaceProto,
-		AttemptId:         request.Run.AttemptID,
-		AttemptNumber:     uint32(request.Run.AttemptNumber),
-		SessionId:         request.Run.SessionID,
-		SnapshotVersion:   uint64(request.Run.SnapshotVersion),
-		ReplayedFromRunId: request.Run.ReplayedFromRunID,
+		TaskId:          request.Run.TaskID,
+		ModulePath:      modulePath,
+		Cwd:             cwd,
+		Secrets:         secrets,
+		RunId:           request.Run.RunID,
+		PayloadJson:     string(request.Run.Payload),
+		Workspace:       workspaceProto,
+		AttemptId:       request.Run.AttemptID,
+		AttemptNumber:   uint32(request.Run.AttemptNumber),
+		RunLeaseId:      request.Run.RunLeaseID,
+		SnapshotVersion: uint64(request.Run.SnapshotVersion),
+		TaskSessionId:   taskSessionID,
 		Trace: &runv0.TraceContext{
 			TraceId:     request.Run.Trace.TraceID,
 			SpanId:      request.Run.Trace.SpanID,

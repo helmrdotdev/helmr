@@ -82,22 +82,24 @@ schedule AS (
 ),
 instance_inputs AS (
     SELECT sqlc.arg(instance_id) AS id,
-           schedule.id AS schedule_id,
-           schedule.org_id,
-           schedule.project_id,
-           sqlc.arg(environment_id)::uuid AS environment_id,
-           sqlc.arg(run_options)::jsonb AS run_options,
+	           schedule.id AS schedule_id,
+	           schedule.org_id,
+	           schedule.project_id,
+	           sqlc.arg(environment_id)::uuid AS environment_id,
+	           schedule.task_id,
+	           sqlc.arg(run_options)::jsonb AS run_options,
            sqlc.arg(active) AS active,
            CASE WHEN sqlc.arg(active) THEN sqlc.arg(next_fire_at)::timestamptz ELSE NULL END AS next_fire_at
       FROM schedule
     UNION ALL
     SELECT uuidv7() AS id,
-           task_schedule_instances.schedule_id,
-           task_schedule_instances.org_id,
-           task_schedule_instances.project_id,
-           task_schedule_instances.environment_id,
-           task_schedule_instances.run_options,
-           task_schedule_instances.active,
+	           task_schedule_instances.schedule_id,
+	           task_schedule_instances.org_id,
+	           task_schedule_instances.project_id,
+	           task_schedule_instances.environment_id,
+	           schedule.task_id,
+	           task_schedule_instances.run_options,
+	           task_schedule_instances.active,
            CASE WHEN task_schedule_instances.active THEN sqlc.arg(next_fire_at)::timestamptz ELSE NULL END AS next_fire_at
       FROM task_schedule_instances
       JOIN schedule ON schedule.id = task_schedule_instances.schedule_id
@@ -107,26 +109,29 @@ instance_inputs AS (
 instances AS (
     INSERT INTO task_schedule_instances (
         id,
-        schedule_id,
-        org_id,
-        project_id,
-        environment_id,
-        run_options,
-        active,
+	        schedule_id,
+	        org_id,
+	        project_id,
+	        environment_id,
+	        task_id,
+	        run_options,
+	        active,
         next_fire_at
     )
     SELECT id,
-           schedule_id,
-           org_id,
-           project_id,
-           environment_id,
-           run_options,
-           active,
+	           schedule_id,
+	           org_id,
+	           project_id,
+	           environment_id,
+	           task_id,
+	           run_options,
+	           active,
            next_fire_at
       FROM instance_inputs
     ON CONFLICT (schedule_id, environment_id) DO UPDATE
-       SET run_options = EXCLUDED.run_options,
-           active = EXCLUDED.active,
+	       SET run_options = EXCLUDED.run_options,
+	           task_id = EXCLUDED.task_id,
+	           active = EXCLUDED.active,
            generation = task_schedule_instances.generation + 1,
            next_fire_at = EXCLUDED.next_fire_at,
            retry_after = NULL,
@@ -251,21 +256,23 @@ schedule AS (
 ),
 instance_inputs AS (
     SELECT sqlc.arg(instance_id) AS id,
-           schedule.id AS schedule_id,
-           schedule.org_id,
-           schedule.project_id,
-           sqlc.arg(environment_id)::uuid AS environment_id,
-           sqlc.arg(run_options)::jsonb AS run_options,
+	           schedule.id AS schedule_id,
+	           schedule.org_id,
+	           schedule.project_id,
+	           sqlc.arg(environment_id)::uuid AS environment_id,
+	           schedule.task_id,
+	           sqlc.arg(run_options)::jsonb AS run_options,
            sqlc.arg(active) AS active,
            CASE WHEN sqlc.arg(active) THEN sqlc.arg(next_fire_at)::timestamptz ELSE NULL END AS next_fire_at
       FROM schedule
     UNION ALL
     SELECT uuidv7() AS id,
-           task_schedule_instances.schedule_id,
-           task_schedule_instances.org_id,
-           task_schedule_instances.project_id,
-           task_schedule_instances.environment_id,
-           task_schedule_instances.run_options,
+	           task_schedule_instances.schedule_id,
+	           task_schedule_instances.org_id,
+	           task_schedule_instances.project_id,
+	           task_schedule_instances.environment_id,
+	           schedule.task_id,
+	           task_schedule_instances.run_options,
            task_schedule_instances.active,
            CASE WHEN task_schedule_instances.active THEN sqlc.arg(next_fire_at)::timestamptz ELSE NULL END AS next_fire_at
       FROM task_schedule_instances
@@ -276,26 +283,29 @@ instance_inputs AS (
 instances AS (
     INSERT INTO task_schedule_instances (
         id,
-        schedule_id,
-        org_id,
-        project_id,
-        environment_id,
-        run_options,
-        active,
+	        schedule_id,
+	        org_id,
+	        project_id,
+	        environment_id,
+	        task_id,
+	        run_options,
+	        active,
         next_fire_at
     )
     SELECT id,
-           schedule_id,
-           org_id,
-           project_id,
-           environment_id,
-           run_options,
+	           schedule_id,
+	           org_id,
+	           project_id,
+	           environment_id,
+	           task_id,
+	           run_options,
            active,
            next_fire_at
       FROM instance_inputs
     ON CONFLICT (schedule_id, environment_id) DO UPDATE
-       SET run_options = EXCLUDED.run_options,
-           active = EXCLUDED.active,
+	       SET run_options = EXCLUDED.run_options,
+	           task_id = EXCLUDED.task_id,
+	           active = EXCLUDED.active,
            generation = task_schedule_instances.generation + 1,
            next_fire_at = EXCLUDED.next_fire_at,
            retry_after = NULL,
@@ -822,6 +832,15 @@ UPDATE task_schedule_instances
 UPDATE task_schedule_instances
    SET next_fire_at = NULL,
        retry_after = NULL,
+       updated_at = now()
+ WHERE id = sqlc.arg(instance_id)
+   AND generation = sqlc.arg(generation)
+   AND next_fire_at = sqlc.arg(scheduled_at)
+   AND active;
+
+-- name: DeferScheduleInstanceTrigger :execrows
+UPDATE task_schedule_instances
+   SET retry_after = sqlc.arg(retry_after),
        updated_at = now()
  WHERE id = sqlc.arg(instance_id)
    AND generation = sqlc.arg(generation)

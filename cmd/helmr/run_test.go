@@ -16,9 +16,9 @@ import (
 )
 
 func TestRunCommandCreatesGitHubRun(t *testing.T) {
-	var request api.CreateRunRequest
+	var request api.TaskStartRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/runs" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
@@ -41,13 +41,7 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(api.RunResponse{
-			ID:        "run-1",
-			TaskID:    request.TaskID,
-			Status:    "queued",
-			CreatedAt: time.Unix(0, 0).UTC(),
-			UpdatedAt: time.Unix(0, 0).UTC(),
-		})
+		_ = json.NewEncoder(w).Encode(taskStartResponseFixture())
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -71,10 +65,10 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out.String()) != "run-1" {
+	if strings.TrimSpace(out.String()) != "session-1" {
 		t.Fatalf("output = %q", out.String())
 	}
-	if request.TaskID != "deploy" || request.Options.MaxDurationSeconds != 60 {
+	if request.Options.MaxDurationSeconds != 60 {
 		t.Fatalf("request = %+v", request)
 	}
 	if request.ProjectID != "" || request.EnvironmentID != "" {
@@ -128,118 +122,16 @@ func TestCancelCommandCancelsRun(t *testing.T) {
 	}
 }
 
-func TestReplayCommandReplaysRun(t *testing.T) {
-	var request api.ReplayRunRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/runs/run-1/replay" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		_ = json.NewEncoder(w).Encode(api.ReplayRunResponse{
-			Run:       api.RunResponse{ID: "run-2", Status: "queued"},
-			Operation: api.RunOperationResponse{ID: "op-1", RunID: "run-1", Kind: "replay", Status: "applied"},
-		})
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{
-		"replay", "run-1",
-		"--version", "latest",
-		"--payload", "env=prod",
-		"--metadata-json", `{"reason":"manual"}`,
-		"--tag", "manual",
-		"--reason", "retry deploy",
-		"--idempotency-key", "replay-1",
-	})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(out.String()) != "run-2" {
-		t.Fatalf("output = %q", out.String())
-	}
-	if request.Version != "latest" || request.Reason != "retry deploy" || request.IdempotencyKey != "replay-1" {
-		t.Fatalf("request = %+v", request)
-	}
-	if string(request.Payload) != `{"env":"prod"}` || string(request.Metadata) != `{"reason":"manual"}` {
-		t.Fatalf("request JSON = %+v", request)
-	}
-	if strings.Join(request.Tags, ",") != "manual" {
-		t.Fatalf("tags = %+v", request.Tags)
-	}
-}
-
-func TestReplayCommandDoesNotUseProjectShorthandForPayload(t *testing.T) {
-	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"replay", "run-1", "-p", "env=prod"})
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "unknown shorthand flag: 'p'") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestReplayCommandOmitsPayloadMetadataAndTagsWhenNotOverridden(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/runs/run-1/replay" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var raw map[string]json.RawMessage
-		if err := json.Unmarshal(body, &raw); err != nil {
-			t.Fatal(err)
-		}
-		for _, key := range []string{"payload", "metadata", "tags"} {
-			if _, ok := raw[key]; ok {
-				t.Fatalf("request included %s override: %s", key, body)
-			}
-		}
-		_ = json.NewEncoder(w).Encode(api.ReplayRunResponse{Run: api.RunResponse{ID: "run-2", Status: "queued"}})
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"replay", "run-1"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(out.String()) != "run-2" {
-		t.Fatalf("output = %q", out.String())
-	}
-}
-
 func TestRunCommandReadsPayloadFile(t *testing.T) {
-	var request api.CreateRunRequest
+	var request api.TaskStartRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/runs" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(api.RunResponse{
-			ID:        "run-1",
-			TaskID:    request.TaskID,
-			Status:    "queued",
-			CreatedAt: time.Unix(0, 0).UTC(),
-			UpdatedAt: time.Unix(0, 0).UTC(),
-		})
+		_ = json.NewEncoder(w).Encode(taskStartResponseFixture())
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -262,6 +154,31 @@ func TestRunCommandReadsPayloadFile(t *testing.T) {
 	}
 	if payload["env"] != "prod" || payload["count"] != float64(2) {
 		t.Fatalf("payload = %s", request.Payload)
+	}
+}
+
+func taskStartResponseFixture() api.TaskStartResponse {
+	now := time.Unix(0, 0).UTC()
+	return api.TaskStartResponse{
+		Session: api.TaskSessionResponse{
+			ID:                  "session-1",
+			ProjectID:           "project-1",
+			EnvironmentID:       "env-1",
+			TaskID:              "deploy",
+			InitialDeploymentID: "deployment-1",
+			ActiveDeploymentID:  "deployment-1",
+			Status:              "open",
+			CurrentRunID:        "run-1",
+			CreatedAt:           now,
+			UpdatedAt:           now,
+		},
+		Run: api.RunResponse{
+			ID:        "run-1",
+			TaskID:    "deploy",
+			Status:    "queued",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
 	}
 }
 
@@ -293,6 +210,23 @@ func TestRunCommandRejectsPayloadFileCombinations(t *testing.T) {
 	}
 	if called {
 		t.Fatal("server was called")
+	}
+}
+
+func TestRunCommandDoesNotExposeInputFlagAliases(t *testing.T) {
+	for _, args := range [][]string{
+		{"run", "deploy", "--input-json", `{"env":"prod"}`},
+		{"run", "deploy", "--input-file", "payload.json"},
+		{"run", "deploy", "--input", "env=prod"},
+	} {
+		cmd := newRootCommand()
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs(args)
+		err := cmd.Execute()
+		if err == nil || !strings.Contains(err.Error(), "unknown flag") {
+			t.Fatalf("args %v err = %v", args, err)
+		}
 	}
 }
 

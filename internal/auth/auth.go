@@ -173,10 +173,16 @@ func normalizeAPIKeyGrantPermission(permission string) []Permission {
 		return []Permission{PermissionRunsRead}
 	case string(PermissionRunsManage):
 		return []Permission{PermissionRunsManage}
-	case string(PermissionWaitpointsRespond):
-		return []Permission{PermissionWaitpointsRespond}
-	case string(PermissionWaitpointPolicies):
-		return []Permission{PermissionWaitpointPolicies}
+	case string(PermissionRunWaitpointsRead):
+		return []Permission{PermissionRunWaitpointsRead}
+	case string(PermissionChannelsWrite):
+		return []Permission{PermissionChannelsWrite}
+	case string(PermissionWaitpointTokensCreate):
+		return []Permission{PermissionWaitpointTokensCreate}
+	case string(PermissionWaitpointTokensRead):
+		return []Permission{PermissionWaitpointTokensRead}
+	case string(PermissionWaitpointTokensComplete):
+		return []Permission{PermissionWaitpointTokensComplete}
 	case string(PermissionSecretsWrite):
 		return []Permission{PermissionSecretsWrite}
 	case string(PermissionTasksDeploy):

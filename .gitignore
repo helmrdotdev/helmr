@@ -13,6 +13,7 @@ images/*/out/
 .bin/
 **/.terraform/
 **/.terraform.lock.hcl
+dev/workflows/vendor/
 *.tfstate
 *.tfstate.*
 *.tfvars

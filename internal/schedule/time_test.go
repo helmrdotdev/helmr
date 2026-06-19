@@ -86,9 +86,9 @@ func TestRunRequestFromTriggerCandidateBuildsScheduledPayload(t *testing.T) {
 	}
 }
 
-func TestRunRequestFromTriggerCandidateSkipsPastUpcomingSlots(t *testing.T) {
+func TestRunRequestFromTriggerCandidateUpcomingIsStableAcrossRetries(t *testing.T) {
 	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
-	request, err := RunRequestFromTriggerCandidateAt(db.GetScheduleTriggerCandidateRow{
+	row := db.GetScheduleTriggerCandidateRow{
 		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		InstanceID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ProjectID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -100,17 +100,25 @@ func TestRunRequestFromTriggerCandidateSkipsPastUpcomingSlots(t *testing.T) {
 		RunOptions:    []byte(`{}`),
 		Generation:    1,
 		NextFireAt:    pgtype.Timestamptz{Time: scheduledAt, Valid: true},
-	}, scheduledAt.Add(48*time.Hour))
+	}
+	first, err := RunRequestFromTriggerCandidateAt(row, scheduledAt.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
+	}
+	retry, err := RunRequestFromTriggerCandidateAt(row, scheduledAt.Add(48*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first.Payload) != string(retry.Payload) {
+		t.Fatalf("payload changed across retry:\nfirst=%s\nretry=%s", first.Payload, retry.Payload)
 	}
 	var payload struct {
 		Upcoming []string `json:"upcoming"`
 	}
-	if err := json.Unmarshal(request.Payload, &payload); err != nil {
+	if err := json.Unmarshal(retry.Payload, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if len(payload.Upcoming) != 5 || payload.Upcoming[0] != "2026-06-05T00:00:00Z" {
+	if len(payload.Upcoming) != 5 || payload.Upcoming[0] != "2026-06-03T00:00:00Z" {
 		t.Fatalf("upcoming = %+v", payload.Upcoming)
 	}
 }

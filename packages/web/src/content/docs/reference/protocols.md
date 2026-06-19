@@ -22,12 +22,12 @@ The control-plane REST API version is date based. Worker and bundle protocols ar
 
 `helmr.run.v0` describes host/guest execution:
 
-- `RunTaskRequest` carries task ID, module path, cwd, run ID, payload JSON, secrets, and workspace overlay metadata.
-- `RunEvent` carries stdout/stderr chunks, log entries, wait requests, emitted events, task output, and task completion.
-- Wait messages include human and delay waitpoints with optional timeouts.
+- `RunTaskRequest` carries task ID, module path, cwd, run ID, task session ID, payload JSON, secrets, and workspace session context.
+- `RunEvent` carries stdout/stderr chunks, log entries, waitpoint requests, channel output append notifications, metadata update notifications, task output, and task completion.
+- Waitpoint requests cover external completion and time-based sleeps with optional timeouts.
 - Checkpoint/resume messages are `SuspendForCheckpoint`, `PauseReady`, `ResumeAttach`, `ResumeDecision`, and `ResumeAck`.
 
-`helmr.worker.v0` is the current control-plane to worker lease protocol. Workers send `protocol_version`, `supported_protocol_versions`, and `worker_version` in their capabilities. The control plane requires the current worker protocol to be present before it records heartbeat state or leases execution/build work, and lease payloads include the selected protocol version for the worker to parse.
+`helmr.worker.v0` is the current control-plane to worker lease protocol. Workers send `protocol_version` and `worker_version` in their capabilities. The control plane requires the current worker protocol before it records heartbeat state or leases execution/build work, and lease payloads include the selected protocol version for the worker to parse.
 
 Deployment builds emit bundle format version `1`. Deployment tasks carry this value so future bundle readers can reject or branch on unsupported formats before trying to execute task code.
 

@@ -48,13 +48,11 @@ func TestDeploymentTaskSecretNames(t *testing.T) {
 func TestCreateRunWithoutSecretsAllowsDeveloper(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{role: auth.RoleDeveloper}, Secrets: fakeSecrets{}})
-	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID: "deploy",
-	})
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer developer-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -75,13 +73,11 @@ func TestAPIKeyRunCreateAllowsDeclaredTaskSecrets(t *testing.T) {
 		permissions:   []auth.Permission{auth.PermissionRunsCreate},
 	}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}},
 	)
-	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID: "deploy",
-	})
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer machine-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -107,6 +103,7 @@ func TestCreateScheduleRunUsesDeclaredTaskSecrets(t *testing.T) {
 		db:          store,
 		secrets:     fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}},
 		runEnqueuer: runEnqueuer,
+		eventStream: newTestEventStream(t),
 	}
 	runID, err := server.CreateScheduleRun(context.Background(), db.GetScheduleTriggerCandidateRow{
 		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
@@ -147,13 +144,11 @@ func TestCreateRunRejectsUnavailableDeclaredSecret(t *testing.T) {
 		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"other": []byte("secret")}}})
-	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID: "deploy",
-	})
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -347,7 +342,7 @@ func TestWorkerRunLeaseFailsRunWhenSecretUnavailable(t *testing.T) {
 			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
-			Payload:            []byte(`{}`),
+			Output:             []byte(`{}`),
 			MaxDurationSeconds: 3600,
 			CreatedAt:          testTime(),
 			UpdatedAt:          testTime(),
@@ -357,7 +352,7 @@ func TestWorkerRunLeaseFailsRunWhenSecretUnavailable(t *testing.T) {
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"other": []byte("secret-value")}}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)

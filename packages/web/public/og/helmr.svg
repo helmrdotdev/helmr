@@ -28,7 +28,7 @@
   <rect x="225" y="502.31" width="136.81" height="47" fill="#e3f0ff"/>
   <text class="mono chip" x="293.41" y="512.31" text-anchor="middle">schedule</text>
   <rect x="375.81" y="502.31" width="124.2" height="47" fill="#f3dded"/>
-  <text class="mono chip" x="437.91" y="512.31" text-anchor="middle">trigger</text>
+  <text class="mono chip" x="437.91" y="512.31" text-anchor="middle">start</text>
   <rect x="514.02" y="502.31" width="111.61" height="47" fill="#e4efdc"/>
-  <text class="mono chip" x="569.82" y="512.31" text-anchor="middle">replay</text>
+  <text class="mono chip" x="569.82" y="512.31" text-anchor="middle">resume</text>
 </svg>

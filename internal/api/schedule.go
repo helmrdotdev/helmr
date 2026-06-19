@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -22,8 +24,6 @@ type CreateScheduleRequest struct {
 }
 
 type ScheduleRunOptions struct {
-	DeploymentID       string          `json:"deployment_id,omitempty"`
-	Version            string          `json:"version,omitempty"`
 	Queue              *RunQueueOption `json:"queue,omitempty"`
 	ConcurrencyKey     string          `json:"concurrency_key,omitempty"`
 	Priority           int32           `json:"priority,omitempty"`
@@ -31,10 +31,28 @@ type ScheduleRunOptions struct {
 	MaxDurationSeconds int32           `json:"max_duration_seconds,omitempty"`
 }
 
+func (o *ScheduleRunOptions) UnmarshalJSON(data []byte) error {
+	type scheduleRunOptions ScheduleRunOptions
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["deployment_id"]; ok {
+		return errors.New("deployment_id is not accepted for scheduled task starts")
+	}
+	if _, ok := raw["version"]; ok {
+		return errors.New("version is not accepted for scheduled task starts")
+	}
+	var decoded scheduleRunOptions
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*o = ScheduleRunOptions(decoded)
+	return nil
+}
+
 func (o ScheduleRunOptions) CreateRunOptions() CreateRunOptions {
 	return CreateRunOptions{
-		DeploymentID:       o.DeploymentID,
-		Version:            o.Version,
 		Queue:              o.Queue,
 		ConcurrencyKey:     o.ConcurrencyKey,
 		Priority:           o.Priority,

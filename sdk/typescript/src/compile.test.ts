@@ -648,15 +648,17 @@ export const schemaPayload = task({
       "context",
       `({
         runId: ctx.run.id,
+        sessionId: ctx.session.id,
         taskId: ctx.task.id,
-        workspacePath: ctx.workspace.path,
-        projectPath: ctx.workspace.projectPath,
+        workspacePath: ctx.session.workspace.path,
+        projectPath: ctx.session.workspace.projectPath,
       })`,
     )
     const result = await runAdapterTask(cwd, "context", {
       runId: "run-context",
       taskContextJson: sampleTaskContextJSON({
         runId: "run-context",
+        sessionId: "session-context",
         taskId: "context",
       }),
     })
@@ -664,6 +666,7 @@ export const schemaPayload = task({
     expect(result.status, result.stderr).toBe(0)
     expect(taskOutput(result)).toEqual({
       runId: "run-context",
+      sessionId: "session-context",
       taskId: "context",
       workspacePath: "/workspace",
       projectPath: "/workspace",
@@ -792,23 +795,26 @@ export default task({
     expect(decoded.task?.modulePath).toBe("tasks/mts-task.mts")
   })
 
-  test("adapter run emits token requests and fails on closed response stream", async () => {
+  test("adapter run emits waitpoints and fails on closed response stream", async () => {
     const cwd = await taskFixture(
       "needs-token",
-      "ctx.wait.human({ displayText: 'ship it', policy: 'prod-deploy-approval' })",
+      `(() => {
+        return wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, metadata: { repo: "helmr" }, tags: ["release", "channel:slack"] }).unwrap()
+      })()`,
+      `import { wait } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "needs-token")
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
     expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitRequested",
+      case: "waitpointRequested",
       value: {
         correlationId: "1",
-        kind: "human",
-        requestJson: JSON.stringify({}),
-        displayText: "ship it",
-        policy: "prod-deploy-approval",
+        kind: "token",
+        paramsJson: JSON.stringify({ token_id: "token-1" }),
+        metadataJson: JSON.stringify({ repo: "helmr" }),
+        tags: ["release", "channel:slack"],
       },
     })
     const error = JSON.parse(result.stderr.trim())
@@ -818,20 +824,29 @@ export default task({
     })
   })
 
-  test("adapter run surfaces token timeout errors from host-driven timeout responses", async () => {
+  test("adapter run surfaces wait timeout errors from host-driven timeout responses", async () => {
     const cwd = await taskFixture(
       "token-timeout",
-      "(async () => { try { await ctx.wait.human({ displayText: 'ship it', timeout: 1 }); return { ok: false } } catch (error) { return { name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) } } })()",
+      `(async () => {
+        const result = await wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, timeout: 1 })
+        try {
+          result.unwrap()
+          return { ok: false }
+        } catch (error) {
+          return { name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) }
+        }
+      })()`,
+      `import { wait } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
       "token-timeout",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitRequested")
+        await waitForControlEvent("waitpointRequested")
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
           kind: "timed_out",
-          resumePayloadJson: JSON.stringify({ at: "2026-04-23T00:00:00Z" }),
+          dataJson: "null",
         }))
         stdin.end()
       },
@@ -839,15 +854,16 @@ export default task({
 
     expect(result.status, result.stderr).toBe(0)
     expect(taskOutput(result)).toMatchObject({
-      name: "Error",
-      message: "human wait timed out after 1",
+      name: "WaitTimeoutError",
+      message: "waitpoint timed out after 1",
     })
   })
 
-  test("adapter run emits generic wait.for requests", async () => {
+  test("adapter run emits wait.for requests", async () => {
     const cwd = await taskFixture(
       "needs-wait-for",
-      "ctx.wait.for({ seconds: 10 }, { displayText: 'ten seconds' })",
+      "wait.for({ seconds: 10 })",
+      `import { wait } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "needs-wait-for")
 
@@ -855,87 +871,89 @@ export default task({
     expect(taskExitCode(result)).toBe(1)
     const event = result.controlEvents[0]?.event
     expect(event).toMatchObject({
-      case: "waitRequested",
+      case: "waitpointRequested",
       value: {
         correlationId: "1",
-        kind: "delay",
-        requestJson: JSON.stringify({ seconds: 10 }),
-        displayText: "ten seconds",
+        kind: "timer",
+        paramsJson: JSON.stringify({ seconds: 10 }),
         timeout: 10,
       },
     })
-    if (event?.case !== "waitRequested") throw new Error("expected waitRequested")
+    if (event?.case !== "waitpointRequested") throw new Error("expected waitpointRequested")
   })
 
   test("adapter run rounds millisecond wait.for requests up to seconds", async () => {
-    const cwd = await taskFixture("needs-wait-for-ms", "ctx.wait.for({ milliseconds: 1500 })")
+    const cwd = await taskFixture("needs-wait-for-ms", "wait.for({ milliseconds: 1500 })", `import { wait } from "@helmr/sdk"\n`)
     const result = await runAdapterTask(cwd, "needs-wait-for-ms")
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
     expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitRequested",
+      case: "waitpointRequested",
       value: {
         correlationId: "1",
-        kind: "delay",
-        requestJson: JSON.stringify({ milliseconds: 1500 }),
+        kind: "timer",
+        paramsJson: JSON.stringify({ milliseconds: 1500 }),
         timeout: 2,
       },
     })
   })
 
   test("adapter run accepts duration wait.for requests", async () => {
-    const cwd = await taskFixture("needs-wait-for-duration", "ctx.wait.for('1.5s')")
+    const cwd = await taskFixture("needs-wait-for-duration", "wait.for('1.5s')", `import { wait } from "@helmr/sdk"\n`)
     const result = await runAdapterTask(cwd, "needs-wait-for-duration")
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
     expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitRequested",
+      case: "waitpointRequested",
       value: {
         correlationId: "1",
-        kind: "delay",
-        requestJson: JSON.stringify({ duration: "1.5s" }),
+        kind: "timer",
+        paramsJson: JSON.stringify({ duration: "1.5s" }),
         timeout: 2,
       },
     })
   })
 
-  test("adapter run emits generic wait.until requests", async () => {
+  test("adapter run emits wait.until requests", async () => {
     const cwd = await taskFixture(
       "needs-wait-until",
-      "ctx.wait.until(new Date('2026-04-23T00:00:00Z'), { displayText: 'deadline' })",
+      "wait.until({ date: new Date('2026-04-23T00:00:00Z') })",
+      `import { wait } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "needs-wait-until")
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
     expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitRequested",
+      case: "waitpointRequested",
       value: {
         correlationId: "1",
-        kind: "delay",
-        requestJson: JSON.stringify({ date: "2026-04-23T00:00:00.000Z" }),
-        displayText: "deadline",
+        kind: "timer",
+        paramsJson: JSON.stringify({ date: "2026-04-23T00:00:00.000Z" }),
         timeout: 1,
       },
     })
   })
 
-  test("adapter run resolves generic wait.human completions", async () => {
-    const cwd = await taskFixture("wait-human", "ctx.wait.human()")
+  test("adapter run resolves waitpoint completions", async () => {
+    const cwd = await taskFixture(
+      "wait-human",
+      `(() => {
+        return wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }).unwrap()
+      })()`,
+      `import { wait } from "@helmr/sdk"\n`,
+    )
     const result = await runAdapterTaskInteractively(
       cwd,
       "wait-human",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitRequested")
+        await waitForControlEvent("waitpointRequested")
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
           kind: "completed",
-          resumePayloadJson: JSON.stringify({
-            value: { ok: true },
-            at: "2026-04-23T00:00:00Z",
-          }),
+          dataJson: JSON.stringify({ ok: true }),
         }))
         stdin.end()
       },
@@ -943,17 +961,223 @@ export default task({
 
     expect(result.status, result.stderr).toBe(0)
     expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitRequested",
+      case: "waitpointRequested",
       value: {
         correlationId: "1",
-        kind: "human",
-        requestJson: JSON.stringify({}),
+        kind: "token",
+        paramsJson: JSON.stringify({ token_id: "token-1" }),
       },
     })
     expect(taskOutput(result)).toEqual({ ok: true })
   })
 
-  test("adapter run parses wait.human completions with validation-only schemas", async () => {
+  test("adapter run resolves channel waits as direct channel data", async () => {
+    const cwd = await taskFixture(
+      "wait-session-channel",
+      `(() => {
+        const approval = ctx.session.input(channels.input("approval", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
+        return approval.wait({ timeout: 5, tags: ["approval"] }).unwrap()
+      })()`,
+      `import { channels } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "wait-session-channel",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("waitpointRequested")
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-1",
+          kind: "completed",
+          dataJson: JSON.stringify({ channel: "approval", sequence: 1, data: { approved: true } }),
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.controlEvents[0]?.event).toMatchObject({
+      case: "waitpointRequested",
+      value: {
+        correlationId: "1",
+        kind: "channel",
+        paramsJson: JSON.stringify({ channel: "approval" }),
+        tags: ["approval"],
+        timeout: 5,
+      },
+    })
+    expect(taskOutput(result)).toEqual({ approved: true })
+  })
+
+  test("adapter run emits wait.all as one ordered aggregate wait", async () => {
+    const cwd = await taskFixture(
+      "wait-all",
+      `(() => {
+        const approval = ctx.session.input(channels.input("approval", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
+        return wait.all([
+          wait.for({ seconds: 1 }),
+          approval.wait({ correlationId: "thread-1" }),
+        ])
+      })()`,
+      `import { channels, wait } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "wait-all",
+      async ({ stdin, waitForControlEventCount }) => {
+        await waitForControlEventCount("waitpointRequested", 2)
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-1",
+          kind: "waitpoints",
+          dataJson: JSON.stringify({
+            waitpoints: [
+              null,
+              { channel: "approval", sequence: 1, data: { approved: true } },
+            ],
+          }),
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    const waitpointEvents = result.controlEvents
+      .map((event) => event.event)
+      .filter((event): event is { case: "waitpointRequested"; value: runProto.WaitpointRequested } => event.case === "waitpointRequested")
+    expect(waitpointEvents).toHaveLength(2)
+    expect(waitpointEvents[0]?.value).toMatchObject({
+      correlationId: "1",
+      kind: "timer",
+      paramsJson: JSON.stringify({ seconds: 1 }),
+      timeout: 1,
+      ordinal: 0,
+    })
+    expect(waitpointEvents[1]?.value).toMatchObject({
+      correlationId: "1",
+      kind: "channel",
+      paramsJson: JSON.stringify({ channel: "approval", correlation_id: "thread-1" }),
+      ordinal: 1,
+    })
+    expect(taskOutput(result)).toEqual([null, { approved: true }])
+  })
+
+  test("adapter run leaves channel wait cursors to the control plane", async () => {
+    const cwd = await taskFixture(
+      "wait-session-channel-twice",
+      `(async () => {
+        const numbers = ctx.session.input(channels.input("numbers", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
+        const first = await numbers.wait().unwrap()
+        const second = await numbers.wait().unwrap()
+        return [first, second]
+      })()`,
+      `import { channels } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "wait-session-channel-twice",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("waitpointRequested")
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-1",
+          kind: "completed",
+          dataJson: JSON.stringify({ channel: "numbers", sequence: 1, data: 10 }),
+        }))
+        await waitForControlEvent("waitpointRequested")
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-2",
+          kind: "completed",
+          dataJson: JSON.stringify({ channel: "numbers", sequence: 2, data: 20 }),
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.controlEvents[0]?.event).toMatchObject({
+      case: "waitpointRequested",
+      value: {
+        correlationId: "1",
+        kind: "channel",
+        paramsJson: JSON.stringify({ channel: "numbers" }),
+      },
+    })
+    expect(result.controlEvents[1]?.event).toMatchObject({
+      case: "waitpointRequested",
+      value: {
+        correlationId: "2",
+        kind: "channel",
+        paramsJson: JSON.stringify({ channel: "numbers" }),
+      },
+    })
+    expect(taskOutput(result)).toEqual([10, 20])
+  })
+
+  test("adapter run preserves correlation ids without local channel cursors", async () => {
+    const cwd = await taskFixture(
+      "wait-session-channel-correlated",
+      `(async () => {
+        const replies = ctx.session.input(channels.input("replies", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
+        const firstA = await replies.wait({ correlationId: "thread-a" }).unwrap()
+        const firstB = await replies.wait({ correlationId: "thread-b" }).unwrap()
+        const secondA = await replies.wait({ correlationId: " thread-a " }).unwrap()
+        return [firstA, firstB, secondA]
+      })()`,
+      `import { channels } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "wait-session-channel-correlated",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("waitpointRequested")
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-1",
+          kind: "completed",
+          dataJson: JSON.stringify({ channel: "replies", correlation_id: "thread-a", sequence: 10, data: "a1" }),
+        }))
+        await waitForControlEvent("waitpointRequested")
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-2",
+          kind: "completed",
+          dataJson: JSON.stringify({ channel: "replies", correlation_id: "thread-b", sequence: 3, data: "b1" }),
+        }))
+        await waitForControlEvent("waitpointRequested")
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-3",
+          kind: "completed",
+          dataJson: JSON.stringify({ channel: "replies", correlation_id: "thread-a", sequence: 11, data: "a2" }),
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.controlEvents[0]?.event).toMatchObject({
+      case: "waitpointRequested",
+      value: {
+        correlationId: "1",
+        kind: "channel",
+        paramsJson: JSON.stringify({ channel: "replies", correlation_id: "thread-a" }),
+      },
+    })
+    expect(result.controlEvents[1]?.event).toMatchObject({
+      case: "waitpointRequested",
+      value: {
+        correlationId: "2",
+        kind: "channel",
+        paramsJson: JSON.stringify({ channel: "replies", correlation_id: "thread-b" }),
+      },
+    })
+    expect(result.controlEvents[2]?.event).toMatchObject({
+      case: "waitpointRequested",
+      value: {
+        correlationId: "3",
+        kind: "channel",
+        paramsJson: JSON.stringify({ channel: "replies", correlation_id: "thread-a" }),
+      },
+    })
+    expect(taskOutput(result)).toEqual(["a1", "b1", "a2"])
+  })
+
+  test("adapter run parses waitpoint completions with validation-only schemas", async () => {
     const cwd = await taskFixture(
       "wait-human-validation-schema",
       `(async () => {
@@ -973,22 +1197,19 @@ export default task({
             },
           },
         }
-        return await ctx.wait.human({ schema })
+        return await wait.forToken("token-1", { schema }).unwrap()
       })()`,
-      `import type { PayloadSchema } from "@helmr/sdk"\n`,
+      `import { wait, type PayloadSchema } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
       "wait-human-validation-schema",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitRequested")
+        await waitForControlEvent("waitpointRequested")
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
           kind: "completed",
-          resumePayloadJson: JSON.stringify({
-            value: { approved: true },
-            at: "2026-04-23T00:00:00Z",
-          }),
+          dataJson: JSON.stringify({ approved: true }),
         }))
         stdin.end()
       },
@@ -998,67 +1219,144 @@ export default task({
     expect(taskOutput(result)).toEqual({ approved: true })
   })
 
-  test("adapter run rejects human resume payloads with missing at", async () => {
+  test("adapter run rejects invalid waitpoint completion data", async () => {
     const cwd = await taskFixture(
-      "token-missing-at",
-      "(async () => { try { return await ctx.wait.human<{ ok: boolean }>() } catch (error) { return { message: error instanceof Error ? error.message : String(error) } } })()",
+      "token-invalid-json",
+      `(async () => {
+        try {
+          return await wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }).unwrap()
+        } catch (error) { return { message: error instanceof Error ? error.message : String(error) } }
+      })()`,
+      `import { wait } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
-      "token-missing-at",
+      "token-invalid-json",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitRequested")
+        await waitForControlEvent("waitpointRequested")
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
           kind: "completed",
-          resumePayloadJson: JSON.stringify({ value: { ok: true } }),
+          dataJson: "{",
         }))
         stdin.end()
       },
     )
 
     expect(result.status, result.stderr).toBe(0)
-    expect(taskOutput(result)).toEqual({
-      message: "resume payload at is required and must be a valid timestamp",
-    })
+    expect(taskOutput(result).message).toContain("waitpoint data must be valid JSON")
   })
 
-  test("adapter run rejects human resume payloads with invalid at", async () => {
+  test("adapter run returns null waitpoint completion data", async () => {
     const cwd = await taskFixture(
-      "token-invalid-at",
-      "(async () => { try { return await ctx.wait.human<{ ok: boolean }>() } catch (error) { return { message: error instanceof Error ? error.message : String(error) } } })()",
+      "token-null-data",
+      `(() => wait.forToken("token-1").unwrap())()`,
+      `import { wait } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
-      "token-invalid-at",
+      "token-null-data",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitRequested")
+        await waitForControlEvent("waitpointRequested")
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
           kind: "completed",
-          resumePayloadJson: JSON.stringify({ value: { ok: true }, at: "not-a-date" }),
+          dataJson: "null",
         }))
         stdin.end()
       },
     )
 
     expect(result.status, result.stderr).toBe(0)
-    expect(taskOutput(result)).toEqual({
-      message: "resume payload at is required and must be a valid timestamp",
-    })
+    expect(taskOutput(result)).toBeNull()
   })
 
-  test("adapter run rejects resume decisions with the wrong kind for human waits", async () => {
-    const cwd = await taskFixture("token-wrong-kind", "ctx.wait.human()")
+  test("adapter run validates null waitpoint completion data as direct data", async () => {
+    const cwd = await taskFixture(
+      "token-null-data-schema",
+      `(async () => {
+        try {
+          return await wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate(value: unknown) {
+            if (value === null || typeof value !== "object") {
+              return { issues: [{ message: "expected object" }] }
+            }
+            return { value }
+          } } } }).unwrap()
+        } catch (error) { return { message: error instanceof Error ? error.message : String(error) } }
+      })()`,
+      `import { wait } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "token-null-data-schema",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("waitpointRequested")
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-1",
+          kind: "completed",
+          dataJson: "null",
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(taskOutput(result).message).toContain("waitpoint data failed validation: expected object")
+  })
+
+  test("adapter run rejects old waitpoint completion wrappers", async () => {
+    const cwd = await taskFixture(
+      "token-old-wrapper",
+      `(async () => {
+        try {
+          return await wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate(value: unknown) {
+            if (value === null || typeof value !== "object" || typeof (value as Record<string, unknown>).approved !== "boolean") {
+              return { issues: [{ message: "expected approval object", path: ["approved"] }] }
+            }
+            return { value }
+          } } } }).unwrap()
+        } catch (error) { return { message: error instanceof Error ? error.message : String(error) } }
+      })()`,
+      `import { wait } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "token-old-wrapper",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("waitpointRequested")
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-1",
+          kind: "completed",
+          dataJson: JSON.stringify({
+            payload: { approved: true },
+            at: "2026-04-23T00:00:00Z",
+          }),
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(taskOutput(result).message).toContain("waitpoint data failed validation: payload.approved: expected approval object")
+  })
+
+  test("adapter run rejects resume decisions with the wrong kind for waitpoints", async () => {
+    const cwd = await taskFixture(
+      "token-wrong-kind",
+      `(() => {
+        return wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }).unwrap()
+      })()`,
+      `import { wait } from "@helmr/sdk"\n`,
+    )
     const result = await runAdapterTaskInteractively(
       cwd,
       "token-wrong-kind",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitRequested")
+        await waitForControlEvent("waitpointRequested")
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
           kind: "unexpected",
-          resumePayloadJson: JSON.stringify({ principal: "alice" }),
+          dataJson: JSON.stringify({ principal: "alice" }),
         }))
         stdin.end()
       },
@@ -1066,77 +1364,154 @@ export default task({
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
-    expect(JSON.parse(result.stderr.trim()).message).toBe('unexpected human resume decision kind "unexpected"')
+    expect(JSON.parse(result.stderr.trim()).message).toBe('unexpected waitpoint resume decision kind "unexpected"')
   })
 
   test("adapter run rejects concurrent waits with ConcurrentWaitError", async () => {
     const cwd = await taskFixture(
       "concurrent-wait",
-      "(async () => { const first = ctx.wait.human({ displayText: 'one' }).catch(() => undefined); try { await ctx.wait.human({ displayText: 'two' }); return { ok: false } } catch (error) { return { concurrent: error instanceof ConcurrentWaitError, name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) } } finally { await first } })()",
-      "import { ConcurrentWaitError } from \"@helmr/sdk\"\n",
+      `(async () => {
+        const first = wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }).unwrap().catch(() => undefined)
+        try {
+          await wait.forToken("token-2", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }).unwrap()
+          return { ok: false }
+        } catch (error) {
+          return { concurrent: error instanceof ConcurrentWaitError, name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) }
+        } finally { await first }
+      })()`,
+      "import { ConcurrentWaitError, wait } from \"@helmr/sdk\"\n",
     )
     const result = await runAdapterTask(cwd, "concurrent-wait")
 
     expect(result.status, result.stderr).toBe(0)
-    expect(result.controlEvents[0]?.event.case).toBe("waitRequested")
+    expect(result.controlEvents[0]?.event.case).toBe("waitpointRequested")
     expect(taskOutput(result)).toMatchObject({
       concurrent: true,
       name: "ConcurrentWaitError",
-      message: "concurrent ctx.wait.* calls are not supported in v0.1",
+      message: "concurrent blocking run I/O calls are not supported",
     })
   })
 
-  test("adapter run rejects oversized wait display text before emitting control events", async () => {
+  test("adapter run rejects empty waitpoint tags before emitting control events", async () => {
     const cwd = await taskFixture(
       "oversized-wait",
-      `ctx.wait.human({ displayText: ${JSON.stringify("x".repeat(16 * 1024 + 1))} })`,
+      `wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, tags: [""] }).unwrap()`,
+      `import { wait } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "oversized-wait")
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
-    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("waitRequested")
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("waitpointRequested")
     const error = JSON.parse(result.stderr.trim())
-    expect(error.message).toContain("wait display text")
-    expect(error.message).toContain("exceeds max 16384")
+    expect(error.message).toContain("wait tag")
+    expect(error.message).toContain("must be non-empty")
   })
 
-  test("adapter run emits MCP-shaped events", async () => {
+  test("adapter run rejects too many waitpoint tags before emitting control events", async () => {
     const cwd = await taskFixture(
-      "emits",
-      "(() => { ctx.emit({ type: 'agent.event', content: [{ type: 'text', text: 'hi' }] }); return { ok: true } })()",
+      "too-many-wait-tags",
+      `wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, tags: Array.from({ length: 33 }, (_, index) => "tag-" + index) }).unwrap()`,
+      `import { wait } from "@helmr/sdk"\n`,
     )
-    const result = await runAdapterTask(cwd, "emits")
+    const result = await runAdapterTask(cwd, "too-many-wait-tags")
+
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("waitpointRequested")
+    const error = JSON.parse(result.stderr.trim())
+    expect(error.message).toContain("wait tags")
+    expect(error.message).toContain("exceeds max")
+  })
+
+  test("adapter run rejects oversized waitpoint tags before emitting control events", async () => {
+    const cwd = await taskFixture(
+      "oversized-wait-tag",
+      `wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, tags: ["${"x".repeat(129)}"] }).unwrap()`,
+      `import { wait } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTask(cwd, "oversized-wait-tag")
+
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("waitpointRequested")
+    const error = JSON.parse(result.stderr.trim())
+    expect(error.message).toContain("wait tag")
+    expect(error.message).toContain("exceeds max")
+  })
+
+  test("adapter run rejects non-object waitpoint metadata before emitting control events", async () => {
+    const cwd = await taskFixture(
+      "invalid-input-metadata",
+      `wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, metadata: [] } as any).unwrap()`,
+      `import { wait } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTask(cwd, "invalid-input-metadata")
+
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("waitpointRequested")
+    const error = JSON.parse(result.stderr.trim())
+    expect(error.message).toBe("wait metadata must be a JSON object")
+  })
+
+  test("adapter run rejects oversized waitpoint metadata before emitting control events", async () => {
+    const cwd = await taskFixture(
+      "oversized-input-metadata",
+      `wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, metadata: { value: "x".repeat(70 * 1024) } }).unwrap()`,
+      `import { wait } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTask(cwd, "oversized-input-metadata")
+
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("waitpointRequested")
+    const error = JSON.parse(result.stderr.trim())
+    expect(error.message).toContain("wait metadata_json")
+    expect(error.message).toContain("exceeds max")
+  })
+
+  test("adapter run emits durable channel output appends", async () => {
+    const cwd = await taskFixture(
+      "writes-channel-output",
+      "(() => { ctx.session.output(channels.output('agent.report', { schema: { '~standard': { version: 1, vendor: 'test', validate: (value: unknown) => ({ value }) } } })).append({ ok: true }, { contentType: 'application/json', objectRef: { path: 'report.json' } }); return { ok: true } })()",
+      `import { channels } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTask(cwd, "writes-channel-output")
 
     expect(result.status, result.stderr).toBe(0)
     expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "emitEvent",
+      case: "channelOutputAppended",
       value: {
-        type: "agent.event",
-        contentJson: JSON.stringify([{ type: "text", text: "hi" }]),
+        channel: "agent.report",
+        payloadJson: JSON.stringify({ ok: true }),
+        contentType: "application/json",
+        objectRefJson: JSON.stringify({ path: "report.json" }),
       },
     })
   })
 
-  test("adapter run rejects oversized emit events before emitting control events", async () => {
+  test("adapter run emits metadata updates", async () => {
     const cwd = await taskFixture(
-      "oversized-emit",
-      "(() => { ctx.emit({ type: 'agent.event', content: ['" + "x".repeat(256 * 1024) + "'] }); return { ok: true } })()",
+      "writes-metadata",
+      "(() => { metadata.set('status', 'reviewing'); metadata.patch({ currentFile: 'src/app.ts' }); metadata.increment('filesReviewed', 1); return { ok: true } })()",
+      `import { metadata } from "@helmr/sdk"\n`,
     )
-    const result = await runAdapterTask(cwd, "oversized-emit")
+    const result = await runAdapterTask(cwd, "writes-metadata")
 
-    expect(result.status).toBe(0)
-    expect(taskExitCode(result)).toBe(1)
-    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("emitEvent")
-    const error = JSON.parse(result.stderr.trim())
-    expect(error.message).toContain("emit event content_json")
-    expect(error.message).toContain("exceeds max 262144")
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.controlEvents.slice(0, 3).map((event) => event.event)).toMatchObject([
+      { case: "metadataUpdated", value: { operation: "set", key: "status", valueJson: JSON.stringify("reviewing") } },
+      { case: "metadataUpdated", value: { operation: "patch", patchJson: JSON.stringify({ currentFile: "src/app.ts" }) } },
+      { case: "metadataUpdated", value: { operation: "increment", key: "filesReviewed", amount: 1 } },
+    ])
   })
 
-  test("adapter run truncates oversized ctx.log entries", async () => {
+  test("adapter run truncates oversized logger entries", async () => {
     const cwd = await taskFixture(
       "oversized-log",
-      "(() => { ctx.log.info('" + "x".repeat(70 * 1024) + "'); return { ok: true } })()",
+      "(() => { logger.info('" + "x".repeat(70 * 1024) + "'); return { ok: true } })()",
+      `import { logger } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "oversized-log")
 
@@ -1146,7 +1521,7 @@ export default task({
     expect(typeof entry).toBe("string")
     expect(Buffer.byteLength(entry as string, "utf8")).toBeLessThanOrEqual(64 * 1024)
     const payload = JSON.parse(entry as string)
-    expect(payload.message).toContain("...[truncated ctx.log entry]")
+    expect(payload.message).toContain("...[truncated logger entry]")
   })
 
   test("adapter run propagates task throws as error JSON", async () => {
@@ -1291,6 +1666,7 @@ async function runAdapterTaskInteractively(
   interact: (helpers: {
     readonly stdin: PassThrough
     readonly waitForControlEvent: (kind: runProto.RunEvent["event"]["case"]) => Promise<void>
+    readonly waitForControlEventCount: (kind: runProto.RunEvent["event"]["case"], count: number) => Promise<void>
   }) => Promise<void>,
   options: RunAdapterTaskOptions = {},
 ): Promise<{
@@ -1308,16 +1684,19 @@ async function runAdapterTaskInteractively(
   const io: AdapterIo = { stdin, stdout, stderr, control }
   const resultPromise = runAdapterCli(adapterRunArgs(cwd, taskId, options), io)
   const waitForControlEvent = async (kind: runProto.RunEvent["event"]["case"]): Promise<void> => {
+    await waitForControlEventCount(kind, 1)
+  }
+  const waitForControlEventCount = async (kind: runProto.RunEvent["event"]["case"], count: number): Promise<void> => {
     for (let attempt = 0; attempt < 100; attempt += 1) {
-      if (decodeRunEvents(control.bytes()).some((event) => event.event.case === kind)) {
+      if (decodeRunEvents(control.bytes()).filter((event) => event.event.case === kind).length >= count) {
         return
       }
       await new Promise((resolve) => setTimeout(resolve, 5))
     }
-    throw new Error(`timed out waiting for control event: ${kind}`)
+    throw new Error(`timed out waiting for ${count} control event(s): ${kind}`)
   }
 
-  await interact({ stdin, waitForControlEvent })
+  await interact({ stdin, waitForControlEvent, waitForControlEventCount })
   const status = await resultPromise
   return {
     stdout: stdout.bytes().toString(),
@@ -1336,6 +1715,7 @@ interface RunAdapterTaskOptions {
 
 function sampleTaskContextJSON(options: {
   readonly runId: string
+  readonly sessionId?: string
   readonly taskId: string
   readonly refKind?: string
   readonly pullRequest?: {
@@ -1363,6 +1743,13 @@ function sampleTaskContextJSON(options: {
     workspace: {
       path: "/workspace",
       projectPath: "/workspace",
+    },
+    session: {
+      id: options.sessionId ?? "session-1",
+      workspace: {
+        path: "/workspace",
+        projectPath: "/workspace",
+      },
     },
   })
 }
@@ -1448,7 +1835,7 @@ async function linkLocalSdk(cwd: string, sdkRoot: string): Promise<void> {
 function resumeDecisionFrame(decision: {
   readonly waitpointId?: string
   readonly kind?: string
-  readonly resumePayloadJson?: string
+  readonly dataJson?: string
 }): Buffer {
   const body = Buffer.from(toBinary(
     runProto.ResumeDecisionSchema,

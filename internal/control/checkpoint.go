@@ -38,9 +38,9 @@ func (s *Server) workerAcknowledgeRestore(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	runWaitID, err := uuid.Parse(request.RunWaitID)
+	runSuspensionID, err := uuid.Parse(request.RunSuspensionID)
 	if err != nil {
-		writeError(w, badRequest(errors.New("run_wait_id must be a UUID")))
+		writeError(w, badRequest(errors.New("run_suspension_id must be a UUID")))
 		return
 	}
 	waitpointID, err := uuid.Parse(request.WaitpointID)
@@ -56,10 +56,10 @@ func (s *Server) workerAcknowledgeRestore(w http.ResponseWriter, r *http.Request
 	waitpoint, err := s.db.AcknowledgeRestore(r.Context(), db.AcknowledgeRestoreParams{
 		OrgID:            pgvalue.UUID(leaseIDs.orgID),
 		RunID:            pgvalue.UUID(leaseIDs.runID),
-		SessionID:        pgvalue.UUID(leaseIDs.sessionID),
+		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		CheckpointID:     pgvalue.UUID(checkpointID),
-		RunWaitID:        pgvalue.UUID(runWaitID),
+		RunSuspensionID:  pgvalue.UUID(runSuspensionID),
 		WaitpointID:      pgvalue.UUID(waitpointID),
 	})
 	if isNoRows(err) {
@@ -72,10 +72,10 @@ func (s *Server) workerAcknowledgeRestore(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerAcknowledgeRestoreResponse{
-		RunID:        request.Lease.RunID,
-		RunWaitID:    pgvalue.MustUUIDValue(waitpoint.RunWaitID).String(),
-		WaitpointID:  pgvalue.MustUUIDValue(waitpoint.ID).String(),
-		CheckpointID: pgvalue.MustUUIDValue(waitpoint.CheckpointID).String(),
+		RunID:           request.Lease.RunID,
+		RunSuspensionID: pgvalue.MustUUIDValue(waitpoint.RunSuspensionID).String(),
+		WaitpointID:     pgvalue.MustUUIDValue(waitpoint.ID).String(),
+		CheckpointID:    pgvalue.MustUUIDValue(waitpoint.CheckpointID).String(),
 	})
 }
 
@@ -105,9 +105,9 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("worker run lease belongs to another worker")))
 		return
 	}
-	runWaitID, err := uuid.Parse(request.RunWaitID)
+	runSuspensionID, err := uuid.Parse(request.RunSuspensionID)
 	if err != nil {
-		writeError(w, badRequest(errors.New("run_wait_id must be a UUID")))
+		writeError(w, badRequest(errors.New("run_suspension_id must be a UUID")))
 		return
 	}
 	waitpointID, err := uuid.Parse(request.WaitpointID)
@@ -120,7 +120,7 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("checkpoint_id must be a UUID")))
 		return
 	}
-	params, err := checkpointReadyParams(leaseIDs.orgID, leaseIDs, worker.WorkerInstanceID, runWaitID, waitpointID, checkpointID, request)
+	params, err := checkpointReadyParams(leaseIDs.orgID, leaseIDs, worker.WorkerInstanceID, runSuspensionID, waitpointID, checkpointID, request)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -135,14 +135,14 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("get queue lease"))
 		return
 	}
-	runtimeRelease, err := s.db.GetRunExecutionSessionRuntimeRelease(r.Context(), db.GetRunExecutionSessionRuntimeReleaseParams{
+	runtimeRelease, err := s.db.GetRunLeaseRuntimeRelease(r.Context(), db.GetRunLeaseRuntimeReleaseParams{
 		OrgID:            pgvalue.UUID(leaseIDs.orgID),
 		RunID:            pgvalue.UUID(leaseIDs.runID),
-		SessionID:        pgvalue.UUID(leaseIDs.sessionID),
+		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 	})
 	if isNoRows(err) {
-		s.log.Warn("checkpoint ready runtime release missing", "run_id", request.Lease.RunID, "session_id", request.Lease.ID, "checkpoint_id", request.CheckpointID)
+		s.log.Warn("checkpoint ready runtime release missing", "run_id", request.Lease.RunID, "run_lease_id", request.Lease.ID, "checkpoint_id", request.CheckpointID)
 		writeError(w, conflict(errors.New("worker run lease runtime is unavailable")))
 		return
 	}
@@ -155,17 +155,17 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn(
 			"checkpoint ready runtime rejected",
 			"run_id", request.Lease.RunID,
-			"session_id", request.Lease.ID,
+			"run_lease_id", request.Lease.ID,
 			"checkpoint_id", request.CheckpointID,
 			"runtime_backend", params.RuntimeBackend,
 			"runtime_id", params.RuntimeID,
-			"session_runtime_id", runtimeRelease.RuntimeID,
+			"run_lease_runtime_id", runtimeRelease.RuntimeID,
 		)
 		writeError(w, conflict(err))
 		return
 	}
 	if err := s.verifyCheckpointReadyArtifacts(r.Context(), request.Manifest); err != nil {
-		s.log.Warn("checkpoint ready artifact rejected", "run_id", request.Lease.RunID, "session_id", request.Lease.ID, "checkpoint_id", request.CheckpointID, "error", err)
+		s.log.Warn("checkpoint ready artifact rejected", "run_id", request.Lease.RunID, "run_lease_id", request.Lease.ID, "checkpoint_id", request.CheckpointID, "error", err)
 		writeError(w, conflict(err))
 		return
 	}
@@ -174,7 +174,7 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn(
 			"checkpoint ready rejected",
 			"run_id", request.Lease.RunID,
-			"session_id", request.Lease.ID,
+			"run_lease_id", request.Lease.ID,
 			"checkpoint_id", request.CheckpointID,
 			"runtime_backend", params.RuntimeBackend,
 			"runtime_id", params.RuntimeID,
@@ -187,19 +187,19 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("mark checkpoint ready"))
 		return
 	}
-	s.ackWorkerQueueLease(r.Context(), pgvalue.UUID(leaseIDs.runID), lease)
-	if waitpoint.Status == db.RunWaitStatusWaiting && !resumed {
-		go s.notifyPendingWaitpoint(context.Background(), checkpointReadyWaitpoint(waitpoint))
+	if resumed {
+		s.enqueueResolvedWaitpointRuns(r.Context(), pgvalue.UUID(leaseIDs.orgID), []pgtype.UUID{pgvalue.UUID(leaseIDs.runID)})
 	}
+	s.ackWorkerQueueLease(r.Context(), pgvalue.UUID(leaseIDs.runID), lease)
 	writeJSON(w, http.StatusOK, api.WorkerCreateWaitpointResponse{
-		RunID:        request.Lease.RunID,
-		RunWaitID:    pgvalue.MustUUIDValue(waitpoint.RunWaitID).String(),
-		WaitpointID:  pgvalue.MustUUIDValue(waitpoint.ID).String(),
-		CheckpointID: pgvalue.MustUUIDValue(waitpoint.CheckpointID).String(),
+		RunID:           request.Lease.RunID,
+		RunSuspensionID: pgvalue.MustUUIDValue(waitpoint.RunSuspensionID).String(),
+		WaitpointID:     pgvalue.MustUUIDValue(waitpoint.ID).String(),
+		CheckpointID:    pgvalue.MustUUIDValue(waitpoint.CheckpointID).String(),
 	})
 }
 
-func validateCheckpointReadyRuntime(runtimeRelease db.GetRunExecutionSessionRuntimeReleaseRow, params db.MarkWaitpointCheckpointDurableReadyParams) error {
+func validateCheckpointReadyRuntime(runtimeRelease db.GetRunLeaseRuntimeReleaseRow, params db.MarkRunSuspensionCheckpointReadyParams) error {
 	// Keep this backend guard in sync with the SQL expected_runtime fence.
 	if params.RuntimeBackend != checkpointRuntimeBackendFirecracker {
 		return fmt.Errorf("checkpoint runtime backend %q is not supported", params.RuntimeBackend)
@@ -252,48 +252,62 @@ func (s *Server) verifyCheckpointCASObject(ctx context.Context, digest string, s
 	return nil
 }
 
-func (s *Server) markWaitpointCheckpointReady(ctx context.Context, orgID pgtype.UUID, waitpointID pgtype.UUID, params db.MarkWaitpointCheckpointDurableReadyParams) (db.MarkWaitpointCheckpointDurableReadyRow, bool, error) {
+func (s *Server) markWaitpointCheckpointReady(ctx context.Context, orgID pgtype.UUID, waitpointID pgtype.UUID, params db.MarkRunSuspensionCheckpointReadyParams) (db.MarkRunSuspensionCheckpointReadyRow, bool, error) {
 	if s.tx == nil {
-		waitpoint, err := s.db.MarkWaitpointCheckpointDurableReady(ctx, params)
+		waitpoint, err := s.db.MarkRunSuspensionCheckpointReady(ctx, params)
 		if err != nil {
-			return db.MarkWaitpointCheckpointDurableReadyRow{}, false, err
+			return db.MarkRunSuspensionCheckpointReadyRow{}, false, err
 		}
 		resumed := false
-		if waitpoint.Status == db.RunWaitStatusWaiting {
-			resumedWaits, err := s.db.UnblockRunWaitsForWaitpoint(ctx, db.UnblockRunWaitsForWaitpointParams{
+		if waitpoint.Status == db.RunSuspensionStatusWaiting {
+			resumedRunIDs := []pgtype.UUID(nil)
+			inputRunIDs, err := resolveRunChannelWaitpointsWithQueries(ctx, s.db, orgID, waitpoint.RunID)
+			if err != nil {
+				return db.MarkRunSuspensionCheckpointReadyRow{}, false, err
+			}
+			resumedRunIDs = append(resumedRunIDs, inputRunIDs...)
+			resumedWaits, err := s.db.UnblockRunWaitpointsForWaitpoint(ctx, db.UnblockRunWaitpointsForWaitpointParams{
 				OrgID:       orgID,
 				WaitpointID: waitpointID,
 			})
 			if err != nil {
-				return db.MarkWaitpointCheckpointDurableReadyRow{}, false, err
+				return db.MarkRunSuspensionCheckpointReadyRow{}, false, err
 			}
-			resumed = len(resumedWaits) > 0
+			resumedRunIDs = append(resumedRunIDs, waitpointResumeRunIDs(resumedWaits)...)
+			resumed = len(resumedRunIDs) > 0
 		}
 		return waitpoint, resumed, nil
 	}
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
-		return db.MarkWaitpointCheckpointDurableReadyRow{}, false, err
+		return db.MarkRunSuspensionCheckpointReadyRow{}, false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	queries := db.New(tx)
-	waitpoint, err := queries.MarkWaitpointCheckpointDurableReady(ctx, params)
+	waitpoint, err := queries.MarkRunSuspensionCheckpointReady(ctx, params)
 	if err != nil {
-		return db.MarkWaitpointCheckpointDurableReadyRow{}, false, err
+		return db.MarkRunSuspensionCheckpointReadyRow{}, false, err
 	}
 	resumed := false
-	if waitpoint.Status == db.RunWaitStatusWaiting {
-		resumedWaits, err := queries.UnblockRunWaitsForWaitpoint(ctx, db.UnblockRunWaitsForWaitpointParams{
+	if waitpoint.Status == db.RunSuspensionStatusWaiting {
+		resumedRunIDs := []pgtype.UUID(nil)
+		inputRunIDs, err := resolveRunChannelWaitpointsWithQueries(ctx, queries, orgID, waitpoint.RunID)
+		if err != nil {
+			return db.MarkRunSuspensionCheckpointReadyRow{}, false, err
+		}
+		resumedRunIDs = append(resumedRunIDs, inputRunIDs...)
+		resumedWaits, err := queries.UnblockRunWaitpointsForWaitpoint(ctx, db.UnblockRunWaitpointsForWaitpointParams{
 			OrgID:       orgID,
 			WaitpointID: waitpointID,
 		})
 		if err != nil {
-			return db.MarkWaitpointCheckpointDurableReadyRow{}, false, err
+			return db.MarkRunSuspensionCheckpointReadyRow{}, false, err
 		}
-		resumed = len(resumedWaits) > 0
+		resumedRunIDs = append(resumedRunIDs, waitpointResumeRunIDs(resumedWaits)...)
+		resumed = len(resumedRunIDs) > 0
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return db.MarkWaitpointCheckpointDurableReadyRow{}, false, err
+		return db.MarkRunSuspensionCheckpointReadyRow{}, false, err
 	}
 	return waitpoint, resumed, nil
 }
@@ -328,9 +342,9 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 		writeError(w, errors.New("get queue lease"))
 		return
 	}
-	runWaitID, err := uuid.Parse(request.RunWaitID)
+	runSuspensionID, err := uuid.Parse(request.RunSuspensionID)
 	if err != nil {
-		writeError(w, badRequest(errors.New("run_wait_id must be a UUID")))
+		writeError(w, badRequest(errors.New("run_suspension_id must be a UUID")))
 		return
 	}
 	waitpointID, err := uuid.Parse(request.WaitpointID)
@@ -347,13 +361,13 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 	if message == "" {
 		message = "checkpoint failed"
 	}
-	waitpoint, err := s.db.MarkWaitpointCheckpointFailed(r.Context(), db.MarkWaitpointCheckpointFailedParams{
+	waitpoint, err := s.db.MarkRunSuspensionCheckpointFailed(r.Context(), db.MarkRunSuspensionCheckpointFailedParams{
 		OrgID:            pgvalue.UUID(leaseIDs.orgID),
 		RunID:            pgvalue.UUID(leaseIDs.runID),
 		CheckpointID:     pgvalue.UUID(checkpointID),
-		RunWaitID:        pgvalue.UUID(runWaitID),
+		RunSuspensionID:  pgvalue.UUID(runSuspensionID),
 		WaitpointID:      pgvalue.UUID(waitpointID),
-		SessionID:        pgvalue.UUID(leaseIDs.sessionID),
+		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		ErrorMessage:     pgtype.Text{String: message, Valid: true},
 	})
@@ -367,114 +381,114 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerCreateWaitpointResponse{
-		RunID:        request.Lease.RunID,
-		RunWaitID:    pgvalue.MustUUIDValue(waitpoint.RunWaitID).String(),
-		WaitpointID:  pgvalue.MustUUIDValue(waitpoint.ID).String(),
-		CheckpointID: pgvalue.MustUUIDValue(waitpoint.CheckpointID).String(),
+		RunID:           request.Lease.RunID,
+		RunSuspensionID: pgvalue.MustUUIDValue(waitpoint.RunSuspensionID).String(),
+		WaitpointID:     pgvalue.MustUUIDValue(waitpoint.ID).String(),
+		CheckpointID:    pgvalue.MustUUIDValue(waitpoint.CheckpointID).String(),
 	})
 }
 
 func checkpointReason(kind db.WaitpointKind) string {
 	switch kind {
-	case db.WaitpointKindHuman:
-		return "wait_human"
-	case db.WaitpointKindDelay:
-		return "wait_delay"
+	case db.WaitpointKindToken:
+		return "wait_token"
+	case db.WaitpointKindTimer:
+		return "wait_timer"
 	default:
 		return "wait"
 	}
 }
 
-func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerInstanceID uuid.UUID, runWaitID uuid.UUID, waitpointID uuid.UUID, checkpointID uuid.UUID, request api.WorkerCheckpointReadyRequest) (db.MarkWaitpointCheckpointDurableReadyParams, error) {
+func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerInstanceID uuid.UUID, runSuspensionID uuid.UUID, waitpointID uuid.UUID, checkpointID uuid.UUID, request api.WorkerCheckpointReadyRequest) (db.MarkRunSuspensionCheckpointReadyParams, error) {
 	if request.ActiveDurationMs < 0 {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("active_duration_ms must be non-negative")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("active_duration_ms must be non-negative")
 	}
 	if request.ActiveDurationMs > maxStoredActiveDurationMilliseconds {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, fmt.Errorf("active_duration_ms exceeds max %d", maxStoredActiveDurationMilliseconds)
+		return db.MarkRunSuspensionCheckpointReadyParams{}, fmt.Errorf("active_duration_ms exceeds max %d", maxStoredActiveDurationMilliseconds)
 	}
 	manifest, err := json.Marshal(request.Manifest)
 	if err != nil {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, fmt.Errorf("encode checkpoint manifest: %w", err)
+		return db.MarkRunSuspensionCheckpointReadyParams{}, fmt.Errorf("encode checkpoint manifest: %w", err)
 	}
 	if len(request.Manifest.RuntimeState.Config) == 0 {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.runtime_state.config is required")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.runtime_state.config is required")
 	}
 	if !json.Valid(request.Manifest.RuntimeState.Config) {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.runtime_state.config must be valid JSON")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.runtime_state.config must be valid JSON")
 	}
 	if err := validateCheckpointRecoveryPoint(request.Manifest.RecoveryPoint, leaseIDs.runID, waitpointID, checkpointID, request.Manifest.RuntimeState.Config); err != nil {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
+		return db.MarkRunSuspensionCheckpointReadyParams{}, err
 	}
 	runtimeSpec, err := checkpointRuntimeSpec(request.Manifest.RuntimeState.Config)
 	if err != nil {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
+		return db.MarkRunSuspensionCheckpointReadyParams{}, err
 	}
 	if runtimeSpec.CNIProfile == nil || strings.TrimSpace(*runtimeSpec.CNIProfile) == "" {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.runtime_state.config.recovery_point.runtime.network.profile is required")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.runtime_state.config.recovery_point.runtime.network.profile is required")
 	}
 	runtimeInfo := request.Manifest.RecoveryPoint.Runtime
 	if runtimeInfo.Backend != checkpointRuntimeBackendFirecracker {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, fmt.Errorf("manifest.recovery_point.runtime.backend must be %s", checkpointRuntimeBackendFirecracker)
+		return db.MarkRunSuspensionCheckpointReadyParams{}, fmt.Errorf("manifest.recovery_point.runtime.backend must be %s", checkpointRuntimeBackendFirecracker)
 	}
 	if strings.TrimSpace(runtimeInfo.ID) == "" {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.id is required")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.recovery_point.runtime.id is required")
 	}
 	if strings.TrimSpace(runtimeInfo.Arch) == "" {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.arch is required")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.recovery_point.runtime.arch is required")
 	}
 	if strings.TrimSpace(runtimeInfo.ABI) == "" {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.abi is required")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.recovery_point.runtime.abi is required")
 	}
 	if strings.TrimSpace(runtimeInfo.KernelDigest) == "" {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.kernel_digest is required")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.recovery_point.runtime.kernel_digest is required")
 	}
 	if strings.TrimSpace(runtimeInfo.InitramfsDigest) == "" {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.initramfs_digest is required")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.recovery_point.runtime.initramfs_digest is required")
 	}
 	if strings.TrimSpace(runtimeInfo.RootfsDigest) == "" {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.rootfs_digest is required")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.recovery_point.runtime.rootfs_digest is required")
 	}
 	if strings.TrimSpace(runtimeInfo.ConfigDigest) == "" {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.config_digest is required")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.recovery_point.runtime.config_digest is required")
 	}
 	if _, err := requiredCheckpointManifestArtifact(request.Manifest.RuntimeState.ConfigArtifact, cas.CheckpointRuntimeConfigMediaType, "manifest.runtime_state.config_artifact"); err != nil {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
+		return db.MarkRunSuspensionCheckpointReadyParams{}, err
 	}
 	if _, err := requiredCheckpointManifestArtifact(request.Manifest.RuntimeState.VMStateArtifact, cas.CheckpointVMStateMediaType, "manifest.runtime_state.vm_state_artifact"); err != nil {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
+		return db.MarkRunSuspensionCheckpointReadyParams{}, err
 	}
 	if _, err := requiredCheckpointManifestArtifact(request.Manifest.RuntimeState.ScratchDiskArtifact, cas.CheckpointScratchDiskMediaType, "manifest.runtime_state.scratch_disk_artifact"); err != nil {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
+		return db.MarkRunSuspensionCheckpointReadyParams{}, err
 	}
 	workspace := request.Manifest.WorkspaceState.Base
 	if strings.TrimSpace(workspace.ArtifactDigest) == "" {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.workspace_state.base.artifact_digest is required")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.workspace_state.base.artifact_digest is required")
 	}
 	if _, err := cas.ObjectKey("", workspace.ArtifactDigest); err != nil {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, fmt.Errorf("manifest.workspace_state.base.artifact_digest is invalid: %w", err)
+		return db.MarkRunSuspensionCheckpointReadyParams{}, fmt.Errorf("manifest.workspace_state.base.artifact_digest is invalid: %w", err)
 	}
 	if workspace.ArtifactSizeBytes < 0 {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.workspace_state.base.artifact_size_bytes must be non-negative")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.workspace_state.base.artifact_size_bytes must be non-negative")
 	}
 	if strings.TrimSpace(workspace.ArtifactMediaType) == "" {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.workspace_state.base.artifact_media_type is required")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.workspace_state.base.artifact_media_type is required")
 	}
 	if strings.TrimSpace(workspace.MountPath) == "" {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.workspace_state.base.mount_path is required")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.workspace_state.base.mount_path is required")
 	}
 	if strings.TrimSpace(workspace.VolumeKind) == "" {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.workspace_state.base.volume_kind is required")
+		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.workspace_state.base.volume_kind is required")
 	}
 	if len(request.Manifest.RuntimeState.MemoryArtifacts) != 1 {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, fmt.Errorf("manifest.runtime_state.memory_artifacts must contain exactly one artifact, got %d", len(request.Manifest.RuntimeState.MemoryArtifacts))
+		return db.MarkRunSuspensionCheckpointReadyParams{}, fmt.Errorf("manifest.runtime_state.memory_artifacts must contain exactly one artifact, got %d", len(request.Manifest.RuntimeState.MemoryArtifacts))
 	}
 	checkpointArtifacts, err := checkpointArtifactParams(request.Manifest)
 	if err != nil {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
+		return db.MarkRunSuspensionCheckpointReadyParams{}, err
 	}
 	checkpointArtifactsJSON, err := json.Marshal(checkpointArtifacts)
 	if err != nil {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, fmt.Errorf("encode checkpoint artifacts: %w", err)
+		return db.MarkRunSuspensionCheckpointReadyParams{}, fmt.Errorf("encode checkpoint artifacts: %w", err)
 	}
 	checkpointPayload, err := json.Marshal(map[string]any{
 		"run_id":        request.Lease.RunID,
@@ -485,12 +499,12 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		"runtime_abi":   runtimeInfo.ABI,
 	})
 	if err != nil {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, fmt.Errorf("encode checkpoint event: %w", err)
+		return db.MarkRunSuspensionCheckpointReadyParams{}, fmt.Errorf("encode checkpoint event: %w", err)
 	}
-	return db.MarkWaitpointCheckpointDurableReadyParams{
+	return db.MarkRunSuspensionCheckpointReadyParams{
 		OrgID:                      pgvalue.UUID(orgID),
 		RunID:                      pgvalue.UUID(leaseIDs.runID),
-		SessionID:                  pgvalue.UUID(leaseIDs.sessionID),
+		RunLeaseID:                 pgvalue.UUID(leaseIDs.runLeaseID),
 		WorkerInstanceID:           pgvalue.UUID(workerInstanceID),
 		CheckpointArtifacts:        checkpointArtifactsJSON,
 		Manifest:                   manifest,
@@ -514,7 +528,7 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		WorkspaceVolumeKind:        pgvalue.TextPtr(optionalTrimmedString(workspace.VolumeKind)),
 		ActiveDurationMs:           request.ActiveDurationMs,
 		CheckpointID:               pgvalue.UUID(checkpointID),
-		RunWaitID:                  pgvalue.UUID(runWaitID),
+		RunSuspensionID:            pgvalue.UUID(runSuspensionID),
 		WaitpointID:                pgvalue.UUID(waitpointID),
 		CheckpointPayload:          checkpointPayload,
 	}, nil
@@ -534,30 +548,6 @@ func validateCheckpointRecoveryPoint(recovery api.WorkerCheckpointRecoveryPoint,
 		return fmt.Errorf("manifest.recovery_point.runtime.config_digest must match manifest.runtime_state.config digest")
 	}
 	return nil
-}
-
-func checkpointReadyWaitpoint(waitpoint db.MarkWaitpointCheckpointDurableReadyRow) waitpointView {
-	return waitpointView{
-		ID:             waitpoint.ID,
-		RunWaitID:      waitpoint.RunWaitID,
-		OrgID:          waitpoint.OrgID,
-		RunID:          waitpoint.RunID,
-		SessionID:      waitpoint.SessionID,
-		CheckpointID:   waitpoint.CheckpointID,
-		CorrelationID:  waitpoint.CorrelationID,
-		Kind:           waitpoint.Kind,
-		Request:        waitpoint.Request,
-		DisplayText:    waitpoint.DisplayText,
-		TimeoutSeconds: waitpoint.TimeoutSeconds,
-		PolicyName:     waitpoint.PolicyName,
-		PolicySnapshot: waitpoint.PolicySnapshot,
-		Status:         waitpoint.Status,
-		ResolutionKind: waitpoint.ResolutionKind,
-		Resolution:     waitpoint.Resolution,
-		CreatedAt:      waitpoint.CreatedAt,
-		RequestedAt:    waitpoint.RequestedAt,
-		ResolvedAt:     waitpoint.ResolvedAt,
-	}
 }
 
 type checkpointRuntime struct {

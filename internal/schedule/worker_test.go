@@ -77,6 +77,82 @@ func TestEngineRepairSkipsWhenLockIsHeld(t *testing.T) {
 	}
 }
 
+func TestEngineDeferTriggerNacksWithoutConsumingAttempts(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	instanceID := uuid.Must(uuid.NewV7())
+	index := &fakeScheduleIndex{}
+	engine, err := NewEngine(nil, fakeDBTX{allowExec: true, execTag: pgconn.NewCommandTag("UPDATE 1")}, index, fakeRunCreator{}, EngineConfig{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := IndexLease{
+		Entry: IndexEntry{
+			InstanceID:  instanceID,
+			Generation:  7,
+			ScheduledAt: now.Add(-time.Minute),
+			AvailableAt: now,
+		},
+		Attempt: 2,
+	}
+	row := db.GetScheduleTriggerCandidateRow{
+		InstanceID:          pgvalue.UUID(instanceID),
+		Generation:          7,
+		NextFireAt:          pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
+		TriggerAttemptCount: 3,
+	}
+
+	if err := engine.deferTrigger(ctx, lease, row); err != nil {
+		t.Fatal(err)
+	}
+	if len(index.nacks) != 1 {
+		t.Fatalf("nacks = %d, want 1", len(index.nacks))
+	}
+	wantRetryAt := now.Add(RetryDelay(5))
+	if !index.nacks[0].retryAt.Equal(wantRetryAt) {
+		t.Fatalf("retryAt = %s, want %s", index.nacks[0].retryAt, wantRetryAt)
+	}
+	if len(index.enqueued) != 0 {
+		t.Fatalf("enqueued = %d, want 0", len(index.enqueued))
+	}
+}
+
+func TestEngineDeferTriggerAcksStaleScheduleRow(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	instanceID := uuid.Must(uuid.NewV7())
+	index := &fakeScheduleIndex{}
+	engine, err := NewEngine(nil, fakeDBTX{allowExec: true, execTag: pgconn.NewCommandTag("UPDATE 0")}, index, fakeRunCreator{}, EngineConfig{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := IndexLease{
+		Entry: IndexEntry{
+			InstanceID:  instanceID,
+			Generation:  7,
+			ScheduledAt: now.Add(-time.Minute),
+			AvailableAt: now,
+		},
+		Attempt: 1,
+	}
+	row := db.GetScheduleTriggerCandidateRow{
+		InstanceID:          pgvalue.UUID(instanceID),
+		Generation:          7,
+		NextFireAt:          pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
+		TriggerAttemptCount: 3,
+	}
+
+	if err := engine.deferTrigger(ctx, lease, row); err != nil {
+		t.Fatal(err)
+	}
+	if len(index.acks) != 1 {
+		t.Fatalf("acks = %d, want 1", len(index.acks))
+	}
+	if len(index.nacks) != 0 {
+		t.Fatalf("nacks = %d, want 0", len(index.nacks))
+	}
+}
+
 func scheduleRepairRow(instanceID uuid.UUID, generation int64, scheduledAt time.Time, retryAfter pgtype.Timestamptz) db.ListScheduleRepairEntriesRow {
 	availableAt := pgtype.Timestamptz{Time: scheduledAt.UTC(), Valid: true}
 	if retryAfter.Valid {
@@ -138,6 +214,13 @@ func (f *fakeReconcileLockGuard) Unlock(context.Context) error {
 
 type fakeScheduleIndex struct {
 	enqueued []IndexEntry
+	acks     []IndexLease
+	nacks    []fakeScheduleNack
+}
+
+type fakeScheduleNack struct {
+	lease   IndexLease
+	retryAt time.Time
 }
 
 func (f *fakeScheduleIndex) Enqueue(_ context.Context, entry IndexEntry) error {
@@ -145,15 +228,21 @@ func (f *fakeScheduleIndex) Enqueue(_ context.Context, entry IndexEntry) error {
 	return nil
 }
 
+func (f *fakeScheduleIndex) Delete(context.Context, uuid.UUID) error {
+	return nil
+}
+
 func (f *fakeScheduleIndex) Dequeue(context.Context, DequeueRequest) ([]IndexLease, error) {
 	return nil, nil
 }
 
-func (f *fakeScheduleIndex) Ack(context.Context, IndexLease) error {
+func (f *fakeScheduleIndex) Ack(_ context.Context, lease IndexLease) error {
+	f.acks = append(f.acks, lease)
 	return nil
 }
 
-func (f *fakeScheduleIndex) Nack(context.Context, IndexLease, time.Time) error {
+func (f *fakeScheduleIndex) Nack(_ context.Context, lease IndexLease, retryAt time.Time) error {
+	f.nacks = append(f.nacks, fakeScheduleNack{lease: lease, retryAt: retryAt})
 	return nil
 }
 
@@ -163,9 +252,16 @@ func (fakeRunCreator) CreateScheduleRun(context.Context, db.GetScheduleTriggerCa
 	return pgtype.UUID{}, errors.New("unexpected schedule run creation")
 }
 
-type fakeDBTX struct{}
+type fakeDBTX struct {
+	allowExec bool
+	execTag   pgconn.CommandTag
+	execErr   error
+}
 
-func (fakeDBTX) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+func (f fakeDBTX) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	if f.allowExec {
+		return f.execTag, f.execErr
+	}
 	return pgconn.CommandTag{}, errors.New("unexpected exec")
 }
 

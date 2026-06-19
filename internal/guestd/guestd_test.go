@@ -2,6 +2,7 @@ package guestd
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -24,6 +25,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/safepath"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
+	workspacepkg "github.com/helmrdotdev/helmr/internal/workspace"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestMain(m *testing.M) {
@@ -409,7 +412,7 @@ func TestRunAdapterReportsWaitHandoffControlFailure(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if event.GetWaitRequested() != nil {
+		if event.GetWaitpointRequested() != nil {
 			sawWait = true
 			continue
 		}
@@ -440,7 +443,7 @@ func TestHandleRunRejectsSourceOnlyRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	stderr, complete := readGuestdFailureEvents(t, &stream)
-	if !strings.Contains(stderr, `unsupported input stream type "workspace-artifact"`) {
+	if !strings.Contains(stderr, `unsupported runtime input type "workspace-artifact"`) {
 		t.Fatalf("stderr = %q", stderr)
 	}
 	if complete.ExitCode != 1 {
@@ -468,7 +471,7 @@ func TestHandleRunRejectsMismatchedRunIDs(t *testing.T) {
 			imageRunID:   "run-1",
 			sourceRunID:  "run-1",
 			requestRunID: "run-2",
-			want:         `run request run_id "run-2" does not match input stream run_id "run-1"`,
+			want:         `run request run_id "run-2" does not match runtime input run_id "run-1"`,
 		},
 	}
 	for _, tt := range tests {
@@ -789,7 +792,7 @@ func TestReadConnectionStartAcceptsResumeAttach(t *testing.T) {
 	if err := transport.WriteProtoFrame(&stream, &runv0.ResumeAttach{
 		CheckpointId: "checkpoint-1",
 		WaitpointId:  "waitpoint-1",
-		SessionId:    "execution-1",
+		RunLeaseId:   "execution-1",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1107,7 +1110,7 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event.GetWaitRequested() == nil {
+	if event.GetWaitpointRequested() == nil {
 		t.Fatalf("first event = %+v", event)
 	}
 	writeSuspendAndReadReady(t, originalHost, "waitpoint-1", "checkpoint-1")
@@ -1118,9 +1121,10 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := transport.WriteProtoFrame(attachedHost, &runv0.ResumeDecision{
-		WaitpointId:       "waitpoint-1",
-		Kind:              "completed",
-		ResumePayloadJson: "{}",
+		WaitpointId:        "waitpoint-1",
+		Kind:               "completed",
+		DataJson:           "{}",
+		RequireConsumedAck: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1189,14 +1193,14 @@ func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), registry)
 	}()
 
-	readWaitRequested(t, originalHost)
+	readWaitpointRequested(t, originalHost)
 	writeSuspendAndReadReady(t, originalHost, "waitpoint-1", "checkpoint-1")
 	if err := registry.attach("waitpoint-1", "checkpoint-1", firstGuest); err != nil {
 		t.Fatal(err)
 	}
 	writeDecisionAndReadAck(t, firstHost, "waitpoint-1", "completed")
 
-	readWaitRequested(t, firstHost)
+	readWaitpointRequested(t, firstHost)
 	writeSuspendAndReadReady(t, firstHost, "waitpoint-2", "checkpoint-2")
 	if err := registry.attach("waitpoint-2", "checkpoint-2", secondGuest); err != nil {
 		t.Fatal(err)
@@ -1240,42 +1244,170 @@ func TestReadResumeDecisionTimesOut(t *testing.T) {
 	}
 }
 
-func readWaitRequested(t *testing.T, conn io.Reader) {
+func TestRunAdapterForwardsAggregateWaitpointsBeforeCheckpointReady(t *testing.T) {
+	t.Setenv("HELMR_GUESTD_HELPER", "wait-all-control")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	originalGuest, originalHost := net.Pipe()
+	defer originalGuest.Close()
+	defer originalHost.Close()
+	attachedGuest, attachedHost := net.Pipe()
+	defer attachedGuest.Close()
+	defer attachedHost.Close()
+
+	deadline := time.Now().Add(15 * time.Second)
+	for _, conn := range []net.Conn{originalHost, attachedHost} {
+		if err := conn.SetDeadline(deadline); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	registry := newWaitingRunRegistry()
+	tempDir, runner := guestAdapterHelperRunner(t, "wait-all-control")
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runAdapter(ctx, originalGuest, Config{
+			AdapterRuntimePath: runner,
+			AdapterPath:        "-test.run=TestGuestAdapterHelperProcess",
+		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), registry)
+	}()
+
+	first := readWaitpointRequestedEvent(t, originalHost)
+	if first.CorrelationId != "aggregate-1" || first.Ordinal != 0 || first.AggregateCount != 2 {
+		t.Fatalf("first wait = %+v", first)
+	}
+	if err := transport.WriteProtoFrame(originalHost, &runv0.CheckpointPauseRequest{
+		WaitpointId:  "waitpoint-1",
+		CheckpointId: "checkpoint-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	second := readWaitpointRequestedEvent(t, originalHost)
+	if second.CorrelationId != "aggregate-1" || second.Ordinal != 1 || second.AggregateCount != 2 {
+		t.Fatalf("second wait = %+v", second)
+	}
+	readCheckpointPauseReady(t, originalHost, "waitpoint-1", "checkpoint-1")
+	if err := registry.attach("waitpoint-1", "checkpoint-1", attachedGuest); err != nil {
+		t.Fatal(err)
+	}
+	writeDecisionAndReadAck(t, attachedHost, "waitpoint-1", "waitpoints")
+
+	var completed bool
+	for !completed {
+		event, err := transport.ReadRunEvent(attachedHost)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result := event.GetTaskResult(); result != nil {
+			completed = true
+			if result.ExitCode != 0 {
+				t.Fatalf("exit code = %d message=%v", result.ExitCode, result.ErrorMessage)
+			}
+		}
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestForwardCheckpointControlEventsRejectsIncompleteAggregate(t *testing.T) {
+	controlEvents := make(chan adapterControlEvent)
+	close(controlEvents)
+	err := forwardCheckpointControlEvents(context.Background(), controlEvents, nil, &runv0.WaitpointRequested{
+		CorrelationId:  "aggregate-1",
+		Kind:           "timer",
+		ParamsJson:     `{}`,
+		Ordinal:        0,
+		AggregateCount: 2,
+	})
+	if err == nil || !strings.Contains(err.Error(), "before aggregate wait completed") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAdapterRunStreamTimesOutWaitingForResumeConsumed(t *testing.T) {
+	var out bytes.Buffer
+	stream := newAdapterRunStream(&out)
+	stream.resumeAckPending = true
+	stream.resumeAckWaitpoint = "waitpoint-1"
+	stream.resumeAckDeadline = time.Now().Add(-time.Millisecond)
+	err := stream.writeEvent(&runv0.RunEvent{
+		Event: &runv0.RunEvent_LogEntry{LogEntry: "blocked"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "was not acknowledged before timeout") {
+		t.Fatalf("err = %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("event was written despite timed out resume ack gate: %d bytes", out.Len())
+	}
+}
+
+func readWaitpointRequested(t *testing.T, conn io.Reader) {
+	t.Helper()
+	_ = readWaitpointRequestedEvent(t, conn)
+}
+
+func readWaitpointRequestedEvent(t *testing.T, conn io.Reader) *runv0.WaitpointRequested {
 	t.Helper()
 	for {
 		event, err := transport.ReadRunEvent(conn)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if event.GetWaitRequested() != nil {
-			return
+		if wait := event.GetWaitpointRequested(); wait != nil {
+			return wait
 		}
 	}
 }
 
 func writeSuspendAndReadReady(t *testing.T, conn io.ReadWriter, waitpointID string, checkpointID string) {
 	t.Helper()
-	if err := transport.WriteProtoFrame(conn, &runv0.SuspendForCheckpoint{
+	if err := transport.WriteProtoFrame(conn, &runv0.CheckpointPauseRequest{
 		WaitpointId:  waitpointID,
 		CheckpointId: checkpointID,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	header, bodyLen, err := transport.ReadStreamFrameHeader(conn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if header.Type != transport.StreamTypeCheckpointPauseReady || header.WaitpointID != waitpointID || header.CheckpointID != checkpointID || bodyLen != 0 {
-		t.Fatalf("pause ready = %+v bodyLen=%d, want waitpoint=%s checkpoint=%s", header, bodyLen, waitpointID, checkpointID)
+	readCheckpointPauseReady(t, conn, waitpointID, checkpointID)
+}
+
+func readCheckpointPauseReady(t *testing.T, conn io.Reader, waitpointID string, checkpointID string) {
+	t.Helper()
+	reader := bufio.NewReader(conn)
+	for {
+		prefix, err := reader.Peek(4)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if transport.IsStreamFramePrefix(prefix) {
+			header, bodyLen, err := transport.ReadStreamFrameHeader(reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if header.Type != transport.StreamTypeCheckpointPauseReady || header.WaitpointID != waitpointID || header.CheckpointID != checkpointID || bodyLen != 0 {
+				t.Fatalf("pause ready = %+v bodyLen=%d, want waitpoint=%s checkpoint=%s", header, bodyLen, waitpointID, checkpointID)
+			}
+			return
+		}
+		body, err := transport.ReadMessageFrame(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var event runv0.RunEvent
+		if err := proto.Unmarshal(body, &event); err != nil {
+			t.Fatalf("unmarshal interleaved run event: %v", err)
+		}
 	}
 }
 
 func writeDecisionAndReadAck(t *testing.T, conn io.ReadWriter, waitpointID string, kind string) {
 	t.Helper()
 	if err := transport.WriteProtoFrame(conn, &runv0.ResumeDecision{
-		WaitpointId:       waitpointID,
-		Kind:              kind,
-		ResumePayloadJson: "{}",
+		WaitpointId:        waitpointID,
+		Kind:               kind,
+		DataJson:           "{}",
+		RequireConsumedAck: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1409,17 +1541,48 @@ func runGuestAdapterHelperProcess() int {
 			return 2
 		}
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
-			Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
+			Event: &runv0.RunEvent_WaitpointRequested{WaitpointRequested: &runv0.WaitpointRequested{
 				CorrelationId: "approval-1",
-				Kind:          "human",
-				RequestJson:   `{}`,
-				DisplayText:   new("approve"),
+				Kind:          "token",
+				ParamsJson:    `{}`,
 			}},
 		}); err != nil {
 			return 2
 		}
 		_ = control.Close()
 		return 0
+	case "wait-all-control":
+		control, err := helperControlWriter()
+		if err != nil {
+			return 2
+		}
+		for ordinal, kind := range []string{"timer", "channel"} {
+			if ordinal == 1 {
+				time.Sleep(200 * time.Millisecond)
+			}
+			if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+				Event: &runv0.RunEvent_WaitpointRequested{WaitpointRequested: &runv0.WaitpointRequested{
+					CorrelationId:  "aggregate-1",
+					Kind:           kind,
+					ParamsJson:     `{}`,
+					Ordinal:        uint32(ordinal),
+					AggregateCount: 2,
+				}},
+			}); err != nil {
+				_ = control.Close()
+				return 2
+			}
+		}
+		var decision runv0.ResumeDecision
+		if err := transport.ReadProtoFrame(os.Stdin, &decision); err != nil {
+			_ = control.Close()
+			return 2
+		}
+		if err := writeHelperResumeConsumed(control, decision.WaitpointId); err != nil {
+			_ = control.Close()
+			return 2
+		}
+		return writeHelperTaskResult(control, 0, "")
 	default:
 		return 2
 	}
@@ -1428,11 +1591,10 @@ func runGuestAdapterHelperProcess() int {
 		return 2
 	}
 	if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
-		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
+		Event: &runv0.RunEvent_WaitpointRequested{WaitpointRequested: &runv0.WaitpointRequested{
 			CorrelationId: "approval-1",
-			Kind:          "human",
-			RequestJson:   `{}`,
-			DisplayText:   new("approve"),
+			Kind:          "token",
+			ParamsJson:    `{}`,
 		}},
 	}); err != nil {
 		return 2
@@ -1441,14 +1603,16 @@ func runGuestAdapterHelperProcess() int {
 	if err := transport.ReadProtoFrame(os.Stdin, &decision); err != nil {
 		return 2
 	}
+	if err := writeHelperResumeConsumed(control, decision.WaitpointId); err != nil {
+		return 2
+	}
 	fmt.Println("after-first")
 	if os.Getenv("HELMR_GUESTD_HELPER") == "resume-handoff-twice" {
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
-			Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
+			Event: &runv0.RunEvent_WaitpointRequested{WaitpointRequested: &runv0.WaitpointRequested{
 				CorrelationId: "message-1",
-				Kind:          "human",
-				RequestJson:   `{}`,
-				DisplayText:   new("reply"),
+				Kind:          "token",
+				ParamsJson:    `{}`,
 			}},
 		}); err != nil {
 			return 2
@@ -1456,11 +1620,22 @@ func runGuestAdapterHelperProcess() int {
 		if err := transport.ReadProtoFrame(os.Stdin, &decision); err != nil {
 			return 2
 		}
+		if err := writeHelperResumeConsumed(control, decision.WaitpointId); err != nil {
+			return 2
+		}
 		fmt.Println("after-second")
 		return writeHelperTaskResult(control, 0, "")
 	}
 	fmt.Println("after-resume")
 	return writeHelperTaskResult(control, 0, "")
+}
+
+func writeHelperResumeConsumed(control io.Writer, waitpointID string) error {
+	return transport.WriteProtoFrame(control, &runv0.RunEvent{
+		Event: &runv0.RunEvent_ResumeConsumed{ResumeConsumed: &runv0.ResumeConsumed{
+			WaitpointId: waitpointID,
+		}},
+	})
 }
 
 func writeHelperTaskResult(control io.WriteCloser, exitCode int32, outputJSON string) int {
@@ -1901,6 +2076,73 @@ func TestApplySecretsExplicitOwnerParentsRemainTraversable(t *testing.T) {
 	}
 }
 
+func TestWorkspaceArtifactExcludesWorkspaceRelativeSecrets(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "public.txt"), []byte("public"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{}
+	secretPaths, err := applySecretsWithWorkspacePaths(root, workspace, &runv0.RunTaskRequest{
+		Secrets: []*runv0.SecretInject{
+			{
+				Name:       "file-token",
+				ValueBytes: []byte("file-secret"),
+				Placement: &runv0.Placement{Kind: &runv0.Placement_File{File: &runv0.FilePlacement{
+					Path: "secrets/token",
+				}}},
+			},
+			{
+				Name:       "dir-token",
+				ValueBytes: []byte(""),
+				Placement: &runv0.Placement{Kind: &runv0.Placement_Dir{Dir: &runv0.DirPlacement{
+					Path: "secret-dir",
+				}}},
+			},
+		},
+	}, nil, &env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "secret-dir", "nested.txt"), []byte("dir-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, cleanup, err := workspacepkg.CreateWorkspaceArtifactFromRootWithExcludes(
+		workspace,
+		t.TempDir(),
+		workspace,
+		workspaceSecretExcludePatterns(workspace, secretPaths),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	extracted := t.TempDir()
+	file, err := os.Open(artifact.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.ExtractTar(file, extracted); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readText(t, filepath.Join(extracted, "public.txt")); got != "public" {
+		t.Fatalf("public file = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(extracted, "secrets", "token")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("workspace file secret leaked into artifact: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(extracted, "secret-dir")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("workspace dir secret leaked into artifact: %v", err)
+	}
+}
+
 func TestApplySecretsResolvesRootOwnerWithoutPasswd(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires chown")
@@ -2099,6 +2341,14 @@ func TestApplySecretsRejectsMalformedPlacements(t *testing.T) {
 			want: "dir placement path is required",
 		},
 		{
+			name: "workspace root dir path",
+			secret: &runv0.SecretInject{
+				Name:      "token",
+				Placement: &runv0.Placement{Kind: &runv0.Placement_Dir{Dir: &runv0.DirPlacement{Path: "/workspace"}}},
+			},
+			want: "dir placement path must not target the workspace root",
+		},
+		{
 			name:   "missing kind",
 			secret: &runv0.SecretInject{Name: "token", Placement: &runv0.Placement{}},
 			want:   "placement is required",
@@ -2200,9 +2450,10 @@ func TestCopyTreeRejectsDestinationSymlinkParent(t *testing.T) {
 
 func testRunTaskRequest() *runv0.RunTaskRequest {
 	return &runv0.RunTaskRequest{
-		TaskId:      "task",
-		RunId:       "run",
-		PayloadJson: "{}",
+		TaskId:        "task",
+		RunId:         "run",
+		TaskSessionId: "session",
+		PayloadJson:   "{}",
 		Workspace: &runv0.RunTaskWorkspace{
 			Path:        "/workspace",
 			ProjectPath: "/workspace",

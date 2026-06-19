@@ -24,8 +24,8 @@ type ExpirySweepStore interface {
 }
 
 type ExpirySweepOrgStore interface {
-	RequeueExpiredLeasedRunExecutionSessions(ctx context.Context, orgID pgtype.UUID) error
-	FailExpiredRunningRunExecutionSessions(ctx context.Context, orgID pgtype.UUID) error
+	RequeueExpiredLeasedRunLeases(ctx context.Context, orgID pgtype.UUID) error
+	FailExpiredRunningRunLeases(ctx context.Context, orgID pgtype.UUID) error
 	ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
 	ExpireDuePendingWaitpoints(ctx context.Context, orgID pgtype.UUID) error
 }
@@ -124,9 +124,9 @@ func (s *ExpirySweeper) Run(ctx context.Context) error {
 				return ctx.Err()
 			}
 			consecutiveFailures++
-			s.log.Warn("sweep expired sessions failed", "error", err, "consecutive_failures", consecutiveFailures)
+			s.log.Warn("sweep expired run leases failed", "error", err, "consecutive_failures", consecutiveFailures)
 			if consecutiveFailures >= s.failureLimit {
-				return fmt.Errorf("sweep expired sessions failed %d consecutive times: %w", consecutiveFailures, err)
+				return fmt.Errorf("sweep expired run leases failed %d consecutive times: %w", consecutiveFailures, err)
 			}
 		} else {
 			consecutiveFailures = 0
@@ -186,10 +186,10 @@ func sweepOnce(ctx context.Context, store ExpirySweepStore, orgLimit int32) erro
 }
 
 func SweepExpiredForOrg(ctx context.Context, store ExpirySweepOrgStore, orgID pgtype.UUID) error {
-	if err := store.RequeueExpiredLeasedRunExecutionSessions(ctx, orgID); err != nil {
+	if err := store.RequeueExpiredLeasedRunLeases(ctx, orgID); err != nil {
 		return err
 	}
-	if err := store.FailExpiredRunningRunExecutionSessions(ctx, orgID); err != nil {
+	if err := store.FailExpiredRunningRunLeases(ctx, orgID); err != nil {
 		return err
 	}
 	if err := store.ExpireQueuedRuns(ctx, orgID); err != nil {

@@ -197,7 +197,7 @@ VALUES (
 )
 ON CONFLICT (token_hash) DO UPDATE
    SET revoked_at = worker_bootstrap_tokens.revoked_at
-RETURNING id, token_hash, created_at, last_used_at, last_used_by_worker_instance_id, revoked_at, worker_group_id
+RETURNING id, token_hash, worker_group_id, created_at, last_used_at, last_used_by_worker_instance_id, revoked_at
 `
 
 type UpsertWorkerBootstrapTokenParams struct {
@@ -212,11 +212,11 @@ func (q *Queries) UpsertWorkerBootstrapToken(ctx context.Context, arg UpsertWork
 	err := row.Scan(
 		&i.ID,
 		&i.TokenHash,
+		&i.WorkerGroupID,
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.LastUsedByWorkerInstanceID,
 		&i.RevokedAt,
-		&i.WorkerGroupID,
 	)
 	return i, err
 }

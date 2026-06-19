@@ -32,8 +32,6 @@ func runCommand() *cobra.Command {
 	var payloadPairs []string
 	var projectID string
 	var environmentID string
-	var deploymentID string
-	var version string
 	var queueName string
 	var concurrencyKey string
 	var priority int32
@@ -49,7 +47,7 @@ func runCommand() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "run TASK",
-		Short: "Create a remote run.",
+		Short: "Start a task session.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			payload, err := parsePayload(payloadFile, payloadJSON, payloadPairs)
@@ -81,9 +79,7 @@ func runCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			options := api.CreateRunOptions{
-				DeploymentID:       strings.TrimSpace(deploymentID),
-				Version:            strings.TrimSpace(version),
+			options := api.TaskStartOptions{
 				ConcurrencyKey:     strings.TrimSpace(concurrencyKey),
 				Priority:           priority,
 				TTL:                strings.TrimSpace(ttl),
@@ -97,10 +93,9 @@ func runCommand() *cobra.Command {
 			if queueName = strings.TrimSpace(queueName); queueName != "" {
 				options.Queue = &api.RunQueueOption{Name: queueName}
 			}
-			run, err := control.CreateRun(cmd.Context(), api.CreateRunRequest{
+			started, err := control.StartTask(cmd.Context(), args[0], api.TaskStartRequest{
 				ProjectID:     scope.ProjectID,
 				EnvironmentID: scope.EnvironmentID,
-				TaskID:        args[0],
 				Payload:       payload,
 				Options:       options,
 			})
@@ -108,9 +103,9 @@ func runCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), run)
+				return format.JSON(cmd.OutOrStdout(), started)
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), run.ID)
+			fmt.Fprintln(cmd.OutOrStdout(), started.Session.ID)
 			return nil
 		},
 	}
@@ -119,8 +114,6 @@ func runCommand() *cobra.Command {
 	cmd.Flags().StringArrayVar(&payloadPairs, "payload", nil, "Add a top-level string payload field as KEY=VALUE.")
 	cmd.Flags().StringVarP(&projectID, "project", "p", "", "Project slug or ID for this run.")
 	cmd.Flags().StringVarP(&environmentID, "env", "e", "", "Environment slug or ID for this run.")
-	cmd.Flags().StringVar(&deploymentID, "deployment", "", "Deployment ID to pin for this run.")
-	cmd.Flags().StringVar(&version, "version", "", "Deployment version to pin for this run.")
 	cmd.Flags().StringVar(&queueName, "queue", "", "Queue name for this run.")
 	cmd.Flags().StringVar(&concurrencyKey, "concurrency-key", "", "Concurrency key for this run.")
 	cmd.Flags().Int32Var(&priority, "priority", 0, "Run priority offset in seconds.")
@@ -134,7 +127,6 @@ func runCommand() *cobra.Command {
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
 	cmd.Flags().StringVar(&idempotencyKeyTTL, "idempotency-key-ttl", "", "Duration to retain the idempotency key, for example 30d or 24h.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	cmd.MarkFlagsMutuallyExclusive("deployment", "version")
 	cmd.MarkFlagsMutuallyExclusive("metadata-file", "metadata-json")
 	cmd.MarkFlagsMutuallyExclusive("retry-file", "retry-json")
 	return cmd
@@ -177,71 +169,6 @@ func cancelCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "Force cancellation without waiting for graceful shutdown.")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	return cmd
-}
-
-func replayCommand() *cobra.Command {
-	var version string
-	var payloadFile string
-	var payloadJSON string
-	var payloadPairs []string
-	var metadataFile string
-	var metadataJSON string
-	var tags []string
-	var reason string
-	var idempotencyKey string
-	var jsonOutput bool
-	cmd := &cobra.Command{
-		Use:   "replay RUN",
-		Short: "Replay a run.",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			payload, err := parseOptionalPayload(payloadFile, payloadJSON, payloadPairs)
-			if err != nil {
-				return err
-			}
-			metadata, err := parseOptionalJSON(metadataFile, metadataJSON, "--metadata")
-			if err != nil {
-				return err
-			}
-			control, err := controlClient(cmd)
-			if err != nil {
-				return err
-			}
-			scope, err := resolveRunScope(cmd.Context(), control, args[0])
-			if err != nil {
-				return err
-			}
-			response, err := control.ReplayRun(cmd.Context(), args[0], api.ReplayRunRequest{
-				Version:        strings.TrimSpace(version),
-				Payload:        payload,
-				Reason:         strings.TrimSpace(reason),
-				IdempotencyKey: strings.TrimSpace(idempotencyKey),
-				Metadata:       metadata,
-				Tags:           optionalTags(tags),
-			}, scope)
-			if err != nil {
-				return err
-			}
-			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), response.Run.ID)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&version, "version", "", "Replay version: original, latest, or a deployment version.")
-	cmd.Flags().StringVar(&payloadFile, "payload-file", "", "Read payload JSON from a file.")
-	cmd.Flags().StringVar(&payloadJSON, "payload-json", "", "Inline payload JSON literal.")
-	cmd.Flags().StringArrayVar(&payloadPairs, "payload", nil, "Add a top-level string payload field as KEY=VALUE.")
-	cmd.Flags().StringVar(&metadataFile, "metadata-file", "", "Read metadata JSON from a file.")
-	cmd.Flags().StringVar(&metadataJSON, "metadata-json", "", "Inline metadata JSON literal.")
-	cmd.Flags().StringArrayVar(&tags, "tag", nil, "Replace run tags. Repeat for multiple tags.")
-	cmd.Flags().StringVar(&reason, "reason", "", "Reason for the replay.")
-	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	cmd.MarkFlagsMutuallyExclusive("payload-file", "payload-json", "payload")
-	cmd.MarkFlagsMutuallyExclusive("metadata-file", "metadata-json")
 	return cmd
 }
 
@@ -528,13 +455,6 @@ func parsePayload(file string, raw string, pairs []string) (json.RawMessage, err
 	return payload, nil
 }
 
-func parseOptionalPayload(file string, raw string, pairs []string) (json.RawMessage, error) {
-	if strings.TrimSpace(file) == "" && strings.TrimSpace(raw) == "" && len(pairs) == 0 {
-		return nil, nil
-	}
-	return parsePayload(file, raw, pairs)
-}
-
 func parseOptionalJSON(file string, raw string, label string) (json.RawMessage, error) {
 	file = strings.TrimSpace(file)
 	raw = strings.TrimSpace(raw)
@@ -571,13 +491,6 @@ func cleanTags(tags []string) []string {
 		}
 	}
 	return cleaned
-}
-
-func optionalTags(tags []string) []string {
-	if tags == nil {
-		return nil
-	}
-	return cleanTags(tags)
 }
 
 func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, cursor int64, scope client.RunScopeOptions) error {

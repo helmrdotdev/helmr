@@ -303,6 +303,27 @@ SELECT *
  ORDER BY created_at ASC;
 
 -- name: CreateDeploymentTask :one
+WITH catalog_task AS (
+    INSERT INTO tasks (
+        org_id,
+        project_id,
+        environment_id,
+        task_id,
+        archived_at,
+        updated_at
+    ) VALUES (
+        sqlc.arg(org_id),
+        sqlc.arg(project_id),
+        sqlc.arg(environment_id),
+        sqlc.arg(task_id),
+        NULL,
+        now()
+    )
+    ON CONFLICT (org_id, project_id, environment_id, task_id)
+    DO UPDATE SET archived_at = NULL,
+                  updated_at = now()
+    RETURNING task_id
+)
 INSERT INTO deployment_tasks (
     id,
     org_id,
@@ -327,7 +348,7 @@ INSERT INTO deployment_tasks (
     ttl,
     max_duration_seconds,
     retry_policy
-) VALUES (
+) SELECT
     sqlc.arg(id),
     sqlc.arg(org_id),
     sqlc.arg(project_id),
@@ -351,7 +372,7 @@ INSERT INTO deployment_tasks (
     sqlc.arg(ttl),
     sqlc.arg(max_duration_seconds),
     coalesce(sqlc.arg(retry_policy)::jsonb, 'false'::jsonb)
-)
+  FROM catalog_task
 RETURNING *;
 
 -- name: GetCurrentDeployment :one

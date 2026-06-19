@@ -1,8 +1,8 @@
-import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { cache, image, logger, sandbox, source, task } from "@helmr/sdk"
 import { z } from "zod"
 
 const dependencyInputs = source.directory(".", {
-  ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
+  ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json", "!vendor", "!vendor/**"],
 })
 
 const base = image("helmr-secret-smoke")
@@ -43,7 +43,7 @@ export const secretSmoke = task({
   payload,
   run: async (input, ctx) => {
     const secrets = Object.fromEntries(secretNames.map((name) => [name, secretFingerprint(name)]))
-    ctx.log.info({
+    logger.info({
       phase: "secret-smoke",
       scenario: input.scenario,
       expectedEnvironment: input.expectedEnvironment,

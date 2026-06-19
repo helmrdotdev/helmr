@@ -47,11 +47,14 @@ type APIKeyPermissionGrant struct {
 type APIKeyScope string
 
 const (
-	APIKeyScopeRunsCreate        APIKeyScope = "runs:create"
-	APIKeyScopeRunsRead          APIKeyScope = "runs:read"
-	APIKeyScopeRunsManage        APIKeyScope = "runs:manage"
-	APIKeyScopeWaitpointsRespond APIKeyScope = "waitpoints:respond"
-	APIKeyScopeWaitpointPolicies APIKeyScope = "waitpoint-policies:manage"
-	APIKeyScopeSecretsWrite      APIKeyScope = "secrets:write"
-	APIKeyScopeTasksDeploy       APIKeyScope = "tasks:deploy"
+	APIKeyScopeRunsCreate              APIKeyScope = "runs:create"
+	APIKeyScopeRunsRead                APIKeyScope = "runs:read"
+	APIKeyScopeRunsManage              APIKeyScope = "runs:manage"
+	APIKeyScopeRunWaitpointsRead       APIKeyScope = "run-waitpoints:read"
+	APIKeyScopeWaitpointTokensCreate   APIKeyScope = "waitpoint-tokens:create"
+	APIKeyScopeWaitpointTokensRead     APIKeyScope = "waitpoint-tokens:read"
+	APIKeyScopeWaitpointTokensComplete APIKeyScope = "waitpoint-tokens:complete"
+	APIKeyScopeChannelsWrite           APIKeyScope = "channels:write"
+	APIKeyScopeSecretsWrite            APIKeyScope = "secrets:write"
+	APIKeyScopeTasksDeploy             APIKeyScope = "tasks:deploy"
 )

@@ -14,11 +14,11 @@ import { AuthGitHubCallback } from "./routes/auth-github-callback";
 import { AuthMagicLinkCallback } from "./routes/auth-magic-link-callback";
 import { Runs } from "./routes/runs";
 import { RunDetail } from "./routes/run-detail";
+import { SessionDetail } from "./routes/session-detail";
 import { Schedules } from "./routes/schedules";
 import { Tasks } from "./routes/tasks";
-import { Approvals } from "./routes/approvals";
+import { Waitpoints } from "./routes/waitpoints";
 import { ApiKeys } from "./routes/api-keys";
-import { WaitpointPolicies } from "./routes/waitpoint-policies";
 import { Secrets } from "./routes/secrets";
 import { Members } from "./routes/members";
 import { Projects } from "./routes/projects";
@@ -168,7 +168,7 @@ function AppShell(props: { children?: JSX.Element }) {
           <TabLink href="/tasks">Tasks</TabLink>
           <TabLink href="/runs" matchPrefix>Runs</TabLink>
           <TabLink href="/schedules">Schedules</TabLink>
-          <TabLink href="/approvals">Approvals</TabLink>
+          <TabLink href="/waitpoints">Waitpoints</TabLink>
           <TabLink href="/settings/projects" activePrefix="/settings">Settings</TabLink>
         </nav>
         <div class={"flex items-center gap-2"}>
@@ -219,9 +219,10 @@ export function App() {
 
       <Route path="/runs" component={wrap(Runs)} />
       <Route path="/runs/:id" component={wrap(RunDetail)} />
+      <Route path="/sessions/:id" component={wrap(SessionDetail)} />
       <Route path="/schedules" component={wrap(Schedules)} />
       <Route path="/tasks" component={wrap(Tasks)} />
-      <Route path="/approvals" component={wrap(Approvals)} />
+      <Route path="/waitpoints" component={wrap(Waitpoints)} />
       <Route path="/projects/new" component={() => <RequireAuth allowOnboarding><ProjectNew /></RequireAuth>} />
 
       <Route path="/settings" component={() => <Navigate href="/settings/projects" />} />
@@ -229,7 +230,6 @@ export function App() {
       <Route path="/settings/environments" component={wrapSettings(Environments)} />
       <Route path="/settings/members" component={wrapSettings(Members)} />
       <Route path="/settings/api-keys" component={wrapSettings(ApiKeys)} />
-      <Route path="/settings/waitpoint-policies" component={wrapSettings(WaitpointPolicies)} />
       <Route path="/settings/secrets" component={wrapSettings(Secrets)} />
     </Router>
   );

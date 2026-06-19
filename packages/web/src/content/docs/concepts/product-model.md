@@ -8,7 +8,7 @@ order: 100
 
 # Product Model
 
-Helmr organizes agent execution around projects, environments, deployments, workspaces, schedules, runs, waitpoints, and secrets.
+Helmr organizes agent execution around projects, environments, deployments, task sessions, workspaces, schedules, runs, waitpoints, waitpoint tokens, session channels, metadata, and secrets.
 
 | Object | Meaning |
 | --- | --- |
@@ -20,10 +20,13 @@ Helmr organizes agent execution around projects, environments, deployments, work
 | Task project | A source directory with `helmr.config.ts` and TypeScript task modules. |
 | Deployment | An immutable versioned upload of indexed task definitions. One current deployment pointer is used per project environment, and a deployment can contain multiple tasks. |
 | Task | A TypeScript unit of work identified by `task_id`. It declares a sandbox, optional secrets, max duration, and run logic. |
-| Workspace | The empty writable filesystem mounted for a run. |
-| Schedule | A cron definition that creates runs for a deployed task with generated schedule metadata and stored run options. |
+| Workspace | The writable filesystem state carried by a task session and mounted for its current run. |
+| Task session | The durable work context that owns workspace state, channel records, and the ordered run history for a task start. |
+| Schedule | A cron definition that starts task sessions for a deployed task with generated schedule metadata and stored run options. |
 | Run | One execution of a deployment task with payload, task-declared secrets, workspace state, and pinned deployment metadata. |
-| Waitpoint | A pause in a run for approval or operator input. |
+| Waitpoint | A durable pause in a run for time or external completion. |
+| Waitpoint token | A scoped capability that can complete a token waitpoint. |
+| Session channel | A named input or output lane for session-owned records. |
 | Secret | An encrypted value stored by name and bound to a declared task secret at run time. |
 
 ## Scope
@@ -38,5 +41,5 @@ Helmr keeps separate version axes for separate contracts:
 
 - API surface version: clients send `Helmr-API-Version` with a fixed date value compiled into the CLI, SDK, or console build. The control plane echoes the effective API version and rejects unsupported values.
 - Deployment version: every deploy creates a new immutable code snapshot for a project environment. Content hashes remain artifact integrity metadata, but they are not used as the deployment version identity.
-- Worker protocol version: workers advertise a wire protocol and supported protocol set. The control plane leases work only when the worker supports the current protocol.
+- Worker protocol version: workers advertise their active wire protocol. The control plane leases work only when the worker protocol matches the deployment's required protocol.
 - Provenance versions: deployments and runs record CLI, SDK, bundle format, and protocol metadata for debugging and audit. These values are not authorization inputs.

@@ -1,5 +1,6 @@
 import {
   parseTaskPayload,
+  validateChannelName,
   validateRetryPolicy,
   type AnyTask,
   type NoPayload,
@@ -7,9 +8,9 @@ import {
   type TaskOutput,
   type TaskRunOptions,
   type TaskSecrets,
-  type TaskTriggerPayload,
+  type TaskStartPayload,
 } from "../internal"
-import { runIdempotencyRequestFields } from "../idempotency"
+import { taskStartIdempotencyRequestFields } from "../idempotency"
 import { readOptionalMaxDurationSeconds } from "../schema/task"
 import { AuthError, TimeoutError, UnsupportedTransportError } from "./errors"
 import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER, HELMR_SDK_VERSION, HELMR_SDK_VERSION_HEADER } from "../version"
@@ -18,7 +19,7 @@ import {
   type CancelRunOptions,
   type ListRunEventsOptions,
   type ListRunsOptions,
-  type PendingHumanWaitpoint,
+  type PendingWaitpoint,
   type PendingWaitpointResponse,
   type RetrieveRunOptions,
   type RunHandle,
@@ -27,11 +28,8 @@ import {
   type RunEventRecordPage,
   type RunSnapshot,
   type RunSummary,
-  type RunWaitOptions,
-  type ReplayRunOptions,
+  type RunWaitpointOptions,
   type SubscribeRunEventsOptions,
-  type WaitpointRespondOptions,
-  type WaitpointRef,
   isTerminalRunStatus,
   pendingWaitpointFromResponse,
   runHandle,
@@ -42,42 +40,215 @@ import {
 const MAX_SSE_BUFFER_CHARS = 1024 * 1024
 const RUN_EVENT_RECONNECT_DELAY_MS = 1000
 const RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS = 100
+const TASK_START_PENDING_MAX_WAIT_MS = 10_000
+const TASK_START_PENDING_DEFAULT_RETRY_MS = 250
 
 export interface HelmrClientOptions {
   readonly url?: string
   readonly apiKey?: string
 }
 
-export type TaskTriggerOptions<TSecrets extends SecretDecls> = TaskRunOptions<TSecrets>
+export type TaskStartOptions<TSecrets extends SecretDecls> = TaskRunOptions<TSecrets> & {
+  readonly projectId?: string
+  readonly environmentId?: string
+  readonly externalId?: string
+  readonly expiresAt?: string | Date
+}
+export type TaskStartAndWaitOptions<TSecrets extends SecretDecls> = TaskStartOptions<TSecrets> & {
+  readonly timeoutSeconds?: number
+}
 
-export type TasksTriggerArgs<TTask extends AnyTask> =
-  [TaskTriggerPayload<TTask>] extends [NoPayload]
-    ? [id: string, opts: TaskTriggerOptions<TaskSecrets<TTask>>]
-    : [id: string, payload: TaskTriggerPayload<TTask>, opts: TaskTriggerOptions<TaskSecrets<TTask>>]
+export type DirectTaskStartArgs<TTask extends AnyTask> =
+  [TaskStartPayload<TTask>] extends [NoPayload]
+    ? [opts: TaskStartOptions<TaskSecrets<TTask>>]
+    : [payload: TaskStartPayload<TTask>, opts: TaskStartOptions<TaskSecrets<TTask>>]
 
-export type DirectTaskTriggerArgs<TTask extends AnyTask> =
-  [TaskTriggerPayload<TTask>] extends [NoPayload]
-    ? [opts: TaskTriggerOptions<TaskSecrets<TTask>>]
-    : [payload: TaskTriggerPayload<TTask>, opts: TaskTriggerOptions<TaskSecrets<TTask>>]
+export type TasksStartArgs<TTask extends AnyTask> =
+  [TaskStartPayload<TTask>] extends [NoPayload]
+    ? [id: string, opts: TaskStartOptions<TaskSecrets<TTask>>]
+    : [id: string, payload: TaskStartPayload<TTask>, opts: TaskStartOptions<TaskSecrets<TTask>>]
 
-export const triggerTaskClientMethod = Symbol.for("helmr.sdk.client.triggerTask")
+export type TasksStartAndWaitArgs<TTask extends AnyTask> =
+  [TaskStartPayload<TTask>] extends [NoPayload]
+    ? [id: string, opts: TaskStartAndWaitOptions<TaskSecrets<TTask>>]
+    : [id: string, payload: TaskStartPayload<TTask>, opts: TaskStartAndWaitOptions<TaskSecrets<TTask>>]
 
-export interface WaitpointsApi {
-  readonly create: (opts: WaitpointCreateOptions) => Promise<Waitpoint>
-  readonly respond: {
-    (target: PendingHumanWaitpoint | WaitpointRef, opts?: WaitpointRespondOptions): Promise<void>
-    (waitpointId: string, opts?: WaitpointRespondOptions): Promise<void>
-  }
-  readonly tokens: {
-    readonly create: {
-      (target: PendingHumanWaitpoint | WaitpointRef, opts?: WaitpointTokenCreateOptions): Promise<WaitpointResponseToken>
-      (waitpointId: string, opts?: WaitpointTokenCreateOptions): Promise<WaitpointResponseToken>
+export const startTaskClientMethod = Symbol.for("helmr.sdk.client.startTask")
+export const waitpointTokenClientMethod = Symbol.for("helmr.sdk.client.waitpointToken")
+
+export interface RunWaitpointsApi {
+  readonly listPage: <TOutput = unknown>(idOrHandle: string | RunHandle<TOutput>, opts?: RunWaitpointListOptions) => Promise<RunWaitpointsPage>
+  readonly list: <TOutput = unknown>(idOrHandle: string | RunHandle<TOutput>, opts?: RunWaitpointListOptions) => Promise<PendingWaitpoint[]>
+}
+
+export type TaskSessionStatus = "open" | "completed" | "failed" | "closed" | "cancelled" | "expired"
+
+export interface TaskSessionHandle<TOutput = unknown> {
+  readonly id: string
+  readonly taskId: string
+  readonly currentRunId: string | null
+  readonly output?: TOutput
+}
+
+export interface TaskStartResult<TOutput = unknown> {
+  readonly session: TaskSessionSnapshot<TOutput>
+  readonly run: RunHandle<TOutput>
+  readonly isCached: boolean
+}
+
+export interface TaskSessionSnapshot<TOutput = unknown> {
+  readonly id: string
+  readonly projectId: string
+  readonly environmentId: string
+  readonly taskId: string
+  readonly initialDeploymentId: string
+  readonly activeDeploymentId: string
+  readonly externalId?: string
+  readonly status: TaskSessionStatus
+  readonly currentRunId: string | null
+  readonly workspaceId: string | null
+  readonly metadata: Record<string, unknown>
+  readonly tags: readonly string[]
+  readonly result?: TOutput
+  readonly error?: unknown
+  readonly timedOut: boolean
+  readonly terminalReason?: unknown
+  readonly expiresAt: string | null
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+export interface TaskSessionListOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
+  readonly status?: TaskSessionStatus | "all"
+  readonly taskId?: string
+  readonly limit?: number
+  readonly signal?: AbortSignal
+}
+
+export interface TaskSessionWaitOptions {
+  readonly timeoutSeconds?: number
+  readonly signal?: AbortSignal
+}
+
+export interface TaskSessionCloseOptions {
+  readonly reason?: string
+  readonly signal?: AbortSignal
+}
+
+export interface TaskSessionCancelOptions {
+  readonly reason?: string
+  readonly signal?: AbortSignal
+}
+
+export interface TaskSessionRun {
+  readonly id: string
+  readonly runId: string
+  readonly deploymentId: string
+  readonly previousRunId?: string
+  readonly turnIndex: number
+  readonly status: string
+  readonly executionStatus: string
+  readonly terminalOutcome?: string
+  readonly createdAt: string
+  readonly endedAt?: string
+}
+
+export interface TaskSessionWorkspace {
+  readonly id: string
+  readonly taskSessionId: string
+  readonly currentVersionId: string | null
+  readonly mountPath: string | null
+  readonly state: string
+  readonly retentionPolicy?: unknown
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+export interface ChannelRecord<TData = unknown> {
+  readonly id: string
+  readonly channelId: string
+  readonly sequence: number
+  readonly data: TData
+  readonly correlationId?: string
+  readonly contentType: string
+  readonly createdAt: string
+}
+
+export interface SessionChannelInputSendResult<TData = unknown> extends ChannelRecord<TData> {
+  readonly idempotencyStatus: "created" | "duplicate"
+}
+
+export interface SessionChannelInputSendOptions {
+  readonly correlationId?: string
+  readonly externalEventId?: string
+  readonly signal?: AbortSignal
+}
+
+export interface SessionChannelListOptions {
+  readonly cursor?: number
+  readonly limit?: number
+  readonly correlationId?: string
+  readonly signal?: AbortSignal
+}
+
+export interface SessionChannelOutputStreamOptions {
+  readonly cursor?: number
+  readonly correlationId?: string
+  readonly signal?: AbortSignal
+}
+
+export type PublicAccessTokenScope =
+  | {
+      readonly type: "session.input.append"
+      readonly sessionId: string | TaskSessionHandle
+      readonly channel: string
+      readonly correlationId?: string
     }
-    readonly respond: {
-      (token: WaitpointResponseToken, opts: WaitpointTokenRespondOptions): Promise<void>
-      (id: string, token: string, opts: WaitpointTokenRespondOptions): Promise<void>
+  | {
+      readonly type: "session.output.read"
+      readonly sessionId: string | TaskSessionHandle
+      readonly channel: string
+      readonly correlationId?: string
     }
-  }
+
+export interface PublicAccessTokenCreateOptions {
+  readonly scope: PublicAccessTokenScope
+  readonly expiresAt?: string | Date
+  readonly maxUses?: number
+  readonly signal?: AbortSignal
+}
+
+export interface PublicAccessToken {
+  readonly id: string
+  readonly publicAccessToken: string
+  readonly scope: PublicAccessTokenScope
+  readonly expiresAt: string
+  readonly maxUses?: number
+  readonly createdAt: string
+}
+
+export interface SessionChannelInputApi {
+  send<TData = unknown>(data: TData, opts?: SessionChannelInputSendOptions): Promise<SessionChannelInputSendResult<TData>>
+  list<TData = unknown>(opts?: SessionChannelListOptions): Promise<ChannelRecord<TData>[]>
+}
+
+export interface SessionChannelOutputApi {
+  list<TData = unknown>(opts?: SessionChannelListOptions): Promise<ChannelRecord<TData>[]>
+  stream<TData = unknown>(opts?: SessionChannelOutputStreamOptions): Promise<AsyncIterable<ChannelRecord<TData>>>
+}
+
+export interface OpenTaskSessionApi<TOutput = unknown> {
+  readonly id: string
+  retrieve(opts?: { readonly signal?: AbortSignal }): Promise<TaskSessionSnapshot<TOutput>>
+  wait(opts?: TaskSessionWaitOptions): Promise<TaskSessionSnapshot<TOutput>>
+  close(opts?: TaskSessionCloseOptions): Promise<TaskSessionSnapshot<TOutput>>
+  cancel(opts?: TaskSessionCancelOptions): Promise<TaskSessionSnapshot<TOutput>>
+  runs(opts?: { readonly signal?: AbortSignal }): Promise<TaskSessionRun[]>
+  workspace(opts?: { readonly signal?: AbortSignal }): Promise<TaskSessionWorkspace>
+  input(channel: string): SessionChannelInputApi
+  output(channel: string): SessionChannelOutputApi
 }
 
 export interface SchedulesApi {
@@ -105,8 +276,6 @@ export type ScheduleUpdateOptions = Omit<ScheduleCreateOptions, "deduplicationKe
 }
 
 export interface ScheduleRunOptions {
-  readonly deploymentId?: string
-  readonly version?: string
   readonly queue?: string
   readonly concurrencyKey?: string
   readonly priority?: number
@@ -143,47 +312,103 @@ export interface Schedule {
 
 type WaitpointTokenExpirationOptions =
   | {
-      readonly expiresInSeconds?: number
-      readonly expiresAt?: never
+      readonly timeoutInSeconds?: number
+      readonly timeoutAt?: never
     }
   | {
-      readonly expiresInSeconds?: never
-      readonly expiresAt?: string
+      readonly timeoutInSeconds?: never
+      readonly timeoutAt?: string
     }
 
 export type WaitpointTokenCreateOptions = WaitpointTokenExpirationOptions & {
+  readonly projectId?: string
+  readonly environmentId?: string
+  readonly tags?: readonly string[]
+  readonly metadata?: Record<string, unknown>
+  readonly signal?: AbortSignal
+}
+
+export interface WaitpointToken {
+  readonly id: string
+  readonly status?: "waiting" | "completed" | "timed_out" | "cancelled"
+  readonly callbackUrl: string
+  readonly publicAccessToken?: string
+  readonly timeoutAt: string | null
+  readonly data?: unknown
+  readonly tags?: readonly string[]
   readonly metadata?: Record<string, unknown>
 }
 
-export interface WaitpointResponseToken {
+export interface WaitpointTokenRef {
   readonly id: string
-  readonly waitpointId: string
-  readonly url: string
-  readonly token: string
-  readonly expiresAt: string | null
 }
 
-export type WaitpointTokenRespondOptions = WaitpointRespondOptions
-
-export interface WaitpointCreateOptions {
-  readonly request?: unknown
-  readonly displayText?: string
-  readonly expiresAt: string
-  readonly idempotencyKey?: string
-  readonly idempotencyKeyExpiresAt?: string
-  readonly idempotencyKeyTTLSeconds?: number
+export interface WaitpointTokenCompleteOptions {
+  readonly publicAccessToken?: string
+  readonly signal?: AbortSignal
 }
 
-export interface Waitpoint {
+export interface WaitpointTokenRetrieveOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
+  readonly signal?: AbortSignal
+}
+
+export interface WaitpointTokenListOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
+  readonly status?: "waiting" | "completed" | "timed_out" | "cancelled"
+  readonly cursor?: string
+  readonly limit?: number
+  readonly signal?: AbortSignal
+}
+
+export interface WaitpointTokensPage {
+  readonly tokens: readonly WaitpointToken[]
+  readonly nextCursor: string | null
+}
+
+type WaitpointTokenCreateRequest = {
+  readonly operation: "create"
+  readonly opts?: WaitpointTokenCreateOptions
+}
+
+type WaitpointTokenRetrieveRequest = {
+  readonly operation: "retrieve"
   readonly id: string
-  readonly projectId: string
-  readonly environmentId: string
-  readonly kind: "human" | "delay"
-  readonly status: "pending" | "completed" | "expired" | "cancelled"
-  readonly request: unknown
-  readonly displayText: string
-  readonly expiresAt: string | null
-  readonly createdAt: string
+  readonly opts?: WaitpointTokenRetrieveOptions
+}
+
+type WaitpointTokenListPageRequest = {
+  readonly operation: "listPage"
+  readonly opts?: WaitpointTokenListOptions
+}
+
+type WaitpointTokenCompleteRequest = {
+  readonly operation: "complete"
+  readonly token: WaitpointToken | WaitpointTokenRef | string
+  readonly data: unknown
+  readonly opts?: WaitpointTokenCompleteOptions
+}
+
+type WaitpointTokenClientRequest =
+  | WaitpointTokenCreateRequest
+  | WaitpointTokenRetrieveRequest
+  | WaitpointTokenListPageRequest
+  | WaitpointTokenCompleteRequest
+
+export interface RunWaitpointsPage {
+  readonly waitpoints: readonly PendingWaitpoint[]
+  readonly nextCursor: string | null
+}
+
+export type WaitpointStatus = "pending" | "completed" | "timed_out" | "cancelled" | "failed"
+
+export interface RunWaitpointListOptions {
+  readonly cursor?: string
+  readonly limit?: number
+  readonly signal?: AbortSignal
+  readonly status?: WaitpointStatus
 }
 
 export class HelmrClient {
@@ -228,27 +453,100 @@ export class HelmrClient {
   }
 
   readonly tasks = {
-    trigger: async <TTask extends AnyTask>(
-      ...args: TasksTriggerArgs<TTask>
-    ): Promise<RunHandle<TaskOutput<TTask>>> => {
+    start: async <TTask extends AnyTask>(
+      ...args: TasksStartArgs<TTask>
+    ): Promise<TaskStartResult<TaskOutput<TTask>>> => {
       const taskId = args[0]
       const hasPayload = args.length === 3
       const payload = hasPayload ? args[1] : undefined
-      const opts = (hasPayload ? args[2] : args[1]) as TaskTriggerOptions<TaskSecrets<TTask>>
+      const opts = (hasPayload ? args[2] : args[1]) as TaskStartOptions<TaskSecrets<TTask>>
       if (hasPayload && payload === undefined) {
         throw new Error(`task ${JSON.stringify(taskId)} requires payload`)
       }
-      return await this.#triggerRun(taskId, payload, opts)
+      return await this.#startTask(taskId, payload, opts)
+    },
+    startAndWait: async <TTask extends AnyTask>(
+      ...args: TasksStartAndWaitArgs<TTask>
+    ): Promise<TaskSessionSnapshot<TaskOutput<TTask>>> => {
+      const taskId = args[0]
+      const hasPayload = args.length === 3
+      const payload = hasPayload ? args[1] : undefined
+      const opts = (hasPayload ? args[2] : args[1]) as TaskStartAndWaitOptions<TaskSecrets<TTask>>
+      if (hasPayload && payload === undefined) {
+        throw new Error(`task ${JSON.stringify(taskId)} requires payload`)
+      }
+      return await this.#startTaskAndWait(taskId, payload, opts)
     },
   }
 
-  async [triggerTaskClientMethod]<TTask extends AnyTask>(
+  readonly sessions = {
+    open: <TOutput = unknown>(idOrHandle: string | TaskSessionHandle<TOutput>): OpenTaskSessionApi<TOutput> => {
+      return this.#openSession<TOutput>(sessionId(idOrHandle))
+    },
+    retrieve: async <TOutput = unknown>(
+      idOrHandle: string | TaskSessionHandle<TOutput>,
+      opts: { readonly signal?: AbortSignal } = {},
+    ): Promise<TaskSessionSnapshot<TOutput>> => {
+      return await this.#openSession<TOutput>(sessionId(idOrHandle)).retrieve(opts)
+    },
+    wait: async <TOutput = unknown>(
+      idOrHandle: string | TaskSessionHandle<TOutput>,
+      opts: TaskSessionWaitOptions = {},
+    ): Promise<TaskSessionSnapshot<TOutput>> => {
+      return await this.#openSession<TOutput>(sessionId(idOrHandle)).wait(opts)
+    },
+    list: async (opts: TaskSessionListOptions = {}): Promise<TaskSessionSnapshot[]> => {
+      const response = await this.#json<ListTaskSessionsResponse>(
+        `/api/sessions${taskSessionListQuery(opts)}`,
+        requestSignal(opts.signal),
+      )
+      return response.sessions.map(taskSessionFromResponse)
+    },
+  }
+
+  readonly waitpoints = {
+    tokens: {
+      create: async (opts: WaitpointTokenCreateOptions = {}): Promise<WaitpointToken> => {
+        return await this[waitpointTokenClientMethod]({ operation: "create", opts })
+      },
+      retrieve: async (id: string, opts: WaitpointTokenRetrieveOptions = {}): Promise<WaitpointToken> => {
+        return await this[waitpointTokenClientMethod]({ operation: "retrieve", id, opts })
+      },
+      listPage: async (opts: WaitpointTokenListOptions = {}): Promise<WaitpointTokensPage> => {
+        return await this[waitpointTokenClientMethod]({ operation: "listPage", opts })
+      },
+      list: async (opts: WaitpointTokenListOptions = {}): Promise<WaitpointToken[]> => {
+        return [...(await this[waitpointTokenClientMethod]({ operation: "listPage", opts })).tokens]
+      },
+      complete: async (
+        token: WaitpointToken | WaitpointTokenRef | string,
+        data: unknown,
+        opts: WaitpointTokenCompleteOptions = {},
+      ): Promise<void> => {
+        await this[waitpointTokenClientMethod]({ operation: "complete", token, data, opts })
+      },
+    },
+  }
+
+  readonly auth = {
+    createPublicToken: async (opts: PublicAccessTokenCreateOptions): Promise<PublicAccessToken> => {
+      const response = await this.#json<PublicAccessTokenResponse>("/api/public-access-tokens", {
+        method: "POST",
+        body: JSON.stringify(publicAccessTokenCreateBody(opts)),
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal),
+      })
+      return publicAccessTokenFromResponse(response)
+    },
+  }
+
+  async [startTaskClientMethod]<TTask extends AnyTask>(
     task: TTask,
-    ...args: DirectTaskTriggerArgs<TTask>
-  ): Promise<RunHandle<TaskOutput<TTask>>> {
+    ...args: DirectTaskStartArgs<TTask>
+  ): Promise<TaskStartResult<TaskOutput<TTask>>> {
     const hasPayload = task.payload !== undefined
     const payload = hasPayload ? args[0] : undefined
-    const opts = (hasPayload ? args[1] : args[0]) as TaskTriggerOptions<TaskSecrets<TTask>>
+    const opts = (hasPayload ? args[1] : args[0]) as TaskStartOptions<TaskSecrets<TTask>>
     if (task.payload !== undefined) {
       if (payload === undefined) {
         throw new Error(`task ${JSON.stringify(task.id)} requires payload`)
@@ -257,40 +555,282 @@ export class HelmrClient {
     } else if (args.length > 1) {
       throw new Error(`task ${JSON.stringify(task.id)} does not accept payload`)
     }
-    return await this.#triggerRun(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration))
+    return await this.#startTask(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration))
   }
 
-  async #triggerRun<TTask extends AnyTask>(
+  async [waitpointTokenClientMethod](request: WaitpointTokenCreateRequest): Promise<WaitpointToken>
+  async [waitpointTokenClientMethod](request: WaitpointTokenRetrieveRequest): Promise<WaitpointToken>
+  async [waitpointTokenClientMethod](request: WaitpointTokenListPageRequest): Promise<WaitpointTokensPage>
+  async [waitpointTokenClientMethod](request: WaitpointTokenCompleteRequest): Promise<void>
+  async [waitpointTokenClientMethod](
+    request: WaitpointTokenClientRequest,
+  ): Promise<WaitpointToken | WaitpointTokensPage | void> {
+    switch (request.operation) {
+      case "create": {
+        const opts = request.opts ?? {}
+        const response = await this.#json<WaitpointTokenResponse>(
+          waitpointTokenCollectionPath(opts),
+          {
+            method: "POST",
+            body: JSON.stringify(waitpointTokenCreateBody(opts)),
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal),
+          },
+        )
+        return waitpointTokenFromResponse(response)
+      }
+      case "retrieve": {
+        const opts = request.opts ?? {}
+        const response = await this.#json<WaitpointTokenResponse>(
+          `${waitpointTokenCollectionPath(opts)}/${encodeURIComponent(request.id)}`,
+          requestSignal(opts.signal),
+        )
+        return waitpointTokenFromResponse(response)
+      }
+      case "listPage": {
+        const opts = request.opts ?? {}
+        const response = await this.#json<ListWaitpointTokensResponse>(
+          `${waitpointTokenCollectionPath(opts)}${waitpointTokenListQuery(opts)}`,
+          requestSignal(opts.signal),
+        )
+        return {
+          tokens: response.tokens.map(waitpointTokenFromResponse),
+          nextCursor: response.next_cursor ?? null,
+        }
+      }
+      case "complete": {
+        const opts = request.opts ?? {}
+        const id = typeof request.token === "string" ? request.token : request.token.id
+        const publicAccessToken = opts.publicAccessToken ?? waitpointTokenPublicAccessToken(request.token)
+        await this.#fetch(`/api/waitpoints/tokens/${encodeURIComponent(id)}/complete`, {
+          method: "POST",
+          body: JSON.stringify(waitpointTokenCompleteBody(request.data, opts)),
+          headers: {
+            "content-type": "application/json",
+            ...(publicAccessToken === undefined ? {} : { authorization: `Bearer ${publicAccessToken}` }),
+          },
+          ...requestSignal(opts.signal),
+        })
+        return
+      }
+    }
+  }
+
+  async #startTask<TTask extends AnyTask>(
     taskId: string,
     payload: unknown,
-    opts: TaskTriggerOptions<TaskSecrets<TTask>>,
+    opts: TaskStartOptions<TaskSecrets<TTask>>,
     maxDurationSeconds?: number,
-  ): Promise<RunHandle<TaskOutput<TTask>>> {
+  ): Promise<TaskStartResult<TaskOutput<TTask>>> {
     validateRetryPolicy(opts.retry, "retry")
-    const runOptions = {
-      ...(opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId }),
-      ...(opts.version === undefined ? {} : { version: opts.version }),
-      ...(opts.queue === undefined ? {} : { queue: { name: opts.queue } }),
-      ...(opts.concurrencyKey === undefined ? {} : { concurrency_key: opts.concurrencyKey }),
-      ...(opts.priority === undefined ? {} : { priority: opts.priority }),
-      ...(opts.ttl === undefined ? {} : { ttl: opts.ttl }),
-      ...(opts.retry === undefined ? {} : { retry: opts.retry }),
-      ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
-      ...(opts.tags === undefined ? {} : { tags: opts.tags }),
-      ...(maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds }),
-      ...runIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL),
+    const body = taskStartBody(payload, opts, maxDurationSeconds)
+    const startedAt = Date.now()
+    for (;;) {
+      const response = await this.#fetch(`/api/tasks/${encodeURIComponent(taskId)}/start`, {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal),
+      })
+      if (response.status !== 202) {
+        const start = (await response.json()) as TaskStartResponse
+        return taskStartFromResponse<TaskOutput<TTask>>(start)
+      }
+      const pendingBody = await response.text()
+      if (!taskStartPendingResponse(pendingBody)) {
+        throw new HelmrApiError(response.status, pendingBody)
+      }
+      const retryDelay = taskStartPendingRetryDelay(response)
+      if (Date.now() - startedAt + retryDelay > TASK_START_PENDING_MAX_WAIT_MS) {
+        throw new HelmrApiError(response.status, pendingBody)
+      }
+      await delay(retryDelay, opts.signal)
     }
-    const response = await this.#fetch("/api/runs", {
-      method: "POST",
-      body: JSON.stringify({
-        task_id: taskId,
-        ...(payload === undefined ? {} : { payload }),
-        ...(Object.keys(runOptions).length === 0 ? {} : { options: runOptions }),
-      }),
-      headers: { "content-type": "application/json" },
-    })
-    const run = (await response.json()) as RunResponse
-    return runHandle<TaskOutput<TTask>>(run.id, run.task_id)
+  }
+
+  async #startTaskAndWait<TTask extends AnyTask>(
+    taskId: string,
+    payload: unknown,
+    opts: TaskStartAndWaitOptions<TaskSecrets<TTask>>,
+    maxDurationSeconds?: number,
+  ): Promise<TaskSessionSnapshot<TaskOutput<TTask>>> {
+    validateRetryPolicy(opts.retry, "retry")
+    const body = {
+      ...taskStartBody(payload, opts, maxDurationSeconds),
+      ...(opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }),
+    }
+    const startedAt = Date.now()
+    for (;;) {
+      const response = await this.#fetch(`/api/tasks/${encodeURIComponent(taskId)}/start-and-wait`, {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal),
+      })
+      if (response.status !== 202) {
+        return taskSessionFromResponse<TaskOutput<TTask>>((await response.json()) as TaskSessionResponse)
+      }
+      const pendingBody = await response.text()
+      if (!taskStartPendingResponse(pendingBody)) {
+        throw new HelmrApiError(response.status, pendingBody)
+      }
+      const retryDelay = taskStartPendingRetryDelay(response)
+      if (Date.now() - startedAt + retryDelay > TASK_START_PENDING_MAX_WAIT_MS) {
+        throw new HelmrApiError(response.status, pendingBody)
+      }
+      await delay(retryDelay, opts.signal)
+    }
+  }
+
+  #openSession<TOutput = unknown>(id: string): OpenTaskSessionApi<TOutput> {
+    return {
+      id,
+      retrieve: async (opts = {}) => {
+        const response = await this.#json<TaskSessionResponse>(
+          `/api/sessions/${encodeURIComponent(id)}`,
+          requestSignal(opts.signal),
+        )
+        return taskSessionFromResponse<TOutput>(response)
+      },
+      wait: async (opts = {}) => {
+        const response = await this.#json<TaskSessionResponse>(
+          `/api/sessions/${encodeURIComponent(id)}/wait`,
+          {
+            method: "POST",
+            body: JSON.stringify(taskSessionWaitBody(opts)),
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal),
+          },
+        )
+        return taskSessionFromResponse<TOutput>(response)
+      },
+      close: async (opts = {}) => {
+        const response = await this.#json<TaskSessionResponse>(
+          `/api/sessions/${encodeURIComponent(id)}/close`,
+          {
+            method: "POST",
+            body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal),
+          },
+        )
+        return taskSessionFromResponse<TOutput>(response)
+      },
+      cancel: async (opts = {}) => {
+        const response = await this.#json<TaskSessionResponse>(
+          `/api/sessions/${encodeURIComponent(id)}/cancel`,
+          {
+            method: "POST",
+            body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal),
+          },
+        )
+        return taskSessionFromResponse<TOutput>(response)
+      },
+      runs: async (opts = {}) => {
+        const response = await this.#json<ListTaskSessionRunsResponse>(
+          `/api/sessions/${encodeURIComponent(id)}/runs`,
+          requestSignal(opts.signal),
+        )
+        return response.runs.map(taskSessionRunFromResponse)
+      },
+      workspace: async (opts = {}) => {
+        const response = await this.#json<TaskSessionWorkspaceResponse>(
+          `/api/sessions/${encodeURIComponent(id)}/workspace`,
+          requestSignal(opts.signal),
+        )
+        return taskSessionWorkspaceFromResponse(response)
+      },
+      input: (channelInput: string) => {
+        const channel = validateChannelName(channelInput)
+        return {
+          send: async <TData = unknown>(data: TData, opts: SessionChannelInputSendOptions = {}) => {
+            const response = await this.#json<AppendChannelRecordResponse>(
+              `/api/sessions/${encodeURIComponent(id)}/channels/${encodeURIComponent(channel)}/inputs`,
+              {
+                method: "POST",
+                body: JSON.stringify(channelInputAppendBody(data, opts)),
+                headers: { "content-type": "application/json" },
+                ...requestSignal(opts.signal),
+              },
+            )
+            return appendChannelRecordFromResponse<TData>(response)
+          },
+          list: async <TData = unknown>(opts: SessionChannelListOptions = {}) => {
+            return await this.#listSessionChannelRecords<TData>(id, channel, "inputs", opts)
+          },
+        }
+      },
+      output: (channelInput: string) => {
+        const channel = validateChannelName(channelInput)
+        return {
+          list: async <TData = unknown>(opts: SessionChannelListOptions = {}) => {
+            return await this.#listSessionChannelRecords<TData>(id, channel, "outputs", opts)
+          },
+          stream: async <TData = unknown>(opts: SessionChannelOutputStreamOptions = {}) => {
+            return this.#streamSessionChannelOutputs<TData>(id, channel, opts)
+          },
+        }
+      },
+    }
+  }
+
+  async #listSessionChannelRecords<TData>(
+    sessionID: string,
+    channel: string,
+    direction: "inputs" | "outputs",
+    opts: SessionChannelListOptions,
+  ): Promise<ChannelRecord<TData>[]> {
+    const response = await this.#json<ListChannelRecordsResponse>(
+      `/api/sessions/${encodeURIComponent(sessionID)}/channels/${encodeURIComponent(channel)}/${direction}${sessionChannelQuery(opts)}`,
+      requestSignal(opts.signal),
+    )
+    return response.records.map(channelRecordFromResponse<TData>)
+  }
+
+  async #streamSessionChannelOutputs<TData>(
+    sessionID: string,
+    channel: string,
+    opts: SessionChannelOutputStreamOptions,
+  ): Promise<AsyncIterable<ChannelRecord<TData>>> {
+    const client = this
+    const stream = async function* (): AsyncIterable<ChannelRecord<TData>> {
+      let cursor = opts.cursor
+      for (;;) {
+        try {
+          const response = await client.#fetch(
+            `/api/sessions/${encodeURIComponent(sessionID)}/channels/${encodeURIComponent(channel)}/outputs/stream${sessionChannelStreamQuery(opts, cursor)}`,
+            {
+              headers: { accept: "text/event-stream" },
+              ...requestSignal(opts.signal),
+            },
+          )
+          for await (const record of parseChannelRecordSse<TData>(response)) {
+            cursor = Math.max(cursor ?? 0, record.sequence)
+            yield record
+          }
+        } catch (error) {
+          throwIfAborted(opts.signal)
+          if (runEventStreamErrorIsFatal(error)) {
+            throw error
+          }
+        }
+        try {
+          const session = await client.sessions.retrieve(sessionID, retrieveOptions(opts.signal))
+          if (taskSessionTerminal(session.status)) {
+            return
+          }
+        } catch (error) {
+          throwIfAborted(opts.signal)
+          if (runSnapshotErrorIsFatal(error)) {
+            throw error
+          }
+        }
+        await delay(RUN_EVENT_RECONNECT_DELAY_MS, opts.signal)
+      }
+    }
+    return stream()
   }
 
   readonly runs = {
@@ -306,7 +846,7 @@ export class HelmrClient {
     },
     wait: async <TOutput = unknown>(
       idOrHandle: string | RunHandle<TOutput>,
-      opts: RunWaitOptions = {},
+      opts: RunWaitpointOptions = {},
     ): Promise<RunSnapshot<TOutput>> => {
       const id = runId(idOrHandle)
       const timeoutMs = opts.timeoutMs
@@ -373,21 +913,6 @@ export class HelmrClient {
       )
       return runResponseToSnapshot<TOutput>(response.run)
     },
-    replay: async <TPayload = unknown, TOutput = unknown>(
-      idOrHandle: string | RunHandle<TOutput>,
-      opts: ReplayRunOptions<TPayload> = {},
-    ): Promise<RunHandle<TOutput>> => {
-      const response = await this.#json<ReplayRunResponse>(
-        `/api/runs/${encodeURIComponent(runId(idOrHandle))}/replay`,
-        {
-          method: "POST",
-          body: JSON.stringify(replayRunBody(opts)),
-          headers: { "content-type": "application/json" },
-          ...requestSignal(opts.signal),
-        },
-      )
-      return runHandle<TOutput>(response.run.id, response.run.task_id)
-    },
     list: async (opts: ListRunsOptions = {}): Promise<RunSummary[]> => {
       const query = new URLSearchParams()
       if (opts.status !== undefined) query.set("status", opts.status)
@@ -395,6 +920,29 @@ export class HelmrClient {
       const suffix = query.size === 0 ? "" : `?${query}`
       const response = await this.#json<ListRunsResponse>(`/api/runs${suffix}`, requestSignal(opts.signal))
       return response.runs.map((run) => runResponseToSnapshot(run))
+    },
+    waitpoints: {
+      listPage: async <TOutput = unknown>(
+        idOrHandle: string | RunHandle<TOutput>,
+        opts: RunWaitpointListOptions = {},
+      ): Promise<RunWaitpointsPage> => {
+        const id = runId(idOrHandle)
+        const response = await this.#json<ListRunWaitpointsResponse>(
+          `/api/runs/${encodeURIComponent(id)}/waitpoints${runWaitpointListQuery(opts)}`,
+          requestSignal(opts.signal),
+        )
+        return {
+          waitpoints: response.waitpoints.map((request) => pendingWaitpointFromResponse(id, request))
+            .filter((request): request is PendingWaitpoint => request !== null),
+          nextCursor: response.next_cursor ?? null,
+        }
+      },
+      list: async <TOutput = unknown>(
+        idOrHandle: string | RunHandle<TOutput>,
+        opts: RunWaitpointListOptions = {},
+      ): Promise<PendingWaitpoint[]> => {
+        return [...(await this.runs.waitpoints.listPage(idOrHandle, opts)).waitpoints]
+      },
     },
     logs: {
       retrieve: async <TOutput = unknown>(
@@ -416,62 +964,6 @@ export class HelmrClient {
         opts: SubscribeRunEventsOptions = {},
       ): Promise<AsyncIterable<RunEvent>> => {
         return await this.#subscribeEvents(runId(idOrHandle), opts)
-      },
-    },
-  }
-
-  readonly waitpoints: WaitpointsApi = {
-    create: async (opts: WaitpointCreateOptions): Promise<Waitpoint> => {
-      const response = await this.#json<WaitpointResponse>("/api/waitpoints", {
-        method: "POST",
-        body: JSON.stringify(waitpointCreateBody(opts)),
-        headers: { "content-type": "application/json" },
-      })
-      return waitpointFromResponse(response)
-    },
-    respond: async (
-      target: PendingHumanWaitpoint | WaitpointRef | string,
-      waitpointIdOrOpts?: WaitpointRespondOptions,
-      opts: WaitpointRespondOptions = {},
-    ): Promise<void> => {
-      const resolved = resolveWaitpointArgs<WaitpointRespondOptions>(target, waitpointIdOrOpts, opts)
-      await this.#fetch(
-        `/api/waitpoints/${encodeURIComponent(resolved.waitpointId)}/respond`,
-        {
-          method: "POST",
-          body: JSON.stringify(waitpointRespondBody(resolved.opts)),
-          headers: { "content-type": "application/json" },
-        },
-      )
-    },
-    tokens: {
-      create: async (
-        target: PendingHumanWaitpoint | WaitpointRef | string,
-        waitpointIdOrOpts?: WaitpointTokenCreateOptions,
-        opts: WaitpointTokenCreateOptions = {},
-      ): Promise<WaitpointResponseToken> => {
-        const resolved = resolveWaitpointArgs<WaitpointTokenCreateOptions>(target, waitpointIdOrOpts, opts)
-        const response = await this.#json<WaitpointResponseTokenResponse>("/api/waitpoints/tokens", {
-          method: "POST",
-          body: JSON.stringify(waitpointTokenCreateBody(resolved.waitpointId, resolved.opts)),
-          headers: { "content-type": "application/json" },
-        })
-        return waitpointResponseTokenFromResponse(response)
-      },
-      respond: async (
-        target: WaitpointResponseToken | string,
-        tokenOrOpts: string | WaitpointTokenRespondOptions,
-        maybeOpts?: WaitpointTokenRespondOptions,
-      ): Promise<void> => {
-        const resolved =
-          typeof target === "string"
-            ? resolveWaitpointTokenRespondArgs(target, tokenOrOpts, maybeOpts)
-            : { id: target.id, token: target.token, opts: tokenOrOpts as WaitpointTokenRespondOptions }
-        await this.#fetch(`/api/waitpoints/tokens/${encodeURIComponent(resolved.id)}/respond`, {
-          method: "POST",
-          body: JSON.stringify(waitpointTokenRespondBody(resolved.token, resolved.opts)),
-          headers: { "content-type": "application/json" },
-        })
       },
     },
   }
@@ -699,7 +1191,7 @@ export class HelmrClient {
     const headers = new Headers(init.headers)
     headers.set(HELMR_API_VERSION_HEADER, HELMR_API_VERSION)
     headers.set(HELMR_SDK_VERSION_HEADER, HELMR_SDK_VERSION)
-    if (this.#apiKey !== undefined) {
+    if (this.#apiKey !== undefined && !headers.has("authorization")) {
       headers.set("authorization", `Bearer ${this.#apiKey}`)
     }
     const request: RequestInit = {
@@ -765,6 +1257,7 @@ export interface RunResponse {
   readonly attempt_number?: number | null
   readonly task_id: string
   readonly status: string
+  readonly metadata?: Record<string, unknown>
   readonly exit_code?: number | null
   readonly created_at?: string
   readonly updated_at?: string
@@ -776,8 +1269,99 @@ export interface ListRunsResponse {
   readonly runs: readonly RunResponse[]
 }
 
-interface ReplayRunResponse {
+interface TaskStartResponse {
+  readonly session: TaskSessionResponse
   readonly run: RunResponse
+  readonly is_cached?: boolean
+}
+
+interface TaskSessionResponse {
+  readonly id: string
+  readonly project_id: string
+  readonly environment_id: string
+  readonly task_id: string
+  readonly initial_deployment_id: string
+  readonly active_deployment_id: string
+  readonly external_id?: string
+  readonly status: TaskSessionStatus
+  readonly current_run_id?: string | null
+  readonly workspace_id?: string | null
+  readonly metadata?: Record<string, unknown> | null
+  readonly tags?: readonly string[] | null
+  readonly result?: unknown
+  readonly error?: unknown
+  readonly timed_out?: boolean
+  readonly terminal_reason?: unknown
+  readonly expires_at?: string | null
+  readonly created_at: string
+  readonly updated_at: string
+}
+
+interface ListTaskSessionsResponse {
+  readonly sessions: readonly TaskSessionResponse[]
+}
+
+interface TaskSessionRunResponse {
+  readonly id: string
+  readonly run_id: string
+  readonly deployment_id: string
+  readonly previous_run_id?: string
+  readonly turn_index: number
+  readonly status: string
+  readonly execution_status: string
+  readonly terminal_outcome?: string
+  readonly created_at: string
+  readonly ended_at?: string
+}
+
+interface ListTaskSessionRunsResponse {
+  readonly runs: readonly TaskSessionRunResponse[]
+}
+
+interface TaskSessionWorkspaceResponse {
+  readonly id: string
+  readonly task_session_id: string
+  readonly current_version_id?: string | null
+  readonly mount_path?: string | null
+  readonly state: string
+  readonly retention_policy?: unknown
+  readonly created_at: string
+  readonly updated_at: string
+}
+
+interface ChannelRecordResponse {
+  readonly id: string
+  readonly channel_id: string
+  readonly sequence: number
+  readonly data: unknown
+  readonly correlation_id?: string
+  readonly content_type: string
+  readonly created_at: string
+}
+
+interface AppendChannelRecordResponse {
+  readonly record: ChannelRecordResponse
+  readonly idempotency_status?: string
+}
+
+interface ListChannelRecordsResponse {
+  readonly records: readonly ChannelRecordResponse[]
+}
+
+interface PublicAccessTokenScopeResponse {
+  readonly type: "session.input.append" | "session.output.read"
+  readonly session_id: string
+  readonly channel: string
+  readonly correlation_id?: string
+}
+
+interface PublicAccessTokenResponse {
+  readonly id: string
+  readonly public_access_token: string
+  readonly scope: PublicAccessTokenScopeResponse
+  readonly expires_at: string
+  readonly max_uses?: number
+  readonly created_at: string
 }
 
 interface CancelRunResponse {
@@ -814,24 +1398,25 @@ interface LogSnapshotResponse {
   readonly truncated: boolean
 }
 
-interface WaitpointResponseTokenResponse {
+interface WaitpointTokenResponse {
   readonly id: string
-  readonly waitpoint_id: string
-  readonly url: string
-  readonly token: string
-  readonly expires_at?: string | null
+  readonly status?: "waiting" | "completed" | "timed_out" | "cancelled"
+  readonly callback_url: string
+  readonly public_access_token?: string
+  readonly timeout_at?: string | null
+  readonly data?: unknown
+  readonly tags?: readonly string[]
+  readonly metadata?: Record<string, unknown>
 }
 
-interface WaitpointResponse {
-  readonly id: string
-  readonly project_id: string
-  readonly environment_id: string
-  readonly kind: "human" | "delay"
-  readonly status: "pending" | "completed" | "expired" | "cancelled"
-  readonly request?: unknown
-  readonly display_text?: string | null
-  readonly expires_at?: string | null
-  readonly created_at: string
+interface ListWaitpointTokensResponse {
+  readonly tokens: readonly WaitpointTokenResponse[]
+  readonly next_cursor?: string | null
+}
+
+interface ListRunWaitpointsResponse {
+  readonly waitpoints: readonly PendingWaitpointResponse[]
+  readonly next_cursor?: string | null
 }
 
 function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSnapshot<TOutput> {
@@ -849,6 +1434,7 @@ function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSna
     ...(response.cli_version === undefined ? {} : { cliVersion: response.cli_version }),
     attemptNumber: response.attempt_number ?? null,
     status: response.status,
+    metadata: response.metadata ?? {},
     exitCode: response.exit_code ?? null,
     ...(response.created_at === undefined ? {} : { createdAt: response.created_at }),
     ...(response.updated_at === undefined ? {} : { updatedAt: response.updated_at }),
@@ -857,22 +1443,198 @@ function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSna
   })
 }
 
+function taskStartFromResponse<TOutput = unknown>(response: TaskStartResponse): TaskStartResult<TOutput> {
+  return {
+    session: taskSessionFromResponse<TOutput>(response.session),
+    run: runHandle<TOutput>(response.run.id, response.run.task_id),
+    isCached: response.is_cached ?? false,
+  }
+}
+
+function taskSessionFromResponse<TOutput = unknown>(response: TaskSessionResponse): TaskSessionSnapshot<TOutput> {
+  return {
+    id: response.id,
+    projectId: response.project_id,
+    environmentId: response.environment_id,
+    taskId: response.task_id,
+    initialDeploymentId: response.initial_deployment_id,
+    activeDeploymentId: response.active_deployment_id,
+    ...(response.external_id === undefined || response.external_id === "" ? {} : { externalId: response.external_id }),
+    status: response.status,
+    currentRunId: response.current_run_id ?? null,
+    workspaceId: response.workspace_id ?? null,
+    metadata: response.metadata ?? {},
+    tags: response.tags ?? [],
+    ...("result" in response ? { result: response.result as TOutput } : {}),
+    ...("error" in response ? { error: response.error } : {}),
+    timedOut: response.timed_out ?? false,
+    ...("terminal_reason" in response ? { terminalReason: response.terminal_reason } : {}),
+    expiresAt: response.expires_at ?? null,
+    createdAt: response.created_at,
+    updatedAt: response.updated_at,
+  }
+}
+
+function taskSessionRunFromResponse(response: TaskSessionRunResponse): TaskSessionRun {
+  return {
+    id: response.id,
+    runId: response.run_id,
+    deploymentId: response.deployment_id,
+    ...(response.previous_run_id === undefined || response.previous_run_id === "" ? {} : { previousRunId: response.previous_run_id }),
+    turnIndex: response.turn_index,
+    status: response.status,
+    executionStatus: response.execution_status,
+    ...(response.terminal_outcome === undefined || response.terminal_outcome === "" ? {} : { terminalOutcome: response.terminal_outcome }),
+    createdAt: response.created_at,
+    ...(response.ended_at === undefined ? {} : { endedAt: response.ended_at }),
+  }
+}
+
+function taskSessionWorkspaceFromResponse(response: TaskSessionWorkspaceResponse): TaskSessionWorkspace {
+  return {
+    id: response.id,
+    taskSessionId: response.task_session_id,
+    currentVersionId: response.current_version_id ?? null,
+    mountPath: response.mount_path ?? null,
+    state: response.state,
+    ...("retention_policy" in response ? { retentionPolicy: response.retention_policy } : {}),
+    createdAt: response.created_at,
+    updatedAt: response.updated_at,
+  }
+}
+
+function channelRecordFromResponse<TData = unknown>(response: ChannelRecordResponse): ChannelRecord<TData> {
+  return {
+    id: response.id,
+    channelId: response.channel_id,
+    sequence: response.sequence,
+    data: response.data as TData,
+    ...(response.correlation_id === undefined || response.correlation_id === "" ? {} : { correlationId: response.correlation_id }),
+    contentType: response.content_type,
+    createdAt: response.created_at,
+  }
+}
+
+function appendChannelRecordFromResponse<TData = unknown>(
+  response: AppendChannelRecordResponse,
+): SessionChannelInputSendResult<TData> {
+  return {
+    ...channelRecordFromResponse<TData>(response.record),
+    idempotencyStatus: response.idempotency_status === "duplicate" ? "duplicate" : "created",
+  }
+}
+
+function sessionId<TOutput>(idOrHandle: string | TaskSessionHandle<TOutput>): string {
+  return typeof idOrHandle === "string" ? idOrHandle : idOrHandle.id
+}
+
+function taskStartBody(
+  payload: unknown,
+  opts: TaskStartOptions<SecretDecls>,
+  maxDurationSeconds?: number,
+): Record<string, unknown> {
+  const runOptions = {
+    ...(opts.queue === undefined ? {} : { queue: { name: opts.queue } }),
+    ...(opts.concurrencyKey === undefined ? {} : { concurrency_key: opts.concurrencyKey }),
+    ...(opts.priority === undefined ? {} : { priority: opts.priority }),
+    ...(opts.ttl === undefined ? {} : { ttl: opts.ttl }),
+    ...(opts.retry === undefined ? {} : { retry: opts.retry }),
+    ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
+    ...(opts.tags === undefined ? {} : { tags: opts.tags }),
+    ...(opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") }),
+    ...(maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds }),
+    ...taskStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL),
+  }
+  return {
+    ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
+    ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
+    ...(payload === undefined ? {} : { payload }),
+    ...(opts.externalId === undefined ? {} : { external_id: opts.externalId }),
+    ...(Object.keys(runOptions).length === 0 ? {} : { options: runOptions }),
+  }
+}
+
+function taskSessionWaitBody(opts: TaskSessionWaitOptions): Record<string, unknown> {
+  return {
+    ...(opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }),
+  }
+}
+
+function channelInputAppendBody(data: unknown, opts: SessionChannelInputSendOptions): Record<string, unknown> {
+  return {
+    data,
+    ...(opts.correlationId === undefined ? {} : { correlation_id: opts.correlationId }),
+    ...(opts.externalEventId === undefined ? {} : { external_event_id: opts.externalEventId }),
+  }
+}
+
+function taskSessionListQuery(opts: TaskSessionListOptions): string {
+  const query = new URLSearchParams()
+  if (opts.projectId !== undefined) query.set("project_id", opts.projectId)
+  if (opts.environmentId !== undefined) query.set("environment_id", opts.environmentId)
+  if (opts.status !== undefined) query.set("status", opts.status)
+  if (opts.taskId !== undefined) query.set("task_id", opts.taskId)
+  if (opts.limit !== undefined) query.set("limit", String(opts.limit))
+  return query.size === 0 ? "" : `?${query}`
+}
+
+function sessionChannelQuery(opts: SessionChannelListOptions): string {
+  const query = new URLSearchParams()
+  if (opts.cursor !== undefined) query.set("after_sequence", String(opts.cursor))
+  if (opts.limit !== undefined) query.set("limit", String(opts.limit))
+  if (opts.correlationId !== undefined) query.set("correlation_id", opts.correlationId)
+  return query.size === 0 ? "" : `?${query}`
+}
+
+function sessionChannelStreamQuery(opts: SessionChannelOutputStreamOptions, cursor = opts.cursor): string {
+  const query = new URLSearchParams()
+  if (cursor !== undefined) query.set("after_sequence", String(cursor))
+  if (opts.correlationId !== undefined) query.set("correlation_id", opts.correlationId)
+  return query.size === 0 ? "" : `?${query}`
+}
+
+function publicAccessTokenCreateBody(opts: PublicAccessTokenCreateOptions): Record<string, unknown> {
+  return {
+    scope: {
+      type: opts.scope.type,
+      session_id: sessionId(opts.scope.sessionId),
+      channel: validateChannelName(opts.scope.channel),
+      ...(opts.scope.correlationId === undefined ? {} : { correlation_id: opts.scope.correlationId }),
+    },
+    ...(opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") }),
+    ...(opts.maxUses === undefined ? {} : { max_uses: opts.maxUses }),
+  }
+}
+
+function publicAccessTokenFromResponse(response: PublicAccessTokenResponse): PublicAccessToken {
+  return {
+    id: response.id,
+    publicAccessToken: response.public_access_token,
+    scope: {
+      type: response.scope.type,
+      sessionId: response.scope.session_id,
+      channel: response.scope.channel,
+      ...(response.scope.correlation_id === undefined ? {} : { correlationId: response.scope.correlation_id }),
+    },
+    expiresAt: response.expires_at,
+    ...(response.max_uses === undefined ? {} : { maxUses: response.max_uses }),
+    createdAt: response.created_at,
+  }
+}
+
+function isoDateString(value: string | Date, label: string): string {
+  const date = value instanceof Date ? value : new Date(value)
+  if (!Number.isFinite(date.getTime())) {
+    throw new Error(`${label} must be a valid date`)
+  }
+  return date.toISOString()
+}
+
 function cancelRunBody(opts: CancelRunOptions): Record<string, unknown> {
   return {
     ...(opts.reason === undefined ? {} : { reason: opts.reason }),
     ...(opts.force === undefined ? {} : { force: opts.force }),
     ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
-  }
-}
-
-function replayRunBody<TPayload>(opts: ReplayRunOptions<TPayload>): Record<string, unknown> {
-  return {
-    ...(opts.version === undefined ? {} : { version: opts.version }),
-    ...(opts.payload === undefined ? {} : { payload: opts.payload }),
-    ...(opts.reason === undefined ? {} : { reason: opts.reason }),
-    ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
-    ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
-    ...(opts.tags === undefined ? {} : { tags: opts.tags }),
   }
 }
 
@@ -891,8 +1653,6 @@ function scheduleCreateBody(opts: ScheduleCreateOptions | ScheduleUpdateOptions)
 function runOptionsBody(opts: ScheduleRunOptions | undefined): Record<string, unknown> {
   if (opts === undefined) return {}
   return {
-    ...(opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId }),
-    ...(opts.version === undefined ? {} : { version: opts.version }),
     ...(opts.queue === undefined ? {} : { queue: { name: opts.queue } }),
     ...(opts.concurrencyKey === undefined ? {} : { concurrency_key: opts.concurrencyKey }),
     ...(opts.priority === undefined ? {} : { priority: opts.priority }),
@@ -922,121 +1682,75 @@ function scheduleFromResponse(response: ScheduleResponse): Schedule {
   }
 }
 
+function runWaitpointListQuery(opts: RunWaitpointListOptions): string {
+  const query = new URLSearchParams()
+  if (opts.cursor !== undefined) query.set("cursor", opts.cursor)
+  if (opts.limit !== undefined) query.set("limit", String(opts.limit))
+  if (opts.status !== undefined) query.set("status", opts.status)
+  return query.size === 0 ? "" : `?${query}`
+}
+
 function waitpointTokenCreateBody(
-  waitpointId: string,
   opts: WaitpointTokenCreateOptions,
 ): {
-  readonly waitpoint_id: string
-  readonly expires_in_seconds?: number
-  readonly expires_at?: string
+  readonly timeout_in_seconds?: number
+  readonly timeout_at?: string
+  readonly tags?: readonly string[]
   readonly metadata?: Record<string, unknown>
 } {
   return {
-    waitpoint_id: waitpointId,
-    ...(opts.expiresInSeconds === undefined ? {} : { expires_in_seconds: opts.expiresInSeconds }),
-    ...(opts.expiresAt === undefined ? {} : { expires_at: opts.expiresAt }),
+    ...(opts.timeoutInSeconds === undefined ? {} : { timeout_in_seconds: opts.timeoutInSeconds }),
+    ...(opts.timeoutAt === undefined ? {} : { timeout_at: opts.timeoutAt }),
+    ...(opts.tags === undefined ? {} : { tags: opts.tags }),
     ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
   }
 }
 
-function waitpointCreateBody(opts: WaitpointCreateOptions): {
-  readonly request?: unknown
-  readonly display_text?: string
-  readonly expires_at: string
-  readonly idempotency_key?: string
-  readonly idempotency_key_expires_at?: string
-  readonly idempotency_key_ttl_seconds?: number
+function waitpointTokenCompleteBody(data: unknown, opts: WaitpointTokenCompleteOptions): {
+  readonly data: unknown
 } {
+  void opts
   return {
-    ...(opts.request === undefined ? {} : { request: opts.request }),
-    ...(opts.displayText === undefined ? {} : { display_text: opts.displayText }),
-    expires_at: opts.expiresAt,
-    ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
-    ...(opts.idempotencyKeyExpiresAt === undefined ? {} : { idempotency_key_expires_at: opts.idempotencyKeyExpiresAt }),
-    ...(opts.idempotencyKeyTTLSeconds === undefined ? {} : { idempotency_key_ttl_seconds: opts.idempotencyKeyTTLSeconds }),
+    data,
   }
 }
 
-function waitpointFromResponse(response: WaitpointResponse): Waitpoint {
-  return {
-    id: response.id,
-    projectId: response.project_id,
-    environmentId: response.environment_id,
-    kind: response.kind,
-    status: response.status,
-    request: response.request ?? {},
-    displayText: response.display_text ?? "",
-    expiresAt: response.expires_at ?? null,
-    createdAt: response.created_at,
-  }
-}
-
-function waitpointRespondBody(opts: WaitpointRespondOptions): {
-  readonly value?: unknown
-  readonly external_subject?: string
-  readonly metadata?: Record<string, unknown>
-} {
-  return {
-    ...("value" in opts ? { value: opts.value } : {}),
-    ...(opts.externalSubject === undefined ? {} : { external_subject: opts.externalSubject }),
-    ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
-  }
-}
-
-function waitpointTokenRespondBody(token: string, opts: WaitpointTokenRespondOptions): {
-  readonly token: string
-  readonly value?: unknown
-  readonly external_subject?: string
-  readonly metadata?: Record<string, unknown>
-} {
-  return {
-    token,
-    ...waitpointRespondBody(opts),
-  }
-}
-
-function resolveWaitpointTokenRespondArgs(
-  id: string,
-  token: string | WaitpointTokenRespondOptions,
-  opts: WaitpointTokenRespondOptions | undefined,
-): { readonly id: string; readonly token: string; readonly opts: WaitpointTokenRespondOptions } {
-  if (typeof token !== "string" || opts === undefined) {
-    throw new Error("waitpoint token secret is required when responding by token id")
-  }
-  return { id, token, opts }
-}
-
-function waitpointResponseTokenFromResponse(response: WaitpointResponseTokenResponse): WaitpointResponseToken {
-  return {
-    id: response.id,
-    waitpointId: response.waitpoint_id,
-    url: response.url,
-    token: response.token,
-    expiresAt: response.expires_at ?? null,
-  }
-}
-
-function resolveWaitpointArgs<TOpts extends object>(
-  target: WaitpointRef | PendingHumanWaitpoint | string,
-  waitpointIdOrOpts: TOpts | undefined,
-  opts: TOpts | undefined,
-): { readonly waitpointId: string; readonly opts: TOpts } {
-  if (isWaitpointRef(target)) {
-    return {
-      waitpointId: target.waitpointId,
-      opts: (waitpointIdOrOpts ?? opts ?? {}) as TOpts,
+function waitpointTokenCollectionPath(opts: { readonly projectId?: string; readonly environmentId?: string }): string {
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    if (opts.projectId === undefined || opts.environmentId === undefined) {
+      throw new Error("projectId and environmentId must be provided together")
     }
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/waitpoints/tokens`
   }
+  return "/api/waitpoints/tokens"
+}
+
+function waitpointTokenListQuery(opts: WaitpointTokenListOptions): string {
+  const query = new URLSearchParams()
+  if (opts.cursor !== undefined) query.set("cursor", opts.cursor)
+  if (opts.limit !== undefined) query.set("limit", String(opts.limit))
+  if (opts.status !== undefined) query.set("status", opts.status)
+  return query.size === 0 ? "" : `?${query}`
+}
+
+function waitpointTokenFromResponse(response: WaitpointTokenResponse): WaitpointToken {
   return {
-    waitpointId: target,
-    opts: (waitpointIdOrOpts ?? opts ?? {}) as TOpts,
+    id: response.id,
+    ...(response.status === undefined ? {} : { status: response.status }),
+    callbackUrl: response.callback_url,
+    ...(response.public_access_token === undefined ? {} : { publicAccessToken: response.public_access_token }),
+    timeoutAt: response.timeout_at ?? null,
+    ...(response.data === undefined ? {} : { data: response.data }),
+    ...(response.tags === undefined ? {} : { tags: response.tags }),
+    ...(response.metadata === undefined ? {} : { metadata: response.metadata }),
   }
 }
 
-function isWaitpointRef(value: unknown): value is WaitpointRef | PendingHumanWaitpoint {
-  if (value === null || typeof value !== "object") return false
-  const record = value as Record<string, unknown>
-  return typeof record["waitpointId"] === "string"
+function waitpointTokenPublicAccessToken(target: WaitpointToken | WaitpointTokenRef | string): string | undefined {
+  if (typeof target === "string" || !("publicAccessToken" in target)) {
+    return undefined
+  }
+  return target.publicAccessToken
 }
 
 function retrieveOptions(signal: AbortSignal | undefined): RetrieveRunOptions {
@@ -1101,6 +1815,38 @@ function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
     }
     signal?.addEventListener("abort", onAbort, { once: true })
   })
+}
+
+function taskStartPendingRetryDelay(response: Response): number {
+  const retryAfter = response.headers.get("retry-after")
+  if (retryAfter === null) {
+    return TASK_START_PENDING_DEFAULT_RETRY_MS
+  }
+  const retryAfterSeconds = Number(retryAfter)
+  if (Number.isFinite(retryAfterSeconds)) {
+    if (retryAfterSeconds > 0) {
+      return Math.min(retryAfterSeconds * 1000, TASK_START_PENDING_MAX_WAIT_MS)
+    }
+    return TASK_START_PENDING_DEFAULT_RETRY_MS
+  }
+  const retryAt = Date.parse(retryAfter)
+  if (Number.isFinite(retryAt)) {
+    const delayMs = retryAt - Date.now()
+    if (delayMs <= 0) {
+      return TASK_START_PENDING_DEFAULT_RETRY_MS
+    }
+    return Math.min(delayMs, TASK_START_PENDING_MAX_WAIT_MS)
+  }
+  return TASK_START_PENDING_DEFAULT_RETRY_MS
+}
+
+function taskStartPendingResponse(body: string): boolean {
+  try {
+    const decoded = JSON.parse(body) as { code?: unknown }
+    return decoded.code === "idempotency_pending"
+  } catch {
+    return false
+  }
 }
 
 class HelmrApiError extends Error {
@@ -1169,6 +1915,67 @@ async function* parseSse(response: Response): AsyncIterable<RunEventRecord> {
   } finally {
     reader.releaseLock()
   }
+}
+
+async function* parseChannelRecordSse<TData = unknown>(response: Response): AsyncIterable<ChannelRecord<TData>> {
+  const reader = response.body?.getReader()
+  if (reader === undefined) {
+    return
+  }
+  const decoder = new TextDecoder()
+  let buffer = ""
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) {
+        buffer += decoder.decode()
+        const finalRecord = parseChannelRecordSseFrame<TData>(buffer)
+        if (finalRecord !== undefined) {
+          yield finalRecord
+        }
+        return
+      }
+      buffer += decoder.decode(value, { stream: true })
+      let boundary = findSseBoundary(buffer)
+      while (boundary !== -1) {
+        const delimiter = buffer.startsWith("\r\n\r\n", boundary) ? 4 : 2
+        const raw = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + delimiter)
+        const record = parseChannelRecordSseFrame<TData>(raw)
+        if (record !== undefined) {
+          yield record
+        }
+        boundary = findSseBoundary(buffer)
+      }
+      if (buffer.length > MAX_SSE_BUFFER_CHARS) {
+        throw new SseFrameTooLargeError()
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+function parseChannelRecordSseFrame<TData = unknown>(raw: string): ChannelRecord<TData> | undefined {
+  const data = raw
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+  if (data === "") {
+    return undefined
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(data)
+  } catch {
+    throw new SseProtocolError("SSE channel record data must be valid JSON", sseFrameCursor(raw))
+  }
+  const record = objectRecord(parsed)
+  if (record === undefined) {
+    throw new SseProtocolError("SSE channel record data must be a JSON object", sseFrameCursor(raw))
+  }
+  return channelRecordFromResponse<TData>(record as unknown as ChannelRecordResponse)
 }
 
 function parseSseFrame(raw: string): RunEventRecord | undefined {
@@ -1251,6 +2058,10 @@ function parseRunEventCursor(value: string): number | undefined {
 
 function runEventRecordIsTerminal(event: RunEventRecord): boolean {
   return runEventKindIsTerminal(event.message) || runEventKindIsTerminal(event.kind)
+}
+
+function taskSessionTerminal(status: TaskSessionStatus): boolean {
+  return status !== "open"
 }
 
 function runEventKindIsTerminal(kind: string | undefined): boolean {
@@ -1343,44 +2154,46 @@ function runEventRecordToRunEvent(event: unknown): RunEvent | undefined {
       at,
     }
   }
-  if (message === "waitpoint.requested") {
+  if (message === "waitpoint.created") {
     const waitpointId = stringValue(attributes?.["waitpoint_id"])
     const kind = stringValue(attributes?.["kind"])
     if (waitpointId === undefined) return undefined
     if (kind === undefined) return undefined
     return {
-      type: "waitpoint_request",
+      type: "waitpoint",
       run_id: runId,
       waitpoint_id: waitpointId,
       kind,
-      displayText: stringValue(attributes?.["display_text"]) ?? "",
-      request: attributes?.["request"] ?? {},
+      params: attributes?.["params"] ?? {},
+      metadata: objectRecord(attributes?.["metadata"]) ?? {},
+      tags: stringArrayValue(attributes?.["tags"]) ?? [],
       ...optionalNumber("timeout", attributes?.["timeout"]),
       at,
     }
   }
-  if (message === "waitpoint.resolved") {
+  if (message === "waitpoint.completed") {
     const waitpointId = stringValue(attributes?.["waitpoint_id"])
     const kind = stringValue(attributes?.["kind"])
-    const resolution = stringValue(attributes?.["resolution_kind"])
     if (waitpointId === undefined) return undefined
-    if (kind === undefined || resolution === undefined) return undefined
+    if (kind === undefined) return undefined
     return {
-      type: "waitpoint_resolved",
+      type: "waitpoint_completed",
       run_id: runId,
       waitpoint_id: waitpointId,
       kind,
-      resolutionKind: resolution,
-      value: attributes?.["result"],
+      payload: attributes?.["payload"],
       at,
     }
   }
-  if (message.startsWith("emit.")) {
+  if (message === "waitpoint.timed_out") {
+    const waitpointId = stringValue(attributes?.["waitpoint_id"])
+    const kind = stringValue(attributes?.["kind"])
+    if (waitpointId === undefined || kind === undefined) return undefined
     return {
-      type: "emit",
+      type: "waitpoint_timed_out",
       run_id: runId,
-      event_type: stringValue(attributes?.["type"]) ?? message.slice("emit.".length),
-      content: attributes?.["content"],
+      waitpoint_id: waitpointId,
+      kind,
       at,
     }
   }
@@ -1436,6 +2249,10 @@ function objectRecord(value: unknown): Record<string, unknown> | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined
+}
+
+function stringArrayValue(value: unknown): readonly string[] | undefined {
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : undefined
 }
 
 function numberValue(value: unknown): number | undefined {

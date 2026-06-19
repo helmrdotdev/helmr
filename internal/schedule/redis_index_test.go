@@ -65,6 +65,94 @@ func TestRedisIndexDequeuesDueEntriesAndAcks(t *testing.T) {
 	}
 }
 
+func TestRedisIndexDeleteRemovesReadyEntry(t *testing.T) {
+	ctx := context.Background()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	defer client.Close()
+
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return now }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	instanceID := uuid.Must(uuid.NewV7())
+	entry := IndexEntry{
+		InstanceID:  instanceID,
+		Generation:  4,
+		ScheduledAt: now.Add(time.Hour),
+		AvailableAt: now.Add(time.Hour),
+	}
+	if err := index.Enqueue(ctx, entry); err != nil {
+		t.Fatal(err)
+	}
+	if err := index.Delete(ctx, instanceID); err != nil {
+		t.Fatal(err)
+	}
+
+	leases, err := index.Dequeue(ctx, DequeueRequest{
+		WorkerID: uuid.Must(uuid.NewV7()),
+		Limit:    1,
+		Now:      now.Add(2 * time.Hour),
+		Lease:    time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 0 {
+		t.Fatalf("leases after delete = %d, want 0", len(leases))
+	}
+	messageID := indexMessageID(entry)
+	if exists := client.Exists(ctx, index.prefix+":message:"+messageID).Val(); exists != 0 {
+		t.Fatalf("message key exists = %d, want 0", exists)
+	}
+}
+
+func TestRedisIndexDeleteRemovesActiveEntry(t *testing.T) {
+	ctx := context.Background()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	defer client.Close()
+
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return now }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerID := uuid.Must(uuid.NewV7())
+	entry := IndexEntry{
+		InstanceID:  uuid.Must(uuid.NewV7()),
+		Generation:  1,
+		ScheduledAt: now,
+		AvailableAt: now,
+	}
+	if err := index.Enqueue(ctx, entry); err != nil {
+		t.Fatal(err)
+	}
+	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("leases = %d, want 1", len(leases))
+	}
+	if err := index.Delete(ctx, entry.InstanceID); err != nil {
+		t.Fatal(err)
+	}
+
+	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now.Add(2 * time.Minute), Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 0 {
+		t.Fatalf("leases after active delete = %d, want 0", len(leases))
+	}
+	messageID := indexMessageID(entry)
+	if exists := client.Exists(ctx, index.prefix+":message:"+messageID, index.prefix+":message_active:"+messageID, index.prefix+":lease:"+messageID+":lease:1").Val(); exists != 0 {
+		t.Fatalf("deleted keys exist = %d, want 0", exists)
+	}
+}
+
 func TestRedisIndexNackDelaysRetry(t *testing.T) {
 	ctx := context.Background()
 	server := miniredis.RunT(t)

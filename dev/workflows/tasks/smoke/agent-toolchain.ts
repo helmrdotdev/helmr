@@ -1,6 +1,6 @@
 import { query, type Options as ClaudeOptions } from "@anthropic-ai/claude-agent-sdk"
 import { Agent } from "@cursor/sdk"
-import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { cache, image, logger, sandbox, source, task } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { runCodex as runCodexTurn, type CodexThreadOptions } from "../lib/agents/codex-app-server"
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "../lib/agents/models"
@@ -10,7 +10,7 @@ import { runCommand } from "../lib/process"
 import { z } from "zod"
 
 const dependencyInputs = source.directory(".", {
-  ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
+  ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json", "!vendor", "!vendor/**"],
 })
 const guideInputs = source.directory("guides")
 
@@ -127,7 +127,7 @@ export const agentToolchainSmoke = task({
       sdk,
     }
 
-    ctx.log.info({
+    logger.info({
       phase: "agent-toolchain-smoke",
       repository,
       ref,
@@ -136,7 +136,7 @@ export const agentToolchainSmoke = task({
     })
     await writeFile("agent-toolchain-smoke-report.json", `${JSON.stringify(report, null, 2)}\n`)
     if (failures.length > 0) {
-      ctx.log.error({ phase: "agent-toolchain-smoke", repository, ref, failures })
+      logger.error({ phase: "agent-toolchain-smoke", repository, ref, failures })
       throw new Error(`agent toolchain smoke failed ${failures.length} check(s): ${failureSummary(failures)}`)
     }
     return report

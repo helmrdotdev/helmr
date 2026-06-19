@@ -105,7 +105,7 @@ docker run --rm -v "$repo_root":/work -w "/work/$role_dir" \
 		PROTO_HASH=$(sha256sum ../../proto/*.proto | sha256sum | awk '"'"'{print $1}'"'"')
 		cat > "$helmr_home/adapter/manifest.json" <<-EOF
 		{
-		  "runtime_contract_version": 1,
+		  "runtime_contract_version": 0,
 		  "adapter_hash": "sha256:$ADAPTER_HASH",
 		  "proto_schema_hash": "sha256:$PROTO_HASH",
 		  "node_version": "$NODE_VERSION",

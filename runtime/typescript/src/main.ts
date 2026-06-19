@@ -2,15 +2,34 @@ import { create, fromBinary, toBinary, toJson } from "@bufbuild/protobuf"
 import { BundleSchema, runProto } from "@helmr/proto"
 import {
   ConcurrentWaitError,
+  WaitTimeoutError,
   type TaskContext,
   type TaskWorkspace,
-  type WaitForInput,
-  type WaitJson,
-  type WaitOptions,
-  type WaitHumanOptions,
+  type ChannelInputDefinition,
+  type ChannelInputHandle,
+  type ChannelInputWaitOptions,
+  type ChannelOutputAppendOptions,
+  type ChannelOutputDefinition,
+  type ChannelOutputHandle,
+  type TaskSessionContext,
+  type WaitpointHandle,
+  type WaitpointResult,
+  type WaitpointToken,
+  type RuntimeWaitpointTokenCreateOptions,
+  type WaitDurationInput,
   type WaitUntilInput,
+  type WaitJson,
 } from "@helmr/sdk"
-import { parsePayloadWithSchema, parseTaskPayload } from "@helmr/sdk/internal"
+import {
+  enterRunRuntime,
+  runtimeWaitOperand,
+  validateChannelName,
+  WaitpointResultImpl,
+  parsePayloadWithSchema,
+  parseTaskPayload,
+  type RuntimeWaitOperand,
+  type RuntimeWaitpointOptions,
+} from "@helmr/sdk/internal"
 import { createWriteStream, type WriteStream } from "node:fs"
 import { createConnection, type Socket } from "node:net"
 import { resolve } from "node:path"
@@ -63,12 +82,14 @@ const processIo: AdapterIo = {
   stderr: process.stderr,
 }
 
-const CONTROL_EVENT_TYPE_MAX_BYTES = 256
-const EMIT_CONTENT_JSON_MAX_BYTES = 256 * 1024
+const RUNTIME_CONTENT_JSON_MAX_BYTES = 256 * 1024
+const CHANNEL_NAME_MAX_BYTES = 256
 const ADAPTER_MAX_FRAME_BYTES = 256 * 1024 * 1024
 const LOG_ENTRY_MAX_BYTES = 64 * 1024
-const WAIT_TEXT_MAX_BYTES = 16 * 1024
-const TRUNCATED_LOG_ENTRY_MARKER = "\n...[truncated ctx.log entry]"
+const WAIT_METADATA_JSON_MAX_BYTES = 64 * 1024
+const WAIT_TAGS_MAX_COUNT = 32
+const WAIT_TAG_MAX_BYTES = 128
+const TRUNCATED_LOG_ENTRY_MARKER = "\n...[truncated logger entry]"
 
 export async function runAdapterCli(
   argv: readonly string[] = process.argv.slice(2),
@@ -163,6 +184,7 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
   const runId = requireArg(args, "run-id")
   const control = await AdapterControlWriter.open(io.control)
   const responses = new AdapterResponseReader(io.stdin)
+  let leaveRuntime: (() => void) | undefined
 
   try {
     const registry = await loadTaskRegistry(taskCwd)
@@ -173,25 +195,27 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
     const taskContext = parseTaskContext(requireArg(args, "task-context-json"), runId, taskId)
     const mintCorrelationId = createCorrelationIdMint()
     const waitGate = new WaitGate()
+    leaveRuntime = enterRunRuntime({
+      createWaitpointToken: (opts: RuntimeWaitpointTokenCreateOptions) =>
+        createWaitpointToken(responses, control, opts),
+      waitpoint: <TPayload>(opts: RuntimeWaitpointOptions) =>
+        waitInput<TPayload>(responses, control, mintCorrelationId, waitGate, opts),
+      waitAll: (operands: readonly RuntimeWaitOperand[]) =>
+        waitAll(responses, control, mintCorrelationId, waitGate, operands),
+      channelOutputAppend: (channel: string, payload: unknown, opts?: ChannelOutputAppendOptions) => writeChannelOutput(control, channel, payload, opts),
+      waitFor: (input: WaitDurationInput) => waitFor(responses, control, mintCorrelationId, waitGate, input),
+      waitUntil: (input: WaitUntilInput) => waitUntil(responses, control, mintCorrelationId, waitGate, input),
+      metadataSet: (key: string, value: unknown) => writeMetadataSet(control, key, value),
+      metadataPatch: (value: Record<string, unknown>) => writeMetadataPatch(control, value),
+      metadataIncrement: (key: string, amount = 1) => writeMetadataIncrement(control, key, amount),
+      log: (level, values) => writeLog(control, level, values),
+    })
     const ctx = {
-      wait: {
-        for: (input: WaitForInput, opts?: Omit<WaitOptions, "timeout" | "policy">) =>
-          waitFor(responses, control, mintCorrelationId, waitGate, input, opts),
-        until: (input: WaitUntilInput, opts?: Omit<WaitOptions, "timeout" | "policy">) =>
-          waitUntil(responses, control, mintCorrelationId, waitGate, input, opts),
-        human: <TPayload = unknown>(opts?: WaitHumanOptions) =>
-          waitHuman<TPayload>(responses, control, mintCorrelationId, waitGate, opts),
-      },
-      emit: (event: EmitEvent) => emitEvent(control, event),
-      log: {
-        info: (...values: unknown[]) => writeLog(control, "info", values),
-        warn: (...values: unknown[]) => writeLog(control, "warn", values),
-        error: (...values: unknown[]) => writeLog(control, "error", values),
-      },
       signal: controller.signal,
       run: taskContext.run,
       task: taskContext.task,
       workspace: taskContext.workspace,
+      session: createTaskSessionContext(taskContext.session.id, taskContext.session.workspace, responses, control, mintCorrelationId, waitGate),
     }
     let result: unknown
     const payload = task.payload === undefined ? undefined : await parseTaskPayload(task, rawPayload)
@@ -207,6 +231,8 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
       await drainProcessOutputStreams()
       writeTaskResult(control, { exitCode: 1, errorMessage: serialized.message })
       return
+    } finally {
+      leaveRuntime()
     }
     const outputJson = stringifyTaskOutput(result)
     await drainProcessOutputStreams()
@@ -217,6 +243,7 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
     await drainProcessOutputStreams()
     writeTaskResult(control, { exitCode: 1, errorMessage: serialized.message })
   } finally {
+    leaveRuntime?.()
     responses.close()
     await control.close()
   }
@@ -242,12 +269,15 @@ interface ParsedTaskContext {
     readonly id: string
     readonly attemptId?: string
     readonly attemptNumber?: number
-    readonly sessionId?: string
+    readonly runLeaseId?: string
     readonly snapshotVersion?: number
-    readonly replayedFromRunId?: string
   }
   readonly task: { readonly id: string }
   readonly workspace: TaskWorkspace
+  readonly session: {
+    readonly id: string
+    readonly workspace: TaskWorkspace
+  }
 }
 
 function parseTaskContext(json: string, runId: string, taskId: string): ParsedTaskContext {
@@ -265,19 +295,23 @@ function parseTaskContext(json: string, runId: string, taskId: string): ParsedTa
     throw new Error(`task context task.id ${JSON.stringify(contextTaskId)} does not match --task ${JSON.stringify(taskId)}`)
   }
   const workspace = parseTaskWorkspace(record["workspace"])
+  const session = parseTaskSession(record["session"])
   const runRecord = record["run"] as Record<string, unknown>
   const run = {
     id: contextRunId,
     ...optionalProperty("attemptId", readOptionalStringField(runRecord, "attemptId", "task context run.attemptId")),
     ...optionalProperty("attemptNumber", readOptionalPositiveIntegerField(runRecord, "attemptNumber", "task context run.attemptNumber")),
-    ...optionalProperty("sessionId", readOptionalStringField(runRecord, "sessionId", "task context run.sessionId")),
+    ...optionalProperty("runLeaseId", readOptionalStringField(runRecord, "runLeaseId", "task context run.runLeaseId")),
     ...optionalProperty("snapshotVersion", readOptionalPositiveIntegerField(runRecord, "snapshotVersion", "task context run.snapshotVersion")),
-    ...optionalProperty("replayedFromRunId", readOptionalStringField(runRecord, "replayedFromRunId", "task context run.replayedFromRunId")),
   }
   return {
     run: Object.freeze(run),
     task: Object.freeze({ id: contextTaskId }),
     workspace: Object.freeze(workspace),
+    session: Object.freeze({
+      id: session.id,
+      workspace: Object.freeze(session.workspace),
+    }),
   }
 }
 
@@ -335,6 +369,17 @@ function parseTaskWorkspace(value: unknown): TaskWorkspace {
   }
 }
 
+function parseTaskSession(value: unknown): { readonly id: string; readonly workspace: TaskWorkspace } {
+  if (value === null || typeof value !== "object") {
+    throw new Error("task context session is required")
+  }
+  const record = value as Record<string, unknown>
+  return {
+    id: readRequiredString(record, "id", "task context session.id"),
+    workspace: parseTaskWorkspace(record["workspace"]),
+  }
+}
+
 function readRequiredString(record: Record<string, unknown>, key: string, label: string): string {
   const value = record[key]
   if (typeof value !== "string" || value.trim() === "") {
@@ -376,10 +421,18 @@ function compareAscii(left: string, right: string): number {
 
 interface RuntimeWaitRequest {
   readonly kind: string
-  readonly requestJson: string
-  readonly displayText?: string
+  readonly paramsJson: string
+  readonly metadataJson?: string
+  readonly tags?: string[]
   readonly timeout?: number
-  readonly policy?: string
+  readonly ordinal?: number
+  readonly aggregateCount?: number
+}
+
+interface RuntimeWaitOptions {
+  readonly timeout?: number
+  readonly metadata?: { readonly [key: string]: WaitJson }
+  readonly tags?: string | readonly string[]
 }
 
 class AdapterResponseReader {
@@ -401,6 +454,14 @@ class AdapterResponseReader {
     }
     const body = await this.#readFrameBody()
     return fromBinary(runProto.ResumeDecisionSchema, body)
+  }
+
+  async readWaitpointTokenCreateResult(): Promise<runProto.WaitpointTokenCreateResult> {
+    if (this.#closed) {
+      throw new Error("adapter response stream closed")
+    }
+    const body = await this.#readFrameBody()
+    return fromBinary(runProto.WaitpointTokenCreateResultSchema, body)
   }
 
   async #readFrameBody(): Promise<Uint8Array> {
@@ -433,7 +494,7 @@ class WaitGate {
 
   async run<T>(fn: () => Promise<T>): Promise<T> {
     if (this.#inFlight) {
-      throw new ConcurrentWaitError("concurrent ctx.wait.* calls are not supported in v0.1")
+      throw new ConcurrentWaitError("concurrent blocking run I/O calls are not supported")
     }
     this.#inFlight = true
     try {
@@ -442,6 +503,64 @@ class WaitGate {
       this.#inFlight = false
     }
   }
+}
+
+function createTaskSessionContext(
+  id: string,
+  workspace: TaskWorkspace,
+  responses: AdapterResponseReader,
+  control: AdapterControlWriter,
+  mintCorrelationId: () => string,
+  waitGate: WaitGate,
+): TaskSessionContext {
+  return Object.freeze({
+    id,
+    workspace,
+    input(target: ChannelInputDefinition | string): ChannelInputHandle {
+      const channel = channelTargetName(target)
+      const schema = typeof target === "string" ? undefined : target.schema
+      return Object.freeze({
+        id: channel,
+        wait: (waitOpts = {}) => {
+          const operand = {
+            type: "channel",
+            channel,
+            ...(schema === undefined ? {} : { schema }),
+            options: waitOpts,
+          } satisfies RuntimeWaitOperand
+          return waitpointHandle(
+            operand,
+            () => waitChannelInput(responses, control, mintCorrelationId, waitGate, channel, schema, waitOpts),
+          )
+        },
+      })
+    },
+    output(target: ChannelOutputDefinition | string): ChannelOutputHandle {
+      const channel = channelTargetName(target)
+      const schema = typeof target === "string" ? undefined : target.schema
+      return Object.freeze({
+        id: channel,
+        append: async (payload: unknown, appendOpts?: ChannelOutputAppendOptions) => {
+          const parsed = schema === undefined
+            ? payload
+            : await parsePayloadWithSchema(schema, payload, `channel ${JSON.stringify(channel)} payload`)
+          return writeChannelOutput(control, channel, parsed, appendOpts)
+        },
+        pipe: async (source: AsyncIterable<unknown> | Iterable<unknown>, appendOpts?: ChannelOutputAppendOptions) => {
+          for await (const item of source) {
+            const parsed = schema === undefined
+              ? item
+              : await parsePayloadWithSchema(schema, item, `channel ${JSON.stringify(channel)} payload`)
+            await writeChannelOutput(control, channel, parsed, appendOpts)
+          }
+        },
+      })
+    },
+  })
+}
+
+function channelTargetName(target: { readonly id: string } | string): string {
+  return validateChannelName(typeof target === "string" ? target : target.id)
 }
 
 class AdapterControlWriter {
@@ -517,23 +636,83 @@ function connectControlSocket(socketPath: string): Promise<Socket> {
   })
 }
 
+async function createWaitpointToken(
+  responses: AdapterResponseReader,
+  control: AdapterControlWriter,
+  opts: RuntimeWaitpointTokenCreateOptions,
+): Promise<WaitpointToken> {
+  const metadata = opts.metadata === undefined ? undefined : normalizeWaitMetadata(opts.metadata)
+  const metadataJson = metadata === undefined ? undefined : JSON.stringify(metadata)
+  const tags = opts.tags === undefined ? undefined : normalizeWaitTags(opts.tags)
+  const timeoutInSeconds = opts.timeoutInSeconds === undefined ? undefined : positiveDelaySeconds(opts.timeoutInSeconds)
+  control.write(create(runProto.RunEventSchema, {
+    event: {
+      case: "waitpointTokenCreateRequested",
+      value: create(runProto.WaitpointTokenCreateRequestedSchema, {
+        ...(opts.timeoutAt === undefined ? {} : { timeoutAt: opts.timeoutAt }),
+        ...(timeoutInSeconds === undefined ? {} : { timeoutInSeconds }),
+        ...(tags === undefined ? {} : { tags }),
+        ...(metadataJson === undefined ? {} : { metadataJson }),
+      }),
+    },
+  }))
+  const result = await responses.readWaitpointTokenCreateResult()
+  if (result.errorMessage !== undefined && result.errorMessage.trim() !== "") {
+    throw new Error(result.errorMessage)
+  }
+  if (result.id.trim() === "") {
+    throw new Error("waitpoint token create response id is required")
+  }
+  if (result.callbackUrl.trim() === "") {
+    throw new Error("waitpoint token create response callback_url is required")
+  }
+  const resultMetadata = result.metadataJson === undefined || result.metadataJson.trim() === ""
+    ? undefined
+    : parseWaitpointTokenMetadata(result.metadataJson)
+  const status = waitpointTokenStatus(result.status)
+  return {
+    id: result.id,
+    callbackUrl: result.callbackUrl,
+    ...(result.publicAccessToken === undefined ? {} : { publicAccessToken: result.publicAccessToken }),
+    timeoutAt: result.timeoutAt ?? null,
+    ...(status === undefined ? {} : { status }),
+    ...(result.tags.length === 0 ? {} : { tags: result.tags }),
+    ...(resultMetadata === undefined ? {} : { metadata: resultMetadata }),
+  }
+}
+
+function waitpointTokenStatus(value: string | undefined): WaitpointToken["status"] | undefined {
+  switch (value) {
+    case "waiting":
+    case "completed":
+    case "timed_out":
+    case "cancelled":
+      return value
+    case undefined:
+    case "":
+      return undefined
+    default:
+      throw new Error(`waitpoint token create response status is invalid: ${value}`)
+  }
+}
+
 async function waitFor(
   responses: AdapterResponseReader,
   control: AdapterControlWriter,
   mintCorrelationId: () => string,
   waitGate: WaitGate,
-  input: WaitForInput,
-  opts?: Omit<WaitOptions, "timeout" | "policy">,
+  input: WaitDurationInput,
 ): Promise<void> {
-  const seconds = waitForInputSeconds(input)
+  const seconds = waitDurationSeconds(input)
   const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest(
-    "delay",
-    normalizeWaitForInput(input),
-    { ...opts, timeout: seconds },
+    "timer",
+    normalizeWaitDurationInput(input),
+    { timeout: seconds },
   ))
   if (!(decision.kind === "timed_out" || decision.kind === "completed")) {
-    throw new Error(`unexpected delay resume decision kind ${JSON.stringify(decision.kind)}`)
+    throw new Error(`unexpected wait.for resume decision kind ${JSON.stringify(decision.kind)}`)
   }
+  maybeWriteResumeConsumed(control, decision)
 }
 
 async function waitUntil(
@@ -542,44 +721,272 @@ async function waitUntil(
   mintCorrelationId: () => string,
   waitGate: WaitGate,
   input: WaitUntilInput,
-  opts?: Omit<WaitOptions, "timeout" | "policy">,
 ): Promise<void> {
   const until = waitUntilInputDate(input)
   const seconds = Math.max(1, Math.ceil((until.getTime() - Date.now()) / 1000))
   const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest(
-    "delay",
+    "timer",
     normalizeWaitUntilInput(input),
-    { ...opts, timeout: seconds },
+    { timeout: seconds },
   ))
   if (!(decision.kind === "timed_out" || decision.kind === "completed")) {
-    throw new Error(`unexpected delay resume decision kind ${JSON.stringify(decision.kind)}`)
+    throw new Error(`unexpected wait.until resume decision kind ${JSON.stringify(decision.kind)}`)
   }
+  maybeWriteResumeConsumed(control, decision)
 }
 
-async function waitHuman<TPayload>(
+async function waitInput<TPayload>(
   responses: AdapterResponseReader,
   control: AdapterControlWriter,
   mintCorrelationId: () => string,
   waitGate: WaitGate,
-  opts: WaitHumanOptions = {},
-): Promise<TPayload> {
+  opts: RuntimeWaitpointOptions,
+): Promise<WaitpointResultImpl<TPayload>> {
   const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest(
-    "human",
-    {},
-    opts,
+    opts.kind ?? "token",
+    waitpointData(opts),
+    {
+      ...(opts.timeout === undefined ? {} : { timeout: waitDurationSeconds(opts.timeout) }),
+      ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
+      ...(opts.tags === undefined ? {} : { tags: opts.tags }),
+    },
   ))
   if (decision.kind === "timed_out") {
-    throw new Error(`human wait timed out${formatTimeoutSuffix(opts.timeout)}`)
+    const seconds = opts.timeout === undefined ? undefined : waitDurationSeconds(opts.timeout)
+    maybeWriteResumeConsumed(control, decision)
+    return new WaitpointResultImpl<TPayload>(false, undefined as TPayload, new WaitTimeoutError(`waitpoint timed out${formatTimeoutSuffix(seconds)}`, seconds))
   }
   if (decision.kind !== "completed") {
-    throw new Error(`unexpected human resume decision kind ${JSON.stringify(decision.kind)}`)
+    throw new Error(`unexpected waitpoint resume decision kind ${JSON.stringify(decision.kind)}`)
   }
-  const payload = parseResumePayload(decision.resumePayloadJson)
-  const value = payload.value
+  const data = parseResumeData(decision.dataJson)
   if (opts.schema === undefined) {
-    return value as TPayload
+    maybeWriteResumeConsumed(control, decision)
+    return new WaitpointResultImpl(true, data as TPayload)
   }
-  return await parsePayloadWithSchema(opts.schema, value, "wait human value") as TPayload
+  const payload = await parsePayloadWithSchema(opts.schema, data, "waitpoint data") as TPayload
+  maybeWriteResumeConsumed(control, decision)
+  return new WaitpointResultImpl(true, payload)
+}
+
+async function waitChannelInput(
+  responses: AdapterResponseReader,
+  control: AdapterControlWriter,
+  mintCorrelationId: () => string,
+  waitGate: WaitGate,
+  channel: string,
+  schema: unknown,
+  opts: {
+    readonly correlationId?: string
+    readonly timeout?: WaitDurationInput
+    readonly metadata?: { readonly [key: string]: WaitJson }
+    readonly tags?: string | readonly string[]
+  } = {},
+): Promise<WaitpointResult<unknown>> {
+  const correlationId = normalizeOptionalCorrelationId(opts.correlationId)
+  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest(
+    "channel",
+    {
+      channel,
+      ...(correlationId === undefined ? {} : { correlation_id: correlationId }),
+    },
+    {
+      ...(opts.timeout === undefined ? {} : { timeout: waitDurationSeconds(opts.timeout) }),
+      ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
+      ...(opts.tags === undefined ? {} : { tags: opts.tags }),
+    },
+  ))
+  if (decision.kind === "timed_out") {
+    const seconds = opts.timeout === undefined ? undefined : waitDurationSeconds(opts.timeout)
+    maybeWriteResumeConsumed(control, decision)
+    return new WaitpointResultImpl(false, undefined, new WaitTimeoutError(`channel ${JSON.stringify(channel)} wait timed out${formatTimeoutSuffix(seconds)}`, seconds))
+  }
+  if (decision.kind !== "completed") {
+    throw new Error(`unexpected channel wait resume decision kind ${JSON.stringify(decision.kind)}`)
+  }
+  const envelope = channelWaitpointEnvelope(parseResumeData(decision.dataJson), channel)
+  const data = schema === undefined
+    ? envelope.data
+    : await parsePayloadWithSchema(schema as never, envelope.data, `channel ${JSON.stringify(channel)} data`)
+  maybeWriteResumeConsumed(control, decision)
+  return completedWaitpointResult(data)
+}
+
+async function waitAll(
+  responses: AdapterResponseReader,
+  control: AdapterControlWriter,
+  mintCorrelationId: () => string,
+  waitGate: WaitGate,
+  operands: readonly RuntimeWaitOperand[],
+): Promise<readonly unknown[]> {
+  if (operands.length === 0) {
+    throw new Error("wait.all requires at least one operand")
+  }
+  const requests = operands.map(runtimeWaitOperandRequest)
+  const decision = await waitGate.run(async () => {
+    const correlationId = mintCorrelationId()
+    const aggregateCount = requests.length
+    requests.forEach((request, ordinal) => {
+      control.write(waitpointRequestedEvent({ ...request, correlationId, ordinal, aggregateCount }))
+    })
+    return responses.readDecision()
+  })
+  if (decision.kind === "timed_out") {
+    if (operands.length === 1 && (operands[0]?.type === "for" || operands[0]?.type === "until")) {
+      maybeWriteResumeConsumed(control, decision)
+      return [undefined]
+    }
+    maybeWriteResumeConsumed(control, decision)
+    throw new WaitTimeoutError("wait.all timed out")
+  }
+  if (operands.length === 1 && decision.kind === "completed") {
+    const operand = operands[0]
+    if (operand === undefined) {
+      throw new Error("wait.all operand is missing")
+    }
+    const result = await decodeWaitAllOperand(operand, parseResumeData(decision.dataJson))
+    maybeWriteResumeConsumed(control, decision)
+    return [result]
+  }
+  if (decision.kind !== "waitpoints") {
+    throw new Error(`unexpected wait.all resume decision kind ${JSON.stringify(decision.kind)}`)
+  }
+  const envelope = waitAllEnvelope(parseResumeData(decision.dataJson), operands.length)
+  const results = []
+  for (let index = 0; index < operands.length; index += 1) {
+    const operand = operands[index]
+    if (operand === undefined) {
+      throw new Error(`wait.all operand at index ${index} is missing`)
+    }
+    results.push(await decodeWaitAllOperand(operand, envelope[index]))
+  }
+  maybeWriteResumeConsumed(control, decision)
+  return results
+}
+
+function runtimeWaitOperandRequest(operand: RuntimeWaitOperand): RuntimeWaitRequest {
+  switch (operand.type) {
+    case "for": {
+      const seconds = waitDurationSeconds(operand.input)
+      return waitRequest("timer", normalizeWaitDurationInput(operand.input), { timeout: seconds })
+    }
+    case "until": {
+      const until = waitUntilInputDate(operand.input)
+      const seconds = Math.max(1, Math.ceil((until.getTime() - Date.now()) / 1000))
+      return waitRequest("timer", normalizeWaitUntilInput(operand.input), { timeout: seconds })
+    }
+    case "waitpoint":
+      return waitRequest(
+        operand.options.kind ?? "token",
+        waitpointData(operand.options),
+        {
+          ...(operand.options.timeout === undefined ? {} : { timeout: waitDurationSeconds(operand.options.timeout) }),
+          ...(operand.options.metadata === undefined ? {} : { metadata: operand.options.metadata }),
+          ...(operand.options.tags === undefined ? {} : { tags: operand.options.tags }),
+        },
+      )
+    case "channel": {
+      const correlationId = normalizeOptionalCorrelationId(operand.options?.correlationId)
+      return waitRequest(
+        "channel",
+        {
+          channel: operand.channel,
+          ...(correlationId === undefined ? {} : { correlation_id: correlationId }),
+        },
+        {
+          ...(operand.options?.timeout === undefined ? {} : { timeout: waitDurationSeconds(operand.options.timeout) }),
+          ...(operand.options?.metadata === undefined ? {} : { metadata: operand.options.metadata }),
+          ...(operand.options?.tags === undefined ? {} : { tags: operand.options.tags }),
+        },
+      )
+    }
+  }
+}
+
+async function decodeWaitAllOperand(operand: RuntimeWaitOperand, value: unknown): Promise<unknown> {
+  switch (operand.type) {
+    case "for":
+    case "until":
+      return undefined
+    case "waitpoint":
+      if (operand.options.schema === undefined) {
+        return value
+      }
+      return await parsePayloadWithSchema(operand.options.schema, value, "wait.all waitpoint data")
+    case "channel": {
+      const envelope = channelWaitpointEnvelope(value, operand.channel)
+      if (operand.schema === undefined) {
+        return envelope.data
+      }
+      return await parsePayloadWithSchema(operand.schema, envelope.data, `channel ${JSON.stringify(operand.channel)} data`)
+    }
+  }
+}
+
+function waitAllEnvelope(value: unknown, expectedLength: number): readonly unknown[] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("wait.all data must be an object")
+  }
+  const waitpoints = (value as { readonly waitpoints?: unknown }).waitpoints
+  if (!Array.isArray(waitpoints)) {
+    throw new Error("wait.all data.waitpoints must be an array")
+  }
+  if (waitpoints.length !== expectedLength) {
+    throw new Error(`wait.all data.waitpoints length ${waitpoints.length} did not match operand count ${expectedLength}`)
+  }
+  return waitpoints
+}
+
+function normalizeOptionalCorrelationId(value: ChannelInputWaitOptions["correlationId"]): string | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+  const normalized = value.trim()
+  return normalized === "" ? undefined : normalized
+}
+
+function waitpointHandle<TPayload>(
+  operand: RuntimeWaitOperand,
+  factory: () => Promise<WaitpointResult<TPayload>>,
+): WaitpointHandle<TPayload> {
+  let promise: Promise<WaitpointResult<TPayload>> | undefined
+  const getPromise = () => {
+    promise ??= factory()
+    return promise
+  }
+  const handle: WaitpointHandle<TPayload> = {
+    then<TResult1 = WaitpointResult<TPayload>, TResult2 = never>(
+      onfulfilled?: ((value: WaitpointResult<TPayload>) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+    ): PromiseLike<TResult1 | TResult2> {
+      return getPromise().then(onfulfilled, onrejected)
+    },
+    unwrap: async () => (await getPromise()).unwrap(),
+  }
+  Object.defineProperty(handle, runtimeWaitOperand, { value: operand })
+  return handle
+}
+
+function completedWaitpointResult<TPayload>(data: TPayload): WaitpointResult<TPayload> {
+  return new WaitpointResultImpl(true, data)
+}
+
+function channelWaitpointEnvelope(value: unknown, expectedChannel: string): { readonly channel: string; readonly sequence: number; readonly data: unknown } {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("channel waitpoint data must be an object")
+  }
+  const record = value as { readonly channel?: unknown; readonly sequence?: unknown; readonly data?: unknown }
+  if (record.channel !== expectedChannel) {
+    throw new Error(`channel waitpoint channel mismatch: expected ${JSON.stringify(expectedChannel)}`)
+  }
+  if (typeof record.sequence !== "number" || !Number.isInteger(record.sequence) || record.sequence < 0) {
+    throw new Error("channel waitpoint sequence must be a non-negative integer")
+  }
+  return {
+    channel: record.channel,
+    sequence: record.sequence,
+    data: record.data,
+  }
 }
 
 async function waitGenericDecision(
@@ -591,69 +998,100 @@ async function waitGenericDecision(
 ): Promise<runProto.ResumeDecision> {
   return waitGate.run(async () => {
     const correlationId = mintCorrelationId()
-    control.write(waitRequestedEvent({ ...request, correlationId }))
+    control.write(waitpointRequestedEvent({ ...request, correlationId }))
     return responses.readDecision()
   })
 }
 
-function waitRequest(kind: string, request: WaitJson, opts?: WaitOptions): RuntimeWaitRequest {
+function waitRequest(kind: string, data: WaitJson, opts?: RuntimeWaitOptions): RuntimeWaitRequest {
   const normalizedKind = normalizeWaitKind(kind)
   const timeout = opts?.timeout
   if (timeout !== undefined) {
     validateWaitTimeout(timeout)
   }
-  const policy = normalizeWaitPolicy(opts?.policy)
-  const displayText = normalizeWaitDisplayText(opts?.displayText)
+  const tags = normalizeWaitTags(opts?.tags)
   return {
     kind: normalizedKind,
-    requestJson: JSON.stringify(request),
-    ...(displayText === undefined ? {} : { displayText }),
+    paramsJson: JSON.stringify(data),
+    ...(opts?.metadata === undefined ? {} : { metadataJson: JSON.stringify(normalizeWaitMetadata(opts.metadata)) }),
+    ...(tags === undefined ? {} : { tags }),
     ...(timeout === undefined ? {} : { timeout }),
-    ...(policy === undefined ? {} : { policy }),
   }
 }
 
-function waitRequestedEvent(request: RuntimeWaitRequest & { readonly correlationId: string }): runProto.RunEvent {
-  const value = waitRequestedValue(request)
+function waitpointRequestedEvent(request: RuntimeWaitRequest & { readonly correlationId: string }): runProto.RunEvent {
+  const value = waitpointRequestedValue(request)
   return create(runProto.RunEventSchema, {
     event: {
-      case: "waitRequested",
+      case: "waitpointRequested",
       value,
     },
   })
 }
 
-function waitRequestedValue(request: RuntimeWaitRequest & { readonly correlationId: string }): runProto.WaitRequested {
-  return create(runProto.WaitRequestedSchema, {
+function waitpointRequestedValue(request: RuntimeWaitRequest & { readonly correlationId: string }): runProto.WaitpointRequested {
+  return create(runProto.WaitpointRequestedSchema, {
     correlationId: request.correlationId,
     kind: request.kind,
-    requestJson: request.requestJson,
-    ...(request.displayText === undefined ? {} : { displayText: request.displayText }),
+    paramsJson: request.paramsJson,
+    ...(request.metadataJson === undefined ? {} : { metadataJson: request.metadataJson }),
+    ...(request.tags === undefined ? {} : { tags: request.tags }),
     ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
-    ...(request.policy === undefined ? {} : { policy: request.policy }),
+    ...(request.ordinal === undefined ? {} : { ordinal: request.ordinal }),
+    ...(request.aggregateCount === undefined ? {} : { aggregateCount: request.aggregateCount }),
   })
+}
+
+function maybeWriteResumeConsumed(control: AdapterControlWriter, decision: runProto.ResumeDecision): void {
+  if (!decision.requireConsumedAck) {
+    return
+  }
+  if (decision.waitpointId.trim() === "") {
+    throw new Error("resume decision waitpoint_id is required")
+  }
+  control.write(create(runProto.RunEventSchema, {
+    event: {
+      case: "resumeConsumed",
+      value: {
+        waitpointId: decision.waitpointId,
+      },
+    },
+  }))
 }
 
 function formatTimeoutSuffix(timeout: number | undefined): string {
   return timeout === undefined ? "" : ` after ${timeout}`
 }
 
-function normalizeWaitForInput(input: WaitForInput): WaitJson {
+function waitpointData(opts: RuntimeWaitpointOptions): WaitJson {
+  return opts.params === undefined ? {} : normalizeWaitJson(opts.params, "waitpoint params")
+}
+
+function normalizeOptionalIdentifier(value: string | undefined, label: string): string | undefined {
+  if (value === undefined) return undefined
+  const normalized = value.trim()
+  if (normalized === "") {
+    throw new Error(`${label} must be non-empty`)
+  }
+  return normalized
+}
+
+function normalizeWaitDurationInput(input: WaitDurationInput): WaitJson {
   if (typeof input === "string") {
     return { duration: input }
   }
   if (typeof input === "number") {
     return { seconds: input }
   }
-  return normalizeWaitJson(input, "wait.for input")
+  return normalizeWaitJson(input, "wait duration input")
 }
 
-function waitForInputSeconds(input: WaitForInput): number {
+function waitDurationSeconds(input: WaitDurationInput): number {
   if (typeof input === "number") {
     return positiveDelaySeconds(input)
   }
   if (typeof input === "string") {
-    return parseDurationSeconds(input, "wait.for duration")
+    return parseDurationSeconds(input, "wait duration")
   }
   const seconds = input.seconds
   if (seconds !== undefined) {
@@ -663,11 +1101,19 @@ function waitForInputSeconds(input: WaitForInput): number {
   if (milliseconds !== undefined) {
     return positiveDelaySeconds(milliseconds / 1000)
   }
+  const minutes = input.minutes
+  if (minutes !== undefined) {
+    return positiveDelaySeconds(minutes * 60)
+  }
+  const hours = input.hours
+  if (hours !== undefined) {
+    return positiveDelaySeconds(hours * 3600)
+  }
   const duration = input.duration
   if (duration !== undefined) {
-    return parseDurationSeconds(duration, "wait.for duration")
+    return parseDurationSeconds(duration, "wait duration")
   }
-  throw new Error("wait.for requires seconds, milliseconds, or duration")
+  throw new Error("wait duration requires seconds, milliseconds, minutes, hours, or duration")
 }
 
 function parseDurationSeconds(value: string, label: string): number {
@@ -749,96 +1195,128 @@ function normalizeWaitKind(value: string): string {
   return kind
 }
 
-function normalizeWaitDisplayText(value: string | undefined): string | undefined {
-  if (value === undefined) {
-    return undefined
+function normalizeWaitTags(value: string | readonly string[] | undefined): string[] | undefined {
+  if (value === undefined) return undefined
+  const tags = typeof value === "string" ? [value] : [...value]
+  if (tags.length > WAIT_TAGS_MAX_COUNT) {
+    throw new Error(`wait tags has ${tags.length} entries, exceeds max ${WAIT_TAGS_MAX_COUNT}`)
   }
-  validateUtf8ByteLength("wait display text", value, WAIT_TEXT_MAX_BYTES)
-  return value
+  return tags.map((tag) => {
+    const normalized = normalizeRequiredIdentifier(tag, "wait tag")
+    validateUtf8ByteLength("wait tag", normalized, WAIT_TAG_MAX_BYTES)
+    return normalized
+  })
 }
 
-function normalizeWaitPolicy(value: string | undefined): string | undefined {
-  if (value === undefined) {
-    return undefined
+function parseWaitpointTokenMetadata(value: string): Record<string, unknown> {
+  const parsed = JSON.parse(value) as unknown
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("waitpoint token create response metadata_json must be a JSON object")
   }
-  const policy = value.trim()
-  if (policy === "") {
-    throw new Error("wait policy must be non-empty")
-  }
-  return policy
+  return parsed as Record<string, unknown>
 }
 
-interface ResumePayload {
-  readonly raw: Record<string, unknown>
-  readonly at: Date
-  readonly principal?: string
-  readonly text?: string
-  readonly value?: unknown
-  readonly attachments?: unknown
+function normalizeWaitMetadata(value: unknown): { readonly [key: string]: WaitJson } {
+  const normalized = normalizeWaitJson(value as WaitJson, "wait metadata")
+  if (normalized === null || typeof normalized !== "object" || Array.isArray(normalized)) {
+    throw new Error("wait metadata must be a JSON object")
+  }
+  const metadataJson = JSON.stringify(normalized)
+  validateUtf8ByteLength("wait metadata_json", metadataJson, WAIT_METADATA_JSON_MAX_BYTES)
+  return normalized as { readonly [key: string]: WaitJson }
 }
 
-function parseResumePayload(json: string): ResumePayload {
+function normalizeRequiredIdentifier(value: string, label: string): string {
+  const normalized = normalizeOptionalIdentifier(value, label)
+  if (normalized === undefined) {
+    throw new Error(`${label} is required`)
+  }
+  return normalized
+}
+
+function parseResumeData(json: string): unknown {
   if (json === "") {
-    throw new Error("resume payload must be a JSON object with required at timestamp")
+    throw new Error("waitpoint data is required")
   }
-  const parsed = JSON.parse(json)
-  if (parsed === null || typeof parsed !== "object") {
-    throw new Error("resume payload must be a JSON object with required at timestamp")
-  }
-  const record = parsed as Record<string, unknown>
-  const at = parseResumePayloadAt(record["at"])
-  const principal = optionalResumePayloadString(record["principal"], "principal")
-  const text = optionalResumePayloadString(record["text"], "text")
-  return {
-    raw: record,
-    at,
-    ...(principal === undefined ? {} : { principal }),
-    ...(text === undefined ? {} : { text }),
-    ...(record["value"] === undefined ? {} : { value: record["value"] }),
-    ...(record["attachments"] === undefined ? {} : { attachments: record["attachments"] }),
+  try {
+    return JSON.parse(json)
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`waitpoint data must be valid JSON: ${error.message}`)
+    }
+    throw new Error("waitpoint data must be valid JSON")
   }
 }
 
-function parseResumePayloadAt(value: unknown): Date {
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new Error("resume payload at is required and must be a valid timestamp")
+async function writeChannelOutput(control: AdapterControlWriter, channelInput: string, payload: unknown, opts: ChannelOutputAppendOptions = {}): Promise<void> {
+  const channel = validateChannelName(channelInput)
+  validateUtf8ByteLength("channel", channel, CHANNEL_NAME_MAX_BYTES)
+  const contentType = opts.contentType?.trim()
+  if (contentType !== undefined && contentType === "") {
+    throw new Error("channel output contentType must be non-empty")
   }
-  const at = new Date(value)
-  if (Number.isNaN(at.getTime())) {
-    throw new Error("resume payload at is required and must be a valid timestamp")
+  const payloadJson = JSON.stringify(payload === undefined ? null : payload)
+  validateUtf8ByteLength("channel output payload_json", payloadJson, RUNTIME_CONTENT_JSON_MAX_BYTES)
+  const objectRefJson = opts.objectRef === undefined ? undefined : JSON.stringify(normalizeWaitJson(opts.objectRef, "channel output objectRef"))
+  if (objectRefJson !== undefined) {
+    validateUtf8ByteLength("channel output object_ref_json", objectRefJson, RUNTIME_CONTENT_JSON_MAX_BYTES)
   }
-  return at
-}
-
-function optionalResumePayloadString(value: unknown, field: string): string | undefined {
-  if (value === undefined || value === null) {
-    return undefined
-  }
-  if (typeof value !== "string") {
-    throw new Error(`resume payload ${field} must be a string`)
-  }
-  return value
-}
-
-interface EmitEvent {
-  readonly type: string
-  readonly content: readonly unknown[]
-}
-
-function emitEvent(control: AdapterControlWriter, event: EmitEvent): void {
-  if (!event || typeof event !== "object" || typeof event.type !== "string") {
-    throw new Error("ctx.emit requires an event with a string type")
-  }
-  if (!Array.isArray(event.content)) {
-    throw new Error("ctx.emit requires content array")
-  }
-  validateUtf8ByteLength("emit event type", event.type, CONTROL_EVENT_TYPE_MAX_BYTES)
-  const contentJson = JSON.stringify(event.content)
-  validateUtf8ByteLength("emit event content_json", contentJson, EMIT_CONTENT_JSON_MAX_BYTES)
   control.write(create(runProto.RunEventSchema, {
     event: {
-      case: "emitEvent",
-      value: { type: event.type, contentJson },
+      case: "channelOutputAppended",
+      value: {
+        channel,
+        payloadJson,
+        ...(contentType === undefined ? {} : { contentType }),
+        ...(objectRefJson === undefined ? {} : { objectRefJson }),
+      },
+    },
+  }))
+}
+
+async function writeMetadataSet(control: AdapterControlWriter, key: string, value: unknown): Promise<void> {
+  const normalizedKey = normalizeRequiredIdentifier(key, "metadata key")
+  const valueJson = JSON.stringify(normalizeWaitJson(value, "metadata value"))
+  validateUtf8ByteLength("metadata value_json", valueJson, RUNTIME_CONTENT_JSON_MAX_BYTES)
+  control.write(create(runProto.RunEventSchema, {
+    event: {
+      case: "metadataUpdated",
+      value: {
+        operation: "set",
+        key: normalizedKey,
+        valueJson,
+      },
+    },
+  }))
+}
+
+async function writeMetadataPatch(control: AdapterControlWriter, patch: Record<string, unknown>): Promise<void> {
+  const payloadJson = JSON.stringify(normalizeWaitJson(patch, "metadata patch"))
+  validateUtf8ByteLength("metadata patch_json", payloadJson, RUNTIME_CONTENT_JSON_MAX_BYTES)
+  control.write(create(runProto.RunEventSchema, {
+    event: {
+      case: "metadataUpdated",
+      value: {
+        operation: "patch",
+        patchJson: payloadJson,
+      },
+    },
+  }))
+}
+
+async function writeMetadataIncrement(control: AdapterControlWriter, key: string, amount: number): Promise<void> {
+  const normalizedKey = normalizeRequiredIdentifier(key, "metadata key")
+  if (!Number.isFinite(amount)) {
+    throw new Error("metadata increment amount must be finite")
+  }
+  control.write(create(runProto.RunEventSchema, {
+    event: {
+      case: "metadataUpdated",
+      value: {
+        operation: "increment",
+        key: normalizedKey,
+        amount,
+      },
     },
   }))
 }

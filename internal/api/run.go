@@ -21,19 +21,16 @@ type CreateRunRequest struct {
 }
 
 type CreateRunOptions struct {
-	DeploymentID          string          `json:"deployment_id,omitempty"`
-	Version               string          `json:"version,omitempty"`
-	Queue                 *RunQueueOption `json:"queue,omitempty"`
-	ConcurrencyKey        string          `json:"concurrency_key,omitempty"`
-	Priority              int32           `json:"priority,omitempty"`
-	TTL                   string          `json:"ttl,omitempty"`
-	MaxDurationSeconds    int32           `json:"max_duration_seconds,omitempty"`
-	Retry                 json.RawMessage `json:"retry,omitempty"`
-	Metadata              json.RawMessage `json:"metadata,omitempty"`
-	Tags                  []string        `json:"tags,omitempty"`
-	IdempotencyKey        string          `json:"idempotency_key,omitempty"`
-	IdempotencyKeyTTL     string          `json:"idempotency_key_ttl,omitempty"`
-	IdempotencyKeyOptions json.RawMessage `json:"idempotency_key_options,omitempty"`
+	Queue              *RunQueueOption `json:"queue,omitempty"`
+	ConcurrencyKey     string          `json:"concurrency_key,omitempty"`
+	Priority           int32           `json:"priority,omitempty"`
+	TTL                string          `json:"ttl,omitempty"`
+	MaxDurationSeconds int32           `json:"max_duration_seconds,omitempty"`
+	Retry              json.RawMessage `json:"retry,omitempty"`
+	Metadata           json.RawMessage `json:"metadata,omitempty"`
+	Tags               []string        `json:"tags,omitempty"`
+	IdempotencyKey     string          `json:"idempotency_key,omitempty"`
+	IdempotencyKeyTTL  string          `json:"idempotency_key_ttl,omitempty"`
 }
 
 type RunQueueOption struct {
@@ -44,15 +41,6 @@ type CancelRunRequest struct {
 	Reason         string `json:"reason,omitempty"`
 	Force          bool   `json:"force,omitempty"`
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
-}
-
-type ReplayRunRequest struct {
-	Version        string          `json:"version,omitempty"`
-	Payload        json.RawMessage `json:"payload,omitempty"`
-	Reason         string          `json:"reason,omitempty"`
-	IdempotencyKey string          `json:"idempotency_key,omitempty"`
-	Metadata       json.RawMessage `json:"metadata,omitempty"`
-	Tags           []string        `json:"tags,omitempty"`
 }
 
 type RunOperationResponse struct {
@@ -66,11 +54,6 @@ type RunOperationResponse struct {
 }
 
 type CancelRunResponse struct {
-	Run       RunResponse          `json:"run"`
-	Operation RunOperationResponse `json:"operation"`
-}
-
-type ReplayRunResponse struct {
 	Run       RunResponse          `json:"run"`
 	Operation RunOperationResponse `json:"operation"`
 }
@@ -129,6 +112,7 @@ type RunResponse struct {
 	EnvironmentID     string            `json:"environment_id"`
 	DeploymentID      string            `json:"deployment_id"`
 	DeploymentTaskID  string            `json:"deployment_task_id"`
+	TaskSessionID     string            `json:"task_session_id"`
 	Version           string            `json:"version"`
 	DeploymentVersion string            `json:"deployment_version"`
 	APIVersion        string            `json:"api_version"`
@@ -136,6 +120,7 @@ type RunResponse struct {
 	CLIVersion        string            `json:"cli_version,omitempty"`
 	TaskID            string            `json:"task_id"`
 	Status            string            `json:"status"`
+	Metadata          json.RawMessage   `json:"metadata,omitempty"`
 	AttemptNumber     *int32            `json:"attempt_number,omitempty"`
 	ExitCode          *int32            `json:"exit_code"`
 	Output            json.RawMessage   `json:"output,omitempty"`
@@ -179,14 +164,14 @@ func RunEventKindIsTerminal(kind string) bool {
 }
 
 type PendingWaitpoint struct {
-	Kind        string                      `json:"kind"`
-	WaitpointID string                      `json:"waitpoint_id"`
-	Request     json.RawMessage             `json:"request,omitempty"`
-	DisplayText string                      `json:"display_text,omitempty"`
-	Timeout     *int32                      `json:"timeout,omitempty"`
-	Policy      *string                     `json:"policy,omitempty"`
-	Deliveries  []WaitpointDeliveryResponse `json:"deliveries,omitempty"`
-	RequestedAt time.Time                   `json:"requested_at"`
+	ID        string          `json:"id"`
+	Kind      string          `json:"kind,omitempty"`
+	Status    string          `json:"status,omitempty"`
+	Params    json.RawMessage `json:"params,omitempty"`
+	Metadata  json.RawMessage `json:"metadata,omitempty"`
+	Tags      []string        `json:"tags,omitempty"`
+	Timeout   *int32          `json:"timeout,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
 type ListRunsResponse struct {
@@ -215,7 +200,7 @@ type LogSnapshotResponse struct {
 type RunLogChunk struct {
 	ID            string    `json:"id"`
 	RunID         string    `json:"run_id"`
-	SessionID     string    `json:"session_id"`
+	RunLeaseID    string    `json:"run_lease_id"`
 	AttemptNumber int32     `json:"attempt_number"`
 	Stream        string    `json:"stream"`
 	ContentBase64 string    `json:"content_base64"`
@@ -228,7 +213,7 @@ type RunEvent struct {
 	ID             string          `json:"id"`
 	RunID          *string         `json:"run_id,omitempty"`
 	DeploymentID   *string         `json:"deployment_id,omitempty"`
-	SessionID      *string         `json:"session_id,omitempty"`
+	RunLeaseID     *string         `json:"run_lease_id,omitempty"`
 	AttemptID      *string         `json:"attempt_id,omitempty"`
 	AttemptNumber  *int32          `json:"attempt_number,omitempty"`
 	Trace          TraceContext    `json:"trace"`

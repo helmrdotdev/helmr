@@ -247,7 +247,7 @@ export function ScopeSwitcher() {
   }
 
   const selectedEnvironment = createMemo(() => scope.selectedEnvironment());
-  const triggerDisabled = createMemo(() => scope.isLoading());
+  const switcherDisabled = createMemo(() => scope.isLoading());
   const hasNoProjects = createMemo(() => !scope.isLoading() && scope.projects().length === 0);
   const searchInputClass =
     "h-6 w-full border border-console-border bg-white px-2 py-0 font-mono text-[11px] text-console-text outline-none transition placeholder:text-console-faint focus:border-console-accent focus:shadow-[0_0_0_2px_rgb(49_95_206/0.12)]";
@@ -261,7 +261,7 @@ export function ScopeSwitcher() {
         type="button"
         class={ui.scopeTrigger}
         data-open={open() ? "true" : "false"}
-        disabled={triggerDisabled()}
+        disabled={switcherDisabled()}
         aria-haspopup="dialog"
         aria-expanded={open()}
         onClick={toggle}

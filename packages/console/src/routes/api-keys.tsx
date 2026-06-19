@@ -57,8 +57,8 @@ const API_KEY_SCOPE_OPTIONS: {
 }[] = [
   {
     value: "runs:create",
-    label: "Start runs",
-    description: "Allow automation to create runs in the selected project and environment.",
+    label: "Start tasks",
+    description: "Allow automation to start deployed tasks in the selected project and environment.",
   },
   {
     value: "runs:read",
@@ -66,19 +66,39 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to read run status, metadata, and logs.",
   },
   {
+    value: "runs:manage",
+    label: "Manage runs",
+    description: "Allow automation to cancel runs and task sessions.",
+  },
+  {
+    value: "run-waitpoints:read",
+    label: "Read waitpoints",
+    description: "Allow automation to inspect waitpoints created by runs.",
+  },
+	{
+		value: "channels:write",
+		label: "Write channels",
+		description: "Allow automation to append channel records in the selected project and environment.",
+	},
+  {
     value: "secrets:write",
     label: "Manage secrets",
     description: "Allow automation to list, create, update, and delete secrets in the selected project and environment.",
   },
   {
-    value: "waitpoints:respond",
-    label: "Respond to waitpoints",
-    description: "Allow automation to approve or deny pending waitpoints.",
+    value: "waitpoint-tokens:create",
+    label: "Create waitpoint tokens",
+    description: "Allow automation to create externally completable waitpoint tokens.",
   },
   {
-    value: "waitpoint-policies:manage",
-    label: "Manage waitpoint policies",
-    description: "Allow automation to create, update, and delete waitpoint policies in the selected project and environment.",
+    value: "waitpoint-tokens:read",
+    label: "Read waitpoint tokens",
+    description: "Allow automation to inspect waitpoint token status and metadata.",
+  },
+  {
+    value: "waitpoint-tokens:complete",
+    label: "Complete waitpoint tokens",
+    description: "Allow automation to complete waitpoint tokens through the token API.",
   },
   {
     value: "tasks:deploy",

@@ -138,21 +138,23 @@ schedule AS (
 ),
 instance_inputs AS (
     SELECT $9 AS id,
-           schedule.id AS schedule_id,
-           schedule.org_id,
-           schedule.project_id,
-           $10::uuid AS environment_id,
-           $11::jsonb AS run_options,
+	           schedule.id AS schedule_id,
+	           schedule.org_id,
+	           schedule.project_id,
+	           $10::uuid AS environment_id,
+	           schedule.task_id,
+	           $11::jsonb AS run_options,
            $12 AS active,
            CASE WHEN $12 THEN $13::timestamptz ELSE NULL END AS next_fire_at
       FROM schedule
     UNION ALL
     SELECT uuidv7() AS id,
-           task_schedule_instances.schedule_id,
-           task_schedule_instances.org_id,
-           task_schedule_instances.project_id,
-           task_schedule_instances.environment_id,
-           task_schedule_instances.run_options,
+	           task_schedule_instances.schedule_id,
+	           task_schedule_instances.org_id,
+	           task_schedule_instances.project_id,
+	           task_schedule_instances.environment_id,
+	           schedule.task_id,
+	           task_schedule_instances.run_options,
            task_schedule_instances.active,
            CASE WHEN task_schedule_instances.active THEN $13::timestamptz ELSE NULL END AS next_fire_at
       FROM task_schedule_instances
@@ -163,26 +165,29 @@ instance_inputs AS (
 instances AS (
     INSERT INTO task_schedule_instances (
         id,
-        schedule_id,
-        org_id,
-        project_id,
-        environment_id,
-        run_options,
-        active,
+	        schedule_id,
+	        org_id,
+	        project_id,
+	        environment_id,
+	        task_id,
+	        run_options,
+	        active,
         next_fire_at
     )
     SELECT id,
-           schedule_id,
-           org_id,
-           project_id,
-           environment_id,
-           run_options,
+	           schedule_id,
+	           org_id,
+	           project_id,
+	           environment_id,
+	           task_id,
+	           run_options,
            active,
            next_fire_at
       FROM instance_inputs
     ON CONFLICT (schedule_id, environment_id) DO UPDATE
-       SET run_options = EXCLUDED.run_options,
-           active = EXCLUDED.active,
+	       SET run_options = EXCLUDED.run_options,
+	           task_id = EXCLUDED.task_id,
+	           active = EXCLUDED.active,
            generation = task_schedule_instances.generation + 1,
            next_fire_at = EXCLUDED.next_fire_at,
            retry_after = NULL,
@@ -402,22 +407,24 @@ schedule AS (
 ),
 instance_inputs AS (
     SELECT $11 AS id,
-           schedule.id AS schedule_id,
-           schedule.org_id,
-           schedule.project_id,
-           $12::uuid AS environment_id,
-           $13::jsonb AS run_options,
+	           schedule.id AS schedule_id,
+	           schedule.org_id,
+	           schedule.project_id,
+	           $12::uuid AS environment_id,
+	           schedule.task_id,
+	           $13::jsonb AS run_options,
            $14 AS active,
            CASE WHEN $14 THEN $15::timestamptz ELSE NULL END AS next_fire_at
       FROM schedule
     UNION ALL
     SELECT uuidv7() AS id,
-           task_schedule_instances.schedule_id,
-           task_schedule_instances.org_id,
-           task_schedule_instances.project_id,
-           task_schedule_instances.environment_id,
-           task_schedule_instances.run_options,
-           task_schedule_instances.active,
+	           task_schedule_instances.schedule_id,
+	           task_schedule_instances.org_id,
+	           task_schedule_instances.project_id,
+	           task_schedule_instances.environment_id,
+	           schedule.task_id,
+	           task_schedule_instances.run_options,
+	           task_schedule_instances.active,
            CASE WHEN task_schedule_instances.active THEN $15::timestamptz ELSE NULL END AS next_fire_at
       FROM task_schedule_instances
       JOIN schedule ON schedule.id = task_schedule_instances.schedule_id
@@ -427,26 +434,29 @@ instance_inputs AS (
 instances AS (
     INSERT INTO task_schedule_instances (
         id,
-        schedule_id,
-        org_id,
-        project_id,
-        environment_id,
-        run_options,
-        active,
+	        schedule_id,
+	        org_id,
+	        project_id,
+	        environment_id,
+	        task_id,
+	        run_options,
+	        active,
         next_fire_at
     )
     SELECT id,
-           schedule_id,
-           org_id,
-           project_id,
-           environment_id,
-           run_options,
-           active,
+	           schedule_id,
+	           org_id,
+	           project_id,
+	           environment_id,
+	           task_id,
+	           run_options,
+	           active,
            next_fire_at
       FROM instance_inputs
     ON CONFLICT (schedule_id, environment_id) DO UPDATE
-       SET run_options = EXCLUDED.run_options,
-           active = EXCLUDED.active,
+	       SET run_options = EXCLUDED.run_options,
+	           task_id = EXCLUDED.task_id,
+	           active = EXCLUDED.active,
            generation = task_schedule_instances.generation + 1,
            next_fire_at = EXCLUDED.next_fire_at,
            retry_after = NULL,
@@ -584,6 +594,36 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const deferScheduleInstanceTrigger = `-- name: DeferScheduleInstanceTrigger :execrows
+UPDATE task_schedule_instances
+   SET retry_after = $1,
+       updated_at = now()
+ WHERE id = $2
+   AND generation = $3
+   AND next_fire_at = $4
+   AND active
+`
+
+type DeferScheduleInstanceTriggerParams struct {
+	RetryAfter  pgtype.Timestamptz `json:"retry_after"`
+	InstanceID  pgtype.UUID        `json:"instance_id"`
+	Generation  int64              `json:"generation"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+}
+
+func (q *Queries) DeferScheduleInstanceTrigger(ctx context.Context, arg DeferScheduleInstanceTriggerParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deferScheduleInstanceTrigger,
+		arg.RetryAfter,
+		arg.InstanceID,
+		arg.Generation,
+		arg.ScheduledAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteSchedule = `-- name: DeleteSchedule :one
@@ -1499,10 +1539,10 @@ updated_instances AS (
            task_schedule_instances.environment_id = $8
            OR updated_schedule.timing_changed
        )
-    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.run_options, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_fire_at, task_schedule_instances.last_fire_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_kind, task_schedule_instances.trigger_error_message, task_schedule_instances.last_trigger_run_id, task_schedule_instances.created_at, task_schedule_instances.updated_at
+    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.task_id, task_schedule_instances.run_options, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_fire_at, task_schedule_instances.last_fire_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_kind, task_schedule_instances.trigger_error_message, task_schedule_instances.last_trigger_run_id, task_schedule_instances.created_at, task_schedule_instances.updated_at
 ),
 updated_instance AS (
-    SELECT id, schedule_id, org_id, project_id, environment_id, run_options, active, generation, next_fire_at, last_fire_at, retry_after, trigger_attempt_count, trigger_error_kind, trigger_error_message, last_trigger_run_id, created_at, updated_at
+    SELECT id, schedule_id, org_id, project_id, environment_id, task_id, run_options, active, generation, next_fire_at, last_fire_at, retry_after, trigger_attempt_count, trigger_error_kind, trigger_error_message, last_trigger_run_id, created_at, updated_at
       FROM updated_instances
      WHERE environment_id = $8
 )
@@ -1646,10 +1686,10 @@ updated_instances AS (
       FROM updated_schedule
      WHERE task_schedule_instances.schedule_id = updated_schedule.id
        AND task_schedule_instances.environment_id = $6
-    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.run_options, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_fire_at, task_schedule_instances.last_fire_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_kind, task_schedule_instances.trigger_error_message, task_schedule_instances.last_trigger_run_id, task_schedule_instances.created_at, task_schedule_instances.updated_at
+    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.task_id, task_schedule_instances.run_options, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_fire_at, task_schedule_instances.last_fire_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_kind, task_schedule_instances.trigger_error_message, task_schedule_instances.last_trigger_run_id, task_schedule_instances.created_at, task_schedule_instances.updated_at
 ),
 updated_instance AS (
-    SELECT id, schedule_id, org_id, project_id, environment_id, run_options, active, generation, next_fire_at, last_fire_at, retry_after, trigger_attempt_count, trigger_error_kind, trigger_error_message, last_trigger_run_id, created_at, updated_at
+    SELECT id, schedule_id, org_id, project_id, environment_id, task_id, run_options, active, generation, next_fire_at, last_fire_at, retry_after, trigger_attempt_count, trigger_error_kind, trigger_error_message, last_trigger_run_id, created_at, updated_at
       FROM updated_instances
      WHERE environment_id = $6
 )

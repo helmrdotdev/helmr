@@ -3729,26 +3729,30 @@ var exports_run_pb = {};
 __export(exports_run_pb, {
   file_run: () => file_run,
   WorkspaceArtifactSchema: () => WorkspaceArtifactSchema,
-  WaitRequestedSchema: () => WaitRequestedSchema,
+  WaitpointTokenCreateResultSchema: () => WaitpointTokenCreateResultSchema,
+  WaitpointTokenCreateRequestedSchema: () => WaitpointTokenCreateRequestedSchema,
+  WaitpointRequestedSchema: () => WaitpointRequestedSchema,
   TraceContextSchema: () => TraceContextSchema,
   TaskResultSchema: () => TaskResultSchema,
   TaskErrorSchema: () => TaskErrorSchema,
-  SuspendForCheckpointSchema: () => SuspendForCheckpointSchema,
   SecretInjectSchema: () => SecretInjectSchema,
   RunTaskWorkspaceSchema: () => RunTaskWorkspaceSchema,
   RunTaskRequestSchema: () => RunTaskRequestSchema,
   RunEventSchema: () => RunEventSchema,
   ResumeDecisionSchema: () => ResumeDecisionSchema,
+  ResumeConsumedSchema: () => ResumeConsumedSchema,
   ResumeAttachSchema: () => ResumeAttachSchema,
   ResumeAckSchema: () => ResumeAckSchema,
   PlacementSchema: () => PlacementSchema2,
-  PauseReadySchema: () => PauseReadySchema,
+  MetadataUpdatedSchema: () => MetadataUpdatedSchema,
   FilePlacementSchema: () => FilePlacementSchema2,
   EnvPlacementSchema: () => EnvPlacementSchema2,
-  EmitEventSchema: () => EmitEventSchema,
-  DirPlacementSchema: () => DirPlacementSchema2
+  DirPlacementSchema: () => DirPlacementSchema2,
+  CheckpointPauseRequestSchema: () => CheckpointPauseRequestSchema,
+  CheckpointPauseReadySchema: () => CheckpointPauseReadySchema,
+  ChannelOutputAppendedSchema: () => ChannelOutputAppendedSchema
 });
-var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCKQAQoQUnVuVGFza1dvcmtzcGFjZRIMCgRwYXRoGAEgASgJEhQKDHByb2plY3RfcGF0aBgCIAEoCRIxCghhcnRpZmFjdBgDIAEoCzIfLmhlbG1yLnJ1bi52MC5Xb3Jrc3BhY2VBcnRpZmFjdBITCgt2b2x1bWVfa2luZBgEIAEoCRIQCgh3cml0YWJsZRgFIAEoCCJyChFXb3Jrc3BhY2VBcnRpZmFjdBIOCgZkaWdlc3QYASABKAkSEgoKbWVkaWFfdHlwZRgCIAEoCRIQCghlbmNvZGluZxgDIAEoCRISCgpzaXplX2J5dGVzGAQgASgEEhMKC2VudHJ5X2NvdW50GAUgASgNIoIDCg5SdW5UYXNrUmVxdWVzdBIPCgd0YXNrX2lkGAEgASgJEhMKC21vZHVsZV9wYXRoGAIgASgJEgsKA2N3ZBgDIAEoCRIrCgdzZWNyZXRzGAQgAygLMhouaGVsbXIucnVuLnYwLlNlY3JldEluamVjdBIOCgZydW5faWQYBSABKAkSFAoMcGF5bG9hZF9qc29uGAYgASgJEjEKCXdvcmtzcGFjZRgHIAEoCzIeLmhlbG1yLnJ1bi52MC5SdW5UYXNrV29ya3NwYWNlEikKBXRyYWNlGAggASgLMhouaGVsbXIucnVuLnYwLlRyYWNlQ29udGV4dBISCgphdHRlbXB0X2lkGAkgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAogASgNEhIKCnNlc3Npb25faWQYCyABKAkSGAoQc25hcHNob3RfdmVyc2lvbhgMIAEoBBIcChRyZXBsYXllZF9mcm9tX3J1bl9pZBgNIAEoCRIUCgxyZXRyeV9yZWFzb24YDiABKAkiRgoMVHJhY2VDb250ZXh0EhAKCHRyYWNlX2lkGAEgASgJEg8KB3NwYW5faWQYAiABKAkSEwoLdHJhY2VwYXJlbnQYAyABKAkiXQoMU2VjcmV0SW5qZWN0EgwKBG5hbWUYASABKAkSKgoJcGxhY2VtZW50GAIgASgLMhcuaGVsbXIucnVuLnYwLlBsYWNlbWVudBITCgt2YWx1ZV9ieXRlcxgDIAEoDCKWAQoJUGxhY2VtZW50EikKA2VudhgBIAEoCzIaLmhlbG1yLnJ1bi52MC5FbnZQbGFjZW1lbnRIABIrCgRmaWxlGAIgASgLMhsuaGVsbXIucnVuLnYwLkZpbGVQbGFjZW1lbnRIABIpCgNkaXIYAyABKAsyGi5oZWxtci5ydW4udjAuRGlyUGxhY2VtZW50SABCBgoEa2luZCIcCgxFbnZQbGFjZW1lbnQSDAoEbmFtZRgBIAEoCSJXCg1GaWxlUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIlYKDERpclBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciLvAQoIUnVuRXZlbnQSFgoMc3Rkb3V0X2NodW5rGAEgASgMSAASFgoMc3RkZXJyX2NodW5rGAIgASgMSAASEwoJbG9nX2VudHJ5GAMgASgJSAASLwoLdGFza19yZXN1bHQYBCABKAsyGC5oZWxtci5ydW4udjAuVGFza1Jlc3VsdEgAEjUKDndhaXRfcmVxdWVzdGVkGAUgASgLMhsuaGVsbXIucnVuLnYwLldhaXRSZXF1ZXN0ZWRIABItCgplbWl0X2V2ZW50GAYgASgLMhcuaGVsbXIucnVuLnYwLkVtaXRFdmVudEgAQgcKBWV2ZW50Iq4BCgpUYXNrUmVzdWx0EhEKCWV4aXRfY29kZRgBIAEoBRIaCg1lcnJvcl9tZXNzYWdlGAIgASgJSACIAQESGAoLb3V0cHV0X2pzb24YAyABKAlIAYgBARIrCgVlcnJvchgEIAEoCzIXLmhlbG1yLnJ1bi52MC5UYXNrRXJyb3JIAogBAUIQCg5fZXJyb3JfbWVzc2FnZUIOCgxfb3V0cHV0X2pzb25CCAoGX2Vycm9yImEKCVRhc2tFcnJvchIMCgR0eXBlGAEgASgJEgwKBGNvZGUYAiABKAkSDwoHbWVzc2FnZRgDIAEoCRIRCglyZXRyeWFibGUYBCABKAgSFAoMZGV0YWlsc19qc29uGAUgASgJIrkBCg1XYWl0UmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEgwKBGtpbmQYAiABKAkSFAoMcmVxdWVzdF9qc29uGAMgASgJEhkKDGRpc3BsYXlfdGV4dBgEIAEoCUgAiAEBEhQKB3RpbWVvdXQYBSABKA1IAYgBARITCgZwb2xpY3kYBiABKAlIAogBAUIPCg1fZGlzcGxheV90ZXh0QgoKCF90aW1lb3V0QgkKB19wb2xpY3kiQwoUU3VzcGVuZEZvckNoZWNrcG9pbnQSFAoMd2FpdHBvaW50X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkiOQoKUGF1c2VSZWFkeRIUCgx3YWl0cG9pbnRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCSJPCgxSZXN1bWVBdHRhY2gSFQoNY2hlY2twb2ludF9pZBgBIAEoCRIUCgx3YWl0cG9pbnRfaWQYAiABKAkSEgoKc2Vzc2lvbl9pZBgDIAEoCSJRCg5SZXN1bWVEZWNpc2lvbhIUCgx3YWl0cG9pbnRfaWQYASABKAkSDAoEa2luZBgCIAEoCRIbChNyZXN1bWVfcGF5bG9hZF9qc29uGAMgASgJIiEKCVJlc3VtZUFjaxIUCgx3YWl0cG9pbnRfaWQYASABKAkiLwoJRW1pdEV2ZW50EgwKBHR5cGUYASABKAkSFAoMY29udGVudF9qc29uGAIgASgJQjpaOGdpdGh1Yi5jb20vaGVsbXJkb3RkZXYvaGVsbXIvaW50ZXJuYWwvcHJvdG8vcnVuL3YwO3J1bnYwYgZwcm90bzM");
+var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCKQAQoQUnVuVGFza1dvcmtzcGFjZRIMCgRwYXRoGAEgASgJEhQKDHByb2plY3RfcGF0aBgCIAEoCRIxCghhcnRpZmFjdBgDIAEoCzIfLmhlbG1yLnJ1bi52MC5Xb3Jrc3BhY2VBcnRpZmFjdBITCgt2b2x1bWVfa2luZBgEIAEoCRIQCgh3cml0YWJsZRgFIAEoCCJyChFXb3Jrc3BhY2VBcnRpZmFjdBIOCgZkaWdlc3QYASABKAkSEgoKbWVkaWFfdHlwZRgCIAEoCRIQCghlbmNvZGluZxgDIAEoCRISCgpzaXplX2J5dGVzGAQgASgEEhMKC2VudHJ5X2NvdW50GAUgASgNIv8CCg5SdW5UYXNrUmVxdWVzdBIPCgd0YXNrX2lkGAEgASgJEhMKC21vZHVsZV9wYXRoGAIgASgJEgsKA2N3ZBgDIAEoCRIrCgdzZWNyZXRzGAQgAygLMhouaGVsbXIucnVuLnYwLlNlY3JldEluamVjdBIOCgZydW5faWQYBSABKAkSFAoMcGF5bG9hZF9qc29uGAYgASgJEjEKCXdvcmtzcGFjZRgHIAEoCzIeLmhlbG1yLnJ1bi52MC5SdW5UYXNrV29ya3NwYWNlEikKBXRyYWNlGAggASgLMhouaGVsbXIucnVuLnYwLlRyYWNlQ29udGV4dBISCgphdHRlbXB0X2lkGAkgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAogASgNEhQKDHJ1bl9sZWFzZV9pZBgLIAEoCRIYChBzbmFwc2hvdF92ZXJzaW9uGAwgASgEEhcKD3Rhc2tfc2Vzc2lvbl9pZBgNIAEoCRIUCgxyZXRyeV9yZWFzb24YDiABKAkiRgoMVHJhY2VDb250ZXh0EhAKCHRyYWNlX2lkGAEgASgJEg8KB3NwYW5faWQYAiABKAkSEwoLdHJhY2VwYXJlbnQYAyABKAkiXQoMU2VjcmV0SW5qZWN0EgwKBG5hbWUYASABKAkSKgoJcGxhY2VtZW50GAIgASgLMhcuaGVsbXIucnVuLnYwLlBsYWNlbWVudBITCgt2YWx1ZV9ieXRlcxgDIAEoDCKWAQoJUGxhY2VtZW50EikKA2VudhgBIAEoCzIaLmhlbG1yLnJ1bi52MC5FbnZQbGFjZW1lbnRIABIrCgRmaWxlGAIgASgLMhsuaGVsbXIucnVuLnYwLkZpbGVQbGFjZW1lbnRIABIpCgNkaXIYAyABKAsyGi5oZWxtci5ydW4udjAuRGlyUGxhY2VtZW50SABCBgoEa2luZCIcCgxFbnZQbGFjZW1lbnQSDAoEbmFtZRgBIAEoCSJXCg1GaWxlUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIlYKDERpclBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciLfAwoIUnVuRXZlbnQSFgoMc3Rkb3V0X2NodW5rGAEgASgMSAASFgoMc3RkZXJyX2NodW5rGAIgASgMSAASEwoJbG9nX2VudHJ5GAMgASgJSAASLwoLdGFza19yZXN1bHQYBCABKAsyGC5oZWxtci5ydW4udjAuVGFza1Jlc3VsdEgAEj8KE3dhaXRwb2ludF9yZXF1ZXN0ZWQYBSABKAsyIC5oZWxtci5ydW4udjAuV2FpdHBvaW50UmVxdWVzdGVkSAASOQoQbWV0YWRhdGFfdXBkYXRlZBgHIAEoCzIdLmhlbG1yLnJ1bi52MC5NZXRhZGF0YVVwZGF0ZWRIABJXCiB3YWl0cG9pbnRfdG9rZW5fY3JlYXRlX3JlcXVlc3RlZBgIIAEoCzIrLmhlbG1yLnJ1bi52MC5XYWl0cG9pbnRUb2tlbkNyZWF0ZVJlcXVlc3RlZEgAEkYKF2NoYW5uZWxfb3V0cHV0X2FwcGVuZGVkGAkgASgLMiMuaGVsbXIucnVuLnYwLkNoYW5uZWxPdXRwdXRBcHBlbmRlZEgAEjcKD3Jlc3VtZV9jb25zdW1lZBgGIAEoCzIcLmhlbG1yLnJ1bi52MC5SZXN1bWVDb25zdW1lZEgAQgcKBWV2ZW50Iq4BCgpUYXNrUmVzdWx0EhEKCWV4aXRfY29kZRgBIAEoBRIaCg1lcnJvcl9tZXNzYWdlGAIgASgJSACIAQESGAoLb3V0cHV0X2pzb24YAyABKAlIAYgBARIrCgVlcnJvchgEIAEoCzIXLmhlbG1yLnJ1bi52MC5UYXNrRXJyb3JIAogBAUIQCg5fZXJyb3JfbWVzc2FnZUIOCgxfb3V0cHV0X2pzb25CCAoGX2Vycm9yImEKCVRhc2tFcnJvchIMCgR0eXBlGAEgASgJEgwKBGNvZGUYAiABKAkSDwoHbWVzc2FnZRgDIAEoCRIRCglyZXRyeWFibGUYBCABKAgSFAoMZGV0YWlsc19qc29uGAUgASgJItcBChJXYWl0cG9pbnRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDAoEa2luZBgCIAEoCRITCgtwYXJhbXNfanNvbhgDIAEoCRIaCg1tZXRhZGF0YV9qc29uGAQgASgJSACIAQESFAoHdGltZW91dBgFIAEoDUgBiAEBEgwKBHRhZ3MYBiADKAkSDwoHb3JkaW5hbBgHIAEoDRIXCg9hZ2dyZWdhdGVfY291bnQYCCABKA1CEAoOX21ldGFkYXRhX2pzb25CCgoIX3RpbWVvdXQiuwEKHVdhaXRwb2ludFRva2VuQ3JlYXRlUmVxdWVzdGVkEhcKCnRpbWVvdXRfYXQYASABKAlIAIgBARIfChJ0aW1lb3V0X2luX3NlY29uZHMYAiABKA1IAYgBARIMCgR0YWdzGAQgAygJEhoKDW1ldGFkYXRhX2pzb24YBSABKAlIAogBAUINCgtfdGltZW91dF9hdEIVChNfdGltZW91dF9pbl9zZWNvbmRzQhAKDl9tZXRhZGF0YV9qc29uIqoCChpXYWl0cG9pbnRUb2tlbkNyZWF0ZVJlc3VsdBIKCgJpZBgBIAEoCRIUCgxjYWxsYmFja191cmwYAiABKAkSIAoTcHVibGljX2FjY2Vzc190b2tlbhgDIAEoCUgAiAEBEhcKCnRpbWVvdXRfYXQYBCABKAlIAYgBARITCgZzdGF0dXMYBSABKAlIAogBARIMCgR0YWdzGAYgAygJEhoKDW1ldGFkYXRhX2pzb24YByABKAlIA4gBARIaCg1lcnJvcl9tZXNzYWdlGAkgASgJSASIAQFCFgoUX3B1YmxpY19hY2Nlc3NfdG9rZW5CDQoLX3RpbWVvdXRfYXRCCQoHX3N0YXR1c0IQCg5fbWV0YWRhdGFfanNvbkIQCg5fZXJyb3JfbWVzc2FnZSJFChZDaGVja3BvaW50UGF1c2VSZXF1ZXN0EhQKDHdhaXRwb2ludF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJIkMKFENoZWNrcG9pbnRQYXVzZVJlYWR5EhQKDHdhaXRwb2ludF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJIlEKDFJlc3VtZUF0dGFjaBIVCg1jaGVja3BvaW50X2lkGAEgASgJEhQKDHdhaXRwb2ludF9pZBgCIAEoCRIUCgxydW5fbGVhc2VfaWQYAyABKAkiZQoOUmVzdW1lRGVjaXNpb24SFAoMd2FpdHBvaW50X2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEQoJZGF0YV9qc29uGAMgASgJEhwKFHJlcXVpcmVfY29uc3VtZWRfYWNrGAQgASgIIiEKCVJlc3VtZUFjaxIUCgx3YWl0cG9pbnRfaWQYASABKAkiJgoOUmVzdW1lQ29uc3VtZWQSFAoMd2FpdHBvaW50X2lkGAEgASgJIpwBChVDaGFubmVsT3V0cHV0QXBwZW5kZWQSDwoHY2hhbm5lbBgBIAEoCRIUCgxwYXlsb2FkX2pzb24YAiABKAkSGQoMY29udGVudF90eXBlGAMgASgJSACIAQESHAoPb2JqZWN0X3JlZl9qc29uGAQgASgJSAGIAQFCDwoNX2NvbnRlbnRfdHlwZUISChBfb2JqZWN0X3JlZl9qc29uIq4BCg9NZXRhZGF0YVVwZGF0ZWQSEQoJb3BlcmF0aW9uGAEgASgJEhAKA2tleRgCIAEoCUgAiAEBEhcKCnZhbHVlX2pzb24YAyABKAlIAYgBARIXCgpwYXRjaF9qc29uGAQgASgJSAKIAQESEwoGYW1vdW50GAUgASgBSAOIAQFCBgoEX2tleUINCgtfdmFsdWVfanNvbkINCgtfcGF0Y2hfanNvbkIJCgdfYW1vdW50QjpaOGdpdGh1Yi5jb20vaGVsbXJkb3RkZXYvaGVsbXIvaW50ZXJuYWwvcHJvdG8vcnVuL3YwO3J1bnYwYgZwcm90bzM");
 var RunTaskWorkspaceSchema = /* @__PURE__ */ messageDesc(file_run, 0);
 var WorkspaceArtifactSchema = /* @__PURE__ */ messageDesc(file_run, 1);
 var RunTaskRequestSchema = /* @__PURE__ */ messageDesc(file_run, 2);
@@ -3761,13 +3765,17 @@ var DirPlacementSchema2 = /* @__PURE__ */ messageDesc(file_run, 8);
 var RunEventSchema = /* @__PURE__ */ messageDesc(file_run, 9);
 var TaskResultSchema = /* @__PURE__ */ messageDesc(file_run, 10);
 var TaskErrorSchema = /* @__PURE__ */ messageDesc(file_run, 11);
-var WaitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 12);
-var SuspendForCheckpointSchema = /* @__PURE__ */ messageDesc(file_run, 13);
-var PauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 14);
-var ResumeAttachSchema = /* @__PURE__ */ messageDesc(file_run, 15);
-var ResumeDecisionSchema = /* @__PURE__ */ messageDesc(file_run, 16);
-var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 17);
-var EmitEventSchema = /* @__PURE__ */ messageDesc(file_run, 18);
+var WaitpointRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 12);
+var WaitpointTokenCreateRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 13);
+var WaitpointTokenCreateResultSchema = /* @__PURE__ */ messageDesc(file_run, 14);
+var CheckpointPauseRequestSchema = /* @__PURE__ */ messageDesc(file_run, 15);
+var CheckpointPauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 16);
+var ResumeAttachSchema = /* @__PURE__ */ messageDesc(file_run, 17);
+var ResumeDecisionSchema = /* @__PURE__ */ messageDesc(file_run, 18);
+var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 19);
+var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_run, 20);
+var ChannelOutputAppendedSchema = /* @__PURE__ */ messageDesc(file_run, 21);
+var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_run, 22);
 // sdk/typescript/src/schema/payload.ts
 var payloadSchemaValidationErrorBrand = Symbol.for("helmr.sdk.PayloadSchemaValidationError");
 
@@ -3963,7 +3971,67 @@ function isAsciiAlnum(code) {
 }
 
 // sdk/typescript/src/internal.ts
+var CHANNEL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
+function validateChannelName(value, label = "channel name") {
+  const normalized = value.trim();
+  if (!CHANNEL_NAME_PATTERN.test(normalized)) {
+    throw new Error(`${label} must match ${CHANNEL_NAME_PATTERN}`);
+  }
+  return normalized;
+}
+var runtimeWaitOperand = Symbol.for("helmr.sdk.runtimeWaitOperand");
+function getRuntimeWaitOperand(value) {
+  if (value === null || typeof value !== "object" && typeof value !== "function") {
+    return;
+  }
+  return value[runtimeWaitOperand];
+}
+var runRuntimeSlot = Symbol.for("helmr.sdk.runRuntime");
+function enterRunRuntime(runtime) {
+  const global = globalThis;
+  if (global[runRuntimeSlot] !== undefined) {
+    throw new Error("Helmr run runtime is already active");
+  }
+  global[runRuntimeSlot] = runtime;
+  return () => {
+    if (global[runRuntimeSlot] === runtime) {
+      delete global[runRuntimeSlot];
+    }
+  };
+}
+function getRunRuntime() {
+  const runtime = globalThis[runRuntimeSlot];
+  if (runtime === undefined) {
+    throw new Error("Helmr run APIs can only be used while a task is running");
+  }
+  return runtime;
+}
+
+class WaitpointResultImpl {
+  ok;
+  data;
+  error;
+  constructor(ok, data, error) {
+    this.ok = ok;
+    if (data !== undefined) {
+      this.data = data;
+    }
+    if (error !== undefined) {
+      this.error = error;
+    }
+  }
+  unwrap() {
+    if (this.ok) {
+      return this.data;
+    }
+    if (this.error instanceof Error) {
+      throw this.error;
+    }
+    throw new Error(String(this.error ?? "waitpoint failed"));
+  }
+}
 var concurrentWaitErrorBrand = Symbol.for("helmr.sdk.ConcurrentWaitError");
+var waitTimeoutErrorBrand = Symbol.for("helmr.sdk.WaitTimeoutError");
 
 class ConcurrentWaitError extends Error {
   constructor(message) {
@@ -3973,6 +4041,19 @@ class ConcurrentWaitError extends Error {
   }
   static [Symbol.hasInstance](value) {
     return this === ConcurrentWaitError && typeof value === "object" && value !== null && concurrentWaitErrorBrand in value;
+  }
+}
+
+class WaitTimeoutError extends Error {
+  timeout;
+  constructor(message, timeout) {
+    super(message);
+    this.name = "WaitTimeoutError";
+    this.timeout = timeout;
+    Object.defineProperty(this, waitTimeoutErrorBrand, { value: true });
+  }
+  static [Symbol.hasInstance](value) {
+    return this === WaitTimeoutError && typeof value === "object" && value !== null && waitTimeoutErrorBrand in value;
   }
 }
 function validateSecretName(name, label = "secret name") {
@@ -4204,45 +4285,29 @@ function hasBrand(value, brand) {
 import { createHash } from "node:crypto";
 var idempotencyKeys = {
   create(key, options = {}) {
-    const scope = options.scope ?? "run";
+    const scope = options.scope ?? "global";
     return {
-      value: createIdempotencyKey(key, scope, options),
+      value: createIdempotencyKey(key, scope),
       key,
       scope
     };
   }
 };
-function runIdempotencyRequestFields(input, ttl) {
+function taskStartIdempotencyRequestFields(input, ttl) {
   if (input === undefined) {
     return {};
   }
   const key = isIdempotencyKey(input) ? input : idempotencyKeys.create(input);
   return {
     idempotency_key: key.value,
-    ...ttl === undefined ? {} : { idempotency_key_ttl: ttl },
-    idempotency_key_options: {
-      key: key.key,
-      scope: key.scope
-    }
+    ...ttl === undefined ? {} : { idempotency_key_ttl: ttl }
   };
 }
-function createIdempotencyKey(key, scope, options) {
+function createIdempotencyKey(key, scope) {
   const material = {
     scope,
     key: Array.isArray(key) ? [...key] : [key]
   };
-  const runId = "runId" in options ? options.runId : undefined;
-  const attemptNumber = "attemptNumber" in options ? options.attemptNumber : undefined;
-  if (scope === "run" && runId !== undefined) {
-    material["runId"] = runId;
-  }
-  if (scope === "attempt") {
-    if (runId === undefined || attemptNumber === undefined) {
-      throw new Error("attempt-scoped idempotency keys require runId and attemptNumber");
-    }
-    material["runId"] = runId;
-    material["attemptNumber"] = attemptNumber;
-  }
   return createHash("sha256").update(JSON.stringify(material)).digest("hex");
 }
 function isIdempotencyKey(value) {
@@ -4288,6 +4353,7 @@ function runSnapshot(snapshot) {
     id: snapshot.id,
     taskId: snapshot.taskId,
     status,
+    metadata: snapshot.metadata ?? {},
     exitCode: snapshot.exitCode ?? null,
     createdAt: snapshot.createdAt ?? null,
     updatedAt: snapshot.updatedAt ?? null,
@@ -4306,13 +4372,15 @@ function pendingWaitpointFromResponse(runId, wait) {
   if (wait === undefined || wait === null)
     return null;
   return {
-    kind: wait.kind,
     runId,
-    waitpointId: wait.waitpoint_id,
+    id: wait.id,
+    kind: wait.kind ?? "token",
+    status: wait.status ?? "pending",
     timeout: wait.timeout ?? null,
-    request: wait.request === undefined ? {} : wait.request,
-    displayText: wait.display_text ?? "",
-    requestedAt: wait.requested_at
+    params: wait.params === undefined ? {} : wait.params,
+    metadata: wait.metadata ?? {},
+    tags: wait.tags ?? [],
+    createdAt: wait.created_at
   };
 }
 function isTerminalRunStatus(status) {
@@ -4351,7 +4419,10 @@ function runStatus(status) {
 var MAX_SSE_BUFFER_CHARS = 1024 * 1024;
 var RUN_EVENT_RECONNECT_DELAY_MS = 1000;
 var RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS = 100;
-var triggerTaskClientMethod = Symbol.for("helmr.sdk.client.triggerTask");
+var TASK_START_PENDING_MAX_WAIT_MS = 1e4;
+var TASK_START_PENDING_DEFAULT_RETRY_MS = 250;
+var startTaskClientMethod = Symbol.for("helmr.sdk.client.startTask");
+var waitpointTokenClientMethod = Symbol.for("helmr.sdk.client.waitpointToken");
 
 class HelmrClient {
   #baseUrl;
@@ -4384,7 +4455,7 @@ class HelmrClient {
     }
   }
   tasks = {
-    trigger: async (...args) => {
+    start: async (...args) => {
       const taskId = args[0];
       const hasPayload = args.length === 3;
       const payload = hasPayload ? args[1] : undefined;
@@ -4392,10 +4463,65 @@ class HelmrClient {
       if (hasPayload && payload === undefined) {
         throw new Error(`task ${JSON.stringify(taskId)} requires payload`);
       }
-      return await this.#triggerRun(taskId, payload, opts);
+      return await this.#startTask(taskId, payload, opts);
+    },
+    startAndWait: async (...args) => {
+      const taskId = args[0];
+      const hasPayload = args.length === 3;
+      const payload = hasPayload ? args[1] : undefined;
+      const opts = hasPayload ? args[2] : args[1];
+      if (hasPayload && payload === undefined) {
+        throw new Error(`task ${JSON.stringify(taskId)} requires payload`);
+      }
+      return await this.#startTaskAndWait(taskId, payload, opts);
     }
   };
-  async[triggerTaskClientMethod](task, ...args) {
+  sessions = {
+    open: (idOrHandle) => {
+      return this.#openSession(sessionId(idOrHandle));
+    },
+    retrieve: async (idOrHandle, opts = {}) => {
+      return await this.#openSession(sessionId(idOrHandle)).retrieve(opts);
+    },
+    wait: async (idOrHandle, opts = {}) => {
+      return await this.#openSession(sessionId(idOrHandle)).wait(opts);
+    },
+    list: async (opts = {}) => {
+      const response = await this.#json(`/api/sessions${taskSessionListQuery(opts)}`, requestSignal(opts.signal));
+      return response.sessions.map(taskSessionFromResponse);
+    }
+  };
+  waitpoints = {
+    tokens: {
+      create: async (opts = {}) => {
+        return await this[waitpointTokenClientMethod]({ operation: "create", opts });
+      },
+      retrieve: async (id, opts = {}) => {
+        return await this[waitpointTokenClientMethod]({ operation: "retrieve", id, opts });
+      },
+      listPage: async (opts = {}) => {
+        return await this[waitpointTokenClientMethod]({ operation: "listPage", opts });
+      },
+      list: async (opts = {}) => {
+        return [...(await this[waitpointTokenClientMethod]({ operation: "listPage", opts })).tokens];
+      },
+      complete: async (token, data, opts = {}) => {
+        await this[waitpointTokenClientMethod]({ operation: "complete", token, data, opts });
+      }
+    }
+  };
+  auth = {
+    createPublicToken: async (opts) => {
+      const response = await this.#json("/api/public-access-tokens", {
+        method: "POST",
+        body: JSON.stringify(publicAccessTokenCreateBody(opts)),
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal)
+      });
+      return publicAccessTokenFromResponse(response);
+    }
+  };
+  async[startTaskClientMethod](task, ...args) {
     const hasPayload = task.payload !== undefined;
     const payload = hasPayload ? args[0] : undefined;
     const opts = hasPayload ? args[1] : args[0];
@@ -4407,34 +4533,215 @@ class HelmrClient {
     } else if (args.length > 1) {
       throw new Error(`task ${JSON.stringify(task.id)} does not accept payload`);
     }
-    return await this.#triggerRun(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration));
+    return await this.#startTask(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration));
   }
-  async#triggerRun(taskId, payload, opts, maxDurationSeconds) {
+  async[waitpointTokenClientMethod](request) {
+    switch (request.operation) {
+      case "create": {
+        const opts = request.opts ?? {};
+        const response = await this.#json(waitpointTokenCollectionPath(opts), {
+          method: "POST",
+          body: JSON.stringify(waitpointTokenCreateBody(opts)),
+          headers: { "content-type": "application/json" },
+          ...requestSignal(opts.signal)
+        });
+        return waitpointTokenFromResponse(response);
+      }
+      case "retrieve": {
+        const opts = request.opts ?? {};
+        const response = await this.#json(`${waitpointTokenCollectionPath(opts)}/${encodeURIComponent(request.id)}`, requestSignal(opts.signal));
+        return waitpointTokenFromResponse(response);
+      }
+      case "listPage": {
+        const opts = request.opts ?? {};
+        const response = await this.#json(`${waitpointTokenCollectionPath(opts)}${waitpointTokenListQuery(opts)}`, requestSignal(opts.signal));
+        return {
+          tokens: response.tokens.map(waitpointTokenFromResponse),
+          nextCursor: response.next_cursor ?? null
+        };
+      }
+      case "complete": {
+        const opts = request.opts ?? {};
+        const id = typeof request.token === "string" ? request.token : request.token.id;
+        const publicAccessToken = opts.publicAccessToken ?? waitpointTokenPublicAccessToken(request.token);
+        await this.#fetch(`/api/waitpoints/tokens/${encodeURIComponent(id)}/complete`, {
+          method: "POST",
+          body: JSON.stringify(waitpointTokenCompleteBody(request.data, opts)),
+          headers: {
+            "content-type": "application/json",
+            ...publicAccessToken === undefined ? {} : { authorization: `Bearer ${publicAccessToken}` }
+          },
+          ...requestSignal(opts.signal)
+        });
+        return;
+      }
+    }
+  }
+  async#startTask(taskId, payload, opts, maxDurationSeconds) {
     validateRetryPolicy(opts.retry, "retry");
-    const runOptions = {
-      ...opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId },
-      ...opts.version === undefined ? {} : { version: opts.version },
-      ...opts.queue === undefined ? {} : { queue: { name: opts.queue } },
-      ...opts.concurrencyKey === undefined ? {} : { concurrency_key: opts.concurrencyKey },
-      ...opts.priority === undefined ? {} : { priority: opts.priority },
-      ...opts.ttl === undefined ? {} : { ttl: opts.ttl },
-      ...opts.retry === undefined ? {} : { retry: opts.retry },
-      ...opts.metadata === undefined ? {} : { metadata: opts.metadata },
-      ...opts.tags === undefined ? {} : { tags: opts.tags },
-      ...maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds },
-      ...runIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL)
+    const body = taskStartBody(payload, opts, maxDurationSeconds);
+    const startedAt = Date.now();
+    for (;; ) {
+      const response = await this.#fetch(`/api/tasks/${encodeURIComponent(taskId)}/start`, {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal)
+      });
+      if (response.status !== 202) {
+        const start = await response.json();
+        return taskStartFromResponse(start);
+      }
+      const pendingBody = await response.text();
+      if (!taskStartPendingResponse(pendingBody)) {
+        throw new HelmrApiError(response.status, pendingBody);
+      }
+      const retryDelay = taskStartPendingRetryDelay(response);
+      if (Date.now() - startedAt + retryDelay > TASK_START_PENDING_MAX_WAIT_MS) {
+        throw new HelmrApiError(response.status, pendingBody);
+      }
+      await delay(retryDelay, opts.signal);
+    }
+  }
+  async#startTaskAndWait(taskId, payload, opts, maxDurationSeconds) {
+    validateRetryPolicy(opts.retry, "retry");
+    const body = {
+      ...taskStartBody(payload, opts, maxDurationSeconds),
+      ...opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }
     };
-    const response = await this.#fetch("/api/runs", {
-      method: "POST",
-      body: JSON.stringify({
-        task_id: taskId,
-        ...payload === undefined ? {} : { payload },
-        ...Object.keys(runOptions).length === 0 ? {} : { options: runOptions }
-      }),
-      headers: { "content-type": "application/json" }
-    });
-    const run = await response.json();
-    return runHandle(run.id, run.task_id);
+    const startedAt = Date.now();
+    for (;; ) {
+      const response = await this.#fetch(`/api/tasks/${encodeURIComponent(taskId)}/start-and-wait`, {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal)
+      });
+      if (response.status !== 202) {
+        return taskSessionFromResponse(await response.json());
+      }
+      const pendingBody = await response.text();
+      if (!taskStartPendingResponse(pendingBody)) {
+        throw new HelmrApiError(response.status, pendingBody);
+      }
+      const retryDelay = taskStartPendingRetryDelay(response);
+      if (Date.now() - startedAt + retryDelay > TASK_START_PENDING_MAX_WAIT_MS) {
+        throw new HelmrApiError(response.status, pendingBody);
+      }
+      await delay(retryDelay, opts.signal);
+    }
+  }
+  #openSession(id) {
+    return {
+      id,
+      retrieve: async (opts = {}) => {
+        const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}`, requestSignal(opts.signal));
+        return taskSessionFromResponse(response);
+      },
+      wait: async (opts = {}) => {
+        const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}/wait`, {
+          method: "POST",
+          body: JSON.stringify(taskSessionWaitBody(opts)),
+          headers: { "content-type": "application/json" },
+          ...requestSignal(opts.signal)
+        });
+        return taskSessionFromResponse(response);
+      },
+      close: async (opts = {}) => {
+        const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}/close`, {
+          method: "POST",
+          body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
+          headers: { "content-type": "application/json" },
+          ...requestSignal(opts.signal)
+        });
+        return taskSessionFromResponse(response);
+      },
+      cancel: async (opts = {}) => {
+        const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}/cancel`, {
+          method: "POST",
+          body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
+          headers: { "content-type": "application/json" },
+          ...requestSignal(opts.signal)
+        });
+        return taskSessionFromResponse(response);
+      },
+      runs: async (opts = {}) => {
+        const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}/runs`, requestSignal(opts.signal));
+        return response.runs.map(taskSessionRunFromResponse);
+      },
+      workspace: async (opts = {}) => {
+        const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}/workspace`, requestSignal(opts.signal));
+        return taskSessionWorkspaceFromResponse(response);
+      },
+      input: (channelInput) => {
+        const channel = validateChannelName(channelInput);
+        return {
+          send: async (data, opts = {}) => {
+            const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}/channels/${encodeURIComponent(channel)}/inputs`, {
+              method: "POST",
+              body: JSON.stringify(channelInputAppendBody(data, opts)),
+              headers: { "content-type": "application/json" },
+              ...requestSignal(opts.signal)
+            });
+            return appendChannelRecordFromResponse(response);
+          },
+          list: async (opts = {}) => {
+            return await this.#listSessionChannelRecords(id, channel, "inputs", opts);
+          }
+        };
+      },
+      output: (channelInput) => {
+        const channel = validateChannelName(channelInput);
+        return {
+          list: async (opts = {}) => {
+            return await this.#listSessionChannelRecords(id, channel, "outputs", opts);
+          },
+          stream: async (opts = {}) => {
+            return this.#streamSessionChannelOutputs(id, channel, opts);
+          }
+        };
+      }
+    };
+  }
+  async#listSessionChannelRecords(sessionID, channel, direction, opts) {
+    const response = await this.#json(`/api/sessions/${encodeURIComponent(sessionID)}/channels/${encodeURIComponent(channel)}/${direction}${sessionChannelQuery(opts)}`, requestSignal(opts.signal));
+    return response.records.map(channelRecordFromResponse);
+  }
+  async#streamSessionChannelOutputs(sessionID, channel, opts) {
+    const client = this;
+    const stream = async function* () {
+      let cursor = opts.cursor;
+      for (;; ) {
+        try {
+          const response = await client.#fetch(`/api/sessions/${encodeURIComponent(sessionID)}/channels/${encodeURIComponent(channel)}/outputs/stream${sessionChannelStreamQuery(opts, cursor)}`, {
+            headers: { accept: "text/event-stream" },
+            ...requestSignal(opts.signal)
+          });
+          for await (const record of parseChannelRecordSse(response)) {
+            cursor = Math.max(cursor ?? 0, record.sequence);
+            yield record;
+          }
+        } catch (error) {
+          throwIfAborted(opts.signal);
+          if (runEventStreamErrorIsFatal(error)) {
+            throw error;
+          }
+        }
+        try {
+          const session = await client.sessions.retrieve(sessionID, retrieveOptions(opts.signal));
+          if (taskSessionTerminal(session.status)) {
+            return;
+          }
+        } catch (error) {
+          throwIfAborted(opts.signal);
+          if (runSnapshotErrorIsFatal(error)) {
+            throw error;
+          }
+        }
+        await delay(RUN_EVENT_RECONNECT_DELAY_MS, opts.signal);
+      }
+    };
+    return stream();
   }
   runs = {
     retrieve: async (idOrHandle, opts = {}) => {
@@ -4501,15 +4808,6 @@ class HelmrClient {
       });
       return runResponseToSnapshot(response.run);
     },
-    replay: async (idOrHandle, opts = {}) => {
-      const response = await this.#json(`/api/runs/${encodeURIComponent(runId(idOrHandle))}/replay`, {
-        method: "POST",
-        body: JSON.stringify(replayRunBody(opts)),
-        headers: { "content-type": "application/json" },
-        ...requestSignal(opts.signal)
-      });
-      return runHandle(response.run.id, response.run.task_id);
-    },
     list: async (opts = {}) => {
       const query = new URLSearchParams;
       if (opts.status !== undefined)
@@ -4519,6 +4817,19 @@ class HelmrClient {
       const suffix = query.size === 0 ? "" : `?${query}`;
       const response = await this.#json(`/api/runs${suffix}`, requestSignal(opts.signal));
       return response.runs.map((run) => runResponseToSnapshot(run));
+    },
+    waitpoints: {
+      listPage: async (idOrHandle, opts = {}) => {
+        const id = runId(idOrHandle);
+        const response = await this.#json(`/api/runs/${encodeURIComponent(id)}/waitpoints${runWaitpointListQuery(opts)}`, requestSignal(opts.signal));
+        return {
+          waitpoints: response.waitpoints.map((request) => pendingWaitpointFromResponse(id, request)).filter((request) => request !== null),
+          nextCursor: response.next_cursor ?? null
+        };
+      },
+      list: async (idOrHandle, opts = {}) => {
+        return [...(await this.runs.waitpoints.listPage(idOrHandle, opts)).waitpoints];
+      }
     },
     logs: {
       retrieve: async (idOrHandle, opts = {}) => {
@@ -4531,43 +4842,6 @@ class HelmrClient {
       },
       subscribe: async (idOrHandle, opts = {}) => {
         return await this.#subscribeEvents(runId(idOrHandle), opts);
-      }
-    }
-  };
-  waitpoints = {
-    create: async (opts) => {
-      const response = await this.#json("/api/waitpoints", {
-        method: "POST",
-        body: JSON.stringify(waitpointCreateBody(opts)),
-        headers: { "content-type": "application/json" }
-      });
-      return waitpointFromResponse(response);
-    },
-    respond: async (target, waitpointIdOrOpts, opts = {}) => {
-      const resolved = resolveWaitpointArgs(target, waitpointIdOrOpts, opts);
-      await this.#fetch(`/api/waitpoints/${encodeURIComponent(resolved.waitpointId)}/respond`, {
-        method: "POST",
-        body: JSON.stringify(waitpointRespondBody(resolved.opts)),
-        headers: { "content-type": "application/json" }
-      });
-    },
-    tokens: {
-      create: async (target, waitpointIdOrOpts, opts = {}) => {
-        const resolved = resolveWaitpointArgs(target, waitpointIdOrOpts, opts);
-        const response = await this.#json("/api/waitpoints/tokens", {
-          method: "POST",
-          body: JSON.stringify(waitpointTokenCreateBody(resolved.waitpointId, resolved.opts)),
-          headers: { "content-type": "application/json" }
-        });
-        return waitpointResponseTokenFromResponse(response);
-      },
-      respond: async (target, tokenOrOpts, maybeOpts) => {
-        const resolved = typeof target === "string" ? resolveWaitpointTokenRespondArgs(target, tokenOrOpts, maybeOpts) : { id: target.id, token: target.token, opts: tokenOrOpts };
-        await this.#fetch(`/api/waitpoints/tokens/${encodeURIComponent(resolved.id)}/respond`, {
-          method: "POST",
-          body: JSON.stringify(waitpointTokenRespondBody(resolved.token, resolved.opts)),
-          headers: { "content-type": "application/json" }
-        });
       }
     }
   };
@@ -4761,7 +5035,7 @@ class HelmrClient {
     const headers = new Headers(init.headers);
     headers.set(HELMR_API_VERSION_HEADER, HELMR_API_VERSION);
     headers.set(HELMR_SDK_VERSION_HEADER, HELMR_SDK_VERSION);
-    if (this.#apiKey !== undefined) {
+    if (this.#apiKey !== undefined && !headers.has("authorization")) {
       headers.set("authorization", `Bearer ${this.#apiKey}`);
     }
     const request = {
@@ -4821,6 +5095,7 @@ function runResponseToSnapshot(response) {
     ...response.cli_version === undefined ? {} : { cliVersion: response.cli_version },
     attemptNumber: response.attempt_number ?? null,
     status: response.status,
+    metadata: response.metadata ?? {},
     exitCode: response.exit_code ?? null,
     ...response.created_at === undefined ? {} : { createdAt: response.created_at },
     ...response.updated_at === undefined ? {} : { updatedAt: response.updated_at },
@@ -4828,21 +5103,186 @@ function runResponseToSnapshot(response) {
     ..."output" in response ? { output: response.output } : {}
   });
 }
+function taskStartFromResponse(response) {
+  return {
+    session: taskSessionFromResponse(response.session),
+    run: runHandle(response.run.id, response.run.task_id),
+    isCached: response.is_cached ?? false
+  };
+}
+function taskSessionFromResponse(response) {
+  return {
+    id: response.id,
+    projectId: response.project_id,
+    environmentId: response.environment_id,
+    taskId: response.task_id,
+    initialDeploymentId: response.initial_deployment_id,
+    activeDeploymentId: response.active_deployment_id,
+    ...response.external_id === undefined || response.external_id === "" ? {} : { externalId: response.external_id },
+    status: response.status,
+    currentRunId: response.current_run_id ?? null,
+    workspaceId: response.workspace_id ?? null,
+    metadata: response.metadata ?? {},
+    tags: response.tags ?? [],
+    ..."result" in response ? { result: response.result } : {},
+    ..."error" in response ? { error: response.error } : {},
+    timedOut: response.timed_out ?? false,
+    ..."terminal_reason" in response ? { terminalReason: response.terminal_reason } : {},
+    expiresAt: response.expires_at ?? null,
+    createdAt: response.created_at,
+    updatedAt: response.updated_at
+  };
+}
+function taskSessionRunFromResponse(response) {
+  return {
+    id: response.id,
+    runId: response.run_id,
+    deploymentId: response.deployment_id,
+    ...response.previous_run_id === undefined || response.previous_run_id === "" ? {} : { previousRunId: response.previous_run_id },
+    turnIndex: response.turn_index,
+    status: response.status,
+    executionStatus: response.execution_status,
+    ...response.terminal_outcome === undefined || response.terminal_outcome === "" ? {} : { terminalOutcome: response.terminal_outcome },
+    createdAt: response.created_at,
+    ...response.ended_at === undefined ? {} : { endedAt: response.ended_at }
+  };
+}
+function taskSessionWorkspaceFromResponse(response) {
+  return {
+    id: response.id,
+    taskSessionId: response.task_session_id,
+    currentVersionId: response.current_version_id ?? null,
+    mountPath: response.mount_path ?? null,
+    state: response.state,
+    ..."retention_policy" in response ? { retentionPolicy: response.retention_policy } : {},
+    createdAt: response.created_at,
+    updatedAt: response.updated_at
+  };
+}
+function channelRecordFromResponse(response) {
+  return {
+    id: response.id,
+    channelId: response.channel_id,
+    sequence: response.sequence,
+    data: response.data,
+    ...response.correlation_id === undefined || response.correlation_id === "" ? {} : { correlationId: response.correlation_id },
+    contentType: response.content_type,
+    createdAt: response.created_at
+  };
+}
+function appendChannelRecordFromResponse(response) {
+  return {
+    ...channelRecordFromResponse(response.record),
+    idempotencyStatus: response.idempotency_status === "duplicate" ? "duplicate" : "created"
+  };
+}
+function sessionId(idOrHandle) {
+  return typeof idOrHandle === "string" ? idOrHandle : idOrHandle.id;
+}
+function taskStartBody(payload, opts, maxDurationSeconds) {
+  const runOptions = {
+    ...opts.queue === undefined ? {} : { queue: { name: opts.queue } },
+    ...opts.concurrencyKey === undefined ? {} : { concurrency_key: opts.concurrencyKey },
+    ...opts.priority === undefined ? {} : { priority: opts.priority },
+    ...opts.ttl === undefined ? {} : { ttl: opts.ttl },
+    ...opts.retry === undefined ? {} : { retry: opts.retry },
+    ...opts.metadata === undefined ? {} : { metadata: opts.metadata },
+    ...opts.tags === undefined ? {} : { tags: opts.tags },
+    ...opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") },
+    ...maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds },
+    ...taskStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL)
+  };
+  return {
+    ...opts.projectId === undefined ? {} : { project_id: opts.projectId },
+    ...opts.environmentId === undefined ? {} : { environment_id: opts.environmentId },
+    ...payload === undefined ? {} : { payload },
+    ...opts.externalId === undefined ? {} : { external_id: opts.externalId },
+    ...Object.keys(runOptions).length === 0 ? {} : { options: runOptions }
+  };
+}
+function taskSessionWaitBody(opts) {
+  return {
+    ...opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }
+  };
+}
+function channelInputAppendBody(data, opts) {
+  return {
+    data,
+    ...opts.correlationId === undefined ? {} : { correlation_id: opts.correlationId },
+    ...opts.externalEventId === undefined ? {} : { external_event_id: opts.externalEventId }
+  };
+}
+function taskSessionListQuery(opts) {
+  const query = new URLSearchParams;
+  if (opts.projectId !== undefined)
+    query.set("project_id", opts.projectId);
+  if (opts.environmentId !== undefined)
+    query.set("environment_id", opts.environmentId);
+  if (opts.status !== undefined)
+    query.set("status", opts.status);
+  if (opts.taskId !== undefined)
+    query.set("task_id", opts.taskId);
+  if (opts.limit !== undefined)
+    query.set("limit", String(opts.limit));
+  return query.size === 0 ? "" : `?${query}`;
+}
+function sessionChannelQuery(opts) {
+  const query = new URLSearchParams;
+  if (opts.cursor !== undefined)
+    query.set("after_sequence", String(opts.cursor));
+  if (opts.limit !== undefined)
+    query.set("limit", String(opts.limit));
+  if (opts.correlationId !== undefined)
+    query.set("correlation_id", opts.correlationId);
+  return query.size === 0 ? "" : `?${query}`;
+}
+function sessionChannelStreamQuery(opts, cursor = opts.cursor) {
+  const query = new URLSearchParams;
+  if (cursor !== undefined)
+    query.set("after_sequence", String(cursor));
+  if (opts.correlationId !== undefined)
+    query.set("correlation_id", opts.correlationId);
+  return query.size === 0 ? "" : `?${query}`;
+}
+function publicAccessTokenCreateBody(opts) {
+  return {
+    scope: {
+      type: opts.scope.type,
+      session_id: sessionId(opts.scope.sessionId),
+      channel: validateChannelName(opts.scope.channel),
+      ...opts.scope.correlationId === undefined ? {} : { correlation_id: opts.scope.correlationId }
+    },
+    ...opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") },
+    ...opts.maxUses === undefined ? {} : { max_uses: opts.maxUses }
+  };
+}
+function publicAccessTokenFromResponse(response) {
+  return {
+    id: response.id,
+    publicAccessToken: response.public_access_token,
+    scope: {
+      type: response.scope.type,
+      sessionId: response.scope.session_id,
+      channel: response.scope.channel,
+      ...response.scope.correlation_id === undefined ? {} : { correlationId: response.scope.correlation_id }
+    },
+    expiresAt: response.expires_at,
+    ...response.max_uses === undefined ? {} : { maxUses: response.max_uses },
+    createdAt: response.created_at
+  };
+}
+function isoDateString(value, label) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new Error(`${label} must be a valid date`);
+  }
+  return date.toISOString();
+}
 function cancelRunBody(opts) {
   return {
     ...opts.reason === undefined ? {} : { reason: opts.reason },
     ...opts.force === undefined ? {} : { force: opts.force },
     ...opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }
-  };
-}
-function replayRunBody(opts) {
-  return {
-    ...opts.version === undefined ? {} : { version: opts.version },
-    ...opts.payload === undefined ? {} : { payload: opts.payload },
-    ...opts.reason === undefined ? {} : { reason: opts.reason },
-    ...opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey },
-    ...opts.metadata === undefined ? {} : { metadata: opts.metadata },
-    ...opts.tags === undefined ? {} : { tags: opts.tags }
   };
 }
 function scheduleCreateBody(opts) {
@@ -4860,8 +5300,6 @@ function runOptionsBody(opts) {
   if (opts === undefined)
     return {};
   return {
-    ...opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId },
-    ...opts.version === undefined ? {} : { version: opts.version },
     ...opts.queue === undefined ? {} : { queue: { name: opts.queue } },
     ...opts.concurrencyKey === undefined ? {} : { concurrency_key: opts.concurrencyKey },
     ...opts.priority === undefined ? {} : { priority: opts.priority },
@@ -4889,82 +5327,65 @@ function scheduleFromResponse(response) {
     updatedAt: response.updated_at
   };
 }
-function waitpointTokenCreateBody(waitpointId, opts) {
+function runWaitpointListQuery(opts) {
+  const query = new URLSearchParams;
+  if (opts.cursor !== undefined)
+    query.set("cursor", opts.cursor);
+  if (opts.limit !== undefined)
+    query.set("limit", String(opts.limit));
+  if (opts.status !== undefined)
+    query.set("status", opts.status);
+  return query.size === 0 ? "" : `?${query}`;
+}
+function waitpointTokenCreateBody(opts) {
   return {
-    waitpoint_id: waitpointId,
-    ...opts.expiresInSeconds === undefined ? {} : { expires_in_seconds: opts.expiresInSeconds },
-    ...opts.expiresAt === undefined ? {} : { expires_at: opts.expiresAt },
+    ...opts.timeoutInSeconds === undefined ? {} : { timeout_in_seconds: opts.timeoutInSeconds },
+    ...opts.timeoutAt === undefined ? {} : { timeout_at: opts.timeoutAt },
+    ...opts.tags === undefined ? {} : { tags: opts.tags },
     ...opts.metadata === undefined ? {} : { metadata: opts.metadata }
   };
 }
-function waitpointCreateBody(opts) {
+function waitpointTokenCompleteBody(data, opts) {
   return {
-    ...opts.request === undefined ? {} : { request: opts.request },
-    ...opts.displayText === undefined ? {} : { display_text: opts.displayText },
-    expires_at: opts.expiresAt,
-    ...opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey },
-    ...opts.idempotencyKeyExpiresAt === undefined ? {} : { idempotency_key_expires_at: opts.idempotencyKeyExpiresAt },
-    ...opts.idempotencyKeyTTLSeconds === undefined ? {} : { idempotency_key_ttl_seconds: opts.idempotencyKeyTTLSeconds }
+    data
   };
 }
-function waitpointFromResponse(response) {
+function waitpointTokenCollectionPath(opts) {
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    if (opts.projectId === undefined || opts.environmentId === undefined) {
+      throw new Error("projectId and environmentId must be provided together");
+    }
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/waitpoints/tokens`;
+  }
+  return "/api/waitpoints/tokens";
+}
+function waitpointTokenListQuery(opts) {
+  const query = new URLSearchParams;
+  if (opts.cursor !== undefined)
+    query.set("cursor", opts.cursor);
+  if (opts.limit !== undefined)
+    query.set("limit", String(opts.limit));
+  if (opts.status !== undefined)
+    query.set("status", opts.status);
+  return query.size === 0 ? "" : `?${query}`;
+}
+function waitpointTokenFromResponse(response) {
   return {
     id: response.id,
-    projectId: response.project_id,
-    environmentId: response.environment_id,
-    kind: response.kind,
-    status: response.status,
-    request: response.request ?? {},
-    displayText: response.display_text ?? "",
-    expiresAt: response.expires_at ?? null,
-    createdAt: response.created_at
+    ...response.status === undefined ? {} : { status: response.status },
+    callbackUrl: response.callback_url,
+    ...response.public_access_token === undefined ? {} : { publicAccessToken: response.public_access_token },
+    timeoutAt: response.timeout_at ?? null,
+    ...response.data === undefined ? {} : { data: response.data },
+    ...response.tags === undefined ? {} : { tags: response.tags },
+    ...response.metadata === undefined ? {} : { metadata: response.metadata }
   };
 }
-function waitpointRespondBody(opts) {
-  return {
-    ..."value" in opts ? { value: opts.value } : {},
-    ...opts.externalSubject === undefined ? {} : { external_subject: opts.externalSubject },
-    ...opts.metadata === undefined ? {} : { metadata: opts.metadata }
-  };
-}
-function waitpointTokenRespondBody(token, opts) {
-  return {
-    token,
-    ...waitpointRespondBody(opts)
-  };
-}
-function resolveWaitpointTokenRespondArgs(id, token, opts) {
-  if (typeof token !== "string" || opts === undefined) {
-    throw new Error("waitpoint token secret is required when responding by token id");
+function waitpointTokenPublicAccessToken(target) {
+  if (typeof target === "string" || !("publicAccessToken" in target)) {
+    return;
   }
-  return { id, token, opts };
-}
-function waitpointResponseTokenFromResponse(response) {
-  return {
-    id: response.id,
-    waitpointId: response.waitpoint_id,
-    url: response.url,
-    token: response.token,
-    expiresAt: response.expires_at ?? null
-  };
-}
-function resolveWaitpointArgs(target, waitpointIdOrOpts, opts) {
-  if (isWaitpointRef(target)) {
-    return {
-      waitpointId: target.waitpointId,
-      opts: waitpointIdOrOpts ?? opts ?? {}
-    };
-  }
-  return {
-    waitpointId: target,
-    opts: waitpointIdOrOpts ?? opts ?? {}
-  };
-}
-function isWaitpointRef(value) {
-  if (value === null || typeof value !== "object")
-    return false;
-  const record = value;
-  return typeof record["waitpointId"] === "string";
+  return target.publicAccessToken;
 }
 function retrieveOptions(signal) {
   return signal === undefined ? {} : { signal };
@@ -5019,6 +5440,36 @@ function delay(ms, signal) {
     };
     signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+function taskStartPendingRetryDelay(response) {
+  const retryAfter = response.headers.get("retry-after");
+  if (retryAfter === null) {
+    return TASK_START_PENDING_DEFAULT_RETRY_MS;
+  }
+  const retryAfterSeconds = Number(retryAfter);
+  if (Number.isFinite(retryAfterSeconds)) {
+    if (retryAfterSeconds > 0) {
+      return Math.min(retryAfterSeconds * 1000, TASK_START_PENDING_MAX_WAIT_MS);
+    }
+    return TASK_START_PENDING_DEFAULT_RETRY_MS;
+  }
+  const retryAt = Date.parse(retryAfter);
+  if (Number.isFinite(retryAt)) {
+    const delayMs = retryAt - Date.now();
+    if (delayMs <= 0) {
+      return TASK_START_PENDING_DEFAULT_RETRY_MS;
+    }
+    return Math.min(delayMs, TASK_START_PENDING_MAX_WAIT_MS);
+  }
+  return TASK_START_PENDING_DEFAULT_RETRY_MS;
+}
+function taskStartPendingResponse(body) {
+  try {
+    const decoded = JSON.parse(body);
+    return decoded.code === "idempotency_pending";
+  } catch {
+    return false;
+  }
 }
 
 class HelmrApiError extends Error {
@@ -5086,6 +5537,64 @@ async function* parseSse(response) {
   } finally {
     reader.releaseLock();
   }
+}
+async function* parseChannelRecordSse(response) {
+  const reader = response.body?.getReader();
+  if (reader === undefined) {
+    return;
+  }
+  const decoder = new TextDecoder;
+  let buffer = "";
+  try {
+    for (;; ) {
+      const { value, done } = await reader.read();
+      if (done) {
+        buffer += decoder.decode();
+        const finalRecord = parseChannelRecordSseFrame(buffer);
+        if (finalRecord !== undefined) {
+          yield finalRecord;
+        }
+        return;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      let boundary = findSseBoundary(buffer);
+      while (boundary !== -1) {
+        const delimiter = buffer.startsWith(`\r
+\r
+`, boundary) ? 4 : 2;
+        const raw = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + delimiter);
+        const record = parseChannelRecordSseFrame(raw);
+        if (record !== undefined) {
+          yield record;
+        }
+        boundary = findSseBoundary(buffer);
+      }
+      if (buffer.length > MAX_SSE_BUFFER_CHARS) {
+        throw new SseFrameTooLargeError;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+function parseChannelRecordSseFrame(raw) {
+  const data = raw.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join(`
+`);
+  if (data === "") {
+    return;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    throw new SseProtocolError("SSE channel record data must be valid JSON", sseFrameCursor(raw));
+  }
+  const record = objectRecord(parsed);
+  if (record === undefined) {
+    throw new SseProtocolError("SSE channel record data must be a JSON object", sseFrameCursor(raw));
+  }
+  return channelRecordFromResponse(record);
 }
 function parseSseFrame(raw) {
   const frameCursor = sseFrameCursor(raw);
@@ -5164,6 +5673,9 @@ function parseRunEventCursor(value) {
 }
 function runEventRecordIsTerminal(event) {
   return runEventKindIsTerminal(event.message) || runEventKindIsTerminal(event.kind);
+}
+function taskSessionTerminal(status) {
+  return status !== "open";
 }
 function runEventKindIsTerminal(kind) {
   return kind === "run.completed" || kind === "run.failed" || kind === "run.cancelled" || kind === "run.expired";
@@ -5248,7 +5760,7 @@ function runEventRecordToRunEvent(event) {
       at
     };
   }
-  if (message === "waitpoint.requested") {
+  if (message === "waitpoint.created") {
     const waitpointId = stringValue(attributes?.["waitpoint_id"]);
     const kind = stringValue(attributes?.["kind"]);
     if (waitpointId === undefined)
@@ -5256,40 +5768,43 @@ function runEventRecordToRunEvent(event) {
     if (kind === undefined)
       return;
     return {
-      type: "waitpoint_request",
+      type: "waitpoint",
       run_id: runId2,
       waitpoint_id: waitpointId,
       kind,
-      displayText: stringValue(attributes?.["display_text"]) ?? "",
-      request: attributes?.["request"] ?? {},
+      params: attributes?.["params"] ?? {},
+      metadata: objectRecord(attributes?.["metadata"]) ?? {},
+      tags: stringArrayValue(attributes?.["tags"]) ?? [],
       ...optionalNumber("timeout", attributes?.["timeout"]),
       at
     };
   }
-  if (message === "waitpoint.resolved") {
+  if (message === "waitpoint.completed") {
     const waitpointId = stringValue(attributes?.["waitpoint_id"]);
     const kind = stringValue(attributes?.["kind"]);
-    const resolution = stringValue(attributes?.["resolution_kind"]);
     if (waitpointId === undefined)
       return;
-    if (kind === undefined || resolution === undefined)
+    if (kind === undefined)
       return;
     return {
-      type: "waitpoint_resolved",
+      type: "waitpoint_completed",
       run_id: runId2,
       waitpoint_id: waitpointId,
       kind,
-      resolutionKind: resolution,
-      value: attributes?.["result"],
+      payload: attributes?.["payload"],
       at
     };
   }
-  if (message.startsWith("emit.")) {
+  if (message === "waitpoint.timed_out") {
+    const waitpointId = stringValue(attributes?.["waitpoint_id"]);
+    const kind = stringValue(attributes?.["kind"]);
+    if (waitpointId === undefined || kind === undefined)
+      return;
     return {
-      type: "emit",
+      type: "waitpoint_timed_out",
       run_id: runId2,
-      event_type: stringValue(attributes?.["type"]) ?? message.slice("emit.".length),
-      content: attributes?.["content"],
+      waitpoint_id: waitpointId,
+      kind,
       at
     };
   }
@@ -5342,6 +5857,9 @@ function objectRecord(value) {
 function stringValue(value) {
   return typeof value === "string" ? value : undefined;
 }
+function stringArrayValue(value) {
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : undefined;
+}
 function numberValue(value) {
   return typeof value === "number" ? value : undefined;
 }
@@ -5351,14 +5869,14 @@ function decodeBase64Text(value) {
   return new TextDecoder().decode(bytes);
 }
 
-// sdk/typescript/src/trigger.ts
+// sdk/typescript/src/start.ts
 var defaultClient;
 function getDefaultClient() {
   defaultClient ??= new HelmrClient;
   return defaultClient;
 }
-function triggerTask(task, ...args) {
-  return getDefaultClient()[triggerTaskClientMethod](task, ...args);
+function startTask(task, ...args) {
+  return getDefaultClient()[startTaskClientMethod](task, ...args);
 }
 
 // sdk/typescript/src/schedules.ts
@@ -5369,8 +5887,8 @@ function task(config) {
     ...typeof cron === "string" || cron.timezone === undefined ? {} : { timezone: cron.timezone }
   };
   const marked = markScheduledTask({ ...taskConfig, payload: scheduledTaskPayloadSchema }, schedule);
-  Object.defineProperty(marked, "trigger", {
-    value: (...args) => triggerTask(marked, ...args)
+  Object.defineProperty(marked, "start", {
+    value: (...args) => startTask(marked, ...args)
   });
   return marked;
 }
@@ -5440,9 +5958,90 @@ var runs = new Proxy({}, {
     return Reflect.get(getDefaultClient().runs, property, receiver);
   }
 });
-var waitpoints = new Proxy({}, {
-  get(_target, property, receiver) {
-    return Reflect.get(getDefaultClient().waitpoints, property, receiver);
+var channels = Object.freeze({
+  input(id, opts) {
+    return Object.freeze({ id: validateChannelName(id), schema: opts.schema });
+  },
+  output(id, opts) {
+    return Object.freeze({ id: validateChannelName(id), schema: opts.schema });
+  }
+});
+var metadata = Object.freeze({
+  set(key, value) {
+    return getRunRuntime().metadataSet(key, value);
+  },
+  patch(value) {
+    return getRunRuntime().metadataPatch(value);
+  },
+  increment(key, amount = 1) {
+    return getRunRuntime().metadataIncrement(key, amount);
+  }
+});
+var wait = Object.freeze({
+  async createToken(opts = {}) {
+    if (runRuntimeIsActive()) {
+      return await getRunRuntime().createWaitpointToken(normalizeRuntimeWaitpointTokenCreateOptions(opts));
+    }
+    return await getDefaultClient().waitpoints.tokens.create(normalizeWaitpointTokenCreateOptions(opts));
+  },
+  retrieveToken(id, opts) {
+    return getDefaultClient().waitpoints.tokens.retrieve(id, opts);
+  },
+  async listTokens(opts) {
+    return await getDefaultClient().waitpoints.tokens.list(opts);
+  },
+  listTokensPage(opts) {
+    return getDefaultClient().waitpoints.tokens.listPage(opts);
+  },
+  for(input) {
+    return waitDelayHandle({ type: "for", input }, () => getRunRuntime().waitFor(input));
+  },
+  until(input) {
+    return waitDelayHandle({ type: "until", input }, () => getRunRuntime().waitUntil(input));
+  },
+  forToken(token, opts) {
+    const tokenId = typeof token === "string" ? token : token.id;
+    const tokenTimeoutAt = typeof token === "string" ? undefined : ("timeoutAt" in token) ? token.timeoutAt : undefined;
+    const timeout = opts?.timeout ?? waitpointTokenTimeoutInput(tokenTimeoutAt);
+    const schema = opts?.schema;
+    const options = {
+      params: {
+        token_id: tokenId
+      },
+      ...timeout === undefined ? {} : { timeout },
+      ...opts?.metadata === undefined ? {} : { metadata: opts.metadata },
+      ...opts?.tags === undefined ? {} : { tags: opts.tags },
+      ...schema === undefined ? {} : { schema }
+    };
+    const operand = { type: "waitpoint", options };
+    return waitpointHandle(operand, () => getRunRuntime().waitpoint(options));
+  },
+  async all(operands) {
+    const normalized = operands.map((operand, index) => {
+      const waitOperand = getRuntimeWaitOperand(operand);
+      if (waitOperand === undefined) {
+        throw new Error(`wait.all operand at index ${index} is not a Helmr wait handle`);
+      }
+      return waitOperand;
+    });
+    if (normalized.length === 0) {
+      throw new Error("wait.all requires at least one operand");
+    }
+    return await getRunRuntime().waitAll(normalized);
+  },
+  completeToken(token, data, opts) {
+    return getDefaultClient().waitpoints.tokens.complete(token, data, opts);
+  }
+});
+var logger = Object.freeze({
+  info(...values) {
+    getRunRuntime().log("info", values);
+  },
+  warn(...values) {
+    getRunRuntime().log("warn", values);
+  },
+  error(...values) {
+    getRunRuntime().log("error", values);
   }
 });
 var schedules = Object.freeze({
@@ -5455,6 +6054,110 @@ var schedules = Object.freeze({
   deactivate: (...args) => getDefaultClient().schedules.deactivate(...args),
   delete: (...args) => getDefaultClient().schedules.delete(...args)
 });
+function waitpointHandle(operand, factory) {
+  let promise;
+  const getPromise = () => {
+    promise ??= factory();
+    return promise;
+  };
+  const handle = {
+    then(onfulfilled, onrejected) {
+      return getPromise().then(onfulfilled, onrejected);
+    },
+    unwrap: async () => (await getPromise()).unwrap()
+  };
+  Object.defineProperty(handle, runtimeWaitOperand, { value: operand });
+  return handle;
+}
+function waitDelayHandle(operand, factory) {
+  let promise;
+  const getPromise = () => {
+    promise ??= factory();
+    return promise;
+  };
+  const handle = {
+    then(onfulfilled, onrejected) {
+      return getPromise().then(onfulfilled, onrejected);
+    },
+    unwrap: () => getPromise()
+  };
+  Object.defineProperty(handle, runtimeWaitOperand, { value: operand });
+  return handle;
+}
+function runRuntimeIsActive() {
+  try {
+    getRunRuntime();
+    return true;
+  } catch {
+    return false;
+  }
+}
+function normalizeWaitpointTokenCreateOptions(opts) {
+  const { timeout, ...clientOpts } = opts;
+  if (timeout === undefined) {
+    return clientOpts;
+  }
+  if (clientOpts.timeoutAt !== undefined || clientOpts.timeoutInSeconds !== undefined) {
+    throw new Error("wait.createToken timeout cannot be combined with timeoutAt or timeoutInSeconds");
+  }
+  const { timeoutAt: _timeoutAt, timeoutInSeconds: _timeoutInSeconds, ...baseOpts } = clientOpts;
+  return {
+    ...baseOpts,
+    timeoutInSeconds: Math.ceil(waitDurationMilliseconds(timeout) / 1000)
+  };
+}
+function normalizeRuntimeWaitpointTokenCreateOptions(opts) {
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    throw new Error("wait.createToken cannot override projectId or environmentId inside a running task");
+  }
+  if (opts.signal !== undefined) {
+    throw new Error("wait.createToken signal is not supported inside a running task");
+  }
+  return normalizeWaitpointTokenCreateOptions(opts);
+}
+function waitpointTokenTimeoutInput(timeoutAt) {
+  if (timeoutAt === null || timeoutAt === undefined) {
+    return;
+  }
+  const at = timeoutAt instanceof Date ? timeoutAt : new Date(timeoutAt);
+  const milliseconds = at.getTime() - Date.now();
+  if (!Number.isFinite(milliseconds)) {
+    throw new Error("wait.forToken token timeoutAt must be a valid date");
+  }
+  return { milliseconds: Math.max(1, milliseconds) };
+}
+function waitDurationMilliseconds(input) {
+  if (typeof input === "number")
+    return positiveMilliseconds(input * 1000);
+  if (typeof input === "string")
+    return parseDurationMilliseconds(input);
+  if (input.milliseconds !== undefined)
+    return positiveMilliseconds(input.milliseconds);
+  if (input.seconds !== undefined)
+    return positiveMilliseconds(input.seconds * 1000);
+  if (input.minutes !== undefined)
+    return positiveMilliseconds(input.minutes * 60000);
+  if (input.hours !== undefined)
+    return positiveMilliseconds(input.hours * 3600000);
+  if (input.duration !== undefined)
+    return parseDurationMilliseconds(input.duration);
+  throw new Error("duration requires milliseconds, seconds, minutes, hours, or duration");
+}
+function parseDurationMilliseconds(value) {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/.exec(value.trim());
+  if (match === null) {
+    throw new Error("duration must use ms, s, m, or h units");
+  }
+  const amount = Number(match[1]);
+  const unit = match[2];
+  return positiveMilliseconds(amount * (unit === "ms" ? 1 : unit === "s" ? 1000 : unit === "m" ? 60000 : 3600000));
+}
+function positiveMilliseconds(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`duration must be positive: ${value}`);
+  }
+  return Math.ceil(value);
+}
 
 // runtime/typescript/src/main.ts
 import { createWriteStream } from "node:fs";
@@ -6024,16 +6727,16 @@ function assertInsideProjectRoot(cwd, path, configuredDir) {
   }
 }
 async function assertTaskDirExists(path, configuredDir) {
-  let metadata;
+  let metadata2;
   try {
-    metadata = await stat(path);
+    metadata2 = await stat(path);
   } catch (error) {
     if (error?.code === "ENOENT") {
       throw new Error(`configured task dir not found: ${configuredDir}`);
     }
     throw error;
   }
-  if (!metadata.isDirectory()) {
+  if (!metadata2.isDirectory()) {
     throw new Error(`configured task dir is not a directory: ${configuredDir}`);
   }
 }
@@ -6146,8 +6849,8 @@ function collectTaskRefs(cwd, modules) {
 }
 async function assertConfigFileExists(cwd, configPath) {
   try {
-    const metadata = await stat(configPath);
-    if (!metadata.isFile()) {
+    const metadata2 = await stat(configPath);
+    if (!metadata2.isFile()) {
       throw new MissingConfigError(cwd);
     }
   } catch (error) {
@@ -6282,13 +6985,15 @@ var processIo = {
   stdout: process.stdout,
   stderr: process.stderr
 };
-var CONTROL_EVENT_TYPE_MAX_BYTES = 256;
-var EMIT_CONTENT_JSON_MAX_BYTES = 256 * 1024;
+var RUNTIME_CONTENT_JSON_MAX_BYTES = 256 * 1024;
+var CHANNEL_NAME_MAX_BYTES = 256;
 var ADAPTER_MAX_FRAME_BYTES = 256 * 1024 * 1024;
 var LOG_ENTRY_MAX_BYTES = 64 * 1024;
-var WAIT_TEXT_MAX_BYTES = 16 * 1024;
+var WAIT_METADATA_JSON_MAX_BYTES = 64 * 1024;
+var WAIT_TAGS_MAX_COUNT = 32;
+var WAIT_TAG_MAX_BYTES = 128;
 var TRUNCATED_LOG_ENTRY_MARKER = `
-...[truncated ctx.log entry]`;
+...[truncated logger entry]`;
 async function runAdapterCli(argv = process.argv.slice(2), io = processIo) {
   try {
     const args = parseArgs(argv);
@@ -6376,6 +7081,7 @@ async function runCommand(args, io) {
   const runId2 = requireArg(args, "run-id");
   const control = await AdapterControlWriter.open(io.control);
   const responses = new AdapterResponseReader(io.stdin);
+  let leaveRuntime;
   try {
     const registry2 = await loadTaskRegistry(taskCwd);
     const registeredTask = lookupRegisteredTask(registry2, taskId);
@@ -6385,22 +7091,24 @@ async function runCommand(args, io) {
     const taskContext = parseTaskContext(requireArg(args, "task-context-json"), runId2, taskId);
     const mintCorrelationId = createCorrelationIdMint();
     const waitGate = new WaitGate;
+    leaveRuntime = enterRunRuntime({
+      createWaitpointToken: (opts) => createWaitpointToken(responses, control, opts),
+      waitpoint: (opts) => waitInput(responses, control, mintCorrelationId, waitGate, opts),
+      waitAll: (operands) => waitAll(responses, control, mintCorrelationId, waitGate, operands),
+      channelOutputAppend: (channel, payload2, opts) => writeChannelOutput(control, channel, payload2, opts),
+      waitFor: (input) => waitFor(responses, control, mintCorrelationId, waitGate, input),
+      waitUntil: (input) => waitUntil(responses, control, mintCorrelationId, waitGate, input),
+      metadataSet: (key, value) => writeMetadataSet(control, key, value),
+      metadataPatch: (value) => writeMetadataPatch(control, value),
+      metadataIncrement: (key, amount = 1) => writeMetadataIncrement(control, key, amount),
+      log: (level, values) => writeLog(control, level, values)
+    });
     const ctx = {
-      wait: {
-        for: (input, opts) => waitFor(responses, control, mintCorrelationId, waitGate, input, opts),
-        until: (input, opts) => waitUntil(responses, control, mintCorrelationId, waitGate, input, opts),
-        human: (opts) => waitHuman(responses, control, mintCorrelationId, waitGate, opts)
-      },
-      emit: (event) => emitEvent(control, event),
-      log: {
-        info: (...values) => writeLog(control, "info", values),
-        warn: (...values) => writeLog(control, "warn", values),
-        error: (...values) => writeLog(control, "error", values)
-      },
       signal: controller.signal,
       run: taskContext.run,
       task: taskContext.task,
-      workspace: taskContext.workspace
+      workspace: taskContext.workspace,
+      session: createTaskSessionContext(taskContext.session.id, taskContext.session.workspace, responses, control, mintCorrelationId, waitGate)
     };
     let result;
     const payload = task3.payload === undefined ? undefined : await parseTaskPayload(task3, rawPayload);
@@ -6416,6 +7124,8 @@ async function runCommand(args, io) {
       await drainProcessOutputStreams();
       writeTaskResult(control, { exitCode: 1, errorMessage: serialized.message });
       return;
+    } finally {
+      leaveRuntime();
     }
     const outputJson = stringifyTaskOutput(result);
     await drainProcessOutputStreams();
@@ -6426,6 +7136,7 @@ async function runCommand(args, io) {
     await drainProcessOutputStreams();
     writeTaskResult(control, { exitCode: 1, errorMessage: serialized.message });
   } finally {
+    leaveRuntime?.();
     responses.close();
     await control.close();
   }
@@ -6458,19 +7169,23 @@ function parseTaskContext(json, runId2, taskId) {
     throw new Error(`task context task.id ${JSON.stringify(contextTaskId)} does not match --task ${JSON.stringify(taskId)}`);
   }
   const workspace = parseTaskWorkspace(record["workspace"]);
+  const session = parseTaskSession(record["session"]);
   const runRecord = record["run"];
   const run = {
     id: contextRunId,
     ...optionalProperty("attemptId", readOptionalStringField(runRecord, "attemptId", "task context run.attemptId")),
     ...optionalProperty("attemptNumber", readOptionalPositiveIntegerField(runRecord, "attemptNumber", "task context run.attemptNumber")),
-    ...optionalProperty("sessionId", readOptionalStringField(runRecord, "sessionId", "task context run.sessionId")),
-    ...optionalProperty("snapshotVersion", readOptionalPositiveIntegerField(runRecord, "snapshotVersion", "task context run.snapshotVersion")),
-    ...optionalProperty("replayedFromRunId", readOptionalStringField(runRecord, "replayedFromRunId", "task context run.replayedFromRunId"))
+    ...optionalProperty("runLeaseId", readOptionalStringField(runRecord, "runLeaseId", "task context run.runLeaseId")),
+    ...optionalProperty("snapshotVersion", readOptionalPositiveIntegerField(runRecord, "snapshotVersion", "task context run.snapshotVersion"))
   };
   return {
     run: Object.freeze(run),
     task: Object.freeze({ id: contextTaskId }),
-    workspace: Object.freeze(workspace)
+    workspace: Object.freeze(workspace),
+    session: Object.freeze({
+      id: session.id,
+      workspace: Object.freeze(session.workspace)
+    })
   };
 }
 function readStringField(value, objectKey, fieldKey, label) {
@@ -6515,6 +7230,16 @@ function parseTaskWorkspace(value) {
   return {
     path: readRequiredString(record, "path", "task context workspace.path"),
     projectPath: readRequiredString(record, "projectPath", "task context workspace.projectPath")
+  };
+}
+function parseTaskSession(value) {
+  if (value === null || typeof value !== "object") {
+    throw new Error("task context session is required");
+  }
+  const record = value;
+  return {
+    id: readRequiredString(record, "id", "task context session.id"),
+    workspace: parseTaskWorkspace(record["workspace"])
   };
 }
 function readRequiredString(record, key, label) {
@@ -6562,6 +7287,13 @@ class AdapterResponseReader {
     const body = await this.#readFrameBody();
     return fromBinary(exports_run_pb.ResumeDecisionSchema, body);
   }
+  async readWaitpointTokenCreateResult() {
+    if (this.#closed) {
+      throw new Error("adapter response stream closed");
+    }
+    const body = await this.#readFrameBody();
+    return fromBinary(exports_run_pb.WaitpointTokenCreateResultSchema, body);
+  }
   async#readFrameBody() {
     await this.#fill(4);
     const len = this.#buffer.readUInt32BE(0);
@@ -6590,7 +7322,7 @@ class WaitGate {
   #inFlight = false;
   async run(fn) {
     if (this.#inFlight) {
-      throw new ConcurrentWaitError("concurrent ctx.wait.* calls are not supported in v0.1");
+      throw new ConcurrentWaitError("concurrent blocking run I/O calls are not supported");
     }
     this.#inFlight = true;
     try {
@@ -6599,6 +7331,48 @@ class WaitGate {
       this.#inFlight = false;
     }
   }
+}
+function createTaskSessionContext(id, workspace, responses, control, mintCorrelationId, waitGate) {
+  return Object.freeze({
+    id,
+    workspace,
+    input(target) {
+      const channel = channelTargetName(target);
+      const schema = typeof target === "string" ? undefined : target.schema;
+      return Object.freeze({
+        id: channel,
+        wait: (waitOpts = {}) => {
+          const operand = {
+            type: "channel",
+            channel,
+            ...schema === undefined ? {} : { schema },
+            options: waitOpts
+          };
+          return waitpointHandle2(operand, () => waitChannelInput(responses, control, mintCorrelationId, waitGate, channel, schema, waitOpts));
+        }
+      });
+    },
+    output(target) {
+      const channel = channelTargetName(target);
+      const schema = typeof target === "string" ? undefined : target.schema;
+      return Object.freeze({
+        id: channel,
+        append: async (payload, appendOpts) => {
+          const parsed = schema === undefined ? payload : await parsePayloadWithSchema(schema, payload, `channel ${JSON.stringify(channel)} payload`);
+          return writeChannelOutput(control, channel, parsed, appendOpts);
+        },
+        pipe: async (source, appendOpts) => {
+          for await (const item of source) {
+            const parsed = schema === undefined ? item : await parsePayloadWithSchema(schema, item, `channel ${JSON.stringify(channel)} payload`);
+            await writeChannelOutput(control, channel, parsed, appendOpts);
+          }
+        }
+      });
+    }
+  });
+}
+function channelTargetName(target) {
+  return validateChannelName(typeof target === "string" ? target : target.id);
 }
 
 class AdapterControlWriter {
@@ -6668,96 +7442,359 @@ function connectControlSocket(socketPath) {
     });
   });
 }
-async function waitFor(responses, control, mintCorrelationId, waitGate, input, opts) {
-  const seconds = waitForInputSeconds(input);
-  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("delay", normalizeWaitForInput(input), { ...opts, timeout: seconds }));
-  if (!(decision.kind === "timed_out" || decision.kind === "completed")) {
-    throw new Error(`unexpected delay resume decision kind ${JSON.stringify(decision.kind)}`);
+async function createWaitpointToken(responses, control, opts) {
+  const metadata2 = opts.metadata === undefined ? undefined : normalizeWaitMetadata(opts.metadata);
+  const metadataJson = metadata2 === undefined ? undefined : JSON.stringify(metadata2);
+  const tags = opts.tags === undefined ? undefined : normalizeWaitTags(opts.tags);
+  const timeoutInSeconds = opts.timeoutInSeconds === undefined ? undefined : positiveDelaySeconds(opts.timeoutInSeconds);
+  control.write(create(exports_run_pb.RunEventSchema, {
+    event: {
+      case: "waitpointTokenCreateRequested",
+      value: create(exports_run_pb.WaitpointTokenCreateRequestedSchema, {
+        ...opts.timeoutAt === undefined ? {} : { timeoutAt: opts.timeoutAt },
+        ...timeoutInSeconds === undefined ? {} : { timeoutInSeconds },
+        ...tags === undefined ? {} : { tags },
+        ...metadataJson === undefined ? {} : { metadataJson }
+      })
+    }
+  }));
+  const result = await responses.readWaitpointTokenCreateResult();
+  if (result.errorMessage !== undefined && result.errorMessage.trim() !== "") {
+    throw new Error(result.errorMessage);
+  }
+  if (result.id.trim() === "") {
+    throw new Error("waitpoint token create response id is required");
+  }
+  if (result.callbackUrl.trim() === "") {
+    throw new Error("waitpoint token create response callback_url is required");
+  }
+  const resultMetadata = result.metadataJson === undefined || result.metadataJson.trim() === "" ? undefined : parseWaitpointTokenMetadata(result.metadataJson);
+  const status = waitpointTokenStatus(result.status);
+  return {
+    id: result.id,
+    callbackUrl: result.callbackUrl,
+    ...result.publicAccessToken === undefined ? {} : { publicAccessToken: result.publicAccessToken },
+    timeoutAt: result.timeoutAt ?? null,
+    ...status === undefined ? {} : { status },
+    ...result.tags.length === 0 ? {} : { tags: result.tags },
+    ...resultMetadata === undefined ? {} : { metadata: resultMetadata }
+  };
+}
+function waitpointTokenStatus(value) {
+  switch (value) {
+    case "waiting":
+    case "completed":
+    case "timed_out":
+    case "cancelled":
+      return value;
+    case undefined:
+    case "":
+      return;
+    default:
+      throw new Error(`waitpoint token create response status is invalid: ${value}`);
   }
 }
-async function waitUntil(responses, control, mintCorrelationId, waitGate, input, opts) {
+async function waitFor(responses, control, mintCorrelationId, waitGate, input) {
+  const seconds = waitDurationSeconds(input);
+  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("timer", normalizeWaitDurationInput(input), { timeout: seconds }));
+  if (!(decision.kind === "timed_out" || decision.kind === "completed")) {
+    throw new Error(`unexpected wait.for resume decision kind ${JSON.stringify(decision.kind)}`);
+  }
+  maybeWriteResumeConsumed(control, decision);
+}
+async function waitUntil(responses, control, mintCorrelationId, waitGate, input) {
   const until = waitUntilInputDate(input);
   const seconds = Math.max(1, Math.ceil((until.getTime() - Date.now()) / 1000));
-  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("delay", normalizeWaitUntilInput(input), { ...opts, timeout: seconds }));
+  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("timer", normalizeWaitUntilInput(input), { timeout: seconds }));
   if (!(decision.kind === "timed_out" || decision.kind === "completed")) {
-    throw new Error(`unexpected delay resume decision kind ${JSON.stringify(decision.kind)}`);
+    throw new Error(`unexpected wait.until resume decision kind ${JSON.stringify(decision.kind)}`);
   }
+  maybeWriteResumeConsumed(control, decision);
 }
-async function waitHuman(responses, control, mintCorrelationId, waitGate, opts = {}) {
-  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("human", {}, opts));
+async function waitInput(responses, control, mintCorrelationId, waitGate, opts) {
+  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest(opts.kind ?? "token", waitpointData(opts), {
+    ...opts.timeout === undefined ? {} : { timeout: waitDurationSeconds(opts.timeout) },
+    ...opts.metadata === undefined ? {} : { metadata: opts.metadata },
+    ...opts.tags === undefined ? {} : { tags: opts.tags }
+  }));
   if (decision.kind === "timed_out") {
-    throw new Error(`human wait timed out${formatTimeoutSuffix(opts.timeout)}`);
+    const seconds = opts.timeout === undefined ? undefined : waitDurationSeconds(opts.timeout);
+    maybeWriteResumeConsumed(control, decision);
+    return new WaitpointResultImpl(false, undefined, new WaitTimeoutError(`waitpoint timed out${formatTimeoutSuffix(seconds)}`, seconds));
   }
   if (decision.kind !== "completed") {
-    throw new Error(`unexpected human resume decision kind ${JSON.stringify(decision.kind)}`);
+    throw new Error(`unexpected waitpoint resume decision kind ${JSON.stringify(decision.kind)}`);
   }
-  const payload = parseResumePayload(decision.resumePayloadJson);
-  const value = payload.value;
+  const data = parseResumeData(decision.dataJson);
   if (opts.schema === undefined) {
-    return value;
+    maybeWriteResumeConsumed(control, decision);
+    return new WaitpointResultImpl(true, data);
   }
-  return await parsePayloadWithSchema(opts.schema, value, "wait human value");
+  const payload = await parsePayloadWithSchema(opts.schema, data, "waitpoint data");
+  maybeWriteResumeConsumed(control, decision);
+  return new WaitpointResultImpl(true, payload);
+}
+async function waitChannelInput(responses, control, mintCorrelationId, waitGate, channel, schema, opts = {}) {
+  const correlationId = normalizeOptionalCorrelationId(opts.correlationId);
+  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("channel", {
+    channel,
+    ...correlationId === undefined ? {} : { correlation_id: correlationId }
+  }, {
+    ...opts.timeout === undefined ? {} : { timeout: waitDurationSeconds(opts.timeout) },
+    ...opts.metadata === undefined ? {} : { metadata: opts.metadata },
+    ...opts.tags === undefined ? {} : { tags: opts.tags }
+  }));
+  if (decision.kind === "timed_out") {
+    const seconds = opts.timeout === undefined ? undefined : waitDurationSeconds(opts.timeout);
+    maybeWriteResumeConsumed(control, decision);
+    return new WaitpointResultImpl(false, undefined, new WaitTimeoutError(`channel ${JSON.stringify(channel)} wait timed out${formatTimeoutSuffix(seconds)}`, seconds));
+  }
+  if (decision.kind !== "completed") {
+    throw new Error(`unexpected channel wait resume decision kind ${JSON.stringify(decision.kind)}`);
+  }
+  const envelope = channelWaitpointEnvelope(parseResumeData(decision.dataJson), channel);
+  const data = schema === undefined ? envelope.data : await parsePayloadWithSchema(schema, envelope.data, `channel ${JSON.stringify(channel)} data`);
+  maybeWriteResumeConsumed(control, decision);
+  return completedWaitpointResult(data);
+}
+async function waitAll(responses, control, mintCorrelationId, waitGate, operands) {
+  if (operands.length === 0) {
+    throw new Error("wait.all requires at least one operand");
+  }
+  const requests = operands.map(runtimeWaitOperandRequest);
+  const decision = await waitGate.run(async () => {
+    const correlationId = mintCorrelationId();
+    const aggregateCount = requests.length;
+    requests.forEach((request, ordinal) => {
+      control.write(waitpointRequestedEvent({ ...request, correlationId, ordinal, aggregateCount }));
+    });
+    return responses.readDecision();
+  });
+  if (decision.kind === "timed_out") {
+    if (operands.length === 1 && (operands[0]?.type === "for" || operands[0]?.type === "until")) {
+      maybeWriteResumeConsumed(control, decision);
+      return [undefined];
+    }
+    maybeWriteResumeConsumed(control, decision);
+    throw new WaitTimeoutError("wait.all timed out");
+  }
+  if (operands.length === 1 && decision.kind === "completed") {
+    const operand = operands[0];
+    if (operand === undefined) {
+      throw new Error("wait.all operand is missing");
+    }
+    const result = await decodeWaitAllOperand(operand, parseResumeData(decision.dataJson));
+    maybeWriteResumeConsumed(control, decision);
+    return [result];
+  }
+  if (decision.kind !== "waitpoints") {
+    throw new Error(`unexpected wait.all resume decision kind ${JSON.stringify(decision.kind)}`);
+  }
+  const envelope = waitAllEnvelope(parseResumeData(decision.dataJson), operands.length);
+  const results = [];
+  for (let index = 0;index < operands.length; index += 1) {
+    const operand = operands[index];
+    if (operand === undefined) {
+      throw new Error(`wait.all operand at index ${index} is missing`);
+    }
+    results.push(await decodeWaitAllOperand(operand, envelope[index]));
+  }
+  maybeWriteResumeConsumed(control, decision);
+  return results;
+}
+function runtimeWaitOperandRequest(operand) {
+  switch (operand.type) {
+    case "for": {
+      const seconds = waitDurationSeconds(operand.input);
+      return waitRequest("timer", normalizeWaitDurationInput(operand.input), { timeout: seconds });
+    }
+    case "until": {
+      const until = waitUntilInputDate(operand.input);
+      const seconds = Math.max(1, Math.ceil((until.getTime() - Date.now()) / 1000));
+      return waitRequest("timer", normalizeWaitUntilInput(operand.input), { timeout: seconds });
+    }
+    case "waitpoint":
+      return waitRequest(operand.options.kind ?? "token", waitpointData(operand.options), {
+        ...operand.options.timeout === undefined ? {} : { timeout: waitDurationSeconds(operand.options.timeout) },
+        ...operand.options.metadata === undefined ? {} : { metadata: operand.options.metadata },
+        ...operand.options.tags === undefined ? {} : { tags: operand.options.tags }
+      });
+    case "channel": {
+      const correlationId = normalizeOptionalCorrelationId(operand.options?.correlationId);
+      return waitRequest("channel", {
+        channel: operand.channel,
+        ...correlationId === undefined ? {} : { correlation_id: correlationId }
+      }, {
+        ...operand.options?.timeout === undefined ? {} : { timeout: waitDurationSeconds(operand.options.timeout) },
+        ...operand.options?.metadata === undefined ? {} : { metadata: operand.options.metadata },
+        ...operand.options?.tags === undefined ? {} : { tags: operand.options.tags }
+      });
+    }
+  }
+}
+async function decodeWaitAllOperand(operand, value) {
+  switch (operand.type) {
+    case "for":
+    case "until":
+      return;
+    case "waitpoint":
+      if (operand.options.schema === undefined) {
+        return value;
+      }
+      return await parsePayloadWithSchema(operand.options.schema, value, "wait.all waitpoint data");
+    case "channel": {
+      const envelope = channelWaitpointEnvelope(value, operand.channel);
+      if (operand.schema === undefined) {
+        return envelope.data;
+      }
+      return await parsePayloadWithSchema(operand.schema, envelope.data, `channel ${JSON.stringify(operand.channel)} data`);
+    }
+  }
+}
+function waitAllEnvelope(value, expectedLength) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("wait.all data must be an object");
+  }
+  const waitpoints = value.waitpoints;
+  if (!Array.isArray(waitpoints)) {
+    throw new Error("wait.all data.waitpoints must be an array");
+  }
+  if (waitpoints.length !== expectedLength) {
+    throw new Error(`wait.all data.waitpoints length ${waitpoints.length} did not match operand count ${expectedLength}`);
+  }
+  return waitpoints;
+}
+function normalizeOptionalCorrelationId(value) {
+  if (value === undefined) {
+    return;
+  }
+  const normalized = value.trim();
+  return normalized === "" ? undefined : normalized;
+}
+function waitpointHandle2(operand, factory) {
+  let promise;
+  const getPromise = () => {
+    promise ??= factory();
+    return promise;
+  };
+  const handle = {
+    then(onfulfilled, onrejected) {
+      return getPromise().then(onfulfilled, onrejected);
+    },
+    unwrap: async () => (await getPromise()).unwrap()
+  };
+  Object.defineProperty(handle, runtimeWaitOperand, { value: operand });
+  return handle;
+}
+function completedWaitpointResult(data) {
+  return new WaitpointResultImpl(true, data);
+}
+function channelWaitpointEnvelope(value, expectedChannel) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("channel waitpoint data must be an object");
+  }
+  const record = value;
+  if (record.channel !== expectedChannel) {
+    throw new Error(`channel waitpoint channel mismatch: expected ${JSON.stringify(expectedChannel)}`);
+  }
+  if (typeof record.sequence !== "number" || !Number.isInteger(record.sequence) || record.sequence < 0) {
+    throw new Error("channel waitpoint sequence must be a non-negative integer");
+  }
+  return {
+    channel: record.channel,
+    sequence: record.sequence,
+    data: record.data
+  };
 }
 async function waitGenericDecision(responses, control, mintCorrelationId, waitGate, request) {
   return waitGate.run(async () => {
     const correlationId = mintCorrelationId();
-    control.write(waitRequestedEvent({ ...request, correlationId }));
+    control.write(waitpointRequestedEvent({ ...request, correlationId }));
     return responses.readDecision();
   });
 }
-function waitRequest(kind, request, opts) {
+function waitRequest(kind, data, opts) {
   const normalizedKind = normalizeWaitKind(kind);
   const timeout = opts?.timeout;
   if (timeout !== undefined) {
     validateWaitTimeout(timeout);
   }
-  const policy = normalizeWaitPolicy(opts?.policy);
-  const displayText = normalizeWaitDisplayText(opts?.displayText);
+  const tags = normalizeWaitTags(opts?.tags);
   return {
     kind: normalizedKind,
-    requestJson: JSON.stringify(request),
-    ...displayText === undefined ? {} : { displayText },
-    ...timeout === undefined ? {} : { timeout },
-    ...policy === undefined ? {} : { policy }
+    paramsJson: JSON.stringify(data),
+    ...opts?.metadata === undefined ? {} : { metadataJson: JSON.stringify(normalizeWaitMetadata(opts.metadata)) },
+    ...tags === undefined ? {} : { tags },
+    ...timeout === undefined ? {} : { timeout }
   };
 }
-function waitRequestedEvent(request) {
-  const value = waitRequestedValue(request);
+function waitpointRequestedEvent(request) {
+  const value = waitpointRequestedValue(request);
   return create(exports_run_pb.RunEventSchema, {
     event: {
-      case: "waitRequested",
+      case: "waitpointRequested",
       value
     }
   });
 }
-function waitRequestedValue(request) {
-  return create(exports_run_pb.WaitRequestedSchema, {
+function waitpointRequestedValue(request) {
+  return create(exports_run_pb.WaitpointRequestedSchema, {
     correlationId: request.correlationId,
     kind: request.kind,
-    requestJson: request.requestJson,
-    ...request.displayText === undefined ? {} : { displayText: request.displayText },
+    paramsJson: request.paramsJson,
+    ...request.metadataJson === undefined ? {} : { metadataJson: request.metadataJson },
+    ...request.tags === undefined ? {} : { tags: request.tags },
     ...request.timeout === undefined ? {} : { timeout: request.timeout },
-    ...request.policy === undefined ? {} : { policy: request.policy }
+    ...request.ordinal === undefined ? {} : { ordinal: request.ordinal },
+    ...request.aggregateCount === undefined ? {} : { aggregateCount: request.aggregateCount }
   });
+}
+function maybeWriteResumeConsumed(control, decision) {
+  if (!decision.requireConsumedAck) {
+    return;
+  }
+  if (decision.waitpointId.trim() === "") {
+    throw new Error("resume decision waitpoint_id is required");
+  }
+  control.write(create(exports_run_pb.RunEventSchema, {
+    event: {
+      case: "resumeConsumed",
+      value: {
+        waitpointId: decision.waitpointId
+      }
+    }
+  }));
 }
 function formatTimeoutSuffix(timeout) {
   return timeout === undefined ? "" : ` after ${timeout}`;
 }
-function normalizeWaitForInput(input) {
+function waitpointData(opts) {
+  return opts.params === undefined ? {} : normalizeWaitJson(opts.params, "waitpoint params");
+}
+function normalizeOptionalIdentifier(value, label) {
+  if (value === undefined)
+    return;
+  const normalized = value.trim();
+  if (normalized === "") {
+    throw new Error(`${label} must be non-empty`);
+  }
+  return normalized;
+}
+function normalizeWaitDurationInput(input) {
   if (typeof input === "string") {
     return { duration: input };
   }
   if (typeof input === "number") {
     return { seconds: input };
   }
-  return normalizeWaitJson(input, "wait.for input");
+  return normalizeWaitJson(input, "wait duration input");
 }
-function waitForInputSeconds(input) {
+function waitDurationSeconds(input) {
   if (typeof input === "number") {
     return positiveDelaySeconds(input);
   }
   if (typeof input === "string") {
-    return parseDurationSeconds(input, "wait.for duration");
+    return parseDurationSeconds(input, "wait duration");
   }
   const seconds = input.seconds;
   if (seconds !== undefined) {
@@ -6767,11 +7804,19 @@ function waitForInputSeconds(input) {
   if (milliseconds !== undefined) {
     return positiveDelaySeconds(milliseconds / 1000);
   }
+  const minutes = input.minutes;
+  if (minutes !== undefined) {
+    return positiveDelaySeconds(minutes * 60);
+  }
+  const hours = input.hours;
+  if (hours !== undefined) {
+    return positiveDelaySeconds(hours * 3600);
+  }
   const duration = input.duration;
   if (duration !== undefined) {
-    return parseDurationSeconds(duration, "wait.for duration");
+    return parseDurationSeconds(duration, "wait duration");
   }
-  throw new Error("wait.for requires seconds, milliseconds, or duration");
+  throw new Error("wait duration requires seconds, milliseconds, minutes, hours, or duration");
 }
 function parseDurationSeconds(value, label) {
   const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/.exec(value.trim());
@@ -6846,77 +7891,121 @@ function normalizeWaitKind(value) {
   }
   return kind;
 }
-function normalizeWaitDisplayText(value) {
-  if (value === undefined) {
+function normalizeWaitTags(value) {
+  if (value === undefined)
     return;
+  const tags = typeof value === "string" ? [value] : [...value];
+  if (tags.length > WAIT_TAGS_MAX_COUNT) {
+    throw new Error(`wait tags has ${tags.length} entries, exceeds max ${WAIT_TAGS_MAX_COUNT}`);
   }
-  validateUtf8ByteLength("wait display text", value, WAIT_TEXT_MAX_BYTES);
-  return value;
+  return tags.map((tag) => {
+    const normalized = normalizeRequiredIdentifier(tag, "wait tag");
+    validateUtf8ByteLength("wait tag", normalized, WAIT_TAG_MAX_BYTES);
+    return normalized;
+  });
 }
-function normalizeWaitPolicy(value) {
-  if (value === undefined) {
-    return;
+function parseWaitpointTokenMetadata(value) {
+  const parsed = JSON.parse(value);
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("waitpoint token create response metadata_json must be a JSON object");
   }
-  const policy = value.trim();
-  if (policy === "") {
-    throw new Error("wait policy must be non-empty");
-  }
-  return policy;
+  return parsed;
 }
-function parseResumePayload(json) {
+function normalizeWaitMetadata(value) {
+  const normalized = normalizeWaitJson(value, "wait metadata");
+  if (normalized === null || typeof normalized !== "object" || Array.isArray(normalized)) {
+    throw new Error("wait metadata must be a JSON object");
+  }
+  const metadataJson = JSON.stringify(normalized);
+  validateUtf8ByteLength("wait metadata_json", metadataJson, WAIT_METADATA_JSON_MAX_BYTES);
+  return normalized;
+}
+function normalizeRequiredIdentifier(value, label) {
+  const normalized = normalizeOptionalIdentifier(value, label);
+  if (normalized === undefined) {
+    throw new Error(`${label} is required`);
+  }
+  return normalized;
+}
+function parseResumeData(json) {
   if (json === "") {
-    throw new Error("resume payload must be a JSON object with required at timestamp");
+    throw new Error("waitpoint data is required");
   }
-  const parsed = JSON.parse(json);
-  if (parsed === null || typeof parsed !== "object") {
-    throw new Error("resume payload must be a JSON object with required at timestamp");
+  try {
+    return JSON.parse(json);
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`waitpoint data must be valid JSON: ${error.message}`);
+    }
+    throw new Error("waitpoint data must be valid JSON");
   }
-  const record = parsed;
-  const at = parseResumePayloadAt(record["at"]);
-  const principal = optionalResumePayloadString(record["principal"], "principal");
-  const text = optionalResumePayloadString(record["text"], "text");
-  return {
-    raw: record,
-    at,
-    ...principal === undefined ? {} : { principal },
-    ...text === undefined ? {} : { text },
-    ...record["value"] === undefined ? {} : { value: record["value"] },
-    ...record["attachments"] === undefined ? {} : { attachments: record["attachments"] }
-  };
 }
-function parseResumePayloadAt(value) {
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new Error("resume payload at is required and must be a valid timestamp");
+async function writeChannelOutput(control, channelInput, payload, opts = {}) {
+  const channel = validateChannelName(channelInput);
+  validateUtf8ByteLength("channel", channel, CHANNEL_NAME_MAX_BYTES);
+  const contentType = opts.contentType?.trim();
+  if (contentType !== undefined && contentType === "") {
+    throw new Error("channel output contentType must be non-empty");
   }
-  const at = new Date(value);
-  if (Number.isNaN(at.getTime())) {
-    throw new Error("resume payload at is required and must be a valid timestamp");
+  const payloadJson = JSON.stringify(payload === undefined ? null : payload);
+  validateUtf8ByteLength("channel output payload_json", payloadJson, RUNTIME_CONTENT_JSON_MAX_BYTES);
+  const objectRefJson = opts.objectRef === undefined ? undefined : JSON.stringify(normalizeWaitJson(opts.objectRef, "channel output objectRef"));
+  if (objectRefJson !== undefined) {
+    validateUtf8ByteLength("channel output object_ref_json", objectRefJson, RUNTIME_CONTENT_JSON_MAX_BYTES);
   }
-  return at;
-}
-function optionalResumePayloadString(value, field) {
-  if (value === undefined || value === null) {
-    return;
-  }
-  if (typeof value !== "string") {
-    throw new Error(`resume payload ${field} must be a string`);
-  }
-  return value;
-}
-function emitEvent(control, event) {
-  if (!event || typeof event !== "object" || typeof event.type !== "string") {
-    throw new Error("ctx.emit requires an event with a string type");
-  }
-  if (!Array.isArray(event.content)) {
-    throw new Error("ctx.emit requires content array");
-  }
-  validateUtf8ByteLength("emit event type", event.type, CONTROL_EVENT_TYPE_MAX_BYTES);
-  const contentJson = JSON.stringify(event.content);
-  validateUtf8ByteLength("emit event content_json", contentJson, EMIT_CONTENT_JSON_MAX_BYTES);
   control.write(create(exports_run_pb.RunEventSchema, {
     event: {
-      case: "emitEvent",
-      value: { type: event.type, contentJson }
+      case: "channelOutputAppended",
+      value: {
+        channel,
+        payloadJson,
+        ...contentType === undefined ? {} : { contentType },
+        ...objectRefJson === undefined ? {} : { objectRefJson }
+      }
+    }
+  }));
+}
+async function writeMetadataSet(control, key, value) {
+  const normalizedKey = normalizeRequiredIdentifier(key, "metadata key");
+  const valueJson = JSON.stringify(normalizeWaitJson(value, "metadata value"));
+  validateUtf8ByteLength("metadata value_json", valueJson, RUNTIME_CONTENT_JSON_MAX_BYTES);
+  control.write(create(exports_run_pb.RunEventSchema, {
+    event: {
+      case: "metadataUpdated",
+      value: {
+        operation: "set",
+        key: normalizedKey,
+        valueJson
+      }
+    }
+  }));
+}
+async function writeMetadataPatch(control, patch) {
+  const payloadJson = JSON.stringify(normalizeWaitJson(patch, "metadata patch"));
+  validateUtf8ByteLength("metadata patch_json", payloadJson, RUNTIME_CONTENT_JSON_MAX_BYTES);
+  control.write(create(exports_run_pb.RunEventSchema, {
+    event: {
+      case: "metadataUpdated",
+      value: {
+        operation: "patch",
+        patchJson: payloadJson
+      }
+    }
+  }));
+}
+async function writeMetadataIncrement(control, key, amount) {
+  const normalizedKey = normalizeRequiredIdentifier(key, "metadata key");
+  if (!Number.isFinite(amount)) {
+    throw new Error("metadata increment amount must be finite");
+  }
+  control.write(create(exports_run_pb.RunEventSchema, {
+    event: {
+      case: "metadataUpdated",
+      value: {
+        operation: "increment",
+        key: normalizedKey,
+        amount
+      }
     }
   }));
 }

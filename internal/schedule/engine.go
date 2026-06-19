@@ -116,6 +116,14 @@ func (e *Engine) RegisterNext(ctx context.Context, instance Instance) error {
 	})
 }
 
+func (e *Engine) DeleteInstance(ctx context.Context, instanceID pgtype.UUID) error {
+	value, err := pgvalue.UUIDValue(instanceID)
+	if err != nil {
+		return fmt.Errorf("schedule instance id is invalid: %v", err)
+	}
+	return e.index.Delete(ctx, value)
+}
+
 func (e *Engine) Fire(ctx context.Context, lease IndexLease) error {
 	if e.db == nil {
 		return errors.New("schedule database is required")
@@ -153,6 +161,9 @@ func (e *Engine) Fire(ctx context.Context, lease IndexLease) error {
 	if err != nil {
 		if errors.Is(err, ErrTriggerSuperseded) {
 			return e.index.Ack(ctx, lease)
+		}
+		if errors.Is(err, ErrTriggerDeferred) {
+			return e.deferTrigger(ctx, lease, candidate)
 		}
 		return e.markTriggerFailed(ctx, lease, candidate, err)
 	}
@@ -277,6 +288,27 @@ func (e *Engine) markTriggerFailed(ctx context.Context, lease IndexLease, row db
 		return nackErr
 	}
 	return cause
+}
+
+func (e *Engine) deferTrigger(ctx context.Context, lease IndexLease, row db.GetScheduleTriggerCandidateRow) error {
+	indexAttempt := lease.Attempt
+	if indexAttempt < 1 {
+		indexAttempt = 1
+	}
+	retryAt := e.now().Add(RetryDelay(row.TriggerAttemptCount + indexAttempt))
+	affected, err := e.db.DeferScheduleInstanceTrigger(ctx, db.DeferScheduleInstanceTriggerParams{
+		RetryAfter:  pgvalue.TimestamptzUTCZeroInvalid(retryAt),
+		InstanceID:  row.InstanceID,
+		Generation:  row.Generation,
+		ScheduledAt: row.NextFireAt,
+	})
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return e.index.Ack(ctx, lease)
+	}
+	return e.index.Nack(ctx, lease, retryAt)
 }
 
 func (e *Engine) skipFailedFire(ctx context.Context, lease IndexLease, row db.GetScheduleTriggerCandidateRow) error {

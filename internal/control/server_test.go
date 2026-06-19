@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
-	"github.com/helmrdotdev/helmr/internal/waitpoint"
 )
 
 type testServerConfig struct {
@@ -31,7 +30,6 @@ type testServerConfig struct {
 	RunEnqueuer         RunEnqueuer
 	DispatchQueue       dispatch.Queue
 	ScheduleEngine      ScheduleRegistrar
-	Waitpoints          *waitpoint.Notifier
 	EventStream         *EventStream
 	WorkerTokenSecret   []byte
 	WorkerTokenTTL      time.Duration
@@ -88,9 +86,6 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	}
 	if testCfg.ScheduleEngine != nil {
 		cfg.ScheduleEngine = testCfg.ScheduleEngine
-	}
-	if testCfg.Waitpoints != nil {
-		cfg.Waitpoints = testCfg.Waitpoints
 	}
 	if testCfg.EventStream != nil {
 		cfg.EventStream = testCfg.EventStream
@@ -176,7 +171,7 @@ func TestAPIRejectsUnsupportedAPIVersion(t *testing.T) {
 func TestWorkerLogsRejectOversizedRequestBody(t *testing.T) {
 	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &fakeStore{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
 	workerToken := mintTestWorkerToken(t, handler, "00000000-0000-0000-0000-000000000401")
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/logs", strings.NewReader(strings.Repeat("x", int(workerLogRequestBodyLimit)+1)))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/logs", strings.NewReader(strings.Repeat("x", int(workerLogRequestBodyLimit)+1)))
 	req.Header.Set("authorization", "Bearer "+workerToken)
 	rec := httptest.NewRecorder()
 

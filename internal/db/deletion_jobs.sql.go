@@ -75,14 +75,14 @@ RETURNING id, org_id, target_type, target_id, target_project_id, target_slug, ta
 `
 
 type CreateDeletionJobParams struct {
-	ID                   pgtype.UUID `json:"id"`
-	OrgID                pgtype.UUID `json:"org_id"`
-	TargetType           string      `json:"target_type"`
-	TargetID             pgtype.UUID `json:"target_id"`
-	TargetProjectID      pgtype.UUID `json:"target_project_id"`
-	TargetSlug           string      `json:"target_slug"`
-	TargetName           string      `json:"target_name"`
-	RequestedByPrincipal string      `json:"requested_by_principal"`
+	ID                   pgtype.UUID           `json:"id"`
+	OrgID                pgtype.UUID           `json:"org_id"`
+	TargetType           DeletionJobTargetType `json:"target_type"`
+	TargetID             pgtype.UUID           `json:"target_id"`
+	TargetProjectID      pgtype.UUID           `json:"target_project_id"`
+	TargetSlug           string                `json:"target_slug"`
+	TargetName           string                `json:"target_name"`
+	RequestedByPrincipal string                `json:"requested_by_principal"`
 }
 
 func (q *Queries) CreateDeletionJob(ctx context.Context, arg CreateDeletionJobParams) (DeletionJob, error) {

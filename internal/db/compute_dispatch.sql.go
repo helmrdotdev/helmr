@@ -63,19 +63,40 @@ func (q *Queries) CompleteRunQueueItem(ctx context.Context, arg CompleteRunQueue
 }
 
 const deadLetterRunQueueItem = `-- name: DeadLetterRunQueueItem :one
-WITH queue_entry AS (
+WITH locked_task_session AS MATERIALIZED (
+    SELECT task_sessions.id
+      FROM runs
+      JOIN task_sessions
+        ON task_sessions.org_id = runs.org_id
+       AND task_sessions.project_id = runs.project_id
+       AND task_sessions.environment_id = runs.environment_id
+       AND task_sessions.id = runs.task_session_id
+     WHERE runs.org_id = $1
+       AND runs.id = $2
+     FOR UPDATE OF task_sessions
+),
+queue_entry AS (
     UPDATE run_queue_items
        SET status = 'dead_lettered',
            reserved_by_worker_instance_id = NULL,
            reservation_expires_at = NULL,
            dispatch_generation = dispatch_generation + 1,
-           last_error = $1,
+           last_error = $3,
            updated_at = now(),
            finished_at = now()
-     WHERE run_queue_items.org_id = $2
-       AND run_queue_items.run_id = $3
+     WHERE run_queue_items.org_id = $1
+       AND run_queue_items.run_id = $2
        AND run_queue_items.dispatch_message_id = $4
        AND run_queue_items.status IN ('queued', 'published', 'reserved')
+       AND (
+           NOT EXISTS (
+               SELECT 1
+                 FROM runs
+                WHERE runs.org_id = $1
+                  AND runs.id = $2
+           )
+           OR EXISTS (SELECT 1 FROM locked_task_session)
+       )
     RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 ),
 	failed_run AS (
@@ -83,8 +104,8 @@ WITH queue_entry AS (
 		       SET status = 'failed',
 		           execution_status = 'finished',
 		           terminal_outcome = 'dead_lettered',
-		           current_session_id = NULL,
-	           error_message = $1,
+		           current_run_lease_id = NULL,
+	           error_message = $3,
 	           state_version = state_version + 1,
 	           updated_at = now(),
 	           finished_at = now()
@@ -92,13 +113,13 @@ WITH queue_entry AS (
 	     WHERE runs.org_id = queue_entry.org_id
 	       AND runs.id = queue_entry.run_id
 	       AND runs.status = 'queued'
-	       AND runs.current_session_id IS NULL
-	    RETURNING runs.org_id, runs.project_id, runs.environment_id, runs.id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version
+	       AND runs.current_run_lease_id IS NULL
+	    RETURNING runs.org_id, runs.project_id, runs.environment_id, runs.id, runs.task_session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version
 	),
 	failed_attempt AS (
 	    UPDATE run_attempts
 	       SET status = 'failed',
-	           error_message = $1,
+	           error_message = $3,
 	           finished_at = now(),
 	           updated_at = now()
 	      FROM failed_run
@@ -121,6 +142,42 @@ WITH queue_entry AS (
 	      FROM failed_run
 	      JOIN failed_attempt ON failed_attempt.run_id = failed_run.id
 	    RETURNING run_snapshots.run_id
+	),
+	failed_session_runs AS (
+	    UPDATE task_session_runs
+	       SET ended_at = now()
+      FROM failed_run
+     WHERE task_session_runs.org_id = failed_run.org_id
+	       AND task_session_runs.project_id = failed_run.project_id
+	       AND task_session_runs.environment_id = failed_run.environment_id
+	       AND task_session_runs.task_session_id = failed_run.task_session_id
+	       AND task_session_runs.run_id = failed_run.id
+	    RETURNING task_session_runs.id
+	),
+	failed_task_sessions AS (
+	    UPDATE task_sessions
+	       SET status = 'failed',
+	           failed_at = now(),
+	           result = jsonb_build_object(
+	               'ok', false,
+	               'error', jsonb_build_object(
+	                   'name', 'TaskFailed',
+	                   'message', COALESCE(NULLIF($3::text, ''), 'run dead-lettered before execution'),
+	                   'details', jsonb_build_object('origin', 'dead_letter')
+	               )
+	           ),
+	           terminal_reason = jsonb_build_object('origin', 'dead_letter', 'message', COALESCE(NULLIF($3::text, ''), 'run dead-lettered before execution')),
+	           current_run_id = NULL,
+	           current_run_version = task_sessions.current_run_version + 1,
+	           updated_at = now()
+      FROM failed_run
+     WHERE task_sessions.org_id = failed_run.org_id
+	       AND task_sessions.project_id = failed_run.project_id
+	       AND task_sessions.environment_id = failed_run.environment_id
+	       AND task_sessions.id = failed_run.task_session_id
+	       AND task_sessions.current_run_id = failed_run.id
+	       AND task_sessions.status = 'open'
+	    RETURNING task_sessions.id
 	),
 	run_event_seq AS (
 	    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
@@ -156,7 +213,7 @@ WITH queue_entry AS (
 	      JOIN run_event_seq ON run_event_seq.org_id = failed_run.org_id
 	                        AND run_event_seq.subject_type = 'run'
 	                        AND run_event_seq.subject_id = failed_run.id
-	    RETURNING id, subject_type, subject_id, seq, org_id, project_id, environment_id, run_id, deployment_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, occurred_at, created_at
+	    RETURNING id, subject_type, subject_id, seq, org_id, project_id, environment_id, run_id, deployment_id, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, occurred_at, created_at
 	),
 	run_event_outbox AS (
 	    INSERT INTO event_outbox (event_record_id, stream_key)
@@ -168,14 +225,16 @@ WITH queue_entry AS (
 existing_dead_letter AS (
     SELECT run_queue_items.run_id, run_queue_items.org_id, run_queue_items.status, run_queue_items.priority, run_queue_items.queue_name, run_queue_items.concurrency_key, run_queue_items.queue_timestamp, run_queue_items.queued_expires_at, run_queue_items.dispatch_message_id, run_queue_items.reserved_by_worker_instance_id, run_queue_items.reservation_expires_at, run_queue_items.dispatch_generation, run_queue_items.last_error, run_queue_items.enqueued_at, run_queue_items.updated_at, run_queue_items.finished_at
       FROM run_queue_items
-     WHERE run_queue_items.org_id = $2
-       AND run_queue_items.run_id = $3
+     WHERE run_queue_items.org_id = $1
+       AND run_queue_items.run_id = $2
        AND run_queue_items.dispatch_message_id = $4
        AND run_queue_items.status = 'dead_lettered'
 )
 SELECT queue_entry.run_id, queue_entry.org_id, queue_entry.status, queue_entry.priority, queue_entry.queue_name, queue_entry.concurrency_key, queue_entry.queue_timestamp, queue_entry.queued_expires_at, queue_entry.dispatch_message_id, queue_entry.reserved_by_worker_instance_id, queue_entry.reservation_expires_at, queue_entry.dispatch_generation, queue_entry.last_error, queue_entry.enqueued_at, queue_entry.updated_at, queue_entry.finished_at
   FROM queue_entry
   JOIN run_event_outbox ON true
+ WHERE (SELECT count(*) FROM failed_session_runs) >= 0
+   AND (SELECT count(*) FROM failed_task_sessions) >= 0
 UNION ALL
 SELECT existing_dead_letter.run_id, existing_dead_letter.org_id, existing_dead_letter.status, existing_dead_letter.priority, existing_dead_letter.queue_name, existing_dead_letter.concurrency_key, existing_dead_letter.queue_timestamp, existing_dead_letter.queued_expires_at, existing_dead_letter.dispatch_message_id, existing_dead_letter.reserved_by_worker_instance_id, existing_dead_letter.reservation_expires_at, existing_dead_letter.dispatch_generation, existing_dead_letter.last_error, existing_dead_letter.enqueued_at, existing_dead_letter.updated_at, existing_dead_letter.finished_at
   FROM existing_dead_letter
@@ -183,9 +242,9 @@ SELECT existing_dead_letter.run_id, existing_dead_letter.org_id, existing_dead_l
 `
 
 type DeadLetterRunQueueItemParams struct {
-	LastError         string      `json:"last_error"`
 	OrgID             pgtype.UUID `json:"org_id"`
 	RunID             pgtype.UUID `json:"run_id"`
+	LastError         string      `json:"last_error"`
 	DispatchMessageID pgtype.Text `json:"dispatch_message_id"`
 	EventKind         string      `json:"event_kind"`
 	EventPayload      []byte      `json:"event_payload"`
@@ -212,9 +271,9 @@ type DeadLetterRunQueueItemRow struct {
 
 func (q *Queries) DeadLetterRunQueueItem(ctx context.Context, arg DeadLetterRunQueueItemParams) (DeadLetterRunQueueItemRow, error) {
 	row := q.db.QueryRow(ctx, deadLetterRunQueueItem,
-		arg.LastError,
 		arg.OrgID,
 		arg.RunID,
+		arg.LastError,
 		arg.DispatchMessageID,
 		arg.EventKind,
 		arg.EventPayload,
@@ -276,11 +335,11 @@ SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu, 0)
              COALESCE(sum(run_runtime_requirements.requested_memory_mib), 0)::bigint AS used_memory_mib,
              COALESCE(sum(run_runtime_requirements.requested_disk_mib), 0)::bigint AS used_disk_mib,
              COALESCE(sum(run_runtime_requirements.requested_execution_slots), 0)::int AS used_slots
-        FROM run_execution_sessions
-        JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_execution_sessions.org_id
-                             AND run_runtime_requirements.run_id = run_execution_sessions.run_id
-       WHERE run_execution_sessions.worker_instance_id = worker_instances.id
-         AND run_execution_sessions.status IN ('leased', 'running')
+        FROM run_leases
+        JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_leases.org_id
+                             AND run_runtime_requirements.run_id = run_leases.run_id
+       WHERE run_leases.worker_instance_id = worker_instances.id
+         AND run_leases.status IN ('leased', 'running')
   ) active ON true
  WHERE worker_instances.id = $1
    AND worker_instances.status = 'active'
@@ -306,47 +365,46 @@ func (q *Queries) GetWorkerInstanceQueueCapacity(ctx context.Context, id pgtype.
 }
 
 const getWorkerInstanceState = `-- name: GetWorkerInstanceState :one
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.runtime_id, worker_instances.runtime_arch, worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest, worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at, worker_instances.worker_version, worker_instances.protocol_version, worker_instances.supported_protocol_versions, worker_instances.worker_group_id,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.runtime_id, worker_instances.runtime_arch, worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest, worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.worker_version, worker_instances.protocol_version, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at,
        (
            SELECT count(*)::int
-             FROM run_execution_sessions
-            WHERE run_execution_sessions.worker_instance_id = worker_instances.id
-              AND run_execution_sessions.status IN ('leased', 'running')
+             FROM run_leases
+            WHERE run_leases.worker_instance_id = worker_instances.id
+              AND run_leases.status IN ('leased', 'running')
        ) AS active_executions
   FROM worker_instances
  WHERE worker_instances.id = $1
 `
 
 type GetWorkerInstanceStateRow struct {
-	ID                        pgtype.UUID          `json:"id"`
-	ResourceID                string               `json:"resource_id"`
-	Status                    WorkerInstanceStatus `json:"status"`
-	Region                    string               `json:"region"`
-	TotalMilliCpu             int64                `json:"total_milli_cpu"`
-	TotalMemoryMib            int64                `json:"total_memory_mib"`
-	TotalDiskMib              int64                `json:"total_disk_mib"`
-	TotalExecutionSlots       int32                `json:"total_execution_slots"`
-	AvailableMilliCpu         int64                `json:"available_milli_cpu"`
-	AvailableMemoryMib        int64                `json:"available_memory_mib"`
-	AvailableDiskMib          int64                `json:"available_disk_mib"`
-	AvailableExecutionSlots   int32                `json:"available_execution_slots"`
-	Labels                    []byte               `json:"labels"`
-	Heartbeat                 []byte               `json:"heartbeat"`
-	RuntimeID                 string               `json:"runtime_id"`
-	RuntimeArch               string               `json:"runtime_arch"`
-	RuntimeABI                string               `json:"runtime_abi"`
-	KernelDigest              string               `json:"kernel_digest"`
-	InitramfsDigest           string               `json:"initramfs_digest"`
-	RootfsDigest              string               `json:"rootfs_digest"`
-	CniProfile                string               `json:"cni_profile"`
-	FirstSeenAt               pgtype.Timestamptz   `json:"first_seen_at"`
-	LastSeenAt                pgtype.Timestamptz   `json:"last_seen_at"`
-	DrainedAt                 pgtype.Timestamptz   `json:"drained_at"`
-	WorkerVersion             string               `json:"worker_version"`
-	ProtocolVersion           string               `json:"protocol_version"`
-	SupportedProtocolVersions []byte               `json:"supported_protocol_versions"`
-	WorkerGroupID             pgtype.UUID          `json:"worker_group_id"`
-	ActiveExecutions          int32                `json:"active_executions"`
+	ID                      pgtype.UUID          `json:"id"`
+	ResourceID              string               `json:"resource_id"`
+	WorkerGroupID           pgtype.UUID          `json:"worker_group_id"`
+	Status                  WorkerInstanceStatus `json:"status"`
+	Region                  string               `json:"region"`
+	TotalMilliCpu           int64                `json:"total_milli_cpu"`
+	TotalMemoryMib          int64                `json:"total_memory_mib"`
+	TotalDiskMib            int64                `json:"total_disk_mib"`
+	TotalExecutionSlots     int32                `json:"total_execution_slots"`
+	AvailableMilliCpu       int64                `json:"available_milli_cpu"`
+	AvailableMemoryMib      int64                `json:"available_memory_mib"`
+	AvailableDiskMib        int64                `json:"available_disk_mib"`
+	AvailableExecutionSlots int32                `json:"available_execution_slots"`
+	Labels                  []byte               `json:"labels"`
+	Heartbeat               []byte               `json:"heartbeat"`
+	RuntimeID               string               `json:"runtime_id"`
+	RuntimeArch             string               `json:"runtime_arch"`
+	RuntimeABI              string               `json:"runtime_abi"`
+	KernelDigest            string               `json:"kernel_digest"`
+	InitramfsDigest         string               `json:"initramfs_digest"`
+	RootfsDigest            string               `json:"rootfs_digest"`
+	CniProfile              string               `json:"cni_profile"`
+	WorkerVersion           string               `json:"worker_version"`
+	ProtocolVersion         string               `json:"protocol_version"`
+	FirstSeenAt             pgtype.Timestamptz   `json:"first_seen_at"`
+	LastSeenAt              pgtype.Timestamptz   `json:"last_seen_at"`
+	DrainedAt               pgtype.Timestamptz   `json:"drained_at"`
+	ActiveExecutions        int32                `json:"active_executions"`
 }
 
 func (q *Queries) GetWorkerInstanceState(ctx context.Context, id pgtype.UUID) (GetWorkerInstanceStateRow, error) {
@@ -355,6 +413,7 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, id pgtype.UUID) (G
 	err := row.Scan(
 		&i.ID,
 		&i.ResourceID,
+		&i.WorkerGroupID,
 		&i.Status,
 		&i.Region,
 		&i.TotalMilliCpu,
@@ -374,13 +433,11 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, id pgtype.UUID) (G
 		&i.InitramfsDigest,
 		&i.RootfsDigest,
 		&i.CniProfile,
+		&i.WorkerVersion,
+		&i.ProtocolVersion,
 		&i.FirstSeenAt,
 		&i.LastSeenAt,
 		&i.DrainedAt,
-		&i.WorkerVersion,
-		&i.ProtocolVersion,
-		&i.SupportedProtocolVersions,
-		&i.WorkerGroupID,
 		&i.ActiveExecutions,
 	)
 	return i, err
@@ -491,9 +548,19 @@ WITH candidate_scopes AS (
       LEFT JOIN run_queue_items ON run_queue_items.org_id = runs.org_id
                                AND run_queue_items.run_id = runs.id
      WHERE runs.status = 'queued'
-       AND runs.current_session_id IS NULL
+       AND runs.current_run_lease_id IS NULL
        AND runs.queue_timestamp <= now()
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+       AND EXISTS (
+           SELECT 1
+             FROM task_sessions
+            WHERE task_sessions.org_id = runs.org_id
+              AND task_sessions.project_id = runs.project_id
+              AND task_sessions.environment_id = runs.environment_id
+              AND task_sessions.id = runs.task_session_id
+              AND task_sessions.current_run_id = runs.id
+              AND task_sessions.status = 'open'
+       )
        AND (
            run_queue_items.run_id IS NULL
            OR (
@@ -598,9 +665,19 @@ SELECT runs.org_id,
    AND runs.environment_id = $3
    AND COALESCE(run_queue_items.queue_name, runs.queue_name) = $4
    AND runs.status = 'queued'
-   AND runs.current_session_id IS NULL
+   AND runs.current_run_lease_id IS NULL
    AND runs.queue_timestamp <= now()
    AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+   AND EXISTS (
+       SELECT 1
+         FROM task_sessions
+        WHERE task_sessions.org_id = runs.org_id
+          AND task_sessions.project_id = runs.project_id
+          AND task_sessions.environment_id = runs.environment_id
+          AND task_sessions.id = runs.task_session_id
+          AND task_sessions.current_run_id = runs.id
+          AND task_sessions.status = 'open'
+   )
    AND (
        run_queue_items.run_id IS NULL
        OR (
@@ -665,7 +742,7 @@ func (q *Queries) ListQueuedRunQueueItemCandidatesForScope(ctx context.Context, 
 }
 
 const listWorkerInstances = `-- name: ListWorkerInstances :many
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.runtime_id, worker_instances.runtime_arch, worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest, worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at, worker_instances.worker_version, worker_instances.protocol_version, worker_instances.supported_protocol_versions, worker_instances.worker_group_id
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.runtime_id, worker_instances.runtime_arch, worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest, worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.worker_version, worker_instances.protocol_version, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at
   FROM worker_instances
  WHERE (
        $1::text = 'all'
@@ -692,6 +769,7 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 		if err := rows.Scan(
 			&i.ID,
 			&i.ResourceID,
+			&i.WorkerGroupID,
 			&i.Status,
 			&i.Region,
 			&i.TotalMilliCpu,
@@ -711,13 +789,11 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 			&i.InitramfsDigest,
 			&i.RootfsDigest,
 			&i.CniProfile,
+			&i.WorkerVersion,
+			&i.ProtocolVersion,
 			&i.FirstSeenAt,
 			&i.LastSeenAt,
 			&i.DrainedAt,
-			&i.WorkerVersion,
-			&i.ProtocolVersion,
-			&i.SupportedProtocolVersions,
-			&i.WorkerGroupID,
 		); err != nil {
 			return nil, err
 		}
@@ -845,10 +921,20 @@ WITH target_run AS (
      WHERE runs.org_id = $1
        AND runs.id = $2
        AND runs.status = 'queued'
-       AND runs.current_session_id IS NULL
+       AND runs.current_run_lease_id IS NULL
+       AND EXISTS (
+           SELECT 1
+             FROM task_sessions
+            WHERE task_sessions.org_id = runs.org_id
+              AND task_sessions.project_id = runs.project_id
+              AND task_sessions.environment_id = runs.environment_id
+              AND task_sessions.id = runs.task_session_id
+              AND task_sessions.current_run_id = runs.id
+              AND task_sessions.status = 'open'
+       )
 ),
 existing_requirements AS (
-    SELECT run_runtime_requirements.run_id, run_runtime_requirements.org_id, run_runtime_requirements.requested_milli_cpu, run_runtime_requirements.requested_memory_mib, run_runtime_requirements.requested_disk_mib, run_runtime_requirements.requested_execution_slots, run_runtime_requirements.runtime_id, run_runtime_requirements.runtime_arch, run_runtime_requirements.runtime_abi, run_runtime_requirements.kernel_digest, run_runtime_requirements.initramfs_digest, run_runtime_requirements.rootfs_digest, run_runtime_requirements.cni_profile, run_runtime_requirements.network_policy, run_runtime_requirements.placement, run_runtime_requirements.created_at, run_runtime_requirements.updated_at, run_runtime_requirements.worker_group_id
+    SELECT run_runtime_requirements.run_id, run_runtime_requirements.org_id, run_runtime_requirements.worker_group_id, run_runtime_requirements.requested_milli_cpu, run_runtime_requirements.requested_memory_mib, run_runtime_requirements.requested_disk_mib, run_runtime_requirements.requested_execution_slots, run_runtime_requirements.runtime_id, run_runtime_requirements.runtime_arch, run_runtime_requirements.runtime_abi, run_runtime_requirements.kernel_digest, run_runtime_requirements.initramfs_digest, run_runtime_requirements.rootfs_digest, run_runtime_requirements.cni_profile, run_runtime_requirements.network_policy, run_runtime_requirements.placement, run_runtime_requirements.created_at, run_runtime_requirements.updated_at
       FROM run_runtime_requirements
       JOIN target_run ON target_run.org_id = run_runtime_requirements.org_id
                      AND target_run.id = run_runtime_requirements.run_id
@@ -906,12 +992,12 @@ inserted_requirements AS (
       JOIN selected_runtime ON true
      WHERE NOT EXISTS (SELECT 1 FROM existing_requirements)
     ON CONFLICT (run_id) DO NOTHING
-    RETURNING run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at, worker_group_id
+    RETURNING run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at
 ),
 requirements AS (
-    SELECT run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at, worker_group_id FROM existing_requirements
+    SELECT run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at FROM existing_requirements
     UNION ALL
-    SELECT run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at, worker_group_id FROM inserted_requirements
+    SELECT run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at FROM inserted_requirements
     LIMIT 1
 ),
 dispatch AS (
@@ -1076,7 +1162,6 @@ func (q *Queries) PrepareQueuedRunQueueItem(ctx context.Context, arg PrepareQueu
 const renewRunQueueReservation = `-- name: RenewRunQueueReservation :one
 UPDATE run_queue_items
    SET reservation_expires_at = $1,
-       dispatch_generation = dispatch_generation + 1,
        updated_at = now()
  WHERE org_id = $2
    AND run_id = $3
@@ -1193,17 +1278,35 @@ UPDATE run_queue_items
        dispatch_generation = dispatch_generation + 1,
        updated_at = now(),
        finished_at = NULL
- WHERE org_id = $4
-   AND run_id = $5
+ WHERE run_queue_items.org_id = $4
+   AND run_queue_items.run_id = $5
    AND (
-       status = 'published'
+       run_queue_items.status = 'published'
        OR (
-           status = 'reserved'
-           AND reservation_expires_at <= now()
+           run_queue_items.status = 'reserved'
+           AND run_queue_items.reservation_expires_at <= now()
        )
    )
-   AND dispatch_message_id = $1
-   AND (queued_expires_at IS NULL OR queued_expires_at > now())
+   AND run_queue_items.dispatch_message_id = $1
+   AND (run_queue_items.queued_expires_at IS NULL OR run_queue_items.queued_expires_at > now())
+   AND EXISTS (
+       SELECT 1
+         FROM runs
+        WHERE runs.org_id = run_queue_items.org_id
+          AND runs.id = run_queue_items.run_id
+          AND runs.status = 'queued'
+          AND runs.current_run_lease_id IS NULL
+       AND EXISTS (
+           SELECT 1
+             FROM task_sessions
+            WHERE task_sessions.org_id = runs.org_id
+              AND task_sessions.project_id = runs.project_id
+              AND task_sessions.environment_id = runs.environment_id
+              AND task_sessions.id = runs.task_session_id
+              AND task_sessions.current_run_id = runs.id
+              AND task_sessions.status = 'open'
+       )
+   )
 RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
@@ -1245,22 +1348,22 @@ func (q *Queries) ReserveRunQueueItem(ctx context.Context, arg ReserveRunQueueIt
 	return i, err
 }
 
-const runExecutionSessionDispatchAttemptsExhausted = `-- name: RunExecutionSessionDispatchAttemptsExhausted :one
+const runLeaseDispatchAttemptsExhausted = `-- name: RunLeaseDispatchAttemptsExhausted :one
 SELECT count(*) >= $1::int AS exhausted
-  FROM run_execution_sessions
+  FROM run_leases
  WHERE org_id = $2
    AND run_id = $3
    AND status = 'lost'
 `
 
-type RunExecutionSessionDispatchAttemptsExhaustedParams struct {
+type RunLeaseDispatchAttemptsExhaustedParams struct {
 	MaxDispatchAttempts int32       `json:"max_dispatch_attempts"`
 	OrgID               pgtype.UUID `json:"org_id"`
 	RunID               pgtype.UUID `json:"run_id"`
 }
 
-func (q *Queries) RunExecutionSessionDispatchAttemptsExhausted(ctx context.Context, arg RunExecutionSessionDispatchAttemptsExhaustedParams) (bool, error) {
-	row := q.db.QueryRow(ctx, runExecutionSessionDispatchAttemptsExhausted, arg.MaxDispatchAttempts, arg.OrgID, arg.RunID)
+func (q *Queries) RunLeaseDispatchAttemptsExhausted(ctx context.Context, arg RunLeaseDispatchAttemptsExhaustedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, runLeaseDispatchAttemptsExhausted, arg.MaxDispatchAttempts, arg.OrgID, arg.RunID)
 	var exhausted bool
 	err := row.Scan(&exhausted)
 	return exhausted, err
@@ -1274,7 +1377,7 @@ UPDATE worker_instances
            ELSE drained_at
        END
  WHERE worker_instances.id = $2
-RETURNING id, resource_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, first_seen_at, last_seen_at, drained_at, worker_version, protocol_version, supported_protocol_versions, worker_group_id
+RETURNING id, resource_id, worker_group_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, worker_version, protocol_version, first_seen_at, last_seen_at, drained_at
 `
 
 type SetWorkerInstanceStatusParams struct {
@@ -1288,6 +1391,7 @@ func (q *Queries) SetWorkerInstanceStatus(ctx context.Context, arg SetWorkerInst
 	err := row.Scan(
 		&i.ID,
 		&i.ResourceID,
+		&i.WorkerGroupID,
 		&i.Status,
 		&i.Region,
 		&i.TotalMilliCpu,
@@ -1307,13 +1411,11 @@ func (q *Queries) SetWorkerInstanceStatus(ctx context.Context, arg SetWorkerInst
 		&i.InitramfsDigest,
 		&i.RootfsDigest,
 		&i.CniProfile,
+		&i.WorkerVersion,
+		&i.ProtocolVersion,
 		&i.FirstSeenAt,
 		&i.LastSeenAt,
 		&i.DrainedAt,
-		&i.WorkerVersion,
-		&i.ProtocolVersion,
-		&i.SupportedProtocolVersions,
-		&i.WorkerGroupID,
 	)
 	return i, err
 }
@@ -1463,7 +1565,7 @@ ON CONFLICT (run_id) DO UPDATE
        placement = excluded.placement,
        worker_group_id = excluded.worker_group_id,
        updated_at = now()
-RETURNING run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at, worker_group_id
+RETURNING run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at
 `
 
 type UpsertRunRuntimeRequirementsParams struct {
@@ -1508,6 +1610,7 @@ func (q *Queries) UpsertRunRuntimeRequirements(ctx context.Context, arg UpsertRu
 	err := row.Scan(
 		&i.RunID,
 		&i.OrgID,
+		&i.WorkerGroupID,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
 		&i.RequestedDiskMib,
@@ -1523,7 +1626,6 @@ func (q *Queries) UpsertRunRuntimeRequirements(ctx context.Context, arg UpsertRu
 		&i.Placement,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.WorkerGroupID,
 	)
 	return i, err
 }
@@ -1578,7 +1680,6 @@ upserted_worker AS (
         heartbeat,
         worker_version,
         protocol_version,
-        supported_protocol_versions,
         runtime_id,
         runtime_arch,
         runtime_abi,
@@ -1605,7 +1706,6 @@ upserted_worker AS (
            $21,
            $22,
            $23,
-           $24,
            observed_runtime.runtime_id,
            observed_runtime.runtime_arch,
            observed_runtime.runtime_abi,
@@ -1633,7 +1733,6 @@ upserted_worker AS (
            heartbeat = excluded.heartbeat,
            worker_version = excluded.worker_version,
            protocol_version = excluded.protocol_version,
-           supported_protocol_versions = excluded.supported_protocol_versions,
            runtime_id = excluded.runtime_id,
            runtime_arch = excluded.runtime_arch,
            runtime_abi = excluded.runtime_abi,
@@ -1642,68 +1741,66 @@ upserted_worker AS (
            rootfs_digest = excluded.rootfs_digest,
            cni_profile = excluded.cni_profile,
            last_seen_at = now()
-    RETURNING id, resource_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, first_seen_at, last_seen_at, drained_at, worker_version, protocol_version, supported_protocol_versions, worker_group_id
+    RETURNING id, resource_id, worker_group_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, worker_version, protocol_version, first_seen_at, last_seen_at, drained_at
 )
-SELECT upserted_worker.id, upserted_worker.resource_id, upserted_worker.status, upserted_worker.region, upserted_worker.total_milli_cpu, upserted_worker.total_memory_mib, upserted_worker.total_disk_mib, upserted_worker.total_execution_slots, upserted_worker.available_milli_cpu, upserted_worker.available_memory_mib, upserted_worker.available_disk_mib, upserted_worker.available_execution_slots, upserted_worker.labels, upserted_worker.heartbeat, upserted_worker.runtime_id, upserted_worker.runtime_arch, upserted_worker.runtime_abi, upserted_worker.kernel_digest, upserted_worker.initramfs_digest, upserted_worker.rootfs_digest, upserted_worker.cni_profile, upserted_worker.first_seen_at, upserted_worker.last_seen_at, upserted_worker.drained_at, upserted_worker.worker_version, upserted_worker.protocol_version, upserted_worker.supported_protocol_versions, upserted_worker.worker_group_id
+SELECT upserted_worker.id, upserted_worker.resource_id, upserted_worker.worker_group_id, upserted_worker.status, upserted_worker.region, upserted_worker.total_milli_cpu, upserted_worker.total_memory_mib, upserted_worker.total_disk_mib, upserted_worker.total_execution_slots, upserted_worker.available_milli_cpu, upserted_worker.available_memory_mib, upserted_worker.available_disk_mib, upserted_worker.available_execution_slots, upserted_worker.labels, upserted_worker.heartbeat, upserted_worker.runtime_id, upserted_worker.runtime_arch, upserted_worker.runtime_abi, upserted_worker.kernel_digest, upserted_worker.initramfs_digest, upserted_worker.rootfs_digest, upserted_worker.cni_profile, upserted_worker.worker_version, upserted_worker.protocol_version, upserted_worker.first_seen_at, upserted_worker.last_seen_at, upserted_worker.drained_at
   FROM upserted_worker
 `
 
 type UpsertWorkerInstanceHeartbeatParams struct {
-	RuntimeID                 string      `json:"runtime_id"`
-	RuntimeArch               string      `json:"runtime_arch"`
-	RuntimeABI                string      `json:"runtime_abi"`
-	KernelDigest              string      `json:"kernel_digest"`
-	InitramfsDigest           string      `json:"initramfs_digest"`
-	RootfsDigest              string      `json:"rootfs_digest"`
-	CniProfile                string      `json:"cni_profile"`
-	ID                        pgtype.UUID `json:"id"`
-	WorkerGroupID             pgtype.UUID `json:"worker_group_id"`
-	ResourceID                string      `json:"resource_id"`
-	Region                    string      `json:"region"`
-	TotalMilliCpu             int64       `json:"total_milli_cpu"`
-	TotalMemoryMib            int64       `json:"total_memory_mib"`
-	TotalDiskMib              int64       `json:"total_disk_mib"`
-	TotalExecutionSlots       int32       `json:"total_execution_slots"`
-	AvailableMilliCpu         int64       `json:"available_milli_cpu"`
-	AvailableMemoryMib        int64       `json:"available_memory_mib"`
-	AvailableDiskMib          int64       `json:"available_disk_mib"`
-	AvailableExecutionSlots   int32       `json:"available_execution_slots"`
-	Labels                    []byte      `json:"labels"`
-	Heartbeat                 []byte      `json:"heartbeat"`
-	WorkerVersion             string      `json:"worker_version"`
-	ProtocolVersion           string      `json:"protocol_version"`
-	SupportedProtocolVersions []byte      `json:"supported_protocol_versions"`
+	RuntimeID               string      `json:"runtime_id"`
+	RuntimeArch             string      `json:"runtime_arch"`
+	RuntimeABI              string      `json:"runtime_abi"`
+	KernelDigest            string      `json:"kernel_digest"`
+	InitramfsDigest         string      `json:"initramfs_digest"`
+	RootfsDigest            string      `json:"rootfs_digest"`
+	CniProfile              string      `json:"cni_profile"`
+	ID                      pgtype.UUID `json:"id"`
+	WorkerGroupID           pgtype.UUID `json:"worker_group_id"`
+	ResourceID              string      `json:"resource_id"`
+	Region                  string      `json:"region"`
+	TotalMilliCpu           int64       `json:"total_milli_cpu"`
+	TotalMemoryMib          int64       `json:"total_memory_mib"`
+	TotalDiskMib            int64       `json:"total_disk_mib"`
+	TotalExecutionSlots     int32       `json:"total_execution_slots"`
+	AvailableMilliCpu       int64       `json:"available_milli_cpu"`
+	AvailableMemoryMib      int64       `json:"available_memory_mib"`
+	AvailableDiskMib        int64       `json:"available_disk_mib"`
+	AvailableExecutionSlots int32       `json:"available_execution_slots"`
+	Labels                  []byte      `json:"labels"`
+	Heartbeat               []byte      `json:"heartbeat"`
+	WorkerVersion           string      `json:"worker_version"`
+	ProtocolVersion         string      `json:"protocol_version"`
 }
 
 type UpsertWorkerInstanceHeartbeatRow struct {
-	ID                        pgtype.UUID          `json:"id"`
-	ResourceID                string               `json:"resource_id"`
-	Status                    WorkerInstanceStatus `json:"status"`
-	Region                    string               `json:"region"`
-	TotalMilliCpu             int64                `json:"total_milli_cpu"`
-	TotalMemoryMib            int64                `json:"total_memory_mib"`
-	TotalDiskMib              int64                `json:"total_disk_mib"`
-	TotalExecutionSlots       int32                `json:"total_execution_slots"`
-	AvailableMilliCpu         int64                `json:"available_milli_cpu"`
-	AvailableMemoryMib        int64                `json:"available_memory_mib"`
-	AvailableDiskMib          int64                `json:"available_disk_mib"`
-	AvailableExecutionSlots   int32                `json:"available_execution_slots"`
-	Labels                    []byte               `json:"labels"`
-	Heartbeat                 []byte               `json:"heartbeat"`
-	RuntimeID                 string               `json:"runtime_id"`
-	RuntimeArch               string               `json:"runtime_arch"`
-	RuntimeABI                string               `json:"runtime_abi"`
-	KernelDigest              string               `json:"kernel_digest"`
-	InitramfsDigest           string               `json:"initramfs_digest"`
-	RootfsDigest              string               `json:"rootfs_digest"`
-	CniProfile                string               `json:"cni_profile"`
-	FirstSeenAt               pgtype.Timestamptz   `json:"first_seen_at"`
-	LastSeenAt                pgtype.Timestamptz   `json:"last_seen_at"`
-	DrainedAt                 pgtype.Timestamptz   `json:"drained_at"`
-	WorkerVersion             string               `json:"worker_version"`
-	ProtocolVersion           string               `json:"protocol_version"`
-	SupportedProtocolVersions []byte               `json:"supported_protocol_versions"`
-	WorkerGroupID             pgtype.UUID          `json:"worker_group_id"`
+	ID                      pgtype.UUID          `json:"id"`
+	ResourceID              string               `json:"resource_id"`
+	WorkerGroupID           pgtype.UUID          `json:"worker_group_id"`
+	Status                  WorkerInstanceStatus `json:"status"`
+	Region                  string               `json:"region"`
+	TotalMilliCpu           int64                `json:"total_milli_cpu"`
+	TotalMemoryMib          int64                `json:"total_memory_mib"`
+	TotalDiskMib            int64                `json:"total_disk_mib"`
+	TotalExecutionSlots     int32                `json:"total_execution_slots"`
+	AvailableMilliCpu       int64                `json:"available_milli_cpu"`
+	AvailableMemoryMib      int64                `json:"available_memory_mib"`
+	AvailableDiskMib        int64                `json:"available_disk_mib"`
+	AvailableExecutionSlots int32                `json:"available_execution_slots"`
+	Labels                  []byte               `json:"labels"`
+	Heartbeat               []byte               `json:"heartbeat"`
+	RuntimeID               string               `json:"runtime_id"`
+	RuntimeArch             string               `json:"runtime_arch"`
+	RuntimeABI              string               `json:"runtime_abi"`
+	KernelDigest            string               `json:"kernel_digest"`
+	InitramfsDigest         string               `json:"initramfs_digest"`
+	RootfsDigest            string               `json:"rootfs_digest"`
+	CniProfile              string               `json:"cni_profile"`
+	WorkerVersion           string               `json:"worker_version"`
+	ProtocolVersion         string               `json:"protocol_version"`
+	FirstSeenAt             pgtype.Timestamptz   `json:"first_seen_at"`
+	LastSeenAt              pgtype.Timestamptz   `json:"last_seen_at"`
+	DrainedAt               pgtype.Timestamptz   `json:"drained_at"`
 }
 
 func (q *Queries) UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertWorkerInstanceHeartbeatParams) (UpsertWorkerInstanceHeartbeatRow, error) {
@@ -1731,12 +1828,12 @@ func (q *Queries) UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertW
 		arg.Heartbeat,
 		arg.WorkerVersion,
 		arg.ProtocolVersion,
-		arg.SupportedProtocolVersions,
 	)
 	var i UpsertWorkerInstanceHeartbeatRow
 	err := row.Scan(
 		&i.ID,
 		&i.ResourceID,
+		&i.WorkerGroupID,
 		&i.Status,
 		&i.Region,
 		&i.TotalMilliCpu,
@@ -1756,13 +1853,11 @@ func (q *Queries) UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertW
 		&i.InitramfsDigest,
 		&i.RootfsDigest,
 		&i.CniProfile,
+		&i.WorkerVersion,
+		&i.ProtocolVersion,
 		&i.FirstSeenAt,
 		&i.LastSeenAt,
 		&i.DrainedAt,
-		&i.WorkerVersion,
-		&i.ProtocolVersion,
-		&i.SupportedProtocolVersions,
-		&i.WorkerGroupID,
 	)
 	return i, err
 }

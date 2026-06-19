@@ -1,4 +1,4 @@
-import { image, sandbox, task, type PayloadSchema } from "./index"
+import { channels, image, sandbox, task, wait, type PayloadSchema } from "./index"
 
 const sb = sandbox("task-type-test").image(image("task-type-test").from("debian:trixie-slim"))
 
@@ -24,7 +24,7 @@ if (false) {
     payload,
     run: async (payload) => {
       const parsedIssue: number = payload.issue
-      // @ts-expect-error run receives parsed schema output, not trigger input.
+      // @ts-expect-error run receives parsed schema output, not start input.
       const rawIssue: string = payload.issue
       return { parsedIssue, rawIssue }
     },
@@ -33,11 +33,36 @@ if (false) {
   task({
     id: "token-validation-schema-type",
     sandbox: sb,
-    run: async (ctx) => {
-      const token = await ctx.wait.human({ schema: validationOnlySchema })
+    run: async () => {
+      const token = await wait.forToken("token-1", { schema: validationOnlySchema }).unwrap()
       const approved: boolean = token.approved
-      // @ts-expect-error wait.human receives parsed schema output.
+      // @ts-expect-error wait.forToken receives parsed schema output.
       const rawApproved: string = token.approved
+      return { approved, rawApproved }
+    },
+  })
+
+  task({
+    id: "channel-output-write-schema-input-type",
+    sandbox: sb,
+    run: async (ctx) => {
+      const issueChannel = ctx.session.output(channels.output("issue-channel", { schema: payload }))
+      await issueChannel.append({ issue: "41" })
+      await issueChannel.pipe([{ issue: "42" }])
+      // @ts-expect-error defined output channels write schema input, not parsed output.
+      await issueChannel.append({ issue: 41 })
+    },
+  })
+
+  task({
+    id: "channel-input-read-schema-output-type",
+    sandbox: sb,
+    run: async (ctx) => {
+      const approvalChannel = ctx.session.input(channels.input("approval", { schema: validationOnlySchema }))
+      const approval = await approvalChannel.wait({ correlationId: "thread-1" }).unwrap()
+      const approved: boolean = approval.approved
+      // @ts-expect-error defined input channels read parsed schema output.
+      const rawApproved: string = approval.approved
       return { approved, rawApproved }
     },
   })
@@ -54,7 +79,8 @@ if (false) {
     sandbox: sb,
     run: async (ctx) => {
       const runId: string = ctx.run.id
-      return { runId }
+      const sessionId: string = ctx.session.id
+      return { runId, sessionId }
     },
   })
 

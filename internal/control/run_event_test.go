@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -162,25 +161,15 @@ func TestWorkerEventPayloadJSONShapes(t *testing.T) {
 	}
 	assertJSONBytes(t, payload, `{"bytes":12,"observed_seq":7,"run_id":"run-1","stream":"stdout"}`)
 
-	payload, err = json.Marshal(workerEmitPayload{
-		Type:    "deploy.progress",
-		Content: json.RawMessage(`{"step":"build"}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertJSONBytes(t, payload, `{"content":{"step":"build"},"type":"deploy.progress"}`)
-
 	params := workerInstanceHeartbeatParams(workerActor{WorkerInstanceID: uuid.Must(uuid.NewV7()), WorkerGroupID: pgvalue.MustUUIDValue(testWorkerGroupID()), ResourceID: "worker-resource"}, api.WorkerCapabilities{
-		ProtocolVersion:           api.CurrentWorkerProtocolVersion,
-		SupportedProtocolVersions: api.SupportedWorkerProtocolVersions,
-		RuntimeID:                 "sha256:runtime",
-		RuntimeArch:               "arm64",
-		RuntimeABI:                "helmr/v1",
-		KernelDigest:              "sha256:kernel",
-		InitramfsDigest:           "sha256:initramfs",
-		RootfsDigest:              "sha256:rootfs",
-		CNIProfile:                "helmr/v0",
+		ProtocolVersion: api.CurrentWorkerProtocolVersion,
+		RuntimeID:       "sha256:runtime",
+		RuntimeArch:     "arm64",
+		RuntimeABI:      "helmr/v1",
+		KernelDigest:    "sha256:kernel",
+		InitramfsDigest: "sha256:initramfs",
+		RootfsDigest:    "sha256:rootfs",
+		CNIProfile:      "helmr/v0",
 	})
 	assertJSONBytes(t, params.Heartbeat, `{"cni_profile":"helmr/v0","initramfs_digest":"sha256:initramfs","kernel_digest":"sha256:kernel","rootfs_digest":"sha256:rootfs","runtime_abi":"helmr/v1","runtime_arch":"arm64","runtime_id":"sha256:runtime"}`)
 }
@@ -342,14 +331,14 @@ func (f *fakeStore) ListSubjectEvents(_ context.Context, arg db.ListSubjectEvent
 }
 
 func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendRunEventForExecutionParams) (db.AppendRunEventForExecutionRow, error) {
-	if f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+	if f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.AppendRunEventForExecutionRow{}, pgx.ErrNoRows
 	}
 	event := db.Event{
 		Seq:            int64(len(f.events) + 1),
 		OrgID:          arg.OrgID,
 		RunID:          arg.RunID,
-		SessionID:      arg.SessionID,
+		RunLeaseID:     arg.RunLeaseID,
 		AttemptNumber:  pgtype.Int4{Int32: 1, Valid: true},
 		Kind:           arg.Kind,
 		Payload:        arg.Payload,
@@ -361,7 +350,7 @@ func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendR
 		Seq:             event.Seq,
 		OrgID:           event.OrgID,
 		RunID:           event.RunID,
-		SessionID:       event.SessionID,
+		RunLeaseID:      event.RunLeaseID,
 		AttemptNumber:   event.AttemptNumber,
 		Kind:            event.Kind,
 		Payload:         event.Payload,
@@ -372,8 +361,5 @@ func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendR
 }
 
 func fakeEventRedactionClass(kind string) string {
-	if strings.HasPrefix(kind, "emit.") {
-		return "internal"
-	}
 	return "sensitive"
 }

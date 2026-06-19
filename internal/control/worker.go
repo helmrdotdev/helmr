@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -248,52 +247,49 @@ func workerInstanceHeartbeatParams(worker workerActor, capabilities api.WorkerCa
 		CNIProfile:      capabilities.CNIProfile,
 	})
 	labels, _ := json.Marshal(capabilities.Labels)
-	supportedProtocolVersions, _ := json.Marshal(capabilities.SupportedProtocolVersions)
 	return db.UpsertWorkerInstanceHeartbeatParams{
-		ID:                        pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerGroupID:             pgvalue.UUID(worker.WorkerGroupID),
-		ResourceID:                worker.ResourceID,
-		Region:                    capabilities.Region,
-		TotalMilliCpu:             resources.MilliCPU,
-		TotalMemoryMib:            resources.MemoryMiB,
-		TotalDiskMib:              resources.DiskMiB,
-		TotalExecutionSlots:       resources.Slots,
-		AvailableMilliCpu:         resources.MilliCPU,
-		AvailableMemoryMib:        resources.MemoryMiB,
-		AvailableDiskMib:          resources.DiskMiB,
-		AvailableExecutionSlots:   resources.Slots,
-		Labels:                    labels,
-		Heartbeat:                 heartbeat,
-		WorkerVersion:             capabilities.WorkerVersion,
-		ProtocolVersion:           capabilities.ProtocolVersion,
-		SupportedProtocolVersions: supportedProtocolVersions,
-		RuntimeID:                 capabilities.RuntimeID,
-		RuntimeArch:               capabilities.RuntimeArch,
-		RuntimeABI:                capabilities.RuntimeABI,
-		KernelDigest:              capabilities.KernelDigest,
-		InitramfsDigest:           capabilities.InitramfsDigest,
-		RootfsDigest:              capabilities.RootfsDigest,
-		CniProfile:                capabilities.CNIProfile,
+		ID:                      pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID:           pgvalue.UUID(worker.WorkerGroupID),
+		ResourceID:              worker.ResourceID,
+		Region:                  capabilities.Region,
+		TotalMilliCpu:           resources.MilliCPU,
+		TotalMemoryMib:          resources.MemoryMiB,
+		TotalDiskMib:            resources.DiskMiB,
+		TotalExecutionSlots:     resources.Slots,
+		AvailableMilliCpu:       resources.MilliCPU,
+		AvailableMemoryMib:      resources.MemoryMiB,
+		AvailableDiskMib:        resources.DiskMiB,
+		AvailableExecutionSlots: resources.Slots,
+		Labels:                  labels,
+		Heartbeat:               heartbeat,
+		WorkerVersion:           capabilities.WorkerVersion,
+		ProtocolVersion:         capabilities.ProtocolVersion,
+		RuntimeID:               capabilities.RuntimeID,
+		RuntimeArch:             capabilities.RuntimeArch,
+		RuntimeABI:              capabilities.RuntimeABI,
+		KernelDigest:            capabilities.KernelDigest,
+		InitramfsDigest:         capabilities.InitramfsDigest,
+		RootfsDigest:            capabilities.RootfsDigest,
+		CniProfile:              capabilities.CNIProfile,
 	}
 }
 
 func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabilities, error) {
 	capabilities := api.WorkerCapabilities{
-		ProtocolVersion:           strings.TrimSpace(input.ProtocolVersion),
-		SupportedProtocolVersions: normalizeWorkerProtocolVersions(input.SupportedProtocolVersions),
-		WorkerVersion:             strings.TrimSpace(input.WorkerVersion),
-		RuntimeID:                 strings.TrimSpace(input.RuntimeID),
-		RuntimeArch:               strings.TrimSpace(input.RuntimeArch),
-		RuntimeABI:                strings.TrimSpace(input.RuntimeABI),
-		KernelDigest:              strings.TrimSpace(input.KernelDigest),
-		InitramfsDigest:           strings.TrimSpace(input.InitramfsDigest),
-		RootfsDigest:              strings.TrimSpace(input.RootfsDigest),
-		CNIProfile:                strings.TrimSpace(input.CNIProfile),
-		Region:                    strings.TrimSpace(input.Region),
-		MaxVCPUs:                  input.MaxVCPUs,
-		MaxMemoryMiB:              input.MaxMemoryMiB,
-		MaxDiskMiB:                input.MaxDiskMiB,
-		ExecutionSlotsAvailable:   input.ExecutionSlotsAvailable,
+		ProtocolVersion:         strings.TrimSpace(input.ProtocolVersion),
+		WorkerVersion:           strings.TrimSpace(input.WorkerVersion),
+		RuntimeID:               strings.TrimSpace(input.RuntimeID),
+		RuntimeArch:             strings.TrimSpace(input.RuntimeArch),
+		RuntimeABI:              strings.TrimSpace(input.RuntimeABI),
+		KernelDigest:            strings.TrimSpace(input.KernelDigest),
+		InitramfsDigest:         strings.TrimSpace(input.InitramfsDigest),
+		RootfsDigest:            strings.TrimSpace(input.RootfsDigest),
+		CNIProfile:              strings.TrimSpace(input.CNIProfile),
+		Region:                  strings.TrimSpace(input.Region),
+		MaxVCPUs:                input.MaxVCPUs,
+		MaxMemoryMiB:            input.MaxMemoryMiB,
+		MaxDiskMiB:              input.MaxDiskMiB,
+		ExecutionSlotsAvailable: input.ExecutionSlotsAvailable,
 		Network: api.WorkerNetworkCapabilities{
 			Internet:      input.Network.Internet,
 			BlockInternet: input.Network.BlockInternet,
@@ -312,9 +308,6 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 	}
 	if capabilities.ProtocolVersion != api.CurrentWorkerProtocolVersion {
 		return api.WorkerCapabilities{}, fmt.Errorf("worker protocol_version %s is not supported; current protocol is %s", capabilities.ProtocolVersion, api.CurrentWorkerProtocolVersion)
-	}
-	if !slices.Contains(capabilities.SupportedProtocolVersions, api.CurrentWorkerProtocolVersion) {
-		return api.WorkerCapabilities{}, fmt.Errorf("worker supported_protocol_versions must include %s", api.CurrentWorkerProtocolVersion)
 	}
 	if capabilities.RuntimeID == "" {
 		return api.WorkerCapabilities{}, errors.New("worker runtime_id is required")
@@ -382,23 +375,6 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 		return api.WorkerCapabilities{}, errors.New("worker network.deny_cidrs capability is required")
 	}
 	return capabilities, nil
-}
-
-func normalizeWorkerProtocolVersions(input []string) []string {
-	versions := make([]string, 0, len(input))
-	seen := map[string]struct{}{}
-	for _, raw := range input {
-		version := strings.TrimSpace(raw)
-		if version == "" {
-			continue
-		}
-		if _, ok := seen[version]; ok {
-			continue
-		}
-		seen[version] = struct{}{}
-		versions = append(versions, version)
-	}
-	return versions
 }
 
 func firstPositiveInt32(values ...int32) int32 {

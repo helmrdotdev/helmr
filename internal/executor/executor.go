@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/task"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
@@ -42,7 +44,7 @@ type Runner interface {
 }
 
 type Request struct {
-	Lease            api.WorkerRunLease
+	Leases           api.WorkerRunLeaseProvider
 	Run              ResolvedRun
 	Artifact         builder.Artifact
 	DeploymentSource builder.Source
@@ -55,22 +57,34 @@ type Result struct {
 	Output         json.RawMessage
 	Detached       bool
 	ActiveDuration time.Duration
+	Workspace      *workspace.WorkspaceArtifact
 }
 
 type WaitHandler interface {
 	Wait(context.Context, WaitRequest) error
 }
 
+type WaitpointAppender interface {
+	AddWaitpoint(context.Context, WaitRequest) (api.WorkerCreateWaitpointResponse, error)
+}
+
 type WaitRequest struct {
 	Lease          api.WorkerRunLease
 	CorrelationID  string
 	Kind           api.WorkerWaitpointKind
-	Request        json.RawMessage
-	DisplayText    string
+	Params         json.RawMessage
+	Metadata       json.RawMessage
+	Tags           []string
 	TimeoutSeconds *int32
-	Policy         string
+	Ordinal        int32
 	ActiveDuration time.Duration
 	Checkpointer   Checkpointer
+	Resume         func(context.Context, WaitResumeDecision) error
+}
+
+type WaitResumeDecision struct {
+	Kind string
+	Data json.RawMessage
 }
 
 type Checkpointer interface {
@@ -83,13 +97,16 @@ type CheckpointRequest struct {
 	CheckpointID string
 }
 
-func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult {
+func (e Executor) Execute(ctx context.Context, leases api.WorkerRunLeaseProvider, run api.WorkerRun) api.WorkerReleaseResult {
+	if leases == nil {
+		return failedResult(errors.New("worker run lease provider is required"))
+	}
 	resolved, err := Resolve(run)
 	if err != nil {
 		return failedResult(err)
 	}
 	if resolved.Restore != nil {
-		return e.runRuntime(ctx, claim, resolved, builder.Artifact{}, builder.Source{}, workspace.WorkspaceArtifact{})
+		return e.runRuntime(ctx, leases, resolved, builder.Artifact{}, builder.Source{}, workspace.WorkspaceArtifact{})
 	}
 	buildEngine := e.Builder
 	if buildEngine == nil {
@@ -106,6 +123,10 @@ func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api
 		return failedResult(err)
 	}
 	resolved.Bundle = bundle
+	resolved.Workspace.MountPath = workspaceMountPath(bundle)
+	if strings.TrimSpace(resolved.Workspace.VolumeKind) == "" {
+		resolved.Workspace.VolumeKind = workspace.VolumeKind
+	}
 	if err := validateDeploymentTaskMetadata(resolved, bundle); err != nil {
 		return failedResult(err)
 	}
@@ -126,15 +147,12 @@ func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api
 	if err != nil {
 		return failedResult(fmt.Errorf("build run: %w", err))
 	}
-	workspaceArtifact, cleanupWorkspaceArtifact, err := workspace.CreateEmptyWorkspaceArtifact(e.tempDir())
+	workspaceArtifact, cleanupWorkspaceArtifact, err := e.materializeWorkspaceArtifact(ctx, resolved.Workspace)
 	if err != nil {
 		return failedResult(err)
 	}
 	defer cleanupWorkspaceArtifact()
-	if err := e.publishWorkspaceArtifact(ctx, workspaceArtifact); err != nil {
-		return failedResult(err)
-	}
-	return e.runRuntime(ctx, claim, resolved, artifact, deploymentSource, workspaceArtifact)
+	return e.runRuntime(ctx, leases, resolved, artifact, deploymentSource, workspaceArtifact)
 }
 
 func taskBuildCacheScope(resolved ResolvedRun) string {
@@ -186,13 +204,13 @@ func buildCacheScope(repository string, taskID string) string {
 	return repository + "/" + taskID
 }
 
-func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, resolved ResolvedRun, artifact builder.Artifact, deploymentSource builder.Source, ws workspace.WorkspaceArtifact) api.WorkerReleaseResult {
+func (e Executor) runRuntime(ctx context.Context, leases api.WorkerRunLeaseProvider, resolved ResolvedRun, artifact builder.Artifact, deploymentSource builder.Source, ws workspace.WorkspaceArtifact) api.WorkerReleaseResult {
 	runner := e.Runner
 	if runner == nil {
 		return failedResult(ErrRunnerRequired)
 	}
 	result, err := runner.Run(ctx, Request{
-		Lease:            claim,
+		Leases:           leases,
 		Run:              resolved,
 		Artifact:         artifact,
 		DeploymentSource: deploymentSource,
@@ -209,7 +227,117 @@ func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, reso
 	if result.ExitCode == 0 && len(result.Output) > 0 {
 		release.Output = append(json.RawMessage(nil), result.Output...)
 	}
+	if result.ExitCode == 0 {
+		workspaceCommit, err := workerWorkspaceCommit(resolved.Workspace, result.Workspace)
+		if err != nil {
+			return failedResult(err)
+		}
+		release.Workspace = workspaceCommit
+	}
 	return release
+}
+
+func workerWorkspaceCommit(base api.WorkerWorkspace, artifact *workspace.WorkspaceArtifact) (*api.WorkerWorkspace, error) {
+	if strings.TrimSpace(base.ID) == "" {
+		return nil, nil
+	}
+	if artifact == nil {
+		return nil, errors.New("successful session run did not publish a workspace artifact")
+	}
+	if strings.TrimSpace(base.WriteLeaseID) == "" {
+		return nil, errors.New("workspace write lease is required")
+	}
+	mountPath := strings.TrimSpace(base.MountPath)
+	if mountPath == "" {
+		mountPath = "/workspace"
+	}
+	volumeKind := strings.TrimSpace(base.VolumeKind)
+	if volumeKind == "" {
+		volumeKind = workspace.VolumeKind
+	}
+	return &api.WorkerWorkspace{
+		ID:            strings.TrimSpace(base.ID),
+		WriteLeaseID:  strings.TrimSpace(base.WriteLeaseID),
+		BaseVersionID: strings.TrimSpace(base.BaseVersionID),
+		MountPath:     mountPath,
+		VolumeKind:    volumeKind,
+		Artifact: &api.WorkerWorkspaceArtifact{
+			Digest:     artifact.Digest,
+			MediaType:  artifact.MediaType,
+			Encoding:   artifact.Encoding,
+			SizeBytes:  artifact.SizeBytes,
+			EntryCount: int32(artifact.EntryCount),
+		},
+	}, nil
+}
+
+func (e Executor) materializeWorkspaceArtifact(ctx context.Context, base api.WorkerWorkspace) (workspace.WorkspaceArtifact, func(), error) {
+	if base.Artifact == nil || strings.TrimSpace(base.Artifact.Digest) == "" {
+		artifact, cleanup, err := workspace.CreateEmptyWorkspaceArtifact(e.tempDir())
+		if err != nil {
+			return workspace.WorkspaceArtifact{}, func() {}, err
+		}
+		if err := e.publishWorkspaceArtifact(ctx, artifact); err != nil {
+			cleanup()
+			return workspace.WorkspaceArtifact{}, func() {}, err
+		}
+		return artifact, cleanup, nil
+	}
+	if e.CAS == nil {
+		return workspace.WorkspaceArtifact{}, func() {}, errors.New("workspace artifact CAS is required")
+	}
+	if err := os.MkdirAll(e.tempDir(), 0o755); err != nil {
+		return workspace.WorkspaceArtifact{}, func() {}, fmt.Errorf("create worker work dir: %w", err)
+	}
+	file, err := os.CreateTemp(e.tempDir(), "workspace-base-*.tar")
+	if err != nil {
+		return workspace.WorkspaceArtifact{}, func() {}, fmt.Errorf("create workspace artifact file: %w", err)
+	}
+	path := file.Name()
+	cleanup := func() { _ = os.Remove(path) }
+	body, err := e.CAS.Get(ctx, strings.TrimSpace(base.Artifact.Digest))
+	if err != nil {
+		_ = file.Close()
+		cleanup()
+		return workspace.WorkspaceArtifact{}, func() {}, fmt.Errorf("get workspace artifact: %w", err)
+	}
+	hash := sha256.New()
+	size, copyErr := io.Copy(io.MultiWriter(file, hash), body)
+	bodyCloseErr := body.Close()
+	closeErr := file.Close()
+	if copyErr != nil {
+		cleanup()
+		return workspace.WorkspaceArtifact{}, func() {}, fmt.Errorf("copy workspace artifact: %w", copyErr)
+	}
+	if bodyCloseErr != nil {
+		cleanup()
+		return workspace.WorkspaceArtifact{}, func() {}, fmt.Errorf("close workspace artifact body: %w", bodyCloseErr)
+	}
+	if closeErr != nil {
+		cleanup()
+		return workspace.WorkspaceArtifact{}, func() {}, fmt.Errorf("close workspace artifact file: %w", closeErr)
+	}
+	if digest := sha256sum.DigestHash(hash); digest != strings.TrimSpace(base.Artifact.Digest) {
+		cleanup()
+		return workspace.WorkspaceArtifact{}, func() {}, fmt.Errorf("workspace artifact digest mismatch: got %s, want %s", digest, base.Artifact.Digest)
+	}
+	if size != base.Artifact.SizeBytes {
+		cleanup()
+		return workspace.WorkspaceArtifact{}, func() {}, fmt.Errorf("workspace artifact size mismatch: got %d, want %d", size, base.Artifact.SizeBytes)
+	}
+	volumeKind := strings.TrimSpace(base.VolumeKind)
+	if volumeKind == "" {
+		volumeKind = workspace.VolumeKind
+	}
+	return workspace.WorkspaceArtifact{
+		Path:       path,
+		Digest:     strings.TrimSpace(base.Artifact.Digest),
+		MediaType:  strings.TrimSpace(base.Artifact.MediaType),
+		Encoding:   strings.TrimSpace(base.Artifact.Encoding),
+		VolumeKind: volumeKind,
+		SizeBytes:  base.Artifact.SizeBytes,
+		EntryCount: int(base.Artifact.EntryCount),
+	}, cleanup, nil
 }
 
 func (e Executor) publishWorkspaceArtifact(ctx context.Context, artifact workspace.WorkspaceArtifact) error {
