@@ -88,7 +88,6 @@ export interface TaskSessionHandle<TOutput = unknown> {
   readonly id: string
   readonly taskId: string
   readonly currentRunId: string | null
-  readonly output?: TOutput
 }
 
 export interface TaskStartResult<TOutput = unknown> {
