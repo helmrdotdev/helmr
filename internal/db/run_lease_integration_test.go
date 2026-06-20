@@ -21,18 +21,7 @@ func TestTaskSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	ids := seedWaitpointTokenIntegration(t, ctx, pool)
 	queries := db.New(pool)
 	taskSessionID := seedTaskSessionForRun(t, ctx, pool, ids)
-	workspace, err := queries.CreateTaskSessionWorkspace(ctx, db.CreateTaskSessionWorkspaceParams{
-		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:           pgvalue.UUID(ids.orgID),
-		ProjectID:       pgvalue.UUID(ids.projectID),
-		EnvironmentID:   pgvalue.UUID(ids.environmentID),
-		TaskSessionID:   pgvalue.UUID(taskSessionID),
-		RetentionPolicy: []byte(`{}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	workspaceID := pgvalue.MustUUIDValue(workspace.ID)
+	workspaceID := ids.workspaceID
 	baseArtifactID := uuid.Must(uuid.NewV7())
 	baseVersionID := uuid.Must(uuid.NewV7())
 	baseDigest := "sha256:" + strings.Repeat("a", 64)
@@ -52,10 +41,10 @@ func TestTaskSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
 			id, org_id, project_id, environment_id, workspace_id, artifact_id,
-			artifact_encoding, artifact_entry_count, mount_path, volume_kind, state
+			artifact_encoding, artifact_entry_count, content_digest, size_bytes, state, promoted_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'tar', 1, '/workspace', 'copy-on-write', 'active')
-	`, baseVersionID, ids.orgID, ids.projectID, ids.environmentID, workspaceID, baseArtifactID); err != nil {
+		VALUES ($1, $2, $3, $4, $5, $6, 'tar', 1, $7, 10, 'ready', now())
+	`, baseVersionID, ids.orgID, ids.projectID, ids.environmentID, workspaceID, baseArtifactID, baseDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -139,14 +128,14 @@ func TestTaskSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id,
+			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			task_session_id, status, execution_status, payload, queue_name, queue_timestamp,
 			max_duration_seconds, trace_id, root_span_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'approval-task',
-			$7, 'queued', 'queued', '{}', 'default', now(), 300,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task',
+			$8, 'queued', 'queued', '{}', 'default', now(), 300,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, loserRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, taskSessionID); err != nil {
+	`, loserRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, taskSessionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -283,7 +272,7 @@ func TestTaskSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE workspace_versions
-		   SET state = 'superseded'
+		   SET state = 'failed'
 		 WHERE org_id = $1
 		   AND id = $2
 	`, ids.orgID, baseVersionID); err != nil {
@@ -301,14 +290,104 @@ func TestTaskSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		RunLeaseSpanID:    "5555555555555555",
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("LeaseRunLease with superseded current workspace version error = %v, want pgx.ErrNoRows", err)
+		t.Fatalf("LeaseRunLease with non-ready current workspace version error = %v, want pgx.ErrNoRows", err)
 	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE workspace_versions
-		   SET state = 'active'
+		   SET state = 'ready'
 		 WHERE org_id = $1
 		   AND id = $2
 	`, ids.orgID, baseVersionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET queue_concurrency_limit = 1,
+		       concurrency_key = 'workspace-first'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = queries.LeaseRunLease(ctx, db.LeaseRunLeaseParams{
+		OrgID:             pgvalue.UUID(ids.orgID),
+		RunID:             pgvalue.UUID(ids.runID),
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		RunLeaseID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		DispatchMessageID: pgtype.Text{String: winnerDispatchMessageID, Valid: true},
+		DispatchLeaseID:   "lease-current",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+		RunLeaseSpanID:    "4444444444444444",
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("LeaseRunLease without live materialization error = %v, want pgx.ErrNoRows", err)
+	}
+	var activeConcurrencySlots int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM run_queue_concurrency_leases
+		 WHERE org_id = $1
+		   AND run_id = $2
+		   AND released_at IS NULL
+	`, ids.orgID, ids.runID).Scan(&activeConcurrencySlots); err != nil {
+		t.Fatal(err)
+	}
+	if activeConcurrencySlots != 0 {
+		t.Fatalf("LeaseRunLease without live materialization active concurrency slots = %d, want 0", activeConcurrencySlots)
+	}
+	var materializationCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM workspace_materializations
+		 WHERE org_id = $1
+		   AND workspace_id = $2
+	`, ids.orgID, ids.workspaceID).Scan(&materializationCount); err != nil {
+		t.Fatal(err)
+	}
+	if materializationCount != 0 {
+		t.Fatalf("LeaseRunLease created materializations = %d, want 0", materializationCount)
+	}
+	requestedMaterialization, err := requestWorkspaceMaterializationForTest(ctx, queries, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Priority:      0,
+		Request:       []byte(`{"source":"test"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimedMaterialization, err := queries.ClaimWorkspaceMaterialization(ctx, db.ClaimWorkspaceMaterializationParams{
+		AvailableCpuMillis:      1000,
+		AvailableMemoryMib:      1024,
+		AvailableDiskMib:        4096,
+		AvailableExecutionSlots: 1,
+		RootfsDigest:            "sha256:rootfs",
+		RuntimeABI:              "test",
+		GuestdAbi:               "guestd-test",
+		AdapterAbi:              "adapter-test",
+		WorkerInstanceID:        pgvalue.UUID(workerID),
+		ReservationToken:        "materialization-reservation-token",
+		ReservationExpiresAt:    pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+		GuestdChannelTokenHash:  "materialization-channel-token-hash",
+		RuntimeID:               runtimeID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestedMaterialization.ID != claimedMaterialization.ID {
+		t.Fatalf("claimed materialization id = %v, want %v", claimedMaterialization.ID, requestedMaterialization.ID)
+	}
+	if _, err := queries.MarkWorkspaceMaterializationRunning(ctx, db.MarkWorkspaceMaterializationRunningParams{
+		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ID:                   claimedMaterialization.ID,
+		WorkerInstanceID:     pgvalue.UUID(workerID),
+		ReservationToken:     "materialization-reservation-token",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	leasedWinner, err := queries.LeaseRunLease(ctx, db.LeaseRunLeaseParams{
@@ -330,6 +409,26 @@ func TestTaskSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	if !leasedWinner.WorkspaceID.Valid || !leasedWinner.WorkspaceLeaseID.Valid {
 		t.Fatalf("leased winner workspace = id:%+v lease:%+v, want write lease", leasedWinner.WorkspaceID, leasedWinner.WorkspaceLeaseID)
+	}
+	if !leasedWinner.WorkspaceFencingToken.Valid || strings.TrimSpace(leasedWinner.WorkspaceFencingToken.String) == "" {
+		t.Fatalf("leased winner workspace fencing token = %+v, want token", leasedWinner.WorkspaceFencingToken)
+	}
+	var acquiredFencingGeneration int64
+	var materializationFencingGeneration int64
+	if err := pool.QueryRow(ctx, `
+		SELECT workspace_leases.acquired_fencing_generation,
+		       workspace_materializations.fencing_generation
+		  FROM workspace_leases
+		  JOIN workspace_materializations
+		    ON workspace_materializations.org_id = workspace_leases.org_id
+		   AND workspace_materializations.id = workspace_leases.materialization_id
+		 WHERE workspace_leases.org_id = $1
+		   AND workspace_leases.id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(leasedWinner.WorkspaceLeaseID)).Scan(&acquiredFencingGeneration, &materializationFencingGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if acquiredFencingGeneration != materializationFencingGeneration || acquiredFencingGeneration <= 1 {
+		t.Fatalf("workspace fencing generations lease=%d materialization=%d, want matching incremented generation", acquiredFencingGeneration, materializationFencingGeneration)
 	}
 	renewedExpiresAt := pgtype.Timestamptz{Time: time.Now().Add(2 * time.Hour), Valid: true}
 	if _, err := queries.RenewRunLease(ctx, db.RenewRunLeaseParams{
@@ -365,13 +464,40 @@ func TestTaskSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		DispatchLeaseID:             "lease-current",
 		RunStatus:                   db.RunStatusSucceeded,
 		WorkspaceLeaseID:            leasedWinner.WorkspaceLeaseID,
+		WorkspaceFencingToken:       pgvalue.Text("stale-fencing-token"),
 		WorkspaceArtifactDigest:     pgvalue.Text(workspaceDigest),
 		WorkspaceArtifactSizeBytes:  pgtype.Int8{Int64: 123, Valid: true},
 		WorkspaceArtifactMediaType:  pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
 		WorkspaceArtifactEncoding:   pgvalue.Text("tar"),
 		WorkspaceArtifactEntryCount: pgtype.Int4{Int32: 2, Valid: true},
 		WorkspaceMountPath:          pgvalue.Text("/workspace"),
-		WorkspaceVolumeKind:         pgvalue.Text("copy-on-write"),
+		WorkspaceBaseVersionID:      leasedWinner.WorkspaceBaseVersionID,
+		AttemptStatus:               db.RunAttemptStatusSucceeded,
+		ExitCode:                    pgtype.Int4{Int32: 0, Valid: true},
+		Output:                      []byte(`{"ok":true}`),
+		TerminalEventKind:           "run.completed",
+		TerminalEventPayload:        []byte(`{"status":"succeeded"}`),
+		ReleaseActiveDurationMs:     1,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("ReleaseRunLease stale fencing token error = %v, want pgx.ErrNoRows", err)
+	}
+	_, err = queries.ReleaseRunLease(ctx, db.ReleaseRunLeaseParams{
+		OrgID:                       pgvalue.UUID(ids.orgID),
+		RunID:                       pgvalue.UUID(ids.runID),
+		RunLeaseID:                  leasedWinner.RunLeaseID,
+		WorkerInstanceID:            pgvalue.UUID(workerID),
+		DispatchMessageID:           winnerDispatchMessageID,
+		DispatchLeaseID:             "lease-current",
+		RunStatus:                   db.RunStatusSucceeded,
+		WorkspaceLeaseID:            leasedWinner.WorkspaceLeaseID,
+		WorkspaceFencingToken:       leasedWinner.WorkspaceFencingToken,
+		WorkspaceArtifactDigest:     pgvalue.Text(workspaceDigest),
+		WorkspaceArtifactSizeBytes:  pgtype.Int8{Int64: 123, Valid: true},
+		WorkspaceArtifactMediaType:  pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:   pgvalue.Text("tar"),
+		WorkspaceArtifactEntryCount: pgtype.Int4{Int32: 2, Valid: true},
+		WorkspaceMountPath:          pgvalue.Text("/workspace"),
 		WorkspaceBaseVersionID:      pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		AttemptStatus:               db.RunAttemptStatusSucceeded,
 		ExitCode:                    pgtype.Int4{Int32: 0, Valid: true},
@@ -392,13 +518,13 @@ func TestTaskSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		DispatchLeaseID:             "lease-current",
 		RunStatus:                   db.RunStatusSucceeded,
 		WorkspaceLeaseID:            leasedWinner.WorkspaceLeaseID,
+		WorkspaceFencingToken:       leasedWinner.WorkspaceFencingToken,
 		WorkspaceArtifactDigest:     pgvalue.Text(workspaceDigest),
 		WorkspaceArtifactSizeBytes:  pgtype.Int8{Int64: 123, Valid: true},
 		WorkspaceArtifactMediaType:  pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
 		WorkspaceArtifactEncoding:   pgvalue.Text("tar"),
 		WorkspaceArtifactEntryCount: pgtype.Int4{Int32: 2, Valid: true},
 		WorkspaceMountPath:          pgvalue.Text("/workspace"),
-		WorkspaceVolumeKind:         pgvalue.Text("copy-on-write"),
 		WorkspaceBaseVersionID:      leasedWinner.WorkspaceBaseVersionID,
 		AttemptStatus:               db.RunAttemptStatusSucceeded,
 		ExitCode:                    pgtype.Int4{Int32: 0, Valid: true},
@@ -412,6 +538,19 @@ func TestTaskSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	if released.Status != db.RunStatusSucceeded {
 		t.Fatalf("released status = %s, want succeeded", released.Status)
+	}
+	var leaseState db.WorkspaceLeaseState
+	var leaseReleasedAt pgtype.Timestamptz
+	if err := pool.QueryRow(ctx, `
+		SELECT state, released_at
+		  FROM workspace_leases
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(leasedWinner.WorkspaceLeaseID)).Scan(&leaseState, &leaseReleasedAt); err != nil {
+		t.Fatal(err)
+	}
+	if leaseState != db.WorkspaceLeaseStateReleased || !leaseReleasedAt.Valid {
+		t.Fatalf("workspace lease state=%s released_at_valid=%v, want released/valid", leaseState, leaseReleasedAt.Valid)
 	}
 	var currentVersionID pgtype.UUID
 	if err := pool.QueryRow(ctx, `

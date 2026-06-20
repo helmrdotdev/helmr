@@ -97,10 +97,6 @@ func runTaskWorkspaceProto(mountPath string, artifact workspace.WorkspaceArtifac
 	if encoding != workspace.ArtifactEncoding {
 		return nil, fmt.Errorf("unsupported workspace artifact encoding %q", artifact.Encoding)
 	}
-	volumeKind := strings.TrimSpace(artifact.VolumeKind)
-	if volumeKind != workspace.VolumeKind {
-		return nil, fmt.Errorf("unsupported workspace volume_kind %q", artifact.VolumeKind)
-	}
 	if artifact.SizeBytes <= 0 {
 		return nil, errors.New("workspace artifact size_bytes is required")
 	}
@@ -120,8 +116,7 @@ func runTaskWorkspaceProto(mountPath string, artifact workspace.WorkspaceArtifac
 			SizeBytes:  uint64(artifact.SizeBytes),
 			EntryCount: uint32(artifact.EntryCount),
 		},
-		VolumeKind: volumeKind,
-		Writable:   true,
+		Writable: true,
 	}, nil
 }
 

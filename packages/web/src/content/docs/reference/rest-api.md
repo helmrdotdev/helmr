@@ -43,7 +43,6 @@ Common user/API-key routes:
 | `POST` | `/api/sessions/{id}/close` |
 | `POST` | `/api/sessions/{id}/cancel` |
 | `GET` | `/api/sessions/{id}/runs` |
-| `GET` | `/api/sessions/{id}/workspace` |
 | `GET` | `/api/sessions/{id}/channels/{channel}/inputs` |
 | `POST` | `/api/sessions/{id}/channels/{channel}/inputs` |
 | `GET` | `/api/sessions/{id}/channels/{channel}/outputs` |

@@ -18,7 +18,7 @@ tools:
 generate: proto sqlc
 
 proto: tools
-	$(BUF) generate proto --template proto/buf.gen.yaml --path proto/bundle.proto --path proto/run.proto
+	$(BUF) generate proto --template proto/buf.gen.yaml --path proto/bundle.proto --path proto/run.proto --path proto/workspace.proto
 
 sqlc:
 	$(SQLC) generate

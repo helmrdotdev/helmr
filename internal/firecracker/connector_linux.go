@@ -99,6 +99,23 @@ func (c *Connector) Connect(ctx context.Context, network compute.NetworkPolicy) 
 	return c.start(ctx, "", "", "", nil, network)
 }
 
+func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
+	if strings.TrimSpace(request.ImageFormat) != "oci-tar" {
+		return nil, fmt.Errorf("firecracker materialize image format %q is not supported", request.ImageFormat)
+	}
+	rootfsDigest, err := digestFile(c.cfg.RootfsPath)
+	if err != nil {
+		return nil, fmt.Errorf("digest materialization rootfs: %w", err)
+	}
+	if rootfsDigest != strings.TrimSpace(request.RootfsDigest) {
+		return nil, fmt.Errorf("materialization rootfs digest %s does not match declared digest %s", rootfsDigest, request.RootfsDigest)
+	}
+	if strings.TrimSpace(request.ImageDigest) == "" {
+		return nil, errors.New("firecracker materialize image digest is required")
+	}
+	return c.Connect(ctx, request.Network)
+}
+
 func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.Session, error) {
 	if len(request.Memory) != 1 {
 		return nil, fmt.Errorf("firecracker restore requires exactly one memory file, got %d", len(request.Memory))
@@ -264,8 +281,8 @@ type restoreCleanupSession struct {
 	paths []string
 }
 
-func (s restoreCleanupSession) Close() error {
-	err := s.CheckpointableSession.Close()
+func (s restoreCleanupSession) Close(ctx context.Context) error {
+	err := s.CheckpointableSession.Close(ctx)
 	removeFiles(s.paths)
 	return err
 }
@@ -364,17 +381,19 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 		return nil, fmt.Errorf("create firecracker machine: %w", err)
 	}
 	machineCtx, machineCancel := context.WithCancel(context.Background())
-	if err := machine.Start(machineCtx); err != nil {
-		_ = stopMachine(machine)
-		machineCancel()
+	machine.Logger().Printf("starting firecracker machine")
+	if err := startMachineContext(ctx, machine, machineCtx, machineCancel); err != nil {
+		_ = stopMachine(context.Background(), machine)
 		_ = c.cleanupNetworkPolicy(context.Background(), instanceID)
 		cleanup()
 		return nil, fmt.Errorf("start firecracker machine: %w", err)
 	}
+	machineExit := watchMachineExit(machine)
+	machine.Logger().Printf("firecracker machine start returned")
 	started := true
 	defer func() {
 		if !started {
-			_ = stopMachine(machine)
+			_ = stopMachine(context.Background(), machine)
 			machineCancel()
 			_ = c.cleanupNetworkPolicy(context.Background(), instanceID)
 			cleanup()
@@ -386,16 +405,20 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 			return nil, fmt.Errorf("resume restored firecracker machine: %w", err)
 		}
 	}
+	machine.Logger().Printf("waiting for guest health")
 	conn, err := c.connectReadyGuest(ctx, vsockHostPath)
 	if err != nil {
 		started = false
 		return nil, err
 	}
+	machine.Logger().Printf("guest health ready")
 	return &guestSession{
 		stream:        conn,
 		machine:       machine,
 		machineCancel: machineCancel,
+		machineExit:   machineExit,
 		cfg:           c.cfg,
+		vsockHostPath: vsockHostPath,
 		instanceDir:   instanceDir,
 		jailRoot:      jailRoot,
 		scratchDisk:   scratchDiskPath,
@@ -404,6 +427,20 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 			return c.cleanupNetworkPolicy(context.Background(), instanceID)
 		},
 	}, nil
+}
+
+func startMachineContext(ctx context.Context, machine *firecracker.Machine, machineCtx context.Context, machineCancel context.CancelFunc) error {
+	result := make(chan error, 1)
+	go func() {
+		result <- machine.Start(machineCtx)
+	}()
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		machineCancel()
+		return ctx.Err()
+	}
 }
 
 func (c *Connector) connectReadyGuest(ctx context.Context, vsockHostPath string) (io.ReadWriteCloser, error) {
@@ -619,7 +656,9 @@ type guestSession struct {
 	stream               io.ReadWriteCloser
 	machine              *firecracker.Machine
 	machineCancel        context.CancelFunc
+	machineExit          *machineExit
 	cfg                  Config
+	vsockHostPath        string
 	instanceDir          string
 	jailRoot             string
 	scratchDisk          string
@@ -634,15 +673,26 @@ func (s *guestSession) Stream() io.ReadWriteCloser {
 	return s.stream
 }
 
-func (s *guestSession) Close() error {
+func (s *guestSession) OpenStream(ctx context.Context) (io.ReadWriteCloser, error) {
+	return (&Connector{cfg: s.cfg}).connectGuestPort(ctx, s.vsockHostPath)
+}
+
+func (s *guestSession) Wait(ctx context.Context) error {
+	if s.machineExit == nil {
+		return errors.New("firecracker session exit watcher is not configured")
+	}
+	return s.machineExit.Wait(ctx)
+}
+
+func (s *guestSession) Close(ctx context.Context) error {
 	s.once.Do(func() {
-		streamErr := s.stream.Close()
-		if errors.Is(streamErr, net.ErrClosed) || errors.Is(streamErr, os.ErrClosed) {
-			streamErr = nil
-		}
-		stopErr := stopMachine(s.machine)
 		if s.machineCancel != nil {
 			s.machineCancel()
+		}
+		stopErr := stopSessionMachine(ctx, s.machine, s.machineExit)
+		streamErr := closeGuestStream(ctx, s.stream)
+		if errors.Is(streamErr, net.ErrClosed) || errors.Is(streamErr, os.ErrClosed) {
+			streamErr = nil
 		}
 		if stopErr != nil {
 			s.err = errors.Join(streamErr, stopErr)
@@ -656,6 +706,21 @@ func (s *guestSession) Close() error {
 		s.err = errors.Join(streamErr, networkPolicyErr, stopErr)
 	})
 	return s.err
+}
+
+func closeGuestStream(ctx context.Context, stream io.Closer) error {
+	ctx, cancel := closeContext(ctx, stopTimeout)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- stream.Close()
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("close guest stream: %w", ctx.Err())
+	}
 }
 
 func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
@@ -772,10 +837,10 @@ func (s *guestSession) Resume(ctx context.Context) error {
 	return nil
 }
 
-func stopMachine(machine *firecracker.Machine) error {
+func stopMachine(ctx context.Context, machine *firecracker.Machine) error {
 	pid, pidErr := machine.PID()
 	stopErr := machine.StopVMM()
-	waitCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+	waitCtx, cancel := closeContext(ctx, stopTimeout)
 	defer cancel()
 	waitErr := machine.Wait(waitCtx)
 	if errors.Is(waitErr, context.DeadlineExceeded) && pidErr == nil {
@@ -791,6 +856,63 @@ func stopMachine(machine *firecracker.Machine) error {
 		}
 	}
 	return errors.Join(stopErr, ignoreExpectedStopErrors(waitErr))
+}
+
+type machineExit struct {
+	done chan struct{}
+	err  error
+}
+
+func watchMachineExit(machine *firecracker.Machine) *machineExit {
+	exit := &machineExit{done: make(chan struct{})}
+	go func() {
+		exit.err = machine.Wait(context.Background())
+		close(exit.done)
+	}()
+	return exit
+}
+
+func (e *machineExit) Wait(ctx context.Context) error {
+	if e == nil {
+		return errors.New("firecracker machine exit watcher is not configured")
+	}
+	select {
+	case <-e.done:
+		return e.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func stopSessionMachine(ctx context.Context, machine *firecracker.Machine, exit *machineExit) error {
+	pid, pidErr := machine.PID()
+	stopErr := machine.StopVMM()
+	waitCtx, cancel := closeContext(ctx, stopTimeout)
+	defer cancel()
+	waitErr := exit.Wait(waitCtx)
+	if errors.Is(waitErr, context.DeadlineExceeded) && pidErr == nil {
+		if process, err := os.FindProcess(pid); err != nil {
+			waitErr = errors.Join(waitErr, fmt.Errorf("find firecracker process %d: %w", pid, err))
+		} else if err := process.Signal(syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			waitErr = errors.Join(waitErr, fmt.Errorf("kill firecracker process %d: %w", pid, err))
+		} else {
+			killWaitCtx, killCancel := context.WithTimeout(context.Background(), stopTimeout)
+			waitErr = exit.Wait(killWaitCtx)
+			killCancel()
+			waitErr = ignoreStopSignalError(waitErr, syscall.SIGKILL)
+		}
+	}
+	return errors.Join(stopErr, ignoreExpectedStopErrors(waitErr))
+}
+
+func closeContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 func ignoreExpectedStopErrors(err error) error {

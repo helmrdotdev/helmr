@@ -84,7 +84,7 @@ func (r GuestRunner) Run(ctx context.Context, request Request) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("connect guest runtime: %w", err)
 	}
-	defer session.Close()
+	defer session.Close(context.Background())
 	stream := session.Stream()
 	inputMetadata, err := r.writeRuntimeInput(ctx, stream, request, deploymentSourceRoot)
 	if err != nil {
@@ -203,7 +203,7 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 	if err != nil {
 		return Result{}, fmt.Errorf("restore guest runtime: %w", err)
 	}
-	defer session.Close()
+	defer session.Close(context.Background())
 	if err := r.attachAndAcknowledgeRestore(ctx, session, request); err != nil {
 		return Result{}, err
 	}
@@ -292,7 +292,7 @@ func readProtoFrameFromReaderContext(ctx context.Context, session vm.Session, re
 	case err := <-result:
 		return err
 	case <-ctx.Done():
-		_ = session.Close()
+		_ = session.Close(context.Background())
 		return ctx.Err()
 	}
 }
@@ -313,7 +313,7 @@ func (r GuestRunner) readRunEventContext(ctx context.Context, session vm.Session
 	case value := <-result:
 		return value.event, value.workspace, value.err
 	case <-ctx.Done():
-		_ = session.Close()
+		_ = session.Close(context.Background())
 		return nil, nil, ctx.Err()
 	}
 }
@@ -401,7 +401,6 @@ func (r GuestRunner) storeWorkspaceArtifactFrame(ctx context.Context, reader io.
 		Digest:     object.Digest,
 		MediaType:  object.MediaType,
 		Encoding:   workspace.ArtifactEncoding,
-		VolumeKind: workspace.VolumeKind,
 		SizeBytes:  object.SizeBytes,
 		EntryCount: *header.EntryCount,
 	}, nil
@@ -477,11 +476,9 @@ func checkpointWorkspaceBase(request Request, protocolRequest *runv0.RunTaskRequ
 		ArtifactSizeBytes: request.Workspace.SizeBytes,
 		ArtifactMediaType: request.Workspace.MediaType,
 		ArtifactEncoding:  request.Workspace.Encoding,
-		VolumeKind:        request.Workspace.VolumeKind,
 	}
 	if workspace != nil {
 		base.MountPath = workspace.Path
-		base.VolumeKind = workspace.VolumeKind
 		if workspace.Artifact != nil {
 			base.ArtifactDigest = workspace.Artifact.Digest
 			base.ArtifactSizeBytes = int64(workspace.Artifact.SizeBytes)

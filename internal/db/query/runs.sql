@@ -10,6 +10,7 @@ created AS (
         environment_id,
         deployment_id,
         deployment_task_id,
+        workspace_id,
         deployment_version,
         api_version,
         sdk_version,
@@ -42,6 +43,7 @@ created AS (
            sqlc.arg(environment_id),
            sqlc.arg(deployment_id),
            sqlc.arg(deployment_task_id),
+           sqlc.arg(workspace_id),
            sqlc.arg(deployment_version),
            sqlc.arg(api_version),
            sqlc.arg(sdk_version),
@@ -89,7 +91,7 @@ created AS (
                AND task_schedules.project_id = sqlc.arg(project_id)
                AND task_schedules.active
         )
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
 ),
 created_attempt AS (
     INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
@@ -159,7 +161,7 @@ created_event_outbox AS (
       FROM created_event
     RETURNING id
 )
-SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.task_session_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.execution_status, created.terminal_outcome, created.metadata, created.tags, created.locked_retry_policy, created.current_attempt_number, created.exit_code, created.output, created.created_at, created.updated_at
+SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.workspace_id, created.task_session_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.execution_status, created.terminal_outcome, created.metadata, created.tags, created.locked_retry_policy, created.current_attempt_number, created.exit_code, created.output, created.created_at, created.updated_at
   FROM created
   JOIN created_snapshot ON true
   JOIN created_event_outbox ON true;
@@ -333,6 +335,190 @@ expired_event_outbox AS (
 SELECT expired_event.*
   FROM expired_event
   JOIN expired_event_outbox ON true;
+
+-- name: SetQueuedRunWorkspaceMaterialization :exec
+UPDATE runs
+   SET workspace_materialization_id = sqlc.arg(workspace_materialization_id),
+       updated_at = now()
+ WHERE runs.org_id = sqlc.arg(org_id)
+   AND runs.id = sqlc.arg(run_id)
+   AND runs.workspace_id = sqlc.arg(workspace_id)
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL;
+
+-- name: ListQueuedRunsForWorkspaceMaterialization :many
+SELECT runs.id
+  FROM runs
+ WHERE runs.org_id = sqlc.arg(org_id)
+   AND runs.workspace_id = sqlc.arg(workspace_id)
+   AND runs.workspace_materialization_id = sqlc.arg(workspace_materialization_id)
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+ ORDER BY runs.queue_timestamp ASC, runs.id ASC;
+
+-- name: FailQueuedRun :exec
+WITH locked_task_session AS MATERIALIZED (
+    SELECT task_sessions.id
+      FROM runs
+      JOIN task_sessions
+        ON task_sessions.org_id = runs.org_id
+       AND task_sessions.project_id = runs.project_id
+       AND task_sessions.environment_id = runs.environment_id
+       AND task_sessions.id = runs.task_session_id
+     WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.id = sqlc.arg(run_id)
+       AND runs.status = 'queued'
+       AND runs.current_run_lease_id IS NULL
+     FOR UPDATE OF task_sessions
+),
+target AS (
+    SELECT runs.*
+      FROM runs
+      JOIN locked_task_session ON locked_task_session.id = runs.task_session_id
+     WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.id = sqlc.arg(run_id)
+       AND runs.status = 'queued'
+       AND runs.current_run_lease_id IS NULL
+     FOR UPDATE OF runs
+),
+failed_run AS (
+    UPDATE runs
+       SET status = 'failed',
+           execution_status = 'finished',
+           terminal_outcome = 'failed',
+           error_message = COALESCE(NULLIF(sqlc.arg(error_message)::text, ''), 'run failed before execution started'),
+           state_version = runs.state_version + 1,
+           finished_at = now(),
+           updated_at = now()
+      FROM target
+     WHERE runs.org_id = target.org_id
+       AND runs.id = target.id
+       AND runs.status = 'queued'
+       AND runs.current_run_lease_id IS NULL
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.task_session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version, runs.error_message
+),
+failed_session_run AS (
+    UPDATE task_session_runs
+       SET ended_at = now()
+      FROM failed_run
+     WHERE task_session_runs.org_id = failed_run.org_id
+       AND task_session_runs.project_id = failed_run.project_id
+       AND task_session_runs.environment_id = failed_run.environment_id
+       AND task_session_runs.task_session_id = failed_run.task_session_id
+       AND task_session_runs.run_id = failed_run.id
+    RETURNING task_session_runs.id
+),
+failed_task_session AS (
+    UPDATE task_sessions
+       SET status = 'failed',
+           failed_at = now(),
+           result = jsonb_build_object(
+               'ok', false,
+               'error', jsonb_build_object(
+                   'name', COALESCE(NULLIF(sqlc.arg(error_name)::text, ''), 'RunFailed'),
+                   'message', failed_run.error_message,
+                   'details', COALESCE(sqlc.arg(reason)::jsonb, '{}'::jsonb)
+               )
+           ),
+           terminal_reason = COALESCE(sqlc.arg(reason)::jsonb, '{}'::jsonb),
+           current_run_id = NULL,
+           current_run_version = task_sessions.current_run_version + 1,
+           updated_at = now()
+      FROM failed_run
+     WHERE task_sessions.org_id = failed_run.org_id
+       AND task_sessions.project_id = failed_run.project_id
+       AND task_sessions.environment_id = failed_run.environment_id
+       AND task_sessions.id = failed_run.task_session_id
+       AND task_sessions.current_run_id = failed_run.id
+       AND task_sessions.status = 'open'
+    RETURNING task_sessions.id
+),
+failed_attempt AS (
+    UPDATE run_attempts
+       SET status = 'failed',
+           error_message = failed_run.error_message,
+           finished_at = now(),
+           updated_at = now()
+      FROM failed_run
+     WHERE run_attempts.org_id = failed_run.org_id
+       AND run_attempts.run_id = failed_run.id
+       AND run_attempts.id = failed_run.current_attempt_id
+    RETURNING run_attempts.id, run_attempts.run_id
+),
+completed_queue_entry AS (
+    UPDATE run_queue_items
+       SET status = 'completed',
+           dispatch_generation = dispatch_generation + 1,
+           updated_at = now(),
+           finished_at = now()
+      FROM failed_run
+     WHERE run_queue_items.org_id = failed_run.org_id
+       AND run_queue_items.run_id = failed_run.id
+       AND run_queue_items.status IN ('queued', 'published', 'reserved')
+    RETURNING run_queue_items.run_id
+),
+failed_snapshot AS (
+    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
+    SELECT failed_run.org_id,
+           failed_run.id,
+           failed_run.state_version,
+           'failed',
+           'finished',
+           'failed',
+           failed_run.current_attempt_id,
+           'run.failed',
+           COALESCE(sqlc.arg(reason)::jsonb, '{}'::jsonb)
+      FROM failed_run
+      JOIN failed_attempt ON failed_attempt.run_id = failed_run.id
+    RETURNING run_snapshots.run_id
+),
+failed_event_seq AS (
+    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+    SELECT failed_run.org_id, 'run', failed_run.id, 1
+      FROM failed_run
+      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
+    ON CONFLICT (org_id, subject_type, subject_id)
+    DO UPDATE SET last_seq = event_subject_cursors.last_seq + 1,
+                  updated_at = now()
+    RETURNING org_id, subject_type, subject_id, last_seq
+),
+failed_event AS (
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT failed_run.org_id,
+           failed_run.project_id,
+           failed_run.environment_id,
+           failed_run.id,
+           failed_event_seq.last_seq,
+           failed_run.current_attempt_id,
+           failed_run.current_attempt_number,
+           failed_run.trace_id,
+           failed_run.root_span_id,
+           '00-' || failed_run.trace_id || '-' || failed_run.root_span_id || '-01',
+           'lifecycle',
+           'error',
+           'control',
+           'run.failed',
+           'run.failed',
+           COALESCE(sqlc.arg(reason)::jsonb, '{}'::jsonb),
+           'internal',
+           failed_run.state_version
+      FROM failed_run
+      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
+      JOIN failed_event_seq ON failed_event_seq.org_id = failed_run.org_id
+                           AND failed_event_seq.subject_type = 'run'
+                           AND failed_event_seq.subject_id = failed_run.id
+    RETURNING *
+),
+failed_event_outbox AS (
+    INSERT INTO event_outbox (event_record_id, stream_key)
+    SELECT failed_event.id,
+           'helmr:events:' || failed_event.org_id::text || ':' || failed_event.subject_type::text || ':' || failed_event.subject_id::text
+      FROM failed_event
+    RETURNING id
+)
+SELECT failed_event.*
+  FROM failed_event
+  JOIN failed_event_outbox ON true;
 
 -- name: GetRunSummary :one
 SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, current_attempt_number, exit_code, output, created_at, updated_at

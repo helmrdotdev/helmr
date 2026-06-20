@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 	"time"
 
@@ -36,6 +37,7 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 	}
 	seen := map[string]struct{}{}
 	queueLimits := map[string]*int32{}
+	sandboxDefinitions := map[string]workerBuildSandboxDefinition{}
 	for _, task := range result.Tasks {
 		taskID := strings.TrimSpace(task.TaskID)
 		if err := api.ValidateTaskID(taskID); err != nil {
@@ -57,6 +59,33 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		if strings.TrimSpace(task.BundleDigest) == "" {
 			return nil, fmt.Errorf("task %q bundle_digest is required", taskID)
 		}
+		if strings.TrimSpace(task.SandboxID) == "" {
+			return nil, fmt.Errorf("task %q sandbox_id is required", taskID)
+		}
+		if strings.TrimSpace(task.SandboxFingerprint) == "" {
+			return nil, fmt.Errorf("task %q sandbox_fingerprint is required", taskID)
+		}
+		if strings.TrimSpace(task.SandboxImageArtifact.Digest) == "" {
+			return nil, fmt.Errorf("task %q sandbox_image_artifact.digest is required", taskID)
+		}
+		if strings.TrimSpace(task.SandboxImageArtifactFormat) == "" {
+			return nil, fmt.Errorf("task %q sandbox_image_artifact_format is required", taskID)
+		}
+		if strings.TrimSpace(task.SandboxImageDigest) == "" {
+			return nil, fmt.Errorf("task %q sandbox_image_digest is required", taskID)
+		}
+		if strings.TrimSpace(task.SandboxImageFormat) == "" {
+			return nil, fmt.Errorf("task %q sandbox_image_format is required", taskID)
+		}
+		if strings.TrimSpace(task.SandboxImageArtifact.Digest) != strings.TrimSpace(task.SandboxImageDigest) {
+			return nil, fmt.Errorf("task %q sandbox_image_digest must match sandbox_image_artifact.digest", taskID)
+		}
+		if strings.TrimSpace(task.WorkspaceMountPath) == "" {
+			return nil, fmt.Errorf("task %q workspace_mount_path is required", taskID)
+		}
+		if strings.TrimSpace(task.FilesystemFormat) == "" {
+			return nil, fmt.Errorf("task %q filesystem_format is required", taskID)
+		}
 		bundleFormatVersion := task.BundleFormatVersion
 		if bundleFormatVersion == 0 {
 			bundleFormatVersion = api.CurrentBundleFormatVersion
@@ -66,6 +95,13 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		}
 		if err := requireBuildObject(objects, task.BundleDigest, api.TaskBundleArtifactMediaType, fmt.Sprintf("task %q bundle_digest", taskID)); err != nil {
 			return nil, err
+		}
+		if err := requireBuildObject(objects, task.SandboxImageArtifact.Digest, api.SandboxImageArtifactMediaType, fmt.Sprintf("task %q sandbox_image_artifact.digest", taskID)); err != nil {
+			return nil, err
+		}
+		normalizedImage := objects[strings.TrimSpace(task.SandboxImageArtifact.Digest)]
+		if normalizedImage.SizeBytes != task.SandboxImageArtifact.SizeBytes || normalizedImage.MediaType != strings.TrimSpace(task.SandboxImageArtifact.MediaType) {
+			return nil, fmt.Errorf("task %q sandbox_image_artifact metadata does not match CAS object", taskID)
 		}
 		resources := compute.ResourceVector{
 			MilliCPU:  task.RequestedMilliCPU,
@@ -82,6 +118,22 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		if err := task.Network.Validate(); err != nil {
 			return nil, fmt.Errorf("task %q network: %w", taskID, err)
 		}
+		sandboxID := strings.TrimSpace(task.SandboxID)
+		definition := workerBuildSandboxDefinition{
+			fingerprint:        strings.TrimSpace(task.SandboxFingerprint),
+			imageDigest:        strings.TrimSpace(task.SandboxImageDigest),
+			imageFormat:        strings.TrimSpace(task.SandboxImageFormat),
+			workspaceMountPath: strings.TrimSpace(task.WorkspaceMountPath),
+			filesystemFormat:   strings.TrimSpace(task.FilesystemFormat),
+			requestedMilliCPU:  task.RequestedMilliCPU,
+			requestedMemoryMiB: task.RequestedMemoryMiB,
+			requestedDiskMiB:   task.RequestedDiskMiB,
+			network:            task.Network,
+		}
+		if existing, ok := sandboxDefinitions[sandboxID]; ok && !sameWorkerBuildSandboxDefinition(existing, definition) {
+			return nil, fmt.Errorf("sandbox_id %q has conflicting definitions", sandboxID)
+		}
+		sandboxDefinitions[sandboxID] = definition
 		if task.MaxDurationSeconds <= 0 {
 			return nil, fmt.Errorf("task %q max_duration_seconds must be positive", taskID)
 		}
@@ -108,6 +160,30 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		queueLimits[task.QueueName] = task.ConcurrencyLimit
 	}
 	return casObjects, nil
+}
+
+type workerBuildSandboxDefinition struct {
+	fingerprint        string
+	imageDigest        string
+	imageFormat        string
+	workspaceMountPath string
+	filesystemFormat   string
+	requestedMilliCPU  int64
+	requestedMemoryMiB int64
+	requestedDiskMiB   int64
+	network            compute.NetworkPolicy
+}
+
+func sameWorkerBuildSandboxDefinition(left workerBuildSandboxDefinition, right workerBuildSandboxDefinition) bool {
+	return left.fingerprint == right.fingerprint &&
+		left.imageDigest == right.imageDigest &&
+		left.imageFormat == right.imageFormat &&
+		left.workspaceMountPath == right.workspaceMountPath &&
+		left.filesystemFormat == right.filesystemFormat &&
+		left.requestedMilliCPU == right.requestedMilliCPU &&
+		left.requestedMemoryMiB == right.requestedMemoryMiB &&
+		left.requestedDiskMiB == right.requestedDiskMiB &&
+		reflect.DeepEqual(left.network, right.network)
 }
 
 func validateTaskSchedules(taskID string, schedules []api.WorkerDeploymentTaskSchedule) error {

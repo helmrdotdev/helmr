@@ -22,7 +22,7 @@ The control-plane REST API version is date based. Worker and bundle protocols ar
 
 `helmr.run.v0` describes host/guest execution:
 
-- `RunTaskRequest` carries task ID, module path, cwd, run ID, task session ID, payload JSON, secrets, and workspace session context.
+- `RunTaskRequest` carries task ID, module path, cwd, run ID, task session ID, payload JSON, secrets, and attached workspace context.
 - `RunEvent` carries stdout/stderr chunks, log entries, waitpoint requests, channel output append notifications, metadata update notifications, task output, and task completion.
 - Waitpoint requests cover external completion and time-based sleeps with optional timeouts.
 - Checkpoint/resume messages are `SuspendForCheckpoint`, `PauseReady`, `ResumeAttach`, `ResumeDecision`, and `ResumeAck`.

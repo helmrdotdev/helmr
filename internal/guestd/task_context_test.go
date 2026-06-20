@@ -36,8 +36,7 @@ func TestAdapterTaskContextJSON(t *testing.T) {
 	if session["id"] != "session-1" {
 		t.Fatalf("session = %+v", session)
 	}
-	sessionWorkspace := session["workspace"].(map[string]any)
-	if sessionWorkspace["path"] != "/workspace" || sessionWorkspace["projectPath"] != "/workspace/sdk" {
-		t.Fatalf("session workspace = %+v", sessionWorkspace)
+	if _, ok := session["workspace"]; ok {
+		t.Fatalf("session workspace should be absent: %+v", session)
 	}
 }

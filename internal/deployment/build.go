@@ -3,6 +3,8 @@ package deployment
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,10 +28,11 @@ import (
 )
 
 type Builder struct {
-	WorkDir  string
-	CAS      cas.Store
-	Indexer  Indexer
-	Compiler task.Compiler
+	WorkDir      string
+	CAS          cas.Store
+	Indexer      Indexer
+	Compiler     task.Compiler
+	ImageBuilder builder.Engine
 }
 
 type Indexer interface {
@@ -75,7 +78,7 @@ func (p GuestIndexer) Index(ctx context.Context, request IndexRequest) (Catalog,
 	if err != nil {
 		return Catalog{}, fmt.Errorf("connect deployment indexer guest: %w", err)
 	}
-	defer session.Close()
+	defer session.Close(context.Background())
 	stream := session.Stream()
 
 	runID := strings.TrimSpace(request.RunID)
@@ -107,6 +110,9 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 	if e.Compiler == nil {
 		return failedDeploymentBuild(task.ErrCompilerRequired)
 	}
+	if e.ImageBuilder == nil {
+		return failedDeploymentBuild(errors.New("deployment image builder is required"))
+	}
 	source, cleanup, err := materializeSourceArtifact(ctx, e.WorkDir, e.CAS, deployment.DeploymentSource, "deployment")
 	if err != nil {
 		return failedDeploymentBuild(err)
@@ -127,7 +133,8 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 	}
 
 	tasks := make([]api.WorkerDeploymentBuildTask, 0, len(taskIDs))
-	casObjects := make([]api.CASObject, 0, len(taskIDs)+2)
+	casObjects := make([]api.CASObject, 0, len(taskIDs)*2+2)
+	sandboxImages := map[string]api.CASObject{}
 	for _, taskID := range taskIDs {
 		indexTask := index.Tasks[taskID]
 		if err := api.ValidateTaskID(taskID); err != nil {
@@ -156,11 +163,42 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		if err != nil {
 			return failedDeploymentBuild(fmt.Errorf("task %q network: %w", taskID, err))
 		}
+		sandbox, err := deploymentTaskSandbox(bundle)
+		if err != nil {
+			return failedDeploymentBuild(fmt.Errorf("task %q sandbox: %w", taskID, err))
+		}
 		maxDurationSeconds, err := deploymentTaskMaxDurationSeconds(bundle)
 		if err != nil {
 			return failedDeploymentBuild(fmt.Errorf("task %q max duration: %w", taskID, err))
 		}
 		schedules := deploymentTaskSchedules(bundle)
+		imageObject, ok := sandboxImages[sandbox.id]
+		if !ok {
+			imageArtifact, err := e.ImageBuilder.Build(ctx, builder.Request{
+				RunID:  lease.DeploymentID,
+				TaskID: taskID,
+				Bundle: bundle,
+				Source: source,
+			})
+			if err != nil {
+				return failedDeploymentBuild(fmt.Errorf("build sandbox %q image: %w", sandbox.id, err))
+			}
+			imageFile, err := os.Open(imageArtifact.ImageTarPath)
+			if err != nil {
+				return failedDeploymentBuild(fmt.Errorf("open sandbox %q image artifact: %w", sandbox.id, err))
+			}
+			object, putErr := e.CAS.Put(ctx, api.SandboxImageArtifactMediaType, imageFile)
+			closeErr := imageFile.Close()
+			if putErr != nil {
+				return failedDeploymentBuild(fmt.Errorf("store sandbox %q image artifact: %w", sandbox.id, putErr))
+			}
+			if closeErr != nil {
+				return failedDeploymentBuild(fmt.Errorf("close sandbox %q image artifact: %w", sandbox.id, closeErr))
+			}
+			imageObject = api.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
+			sandboxImages[sandbox.id] = imageObject
+			casObjects = append(casObjects, imageObject)
+		}
 		body, err := proto.Marshal(bundle)
 		if err != nil {
 			return failedDeploymentBuild(fmt.Errorf("marshal task %q bundle: %w", taskID, err))
@@ -171,23 +209,31 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		}
 		casObjects = append(casObjects, api.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType})
 		tasks = append(tasks, api.WorkerDeploymentBuildTask{
-			TaskID:              taskID,
-			FilePath:            filePath,
-			ExportName:          exportName,
-			HandlerEntrypoint:   filePath + "#" + exportName,
-			BundleDigest:        object.Digest,
-			BundleFormatVersion: api.CurrentBundleFormatVersion,
-			RequestedMilliCPU:   resources.MilliCPU,
-			RequestedMemoryMiB:  resources.MemoryMiB,
-			RequestedDiskMiB:    resources.DiskMiB,
-			Network:             network,
-			QueueName:           deploymentTaskQueueName(bundle, taskID),
-			ConcurrencyLimit:    deploymentTaskConcurrencyLimit(bundle),
-			TTL:                 deploymentTaskTTL(bundle),
-			MaxDurationSeconds:  maxDurationSeconds,
-			RetryPolicy:         deploymentTaskRetryPolicy(bundle),
-			Secrets:             deploymentTaskSecrets(bundle),
-			Schedules:           schedules,
+			TaskID:                     taskID,
+			SandboxID:                  sandbox.id,
+			SandboxFingerprint:         sandbox.fingerprint,
+			SandboxImageArtifact:       imageObject,
+			SandboxImageArtifactFormat: "oci-tar",
+			SandboxImageDigest:         imageObject.Digest,
+			SandboxImageFormat:         "oci-tar",
+			WorkspaceMountPath:         sandbox.workspaceMountPath,
+			FilesystemFormat:           sandbox.filesystemFormat,
+			FilePath:                   filePath,
+			ExportName:                 exportName,
+			HandlerEntrypoint:          filePath + "#" + exportName,
+			BundleDigest:               object.Digest,
+			BundleFormatVersion:        api.CurrentBundleFormatVersion,
+			RequestedMilliCPU:          resources.MilliCPU,
+			RequestedMemoryMiB:         resources.MemoryMiB,
+			RequestedDiskMiB:           resources.DiskMiB,
+			Network:                    network,
+			QueueName:                  deploymentTaskQueueName(bundle, taskID),
+			ConcurrencyLimit:           deploymentTaskConcurrencyLimit(bundle),
+			TTL:                        deploymentTaskTTL(bundle),
+			MaxDurationSeconds:         maxDurationSeconds,
+			RetryPolicy:                deploymentTaskRetryPolicy(bundle),
+			Secrets:                    deploymentTaskSecrets(bundle),
+			Schedules:                  schedules,
 		})
 	}
 
@@ -243,6 +289,39 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 func failedDeploymentBuild(err error) api.WorkerDeploymentBuildResult {
 	message := err.Error()
 	return api.WorkerDeploymentBuildResult{Error: &message}
+}
+
+type deploymentSandboxBuildMetadata struct {
+	id                 string
+	fingerprint        string
+	workspaceMountPath string
+	filesystemFormat   string
+}
+
+func deploymentTaskSandbox(bundle *bundlev0.Bundle) (deploymentSandboxBuildMetadata, error) {
+	if bundle == nil || bundle.GetSandbox() == nil {
+		return deploymentSandboxBuildMetadata{}, errors.New("sandbox is required")
+	}
+	sandbox := bundle.GetSandbox()
+	sandboxID := strings.TrimSpace(sandbox.GetId())
+	if sandboxID == "" {
+		return deploymentSandboxBuildMetadata{}, errors.New("id is required")
+	}
+	workspace := sandbox.GetWorkspace()
+	if workspace == nil || strings.TrimSpace(workspace.GetMountPath()) == "" {
+		return deploymentSandboxBuildMetadata{}, errors.New("workspace mount_path is required")
+	}
+	body, err := proto.MarshalOptions{Deterministic: true}.Marshal(sandbox)
+	if err != nil {
+		return deploymentSandboxBuildMetadata{}, fmt.Errorf("marshal sandbox fingerprint: %w", err)
+	}
+	sum := sha256.Sum256(body)
+	return deploymentSandboxBuildMetadata{
+		id:                 sandboxID,
+		fingerprint:        "sha256:" + hex.EncodeToString(sum[:]),
+		workspaceMountPath: strings.TrimSpace(workspace.GetMountPath()),
+		filesystemFormat:   "tar",
+	}, nil
 }
 
 func materializeSourceArtifact(ctx context.Context, workDir string, store cas.Store, artifact api.DeploymentSourceArtifact, label string) (builder.Source, func(), error) {

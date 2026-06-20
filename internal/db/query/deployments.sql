@@ -302,6 +302,60 @@ SELECT *
    AND version = sqlc.arg(version)
  ORDER BY created_at ASC;
 
+-- name: CreateDeploymentSandbox :one
+INSERT INTO deployment_sandboxes (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    deployment_id,
+    sandbox_id,
+    image_artifact_id,
+    image_artifact_format,
+    rootfs_digest,
+    image_digest,
+    image_format,
+    workspace_mount_path,
+    resource_floor,
+    disk_floor_mib,
+    network_policy,
+    runtime_abi,
+    guestd_abi,
+    adapter_abi,
+    filesystem_format,
+    default_uid,
+    default_gid,
+    default_workdir,
+    contract_version,
+    fingerprint
+) VALUES (
+    sqlc.arg(id),
+    sqlc.arg(org_id),
+    sqlc.arg(project_id),
+    sqlc.arg(environment_id),
+    sqlc.arg(deployment_id),
+    sqlc.arg(sandbox_id),
+    sqlc.arg(image_artifact_id),
+    sqlc.arg(image_artifact_format),
+    sqlc.arg(rootfs_digest),
+    sqlc.arg(image_digest),
+    sqlc.arg(image_format),
+    sqlc.arg(workspace_mount_path),
+    coalesce(sqlc.arg(resource_floor)::jsonb, '{}'::jsonb),
+    sqlc.arg(disk_floor_mib),
+    coalesce(sqlc.arg(network_policy)::jsonb, '{}'::jsonb),
+    sqlc.arg(runtime_abi),
+    sqlc.arg(guestd_abi),
+    sqlc.arg(adapter_abi),
+    sqlc.arg(filesystem_format),
+    sqlc.arg(default_uid),
+    sqlc.arg(default_gid),
+    sqlc.arg(default_workdir),
+    sqlc.arg(contract_version),
+    sqlc.arg(fingerprint)
+)
+RETURNING *;
+
 -- name: CreateDeploymentTask :one
 WITH catalog_task AS (
     INSERT INTO tasks (
@@ -330,6 +384,7 @@ INSERT INTO deployment_tasks (
     project_id,
     environment_id,
     deployment_id,
+    deployment_sandbox_id,
     task_id,
     file_path,
     export_name,
@@ -354,6 +409,7 @@ INSERT INTO deployment_tasks (
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(deployment_id),
+    sqlc.arg(deployment_sandbox_id),
     sqlc.arg(task_id),
     sqlc.arg(file_path),
     sqlc.arg(export_name),
@@ -399,6 +455,18 @@ SELECT *
 
 -- name: GetCurrentDeploymentTask :one
 SELECT deployment_tasks.*,
+       deployment_sandboxes.sandbox_id,
+       deployment_sandboxes.fingerprint AS sandbox_fingerprint,
+       deployment_sandboxes.workspace_mount_path,
+       deployment_sandboxes.resource_floor AS deployment_sandbox_resource_floor,
+       deployment_sandboxes.disk_floor_mib AS deployment_sandbox_disk_floor_mib,
+       deployment_sandboxes.network_policy AS deployment_sandbox_network_policy,
+       deployment_sandboxes.rootfs_digest AS deployment_sandbox_rootfs_digest,
+       deployment_sandboxes.runtime_abi AS deployment_sandbox_runtime_abi,
+       deployment_sandboxes.guestd_abi AS deployment_sandbox_guestd_abi,
+       deployment_sandboxes.adapter_abi AS deployment_sandbox_adapter_abi,
+       deployment_sandboxes.filesystem_format AS deployment_sandbox_filesystem_format,
+       deployment_sandboxes.contract_version AS deployment_sandbox_contract_version,
        deployments.version AS deployment_version,
        deployments.api_version,
        deployments.sdk_version,
@@ -411,6 +479,11 @@ SELECT deployment_tasks.*,
                   AND deployments.project_id = deployment_tasks.project_id
                   AND deployments.environment_id = deployment_tasks.environment_id
                   AND deployments.id = deployment_tasks.deployment_id
+  JOIN deployment_sandboxes
+    ON deployment_sandboxes.org_id = deployment_tasks.org_id
+   AND deployment_sandboxes.project_id = deployment_tasks.project_id
+   AND deployment_sandboxes.environment_id = deployment_tasks.environment_id
+   AND deployment_sandboxes.id = deployment_tasks.deployment_sandbox_id
   JOIN artifacts AS task_bundle_artifacts
     ON task_bundle_artifacts.org_id = deployment_tasks.org_id
    AND task_bundle_artifacts.project_id = deployment_tasks.project_id
@@ -445,6 +518,18 @@ SELECT queue_name,
 
 -- name: GetDeploymentTask :one
 SELECT deployment_tasks.*,
+       deployment_sandboxes.sandbox_id,
+       deployment_sandboxes.fingerprint AS sandbox_fingerprint,
+       deployment_sandboxes.workspace_mount_path,
+       deployment_sandboxes.resource_floor AS deployment_sandbox_resource_floor,
+       deployment_sandboxes.disk_floor_mib AS deployment_sandbox_disk_floor_mib,
+       deployment_sandboxes.network_policy AS deployment_sandbox_network_policy,
+       deployment_sandboxes.rootfs_digest AS deployment_sandbox_rootfs_digest,
+       deployment_sandboxes.runtime_abi AS deployment_sandbox_runtime_abi,
+       deployment_sandboxes.guestd_abi AS deployment_sandbox_guestd_abi,
+       deployment_sandboxes.adapter_abi AS deployment_sandbox_adapter_abi,
+       deployment_sandboxes.filesystem_format AS deployment_sandbox_filesystem_format,
+       deployment_sandboxes.contract_version AS deployment_sandbox_contract_version,
        deployments.version AS deployment_version,
        deployments.api_version,
        deployments.sdk_version,
@@ -457,6 +542,11 @@ SELECT deployment_tasks.*,
                   AND deployments.project_id = deployment_tasks.project_id
                   AND deployments.environment_id = deployment_tasks.environment_id
                   AND deployments.id = deployment_tasks.deployment_id
+  JOIN deployment_sandboxes
+    ON deployment_sandboxes.org_id = deployment_tasks.org_id
+   AND deployment_sandboxes.project_id = deployment_tasks.project_id
+   AND deployment_sandboxes.environment_id = deployment_tasks.environment_id
+   AND deployment_sandboxes.id = deployment_tasks.deployment_sandbox_id
   JOIN artifacts AS task_bundle_artifacts
     ON task_bundle_artifacts.org_id = deployment_tasks.org_id
    AND task_bundle_artifacts.project_id = deployment_tasks.project_id

@@ -3752,7 +3752,7 @@ __export(exports_run_pb, {
   CheckpointPauseReadySchema: () => CheckpointPauseReadySchema,
   ChannelOutputAppendedSchema: () => ChannelOutputAppendedSchema
 });
-var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCKQAQoQUnVuVGFza1dvcmtzcGFjZRIMCgRwYXRoGAEgASgJEhQKDHByb2plY3RfcGF0aBgCIAEoCRIxCghhcnRpZmFjdBgDIAEoCzIfLmhlbG1yLnJ1bi52MC5Xb3Jrc3BhY2VBcnRpZmFjdBITCgt2b2x1bWVfa2luZBgEIAEoCRIQCgh3cml0YWJsZRgFIAEoCCJyChFXb3Jrc3BhY2VBcnRpZmFjdBIOCgZkaWdlc3QYASABKAkSEgoKbWVkaWFfdHlwZRgCIAEoCRIQCghlbmNvZGluZxgDIAEoCRISCgpzaXplX2J5dGVzGAQgASgEEhMKC2VudHJ5X2NvdW50GAUgASgNIv8CCg5SdW5UYXNrUmVxdWVzdBIPCgd0YXNrX2lkGAEgASgJEhMKC21vZHVsZV9wYXRoGAIgASgJEgsKA2N3ZBgDIAEoCRIrCgdzZWNyZXRzGAQgAygLMhouaGVsbXIucnVuLnYwLlNlY3JldEluamVjdBIOCgZydW5faWQYBSABKAkSFAoMcGF5bG9hZF9qc29uGAYgASgJEjEKCXdvcmtzcGFjZRgHIAEoCzIeLmhlbG1yLnJ1bi52MC5SdW5UYXNrV29ya3NwYWNlEikKBXRyYWNlGAggASgLMhouaGVsbXIucnVuLnYwLlRyYWNlQ29udGV4dBISCgphdHRlbXB0X2lkGAkgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAogASgNEhQKDHJ1bl9sZWFzZV9pZBgLIAEoCRIYChBzbmFwc2hvdF92ZXJzaW9uGAwgASgEEhcKD3Rhc2tfc2Vzc2lvbl9pZBgNIAEoCRIUCgxyZXRyeV9yZWFzb24YDiABKAkiRgoMVHJhY2VDb250ZXh0EhAKCHRyYWNlX2lkGAEgASgJEg8KB3NwYW5faWQYAiABKAkSEwoLdHJhY2VwYXJlbnQYAyABKAkiXQoMU2VjcmV0SW5qZWN0EgwKBG5hbWUYASABKAkSKgoJcGxhY2VtZW50GAIgASgLMhcuaGVsbXIucnVuLnYwLlBsYWNlbWVudBITCgt2YWx1ZV9ieXRlcxgDIAEoDCKWAQoJUGxhY2VtZW50EikKA2VudhgBIAEoCzIaLmhlbG1yLnJ1bi52MC5FbnZQbGFjZW1lbnRIABIrCgRmaWxlGAIgASgLMhsuaGVsbXIucnVuLnYwLkZpbGVQbGFjZW1lbnRIABIpCgNkaXIYAyABKAsyGi5oZWxtci5ydW4udjAuRGlyUGxhY2VtZW50SABCBgoEa2luZCIcCgxFbnZQbGFjZW1lbnQSDAoEbmFtZRgBIAEoCSJXCg1GaWxlUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIlYKDERpclBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciLfAwoIUnVuRXZlbnQSFgoMc3Rkb3V0X2NodW5rGAEgASgMSAASFgoMc3RkZXJyX2NodW5rGAIgASgMSAASEwoJbG9nX2VudHJ5GAMgASgJSAASLwoLdGFza19yZXN1bHQYBCABKAsyGC5oZWxtci5ydW4udjAuVGFza1Jlc3VsdEgAEj8KE3dhaXRwb2ludF9yZXF1ZXN0ZWQYBSABKAsyIC5oZWxtci5ydW4udjAuV2FpdHBvaW50UmVxdWVzdGVkSAASOQoQbWV0YWRhdGFfdXBkYXRlZBgHIAEoCzIdLmhlbG1yLnJ1bi52MC5NZXRhZGF0YVVwZGF0ZWRIABJXCiB3YWl0cG9pbnRfdG9rZW5fY3JlYXRlX3JlcXVlc3RlZBgIIAEoCzIrLmhlbG1yLnJ1bi52MC5XYWl0cG9pbnRUb2tlbkNyZWF0ZVJlcXVlc3RlZEgAEkYKF2NoYW5uZWxfb3V0cHV0X2FwcGVuZGVkGAkgASgLMiMuaGVsbXIucnVuLnYwLkNoYW5uZWxPdXRwdXRBcHBlbmRlZEgAEjcKD3Jlc3VtZV9jb25zdW1lZBgGIAEoCzIcLmhlbG1yLnJ1bi52MC5SZXN1bWVDb25zdW1lZEgAQgcKBWV2ZW50Iq4BCgpUYXNrUmVzdWx0EhEKCWV4aXRfY29kZRgBIAEoBRIaCg1lcnJvcl9tZXNzYWdlGAIgASgJSACIAQESGAoLb3V0cHV0X2pzb24YAyABKAlIAYgBARIrCgVlcnJvchgEIAEoCzIXLmhlbG1yLnJ1bi52MC5UYXNrRXJyb3JIAogBAUIQCg5fZXJyb3JfbWVzc2FnZUIOCgxfb3V0cHV0X2pzb25CCAoGX2Vycm9yImEKCVRhc2tFcnJvchIMCgR0eXBlGAEgASgJEgwKBGNvZGUYAiABKAkSDwoHbWVzc2FnZRgDIAEoCRIRCglyZXRyeWFibGUYBCABKAgSFAoMZGV0YWlsc19qc29uGAUgASgJItcBChJXYWl0cG9pbnRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDAoEa2luZBgCIAEoCRITCgtwYXJhbXNfanNvbhgDIAEoCRIaCg1tZXRhZGF0YV9qc29uGAQgASgJSACIAQESFAoHdGltZW91dBgFIAEoDUgBiAEBEgwKBHRhZ3MYBiADKAkSDwoHb3JkaW5hbBgHIAEoDRIXCg9hZ2dyZWdhdGVfY291bnQYCCABKA1CEAoOX21ldGFkYXRhX2pzb25CCgoIX3RpbWVvdXQiuwEKHVdhaXRwb2ludFRva2VuQ3JlYXRlUmVxdWVzdGVkEhcKCnRpbWVvdXRfYXQYASABKAlIAIgBARIfChJ0aW1lb3V0X2luX3NlY29uZHMYAiABKA1IAYgBARIMCgR0YWdzGAQgAygJEhoKDW1ldGFkYXRhX2pzb24YBSABKAlIAogBAUINCgtfdGltZW91dF9hdEIVChNfdGltZW91dF9pbl9zZWNvbmRzQhAKDl9tZXRhZGF0YV9qc29uIqoCChpXYWl0cG9pbnRUb2tlbkNyZWF0ZVJlc3VsdBIKCgJpZBgBIAEoCRIUCgxjYWxsYmFja191cmwYAiABKAkSIAoTcHVibGljX2FjY2Vzc190b2tlbhgDIAEoCUgAiAEBEhcKCnRpbWVvdXRfYXQYBCABKAlIAYgBARITCgZzdGF0dXMYBSABKAlIAogBARIMCgR0YWdzGAYgAygJEhoKDW1ldGFkYXRhX2pzb24YByABKAlIA4gBARIaCg1lcnJvcl9tZXNzYWdlGAkgASgJSASIAQFCFgoUX3B1YmxpY19hY2Nlc3NfdG9rZW5CDQoLX3RpbWVvdXRfYXRCCQoHX3N0YXR1c0IQCg5fbWV0YWRhdGFfanNvbkIQCg5fZXJyb3JfbWVzc2FnZSJFChZDaGVja3BvaW50UGF1c2VSZXF1ZXN0EhQKDHdhaXRwb2ludF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJIkMKFENoZWNrcG9pbnRQYXVzZVJlYWR5EhQKDHdhaXRwb2ludF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJIlEKDFJlc3VtZUF0dGFjaBIVCg1jaGVja3BvaW50X2lkGAEgASgJEhQKDHdhaXRwb2ludF9pZBgCIAEoCRIUCgxydW5fbGVhc2VfaWQYAyABKAkiZQoOUmVzdW1lRGVjaXNpb24SFAoMd2FpdHBvaW50X2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEQoJZGF0YV9qc29uGAMgASgJEhwKFHJlcXVpcmVfY29uc3VtZWRfYWNrGAQgASgIIiEKCVJlc3VtZUFjaxIUCgx3YWl0cG9pbnRfaWQYASABKAkiJgoOUmVzdW1lQ29uc3VtZWQSFAoMd2FpdHBvaW50X2lkGAEgASgJIpwBChVDaGFubmVsT3V0cHV0QXBwZW5kZWQSDwoHY2hhbm5lbBgBIAEoCRIUCgxwYXlsb2FkX2pzb24YAiABKAkSGQoMY29udGVudF90eXBlGAMgASgJSACIAQESHAoPb2JqZWN0X3JlZl9qc29uGAQgASgJSAGIAQFCDwoNX2NvbnRlbnRfdHlwZUISChBfb2JqZWN0X3JlZl9qc29uIq4BCg9NZXRhZGF0YVVwZGF0ZWQSEQoJb3BlcmF0aW9uGAEgASgJEhAKA2tleRgCIAEoCUgAiAEBEhcKCnZhbHVlX2pzb24YAyABKAlIAYgBARIXCgpwYXRjaF9qc29uGAQgASgJSAKIAQESEwoGYW1vdW50GAUgASgBSAOIAQFCBgoEX2tleUINCgtfdmFsdWVfanNvbkINCgtfcGF0Y2hfanNvbkIJCgdfYW1vdW50QjpaOGdpdGh1Yi5jb20vaGVsbXJkb3RkZXYvaGVsbXIvaW50ZXJuYWwvcHJvdG8vcnVuL3YwO3J1bnYwYgZwcm90bzM");
+var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCJ7ChBSdW5UYXNrV29ya3NwYWNlEgwKBHBhdGgYASABKAkSFAoMcHJvamVjdF9wYXRoGAIgASgJEjEKCGFydGlmYWN0GAMgASgLMh8uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFydGlmYWN0EhAKCHdyaXRhYmxlGAUgASgIInIKEVdvcmtzcGFjZUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJEhAKCGVuY29kaW5nGAMgASgJEhIKCnNpemVfYnl0ZXMYBCABKAQSEwoLZW50cnlfY291bnQYBSABKA0i/wIKDlJ1blRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSEwoLbW9kdWxlX3BhdGgYAiABKAkSCwoDY3dkGAMgASgJEisKB3NlY3JldHMYBCADKAsyGi5oZWxtci5ydW4udjAuU2VjcmV0SW5qZWN0Eg4KBnJ1bl9pZBgFIAEoCRIUCgxwYXlsb2FkX2pzb24YBiABKAkSMQoJd29ya3NwYWNlGAcgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2USKQoFdHJhY2UYCCABKAsyGi5oZWxtci5ydW4udjAuVHJhY2VDb250ZXh0EhIKCmF0dGVtcHRfaWQYCSABKAkSFgoOYXR0ZW1wdF9udW1iZXIYCiABKA0SFAoMcnVuX2xlYXNlX2lkGAsgASgJEhgKEHNuYXBzaG90X3ZlcnNpb24YDCABKAQSFwoPdGFza19zZXNzaW9uX2lkGA0gASgJEhQKDHJldHJ5X3JlYXNvbhgOIAEoCSJGCgxUcmFjZUNvbnRleHQSEAoIdHJhY2VfaWQYASABKAkSDwoHc3Bhbl9pZBgCIAEoCRITCgt0cmFjZXBhcmVudBgDIAEoCSJdCgxTZWNyZXRJbmplY3QSDAoEbmFtZRgBIAEoCRIqCglwbGFjZW1lbnQYAiABKAsyFy5oZWxtci5ydW4udjAuUGxhY2VtZW50EhMKC3ZhbHVlX2J5dGVzGAMgASgMIpYBCglQbGFjZW1lbnQSKQoDZW52GAEgASgLMhouaGVsbXIucnVuLnYwLkVudlBsYWNlbWVudEgAEisKBGZpbGUYAiABKAsyGy5oZWxtci5ydW4udjAuRmlsZVBsYWNlbWVudEgAEikKA2RpchgDIAEoCzIaLmhlbG1yLnJ1bi52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIt8DCghSdW5FdmVudBIWCgxzdGRvdXRfY2h1bmsYASABKAxIABIWCgxzdGRlcnJfY2h1bmsYAiABKAxIABITCglsb2dfZW50cnkYAyABKAlIABIvCgt0YXNrX3Jlc3VsdBgEIAEoCzIYLmhlbG1yLnJ1bi52MC5UYXNrUmVzdWx0SAASPwoTd2FpdHBvaW50X3JlcXVlc3RlZBgFIAEoCzIgLmhlbG1yLnJ1bi52MC5XYWl0cG9pbnRSZXF1ZXN0ZWRIABI5ChBtZXRhZGF0YV91cGRhdGVkGAcgASgLMh0uaGVsbXIucnVuLnYwLk1ldGFkYXRhVXBkYXRlZEgAElcKIHdhaXRwb2ludF90b2tlbl9jcmVhdGVfcmVxdWVzdGVkGAggASgLMisuaGVsbXIucnVuLnYwLldhaXRwb2ludFRva2VuQ3JlYXRlUmVxdWVzdGVkSAASRgoXY2hhbm5lbF9vdXRwdXRfYXBwZW5kZWQYCSABKAsyIy5oZWxtci5ydW4udjAuQ2hhbm5lbE91dHB1dEFwcGVuZGVkSAASNwoPcmVzdW1lX2NvbnN1bWVkGAYgASgLMhwuaGVsbXIucnVuLnYwLlJlc3VtZUNvbnN1bWVkSABCBwoFZXZlbnQirgEKClRhc2tSZXN1bHQSEQoJZXhpdF9jb2RlGAEgASgFEhoKDWVycm9yX21lc3NhZ2UYAiABKAlIAIgBARIYCgtvdXRwdXRfanNvbhgDIAEoCUgBiAEBEisKBWVycm9yGAQgASgLMhcuaGVsbXIucnVuLnYwLlRhc2tFcnJvckgCiAEBQhAKDl9lcnJvcl9tZXNzYWdlQg4KDF9vdXRwdXRfanNvbkIICgZfZXJyb3IiYQoJVGFza0Vycm9yEgwKBHR5cGUYASABKAkSDAoEY29kZRgCIAEoCRIPCgdtZXNzYWdlGAMgASgJEhEKCXJldHJ5YWJsZRgEIAEoCBIUCgxkZXRhaWxzX2pzb24YBSABKAki1wEKEldhaXRwb2ludFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIMCgRraW5kGAIgASgJEhMKC3BhcmFtc19qc29uGAMgASgJEhoKDW1ldGFkYXRhX2pzb24YBCABKAlIAIgBARIUCgd0aW1lb3V0GAUgASgNSAGIAQESDAoEdGFncxgGIAMoCRIPCgdvcmRpbmFsGAcgASgNEhcKD2FnZ3JlZ2F0ZV9jb3VudBgIIAEoDUIQCg5fbWV0YWRhdGFfanNvbkIKCghfdGltZW91dCK7AQodV2FpdHBvaW50VG9rZW5DcmVhdGVSZXF1ZXN0ZWQSFwoKdGltZW91dF9hdBgBIAEoCUgAiAEBEh8KEnRpbWVvdXRfaW5fc2Vjb25kcxgCIAEoDUgBiAEBEgwKBHRhZ3MYBCADKAkSGgoNbWV0YWRhdGFfanNvbhgFIAEoCUgCiAEBQg0KC190aW1lb3V0X2F0QhUKE190aW1lb3V0X2luX3NlY29uZHNCEAoOX21ldGFkYXRhX2pzb24iqgIKGldhaXRwb2ludFRva2VuQ3JlYXRlUmVzdWx0EgoKAmlkGAEgASgJEhQKDGNhbGxiYWNrX3VybBgCIAEoCRIgChNwdWJsaWNfYWNjZXNzX3Rva2VuGAMgASgJSACIAQESFwoKdGltZW91dF9hdBgEIAEoCUgBiAEBEhMKBnN0YXR1cxgFIAEoCUgCiAEBEgwKBHRhZ3MYBiADKAkSGgoNbWV0YWRhdGFfanNvbhgHIAEoCUgDiAEBEhoKDWVycm9yX21lc3NhZ2UYCSABKAlIBIgBAUIWChRfcHVibGljX2FjY2Vzc190b2tlbkINCgtfdGltZW91dF9hdEIJCgdfc3RhdHVzQhAKDl9tZXRhZGF0YV9qc29uQhAKDl9lcnJvcl9tZXNzYWdlIkUKFkNoZWNrcG9pbnRQYXVzZVJlcXVlc3QSFAoMd2FpdHBvaW50X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkiQwoUQ2hlY2twb2ludFBhdXNlUmVhZHkSFAoMd2FpdHBvaW50X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkiUQoMUmVzdW1lQXR0YWNoEhUKDWNoZWNrcG9pbnRfaWQYASABKAkSFAoMd2FpdHBvaW50X2lkGAIgASgJEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSJlCg5SZXN1bWVEZWNpc2lvbhIUCgx3YWl0cG9pbnRfaWQYASABKAkSDAoEa2luZBgCIAEoCRIRCglkYXRhX2pzb24YAyABKAkSHAoUcmVxdWlyZV9jb25zdW1lZF9hY2sYBCABKAgiIQoJUmVzdW1lQWNrEhQKDHdhaXRwb2ludF9pZBgBIAEoCSImCg5SZXN1bWVDb25zdW1lZBIUCgx3YWl0cG9pbnRfaWQYASABKAkinAEKFUNoYW5uZWxPdXRwdXRBcHBlbmRlZBIPCgdjaGFubmVsGAEgASgJEhQKDHBheWxvYWRfanNvbhgCIAEoCRIZCgxjb250ZW50X3R5cGUYAyABKAlIAIgBARIcCg9vYmplY3RfcmVmX2pzb24YBCABKAlIAYgBAUIPCg1fY29udGVudF90eXBlQhIKEF9vYmplY3RfcmVmX2pzb24irgEKD01ldGFkYXRhVXBkYXRlZBIRCglvcGVyYXRpb24YASABKAkSEAoDa2V5GAIgASgJSACIAQESFwoKdmFsdWVfanNvbhgDIAEoCUgBiAEBEhcKCnBhdGNoX2pzb24YBCABKAlIAogBARITCgZhbW91bnQYBSABKAFIA4gBAUIGCgRfa2V5Qg0KC192YWx1ZV9qc29uQg0KC19wYXRjaF9qc29uQgkKB19hbW91bnRCOlo4Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9ydW4vdjA7cnVudjBiBnByb3RvMw");
 var RunTaskWorkspaceSchema = /* @__PURE__ */ messageDesc(file_run, 0);
 var WorkspaceArtifactSchema = /* @__PURE__ */ messageDesc(file_run, 1);
 var RunTaskRequestSchema = /* @__PURE__ */ messageDesc(file_run, 2);
@@ -4491,6 +4491,39 @@ class HelmrClient {
       return response.sessions.map(taskSessionFromResponse);
     }
   };
+  workspaces = {
+    create: async (opts) => {
+      const response = await this.#json(workspaceCollectionPath(opts), {
+        method: "POST",
+        body: JSON.stringify(workspaceCreateBody(opts)),
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal)
+      });
+      return workspaceFromResponse(response.workspace);
+    },
+    open: (id) => {
+      return this.#openWorkspace(id);
+    },
+    retrieve: async (idOrHandle, opts = {}) => {
+      return await this.#openWorkspace(workspaceId(idOrHandle)).retrieve(opts);
+    },
+    list: async (opts = {}) => {
+      const response = await this.#json(`${workspaceCollectionPath(opts)}${workspaceListQuery(opts)}`, requestSignal(opts.signal));
+      return response.workspaces.map(workspaceFromResponse);
+    },
+    update: async (idOrHandle, opts) => {
+      return await this.#openWorkspace(workspaceId(idOrHandle)).update(opts);
+    },
+    delete: async (idOrHandle, opts = {}) => {
+      return await this.#openWorkspace(workspaceId(idOrHandle)).delete(opts);
+    },
+    materialize: async (idOrHandle, opts = {}) => {
+      return await this.#openWorkspace(workspaceId(idOrHandle)).materialize(opts);
+    },
+    connect: async (idOrHandle, opts = {}) => {
+      return await this.#openWorkspace(workspaceId(idOrHandle)).connect(opts);
+    }
+  };
   waitpoints = {
     tokens: {
       create: async (opts = {}) => {
@@ -4631,6 +4664,49 @@ class HelmrClient {
       await delay(retryDelay, opts.signal);
     }
   }
+  #openWorkspace(id) {
+    return {
+      id,
+      retrieve: async (opts = {}) => {
+        const response = await this.#json(workspaceResourcePath(id, opts), requestSignal(opts.signal));
+        return workspaceFromResponse(response.workspace);
+      },
+      update: async (opts) => {
+        const response = await this.#json(workspaceResourcePath(id, opts), {
+          method: "PATCH",
+          body: JSON.stringify(workspaceUpdateBody(opts)),
+          headers: { "content-type": "application/json" },
+          ...requestSignal(opts.signal)
+        });
+        return workspaceFromResponse(response.workspace);
+      },
+      delete: async (opts = {}) => {
+        const response = await this.#json(workspaceResourcePath(id, opts), {
+          method: "DELETE",
+          ...requestSignal(opts.signal)
+        });
+        return workspaceFromResponse(response.workspace);
+      },
+      materialize: async (opts = {}) => {
+        const response = await this.#json(`${workspaceResourcePath(id, opts)}/materialize`, {
+          method: "POST",
+          body: JSON.stringify(workspaceMaterializeBody(opts)),
+          headers: { "content-type": "application/json" },
+          ...requestSignal(opts.signal)
+        });
+        return workspaceMaterializationFromResponse(response);
+      },
+      connect: async (opts = {}) => {
+        const response = await this.#json(`${workspaceResourcePath(id, opts)}/connect`, {
+          method: "POST",
+          body: JSON.stringify(workspaceMaterializeBody(opts)),
+          headers: { "content-type": "application/json" },
+          ...requestSignal(opts.signal)
+        });
+        return workspaceMaterializationFromResponse(response);
+      }
+    };
+  }
   #openSession(id) {
     return {
       id,
@@ -4668,10 +4744,6 @@ class HelmrClient {
       runs: async (opts = {}) => {
         const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}/runs`, requestSignal(opts.signal));
         return response.runs.map(taskSessionRunFromResponse);
-      },
-      workspace: async (opts = {}) => {
-        const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}/workspace`, requestSignal(opts.signal));
-        return taskSessionWorkspaceFromResponse(response);
       },
       input: (channelInput) => {
         const channel = validateChannelName(channelInput);
@@ -5147,18 +5219,6 @@ function taskSessionRunFromResponse(response) {
     ...response.ended_at === undefined ? {} : { endedAt: response.ended_at }
   };
 }
-function taskSessionWorkspaceFromResponse(response) {
-  return {
-    id: response.id,
-    taskSessionId: response.task_session_id,
-    currentVersionId: response.current_version_id ?? null,
-    mountPath: response.mount_path ?? null,
-    state: response.state,
-    ..."retention_policy" in response ? { retentionPolicy: response.retention_policy } : {},
-    createdAt: response.created_at,
-    updatedAt: response.updated_at
-  };
-}
 function channelRecordFromResponse(response) {
   return {
     id: response.id,
@@ -5189,6 +5249,7 @@ function taskStartBody(payload, opts, maxDurationSeconds) {
     ...opts.metadata === undefined ? {} : { metadata: opts.metadata },
     ...opts.tags === undefined ? {} : { tags: opts.tags },
     ...opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") },
+    ...opts.workspaceId === undefined ? {} : { workspace_id: opts.workspaceId },
     ...maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds },
     ...taskStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL)
   };
@@ -5305,6 +5366,106 @@ function runOptionsBody(opts) {
     ...opts.priority === undefined ? {} : { priority: opts.priority },
     ...opts.ttl === undefined ? {} : { ttl: opts.ttl },
     ...opts.maxDurationSeconds === undefined ? {} : { max_duration_seconds: opts.maxDurationSeconds }
+  };
+}
+function workspaceId(idOrHandle) {
+  return typeof idOrHandle === "string" ? idOrHandle : idOrHandle.id;
+}
+function workspaceCollectionPath(opts) {
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    if (opts.projectId === undefined || opts.environmentId === undefined) {
+      throw new Error("projectId and environmentId must be provided together");
+    }
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/workspaces`;
+  }
+  return "/api/workspaces";
+}
+function workspaceResourcePath(id, opts) {
+  return `${workspaceCollectionPath(opts)}/${encodeURIComponent(id)}`;
+}
+function workspaceCreateBody(opts) {
+  return {
+    ...opts.projectId === undefined ? {} : { project_id: opts.projectId },
+    ...opts.environmentId === undefined ? {} : { environment_id: opts.environmentId },
+    sandbox_id: opts.sandboxId,
+    ...opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId },
+    ...opts.externalId === undefined ? {} : { external_id: opts.externalId },
+    ...opts.metadata === undefined ? {} : { metadata: opts.metadata },
+    ...opts.tags === undefined ? {} : { tags: opts.tags },
+    ...opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey },
+    ...opts.idempotencyKeyTTL === undefined ? {} : { idempotency_key_ttl: opts.idempotencyKeyTTL }
+  };
+}
+function workspaceUpdateBody(opts) {
+  return {
+    ...opts.metadata === undefined ? {} : { metadata: opts.metadata },
+    ...opts.tags === undefined ? {} : { tags: opts.tags }
+  };
+}
+function workspaceMaterializeBody(opts) {
+  return {
+    ...opts.projectId === undefined ? {} : { project_id: opts.projectId },
+    ...opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }
+  };
+}
+function workspaceListQuery(opts) {
+  const query = new URLSearchParams;
+  if (opts.projectId !== undefined)
+    query.set("project_id", opts.projectId);
+  if (opts.environmentId !== undefined)
+    query.set("environment_id", opts.environmentId);
+  if (opts.state !== undefined)
+    query.set("state", opts.state);
+  if (opts.externalId !== undefined)
+    query.set("external_id", opts.externalId);
+  if (opts.tag !== undefined)
+    query.set("tag", opts.tag);
+  if (opts.limit !== undefined)
+    query.set("limit", String(opts.limit));
+  return query.size === 0 ? "" : `?${query}`;
+}
+function workspaceFromResponse(response) {
+  return {
+    id: response.id,
+    projectId: response.project_id,
+    environmentId: response.environment_id,
+    deploymentSandboxId: response.deployment_sandbox_id,
+    sandboxId: response.sandbox_id,
+    sandboxFingerprint: response.sandbox_fingerprint,
+    ...response.external_id === undefined || response.external_id === "" ? {} : { externalId: response.external_id },
+    currentVersionId: response.current_version_id ?? null,
+    state: response.state,
+    desiredState: response.desired_state,
+    dirtyState: response.dirty_state,
+    lastMaterializationId: response.last_materialization_id ?? null,
+    metadata: response.metadata ?? {},
+    tags: response.tags ?? [],
+    autoStopAt: response.auto_stop_at ?? null,
+    autoArchiveAt: response.auto_archive_at ?? null,
+    autoDeleteAt: response.auto_delete_at ?? null,
+    lastActivityAt: response.last_activity_at,
+    createdAt: response.created_at,
+    updatedAt: response.updated_at,
+    archivedAt: response.archived_at ?? null,
+    deletedAt: response.deleted_at ?? null
+  };
+}
+function workspaceMaterializationFromResponse(response) {
+  return {
+    id: response.id,
+    projectId: response.project_id,
+    environmentId: response.environment_id,
+    workspaceId: response.workspace_id,
+    deploymentSandboxId: response.deployment_sandbox_id,
+    baseVersionId: response.base_version_id ?? null,
+    workerInstanceId: response.worker_instance_id ?? null,
+    state: response.state,
+    fencingGeneration: response.fencing_generation,
+    dirtyGeneration: response.dirty_generation,
+    reservationExpiresAt: response.reservation_expires_at ?? null,
+    lastHeartbeatAt: response.last_heartbeat_at ?? null,
+    createdAt: response.created_at,
+    updatedAt: response.updated_at
   };
 }
 function scheduleFromResponse(response) {
@@ -7108,7 +7269,7 @@ async function runCommand(args, io) {
       run: taskContext.run,
       task: taskContext.task,
       workspace: taskContext.workspace,
-      session: createTaskSessionContext(taskContext.session.id, taskContext.session.workspace, responses, control, mintCorrelationId, waitGate)
+      session: createTaskSessionContext(taskContext.session.id, responses, control, mintCorrelationId, waitGate)
     };
     let result;
     const payload = task3.payload === undefined ? undefined : await parseTaskPayload(task3, rawPayload);
@@ -7182,10 +7343,7 @@ function parseTaskContext(json, runId2, taskId) {
     run: Object.freeze(run),
     task: Object.freeze({ id: contextTaskId }),
     workspace: Object.freeze(workspace),
-    session: Object.freeze({
-      id: session.id,
-      workspace: Object.freeze(session.workspace)
-    })
+    session: Object.freeze(session)
   };
 }
 function readStringField(value, objectKey, fieldKey, label) {
@@ -7238,8 +7396,7 @@ function parseTaskSession(value) {
   }
   const record = value;
   return {
-    id: readRequiredString(record, "id", "task context session.id"),
-    workspace: parseTaskWorkspace(record["workspace"])
+    id: readRequiredString(record, "id", "task context session.id")
   };
 }
 function readRequiredString(record, key, label) {
@@ -7332,10 +7489,9 @@ class WaitGate {
     }
   }
 }
-function createTaskSessionContext(id, workspace, responses, control, mintCorrelationId, waitGate) {
+function createTaskSessionContext(id, responses, control, mintCorrelationId, waitGate) {
   return Object.freeze({
     id,
-    workspace,
     input(target) {
       const channel = channelTargetName(target);
       const schema = typeof target === "string" ? undefined : target.schema;

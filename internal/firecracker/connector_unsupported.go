@@ -26,6 +26,10 @@ func (*Connector) Restore(context.Context, vm.RestoreRequest) (vm.Session, error
 	return nil, ErrUnsupported
 }
 
+func (*Connector) Materialize(context.Context, vm.MaterializeRequest) (vm.Session, error) {
+	return nil, ErrUnsupported
+}
+
 func (*Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 	return RuntimeCapabilities{}, ErrUnsupported
 }

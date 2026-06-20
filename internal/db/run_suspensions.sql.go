@@ -527,10 +527,10 @@ channel_definition AS (
      WHERE created_waitpoint.kind = 'channel'
 	    ON CONFLICT (org_id, task_session_id, name, direction)
 	    DO UPDATE SET next_sequence = channels.next_sequence
-	    RETURNING id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, backend, next_sequence, created_at
+	    RETURNING id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at
 	),
 	selected_channel AS (
-	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, backend, next_sequence, created_at FROM created_channel
+	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at FROM created_channel
 	),
 	created_channel_cursor AS (
     INSERT INTO channel_wait_cursors (
@@ -1766,33 +1766,30 @@ ready_workspace_snapshot AS (
         project_id,
         environment_id,
         run_id,
-        checkpoint_id,
-        workspace_artifact_id,
-        workspace_artifact_encoding,
-        workspace_mount_path,
-        workspace_volume_kind
-    )
-    SELECT ready_checkpoint.org_id,
-           ready_checkpoint.project_id,
-           ready_checkpoint.environment_id,
-           ready_checkpoint.run_id,
-           ready_checkpoint.id,
-           workspace_artifact_input.artifact_id,
-           $25,
-           $26,
-           $27
+	        checkpoint_id,
+	        workspace_artifact_id,
+	        workspace_artifact_encoding,
+	        workspace_mount_path
+	    )
+	    SELECT ready_checkpoint.org_id,
+	           ready_checkpoint.project_id,
+	           ready_checkpoint.environment_id,
+	           ready_checkpoint.run_id,
+	           ready_checkpoint.id,
+	           workspace_artifact_input.artifact_id,
+	           $25,
+	           $26
       FROM ready_checkpoint
       LEFT JOIN workspace_artifact_input ON true
       LEFT JOIN inserted_artifacts AS inserted_workspace_artifact
         ON inserted_workspace_artifact.id = workspace_artifact_input.artifact_id
     ON CONFLICT (org_id, run_id, checkpoint_id) DO UPDATE
        SET project_id = EXCLUDED.project_id,
-           environment_id = EXCLUDED.environment_id,
-           workspace_artifact_id = EXCLUDED.workspace_artifact_id,
-           workspace_artifact_encoding = EXCLUDED.workspace_artifact_encoding,
-           workspace_mount_path = EXCLUDED.workspace_mount_path,
-           workspace_volume_kind = EXCLUDED.workspace_volume_kind
-    RETURNING org_id, project_id, environment_id, run_id, checkpoint_id, workspace_artifact_id, workspace_artifact_encoding, workspace_mount_path, workspace_volume_kind, created_at
+	           environment_id = EXCLUDED.environment_id,
+	           workspace_artifact_id = EXCLUDED.workspace_artifact_id,
+	           workspace_artifact_encoding = EXCLUDED.workspace_artifact_encoding,
+	           workspace_mount_path = EXCLUDED.workspace_mount_path
+    RETURNING org_id, project_id, environment_id, run_id, checkpoint_id, workspace_artifact_id, workspace_artifact_encoding, workspace_mount_path, created_at
 ),
 ready_requirements AS (
     UPDATE run_runtime_requirements
@@ -1871,7 +1868,7 @@ waiting_run_suspension AS (
     UPDATE run_suspensions
        SET status = 'waiting',
            waiting_at = now(),
-           active_duration_ms = $28,
+           active_duration_ms = $27,
            updated_at = now()
       FROM ready_checkpoint
       JOIN target_run_suspension ON target_run_suspension.checkpoint_id = ready_checkpoint.id
@@ -1892,7 +1889,7 @@ updated AS (
            usage_duration_ms = LEAST(
                GREATEST(
                    runs.usage_duration_ms,
-                   $28,
+                   $27,
                    COALESCE((
                        SELECT SUM(run_usage_events.quantity)::bigint
                          FROM run_usage_events
@@ -1936,13 +1933,15 @@ detached_run_lease AS (
 ),
 released_workspace_lease AS (
     UPDATE workspace_leases
-       SET released_at = now(),
-           renewed_at = now()
+       SET state = 'released',
+           released_at = now(),
+           renewed_at = now(),
+           updated_at = now()
       FROM waiting_run_suspension
       JOIN detached_run_lease ON true
      WHERE workspace_leases.org_id = $1
-       AND workspace_leases.run_id = waiting_run_suspension.run_id
-       AND workspace_leases.mode = 'write'
+       AND workspace_leases.owner_run_id = waiting_run_suspension.run_id
+       AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.released_at IS NULL
     RETURNING workspace_leases.id
 ),
@@ -2085,7 +2084,7 @@ waiting_snapshot AS (
            updated.current_attempt_id,
            detached_run_lease.id,
            'checkpoint.ready',
-           $29
+           $28
       FROM updated
       JOIN detached_run_lease ON true
       JOIN waiting_attempt ON true
@@ -2109,7 +2108,7 @@ event_inputs AS (
            'control' AS source,
            'checkpoint.ready' AS kind,
            'checkpoint.ready' AS message,
-           $29::jsonb AS payload,
+           $28::jsonb AS payload,
            'internal' AS redaction_class,
            updated.state_version AS snapshot_version
       FROM waiting_run_suspension
@@ -2272,7 +2271,6 @@ type MarkRunSuspensionCheckpointReadyParams struct {
 	ImageKey                   pgtype.Text `json:"image_key"`
 	WorkspaceArtifactEncoding  pgtype.Text `json:"workspace_artifact_encoding"`
 	WorkspaceMountPath         pgtype.Text `json:"workspace_mount_path"`
-	WorkspaceVolumeKind        pgtype.Text `json:"workspace_volume_kind"`
 	ActiveDurationMs           int64       `json:"active_duration_ms"`
 	CheckpointPayload          []byte      `json:"checkpoint_payload"`
 }
@@ -2326,7 +2324,6 @@ func (q *Queries) MarkRunSuspensionCheckpointReady(ctx context.Context, arg Mark
 		arg.ImageKey,
 		arg.WorkspaceArtifactEncoding,
 		arg.WorkspaceMountPath,
-		arg.WorkspaceVolumeKind,
 		arg.ActiveDurationMs,
 		arg.CheckpointPayload,
 	)

@@ -173,12 +173,12 @@ type WorkerDeploymentTask struct {
 }
 
 type WorkerWorkspace struct {
-	ID            string                   `json:"id,omitempty"`
-	WriteLeaseID  string                   `json:"write_lease_id,omitempty"`
-	BaseVersionID string                   `json:"base_version_id,omitempty"`
-	MountPath     string                   `json:"mount_path,omitempty"`
-	VolumeKind    string                   `json:"volume_kind,omitempty"`
-	Artifact      *WorkerWorkspaceArtifact `json:"artifact,omitempty"`
+	ID                string                   `json:"id,omitempty"`
+	WriteLeaseID      string                   `json:"write_lease_id,omitempty"`
+	WriteFencingToken string                   `json:"write_fencing_token,omitempty"`
+	BaseVersionID     string                   `json:"base_version_id,omitempty"`
+	MountPath         string                   `json:"mount_path,omitempty"`
+	Artifact          *WorkerWorkspaceArtifact `json:"artifact,omitempty"`
 }
 
 type WorkerWorkspaceArtifact struct {
@@ -262,23 +262,31 @@ type WorkerReleaseResponse struct {
 }
 
 type WorkerDeploymentBuildTask struct {
-	TaskID              string                         `json:"task_id"`
-	FilePath            string                         `json:"file_path"`
-	ExportName          string                         `json:"export_name"`
-	HandlerEntrypoint   string                         `json:"handler_entrypoint"`
-	BundleDigest        string                         `json:"bundle_digest"`
-	BundleFormatVersion int32                          `json:"bundle_format_version"`
-	RequestedMilliCPU   int64                          `json:"requested_milli_cpu"`
-	RequestedMemoryMiB  int64                          `json:"requested_memory_mib"`
-	RequestedDiskMiB    int64                          `json:"requested_disk_mib"`
-	Network             compute.NetworkPolicy          `json:"network"`
-	QueueName           string                         `json:"queue_name"`
-	ConcurrencyLimit    *int32                         `json:"concurrency_limit,omitempty"`
-	TTL                 string                         `json:"ttl,omitempty"`
-	MaxDurationSeconds  int32                          `json:"max_duration_seconds"`
-	RetryPolicy         json.RawMessage                `json:"retry_policy,omitempty"`
-	Secrets             []SecretDeclaration            `json:"secrets,omitempty"`
-	Schedules           []WorkerDeploymentTaskSchedule `json:"schedules,omitempty"`
+	TaskID                     string                         `json:"task_id"`
+	SandboxID                  string                         `json:"sandbox_id"`
+	SandboxFingerprint         string                         `json:"sandbox_fingerprint"`
+	SandboxImageArtifact       CASObject                      `json:"sandbox_image_artifact"`
+	SandboxImageArtifactFormat string                         `json:"sandbox_image_artifact_format"`
+	SandboxImageDigest         string                         `json:"sandbox_image_digest"`
+	SandboxImageFormat         string                         `json:"sandbox_image_format"`
+	WorkspaceMountPath         string                         `json:"workspace_mount_path"`
+	FilesystemFormat           string                         `json:"filesystem_format"`
+	FilePath                   string                         `json:"file_path"`
+	ExportName                 string                         `json:"export_name"`
+	HandlerEntrypoint          string                         `json:"handler_entrypoint"`
+	BundleDigest               string                         `json:"bundle_digest"`
+	BundleFormatVersion        int32                          `json:"bundle_format_version"`
+	RequestedMilliCPU          int64                          `json:"requested_milli_cpu"`
+	RequestedMemoryMiB         int64                          `json:"requested_memory_mib"`
+	RequestedDiskMiB           int64                          `json:"requested_disk_mib"`
+	Network                    compute.NetworkPolicy          `json:"network"`
+	QueueName                  string                         `json:"queue_name"`
+	ConcurrencyLimit           *int32                         `json:"concurrency_limit,omitempty"`
+	TTL                        string                         `json:"ttl,omitempty"`
+	MaxDurationSeconds         int32                          `json:"max_duration_seconds"`
+	RetryPolicy                json.RawMessage                `json:"retry_policy,omitempty"`
+	Secrets                    []SecretDeclaration            `json:"secrets,omitempty"`
+	Schedules                  []WorkerDeploymentTaskSchedule `json:"schedules,omitempty"`
 }
 
 type SecretDeclaration struct {
@@ -432,7 +440,6 @@ type WorkerCheckpointWorkspaceBase struct {
 	ArtifactMediaType string `json:"artifact_media_type"`
 	ArtifactEncoding  string `json:"artifact_encoding"`
 	MountPath         string `json:"mount_path"`
-	VolumeKind        string `json:"volume_kind"`
 }
 
 type WorkerCheckpointArtifact struct {

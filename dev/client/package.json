@@ -1,0 +1,13 @@
+{
+  "name": "helmr-dev-client",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "workspace:lifecycle": "bun run src/workspace/lifecycle.ts",
+    "workspace:exec": "bun run src/workspace/exec.ts",
+    "workspace:pty": "bun run src/workspace/pty.ts",
+    "workspace:files": "bun run src/workspace/files.ts",
+    "workspace:ports": "bun run src/workspace/ports.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

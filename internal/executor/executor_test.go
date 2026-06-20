@@ -93,16 +93,15 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 func TestExecutorReturnsWorkspaceCommitForSessionRun(t *testing.T) {
 	run := validRun()
 	run.Workspace = api.WorkerWorkspace{
-		ID:           "workspace-1",
-		WriteLeaseID: "workspace-lease-1",
-		MountPath:    "/workspace",
-		VolumeKind:   workspace.VolumeKind,
+		ID:                "workspace-1",
+		WriteLeaseID:      "workspace-lease-1",
+		WriteFencingToken: "workspace-fence-1",
+		MountPath:         "/workspace",
 	}
 	finalWorkspace := &workspace.WorkspaceArtifact{
 		Digest:     "sha256:" + strings.Repeat("b", 64),
 		MediaType:  workspace.ArtifactMediaType,
 		Encoding:   workspace.ArtifactEncoding,
-		VolumeKind: workspace.VolumeKind,
 		SizeBytes:  123,
 		EntryCount: 2,
 	}
@@ -117,7 +116,7 @@ func TestExecutorReturnsWorkspaceCommitForSessionRun(t *testing.T) {
 	if result.Kind != "completed" || result.Workspace == nil || result.Workspace.Artifact == nil {
 		t.Fatalf("result = %+v", result)
 	}
-	if result.Workspace.ID != "workspace-1" || result.Workspace.WriteLeaseID != "workspace-lease-1" {
+	if result.Workspace.ID != "workspace-1" || result.Workspace.WriteLeaseID != "workspace-lease-1" || result.Workspace.WriteFencingToken != "workspace-fence-1" {
 		t.Fatalf("workspace commit = %+v", result.Workspace)
 	}
 	if result.Workspace.Artifact.Digest != finalWorkspace.Digest || result.Workspace.Artifact.EntryCount != 2 {
@@ -128,8 +127,9 @@ func TestExecutorReturnsWorkspaceCommitForSessionRun(t *testing.T) {
 func TestExecutorRejectsSuccessfulSessionRunWithoutWorkspaceCommit(t *testing.T) {
 	run := validRun()
 	run.Workspace = api.WorkerWorkspace{
-		ID:           "workspace-1",
-		WriteLeaseID: "workspace-lease-1",
+		ID:                "workspace-1",
+		WriteLeaseID:      "workspace-lease-1",
+		WriteFencingToken: "workspace-fence-1",
 	}
 	result := Executor{
 		WorkDir: t.TempDir(),

@@ -95,6 +95,9 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	if store.listQueueScopes.WorkerGroupID != testWorkerGroupID() {
 		t.Fatalf("list queue scopes worker group = %+v", store.listQueueScopes.WorkerGroupID)
 	}
+	if store.markStaleWorkspaceMaterializationsLostCalls != 1 {
+		t.Fatalf("stale materialization sweeper calls = %d", store.markStaleWorkspaceMaterializationsLostCalls)
+	}
 	if claimResponse.Run.DeploymentSource.Digest != "sha256:"+strings.Repeat("a", 64) {
 		t.Fatalf("deployment source = %+v", claimResponse.Run.DeploymentSource)
 	}
@@ -332,10 +335,10 @@ func TestWorkerReleaseRejectsMalformedWorkspaceCommit(t *testing.T) {
 			Kind:     "completed",
 			ExitCode: &exitCode,
 			Workspace: &api.WorkerWorkspace{
-				ID:           uuid.Must(uuid.NewV7()).String(),
-				WriteLeaseID: "not-a-uuid",
-				MountPath:    "/workspace",
-				VolumeKind:   "copy-on-write",
+				ID:                uuid.Must(uuid.NewV7()).String(),
+				WriteLeaseID:      "not-a-uuid",
+				WriteFencingToken: "workspace-fence-1",
+				MountPath:         "/workspace",
 				Artifact: &api.WorkerWorkspaceArtifact{
 					Digest:     "sha256:" + strings.Repeat("a", 64),
 					SizeBytes:  123,
@@ -403,10 +406,10 @@ func TestWorkerReleaseRejectsWorkspaceCommitWithoutCAS(t *testing.T) {
 			Kind:     "completed",
 			ExitCode: &exitCode,
 			Workspace: &api.WorkerWorkspace{
-				ID:           uuid.Must(uuid.NewV7()).String(),
-				WriteLeaseID: uuid.Must(uuid.NewV7()).String(),
-				MountPath:    "/workspace",
-				VolumeKind:   "copy-on-write",
+				ID:                uuid.Must(uuid.NewV7()).String(),
+				WriteLeaseID:      uuid.Must(uuid.NewV7()).String(),
+				WriteFencingToken: "workspace-fence-1",
+				MountPath:         "/workspace",
 				Artifact: &api.WorkerWorkspaceArtifact{
 					Digest:     "sha256:" + strings.Repeat("b", 64),
 					SizeBytes:  123,
@@ -744,6 +747,42 @@ func TestWorkerRunLeaseRejectsMismatchedProtocolVersion(t *testing.T) {
 	}
 }
 
+func TestWorkerWorkspaceMaterializationClaimSkipsWhenDiskUnavailable(t *testing.T) {
+	workerID := uuid.Must(uuid.NewV7())
+	store := &fakeStore{
+		workerQueueCapacitySet: true,
+		workerQueueCapacity: db.GetWorkerInstanceQueueCapacityRow{
+			AvailableMilliCpu:       2000,
+			AvailableMemoryMib:      2048,
+			AvailableDiskMib:        0,
+			AvailableExecutionSlots: 1,
+		},
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour})
+	workerBearer := mintTestWorkerToken(t, server, workerID.String())
+	body, err := json.Marshal(api.WorkerWorkspaceMaterializationClaimRequest{Capabilities: testWorkerCapabilities()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/workspaces/materializations/claim", bytes.NewReader(body))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.WorkerWorkspaceMaterializationClaimResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Materialization != nil {
+		t.Fatalf("materialization = %+v, want nil", response.Materialization)
+	}
+	if store.claimWorkspaceMaterializationCalls != 0 {
+		t.Fatalf("workspace materialization claims = %d, want 0", store.claimWorkspaceMaterializationCalls)
+	}
+}
+
 func TestWorkerRunLeaseRejectsMismatchedAttemptNumber(t *testing.T) {
 	runID := uuid.Must(uuid.NewV7())
 	sessionID := uuid.Must(uuid.NewV7())
@@ -846,6 +885,11 @@ func (f *fakeStore) EnsureRuntimeReleaseSelection(context.Context, string) error
 	return nil
 }
 
+func (f *fakeStore) MarkStaleWorkspaceMaterializationsLost(context.Context, pgtype.Timestamptz) ([]db.MarkStaleWorkspaceMaterializationsLostRow, error) {
+	f.markStaleWorkspaceMaterializationsLostCalls++
+	return nil, nil
+}
+
 func (f *fakeStore) GetWorkerInstanceState(_ context.Context, id pgtype.UUID) (db.GetWorkerInstanceStateRow, error) {
 	return db.GetWorkerInstanceStateRow{
 		ID:               id,
@@ -856,12 +900,38 @@ func (f *fakeStore) GetWorkerInstanceState(_ context.Context, id pgtype.UUID) (d
 }
 
 func (f *fakeStore) GetWorkerInstanceQueueCapacity(context.Context, pgtype.UUID) (db.GetWorkerInstanceQueueCapacityRow, error) {
+	if f.workerQueueCapacitySet {
+		return f.workerQueueCapacity, nil
+	}
 	return db.GetWorkerInstanceQueueCapacityRow{
 		AvailableMilliCpu:       2000,
 		AvailableMemoryMib:      2048,
 		AvailableDiskMib:        20480,
 		AvailableExecutionSlots: 1,
 	}, nil
+}
+
+func (f *fakeStore) GetWorkerInstanceRunDispatchCapacity(context.Context, pgtype.UUID) (db.GetWorkerInstanceRunDispatchCapacityRow, error) {
+	if f.workerQueueCapacitySet {
+		return db.GetWorkerInstanceRunDispatchCapacityRow{
+			AvailableMilliCpu:       f.workerQueueCapacity.AvailableMilliCpu,
+			AvailableMemoryMib:      f.workerQueueCapacity.AvailableMemoryMib,
+			AvailableDiskMib:        f.workerQueueCapacity.AvailableDiskMib,
+			AvailableExecutionSlots: f.workerQueueCapacity.AvailableExecutionSlots,
+		}, nil
+	}
+	return db.GetWorkerInstanceRunDispatchCapacityRow{
+		AvailableMilliCpu:       2000,
+		AvailableMemoryMib:      2048,
+		AvailableDiskMib:        20480,
+		AvailableExecutionSlots: 1,
+	}, nil
+}
+
+func (f *fakeStore) ClaimWorkspaceMaterialization(_ context.Context, arg db.ClaimWorkspaceMaterializationParams) (db.ClaimWorkspaceMaterializationRow, error) {
+	f.claimWorkspaceMaterialization = arg
+	f.claimWorkspaceMaterializationCalls++
+	return db.ClaimWorkspaceMaterializationRow{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) SetWorkerInstanceStatus(_ context.Context, arg db.SetWorkerInstanceStatusParams) (db.WorkerInstance, error) {
@@ -1139,6 +1209,7 @@ func (f *fakeStore) LeaseRunLease(_ context.Context, arg db.LeaseRunLeaseParams)
 		RunLeaseExpiresAt:                f.executionLeaseExpiresAt,
 		RunLeaseWorkerProtocolVersion:    api.CurrentWorkerProtocolVersion,
 		RunLeaseRestoreCheckpointID:      restoreCheckpointID,
+		WorkspaceFencingToken:            pgvalue.Text("workspace-fence-1"),
 	}, nil
 }
 

@@ -26,7 +26,7 @@ func TestCreateGetAndListRun(t *testing.T) {
 		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
 	}
 	runEnqueuer := &fakeRunEnqueuer{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}, RunEnqueuer: runEnqueuer})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}, RunEnqueuer: runEnqueuer})
 
 	bodyBytes, err := json.Marshal(api.TaskStartRequest{
 		Payload: json.RawMessage(`{"env":"prod"}`),

@@ -26,7 +26,6 @@ type RunTaskWorkspace struct {
 	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
 	ProjectPath   string                 `protobuf:"bytes,2,opt,name=project_path,json=projectPath,proto3" json:"project_path,omitempty"`
 	Artifact      *WorkspaceArtifact     `protobuf:"bytes,3,opt,name=artifact,proto3" json:"artifact,omitempty"`
-	VolumeKind    string                 `protobuf:"bytes,4,opt,name=volume_kind,json=volumeKind,proto3" json:"volume_kind,omitempty"`
 	Writable      bool                   `protobuf:"varint,5,opt,name=writable,proto3" json:"writable,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -81,13 +80,6 @@ func (x *RunTaskWorkspace) GetArtifact() *WorkspaceArtifact {
 		return x.Artifact
 	}
 	return nil
-}
-
-func (x *RunTaskWorkspace) GetVolumeKind() string {
-	if x != nil {
-		return x.VolumeKind
-	}
-	return ""
 }
 
 func (x *RunTaskWorkspace) GetWritable() bool {
@@ -1785,13 +1777,11 @@ var File_run_proto protoreflect.FileDescriptor
 
 const file_run_proto_rawDesc = "" +
 	"\n" +
-	"\trun.proto\x12\fhelmr.run.v0\"\xc3\x01\n" +
+	"\trun.proto\x12\fhelmr.run.v0\"\xa2\x01\n" +
 	"\x10RunTaskWorkspace\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12!\n" +
 	"\fproject_path\x18\x02 \x01(\tR\vprojectPath\x12;\n" +
-	"\bartifact\x18\x03 \x01(\v2\x1f.helmr.run.v0.WorkspaceArtifactR\bartifact\x12\x1f\n" +
-	"\vvolume_kind\x18\x04 \x01(\tR\n" +
-	"volumeKind\x12\x1a\n" +
+	"\bartifact\x18\x03 \x01(\v2\x1f.helmr.run.v0.WorkspaceArtifactR\bartifact\x12\x1a\n" +
 	"\bwritable\x18\x05 \x01(\bR\bwritable\"\xa6\x01\n" +
 	"\x11WorkspaceArtifact\x12\x16\n" +
 	"\x06digest\x18\x01 \x01(\tR\x06digest\x12\x1d\n" +

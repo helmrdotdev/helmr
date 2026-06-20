@@ -56,7 +56,7 @@ func (p GuestCompiler) Compile(ctx context.Context, request CompileRequest) (*bu
 	if err != nil {
 		return nil, fmt.Errorf("connect task compiler guest: %w", err)
 	}
-	defer session.Close()
+	defer session.Close(context.Background())
 	stream := session.Stream()
 
 	runID := strings.TrimSpace(p.RunID)

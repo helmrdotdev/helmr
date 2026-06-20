@@ -10,7 +10,6 @@ import {
   cancelTaskSession,
   closeTaskSession,
   getTaskSession,
-  getTaskSessionWorkspace,
   listTaskSessionChannelRecords,
   listTaskSessionChannels,
   listTaskSessionRuns,
@@ -18,7 +17,6 @@ import {
   type TaskSession,
   type TaskSessionChannel,
   type TaskSessionRun,
-  type TaskSessionWorkspace,
 } from "../lib/task-sessions";
 import { useScope } from "../lib/scope";
 import { cx, ui } from "../ui/styles";
@@ -113,39 +111,6 @@ function SessionRuns(props: { runs: TaskSessionRun[]; projectID: string; environ
             </tbody>
           </table>
         </div>
-      </Show>
-    </section>
-  );
-}
-
-function WorkspacePanel(props: { workspace: TaskSessionWorkspace | undefined }) {
-  return (
-    <section class={"border border-console-border bg-console-surface p-4"}>
-      <div class={"mb-3 flex items-center justify-between gap-3"}>
-        <h2 class={ui.h2}>Workspace</h2>
-        <span class={ui.muted}>{props.workspace?.state ?? "—"}</span>
-      </div>
-      <Show when={props.workspace} fallback={<p class={ui.emptyState}>No workspace state is available.</p>}>
-        {(workspace) => (
-          <dl class={"m-0 grid grid-cols-2 gap-3 max-sm:grid-cols-1 [&_dt]:font-mono [&_dt]:text-[10px] [&_dt]:font-medium [&_dt]:uppercase [&_dt]:tracking-[0.06em] [&_dt]:text-console-subtle [&_dd]:m-0 [&_dd]:break-words [&_dd]:text-[12.5px] [&_dd_code]:font-mono [&_dd_code]:text-[11.5px]"}>
-            <div>
-              <dt>ID</dt>
-              <dd><code>{workspace().id}</code></dd>
-            </div>
-            <div>
-              <dt>Version</dt>
-              <dd><code>{workspace().current_version_id || "—"}</code></dd>
-            </div>
-            <div>
-              <dt>Mount</dt>
-              <dd><code>{workspace().mount_path || "—"}</code></dd>
-            </div>
-            <div>
-              <dt>Updated</dt>
-              <dd>{formatRelative(workspace().updated_at)}</dd>
-            </div>
-          </dl>
-        )}
       </Show>
     </section>
   );
@@ -262,12 +227,6 @@ export function SessionDetail() {
     enabled: hasSessionID() && !!projectID() && !!environmentID(),
     retry: false,
   }));
-  const workspace = createQuery(() => ({
-    queryKey: ["task-session-workspace", sessionID(), projectID(), environmentID()],
-    queryFn: () => getTaskSessionWorkspace(sessionID(), scopeIDs()),
-    enabled: hasSessionID() && !!projectID() && !!environmentID(),
-    retry: false,
-  }));
   const timeline = createQuery(() => ({
     queryKey: ["task-session-channels", sessionID(), projectID(), environmentID()],
     queryFn: async (): Promise<TimelineChannel[]> => {
@@ -369,10 +328,6 @@ export function SessionDetail() {
                     <p class={ui.error} role="alert">{sessionErrorMessage(runs.error)}</p>
                   </Show>
                   <SessionRuns runs={runs.data?.runs ?? []} projectID={projectID()} environmentID={environmentID()} />
-                  <Show when={workspace.isError}>
-                    <p class={ui.error} role="alert">{sessionErrorMessage(workspace.error)}</p>
-                  </Show>
-                  <WorkspacePanel workspace={workspace.data} />
                   <Show when={timeline.isError}>
                     <p class={ui.error} role="alert">{sessionErrorMessage(timeline.error)}</p>
                   </Show>

@@ -725,6 +725,9 @@ func (f *fakeCAS) Stage(_ context.Context, mediaType string) (cas.Stage, error) 
 
 func (f *fakeCAS) put(mediaType string, content []byte) cas.Object {
 	f.body = content
+	if f.object.Digest == "" {
+		f.object.Digest = sha256sum.DigestBytes(content)
+	}
 	if f.object.MediaType == "" {
 		f.object.MediaType = mediaType
 	}

@@ -162,7 +162,9 @@ describe("checked-in task projects parse through the adapter", () => {
       "run",
       "run",
       "copySourceFile",
+      "workdir",
       "run",
+      "workdir",
     ])
     expect(cliTooling.bundle.image?.steps?.[0]).toMatchObject({
       from: { ref: "node:24-bookworm-slim" },
@@ -179,11 +181,14 @@ describe("checked-in task projects parse through the adapter", () => {
     })
     expect(cliTooling.bundle.image?.steps?.[4]).toMatchObject({
       copySourceFile: {
-        dst: "/workspace/package.json",
+        dst: "/opt/helmr-task/package.json",
         srcRef: { path: "package.json" },
       },
     })
     expect(cliTooling.bundle.image?.steps?.[5]).toMatchObject({
+      workdir: { path: "/opt/helmr-task" },
+    })
+    expect(cliTooling.bundle.image?.steps?.[6]).toMatchObject({
       run: {
         argv: ["bun", "install"],
         cacheMounts: [
@@ -193,6 +198,9 @@ describe("checked-in task projects parse through the adapter", () => {
           },
         ],
       },
+    })
+    expect(cliTooling.bundle.image?.steps?.[7]).toMatchObject({
+      workdir: { path: "/workspace" },
     })
   })
 

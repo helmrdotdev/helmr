@@ -858,32 +858,29 @@ ready_workspace_snapshot AS (
         project_id,
         environment_id,
         run_id,
-        checkpoint_id,
-        workspace_artifact_id,
-        workspace_artifact_encoding,
-        workspace_mount_path,
-        workspace_volume_kind
-    )
-    SELECT ready_checkpoint.org_id,
-           ready_checkpoint.project_id,
-           ready_checkpoint.environment_id,
-           ready_checkpoint.run_id,
-           ready_checkpoint.id,
-           workspace_artifact_input.artifact_id,
-           sqlc.narg(workspace_artifact_encoding),
-           sqlc.narg(workspace_mount_path),
-           sqlc.narg(workspace_volume_kind)
+	        checkpoint_id,
+	        workspace_artifact_id,
+	        workspace_artifact_encoding,
+	        workspace_mount_path
+	    )
+	    SELECT ready_checkpoint.org_id,
+	           ready_checkpoint.project_id,
+	           ready_checkpoint.environment_id,
+	           ready_checkpoint.run_id,
+	           ready_checkpoint.id,
+	           workspace_artifact_input.artifact_id,
+	           sqlc.narg(workspace_artifact_encoding),
+	           sqlc.narg(workspace_mount_path)
       FROM ready_checkpoint
       LEFT JOIN workspace_artifact_input ON true
       LEFT JOIN inserted_artifacts AS inserted_workspace_artifact
         ON inserted_workspace_artifact.id = workspace_artifact_input.artifact_id
     ON CONFLICT (org_id, run_id, checkpoint_id) DO UPDATE
        SET project_id = EXCLUDED.project_id,
-           environment_id = EXCLUDED.environment_id,
-           workspace_artifact_id = EXCLUDED.workspace_artifact_id,
-           workspace_artifact_encoding = EXCLUDED.workspace_artifact_encoding,
-           workspace_mount_path = EXCLUDED.workspace_mount_path,
-           workspace_volume_kind = EXCLUDED.workspace_volume_kind
+	           environment_id = EXCLUDED.environment_id,
+	           workspace_artifact_id = EXCLUDED.workspace_artifact_id,
+	           workspace_artifact_encoding = EXCLUDED.workspace_artifact_encoding,
+	           workspace_mount_path = EXCLUDED.workspace_mount_path
     RETURNING *
 ),
 ready_requirements AS (
@@ -1028,13 +1025,15 @@ detached_run_lease AS (
 ),
 released_workspace_lease AS (
     UPDATE workspace_leases
-       SET released_at = now(),
-           renewed_at = now()
+       SET state = 'released',
+           released_at = now(),
+           renewed_at = now(),
+           updated_at = now()
       FROM waiting_run_suspension
       JOIN detached_run_lease ON true
      WHERE workspace_leases.org_id = sqlc.arg(org_id)
-       AND workspace_leases.run_id = waiting_run_suspension.run_id
-       AND workspace_leases.mode = 'write'
+       AND workspace_leases.owner_run_id = waiting_run_suspension.run_id
+       AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.released_at IS NULL
     RETURNING workspace_leases.id
 ),

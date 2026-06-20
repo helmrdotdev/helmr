@@ -52,6 +52,7 @@ export type TaskStartOptions<TSecrets extends SecretDecls> = TaskRunOptions<TSec
   readonly projectId?: string
   readonly environmentId?: string
   readonly externalId?: string
+  readonly workspaceId?: string
   readonly expiresAt?: string | Date
 }
 export type TaskStartAndWaitOptions<TSecrets extends SecretDecls> = TaskStartOptions<TSecrets> & {
@@ -155,17 +156,6 @@ export interface TaskSessionRun {
   readonly endedAt?: string
 }
 
-export interface TaskSessionWorkspace {
-  readonly id: string
-  readonly taskSessionId: string
-  readonly currentVersionId: string | null
-  readonly mountPath: string | null
-  readonly state: string
-  readonly retentionPolicy?: unknown
-  readonly createdAt: string
-  readonly updatedAt: string
-}
-
 export interface ChannelRecord<TData = unknown> {
   readonly id: string
   readonly channelId: string
@@ -246,9 +236,107 @@ export interface OpenTaskSessionApi<TOutput = unknown> {
   close(opts?: TaskSessionCloseOptions): Promise<TaskSessionSnapshot<TOutput>>
   cancel(opts?: TaskSessionCancelOptions): Promise<TaskSessionSnapshot<TOutput>>
   runs(opts?: { readonly signal?: AbortSignal }): Promise<TaskSessionRun[]>
-  workspace(opts?: { readonly signal?: AbortSignal }): Promise<TaskSessionWorkspace>
   input(channel: string): SessionChannelInputApi
   output(channel: string): SessionChannelOutputApi
+}
+
+export type WorkspaceState = "active" | "deleting" | "recovery_required" | "archived" | "deleted"
+export type WorkspaceDesiredState = "active" | "stopped" | "archived" | "deleted"
+export type WorkspaceDirtyState = "clean" | "dirty" | "capturing" | "capture_failed" | "dirty_state_lost"
+
+export interface Workspace {
+  readonly id: string
+  readonly projectId: string
+  readonly environmentId: string
+  readonly deploymentSandboxId: string
+  readonly sandboxId: string
+  readonly sandboxFingerprint: string
+  readonly externalId?: string
+  readonly currentVersionId: string | null
+  readonly state: WorkspaceState
+  readonly desiredState: WorkspaceDesiredState
+  readonly dirtyState: WorkspaceDirtyState
+  readonly lastMaterializationId: string | null
+  readonly metadata: Record<string, unknown>
+  readonly tags: readonly string[]
+  readonly autoStopAt: string | null
+  readonly autoArchiveAt: string | null
+  readonly autoDeleteAt: string | null
+  readonly lastActivityAt: string
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly archivedAt: string | null
+  readonly deletedAt: string | null
+}
+
+export interface WorkspaceHandle {
+  readonly id: string
+  retrieve(opts?: WorkspaceRetrieveOptions): Promise<Workspace>
+  update(opts: WorkspaceUpdateOptions): Promise<Workspace>
+  delete(opts?: WorkspaceRetrieveOptions): Promise<Workspace>
+  materialize(opts?: WorkspaceMaterializeOptions): Promise<WorkspaceMaterialization>
+  connect(opts?: WorkspaceMaterializeOptions): Promise<WorkspaceMaterialization>
+}
+
+export interface WorkspacesApi {
+  readonly create: (opts: WorkspaceCreateOptions) => Promise<Workspace>
+  readonly open: (id: string) => WorkspaceHandle
+  readonly retrieve: (idOrHandle: string | WorkspaceHandle, opts?: WorkspaceRetrieveOptions) => Promise<Workspace>
+  readonly list: (opts?: WorkspaceListOptions) => Promise<Workspace[]>
+  readonly update: (idOrHandle: string | WorkspaceHandle, opts: WorkspaceUpdateOptions) => Promise<Workspace>
+  readonly delete: (idOrHandle: string | WorkspaceHandle, opts?: WorkspaceRetrieveOptions) => Promise<Workspace>
+  readonly materialize: (idOrHandle: string | WorkspaceHandle, opts?: WorkspaceMaterializeOptions) => Promise<WorkspaceMaterialization>
+  readonly connect: (idOrHandle: string | WorkspaceHandle, opts?: WorkspaceMaterializeOptions) => Promise<WorkspaceMaterialization>
+}
+
+export interface WorkspaceCreateOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
+  readonly sandboxId: string
+  readonly deploymentId?: string
+  readonly externalId?: string
+  readonly metadata?: Record<string, unknown>
+  readonly tags?: readonly string[]
+  readonly idempotencyKey?: string
+  readonly idempotencyKeyTTL?: string
+  readonly signal?: AbortSignal
+}
+
+export interface WorkspaceRetrieveOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
+  readonly signal?: AbortSignal
+}
+
+export interface WorkspaceListOptions extends WorkspaceRetrieveOptions {
+  readonly state?: WorkspaceState
+  readonly externalId?: string
+  readonly tag?: string
+  readonly limit?: number
+}
+
+export interface WorkspaceUpdateOptions extends WorkspaceRetrieveOptions {
+  readonly metadata?: Record<string, unknown>
+  readonly tags?: readonly string[]
+}
+
+export interface WorkspaceMaterializeOptions extends WorkspaceRetrieveOptions {}
+
+export interface WorkspaceMaterialization {
+  readonly id: string
+  readonly projectId: string
+  readonly environmentId: string
+  readonly workspaceId: string
+  readonly deploymentSandboxId: string
+  readonly baseVersionId: string | null
+  readonly workerInstanceId: string | null
+  readonly state: string
+  readonly fencingGeneration: number
+  readonly dirtyGeneration: number
+  readonly reservationExpiresAt: string | null
+  readonly lastHeartbeatAt: string | null
+  readonly createdAt: string
+  readonly updatedAt: string
 }
 
 export interface SchedulesApi {
@@ -504,6 +592,43 @@ export class HelmrClient {
     },
   }
 
+  readonly workspaces: WorkspacesApi = {
+    create: async (opts: WorkspaceCreateOptions): Promise<Workspace> => {
+      const response = await this.#json<WorkspaceEnvelopeResponse>(workspaceCollectionPath(opts), {
+        method: "POST",
+        body: JSON.stringify(workspaceCreateBody(opts)),
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal),
+      })
+      return workspaceFromResponse(response.workspace)
+    },
+    open: (id: string): WorkspaceHandle => {
+      return this.#openWorkspace(id)
+    },
+    retrieve: async (idOrHandle: string | WorkspaceHandle, opts: WorkspaceRetrieveOptions = {}): Promise<Workspace> => {
+      return await this.#openWorkspace(workspaceId(idOrHandle)).retrieve(opts)
+    },
+    list: async (opts: WorkspaceListOptions = {}): Promise<Workspace[]> => {
+      const response = await this.#json<ListWorkspacesResponse>(
+        `${workspaceCollectionPath(opts)}${workspaceListQuery(opts)}`,
+        requestSignal(opts.signal),
+      )
+      return response.workspaces.map(workspaceFromResponse)
+    },
+    update: async (idOrHandle: string | WorkspaceHandle, opts: WorkspaceUpdateOptions): Promise<Workspace> => {
+      return await this.#openWorkspace(workspaceId(idOrHandle)).update(opts)
+    },
+    delete: async (idOrHandle: string | WorkspaceHandle, opts: WorkspaceRetrieveOptions = {}): Promise<Workspace> => {
+      return await this.#openWorkspace(workspaceId(idOrHandle)).delete(opts)
+    },
+    materialize: async (idOrHandle: string | WorkspaceHandle, opts: WorkspaceMaterializeOptions = {}): Promise<WorkspaceMaterialization> => {
+      return await this.#openWorkspace(workspaceId(idOrHandle)).materialize(opts)
+    },
+    connect: async (idOrHandle: string | WorkspaceHandle, opts: WorkspaceMaterializeOptions = {}): Promise<WorkspaceMaterialization> => {
+      return await this.#openWorkspace(workspaceId(idOrHandle)).connect(opts)
+    },
+  }
+
   readonly waitpoints = {
     tokens: {
       create: async (opts: WaitpointTokenCreateOptions = {}): Promise<WaitpointToken> => {
@@ -682,6 +807,59 @@ export class HelmrClient {
     }
   }
 
+  #openWorkspace(id: string): WorkspaceHandle {
+    return {
+      id,
+      retrieve: async (opts = {}) => {
+        const response = await this.#json<WorkspaceEnvelopeResponse>(
+          workspaceResourcePath(id, opts),
+          requestSignal(opts.signal),
+        )
+        return workspaceFromResponse(response.workspace)
+      },
+      update: async (opts) => {
+        const response = await this.#json<WorkspaceEnvelopeResponse>(workspaceResourcePath(id, opts), {
+          method: "PATCH",
+          body: JSON.stringify(workspaceUpdateBody(opts)),
+          headers: { "content-type": "application/json" },
+          ...requestSignal(opts.signal),
+        })
+        return workspaceFromResponse(response.workspace)
+      },
+      delete: async (opts = {}) => {
+        const response = await this.#json<WorkspaceEnvelopeResponse>(workspaceResourcePath(id, opts), {
+          method: "DELETE",
+          ...requestSignal(opts.signal),
+        })
+        return workspaceFromResponse(response.workspace)
+      },
+      materialize: async (opts = {}) => {
+        const response = await this.#json<WorkspaceMaterializationResponse>(
+          `${workspaceResourcePath(id, opts)}/materialize`,
+          {
+            method: "POST",
+            body: JSON.stringify(workspaceMaterializeBody(opts)),
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal),
+          },
+        )
+        return workspaceMaterializationFromResponse(response)
+      },
+      connect: async (opts = {}) => {
+        const response = await this.#json<WorkspaceMaterializationResponse>(
+          `${workspaceResourcePath(id, opts)}/connect`,
+          {
+            method: "POST",
+            body: JSON.stringify(workspaceMaterializeBody(opts)),
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal),
+          },
+        )
+        return workspaceMaterializationFromResponse(response)
+      },
+    }
+  }
+
   #openSession<TOutput = unknown>(id: string): OpenTaskSessionApi<TOutput> {
     return {
       id,
@@ -734,13 +912,6 @@ export class HelmrClient {
           requestSignal(opts.signal),
         )
         return response.runs.map(taskSessionRunFromResponse)
-      },
-      workspace: async (opts = {}) => {
-        const response = await this.#json<TaskSessionWorkspaceResponse>(
-          `/api/sessions/${encodeURIComponent(id)}/workspace`,
-          requestSignal(opts.signal),
-        )
-        return taskSessionWorkspaceFromResponse(response)
       },
       input: (channelInput: string) => {
         const channel = validateChannelName(channelInput)
@@ -1318,17 +1489,6 @@ interface ListTaskSessionRunsResponse {
   readonly runs: readonly TaskSessionRunResponse[]
 }
 
-interface TaskSessionWorkspaceResponse {
-  readonly id: string
-  readonly task_session_id: string
-  readonly current_version_id?: string | null
-  readonly mount_path?: string | null
-  readonly state: string
-  readonly retention_policy?: unknown
-  readonly created_at: string
-  readonly updated_at: string
-}
-
 interface ChannelRecordResponse {
   readonly id: string
   readonly channel_id: string
@@ -1414,6 +1574,57 @@ interface ListWaitpointTokensResponse {
   readonly next_cursor?: string | null
 }
 
+interface WorkspaceResponse {
+  readonly id: string
+  readonly project_id: string
+  readonly environment_id: string
+  readonly deployment_sandbox_id: string
+  readonly sandbox_id: string
+  readonly sandbox_fingerprint: string
+  readonly external_id?: string
+  readonly current_version_id?: string | null
+  readonly state: WorkspaceState
+  readonly desired_state: WorkspaceDesiredState
+  readonly dirty_state: WorkspaceDirtyState
+  readonly last_materialization_id?: string | null
+  readonly metadata?: Record<string, unknown>
+  readonly tags?: readonly string[]
+  readonly auto_stop_at?: string | null
+  readonly auto_archive_at?: string | null
+  readonly auto_delete_at?: string | null
+  readonly last_activity_at: string
+  readonly created_at: string
+  readonly updated_at: string
+  readonly archived_at?: string | null
+  readonly deleted_at?: string | null
+}
+
+interface WorkspaceEnvelopeResponse {
+  readonly workspace: WorkspaceResponse
+  readonly is_cached?: boolean
+}
+
+interface ListWorkspacesResponse {
+  readonly workspaces: readonly WorkspaceResponse[]
+}
+
+interface WorkspaceMaterializationResponse {
+  readonly id: string
+  readonly project_id: string
+  readonly environment_id: string
+  readonly workspace_id: string
+  readonly deployment_sandbox_id: string
+  readonly base_version_id?: string | null
+  readonly worker_instance_id?: string | null
+  readonly state: string
+  readonly fencing_generation: number
+  readonly dirty_generation: number
+  readonly reservation_expires_at?: string | null
+  readonly last_heartbeat_at?: string | null
+  readonly created_at: string
+  readonly updated_at: string
+}
+
 interface ListRunWaitpointsResponse {
   readonly waitpoints: readonly PendingWaitpointResponse[]
   readonly next_cursor?: string | null
@@ -1490,19 +1701,6 @@ function taskSessionRunFromResponse(response: TaskSessionRunResponse): TaskSessi
   }
 }
 
-function taskSessionWorkspaceFromResponse(response: TaskSessionWorkspaceResponse): TaskSessionWorkspace {
-  return {
-    id: response.id,
-    taskSessionId: response.task_session_id,
-    currentVersionId: response.current_version_id ?? null,
-    mountPath: response.mount_path ?? null,
-    state: response.state,
-    ...("retention_policy" in response ? { retentionPolicy: response.retention_policy } : {}),
-    createdAt: response.created_at,
-    updatedAt: response.updated_at,
-  }
-}
-
 function channelRecordFromResponse<TData = unknown>(response: ChannelRecordResponse): ChannelRecord<TData> {
   return {
     id: response.id,
@@ -1542,6 +1740,7 @@ function taskStartBody(
     ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
     ...(opts.tags === undefined ? {} : { tags: opts.tags }),
     ...(opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") }),
+    ...(opts.workspaceId === undefined ? {} : { workspace_id: opts.workspaceId }),
     ...(maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds }),
     ...taskStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL),
   }
@@ -1658,6 +1857,109 @@ function runOptionsBody(opts: ScheduleRunOptions | undefined): Record<string, un
     ...(opts.priority === undefined ? {} : { priority: opts.priority }),
     ...(opts.ttl === undefined ? {} : { ttl: opts.ttl }),
     ...(opts.maxDurationSeconds === undefined ? {} : { max_duration_seconds: opts.maxDurationSeconds }),
+  }
+}
+
+function workspaceId(idOrHandle: string | WorkspaceHandle): string {
+  return typeof idOrHandle === "string" ? idOrHandle : idOrHandle.id
+}
+
+function workspaceCollectionPath(opts: { readonly projectId?: string; readonly environmentId?: string }): string {
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    if (opts.projectId === undefined || opts.environmentId === undefined) {
+      throw new Error("projectId and environmentId must be provided together")
+    }
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/workspaces`
+  }
+  return "/api/workspaces"
+}
+
+function workspaceResourcePath(id: string, opts: { readonly projectId?: string; readonly environmentId?: string }): string {
+  return `${workspaceCollectionPath(opts)}/${encodeURIComponent(id)}`
+}
+
+function workspaceCreateBody(opts: WorkspaceCreateOptions): Record<string, unknown> {
+  return {
+    ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
+    ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
+    sandbox_id: opts.sandboxId,
+    ...(opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId }),
+    ...(opts.externalId === undefined ? {} : { external_id: opts.externalId }),
+    ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
+    ...(opts.tags === undefined ? {} : { tags: opts.tags }),
+    ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
+    ...(opts.idempotencyKeyTTL === undefined ? {} : { idempotency_key_ttl: opts.idempotencyKeyTTL }),
+  }
+}
+
+function workspaceUpdateBody(opts: WorkspaceUpdateOptions): Record<string, unknown> {
+  return {
+    ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
+    ...(opts.tags === undefined ? {} : { tags: opts.tags }),
+  }
+}
+
+function workspaceMaterializeBody(opts: WorkspaceMaterializeOptions): Record<string, unknown> {
+  return {
+    ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
+    ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
+  }
+}
+
+function workspaceListQuery(opts: WorkspaceListOptions): string {
+  const query = new URLSearchParams()
+  if (opts.projectId !== undefined) query.set("project_id", opts.projectId)
+  if (opts.environmentId !== undefined) query.set("environment_id", opts.environmentId)
+  if (opts.state !== undefined) query.set("state", opts.state)
+  if (opts.externalId !== undefined) query.set("external_id", opts.externalId)
+  if (opts.tag !== undefined) query.set("tag", opts.tag)
+  if (opts.limit !== undefined) query.set("limit", String(opts.limit))
+  return query.size === 0 ? "" : `?${query}`
+}
+
+function workspaceFromResponse(response: WorkspaceResponse): Workspace {
+  return {
+    id: response.id,
+    projectId: response.project_id,
+    environmentId: response.environment_id,
+    deploymentSandboxId: response.deployment_sandbox_id,
+    sandboxId: response.sandbox_id,
+    sandboxFingerprint: response.sandbox_fingerprint,
+    ...(response.external_id === undefined || response.external_id === "" ? {} : { externalId: response.external_id }),
+    currentVersionId: response.current_version_id ?? null,
+    state: response.state,
+    desiredState: response.desired_state,
+    dirtyState: response.dirty_state,
+    lastMaterializationId: response.last_materialization_id ?? null,
+    metadata: response.metadata ?? {},
+    tags: response.tags ?? [],
+    autoStopAt: response.auto_stop_at ?? null,
+    autoArchiveAt: response.auto_archive_at ?? null,
+    autoDeleteAt: response.auto_delete_at ?? null,
+    lastActivityAt: response.last_activity_at,
+    createdAt: response.created_at,
+    updatedAt: response.updated_at,
+    archivedAt: response.archived_at ?? null,
+    deletedAt: response.deleted_at ?? null,
+  }
+}
+
+function workspaceMaterializationFromResponse(response: WorkspaceMaterializationResponse): WorkspaceMaterialization {
+  return {
+    id: response.id,
+    projectId: response.project_id,
+    environmentId: response.environment_id,
+    workspaceId: response.workspace_id,
+    deploymentSandboxId: response.deployment_sandbox_id,
+    baseVersionId: response.base_version_id ?? null,
+    workerInstanceId: response.worker_instance_id ?? null,
+    state: response.state,
+    fencingGeneration: response.fencing_generation,
+    dirtyGeneration: response.dirty_generation,
+    reservationExpiresAt: response.reservation_expires_at ?? null,
+    lastHeartbeatAt: response.last_heartbeat_at ?? null,
+    createdAt: response.created_at,
+    updatedAt: response.updated_at,
   }
 }
 

@@ -20,10 +20,10 @@ Helmr organizes agent execution around projects, environments, deployments, task
 | Task project | A source directory with `helmr.config.ts` and TypeScript task modules. |
 | Deployment | An immutable versioned upload of indexed task definitions. One current deployment pointer is used per project environment, and a deployment can contain multiple tasks. |
 | Task | A TypeScript unit of work identified by `task_id`. It declares a sandbox, optional secrets, max duration, and run logic. |
-| Workspace | The writable filesystem state carried by a task session and mounted for its current run. |
-| Task session | The durable work context that owns workspace state, channel records, and the ordered run history for a task start. |
+| Workspace | A durable filesystem object that can outlive a task session and be attached by multiple task sessions or direct workspace operations. |
+| Task session | A task invocation and history record with channel records and ordered runs. It can attach to a workspace, but it does not own the workspace lifecycle. |
 | Schedule | A cron definition that starts task sessions for a deployed task with generated schedule metadata and stored run options. |
-| Run | One execution of a deployment task with payload, task-declared secrets, workspace state, and pinned deployment metadata. |
+| Run | One execution of a deployment task with payload, task-declared secrets, an attached workspace, and pinned deployment metadata. |
 | Waitpoint | A durable pause in a run for time or external completion. |
 | Waitpoint token | A scoped capability that can complete a token waitpoint. |
 | Session channel | A named input or output lane for session-owned records. |

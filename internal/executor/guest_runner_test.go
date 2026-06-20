@@ -945,10 +945,9 @@ func TestGuestRunnerRejectsMissingResolvedSecrets(t *testing.T) {
 		},
 		Artifact: builder.Artifact{ImageTarPath: imagePath},
 		Workspace: workspace.WorkspaceArtifact{
-			Digest:     "sha256:" + string(bytes.Repeat([]byte{'0'}, 64)),
-			MediaType:  workspace.ArtifactMediaType,
-			Encoding:   workspace.ArtifactEncoding,
-			VolumeKind: workspace.VolumeKind,
+			Digest:    "sha256:" + string(bytes.Repeat([]byte{'0'}, 64)),
+			MediaType: workspace.ArtifactMediaType,
+			Encoding:  workspace.ArtifactEncoding,
 		},
 	})
 	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("required")) {
@@ -1004,8 +1003,17 @@ func (s fakeGuestSession) Stream() io.ReadWriteCloser {
 	return s.stream
 }
 
-func (s fakeGuestSession) Close() error {
+func (s fakeGuestSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
+	return s.stream, nil
+}
+
+func (s fakeGuestSession) Close(context.Context) error {
 	return s.stream.Close()
+}
+
+func (s fakeGuestSession) Wait(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 type fakeCheckpointableGuestSession struct {
@@ -1255,6 +1263,7 @@ type fakeCAS struct {
 	mediaType string
 	content   []byte
 	objects   map[string][]byte
+	metadata  map[string]cas.Object
 }
 
 func (f *fakeCAS) Put(_ context.Context, mediaType string, body io.Reader) (cas.Object, error) {
@@ -1278,6 +1287,10 @@ func (f *fakeCAS) put(mediaType string, content []byte) cas.Object {
 	if f.objects != nil {
 		f.objects[object.Digest] = append([]byte(nil), content...)
 	}
+	if f.metadata == nil {
+		f.metadata = map[string]cas.Object{}
+	}
+	f.metadata[object.Digest] = object
 	return object
 }
 
@@ -1310,8 +1323,14 @@ func (s *fakeCASStage) Abort(context.Context) error {
 	return nil
 }
 
-func (f *fakeCAS) Stat(context.Context, string) (cas.Object, error) {
-	return cas.Object{}, nil
+func (f *fakeCAS) Stat(_ context.Context, digest string) (cas.Object, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	object, ok := f.metadata[digest]
+	if !ok {
+		return cas.Object{}, os.ErrNotExist
+	}
+	return object, nil
 }
 
 func (f *fakeCAS) Get(_ context.Context, digest string) (io.ReadCloser, error) {
@@ -1411,7 +1430,6 @@ func testWorkspaceArtifact(t *testing.T, checkoutRoot, projectRoot string) works
 		Digest:     tarArchive.Digest,
 		MediaType:  workspace.ArtifactMediaType,
 		Encoding:   workspace.ArtifactEncoding,
-		VolumeKind: workspace.VolumeKind,
 		SizeBytes:  tarArchive.SizeBytes,
 		EntryCount: tarArchive.EntryCount,
 	}

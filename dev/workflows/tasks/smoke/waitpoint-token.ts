@@ -9,11 +9,13 @@ const dependencyInputs = source.directory(".", {
 const base = image("helmr-waitpoint-checkpoint-smoke")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
-  .copy("/workspace", dependencyInputs)
+  .copy("/opt/helmr-task", dependencyInputs)
   .run(["npm", "install", "-g", "bun@1.3.10"])
+  .workdir("/opt/helmr-task")
   .run(["bun", "install", "--frozen-lockfile"], {
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("waitpoint-checkpoint-smoke-bun") }],
   })
+  .workdir("/workspace")
 
 const sbx = sandbox("helmr-waitpoint-checkpoint-smoke")
   .image(base)

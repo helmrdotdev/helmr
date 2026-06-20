@@ -17,7 +17,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const deploymentBuildLeaseDuration = 30 * time.Minute
+const (
+	deploymentBuildLeaseDuration = 30 * time.Minute
+	currentGuestdABI             = "helmr.guestd.v0"
+	currentAdapterABI            = "helmr.adapter.v0"
+)
 
 func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
@@ -223,6 +227,15 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		writeError(w, errors.New("get deployment build lease"))
 		return
 	}
+	workerState, err := queries.GetWorkerInstanceState(r.Context(), buildWorkerInstanceID)
+	if isNoRows(err) {
+		failBuild("deployment build worker instance was not found")
+		return
+	}
+	if err != nil {
+		writeError(w, errors.New("get deployment build worker state"))
+		return
+	}
 	casObjectByDigest := make(map[string]api.CASObject, len(casObjects))
 	for _, object := range casObjects {
 		casObjectByDigest[strings.TrimSpace(object.Digest)] = object
@@ -245,6 +258,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		failBuild("record deployment manifest artifact: " + err.Error())
 		return
 	}
+	deploymentSandboxIDs := map[string]pgtype.UUID{}
 	for _, task := range request.Result.Tasks {
 		bundleArtifact, err := createDeploymentBuildArtifact(r.Context(), queries, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.BundleDigest), db.ArtifactKindTaskBundle, casObjectByDigest)
 		if err != nil {
@@ -266,6 +280,56 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			failBuild("encode deployment task network: " + err.Error())
 			return
 		}
+		sandboxID := strings.TrimSpace(task.SandboxID)
+		deploymentSandboxID, ok := deploymentSandboxIDs[sandboxID]
+		if !ok {
+			imageArtifact, err := createDeploymentBuildArtifact(r.Context(), queries, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.SandboxImageArtifact.Digest), db.ArtifactKindSandboxImage, casObjectByDigest)
+			if err != nil {
+				failBuild("record deployment sandbox image artifact: " + err.Error())
+				return
+			}
+			resourceFloor, err := json.Marshal(map[string]any{
+				"milli_cpu":  task.RequestedMilliCPU,
+				"memory_mib": task.RequestedMemoryMiB,
+				"disk_mib":   task.RequestedDiskMiB,
+			})
+			if err != nil {
+				failBuild("encode deployment sandbox resource floor: " + err.Error())
+				return
+			}
+			row, err := queries.CreateDeploymentSandbox(r.Context(), db.CreateDeploymentSandboxParams{
+				ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				OrgID:               orgID,
+				ProjectID:           projectID,
+				EnvironmentID:       environmentID,
+				DeploymentID:        deploymentID,
+				SandboxID:           sandboxID,
+				ImageArtifactID:     imageArtifact.ID,
+				ImageArtifactFormat: strings.TrimSpace(task.SandboxImageArtifactFormat),
+				RootfsDigest:        workerState.RootfsDigest,
+				ImageDigest:         imageArtifact.Digest,
+				ImageFormat:         strings.TrimSpace(task.SandboxImageFormat),
+				WorkspaceMountPath:  strings.TrimSpace(task.WorkspaceMountPath),
+				ResourceFloor:       resourceFloor,
+				DiskFloorMib:        task.RequestedDiskMiB,
+				NetworkPolicy:       networkPolicy,
+				RuntimeABI:          workerState.RuntimeABI,
+				GuestdAbi:           currentGuestdABI,
+				AdapterAbi:          currentAdapterABI,
+				FilesystemFormat:    strings.TrimSpace(task.FilesystemFormat),
+				DefaultUid:          pgtype.Int8{},
+				DefaultGid:          pgtype.Int8{},
+				DefaultWorkdir:      "",
+				ContractVersion:     1,
+				Fingerprint:         strings.TrimSpace(task.SandboxFingerprint),
+			})
+			if err != nil {
+				failBuild("record deployment sandbox: " + err.Error())
+				return
+			}
+			deploymentSandboxID = row.ID
+			deploymentSandboxIDs[sandboxID] = deploymentSandboxID
+		}
 		retryPolicy, err := normalizedRetryPolicy(task.RetryPolicy)
 		if err != nil {
 			failBuild("validate deployment task retry policy: " + err.Error())
@@ -277,6 +341,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			ProjectID:             projectID,
 			EnvironmentID:         environmentID,
 			DeploymentID:          deploymentID,
+			DeploymentSandboxID:   deploymentSandboxID,
 			TaskID:                strings.TrimSpace(task.TaskID),
 			FilePath:              strings.TrimSpace(task.FilePath),
 			ExportName:            strings.TrimSpace(task.ExportName),

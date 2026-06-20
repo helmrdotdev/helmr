@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/safepath"
-	workspacepkg "github.com/helmrdotdev/helmr/internal/workspace"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
@@ -396,7 +396,11 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 		if err != nil {
 			return writeRunSetupFailure(conn, err)
 		}
-		taskAdapterCwd, err = materializeDeploymentSourceForRuntime(imageRoot, deploymentSourceRoot, launchCwd, runtimeUser)
+		taskSourceRoot, err := taskSourceRoot(launchCwd)
+		if err != nil {
+			return writeRunSetupFailure(conn, err)
+		}
+		taskAdapterCwd, err = materializeDeploymentSourceForRuntime(imageRoot, deploymentSourceRoot, taskSourceRoot, runtimeUser)
 		if err != nil {
 			return writeRunSetupFailure(conn, err)
 		}
@@ -859,7 +863,7 @@ func (s *adapterRunStream) writeCheckpointDiagnostic(message string) error {
 }
 
 func (s *adapterRunStream) writeWorkspaceArtifact(runID string, workspaceRoot string, workspaceSecretPaths []string) error {
-	artifact, cleanup, err := workspacepkg.CreateWorkspaceArtifactFromRootWithExcludes(
+	artifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRootWithExcludes(
 		workspaceRoot,
 		os.TempDir(),
 		workspaceRoot,

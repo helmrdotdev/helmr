@@ -50,3 +50,6 @@ worker_disk_mib                     = null
 worker_vm_vcpus                     = 2
 worker_vm_memory_mib                = 4096
 worker_vm_scratch_disk_mib          = 32768
+worker_capacity_vcpus               = 4
+worker_capacity_memory_mib          = 8192
+worker_execution_slots              = 2

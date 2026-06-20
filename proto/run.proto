@@ -8,7 +8,6 @@ message RunTaskWorkspace {
   string path = 1;
   string project_path = 2;
   WorkspaceArtifact artifact = 3;
-  string volume_kind = 4;
   bool writable = 5;
 }
 

@@ -4,10 +4,12 @@ const base = image("task-secrets")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
   .run(["npm", "install", "-g", "bun@1.3.10"])
-  .copy("/workspace/package.json", source.file("package.json"))
+  .copy("/opt/helmr-task/package.json", source.file("package.json"))
+  .workdir("/opt/helmr-task")
   .run(["bun", "install"], {
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("task-secrets-bun") }],
   })
+  .workdir("/workspace")
 
 const sbx = sandbox("task-secrets")
   .image(base)

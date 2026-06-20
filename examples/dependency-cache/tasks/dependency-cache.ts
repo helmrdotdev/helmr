@@ -5,10 +5,12 @@ const deps = image("dependency-cache-deps")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
   .run(["npm", "install", "-g", "bun@1.3.10"])
-  .copy("/workspace/package.json", source.file("package.json"))
+  .copy("/opt/helmr-task/package.json", source.file("package.json"))
+  .workdir("/opt/helmr-task")
   .run(["bun", "install"], {
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("dependency-cache-task-bun") }],
   })
+  .workdir("/workspace")
   .workdir("/opt/app")
   .copy("/opt/app/package.json", source.file("app/package.json"))
   .copy("/opt/app/bun.lock", source.file("app/bun.lock"))

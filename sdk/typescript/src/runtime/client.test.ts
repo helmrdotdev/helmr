@@ -206,6 +206,77 @@ test("schedules map next fire response fields", async () => {
   expect(schedule.lastFireAt).toBe("2026-01-01T00:00:00Z")
 })
 
+test("workspaces.open is lazy and does not call materialize or connect", () => {
+  let calls = 0
+  globalThis.fetch = (async () => {
+    calls += 1
+    return Response.json({})
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const workspace = client.workspaces.open("workspace-1")
+
+  expect(workspace.id).toBe("workspace-1")
+  expect(calls).toBe(0)
+})
+
+test("workspaces create list update materialize and connect use workspace routes", async () => {
+  const requests: Array<{ url: string; method: string; body: unknown }> = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    const method = init?.method ?? "GET"
+    const body = init?.body === undefined ? undefined : JSON.parse(String(init.body))
+    requests.push({ url, method, body })
+    if (url.endsWith("/materialize") || url.endsWith("/connect")) {
+      return Response.json(workspaceMaterializationFixture())
+    }
+    if (method === "GET" && url.includes("/workspaces?")) {
+      return Response.json({ workspaces: [workspaceFixture({ tags: ["prod"] })] })
+    }
+    return Response.json({ workspace: workspaceFixture({ metadata: { owner: "platform" } }) })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const created = await client.workspaces.create({
+    projectId: "project-1",
+    environmentId: "env-1",
+    sandboxId: "sandbox-1",
+    deploymentId: "deployment-1",
+    externalId: "case-1",
+    metadata: { owner: "platform" },
+    tags: ["prod"],
+    idempotencyKey: "workspace-key",
+    idempotencyKeyTTL: "24h",
+  })
+  const listed = await client.workspaces.list({ projectId: "project-1", environmentId: "env-1", state: "active", tag: "prod" })
+  const updated = await client.workspaces.update("workspace-1", { metadata: { owner: "platform" }, tags: ["prod"] })
+  const materialized = await client.workspaces.materialize("workspace-1")
+  const connected = await client.workspaces.open("workspace-1").connect()
+
+  expect(created.metadata).toEqual({ owner: "platform" })
+  expect(listed[0]?.tags).toEqual(["prod"])
+  expect(updated.id).toBe("workspace-1")
+  expect(materialized.workspaceId).toBe("workspace-1")
+  expect(connected.workspaceId).toBe("workspace-1")
+  expect(requests.map((request) => [request.method, request.url, request.body])).toEqual([
+    ["POST", "https://api.example.test/api/projects/project-1/environments/env-1/workspaces", {
+      deployment_id: "deployment-1",
+      environment_id: "env-1",
+      external_id: "case-1",
+      idempotency_key: "workspace-key",
+      idempotency_key_ttl: "24h",
+      metadata: { owner: "platform" },
+      project_id: "project-1",
+      sandbox_id: "sandbox-1",
+      tags: ["prod"],
+    }],
+    ["GET", "https://api.example.test/api/projects/project-1/environments/env-1/workspaces?project_id=project-1&environment_id=env-1&state=active&tag=prod", undefined],
+    ["PATCH", "https://api.example.test/api/workspaces/workspace-1", { metadata: { owner: "platform" }, tags: ["prod"] }],
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/materialize", {}],
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/connect", {}],
+  ])
+})
+
 test("http transport is explicit and warns, including localhost", async () => {
   const warnings: unknown[][] = []
   console.warn = (...args: unknown[]) => warnings.push(args)
@@ -266,6 +337,7 @@ test("tasks.start returns session and run handles from the task start response",
     projectId: "project-1",
     environmentId: "env-1",
     externalId: "case-123",
+    workspaceId: "workspace-1",
     idempotencyKey: key,
     idempotencyKeyTTL: "24h",
     expiresAt: "2026-04-21T00:00:00Z",
@@ -281,6 +353,7 @@ test("tasks.start returns session and run handles from the task start response",
       idempotency_key: key.value,
       idempotency_key_ttl: "24h",
       expires_at: "2026-04-21T00:00:00.000Z",
+      workspace_id: "workspace-1",
     },
   })
   expect(started.run).toEqual({ id: "run-1", taskId: "inspect" })
@@ -2191,6 +2264,81 @@ function taskSessionFixture(overrides: Partial<{
     metadata: {},
     tags: [],
     expires_at: null,
+    created_at: "2026-04-20T00:00:00Z",
+    updated_at: "2026-04-20T00:00:00Z",
+    ...overrides,
+  }
+}
+
+function workspaceFixture(overrides: Partial<{
+  readonly id: string
+  readonly project_id: string
+  readonly environment_id: string
+  readonly deployment_sandbox_id: string
+  readonly sandbox_id: string
+  readonly sandbox_fingerprint: string
+  readonly external_id: string
+  readonly current_version_id: string | null
+  readonly state: string
+  readonly desired_state: string
+  readonly dirty_state: string
+  readonly last_materialization_id: string | null
+  readonly metadata: Record<string, unknown>
+  readonly tags: readonly string[]
+  readonly last_activity_at: string
+  readonly created_at: string
+  readonly updated_at: string
+}> = {}) {
+  return {
+    id: "workspace-1",
+    project_id: "project-1",
+    environment_id: "env-1",
+    deployment_sandbox_id: "sandbox-deployment-1",
+    sandbox_id: "sandbox-1",
+    sandbox_fingerprint: "sandbox-fingerprint-1",
+    current_version_id: null,
+    state: "active",
+    desired_state: "active",
+    dirty_state: "clean",
+    last_materialization_id: null,
+    metadata: {},
+    tags: [],
+    last_activity_at: "2026-04-20T00:00:00Z",
+    created_at: "2026-04-20T00:00:00Z",
+    updated_at: "2026-04-20T00:00:00Z",
+    ...overrides,
+  }
+}
+
+function workspaceMaterializationFixture(overrides: Partial<{
+  readonly id: string
+  readonly project_id: string
+  readonly environment_id: string
+  readonly workspace_id: string
+  readonly deployment_sandbox_id: string
+  readonly base_version_id: string | null
+  readonly worker_instance_id: string | null
+  readonly state: string
+  readonly fencing_generation: number
+  readonly dirty_generation: number
+  readonly reservation_expires_at: string | null
+  readonly last_heartbeat_at: string | null
+  readonly created_at: string
+  readonly updated_at: string
+}> = {}) {
+  return {
+    id: "materialization-1",
+    project_id: "project-1",
+    environment_id: "env-1",
+    workspace_id: "workspace-1",
+    deployment_sandbox_id: "sandbox-deployment-1",
+    base_version_id: null,
+    worker_instance_id: null,
+    state: "requested",
+    fencing_generation: 1,
+    dirty_generation: 0,
+    reservation_expires_at: null,
+    last_heartbeat_at: null,
     created_at: "2026-04-20T00:00:00Z",
     updated_at: "2026-04-20T00:00:00Z",
     ...overrides,

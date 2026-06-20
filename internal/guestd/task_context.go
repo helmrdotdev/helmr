@@ -51,8 +51,7 @@ func adapterTaskContextJSON(request *runv0.RunTaskRequest) (string, error) {
 		"task":      map[string]string{"id": request.TaskId},
 		"workspace": workspaceContext,
 		"session": map[string]any{
-			"id":        taskSessionID,
-			"workspace": workspaceContext,
+			"id": taskSessionID,
 		},
 	}
 	encoded, err := json.Marshal(payload)

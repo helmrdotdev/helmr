@@ -112,8 +112,12 @@ type Worker struct {
 	VMVCPUCount                  int64
 	VMMemoryMiB                  int64
 	VMScratchDiskMiB             int64
+	WorkerCapacityVCPUs          int64
+	WorkerCapacityMemoryMiB      int64
 	WorkerDiskMiB                int64
+	WorkerExecutionSlots         int32
 	VMHealthTimeout              time.Duration
+	WorkspaceMaterializeTimeout  time.Duration
 	PollEvery                    time.Duration
 }
 

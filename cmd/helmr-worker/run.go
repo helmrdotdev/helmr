@@ -72,6 +72,7 @@ func run(log *slog.Logger) error {
 		imagesDir = filepath.Join(workDir, "images")
 	}
 	guestImageDir := filepath.Join(imagesDir, "guest", "out")
+	rootfsPath := filepath.Join(guestImageDir, "rootfs.ext4")
 	connector, err := firecracker.NewConnector(firecracker.Config{
 		FirecrackerPath:         cfg.FirecrackerPath,
 		JailerPath:              cfg.JailerPath,
@@ -82,7 +83,7 @@ func run(log *slog.Logger) error {
 		CgroupVersion:           cfg.CgroupVersion,
 		KernelPath:              filepath.Join(guestImageDir, "vmlinuz"),
 		InitramfsPath:           filepath.Join(guestImageDir, "initramfs"),
-		RootfsPath:              filepath.Join(guestImageDir, "rootfs.ext4"),
+		RootfsPath:              rootfsPath,
 		StateDir:                filepath.Join(workDir, "vms", "guest"),
 		CNINetworkName:          cfg.CNINetworkName,
 		CNIProfile:              cfg.CNIProfile,
@@ -127,10 +128,10 @@ func run(log *slog.Logger) error {
 		CNIProfile:              runtimeCapabilities.CNIProfile,
 		Region:                  cfg.WorkerRegion,
 		Labels:                  cfg.WorkerLabels,
-		MaxVCPUs:                runtimeCapabilities.VCPUCount,
-		MaxMemoryMiB:            runtimeCapabilities.MemoryMiB,
+		MaxVCPUs:                cfg.WorkerCapacityVCPUs,
+		MaxMemoryMiB:            cfg.WorkerCapacityMemoryMiB,
 		MaxDiskMiB:              workerDiskMiB,
-		ExecutionSlotsAvailable: 1,
+		ExecutionSlotsAvailable: cfg.WorkerExecutionSlots,
 		Network: api.WorkerNetworkCapabilities{
 			Internet:      true,
 			BlockInternet: true,
@@ -170,10 +171,17 @@ func run(log *slog.Logger) error {
 		worker.WithPollEvery(cfg.PollEvery),
 		worker.WithLogger(log),
 		worker.WithDeploymentBuilder(deployment.Builder{
-			WorkDir:  workDir,
-			CAS:      store,
-			Indexer:  deployment.GuestIndexer{Connector: connector, TempDir: filepath.Join(workDir, "tmp")},
-			Compiler: compiler,
+			WorkDir:      workDir,
+			CAS:          store,
+			Indexer:      deployment.GuestIndexer{Connector: connector, TempDir: filepath.Join(workDir, "tmp")},
+			Compiler:     compiler,
+			ImageBuilder: builder,
+		}),
+		worker.WithMaterializer(executor.WorkspaceMaterializer{
+			Connector:      connector,
+			CAS:            store,
+			TempDir:        filepath.Join(workDir, "tmp"),
+			StartupTimeout: cfg.WorkspaceMaterializeTimeout,
 		}),
 	)
 	if err != nil {

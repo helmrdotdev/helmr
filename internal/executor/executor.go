@@ -124,9 +124,6 @@ func (e Executor) Execute(ctx context.Context, leases api.WorkerRunLeaseProvider
 	}
 	resolved.Bundle = bundle
 	resolved.Workspace.MountPath = workspaceMountPath(bundle)
-	if strings.TrimSpace(resolved.Workspace.VolumeKind) == "" {
-		resolved.Workspace.VolumeKind = workspace.VolumeKind
-	}
 	if err := validateDeploymentTaskMetadata(resolved, bundle); err != nil {
 		return failedResult(err)
 	}
@@ -247,20 +244,19 @@ func workerWorkspaceCommit(base api.WorkerWorkspace, artifact *workspace.Workspa
 	if strings.TrimSpace(base.WriteLeaseID) == "" {
 		return nil, errors.New("workspace write lease is required")
 	}
+	if strings.TrimSpace(base.WriteFencingToken) == "" {
+		return nil, errors.New("workspace write fencing token is required")
+	}
 	mountPath := strings.TrimSpace(base.MountPath)
 	if mountPath == "" {
 		mountPath = "/workspace"
 	}
-	volumeKind := strings.TrimSpace(base.VolumeKind)
-	if volumeKind == "" {
-		volumeKind = workspace.VolumeKind
-	}
 	return &api.WorkerWorkspace{
-		ID:            strings.TrimSpace(base.ID),
-		WriteLeaseID:  strings.TrimSpace(base.WriteLeaseID),
-		BaseVersionID: strings.TrimSpace(base.BaseVersionID),
-		MountPath:     mountPath,
-		VolumeKind:    volumeKind,
+		ID:                strings.TrimSpace(base.ID),
+		WriteLeaseID:      strings.TrimSpace(base.WriteLeaseID),
+		WriteFencingToken: strings.TrimSpace(base.WriteFencingToken),
+		BaseVersionID:     strings.TrimSpace(base.BaseVersionID),
+		MountPath:         mountPath,
 		Artifact: &api.WorkerWorkspaceArtifact{
 			Digest:     artifact.Digest,
 			MediaType:  artifact.MediaType,
@@ -325,16 +321,11 @@ func (e Executor) materializeWorkspaceArtifact(ctx context.Context, base api.Wor
 		cleanup()
 		return workspace.WorkspaceArtifact{}, func() {}, fmt.Errorf("workspace artifact size mismatch: got %d, want %d", size, base.Artifact.SizeBytes)
 	}
-	volumeKind := strings.TrimSpace(base.VolumeKind)
-	if volumeKind == "" {
-		volumeKind = workspace.VolumeKind
-	}
 	return workspace.WorkspaceArtifact{
 		Path:       path,
 		Digest:     strings.TrimSpace(base.Artifact.Digest),
 		MediaType:  strings.TrimSpace(base.Artifact.MediaType),
 		Encoding:   strings.TrimSpace(base.Artifact.Encoding),
-		VolumeKind: volumeKind,
 		SizeBytes:  base.Artifact.SizeBytes,
 		EntryCount: int(base.Artifact.EntryCount),
 	}, cleanup, nil

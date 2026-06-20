@@ -72,12 +72,14 @@ released_concurrency_slots AS (
 ),
 released_workspace_leases AS (
     UPDATE workspace_leases
-       SET released_at = now(),
-           renewed_at = now()
+       SET state = 'released',
+           released_at = now(),
+           renewed_at = now(),
+           updated_at = now()
       FROM abandoned
      WHERE workspace_leases.org_id = $1
-       AND workspace_leases.run_id = abandoned.id
-       AND workspace_leases.mode = 'write'
+       AND workspace_leases.owner_run_id = abandoned.id
+       AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.released_at IS NULL
     RETURNING workspace_leases.id
 ),
@@ -229,10 +231,10 @@ retry_plan AS (
                    ELSE base_delay.base_delay_ms
                  END AS delay_ms
       ) delay
-	     WHERE jsonb_typeof(eligible.locked_retry_policy) = 'object'
-	       AND eligible.previous_status = 'running'
-	       AND eligible.previous_attempt_number < policy.max_attempts
-	),
+         WHERE jsonb_typeof(eligible.locked_retry_policy) = 'object'
+           AND eligible.previous_status = 'running'
+           AND eligible.previous_attempt_number < policy.max_attempts
+    ),
 retry_attempt AS (
     INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status, previous_attempt_id)
     SELECT retry_plan.next_attempt_id,
@@ -452,12 +454,14 @@ released_concurrency_slots AS (
 ),
 released_workspace_leases AS (
     UPDATE workspace_leases
-       SET released_at = now(),
-           renewed_at = now()
+       SET state = 'released',
+           released_at = now(),
+           renewed_at = now(),
+           updated_at = now()
       FROM updated_runs
      WHERE workspace_leases.org_id = $1
-       AND workspace_leases.run_id = updated_runs.run_id
-       AND workspace_leases.mode = 'write'
+       AND workspace_leases.owner_run_id = updated_runs.run_id
+       AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.released_at IS NULL
     RETURNING workspace_leases.id
 ),
@@ -878,17 +882,21 @@ dispatch AS (
            worker_instances.labels,
            worker_instances.runtime_id,
            worker_instances.runtime_arch,
-           worker_instances.runtime_abi,
-           worker_instances.kernel_digest,
-           worker_instances.initramfs_digest,
-           worker_instances.rootfs_digest,
-           worker_instances.cni_profile,
-           worker_instances.worker_group_id,
-           worker_instances.protocol_version,
-           active.used_milli_cpu,
-           active.used_memory_mib,
-           active.used_disk_mib,
-           active.used_slots
+	           worker_instances.runtime_abi,
+	           worker_instances.kernel_digest,
+	           worker_instances.initramfs_digest,
+	           worker_instances.rootfs_digest,
+	           worker_instances.cni_profile,
+	           worker_instances.worker_group_id,
+	           worker_instances.protocol_version,
+	           active.used_milli_cpu,
+	           active.used_memory_mib,
+	           active.used_disk_mib,
+	           active.used_slots,
+	           active_materializations.used_milli_cpu AS used_materialization_milli_cpu,
+	           active_materializations.used_memory_mib AS used_materialization_memory_mib,
+	           active_materializations.used_disk_mib AS used_materialization_disk_mib,
+	           active_materializations.used_slots AS used_materialization_slots
       FROM locked_dispatch
       JOIN locked_worker_instance AS worker_instances ON worker_instances.id = locked_dispatch.reserved_by_worker_instance_id
       LEFT JOIN LATERAL (
@@ -902,11 +910,36 @@ dispatch AS (
            WHERE run_leases.worker_instance_id = worker_instances.id
              AND run_leases.status IN ('leased', 'running')
       ) active ON true
+      LEFT JOIN LATERAL (
+          SELECT COALESCE(sum(workspace_materializations.reserved_cpu_millis), 0)::bigint AS used_milli_cpu,
+                 COALESCE(sum(workspace_materializations.reserved_memory_mib), 0)::bigint AS used_memory_mib,
+                 COALESCE(sum(workspace_materializations.reserved_disk_mib), 0)::bigint AS used_disk_mib,
+                 COALESCE(sum(workspace_materializations.reserved_execution_slots), 0)::int AS used_slots
+            FROM workspace_materializations
+           WHERE workspace_materializations.worker_instance_id = worker_instances.id
+             AND workspace_materializations.state IN ('materializing', 'restoring', 'running', 'pausing', 'paused', 'capturing', 'stopping')
+             AND (
+                 workspace_materializations.state NOT IN ('materializing', 'restoring')
+                 OR workspace_materializations.reservation_expires_at IS NULL
+                 OR workspace_materializations.reservation_expires_at > now()
+             )
+             AND NOT EXISTS (
+                 SELECT 1
+                   FROM runs
+                   JOIN run_leases ON run_leases.org_id = runs.org_id
+                                  AND run_leases.run_id = runs.id
+                  WHERE runs.org_id = workspace_materializations.org_id
+                    AND runs.workspace_materialization_id = workspace_materializations.id
+                    AND run_leases.worker_instance_id = worker_instances.id
+                    AND run_leases.status IN ('leased', 'running')
+             )
+      ) active_materializations ON true
 ),
 candidate AS (
     SELECT runs.id,
            runs.project_id,
            runs.environment_id,
+           runs.workspace_id,
            runs.trace_id,
            runs.root_span_id,
            runs.latest_checkpoint_id,
@@ -945,10 +978,6 @@ candidate AS (
        )
        AND deployments.worker_protocol_version = dispatch.protocol_version
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
-       AND run_runtime_requirements.requested_milli_cpu <= GREATEST(dispatch.available_milli_cpu - dispatch.used_milli_cpu, 0)
-       AND run_runtime_requirements.requested_memory_mib <= GREATEST(dispatch.available_memory_mib - dispatch.used_memory_mib, 0)
-       AND run_runtime_requirements.requested_disk_mib <= GREATEST(dispatch.available_disk_mib - dispatch.used_disk_mib, 0)
-       AND run_runtime_requirements.requested_execution_slots <= GREATEST(dispatch.available_execution_slots - dispatch.used_slots, 0)
        AND run_runtime_requirements.worker_group_id = dispatch.worker_group_id
        AND run_runtime_requirements.runtime_id = dispatch.runtime_id
        AND run_runtime_requirements.runtime_arch = dispatch.runtime_arch
@@ -1004,38 +1033,146 @@ candidate AS (
        )
      FOR UPDATE OF runs
 ),
-concurrency_scope_lock AS MATERIALIZED (
+workspace_candidate AS (
     SELECT candidate.id AS run_id,
-           true AS locked
+           candidate.project_id,
+           candidate.environment_id,
+           workspaces.id AS workspace_id,
+           workspaces.deployment_sandbox_id,
+           workspaces.sandbox_fingerprint,
+           workspaces.current_version_id AS workspace_base_version_id,
+           deployment_sandboxes.workspace_mount_path AS workspace_mount_path,
+           current_workspace_version.artifact_encoding AS workspace_artifact_encoding,
+           current_workspace_version.artifact_entry_count AS workspace_artifact_entry_count,
+           current_workspace_version.artifact_id AS workspace_artifact_id,
+           deployment_sandboxes.image_artifact_id,
+           deployment_sandboxes.image_artifact_format,
+           deployment_sandboxes.image_digest,
+           deployment_sandboxes.image_format,
+           workspace_artifact.digest AS workspace_artifact_digest,
+           workspace_artifact.size_bytes AS workspace_artifact_size_bytes,
+           workspace_artifact.media_type AS workspace_artifact_media_type,
+           deployment_sandboxes.rootfs_digest,
+           deployment_sandboxes.runtime_abi AS deployment_sandbox_runtime_abi,
+           deployment_sandboxes.guestd_abi,
+           deployment_sandboxes.adapter_abi,
+           run_runtime_requirements.requested_milli_cpu,
+           run_runtime_requirements.requested_memory_mib,
+           run_runtime_requirements.requested_disk_mib,
+           run_runtime_requirements.requested_execution_slots,
+           run_runtime_requirements.runtime_id
       FROM candidate
+      JOIN workspaces ON workspaces.org_id = $1
+                     AND workspaces.project_id = candidate.project_id
+                     AND workspaces.environment_id = candidate.environment_id
+                     AND workspaces.id = candidate.workspace_id
+                     AND workspaces.state = 'active'
+      JOIN deployment_sandboxes
+        ON deployment_sandboxes.org_id = workspaces.org_id
+       AND deployment_sandboxes.project_id = workspaces.project_id
+       AND deployment_sandboxes.environment_id = workspaces.environment_id
+       AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
+      JOIN run_runtime_requirements ON run_runtime_requirements.org_id = $1
+                                    AND run_runtime_requirements.run_id = candidate.id
+      JOIN workspace_versions AS current_workspace_version
+        ON current_workspace_version.org_id = workspaces.org_id
+       AND current_workspace_version.workspace_id = workspaces.id
+       AND current_workspace_version.id = workspaces.current_version_id
+       AND current_workspace_version.state = 'ready'
+      JOIN artifacts AS workspace_artifact
+        ON workspace_artifact.org_id = workspaces.org_id
+       AND workspace_artifact.project_id = workspaces.project_id
+       AND workspace_artifact.environment_id = workspaces.environment_id
+       AND workspace_artifact.id = current_workspace_version.artifact_id
+       AND workspace_artifact.kind = 'workspace_version'
+       AND workspace_artifact.media_type = 'application/vnd.helmr.workspace.v0.tar'
+      JOIN artifacts AS image_artifact
+        ON image_artifact.org_id = deployment_sandboxes.org_id
+       AND image_artifact.project_id = deployment_sandboxes.project_id
+       AND image_artifact.environment_id = deployment_sandboxes.environment_id
+       AND image_artifact.id = deployment_sandboxes.image_artifact_id
+       AND image_artifact.kind = 'sandbox_image'
+       AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
+),
+existing_workspace_materialization AS (
+    SELECT workspace_materializations.id,
+	           workspace_materializations.org_id,
+	           workspace_materializations.project_id,
+	           workspace_materializations.environment_id,
+	           workspace_materializations.workspace_id,
+	           workspace_materializations.fencing_generation,
+	           workspace_materializations.reserved_cpu_millis,
+	           workspace_materializations.reserved_memory_mib,
+	           workspace_materializations.reserved_disk_mib,
+	           workspace_materializations.reserved_execution_slots
+      FROM workspace_candidate
+      JOIN workspace_materializations
+        ON workspace_materializations.org_id = $1
+       AND workspace_materializations.project_id = workspace_candidate.project_id
+       AND workspace_materializations.environment_id = workspace_candidate.environment_id
+       AND workspace_materializations.workspace_id = workspace_candidate.workspace_id
+       AND workspace_materializations.worker_instance_id = $3
+       AND workspace_materializations.state = 'running'
+       AND workspace_materializations.reservation_expires_at > now()
+),
+workspace_materialization AS (
+    SELECT id, org_id, project_id, environment_id, workspace_id, fencing_generation, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots FROM existing_workspace_materialization
+),
+workspace_ready_candidate AS (
+    SELECT candidate.id, candidate.project_id, candidate.environment_id, candidate.workspace_id, candidate.trace_id, candidate.root_span_id, candidate.latest_checkpoint_id, candidate.task_session_id, candidate.queue_name, candidate.queue_concurrency_limit, candidate.concurrency_key, candidate.current_attempt_id, candidate.current_attempt_number, candidate.runtime_id
+      FROM candidate
+      JOIN dispatch ON dispatch.run_id = candidate.id
+      JOIN workspace_candidate ON workspace_candidate.run_id = candidate.id
+      JOIN workspace_materialization
+        ON workspace_materialization.org_id = $1
+       AND workspace_materialization.project_id = workspace_candidate.project_id
+       AND workspace_materialization.environment_id = workspace_candidate.environment_id
+       AND workspace_materialization.workspace_id = workspace_candidate.workspace_id
+     WHERE workspace_candidate.requested_milli_cpu <= GREATEST(dispatch.available_milli_cpu - dispatch.used_milli_cpu - dispatch.used_materialization_milli_cpu + workspace_materialization.reserved_cpu_millis, 0)
+       AND workspace_candidate.requested_memory_mib <= GREATEST(dispatch.available_memory_mib - dispatch.used_memory_mib - dispatch.used_materialization_memory_mib + workspace_materialization.reserved_memory_mib, 0)
+       AND workspace_candidate.requested_disk_mib <= GREATEST(dispatch.available_disk_mib - dispatch.used_disk_mib - dispatch.used_materialization_disk_mib + workspace_materialization.reserved_disk_mib, 0)
+       AND workspace_candidate.requested_execution_slots <= GREATEST(dispatch.available_execution_slots - dispatch.used_slots - dispatch.used_materialization_slots + workspace_materialization.reserved_execution_slots, 0)
+       AND NOT EXISTS (
+               SELECT 1
+                 FROM workspace_leases
+            WHERE workspace_leases.org_id = workspace_materialization.org_id
+              AND workspace_leases.workspace_id = workspace_materialization.workspace_id
+              AND workspace_leases.lease_kind = 'write'
+              AND workspace_leases.state IN ('active', 'releasing')
+       )
+),
+concurrency_scope_lock AS MATERIALIZED (
+    SELECT workspace_ready_candidate.id AS run_id,
+           true AS locked
+      FROM workspace_ready_candidate
       CROSS JOIN LATERAL (
           SELECT pg_advisory_xact_lock(
-                     hashtext($1::text || ':' || candidate.environment_id::text),
-                     hashtext(candidate.queue_name || ':' || COALESCE(candidate.concurrency_key, ''))
+                     hashtext($1::text || ':' || workspace_ready_candidate.environment_id::text),
+                     hashtext(workspace_ready_candidate.queue_name || ':' || COALESCE(workspace_ready_candidate.concurrency_key, ''))
                  )
       ) lock
-     WHERE candidate.queue_concurrency_limit IS NOT NULL
+     WHERE workspace_ready_candidate.queue_concurrency_limit IS NOT NULL
 ),
 concurrency_capacity AS (
-    SELECT candidate.id, candidate.project_id, candidate.environment_id, candidate.trace_id, candidate.root_span_id, candidate.latest_checkpoint_id, candidate.task_session_id, candidate.queue_name, candidate.queue_concurrency_limit, candidate.concurrency_key, candidate.current_attempt_id, candidate.current_attempt_number, candidate.runtime_id
-      FROM candidate
-      LEFT JOIN concurrency_scope_lock ON concurrency_scope_lock.run_id = candidate.id
-     WHERE candidate.queue_concurrency_limit IS NULL
+    SELECT workspace_ready_candidate.id, workspace_ready_candidate.project_id, workspace_ready_candidate.environment_id, workspace_ready_candidate.workspace_id, workspace_ready_candidate.trace_id, workspace_ready_candidate.root_span_id, workspace_ready_candidate.latest_checkpoint_id, workspace_ready_candidate.task_session_id, workspace_ready_candidate.queue_name, workspace_ready_candidate.queue_concurrency_limit, workspace_ready_candidate.concurrency_key, workspace_ready_candidate.current_attempt_id, workspace_ready_candidate.current_attempt_number, workspace_ready_candidate.runtime_id
+      FROM workspace_ready_candidate
+      LEFT JOIN concurrency_scope_lock ON concurrency_scope_lock.run_id = workspace_ready_candidate.id
+     WHERE workspace_ready_candidate.queue_concurrency_limit IS NULL
         OR (
             concurrency_scope_lock.locked
             AND (
                 SELECT count(*)::int
-                  FROM run_queue_concurrency_leases
-                 WHERE run_queue_concurrency_leases.org_id = $1
-                   AND run_queue_concurrency_leases.environment_id = candidate.environment_id
-                   AND run_queue_concurrency_leases.queue_name = candidate.queue_name
-                   AND COALESCE(run_queue_concurrency_leases.concurrency_key, '') = COALESCE(candidate.concurrency_key, '')
-                   AND run_queue_concurrency_leases.released_at IS NULL
-            ) < candidate.queue_concurrency_limit
+                 FROM run_queue_concurrency_leases
+                WHERE run_queue_concurrency_leases.org_id = $1
+                  AND run_queue_concurrency_leases.environment_id = workspace_ready_candidate.environment_id
+                  AND run_queue_concurrency_leases.queue_name = workspace_ready_candidate.queue_name
+                  AND COALESCE(run_queue_concurrency_leases.concurrency_key, '') = COALESCE(workspace_ready_candidate.concurrency_key, '')
+                  AND run_queue_concurrency_leases.released_at IS NULL
+            ) < workspace_ready_candidate.queue_concurrency_limit
         )
 ),
 concurrency_slot_candidate AS (
-    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.trace_id, concurrency_capacity.root_span_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.task_session_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.current_attempt_id, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id,
+    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.workspace_id, concurrency_capacity.trace_id, concurrency_capacity.root_span_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.task_session_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.current_attempt_id, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id,
            slots.slot_ordinal
       FROM concurrency_capacity
       CROSS JOIN LATERAL generate_series(1, concurrency_capacity.queue_concurrency_limit) AS slots(slot_ordinal)
@@ -1077,85 +1214,106 @@ concurrency_slot AS (
     RETURNING id
 ),
 leaseable_capacity AS (
-    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.trace_id, concurrency_capacity.root_span_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.task_session_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.current_attempt_id, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id
+    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.workspace_id, concurrency_capacity.trace_id, concurrency_capacity.root_span_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.task_session_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.current_attempt_id, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id
       FROM concurrency_capacity
      WHERE concurrency_capacity.queue_concurrency_limit IS NULL
     UNION ALL
-    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.trace_id, concurrency_capacity.root_span_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.task_session_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.current_attempt_id, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id
+    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.workspace_id, concurrency_capacity.trace_id, concurrency_capacity.root_span_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.task_session_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.current_attempt_id, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id
       FROM concurrency_capacity
      WHERE concurrency_capacity.queue_concurrency_limit IS NOT NULL
        AND EXISTS (SELECT 1 FROM concurrency_slot)
 ),
-workspace_candidate AS (
-    SELECT leaseable_capacity.id AS run_id,
-           workspaces.id AS workspace_id,
-           workspaces.current_version_id AS workspace_base_version_id,
-           workspaces.mount_path AS workspace_mount_path,
-           current_workspace_version.artifact_encoding AS workspace_artifact_encoding,
-           current_workspace_version.artifact_entry_count AS workspace_artifact_entry_count,
-           current_workspace_version.volume_kind AS workspace_volume_kind,
-           workspace_artifact.digest AS workspace_artifact_digest,
-           workspace_artifact.size_bytes AS workspace_artifact_size_bytes,
-           workspace_artifact.media_type AS workspace_artifact_media_type
-      FROM leaseable_capacity
-      JOIN workspaces ON workspaces.org_id = $1
-                     AND workspaces.project_id = leaseable_capacity.project_id
-                     AND workspaces.environment_id = leaseable_capacity.environment_id
-                     AND workspaces.task_session_id = leaseable_capacity.task_session_id
-                     AND workspaces.state = 'active'
-      LEFT JOIN workspace_versions AS current_workspace_version
-        ON current_workspace_version.org_id = workspaces.org_id
-       AND current_workspace_version.workspace_id = workspaces.id
-       AND current_workspace_version.id = workspaces.current_version_id
-       AND current_workspace_version.state = 'active'
-      LEFT JOIN artifacts AS workspace_artifact
-        ON workspace_artifact.org_id = workspaces.org_id
-       AND workspace_artifact.project_id = workspaces.project_id
-       AND workspace_artifact.environment_id = workspaces.environment_id
-       AND workspace_artifact.id = current_workspace_version.artifact_id
-     WHERE (
-           workspaces.current_version_id IS NULL
-           OR (
-               current_workspace_version.id IS NOT NULL
-               AND current_workspace_version.artifact_id IS NOT NULL
-               AND workspace_artifact.id IS NOT NULL
-           )
+fenced_workspace_materialization AS (
+    UPDATE workspace_materializations
+       SET fencing_generation = workspace_materializations.fencing_generation + 1,
+           updated_at = now()
+      FROM workspace_materialization
+      JOIN workspace_candidate
+        ON workspace_candidate.project_id = workspace_materialization.project_id
+       AND workspace_candidate.environment_id = workspace_materialization.environment_id
+       AND workspace_candidate.workspace_id = workspace_materialization.workspace_id
+      JOIN leaseable_capacity
+        ON leaseable_capacity.id = workspace_candidate.run_id
+     WHERE workspace_materializations.org_id = workspace_materialization.org_id
+       AND workspace_materializations.project_id = workspace_materialization.project_id
+       AND workspace_materializations.environment_id = workspace_materialization.environment_id
+       AND workspace_materializations.workspace_id = workspace_materialization.workspace_id
+       AND workspace_materializations.id = workspace_materialization.id
+       AND workspace_materializations.fencing_generation = workspace_materialization.fencing_generation
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_leases
+            WHERE workspace_leases.org_id = workspace_materialization.org_id
+              AND workspace_leases.workspace_id = workspace_materialization.workspace_id
+              AND workspace_leases.lease_kind = 'write'
+              AND workspace_leases.state IN ('active', 'releasing')
        )
+    RETURNING workspace_materializations.id,
+              workspace_materializations.org_id,
+              workspace_materializations.project_id,
+              workspace_materializations.environment_id,
+              workspace_materializations.workspace_id,
+              workspace_materializations.fencing_generation
 ),
 workspace_write_lease AS (
     INSERT INTO workspace_leases (
         org_id,
+        project_id,
+        environment_id,
         workspace_id,
-        run_id,
+        materialization_id,
+        lease_kind,
+        state,
+        owner_run_id,
         base_version_id,
-        mode,
+        acquired_version_id,
+        acquired_fencing_generation,
+        fencing_token,
+        heartbeat_token,
         expires_at
     )
     SELECT $1,
+           workspace_candidate.project_id,
+           workspace_candidate.environment_id,
            workspace_candidate.workspace_id,
+           fenced_workspace_materialization.id,
+           'write',
+           'active',
            workspace_candidate.run_id,
            workspace_candidate.workspace_base_version_id,
-           'write',
+           workspace_candidate.workspace_base_version_id,
+           fenced_workspace_materialization.fencing_generation,
+           uuidv7()::text,
+           uuidv7()::text,
            $6
-      FROM workspace_candidate
+      FROM leaseable_capacity
+      JOIN workspace_candidate ON workspace_candidate.run_id = leaseable_capacity.id
+      JOIN fenced_workspace_materialization ON fenced_workspace_materialization.workspace_id = workspace_candidate.workspace_id
     ON CONFLICT DO NOTHING
-    RETURNING id, workspace_id, run_id
+    RETURNING id, workspace_id, materialization_id, owner_run_id, fencing_token
+),
+released_concurrency_slot_without_workspace AS (
+    UPDATE run_queue_concurrency_leases
+       SET released_at = now()
+      FROM concurrency_slot
+     WHERE run_queue_concurrency_leases.id = concurrency_slot.id
+       AND NOT EXISTS (SELECT 1 FROM workspace_write_lease)
+    RETURNING run_queue_concurrency_leases.id
 ),
 leaseable_workspace AS (
-    SELECT leaseable_capacity.id, leaseable_capacity.project_id, leaseable_capacity.environment_id, leaseable_capacity.trace_id, leaseable_capacity.root_span_id, leaseable_capacity.latest_checkpoint_id, leaseable_capacity.task_session_id, leaseable_capacity.queue_name, leaseable_capacity.queue_concurrency_limit, leaseable_capacity.concurrency_key, leaseable_capacity.current_attempt_id, leaseable_capacity.current_attempt_number, leaseable_capacity.runtime_id,
-           workspace_candidate.workspace_id,
+    SELECT leaseable_capacity.id, leaseable_capacity.project_id, leaseable_capacity.environment_id, leaseable_capacity.workspace_id, leaseable_capacity.trace_id, leaseable_capacity.root_span_id, leaseable_capacity.latest_checkpoint_id, leaseable_capacity.task_session_id, leaseable_capacity.queue_name, leaseable_capacity.queue_concurrency_limit, leaseable_capacity.concurrency_key, leaseable_capacity.current_attempt_id, leaseable_capacity.current_attempt_number, leaseable_capacity.runtime_id,
            workspace_write_lease.id AS workspace_lease_id,
+           workspace_write_lease.fencing_token AS workspace_fencing_token,
            workspace_candidate.workspace_base_version_id,
            workspace_candidate.workspace_mount_path,
            workspace_candidate.workspace_artifact_digest,
            workspace_candidate.workspace_artifact_size_bytes,
            workspace_candidate.workspace_artifact_media_type,
            workspace_candidate.workspace_artifact_encoding,
-           workspace_candidate.workspace_artifact_entry_count,
-           workspace_candidate.workspace_volume_kind
+           workspace_candidate.workspace_artifact_entry_count
       FROM leaseable_capacity
       LEFT JOIN workspace_candidate ON workspace_candidate.run_id = leaseable_capacity.id
-      LEFT JOIN workspace_write_lease ON workspace_write_lease.run_id = leaseable_capacity.id
+      LEFT JOIN workspace_write_lease ON workspace_write_lease.owner_run_id = leaseable_capacity.id
                                   AND workspace_write_lease.workspace_id = workspace_candidate.workspace_id
      WHERE workspace_write_lease.id IS NOT NULL
 ),
@@ -1245,11 +1403,12 @@ updated AS (
        SET status = 'running',
            execution_status = 'leased',
            current_run_lease_id = (SELECT id FROM leased_run_lease),
+           workspace_materialization_id = (SELECT materialization_id FROM workspace_write_lease),
            state_version = state_version + 1,
            updated_at = now()
      WHERE id = (SELECT id FROM leaseable_workspace)
       AND EXISTS (SELECT 1 FROM leased_run_lease)
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, task_session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, usage_duration_ms, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_run_lease_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_materialization_id, deployment_version, api_version, sdk_version, cli_version, task_id, task_session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, usage_duration_ms, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_run_lease_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 ),
 updated_attempt AS (
     UPDATE run_attempts
@@ -1293,11 +1452,11 @@ SELECT
     updated.api_version AS run_api_version,
     updated.sdk_version AS run_sdk_version,
     updated.cli_version AS run_cli_version,
-	    updated.status,
-	    updated.payload,
-	    updated.current_attempt_id,
-	    updated.state_version,
-	    deployment_tasks.id AS deployment_task_id,
+        updated.status,
+        updated.payload,
+        updated.current_attempt_id,
+        updated.state_version,
+        deployment_tasks.id AS deployment_task_id,
     deployment_tasks.file_path AS deployment_task_file_path,
     deployment_tasks.export_name AS deployment_task_export_name,
     deployment_tasks.handler_entrypoint AS deployment_task_handler_entrypoint,
@@ -1345,14 +1504,14 @@ SELECT
     active_time.active_duration_ms AS active_duration_ms,
     leaseable_workspace.workspace_id AS workspace_id,
     leaseable_workspace.workspace_lease_id AS workspace_lease_id,
+    leaseable_workspace.workspace_fencing_token AS workspace_fencing_token,
     leaseable_workspace.workspace_base_version_id AS workspace_base_version_id,
     leaseable_workspace.workspace_mount_path AS workspace_mount_path,
     leaseable_workspace.workspace_artifact_digest AS workspace_artifact_digest,
     leaseable_workspace.workspace_artifact_size_bytes AS workspace_artifact_size_bytes,
     leaseable_workspace.workspace_artifact_media_type AS workspace_artifact_media_type,
     leaseable_workspace.workspace_artifact_encoding AS workspace_artifact_encoding,
-    leaseable_workspace.workspace_artifact_entry_count AS workspace_artifact_entry_count,
-    leaseable_workspace.workspace_volume_kind AS workspace_volume_kind
+    leaseable_workspace.workspace_artifact_entry_count AS workspace_artifact_entry_count
 FROM updated
 JOIN leased_run_lease ON true
 JOIN leased_snapshot ON true
@@ -1456,6 +1615,7 @@ type LeaseRunLeaseRow struct {
 	ActiveDurationMs                  int64              `json:"active_duration_ms"`
 	WorkspaceID                       pgtype.UUID        `json:"workspace_id"`
 	WorkspaceLeaseID                  pgtype.UUID        `json:"workspace_lease_id"`
+	WorkspaceFencingToken             pgtype.Text        `json:"workspace_fencing_token"`
 	WorkspaceBaseVersionID            pgtype.UUID        `json:"workspace_base_version_id"`
 	WorkspaceMountPath                pgtype.Text        `json:"workspace_mount_path"`
 	WorkspaceArtifactDigest           pgtype.Text        `json:"workspace_artifact_digest"`
@@ -1463,7 +1623,6 @@ type LeaseRunLeaseRow struct {
 	WorkspaceArtifactMediaType        pgtype.Text        `json:"workspace_artifact_media_type"`
 	WorkspaceArtifactEncoding         pgtype.Text        `json:"workspace_artifact_encoding"`
 	WorkspaceArtifactEntryCount       pgtype.Int4        `json:"workspace_artifact_entry_count"`
-	WorkspaceVolumeKind               pgtype.Text        `json:"workspace_volume_kind"`
 }
 
 func (q *Queries) LeaseRunLease(ctx context.Context, arg LeaseRunLeaseParams) (LeaseRunLeaseRow, error) {
@@ -1542,6 +1701,7 @@ func (q *Queries) LeaseRunLease(ctx context.Context, arg LeaseRunLeaseParams) (L
 		&i.ActiveDurationMs,
 		&i.WorkspaceID,
 		&i.WorkspaceLeaseID,
+		&i.WorkspaceFencingToken,
 		&i.WorkspaceBaseVersionID,
 		&i.WorkspaceMountPath,
 		&i.WorkspaceArtifactDigest,
@@ -1549,7 +1709,6 @@ func (q *Queries) LeaseRunLease(ctx context.Context, arg LeaseRunLeaseParams) (L
 		&i.WorkspaceArtifactMediaType,
 		&i.WorkspaceArtifactEncoding,
 		&i.WorkspaceArtifactEntryCount,
-		&i.WorkspaceVolumeKind,
 	)
 	return i, err
 }
@@ -1621,12 +1780,11 @@ eligible AS (
                $8::uuid IS NOT NULL
                AND $9::text IS NOT NULL
                AND $10::bigint IS NOT NULL
-               AND $11::text IS NOT NULL
-               AND $12::text IS NOT NULL
-               AND $13::int IS NOT NULL
-               AND $14::text IS NOT NULL
-               AND $15::text IS NOT NULL
-               AND NOT EXISTS (
+                   AND $11::text IS NOT NULL
+                   AND $12::text IS NOT NULL
+                   AND $13::int IS NOT NULL
+                   AND $14::text IS NOT NULL
+                   AND NOT EXISTS (
                    SELECT 1
                      FROM cas_objects
                     WHERE cas_objects.digest = $9::text
@@ -1646,9 +1804,10 @@ eligible AS (
                      JOIN workspace_leases
                        ON workspace_leases.org_id = workspaces.org_id
                       AND workspace_leases.workspace_id = workspaces.id
-                      AND workspace_leases.run_id = runs.id
+                      AND workspace_leases.owner_run_id = runs.id
                       AND workspace_leases.id = $8::uuid
-                      AND workspace_leases.mode = 'write'
+                      AND workspace_leases.fencing_token = $15::text
+                      AND workspace_leases.lease_kind = 'write'
                       AND workspace_leases.base_version_id IS NOT DISTINCT FROM $16::uuid
                       AND workspace_leases.released_at IS NULL
                       AND workspace_leases.expires_at > now()
@@ -1831,7 +1990,7 @@ released AS (
                              AND retry_attempt.run_id = retry_plan.run_id
      WHERE runs.org_id = eligible.org_id
        AND runs.id = eligible.run_id
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.task_session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.usage_duration_ms, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_materialization_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.task_session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.usage_duration_ms, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
 ),
 released_session_run AS (
     UPDATE task_session_runs
@@ -1847,7 +2006,7 @@ released_session_run AS (
     RETURNING task_session_runs.id
 ),
 released_with_result_size AS (
-    SELECT released.id, released.org_id, released.project_id, released.environment_id, released.deployment_id, released.deployment_task_id, released.deployment_version, released.api_version, released.sdk_version, released.cli_version, released.task_id, released.task_session_id, released.schedule_id, released.schedule_instance_id, released.scheduled_at, released.status, released.execution_status, released.terminal_outcome, released.payload, released.output, released.metadata, released.tags, released.locked_retry_policy, released.queue_name, released.queue_concurrency_limit, released.concurrency_key, released.priority, released.queue_timestamp, released.ttl, released.queued_expires_at, released.max_duration_seconds, released.usage_duration_ms, released.trace_id, released.root_span_id, released.state_version, released.current_attempt_id, released.current_attempt_number, released.current_run_lease_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at,
+    SELECT released.id, released.org_id, released.project_id, released.environment_id, released.deployment_id, released.deployment_task_id, released.workspace_id, released.workspace_materialization_id, released.deployment_version, released.api_version, released.sdk_version, released.cli_version, released.task_id, released.task_session_id, released.schedule_id, released.schedule_instance_id, released.scheduled_at, released.status, released.execution_status, released.terminal_outcome, released.payload, released.output, released.metadata, released.tags, released.locked_retry_policy, released.queue_name, released.queue_concurrency_limit, released.concurrency_key, released.priority, released.queue_timestamp, released.ttl, released.queued_expires_at, released.max_duration_seconds, released.usage_duration_ms, released.trace_id, released.root_span_id, released.state_version, released.current_attempt_id, released.current_attempt_number, released.current_run_lease_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at,
            CASE WHEN released.output IS NULL THEN NULL ELSE octet_length(released.output::text) END AS output_json_bytes
       FROM released
       LEFT JOIN retry_plan ON retry_plan.run_id = released.id
@@ -1913,9 +2072,7 @@ workspace_commit_input AS (
            $10::bigint AS artifact_size_bytes,
            $11::text AS artifact_media_type,
            $12::text AS artifact_encoding,
-           $13::int AS artifact_entry_count,
-           $14::text AS mount_path,
-           $15::text AS volume_kind
+           $13::int AS artifact_entry_count
       FROM released
       JOIN effective_release ON effective_release.run_id = released.id
       JOIN released_task_session ON released_task_session.id = released.task_session_id
@@ -1924,14 +2081,15 @@ workspace_commit_input AS (
         ON workspaces.org_id = released.org_id
        AND workspaces.project_id = released.project_id
        AND workspaces.environment_id = released.environment_id
-       AND workspaces.task_session_id = released.task_session_id
+       AND workspaces.id = released.workspace_id
        AND workspaces.state = 'active'
       JOIN workspace_leases
         ON workspace_leases.org_id = workspaces.org_id
        AND workspace_leases.workspace_id = workspaces.id
-       AND workspace_leases.run_id = released.id
+       AND workspace_leases.owner_run_id = released.id
        AND workspace_leases.id = $8::uuid
-       AND workspace_leases.mode = 'write'
+       AND workspace_leases.fencing_token = $15::text
+       AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.base_version_id IS NOT DISTINCT FROM $16::uuid
        AND workspace_leases.released_at IS NULL
      WHERE effective_release.run_status = 'succeeded'
@@ -1987,13 +2145,17 @@ published_workspace_version AS (
         project_id,
         environment_id,
         workspace_id,
-        base_version_id,
+        parent_version_id,
+        source_write_lease_id,
+        kind,
+        state,
         artifact_id,
         artifact_encoding,
         artifact_entry_count,
-        mount_path,
-        volume_kind,
-        produced_by_run_id
+        content_digest,
+        size_bytes,
+        produced_by_run_id,
+        promoted_at
     )
     SELECT workspace_commit_input.workspace_version_id,
            workspace_commit_input.org_id,
@@ -2001,37 +2163,44 @@ published_workspace_version AS (
            workspace_commit_input.environment_id,
            workspace_commit_input.workspace_id,
            workspace_commit_input.base_version_id,
+           workspace_commit_input.workspace_lease_id,
+           'user',
+           'ready',
            workspace_commit_input.artifact_id,
            workspace_commit_input.artifact_encoding,
            workspace_commit_input.artifact_entry_count,
-           workspace_commit_input.mount_path,
-           workspace_commit_input.volume_kind,
-           workspace_commit_input.run_id
+           workspace_commit_input.artifact_digest,
+           workspace_commit_input.artifact_size_bytes,
+           workspace_commit_input.run_id,
+           now()
       FROM workspace_commit_input
       JOIN inserted_workspace_artifact ON inserted_workspace_artifact.id = workspace_commit_input.artifact_id
-    RETURNING id, org_id, workspace_id, base_version_id
+    RETURNING id, org_id, workspace_id, parent_version_id
 ),
 advanced_workspace AS (
     UPDATE workspaces
        SET current_version_id = published_workspace_version.id,
-           mount_path = workspace_commit_input.mount_path,
+           dirty_state = 'clean',
+           last_activity_at = now(),
            updated_at = now()
       FROM published_workspace_version
       JOIN workspace_commit_input
         ON workspace_commit_input.workspace_version_id = published_workspace_version.id
      WHERE workspaces.org_id = published_workspace_version.org_id
        AND workspaces.id = published_workspace_version.workspace_id
-       AND workspaces.current_version_id IS NOT DISTINCT FROM published_workspace_version.base_version_id
+       AND workspaces.current_version_id IS NOT DISTINCT FROM published_workspace_version.parent_version_id
     RETURNING workspaces.id
 ),
 released_workspace_lease AS (
     UPDATE workspace_leases
-       SET released_at = now(),
-           renewed_at = now()
+       SET state = 'released',
+           released_at = now(),
+           renewed_at = now(),
+           updated_at = now()
       FROM released
      WHERE workspace_leases.org_id = released.org_id
-       AND workspace_leases.run_id = released.id
-       AND workspace_leases.mode = 'write'
+       AND workspace_leases.owner_run_id = released.id
+       AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.released_at IS NULL
     RETURNING workspace_leases.id
 ),
@@ -2463,7 +2632,7 @@ cleanup AS (
         (SELECT count(*) FROM released_workspace_lease) AS released_workspace_leases
 ),
 idempotent_released AS (
-    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.task_session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.usage_duration_ms, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_materialization_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.task_session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.usage_duration_ms, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
       FROM runs
       JOIN run_leases
         ON run_leases.org_id = runs.org_id
@@ -2511,7 +2680,7 @@ idempotent_released AS (
        AND runs.current_run_lease_id IS NULL
        AND NOT EXISTS (SELECT 1 FROM released)
 )
-SELECT released.id, released.org_id, released.project_id, released.environment_id, released.deployment_id, released.deployment_task_id, released.deployment_version, released.api_version, released.sdk_version, released.cli_version, released.task_id, released.task_session_id, released.schedule_id, released.schedule_instance_id, released.scheduled_at, released.status, released.execution_status, released.terminal_outcome, released.payload, released.output, released.metadata, released.tags, released.locked_retry_policy, released.queue_name, released.queue_concurrency_limit, released.concurrency_key, released.priority, released.queue_timestamp, released.ttl, released.queued_expires_at, released.max_duration_seconds, released.usage_duration_ms, released.trace_id, released.root_span_id, released.state_version, released.current_attempt_id, released.current_attempt_number, released.current_run_lease_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at
+SELECT released.id, released.org_id, released.project_id, released.environment_id, released.deployment_id, released.deployment_task_id, released.workspace_id, released.workspace_materialization_id, released.deployment_version, released.api_version, released.sdk_version, released.cli_version, released.task_id, released.task_session_id, released.schedule_id, released.schedule_instance_id, released.scheduled_at, released.status, released.execution_status, released.terminal_outcome, released.payload, released.output, released.metadata, released.tags, released.locked_retry_policy, released.queue_name, released.queue_concurrency_limit, released.concurrency_key, released.priority, released.queue_timestamp, released.ttl, released.queued_expires_at, released.max_duration_seconds, released.usage_duration_ms, released.trace_id, released.root_span_id, released.state_version, released.current_attempt_id, released.current_attempt_number, released.current_run_lease_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at
   FROM released
   JOIN released_run_lease ON true
   JOIN completed_queue_entry ON true
@@ -2519,7 +2688,7 @@ SELECT released.id, released.org_id, released.project_id, released.environment_i
  WHERE (SELECT terminal_events FROM cleanup) > 0
    AND (SELECT cancelled_waitpoints + released_channel_wait_matches + invalidated_checkpoints + released_concurrency_slots + completed_restore_checkpoints + resolved_restore_waitpoints + terminal_events + retry_decisions + retry_events + event_outboxes + active_time_usage_events + output_usage_events + workspace_versions + advanced_workspaces + released_workspace_leases FROM cleanup) >= 0
 UNION ALL
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, task_session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, usage_duration_ms, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_run_lease_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_materialization_id, deployment_version, api_version, sdk_version, cli_version, task_id, task_session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, usage_duration_ms, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_run_lease_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
   FROM idempotent_released
 `
 
@@ -2538,7 +2707,7 @@ type ReleaseRunLeaseParams struct {
 	WorkspaceArtifactEncoding   pgtype.Text      `json:"workspace_artifact_encoding"`
 	WorkspaceArtifactEntryCount pgtype.Int4      `json:"workspace_artifact_entry_count"`
 	WorkspaceMountPath          pgtype.Text      `json:"workspace_mount_path"`
-	WorkspaceVolumeKind         pgtype.Text      `json:"workspace_volume_kind"`
+	WorkspaceFencingToken       pgtype.Text      `json:"workspace_fencing_token"`
 	WorkspaceBaseVersionID      pgtype.UUID      `json:"workspace_base_version_id"`
 	AttemptStatus               RunAttemptStatus `json:"attempt_status"`
 	ExitCode                    pgtype.Int4      `json:"exit_code"`
@@ -2550,51 +2719,53 @@ type ReleaseRunLeaseParams struct {
 }
 
 type ReleaseRunLeaseRow struct {
-	ID                    pgtype.UUID            `json:"id"`
-	OrgID                 pgtype.UUID            `json:"org_id"`
-	ProjectID             pgtype.UUID            `json:"project_id"`
-	EnvironmentID         pgtype.UUID            `json:"environment_id"`
-	DeploymentID          pgtype.UUID            `json:"deployment_id"`
-	DeploymentTaskID      pgtype.UUID            `json:"deployment_task_id"`
-	DeploymentVersion     string                 `json:"deployment_version"`
-	ApiVersion            string                 `json:"api_version"`
-	SdkVersion            string                 `json:"sdk_version"`
-	CliVersion            string                 `json:"cli_version"`
-	TaskID                string                 `json:"task_id"`
-	TaskSessionID         pgtype.UUID            `json:"task_session_id"`
-	ScheduleID            pgtype.UUID            `json:"schedule_id"`
-	ScheduleInstanceID    pgtype.UUID            `json:"schedule_instance_id"`
-	ScheduledAt           pgtype.Timestamptz     `json:"scheduled_at"`
-	Status                RunStatus              `json:"status"`
-	ExecutionStatus       RunExecutionStatus     `json:"execution_status"`
-	TerminalOutcome       NullRunTerminalOutcome `json:"terminal_outcome"`
-	Payload               []byte                 `json:"payload"`
-	Output                []byte                 `json:"output"`
-	Metadata              []byte                 `json:"metadata"`
-	Tags                  []string               `json:"tags"`
-	LockedRetryPolicy     []byte                 `json:"locked_retry_policy"`
-	QueueName             string                 `json:"queue_name"`
-	QueueConcurrencyLimit pgtype.Int4            `json:"queue_concurrency_limit"`
-	ConcurrencyKey        pgtype.Text            `json:"concurrency_key"`
-	Priority              int32                  `json:"priority"`
-	QueueTimestamp        pgtype.Timestamptz     `json:"queue_timestamp"`
-	Ttl                   string                 `json:"ttl"`
-	QueuedExpiresAt       pgtype.Timestamptz     `json:"queued_expires_at"`
-	MaxDurationSeconds    int32                  `json:"max_duration_seconds"`
-	UsageDurationMs       int64                  `json:"usage_duration_ms"`
-	TraceID               string                 `json:"trace_id"`
-	RootSpanID            string                 `json:"root_span_id"`
-	StateVersion          int64                  `json:"state_version"`
-	CurrentAttemptID      pgtype.UUID            `json:"current_attempt_id"`
-	CurrentAttemptNumber  pgtype.Int4            `json:"current_attempt_number"`
-	CurrentRunLeaseID     pgtype.UUID            `json:"current_run_lease_id"`
-	LatestCheckpointID    pgtype.UUID            `json:"latest_checkpoint_id"`
-	ExitCode              pgtype.Int4            `json:"exit_code"`
-	ErrorMessage          pgtype.Text            `json:"error_message"`
-	CreatedAt             pgtype.Timestamptz     `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz     `json:"updated_at"`
-	StartedAt             pgtype.Timestamptz     `json:"started_at"`
-	FinishedAt            pgtype.Timestamptz     `json:"finished_at"`
+	ID                         pgtype.UUID            `json:"id"`
+	OrgID                      pgtype.UUID            `json:"org_id"`
+	ProjectID                  pgtype.UUID            `json:"project_id"`
+	EnvironmentID              pgtype.UUID            `json:"environment_id"`
+	DeploymentID               pgtype.UUID            `json:"deployment_id"`
+	DeploymentTaskID           pgtype.UUID            `json:"deployment_task_id"`
+	WorkspaceID                pgtype.UUID            `json:"workspace_id"`
+	WorkspaceMaterializationID pgtype.UUID            `json:"workspace_materialization_id"`
+	DeploymentVersion          string                 `json:"deployment_version"`
+	ApiVersion                 string                 `json:"api_version"`
+	SdkVersion                 string                 `json:"sdk_version"`
+	CliVersion                 string                 `json:"cli_version"`
+	TaskID                     string                 `json:"task_id"`
+	TaskSessionID              pgtype.UUID            `json:"task_session_id"`
+	ScheduleID                 pgtype.UUID            `json:"schedule_id"`
+	ScheduleInstanceID         pgtype.UUID            `json:"schedule_instance_id"`
+	ScheduledAt                pgtype.Timestamptz     `json:"scheduled_at"`
+	Status                     RunStatus              `json:"status"`
+	ExecutionStatus            RunExecutionStatus     `json:"execution_status"`
+	TerminalOutcome            NullRunTerminalOutcome `json:"terminal_outcome"`
+	Payload                    []byte                 `json:"payload"`
+	Output                     []byte                 `json:"output"`
+	Metadata                   []byte                 `json:"metadata"`
+	Tags                       []string               `json:"tags"`
+	LockedRetryPolicy          []byte                 `json:"locked_retry_policy"`
+	QueueName                  string                 `json:"queue_name"`
+	QueueConcurrencyLimit      pgtype.Int4            `json:"queue_concurrency_limit"`
+	ConcurrencyKey             pgtype.Text            `json:"concurrency_key"`
+	Priority                   int32                  `json:"priority"`
+	QueueTimestamp             pgtype.Timestamptz     `json:"queue_timestamp"`
+	Ttl                        string                 `json:"ttl"`
+	QueuedExpiresAt            pgtype.Timestamptz     `json:"queued_expires_at"`
+	MaxDurationSeconds         int32                  `json:"max_duration_seconds"`
+	UsageDurationMs            int64                  `json:"usage_duration_ms"`
+	TraceID                    string                 `json:"trace_id"`
+	RootSpanID                 string                 `json:"root_span_id"`
+	StateVersion               int64                  `json:"state_version"`
+	CurrentAttemptID           pgtype.UUID            `json:"current_attempt_id"`
+	CurrentAttemptNumber       pgtype.Int4            `json:"current_attempt_number"`
+	CurrentRunLeaseID          pgtype.UUID            `json:"current_run_lease_id"`
+	LatestCheckpointID         pgtype.UUID            `json:"latest_checkpoint_id"`
+	ExitCode                   pgtype.Int4            `json:"exit_code"`
+	ErrorMessage               pgtype.Text            `json:"error_message"`
+	CreatedAt                  pgtype.Timestamptz     `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz     `json:"updated_at"`
+	StartedAt                  pgtype.Timestamptz     `json:"started_at"`
+	FinishedAt                 pgtype.Timestamptz     `json:"finished_at"`
 }
 
 func (q *Queries) ReleaseRunLease(ctx context.Context, arg ReleaseRunLeaseParams) (ReleaseRunLeaseRow, error) {
@@ -2613,7 +2784,7 @@ func (q *Queries) ReleaseRunLease(ctx context.Context, arg ReleaseRunLeaseParams
 		arg.WorkspaceArtifactEncoding,
 		arg.WorkspaceArtifactEntryCount,
 		arg.WorkspaceMountPath,
-		arg.WorkspaceVolumeKind,
+		arg.WorkspaceFencingToken,
 		arg.WorkspaceBaseVersionID,
 		arg.AttemptStatus,
 		arg.ExitCode,
@@ -2631,6 +2802,8 @@ func (q *Queries) ReleaseRunLease(ctx context.Context, arg ReleaseRunLeaseParams
 		&i.EnvironmentID,
 		&i.DeploymentID,
 		&i.DeploymentTaskID,
+		&i.WorkspaceID,
+		&i.WorkspaceMaterializationID,
 		&i.DeploymentVersion,
 		&i.ApiVersion,
 		&i.SdkVersion,
@@ -2706,8 +2879,8 @@ renewed_workspace_lease AS (
            renewed_at = now()
       FROM renewed_session
      WHERE workspace_leases.org_id = renewed_session.org_id
-       AND workspace_leases.run_id = renewed_session.run_id
-       AND workspace_leases.mode = 'write'
+       AND workspace_leases.owner_run_id = renewed_session.run_id
+       AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.released_at IS NULL
     RETURNING workspace_leases.id
 )
@@ -2868,12 +3041,14 @@ released_concurrency_slots AS (
 ),
 released_workspace_leases AS (
     UPDATE workspace_leases
-       SET released_at = now(),
-           renewed_at = now()
+       SET state = 'released',
+           released_at = now(),
+           renewed_at = now(),
+           updated_at = now()
       FROM updated_runs
      WHERE workspace_leases.org_id = $1
-       AND workspace_leases.run_id = updated_runs.run_id
-       AND workspace_leases.mode = 'write'
+       AND workspace_leases.owner_run_id = updated_runs.run_id
+       AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.released_at IS NULL
     RETURNING workspace_leases.id
 ),

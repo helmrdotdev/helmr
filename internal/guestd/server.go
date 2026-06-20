@@ -60,6 +60,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	logger.Info("guestd ready", "vsock_port", cfg.VsockPort, "health_port", cfg.HealthPort)
 
 	registry := newWaitingRunRegistry()
+	workspaceRegistry := newWorkspaceOperationRegistry()
 	for {
 		conn, err := runListener.Accept()
 		if err != nil {
@@ -75,7 +76,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 					_ = conn.Close()
 				}
 			}()
-			keepOpen, err := handleConnection(ctx, conn, cfg, logger, registry)
+			keepOpen, err := handleConnection(ctx, conn, cfg, logger, registry, workspaceRegistry)
 			if keepOpen {
 				closeConn = false
 			}

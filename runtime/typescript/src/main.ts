@@ -215,7 +215,7 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
       run: taskContext.run,
       task: taskContext.task,
       workspace: taskContext.workspace,
-      session: createTaskSessionContext(taskContext.session.id, taskContext.session.workspace, responses, control, mintCorrelationId, waitGate),
+      session: createTaskSessionContext(taskContext.session.id, responses, control, mintCorrelationId, waitGate),
     }
     let result: unknown
     const payload = task.payload === undefined ? undefined : await parseTaskPayload(task, rawPayload)
@@ -276,7 +276,6 @@ interface ParsedTaskContext {
   readonly workspace: TaskWorkspace
   readonly session: {
     readonly id: string
-    readonly workspace: TaskWorkspace
   }
 }
 
@@ -308,10 +307,7 @@ function parseTaskContext(json: string, runId: string, taskId: string): ParsedTa
     run: Object.freeze(run),
     task: Object.freeze({ id: contextTaskId }),
     workspace: Object.freeze(workspace),
-    session: Object.freeze({
-      id: session.id,
-      workspace: Object.freeze(session.workspace),
-    }),
+    session: Object.freeze(session),
   }
 }
 
@@ -369,14 +365,13 @@ function parseTaskWorkspace(value: unknown): TaskWorkspace {
   }
 }
 
-function parseTaskSession(value: unknown): { readonly id: string; readonly workspace: TaskWorkspace } {
+function parseTaskSession(value: unknown): { readonly id: string } {
   if (value === null || typeof value !== "object") {
     throw new Error("task context session is required")
   }
   const record = value as Record<string, unknown>
   return {
     id: readRequiredString(record, "id", "task context session.id"),
-    workspace: parseTaskWorkspace(record["workspace"]),
   }
 }
 
@@ -507,7 +502,6 @@ class WaitGate {
 
 function createTaskSessionContext(
   id: string,
-  workspace: TaskWorkspace,
   responses: AdapterResponseReader,
   control: AdapterControlWriter,
   mintCorrelationId: () => string,
@@ -515,7 +509,6 @@ function createTaskSessionContext(
 ): TaskSessionContext {
   return Object.freeze({
     id,
-    workspace,
     input(target: ChannelInputDefinition | string): ChannelInputHandle {
       const channel = channelTargetName(target)
       const schema = typeof target === "string" ? undefined : target.schema

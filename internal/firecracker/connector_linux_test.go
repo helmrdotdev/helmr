@@ -616,7 +616,7 @@ func TestRestoreCleanupSessionPreservesCheckpointSupport(t *testing.T) {
 	if !inner.snapshotCalled {
 		t.Fatal("snapshot call did not reach inner session")
 	}
-	if err := session.Close(); err != nil {
+	if err := session.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if !inner.closed {
@@ -666,9 +666,18 @@ func (s *checkpointableTestSession) Stream() io.ReadWriteCloser {
 	return readWriteNopCloser{}
 }
 
-func (s *checkpointableTestSession) Close() error {
+func (s *checkpointableTestSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
+	return readWriteNopCloser{}, nil
+}
+
+func (s *checkpointableTestSession) Close(context.Context) error {
 	s.closed = true
 	return nil
+}
+
+func (s *checkpointableTestSession) Wait(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func (s *checkpointableTestSession) CreateSnapshot(context.Context, vm.SnapshotRequest) (vm.SnapshotArtifact, error) {

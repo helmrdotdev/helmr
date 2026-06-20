@@ -10,18 +10,23 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const testWorkspaceOperationMaxClaimAttempts = 3
 
 func TestWaitpointTokenCompletionIdempotencyUsesData(t *testing.T) {
 	ctx := context.Background()
@@ -77,6 +82,1711 @@ func TestWaitpointTokenCompletionIdempotencyUsesData(t *testing.T) {
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("different data error = %v", err)
+	}
+}
+
+func TestWorkspaceMaterializationStateMachine(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	workerID := seedMaterializationWorker(t, ctx, pool)
+	queries := db.New(pool)
+	rootfsDigest := deploymentSandboxRootfsDigest(t, ctx, pool, ids)
+
+	requested, err := requestWorkspaceMaterializationForTest(ctx, queries, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Priority:      10,
+		Request:       []byte(`{"test":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requested.State != db.WorkspaceMaterializationStateRequested || !requested.BaseVersionID.Valid {
+		t.Fatalf("requested materialization state=%s base=%v", requested.State, requested.BaseVersionID)
+	}
+
+	claimed, err := queries.ClaimWorkspaceMaterialization(ctx, db.ClaimWorkspaceMaterializationParams{
+		AvailableCpuMillis:      2000,
+		AvailableMemoryMib:      2048,
+		AvailableDiskMib:        4096,
+		AvailableExecutionSlots: 1,
+		RootfsDigest:            rootfsDigest,
+		RuntimeABI:              "test",
+		GuestdAbi:               "guestd-test",
+		AdapterAbi:              "adapter-test",
+		WorkerInstanceID:        pgvalue.UUID(workerID),
+		ReservationToken:        "reservation-token",
+		ReservationExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		GuestdChannelTokenHash:  "channel-token-hash",
+		RuntimeID:               "runtime-test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.State != db.WorkspaceMaterializationStateMaterializing || claimed.WorkerInstanceID != pgvalue.UUID(workerID) || claimed.RuntimeID != "runtime-test" {
+		t.Fatalf("claimed materialization = %+v", claimed)
+	}
+	capacity, err := queries.GetWorkerInstanceQueueCapacity(ctx, pgvalue.UUID(workerID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capacity.AvailableMilliCpu != 1000 ||
+		capacity.AvailableMemoryMib != 1024 ||
+		capacity.AvailableDiskMib != 4096 ||
+		capacity.AvailableExecutionSlots != 0 {
+		t.Fatalf("materialization queue capacity should reserve live materialization resources: capacity=%+v claimed=%+v", capacity, claimed)
+	}
+	if _, err := queries.ClaimWorkspaceMaterialization(ctx, db.ClaimWorkspaceMaterializationParams{
+		AvailableCpuMillis:      2000,
+		AvailableMemoryMib:      2048,
+		AvailableDiskMib:        4096,
+		AvailableExecutionSlots: 1,
+		RootfsDigest:            rootfsDigest,
+		RuntimeABI:              "test",
+		GuestdAbi:               "guestd-test",
+		AdapterAbi:              "adapter-test",
+		WorkerInstanceID:        pgvalue.UUID(workerID),
+		ReservationToken:        "second-token",
+		RuntimeID:               "runtime-test",
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("concurrent claim err = %v, want no rows", err)
+	}
+
+	renewed, err := queries.RenewWorkspaceMaterialization(ctx, db.RenewWorkspaceMaterializationParams{
+		ReservationExpiresAt: pgvalue.Timestamptz(time.Now().Add(2 * time.Minute)),
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ID:                   requested.ID,
+		WorkerInstanceID:     pgvalue.UUID(workerID),
+		ReservationToken:     "reservation-token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.State != db.WorkspaceMaterializationStateMaterializing || !renewed.LastHeartbeatAt.Valid {
+		t.Fatalf("renewed materialization = %+v", renewed)
+	}
+	if !renewed.ReservationExpiresAt.Valid || time.Until(renewed.ReservationExpiresAt.Time) < time.Minute {
+		t.Fatalf("renew did not extend reservation: %+v", renewed.ReservationExpiresAt)
+	}
+	running, err := queries.MarkWorkspaceMaterializationRunning(ctx, db.MarkWorkspaceMaterializationRunningParams{
+		ReservationExpiresAt: pgvalue.Timestamptz(time.Now().Add(2 * time.Minute)),
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ID:                   requested.ID,
+		WorkerInstanceID:     pgvalue.UUID(workerID),
+		ReservationToken:     "reservation-token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running.State != db.WorkspaceMaterializationStateRunning || !running.MaterializedAt.Valid {
+		t.Fatalf("running materialization = %+v", running)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_materializations
+		   SET reservation_expires_at = now() - interval '1 second'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, requested.ID); err != nil {
+		t.Fatal(err)
+	}
+	runCapacity, err := queries.GetWorkerInstanceRunDispatchCapacity(ctx, pgvalue.UUID(workerID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runCapacity.AvailableMilliCpu != 2000 ||
+		runCapacity.AvailableMemoryMib != 2048 ||
+		runCapacity.AvailableDiskMib != 4096 ||
+		runCapacity.AvailableExecutionSlots != 1 {
+		t.Fatalf("run dispatch capacity should stay available for attached runs: capacity=%+v claimed=%+v", runCapacity, claimed)
+	}
+	operation, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  requested.ID,
+		OperationKind:      "noop",
+		RequestFingerprint: "test-noop-dispatch",
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Request:            []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := queries.StopWorkspaceMaterialization(ctx, db.StopWorkspaceMaterializationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               requested.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ReservationToken: "reservation-token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.State != db.WorkspaceMaterializationStateStopped {
+		t.Fatalf("stopped state = %s", stopped.State)
+	}
+	if stopped.ReservedCpuMillis != 0 || stopped.ReservedMemoryMib != 0 || stopped.ReservedDiskMib != 0 || stopped.ReservedExecutionSlots != 0 {
+		t.Fatalf("stopped materialization kept reservation cpu=%d memory=%d disk=%d slots=%d", stopped.ReservedCpuMillis, stopped.ReservedMemoryMib, stopped.ReservedDiskMib, stopped.ReservedExecutionSlots)
+	}
+	stoppedOperation, err := queries.GetWorkspaceMaterializationOperation(ctx, db.GetWorkspaceMaterializationOperationParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            operation.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stoppedOperation.State != db.WorkspaceMaterializationOperationStateLost {
+		t.Fatalf("stopped operation state = %s", stoppedOperation.State)
+	}
+	capacity, err = queries.GetWorkerInstanceQueueCapacity(ctx, pgvalue.UUID(workerID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capacity.AvailableMilliCpu != 2000 || capacity.AvailableMemoryMib != 2048 || capacity.AvailableDiskMib != 4096 || capacity.AvailableExecutionSlots != 1 {
+		t.Fatalf("stopped materialization did not release capacity: %+v", capacity)
+	}
+	if _, err := queries.StopWorkspaceMaterialization(ctx, db.StopWorkspaceMaterializationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               requested.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ReservationToken: "reservation-token",
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("invalid stopped transition err = %v, want no rows", err)
+	}
+	var currentVersionID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT current_version_id FROM workspaces WHERE id = $1`, ids.workspaceID).Scan(&currentVersionID); err != nil {
+		t.Fatal(err)
+	}
+	if currentVersionID != pgvalue.MustUUIDValue(requested.BaseVersionID) {
+		t.Fatalf("current_version_id = %s, want base version %s", currentVersionID, pgvalue.MustUUIDValue(requested.BaseVersionID))
+	}
+}
+
+func TestEnsureWorkspaceMaterializationRequestedCreatesOneActiveArtifactBackedRequest(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+
+	first, err := queries.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Priority:      7,
+		Request:       []byte(`{"source":"task_start","run_id":"first"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.State != db.WorkspaceMaterializationStateRequested || !first.BaseVersionID.Valid {
+		t.Fatalf("first materialization state=%s base=%v", first.State, first.BaseVersionID)
+	}
+	if !first.Inserted {
+		t.Fatal("first ensure returned inserted=false, want true")
+	}
+	if !first.ImageArtifactID.Valid || first.ImageDigest == "" || first.RootfsDigest == "" {
+		t.Fatalf("first materialization missing sandbox artifact authority: image_artifact=%v image_digest=%q rootfs_digest=%q", first.ImageArtifactID, first.ImageDigest, first.RootfsDigest)
+	}
+	if !first.WorkspaceArtifactID.Valid || first.WorkspaceArtifactDigest == "" || first.WorkspaceMountPath != "/workspace" {
+		t.Fatalf("first materialization missing workspace artifact authority: artifact=%v digest=%q mount=%q", first.WorkspaceArtifactID, first.WorkspaceArtifactDigest, first.WorkspaceMountPath)
+	}
+
+	secondID := uuid.Must(uuid.NewV7())
+	second, err := queries.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(secondID),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Priority:      1,
+		Request:       []byte(`{"source":"task_start","run_id":"second"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("second ensure materialization id = %s, want existing %s", pgvalue.MustUUIDValue(second.ID), pgvalue.MustUUIDValue(first.ID))
+	}
+	if second.Inserted {
+		t.Fatal("second ensure returned inserted=true for existing runnable materialization")
+	}
+	if second.ID == pgvalue.UUID(secondID) {
+		t.Fatal("second ensure inserted a duplicate active materialization")
+	}
+	third, err := queries.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Priority:      10,
+		Request:       []byte(`{"source":"task_start","run_id":"third"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.ID != first.ID {
+		t.Fatalf("third ensure materialization id = %s, want existing %s", pgvalue.MustUUIDValue(third.ID), pgvalue.MustUUIDValue(first.ID))
+	}
+	if third.Inserted {
+		t.Fatal("third ensure returned inserted=true for priority bump")
+	}
+	if third.Priority != 10 {
+		t.Fatalf("third ensure priority = %d, want 10", third.Priority)
+	}
+	var storedPriority int32
+	if err := pool.QueryRow(ctx, `
+		SELECT priority
+		  FROM workspace_materializations
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(first.ID)).Scan(&storedPriority); err != nil {
+		t.Fatal(err)
+	}
+	if storedPriority != 10 {
+		t.Fatalf("stored materialization priority = %d, want 10", storedPriority)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_materializations
+		   SET state = 'running'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(first.ID)); err != nil {
+		t.Fatal(err)
+	}
+	running, err := queries.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Priority:      20,
+		Request:       []byte(`{"source":"task_start","run_id":"running"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running.ID != first.ID {
+		t.Fatalf("running ensure materialization id = %s, want existing %s", pgvalue.MustUUIDValue(running.ID), pgvalue.MustUUIDValue(first.ID))
+	}
+	if running.Priority != 10 {
+		t.Fatalf("running ensure priority = %d, want unchanged 10", running.Priority)
+	}
+	var activeCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM workspace_materializations
+		 WHERE org_id = $1
+		   AND workspace_id = $2
+		   AND state IN ('requested', 'materializing', 'restoring', 'running', 'pausing', 'paused', 'capturing', 'stopping')
+	`, ids.orgID, ids.workspaceID).Scan(&activeCount); err != nil {
+		t.Fatal(err)
+	}
+	if activeCount != 1 {
+		t.Fatalf("active materializations = %d, want 1", activeCount)
+	}
+}
+
+func TestQueuedRunWorkspaceMaterializationDependencyIsExact(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	seedCurrentAttempt(t, ctx, pool, ids, db.RunAttemptStatusQueued)
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET status = 'queued',
+		       execution_status = 'queued'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	first, err := queries.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Priority:      0,
+		Request:       []byte(`{"source":"test","run":"first"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.SetQueuedRunWorkspaceMaterialization(ctx, db.SetQueuedRunWorkspaceMaterializationParams{
+		OrgID:                      pgvalue.UUID(ids.orgID),
+		RunID:                      pgvalue.UUID(ids.runID),
+		WorkspaceID:                pgvalue.UUID(ids.workspaceID),
+		WorkspaceMaterializationID: first.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_materializations
+		   SET state = 'failed'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(first.ID)); err != nil {
+		t.Fatal(err)
+	}
+	second, err := queries.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Priority:      0,
+		Request:       []byte(`{"source":"test","run":"second"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID == first.ID {
+		t.Fatal("second ensure reused failed materialization")
+	}
+	secondRunID := seedQueuedRunForWorkspaceMaterializationTest(t, ctx, pool, ids)
+	if err := queries.SetQueuedRunWorkspaceMaterialization(ctx, db.SetQueuedRunWorkspaceMaterializationParams{
+		OrgID:                      pgvalue.UUID(ids.orgID),
+		RunID:                      pgvalue.UUID(secondRunID),
+		WorkspaceID:                pgvalue.UUID(ids.workspaceID),
+		WorkspaceMaterializationID: second.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waiting, err := queries.ListQueuedRunsForWorkspaceMaterialization(ctx, db.ListQueuedRunsForWorkspaceMaterializationParams{
+		OrgID:                      pgvalue.UUID(ids.orgID),
+		WorkspaceID:                pgvalue.UUID(ids.workspaceID),
+		WorkspaceMaterializationID: first.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(waiting) != 1 || pgvalue.MustUUIDValue(waiting[0]) != ids.runID {
+		t.Fatalf("first materialization queued runs = %v, want only %s", waiting, ids.runID)
+	}
+	if err := queries.FailQueuedRun(ctx, db.FailQueuedRunParams{
+		OrgID:        pgvalue.UUID(ids.orgID),
+		RunID:        pgvalue.UUID(ids.runID),
+		ErrorName:    "WorkspaceMaterializationFailed",
+		ErrorMessage: "materialization failed",
+		Reason:       []byte(`{"origin":"workspace_materialization"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	firstRun, err := queries.GetRun(ctx, db.GetRunParams{OrgID: pgvalue.UUID(ids.orgID), ID: pgvalue.UUID(ids.runID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstRun.Status != db.RunStatusFailed {
+		t.Fatalf("first run status = %s, want failed", firstRun.Status)
+	}
+	secondRun, err := queries.GetRun(ctx, db.GetRunParams{OrgID: pgvalue.UUID(ids.orgID), ID: pgvalue.UUID(secondRunID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondRun.Status != db.RunStatusQueued {
+		t.Fatalf("second run status = %s, want queued", secondRun.Status)
+	}
+}
+
+func TestEnsureWorkspaceMaterializationRequestedSerializesConcurrentFirstRequests(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	const callers = 8
+	start := make(chan struct{})
+	results := make(chan db.EnsureWorkspaceMaterializationRequestedRow, callers)
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for i := range callers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			row, err := queries.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
+				ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				OrgID:         pgvalue.UUID(ids.orgID),
+				ProjectID:     pgvalue.UUID(ids.projectID),
+				EnvironmentID: pgvalue.UUID(ids.environmentID),
+				WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+				Priority:      int32(i),
+				Request:       []byte(fmt.Sprintf(`{"source":"task_start","call":%d}`, i)),
+			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- row
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent ensure failed: %v", err)
+	}
+	var first pgtype.UUID
+	count := 0
+	insertedCount := 0
+	for row := range results {
+		if count == 0 {
+			first = row.ID
+		} else if row.ID != first {
+			t.Fatalf("concurrent ensure returned id = %s, want %s", pgvalue.MustUUIDValue(row.ID), pgvalue.MustUUIDValue(first))
+		}
+		if row.Inserted {
+			insertedCount++
+		}
+		count++
+	}
+	if count != callers {
+		t.Fatalf("ensure results = %d, want %d", count, callers)
+	}
+	if insertedCount != 1 {
+		t.Fatalf("inserted ensure results = %d, want 1", insertedCount)
+	}
+	var activeCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM workspace_materializations
+		 WHERE org_id = $1
+		   AND workspace_id = $2
+		   AND state IN ('requested', 'materializing', 'restoring', 'running', 'pausing', 'paused', 'capturing', 'stopping')
+	`, ids.orgID, ids.workspaceID).Scan(&activeCount); err != nil {
+		t.Fatal(err)
+	}
+	if activeCount != 1 {
+		t.Fatalf("active materializations = %d, want 1", activeCount)
+	}
+}
+
+func TestEnsureWorkspaceMaterializationRequestedRejectsNonRunnableActiveMaterialization(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+
+	requested, err := queries.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Priority:      1,
+		Request:       []byte(`{"source":"task_start","run_id":"first"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []db.WorkspaceMaterializationState{
+		db.WorkspaceMaterializationStatePausing,
+		db.WorkspaceMaterializationStatePaused,
+		db.WorkspaceMaterializationStateCapturing,
+		db.WorkspaceMaterializationStateStopping,
+	} {
+		if _, err := pool.Exec(ctx, `
+			UPDATE workspace_materializations
+			   SET state = $3
+			 WHERE org_id = $1
+			   AND id = $2
+		`, ids.orgID, pgvalue.MustUUIDValue(requested.ID), state); err != nil {
+			t.Fatal(err)
+		}
+		prerequisites, err := queries.GetWorkspaceMaterializationPrerequisites(ctx, db.GetWorkspaceMaterializationPrerequisitesParams{
+			OrgID:         pgvalue.UUID(ids.orgID),
+			ProjectID:     pgvalue.UUID(ids.projectID),
+			EnvironmentID: pgvalue.UUID(ids.environmentID),
+			WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !prerequisites.ActiveMaterializationState.Valid ||
+			prerequisites.ActiveMaterializationState.WorkspaceMaterializationState != state {
+			t.Fatalf("active materialization state = %+v, want %s", prerequisites.ActiveMaterializationState, state)
+		}
+
+		_, err = queries.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
+			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:         pgvalue.UUID(ids.orgID),
+			ProjectID:     pgvalue.UUID(ids.projectID),
+			EnvironmentID: pgvalue.UUID(ids.environmentID),
+			WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+			Priority:      1,
+			Request:       []byte(`{"source":"task_start","run_id":"second"}`),
+		})
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("non-runnable active ensure for %s err = %v, want no rows", state, err)
+		}
+	}
+	var materializations int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM workspace_materializations
+		 WHERE org_id = $1
+		   AND workspace_id = $2
+	`, ids.orgID, ids.workspaceID).Scan(&materializations); err != nil {
+		t.Fatal(err)
+	}
+	if materializations != 1 {
+		t.Fatalf("materializations = %d, want existing non-runnable only", materializations)
+	}
+}
+
+func TestEnsureWorkspaceMaterializationRequestedRejectsCorruptWorkspaceArtifact(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE artifacts
+		   SET media_type = 'application/octet-stream'
+		 WHERE id = (
+		       SELECT workspace_versions.artifact_id
+		         FROM workspaces
+		         JOIN workspace_versions
+		           ON workspace_versions.org_id = workspaces.org_id
+		          AND workspace_versions.project_id = workspaces.project_id
+		          AND workspace_versions.environment_id = workspaces.environment_id
+		          AND workspace_versions.workspace_id = workspaces.id
+		          AND workspace_versions.id = workspaces.current_version_id
+		        WHERE workspaces.org_id = $1
+		          AND workspaces.id = $2
+		 )
+	`, ids.orgID, ids.workspaceID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := queries.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Priority:      1,
+		Request:       []byte(`{"source":"task_start"}`),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("corrupt workspace artifact ensure err = %v, want no rows", err)
+	}
+	var materializations int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM workspace_materializations
+		 WHERE org_id = $1
+		   AND workspace_id = $2
+	`, ids.orgID, ids.workspaceID).Scan(&materializations); err != nil {
+		t.Fatal(err)
+	}
+	if materializations != 0 {
+		t.Fatalf("corrupt artifact created materializations = %d", materializations)
+	}
+}
+
+func TestDeploymentSandboxRequiresImageArtifactAuthority(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO deployment_sandboxes (
+			id, org_id, project_id, environment_id, deployment_id, sandbox_id,
+			image_artifact_format, rootfs_digest, image_digest, image_format,
+			workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format,
+			contract_version, fingerprint
+		)
+		VALUES ($1, $2, $3, $4, $5, 'missing-image-artifact',
+			'oci-tar', 'sha256:rootfs', $6, 'oci-tar',
+			'/workspace', 'test', 'guestd-test', 'adapter-test', 'tar', 1, 'missing-image-artifact')
+	`, uuid.Must(uuid.NewV7()), ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, testDigest("missing-image"))
+	if err == nil {
+		t.Fatal("deployment_sandbox without image_artifact_id should fail")
+	}
+}
+
+func TestSandboxImageArtifactDigestIntegrity(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	imageArtifactID, _ := seedSandboxImageArtifact(t, ctx, pool, ids)
+	mismatchedImageDigest := testDigest("mismatched-sandbox-image")
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO deployment_sandboxes (
+			id, org_id, project_id, environment_id, deployment_id, sandbox_id,
+			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
+			workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format,
+			contract_version, fingerprint
+		)
+		VALUES ($1, $2, $3, $4, $5, 'mismatched-image-artifact',
+			$6, 'oci-tar', 'sha256:rootfs', $7, 'oci-tar',
+			'/workspace', 'test', 'guestd-test', 'adapter-test', 'tar', 1, 'mismatched-image-artifact')
+	`, uuid.Must(uuid.NewV7()), ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, imageArtifactID, mismatchedImageDigest)
+	if err == nil {
+		t.Fatal("deployment_sandbox image_artifact_id/image_digest mismatch should fail")
+	}
+}
+
+func TestWorkspaceMaterializationClaimIncludesSandboxAndWorkspaceArtifacts(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	workerID := seedMaterializationWorker(t, ctx, pool)
+	queries := db.New(pool)
+	rootfsDigest := deploymentSandboxRootfsDigest(t, ctx, pool, ids)
+	imageDigest := deploymentSandboxImageDigest(t, ctx, pool, ids)
+	var taskSessionsBefore int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM task_sessions WHERE org_id = $1`, ids.orgID).Scan(&taskSessionsBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := requestWorkspaceMaterializationForTest(ctx, queries, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Request:       []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := queries.ClaimWorkspaceMaterialization(ctx, db.ClaimWorkspaceMaterializationParams{
+		AvailableCpuMillis:      2000,
+		AvailableMemoryMib:      2048,
+		AvailableDiskMib:        4096,
+		AvailableExecutionSlots: 1,
+		RootfsDigest:            rootfsDigest,
+		RuntimeABI:              "test",
+		GuestdAbi:               "guestd-test",
+		AdapterAbi:              "adapter-test",
+		WorkerInstanceID:        pgvalue.UUID(workerID),
+		ReservationToken:        "artifact-claim-token",
+		ReservationExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		GuestdChannelTokenHash:  "channel-token-hash",
+		RuntimeID:               "runtime-test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.ImageArtifactDigest != imageDigest || claimed.ImageArtifactMediaType != api.SandboxImageArtifactMediaType || claimed.ImageArtifactFormat != "oci-tar" {
+		t.Fatalf("sandbox image artifact = digest %q media %q format %q", claimed.ImageArtifactDigest, claimed.ImageArtifactMediaType, claimed.ImageArtifactFormat)
+	}
+	if claimed.WorkspaceMountPath != "/workspace" || claimed.WorkspaceArtifactMediaType != workspace.ArtifactMediaType || claimed.WorkspaceArtifactEncoding != workspace.ArtifactEncoding || !claimed.BaseVersionID.Valid {
+		t.Fatalf("workspace artifact/mount = base %v digest %q media %q encoding %q mount %q", claimed.BaseVersionID, claimed.WorkspaceArtifactDigest, claimed.WorkspaceArtifactMediaType, claimed.WorkspaceArtifactEncoding, claimed.WorkspaceMountPath)
+	}
+	var taskSessionsAfter int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM task_sessions WHERE org_id = $1`, ids.orgID).Scan(&taskSessionsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if taskSessionsAfter != taskSessionsBefore {
+		t.Fatalf("direct materialization created task sessions: before=%d after=%d", taskSessionsBefore, taskSessionsAfter)
+	}
+}
+
+func TestWorkspaceMaterializationRejectsCorruptWorkspaceArtifact(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	if _, err := pool.Exec(ctx, `
+		UPDATE artifacts
+		   SET media_type = 'application/octet-stream'
+		 WHERE id = (
+		       SELECT workspace_versions.artifact_id
+		         FROM workspaces
+		         JOIN workspace_versions
+		           ON workspace_versions.org_id = workspaces.org_id
+		          AND workspace_versions.project_id = workspaces.project_id
+		          AND workspace_versions.environment_id = workspaces.environment_id
+		          AND workspace_versions.workspace_id = workspaces.id
+		          AND workspace_versions.id = workspaces.current_version_id
+		        WHERE workspaces.org_id = $1
+		          AND workspaces.id = $2
+		 )
+	`, ids.orgID, ids.workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	_, err := requestWorkspaceMaterializationForTest(ctx, queries, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Request:       []byte(`{}`),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("corrupt workspace artifact request err = %v, want no rows", err)
+	}
+	var materializations int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM workspace_materializations
+		 WHERE org_id = $1
+		   AND workspace_id = $2
+	`, ids.orgID, ids.workspaceID).Scan(&materializations); err != nil {
+		t.Fatal(err)
+	}
+	if materializations != 0 {
+		t.Fatalf("corrupt artifact created materializations = %d", materializations)
+	}
+}
+
+func TestWorkspaceMaterializationStaleHeartbeatMarksLost(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	workerID := seedMaterializationWorker(t, ctx, pool)
+	queries := db.New(pool)
+	rootfsDigest := deploymentSandboxRootfsDigest(t, ctx, pool, ids)
+	requested, err := requestWorkspaceMaterializationForTest(ctx, queries, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Request:       []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ClaimWorkspaceMaterialization(ctx, db.ClaimWorkspaceMaterializationParams{
+		AvailableCpuMillis:      2000,
+		AvailableMemoryMib:      2048,
+		AvailableDiskMib:        4096,
+		AvailableExecutionSlots: 1,
+		RootfsDigest:            rootfsDigest,
+		RuntimeABI:              "test",
+		GuestdAbi:               "guestd-test",
+		AdapterAbi:              "adapter-test",
+		WorkerInstanceID:        pgvalue.UUID(workerID),
+		ReservationToken:        "stale-token",
+		ReservationExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		GuestdChannelTokenHash:  "channel-token-hash",
+		RuntimeID:               "runtime-test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.MarkWorkspaceMaterializationRunning(ctx, db.MarkWorkspaceMaterializationRunningParams{
+		ReservationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ID:                   requested.ID,
+		WorkerInstanceID:     pgvalue.UUID(workerID),
+		ReservationToken:     "stale-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  requested.ID,
+		OperationKind:      "noop",
+		RequestFingerprint: "test-noop-dispatch",
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Request:            []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE workspace_materializations SET last_heartbeat_at = now() - interval '10 minutes' WHERE id = $1`, requested.ID); err != nil {
+		t.Fatal(err)
+	}
+	lost, err := queries.MarkStaleWorkspaceMaterializationsLost(ctx, pgvalue.Timestamptz(time.Now().Add(-time.Minute)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lost) != 1 || lost[0].ID != requested.ID || lost[0].State != db.WorkspaceMaterializationStateLost {
+		t.Fatalf("lost materializations = %+v", lost)
+	}
+	lostOperation, err := queries.GetWorkspaceMaterializationOperation(ctx, db.GetWorkspaceMaterializationOperationParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            operation.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lostOperation.State != db.WorkspaceMaterializationOperationStateLost {
+		t.Fatalf("lost operation state = %s", lostOperation.State)
+	}
+}
+
+func TestWorkspaceMaterializationStaleHeartbeatKeepsActiveRunMaterialization(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
+	var workerGroupID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
+		t.Fatal(err)
+	}
+	attemptID := uuid.Must(uuid.NewV7())
+	runLeaseID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_releases (
+			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
+		)
+		VALUES ('runtime-test', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+		ON CONFLICT (runtime_id) DO NOTHING
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status, started_at)
+		VALUES ($1, $2, $3, 1, 'running', now())
+	`, attemptID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_leases (
+			id, org_id, run_id, attempt_id, worker_instance_id, worker_group_id,
+			dispatch_message_id, dispatch_lease_id, dispatch_attempt, status,
+			lease_expires_at, runtime_id, trace_id, span_id, parent_span_id, traceparent
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, 'dispatch-message', 'dispatch-lease', 1, 'running',
+			now() + interval '1 hour', 'runtime-test',
+			'11111111111111111111111111111111', '3333333333333333', '2222222222222222',
+			'00-11111111111111111111111111111111-3333333333333333-01')
+	`, runLeaseID, ids.orgID, ids.runID, attemptID, workerID, workerGroupID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET workspace_materialization_id = $1,
+		       current_attempt_id = $2,
+		       current_run_lease_id = $3,
+		       current_attempt_number = 1,
+		       status = 'running',
+		       execution_status = 'executing'
+		 WHERE org_id = $4
+		   AND id = $5
+	`, pgvalue.MustUUIDValue(materialization.ID), attemptID, runLeaseID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_materializations
+		   SET last_heartbeat_at = now() - interval '10 minutes'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, materialization.ID); err != nil {
+		t.Fatal(err)
+	}
+	lost, err := queries.MarkStaleWorkspaceMaterializationsLost(ctx, pgvalue.Timestamptz(time.Now().Add(-time.Minute)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lost) != 0 {
+		t.Fatalf("active run materialization was reaped: %+v", lost)
+	}
+	var state db.WorkspaceMaterializationState
+	if err := pool.QueryRow(ctx, `
+		SELECT state
+		  FROM workspace_materializations
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, materialization.ID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != db.WorkspaceMaterializationStateRunning {
+		t.Fatalf("materialization state = %s", state)
+	}
+}
+
+func TestWorkspaceMaterializationExpiredClaimIsReclaimed(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	workerID := seedMaterializationWorker(t, ctx, pool)
+	secondWorkerID := seedMaterializationWorker(t, ctx, pool)
+	queries := db.New(pool)
+	rootfsDigest := deploymentSandboxRootfsDigest(t, ctx, pool, ids)
+
+	requested, err := requestWorkspaceMaterializationForTest(ctx, queries, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Request:       []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := queries.ClaimWorkspaceMaterialization(ctx, db.ClaimWorkspaceMaterializationParams{
+		AvailableCpuMillis:      2000,
+		AvailableMemoryMib:      2048,
+		AvailableDiskMib:        4096,
+		AvailableExecutionSlots: 1,
+		RootfsDigest:            rootfsDigest,
+		RuntimeABI:              "test",
+		GuestdAbi:               "guestd-test",
+		AdapterAbi:              "adapter-test",
+		WorkerInstanceID:        pgvalue.UUID(workerID),
+		ReservationToken:        "expired-materialization-token",
+		ReservationExpiresAt:    pgvalue.Timestamptz(time.Now().Add(-time.Second)),
+		GuestdChannelTokenHash:  "expired-channel-token-hash",
+		RuntimeID:               "runtime-test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := queries.ClaimWorkspaceMaterialization(ctx, db.ClaimWorkspaceMaterializationParams{
+		AvailableCpuMillis:      2000,
+		AvailableMemoryMib:      2048,
+		AvailableDiskMib:        4096,
+		AvailableExecutionSlots: 1,
+		RootfsDigest:            rootfsDigest,
+		RuntimeABI:              "test",
+		GuestdAbi:               "guestd-test",
+		AdapterAbi:              "adapter-test",
+		WorkerInstanceID:        pgvalue.UUID(secondWorkerID),
+		ReservationToken:        "fresh-materialization-token",
+		ReservationExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		GuestdChannelTokenHash:  "fresh-channel-token-hash",
+		RuntimeID:               "runtime-test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != requested.ID || second.ID != requested.ID || second.WorkerInstanceID != pgvalue.UUID(secondWorkerID) || second.ClaimAttempt != first.ClaimAttempt+1 {
+		t.Fatalf("expired claim was not reclaimed first=%+v second=%+v requested=%+v", first, second, requested)
+	}
+	if _, err := queries.RenewWorkspaceMaterialization(ctx, db.RenewWorkspaceMaterializationParams{
+		ReservationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ID:                   requested.ID,
+		WorkerInstanceID:     pgvalue.UUID(workerID),
+		ReservationToken:     "expired-materialization-token",
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expired reservation renew err = %v, want no rows", err)
+	}
+}
+
+func TestWorkspaceMaterializationExpiredClaimWithLiveWriteLeaseIsNotReclaimed(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	workerID := seedMaterializationWorker(t, ctx, pool)
+	secondWorkerID := seedMaterializationWorker(t, ctx, pool)
+	queries := db.New(pool)
+	rootfsDigest := deploymentSandboxRootfsDigest(t, ctx, pool, ids)
+
+	requested, err := requestWorkspaceMaterializationForTest(ctx, queries, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Request:       []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := queries.ClaimWorkspaceMaterialization(ctx, db.ClaimWorkspaceMaterializationParams{
+		AvailableCpuMillis:      2000,
+		AvailableMemoryMib:      2048,
+		AvailableDiskMib:        4096,
+		AvailableExecutionSlots: 1,
+		RootfsDigest:            rootfsDigest,
+		RuntimeABI:              "test",
+		GuestdAbi:               "guestd-test",
+		AdapterAbi:              "adapter-test",
+		WorkerInstanceID:        pgvalue.UUID(workerID),
+		ReservationToken:        "expired-materialization-token",
+		ReservationExpiresAt:    pgvalue.Timestamptz(time.Now().Add(-time.Second)),
+		GuestdChannelTokenHash:  "expired-channel-token-hash",
+		RuntimeID:               "runtime-test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != requested.ID {
+		t.Fatalf("claimed materialization id = %s, want %s", first.ID, requested.ID)
+	}
+	seedWorkspaceWriteLease(t, ctx, pool, ids, workerID)
+
+	if _, err := queries.ClaimWorkspaceMaterialization(ctx, db.ClaimWorkspaceMaterializationParams{
+		AvailableCpuMillis:      2000,
+		AvailableMemoryMib:      2048,
+		AvailableDiskMib:        4096,
+		AvailableExecutionSlots: 1,
+		RootfsDigest:            rootfsDigest,
+		RuntimeABI:              "test",
+		GuestdAbi:               "guestd-test",
+		AdapterAbi:              "adapter-test",
+		WorkerInstanceID:        pgvalue.UUID(secondWorkerID),
+		ReservationToken:        "fresh-materialization-token",
+		ReservationExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		GuestdChannelTokenHash:  "fresh-channel-token-hash",
+		RuntimeID:               "runtime-test",
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("claim with live write lease err = %v, want no rows", err)
+	}
+}
+
+func TestWorkspaceMaterializationOperationClaimAndComplete(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
+	otherWorkerID := seedMaterializationWorker(t, ctx, pool)
+
+	requested, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      "noop",
+		RequestFingerprint: "test-noop-dispatch",
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Priority:           10,
+		Request:            []byte(`{"check":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requested.State != db.WorkspaceMaterializationOperationStateQueued {
+		t.Fatalf("queued state = %s", requested.State)
+	}
+	if requested.FencingGeneration != materialization.FencingGeneration {
+		t.Fatalf("operation fencing_generation = %d, want materialization generation %d", requested.FencingGeneration, materialization.FencingGeneration)
+	}
+
+	if _, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(otherWorkerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "wrong-worker-token",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		MaxClaimAttempts:  testWorkspaceOperationMaxClaimAttempts,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("wrong worker claim err = %v, want no rows", err)
+	}
+	claimed, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "claim-token",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		MaxClaimAttempts:  testWorkspaceOperationMaxClaimAttempts,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.ID != requested.ID || claimed.State != db.WorkspaceMaterializationOperationStateClaimed || claimed.ClaimedByWorkerInstanceID != pgvalue.UUID(workerID) {
+		t.Fatalf("claimed operation = %+v", claimed)
+	}
+	running, err := queries.StartWorkspaceMaterializationOperation(ctx, db.StartWorkspaceMaterializationOperationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               requested.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ClaimToken:       "claim-token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running.State != db.WorkspaceMaterializationOperationStateRunning {
+		t.Fatalf("running state = %s", running.State)
+	}
+	replayedStart, err := queries.StartWorkspaceMaterializationOperation(ctx, db.StartWorkspaceMaterializationOperationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               requested.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ClaimToken:       "claim-token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayedStart.State != db.WorkspaceMaterializationOperationStateRunning || replayedStart.ID != requested.ID {
+		t.Fatalf("replayed start = %+v", replayedStart)
+	}
+	if _, err := queries.CompleteWorkspaceMaterializationOperation(ctx, db.CompleteWorkspaceMaterializationOperationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               requested.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ClaimToken:       "stale-token",
+		Result:           []byte(`{"ok":false}`),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("stale token complete err = %v, want no rows", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_materialization_operations
+		   SET claim_expires_at = now() - interval '1 second'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, requested.ID); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := queries.CompleteWorkspaceMaterializationOperation(ctx, db.CompleteWorkspaceMaterializationOperationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               requested.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ClaimToken:       "claim-token",
+		Result:           []byte(`{"ok":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.State != db.WorkspaceMaterializationOperationStateCompleted || string(completed.Result) != `{"ok": true}` {
+		t.Fatalf("completed operation = state:%s result:%s", completed.State, completed.Result)
+	}
+	replayed, err := queries.CompleteWorkspaceMaterializationOperation(ctx, db.CompleteWorkspaceMaterializationOperationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               requested.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ClaimToken:       "claim-token",
+		Result:           []byte(`{"ok":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.State != db.WorkspaceMaterializationOperationStateCompleted || string(replayed.Result) != `{"ok": true}` {
+		t.Fatalf("replayed completion = state:%s result:%s", replayed.State, replayed.Result)
+	}
+	if _, err := queries.CompleteWorkspaceMaterializationOperation(ctx, db.CompleteWorkspaceMaterializationOperationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               requested.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ClaimToken:       "claim-token",
+		Result:           []byte(`{"ok":false}`),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("different replay completion err = %v, want no rows", err)
+	}
+}
+
+func TestWorkspaceMaterializationOperationRequiresActiveWriteLease(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
+	leaseID := seedWorkspaceWriteLease(t, ctx, pool, ids, workerID)
+	fencingToken := "fence-" + shortUUID(leaseID)
+
+	requested, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      "noop",
+		RequestFingerprint: "test-write-lease-dispatch",
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		WriteLeaseID:       pgvalue.UUID(leaseID),
+		FencingToken:       fencingToken,
+		Request:            []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requested.FencingGeneration != 1 || requested.WriteLeaseID != pgvalue.UUID(leaseID) || requested.FencingToken != fencingToken {
+		t.Fatalf("operation lease fence = generation %d lease %v token %q", requested.FencingGeneration, requested.WriteLeaseID, requested.FencingToken)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_leases
+		   SET state = 'released',
+		       released_at = now(),
+		       updated_at = now()
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, leaseID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "claim-token",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		MaxClaimAttempts:  testWorkspaceOperationMaxClaimAttempts,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("claim after released write lease err = %v, want no rows", err)
+	}
+}
+
+func TestWorkspaceMaterializationOperationExpiredClaimReclaimsForSameMaterialization(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
+
+	requested, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      "noop",
+		RequestFingerprint: "test-noop-dispatch",
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Request:            []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "expired-claim-token",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(-time.Second)),
+		MaxClaimAttempts:  testWorkspaceOperationMaxClaimAttempts,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "fresh-claim-token",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		MaxClaimAttempts:  testWorkspaceOperationMaxClaimAttempts,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != requested.ID || second.ID != requested.ID || second.ClaimToken != "fresh-claim-token" || second.ClaimAttempt != first.ClaimAttempt+1 {
+		t.Fatalf("reclaimed operation first=%+v second=%+v requested=%+v", first, second, requested)
+	}
+	if _, err := queries.StartWorkspaceMaterializationOperation(ctx, db.StartWorkspaceMaterializationOperationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               requested.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ClaimToken:       "fresh-claim-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.CompleteWorkspaceMaterializationOperation(ctx, db.CompleteWorkspaceMaterializationOperationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               requested.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ClaimToken:       "expired-claim-token",
+		Result:           []byte(`{"ok":false}`),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expired token complete err = %v, want no rows", err)
+	}
+	completed, err := queries.CompleteWorkspaceMaterializationOperation(ctx, db.CompleteWorkspaceMaterializationOperationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               requested.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ClaimToken:       "fresh-claim-token",
+		Result:           []byte(`{"ok":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.State != db.WorkspaceMaterializationOperationStateCompleted {
+		t.Fatalf("completed state = %s", completed.State)
+	}
+}
+
+func TestWorkspaceMaterializationOperationRunningIsTerminallyCleanedUp(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
+
+	requested, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      "noop",
+		RequestFingerprint: "test-noop-dispatch",
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Request:            []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "running-terminal-token",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		MaxClaimAttempts:  testWorkspaceOperationMaxClaimAttempts,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartWorkspaceMaterializationOperation(ctx, db.StartWorkspaceMaterializationOperationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               requested.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ClaimToken:       claimed.ClaimToken,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.FailWorkspaceMaterialization(ctx, db.FailWorkspaceMaterializationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               materialization.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ReservationToken: materialization.ReservationToken,
+		Error:            []byte(`{"code":"test_failure"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cleaned, err := queries.GetWorkspaceMaterializationOperation(ctx, db.GetWorkspaceMaterializationOperationParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            requested.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleaned.State != db.WorkspaceMaterializationOperationStateLost {
+		t.Fatalf("running operation was not lost after materialization failure: %+v", cleaned)
+	}
+}
+
+func TestWorkspaceMaterializationOperationRunningExpires(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
+
+	requested, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      "noop",
+		RequestFingerprint: "test-noop-dispatch",
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Request:            []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "running-expired-token",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		MaxClaimAttempts:  testWorkspaceOperationMaxClaimAttempts,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartWorkspaceMaterializationOperation(ctx, db.StartWorkspaceMaterializationOperationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               requested.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ClaimToken:       claimed.ClaimToken,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_materialization_operations
+		   SET operation_expires_at = now() - interval '1 second'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, requested.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "after-expiry-token",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		MaxClaimAttempts:  testWorkspaceOperationMaxClaimAttempts,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expired running operation claim err = %v, want no rows", err)
+	}
+	expired, err := queries.GetWorkspaceMaterializationOperation(ctx, db.GetWorkspaceMaterializationOperationParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            requested.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expired.State != db.WorkspaceMaterializationOperationStateExpired {
+		t.Fatalf("running operation expiry state = %s", expired.State)
+	}
+}
+
+func TestWorkspaceMaterializationOperationExpiredClaimExhaustsAttempts(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
+
+	requested, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      "noop",
+		RequestFingerprint: "test-noop-dispatch",
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Request:            []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "expired-claim-token",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(-time.Second)),
+		MaxClaimAttempts:  1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "second-claim-token",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		MaxClaimAttempts:  1,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("exhausted claim err = %v, want no rows", err)
+	}
+	exhausted, err := queries.GetWorkspaceMaterializationOperation(ctx, db.GetWorkspaceMaterializationOperationParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            requested.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exhausted.State != db.WorkspaceMaterializationOperationStateLost {
+		t.Fatalf("exhausted state = %s", exhausted.State)
+	}
+}
+
+func TestWorkspaceLeasesFenceDirtyAndCapturePromotion(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	firstExecID := seedWorkspaceExec(t, ctx, pool, ids, materialization)
+	secondExecID := seedWorkspaceExec(t, ctx, pool, ids, materialization)
+	writeExecID := seedWorkspaceExec(t, ctx, pool, ids, materialization)
+
+	firstInstance, err := queries.AcquireWorkspaceInstanceLease(ctx, db.AcquireWorkspaceInstanceLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       pgvalue.UUID(firstExecID),
+		FencingToken:      "instance-token-1",
+		HeartbeatToken:    "instance-heartbeat-1",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondInstance, err := queries.AcquireWorkspaceInstanceLease(ctx, db.AcquireWorkspaceInstanceLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       pgvalue.UUID(secondExecID),
+		FencingToken:      "instance-token-2",
+		HeartbeatToken:    "instance-heartbeat-2",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstInstance.LeaseKind != db.WorkspaceLeaseKindInstance || secondInstance.LeaseKind != db.WorkspaceLeaseKindInstance {
+		t.Fatalf("instance lease kinds = %s / %s", firstInstance.LeaseKind, secondInstance.LeaseKind)
+	}
+
+	writeLease, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       pgvalue.UUID(writeExecID),
+		FencingToken:      "write-token",
+		HeartbeatToken:    "write-heartbeat",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		FencingToken:      "write-token-2",
+		HeartbeatToken:    "write-heartbeat-2",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	}); err == nil {
+		t.Fatal("second active write lease should fail")
+	}
+	if _, err := queries.MarkWorkspaceWriteLeaseDirty(ctx, db.MarkWorkspaceWriteLeaseDirtyParams{
+		OrgID:        pgvalue.UUID(ids.orgID),
+		WriteLeaseID: writeLease.ID,
+		FencingToken: "stale-token",
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("stale fencing dirty err = %v, want no rows", err)
+	}
+	dirty, err := queries.MarkWorkspaceWriteLeaseDirty(ctx, db.MarkWorkspaceWriteLeaseDirtyParams{
+		OrgID:        pgvalue.UUID(ids.orgID),
+		WriteLeaseID: writeLease.ID,
+		FencingToken: "write-token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirty.DirtyGeneration != 1 {
+		t.Fatalf("dirty generation = %d, want 1", dirty.DirtyGeneration)
+	}
+	artifactID := seedWorkspaceVersionArtifact(t, ctx, pool, ids)
+	if _, err := queries.PromoteWorkspaceCapture(ctx, db.PromoteWorkspaceCaptureParams{
+		OrgID:              pgvalue.UUID(ids.orgID),
+		WriteLeaseID:       writeLease.ID,
+		FencingToken:       "write-token",
+		DirtyGeneration:    2,
+		VersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Kind:               db.WorkspaceVersionKindSystem,
+		ArtifactID:         pgvalue.UUID(artifactID),
+		ArtifactEncoding:   "tar.zst",
+		ArtifactEntryCount: 1,
+		ContentDigest:      "sha256:capture",
+		SizeBytes:          10,
+		Message:            "wrong dirty generation",
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("stale capture dirty generation err = %v, want no rows", err)
+	}
+	if _, err := queries.PromoteWorkspaceCapture(ctx, db.PromoteWorkspaceCaptureParams{
+		OrgID:              pgvalue.UUID(ids.orgID),
+		WriteLeaseID:       writeLease.ID,
+		FencingToken:       "write-token",
+		DirtyGeneration:    dirty.DirtyGeneration,
+		VersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Kind:               db.WorkspaceVersionKindSystem,
+		ArtifactID:         pgvalue.UUID(artifactID),
+		ArtifactEncoding:   "tar.zst",
+		ArtifactEntryCount: 1,
+		ContentDigest:      "sha256:capture",
+		SizeBytes:          11,
+		Message:            "bad artifact size",
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("CAS mismatch capture err = %v, want no rows", err)
+	}
+	var promotedAfterCASFailure bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			  FROM workspace_versions
+			 WHERE org_id = $1
+			   AND workspace_id = $2
+			   AND artifact_id = $3
+		)
+	`, ids.orgID, ids.workspaceID, artifactID).Scan(&promotedAfterCASFailure); err != nil {
+		t.Fatal(err)
+	}
+	if promotedAfterCASFailure {
+		t.Fatal("CAS mismatch should not create a workspace version")
+	}
+	versionID := uuid.Must(uuid.NewV7())
+	version, err := queries.PromoteWorkspaceCapture(ctx, db.PromoteWorkspaceCaptureParams{
+		OrgID:              pgvalue.UUID(ids.orgID),
+		WriteLeaseID:       writeLease.ID,
+		FencingToken:       "write-token",
+		DirtyGeneration:    dirty.DirtyGeneration,
+		VersionID:          pgvalue.UUID(versionID),
+		Kind:               db.WorkspaceVersionKindSystem,
+		ArtifactID:         pgvalue.UUID(artifactID),
+		ArtifactEncoding:   "tar.zst",
+		ArtifactEntryCount: 1,
+		ContentDigest:      "sha256:capture",
+		SizeBytes:          10,
+		Message:            "capture on stop",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version.ID != pgvalue.UUID(versionID) || version.State != db.WorkspaceVersionStateReady || !version.PromotedAt.Valid {
+		t.Fatalf("version = %+v", version)
+	}
+	var currentVersionID uuid.UUID
+	var dirtyState string
+	if err := pool.QueryRow(ctx, `SELECT current_version_id, dirty_state::text FROM workspaces WHERE id = $1`, ids.workspaceID).Scan(&currentVersionID, &dirtyState); err != nil {
+		t.Fatal(err)
+	}
+	if currentVersionID != versionID || dirtyState != "clean" {
+		t.Fatalf("workspace current_version_id=%s dirty_state=%s", currentVersionID, dirtyState)
 	}
 }
 
@@ -352,7 +2062,7 @@ func TestResolveRunChannelWaitpointsWaitBeforeSend(t *testing.T) {
 		Channel:                "approval",
 		Data:                   []byte(`{"approved":true}`),
 		ContentType:            "application/json",
-		IdempotencyKey:         "slack-action-1",
+		IdempotencyKey:         "external-action-1",
 		IdempotencyFingerprint: "test-fingerprint",
 		MaxInputsPerChannel:    1024,
 		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
@@ -505,18 +2215,19 @@ func TestChannelWaitCursorAdvancesUnfilteredWaitForCorrelatedRecord(t *testing.T
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO task_sessions (
 			id, org_id, project_id, environment_id, task_id,
-			initial_deployment_id, active_deployment_id, current_run_id
+			initial_deployment_id, active_deployment_id, workspace_id, current_run_id
 		)
-		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5, $6)
-	`, taskSessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.runID); err != nil {
+		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5, $6, $7)
+	`, taskSessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID, ids.runID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE runs
-		   SET task_session_id = $1
+		   SET task_session_id = $1,
+		       workspace_id = $4
 		 WHERE org_id = $2
 		   AND id = $3
-	`, taskSessionID, ids.orgID, ids.runID); err != nil {
+	`, taskSessionID, ids.orgID, ids.runID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -764,7 +2475,6 @@ func TestCreateRunSuspensionForWaitpointUsesTaskSessionChannel(t *testing.T) {
 		ImageKey:                   pgvalue.Text("test-image"),
 		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
 		WorkspaceMountPath:         pgvalue.Text("/workspace"),
-		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
 		ActiveDurationMs:           10,
 		CheckpointPayload:          []byte(`{"waitpoint":"wait-1"}`),
 	})
@@ -960,7 +2670,6 @@ func TestAcknowledgeRestoreDoesNotCommitMatchedChannelCursorForTimedOutAggregate
 		ImageKey:                   pgvalue.Text("test-image"),
 		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
 		WorkspaceMountPath:         pgvalue.Text("/workspace"),
-		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
 		ActiveDurationMs:           10,
 		CheckpointPayload:          []byte(`{"waitpoint":"aggregate-1"}`),
 	})
@@ -1478,7 +3187,7 @@ func TestMarkRunSuspensionCheckpointReadyReleasesWorkspaceWriteLease(t *testing.
 	pool := newIntegrationDB(t, ctx)
 	queries := db.New(pool)
 	ids := seedWaitpointTokenIntegration(t, ctx, pool)
-	taskSessionID, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
 	var runtimeID string
 	if err := pool.QueryRow(ctx, `
 		SELECT runtime_id
@@ -1488,24 +3197,7 @@ func TestMarkRunSuspensionCheckpointReadyReleasesWorkspaceWriteLease(t *testing.
 	`, ids.orgID, runLeaseID).Scan(&runtimeID); err != nil {
 		t.Fatal(err)
 	}
-	workspace, err := queries.CreateTaskSessionWorkspace(ctx, db.CreateTaskSessionWorkspaceParams{
-		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:           pgvalue.UUID(ids.orgID),
-		ProjectID:       pgvalue.UUID(ids.projectID),
-		EnvironmentID:   pgvalue.UUID(ids.environmentID),
-		TaskSessionID:   pgvalue.UUID(taskSessionID),
-		RetentionPolicy: []byte(`{}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	workspaceLeaseID := uuid.Must(uuid.NewV7())
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO workspace_leases (id, org_id, workspace_id, run_id, mode, expires_at)
-		VALUES ($1, $2, $3, $4, 'write', now() + interval '1 hour')
-	`, workspaceLeaseID, ids.orgID, pgvalue.MustUUIDValue(workspace.ID), ids.runID); err != nil {
-		t.Fatal(err)
-	}
+	workspaceLeaseID := seedWorkspaceWriteLease(t, ctx, pool, ids, workerID)
 	waitpoint, err := queries.CreateRunSuspensionForWaitpoint(ctx, db.CreateRunSuspensionForWaitpointParams{
 		OrgID:            pgvalue.UUID(ids.orgID),
 		RunID:            pgvalue.UUID(ids.runID),
@@ -1551,7 +3243,6 @@ func TestMarkRunSuspensionCheckpointReadyReleasesWorkspaceWriteLease(t *testing.
 		ImageKey:                   pgvalue.Text("test-image"),
 		WorkspaceArtifactEncoding:  pgvalue.Text("tar"),
 		WorkspaceMountPath:         pgvalue.Text("/workspace"),
-		WorkspaceVolumeKind:        pgvalue.Text("copy-on-write"),
 		ActiveDurationMs:           10,
 		CheckpointPayload:          []byte(`{"waitpoint":"token-1"}`),
 	})
@@ -1573,12 +3264,7 @@ func TestMarkRunSuspensionCheckpointReadyReleasesWorkspaceWriteLease(t *testing.
 	if !releasedAt.Valid {
 		t.Fatal("workspace write lease released_at is null after checkpoint ready")
 	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO workspace_leases (org_id, workspace_id, run_id, mode, expires_at)
-		VALUES ($1, $2, $3, 'write', now() + interval '1 hour')
-	`, ids.orgID, pgvalue.MustUUIDValue(workspace.ID), ids.runID); err != nil {
-		t.Fatalf("second workspace write lease insert failed after checkpoint release: %v", err)
-	}
+	_ = seedWorkspaceWriteLease(t, ctx, pool, ids, workerID)
 }
 
 func TestRunTaskSessionIDCannotBeCleared(t *testing.T) {
@@ -1652,12 +3338,12 @@ func TestAppendExecutionChannelRecordRejectsNonCurrentSessionRun(t *testing.T) {
 	nextRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id,
+			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			task_session_id, status, execution_status, payload, queue_name, max_duration_seconds, trace_id, root_span_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'approval-task', $7, 'queued', 'queued', '{}', 'default', 300,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'queued', 'queued', '{}', 'default', 300,
 			'00000000000000000000000000000002', '0000000000000002')
-	`, nextRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, taskSessionID); err != nil {
+	`, nextRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, taskSessionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1689,27 +3375,12 @@ func TestReleaseRunLeaseFailsTaskSessionWhenResultTooLarge(t *testing.T) {
 	queries := db.New(pool)
 	ids := seedWaitpointTokenIntegration(t, ctx, pool)
 	taskSessionID, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
-	workspace, err := queries.CreateTaskSessionWorkspace(ctx, db.CreateTaskSessionWorkspaceParams{
-		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:           pgvalue.UUID(ids.orgID),
-		ProjectID:       pgvalue.UUID(ids.projectID),
-		EnvironmentID:   pgvalue.UUID(ids.environmentID),
-		TaskSessionID:   pgvalue.UUID(taskSessionID),
-		RetentionPolicy: []byte(`{}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	workspaceLeaseID := uuid.Must(uuid.NewV7())
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO workspace_leases (id, org_id, workspace_id, run_id, mode, expires_at)
-		VALUES ($1, $2, $3, $4, 'write', now() + interval '1 hour')
-	`, workspaceLeaseID, ids.orgID, pgvalue.MustUUIDValue(workspace.ID), ids.runID); err != nil {
-		t.Fatal(err)
-	}
+	seedTaskSessionRun(t, ctx, pool, ids, taskSessionID)
+	workspaceLeaseID := seedWorkspaceWriteLease(t, ctx, pool, ids, workerID)
+	baseVersionID := currentWorkspaceVersionID(t, ctx, pool, ids)
 	largeOutput := []byte(`"` + strings.Repeat("x", 1048577) + `"`)
 
-	_, err = queries.ReleaseRunLease(ctx, db.ReleaseRunLeaseParams{
+	_, err := queries.ReleaseRunLease(ctx, db.ReleaseRunLeaseParams{
 		RunLeaseID:                  pgvalue.UUID(runLeaseID),
 		WorkerInstanceID:            pgvalue.UUID(workerID),
 		DispatchMessageID:           "dispatch-" + runLeaseID.String()[:8],
@@ -1718,13 +3389,14 @@ func TestReleaseRunLeaseFailsTaskSessionWhenResultTooLarge(t *testing.T) {
 		RunID:                       pgvalue.UUID(ids.runID),
 		RunStatus:                   db.RunStatusSucceeded,
 		WorkspaceLeaseID:            pgvalue.UUID(workspaceLeaseID),
+		WorkspaceBaseVersionID:      pgvalue.UUID(baseVersionID),
+		WorkspaceFencingToken:       pgtype.Text{String: "fence-" + shortUUID(workspaceLeaseID), Valid: true},
 		WorkspaceArtifactDigest:     pgvalue.Text("sha256:" + strings.Repeat("c", 64)),
 		WorkspaceArtifactSizeBytes:  pgtype.Int8{Int64: 123, Valid: true},
 		WorkspaceArtifactMediaType:  pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
 		WorkspaceArtifactEncoding:   pgvalue.Text("tar"),
 		WorkspaceArtifactEntryCount: pgtype.Int4{Int32: 2, Valid: true},
 		WorkspaceMountPath:          pgvalue.Text("/workspace"),
-		WorkspaceVolumeKind:         pgvalue.Text("copy-on-write"),
 		AttemptStatus:               db.RunAttemptStatusSucceeded,
 		ExitCode:                    pgtype.Int4{Int32: 0, Valid: true},
 		Output:                      largeOutput,
@@ -1771,22 +3443,22 @@ func TestReleaseRunLeaseFailsTaskSessionWhenResultTooLarge(t *testing.T) {
 		  FROM workspaces
 		 WHERE org_id = $1
 		   AND id = $2
-	`, ids.orgID, pgvalue.MustUUIDValue(workspace.ID)).Scan(&currentVersionID); err != nil {
+	`, ids.orgID, ids.workspaceID).Scan(&currentVersionID); err != nil {
 		t.Fatal(err)
 	}
-	if currentVersionID.Valid {
-		t.Fatalf("workspace current_version_id = %+v, want null for oversized session result", currentVersionID)
+	if !currentVersionID.Valid || pgvalue.MustUUIDValue(currentVersionID) != baseVersionID {
+		t.Fatalf("workspace current_version_id = %+v, want base version %s for oversized session result", currentVersionID, baseVersionID)
 	}
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		  FROM workspace_versions
 		 WHERE org_id = $1
 		   AND workspace_id = $2
-	`, ids.orgID, pgvalue.MustUUIDValue(workspace.ID)).Scan(&workspaceVersionCount); err != nil {
+	`, ids.orgID, ids.workspaceID).Scan(&workspaceVersionCount); err != nil {
 		t.Fatal(err)
 	}
-	if workspaceVersionCount != 0 {
-		t.Fatalf("workspace versions = %d, want 0 for oversized session result", workspaceVersionCount)
+	if workspaceVersionCount != 1 {
+		t.Fatalf("workspace versions = %d, want only base version for oversized session result", workspaceVersionCount)
 	}
 }
 
@@ -1896,7 +3568,7 @@ func TestAppendSessionChannelInputIdempotencyReturnsExistingInput(t *testing.T) 
 		Channel:                "approval",
 		Data:                   []byte(`{"approved":true}`),
 		ContentType:            "application/json",
-		IdempotencyKey:         "slack-action-1",
+		IdempotencyKey:         "external-action-1",
 		IdempotencyFingerprint: "test-fingerprint",
 		MaxInputsPerChannel:    1024,
 		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
@@ -1911,7 +3583,7 @@ func TestAppendSessionChannelInputIdempotencyReturnsExistingInput(t *testing.T) 
 		Channel:                "approval",
 		Data:                   []byte(`{"approved":false}`),
 		ContentType:            "application/json",
-		IdempotencyKey:         "slack-action-1",
+		IdempotencyKey:         "external-action-1",
 		IdempotencyFingerprint: "test-fingerprint",
 		MaxInputsPerChannel:    1024,
 		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
@@ -1937,7 +3609,7 @@ func TestAppendSessionChannelInputIdempotencyReturnsExistingInput(t *testing.T) 
 		   AND runs.id = $2
 		   AND channels.name = 'approval'
 		   AND channels.direction = 'input'
-		   AND channel_records.idempotency_key = 'slack-action-1'
+		   AND channel_records.idempotency_key = 'external-action-1'
 	`, ids.orgID, ids.runID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
@@ -1960,7 +3632,7 @@ func TestAppendSessionChannelInputIdempotencyFingerprintMismatchReturnsNoRows(t 
 		Channel:                "approval",
 		Data:                   []byte(`{"approved":true}`),
 		ContentType:            "application/json",
-		IdempotencyKey:         "slack-action-1",
+		IdempotencyKey:         "external-action-1",
 		IdempotencyFingerprint: "test-fingerprint",
 		MaxInputsPerChannel:    1024,
 		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
@@ -1974,7 +3646,7 @@ func TestAppendSessionChannelInputIdempotencyFingerprintMismatchReturnsNoRows(t 
 		Channel:                "approval",
 		Data:                   []byte(`{"approved":false}`),
 		ContentType:            "application/json",
-		IdempotencyKey:         "slack-action-1",
+		IdempotencyKey:         "external-action-1",
 		IdempotencyFingerprint: "different-fingerprint",
 		MaxInputsPerChannel:    1024,
 		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
@@ -1986,7 +3658,7 @@ func TestAppendSessionChannelInputIdempotencyFingerprintMismatchReturnsNoRows(t 
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		RunID:                  pgvalue.UUID(ids.runID),
 		Channel:                "approval",
-		IdempotencyKey:         "slack-action-1",
+		IdempotencyKey:         "external-action-1",
 		IdempotencyFingerprint: "different-fingerprint",
 		MaxInputsPerChannel:    1024,
 	})
@@ -2014,7 +3686,7 @@ func TestAppendSessionChannelInputExternalEventIDReturnsExistingInput(t *testing
 		ContentType:            "application/json",
 		IdempotencyKey:         "",
 		IdempotencyFingerprint: "test-fingerprint",
-		ExternalEventID:        "slack-event-1",
+		ExternalEventID:        "external-event-1",
 		MaxInputsPerChannel:    1024,
 		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
 	})
@@ -2030,7 +3702,7 @@ func TestAppendSessionChannelInputExternalEventIDReturnsExistingInput(t *testing
 		ContentType:            "application/json",
 		IdempotencyKey:         "",
 		IdempotencyFingerprint: "test-fingerprint",
-		ExternalEventID:        "slack-event-1",
+		ExternalEventID:        "external-event-1",
 		MaxInputsPerChannel:    1024,
 		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
 	})
@@ -2053,7 +3725,7 @@ func TestAppendSessionChannelInputExternalEventIDReturnsExistingInput(t *testing
 		ContentType:            "application/json",
 		IdempotencyKey:         "",
 		IdempotencyFingerprint: "different-fingerprint",
-		ExternalEventID:        "slack-event-1",
+		ExternalEventID:        "external-event-1",
 		MaxInputsPerChannel:    1024,
 		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
 	})
@@ -2066,7 +3738,7 @@ func TestAppendSessionChannelInputExternalEventIDReturnsExistingInput(t *testing
 		Channel:                "approval",
 		IdempotencyKey:         "",
 		IdempotencyFingerprint: "different-fingerprint",
-		ExternalEventID:        "slack-event-1",
+		ExternalEventID:        "external-event-1",
 		MaxInputsPerChannel:    1024,
 	})
 	if err != nil {
@@ -2091,7 +3763,7 @@ func TestAppendSessionChannelInputRejectsAmbiguousIdempotencyIdentity(t *testing
 		Channel:                "approval",
 		Data:                   []byte(`{"source":"idempotency"}`),
 		ContentType:            "application/json",
-		IdempotencyKey:         "slack-action-1",
+		IdempotencyKey:         "external-action-1",
 		IdempotencyFingerprint: "same-fingerprint",
 		MaxInputsPerChannel:    1024,
 		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
@@ -2106,7 +3778,7 @@ func TestAppendSessionChannelInputRejectsAmbiguousIdempotencyIdentity(t *testing
 		Data:                   []byte(`{"source":"event"}`),
 		ContentType:            "application/json",
 		IdempotencyFingerprint: "same-fingerprint",
-		ExternalEventID:        "slack-event-1",
+		ExternalEventID:        "external-event-1",
 		MaxInputsPerChannel:    1024,
 		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
 	}); err != nil {
@@ -2119,9 +3791,9 @@ func TestAppendSessionChannelInputRejectsAmbiguousIdempotencyIdentity(t *testing
 		Channel:                "approval",
 		Data:                   []byte(`{"source":"both"}`),
 		ContentType:            "application/json",
-		IdempotencyKey:         "slack-action-1",
+		IdempotencyKey:         "external-action-1",
 		IdempotencyFingerprint: "same-fingerprint",
-		ExternalEventID:        "slack-event-1",
+		ExternalEventID:        "external-event-1",
 		MaxInputsPerChannel:    1024,
 		AuthSubjectType:        db.ChannelRecordAuthSubjectTypeSystem,
 	})
@@ -2132,9 +3804,9 @@ func TestAppendSessionChannelInputRejectsAmbiguousIdempotencyIdentity(t *testing
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		RunID:                  pgvalue.UUID(ids.runID),
 		Channel:                "approval",
-		IdempotencyKey:         "slack-action-1",
+		IdempotencyKey:         "external-action-1",
 		IdempotencyFingerprint: "same-fingerprint",
-		ExternalEventID:        "slack-event-1",
+		ExternalEventID:        "external-event-1",
 		MaxInputsPerChannel:    1024,
 	})
 	if err != nil {
@@ -2154,11 +3826,11 @@ func TestAppendSessionChannelInputRejectsStaleCurrentRun(t *testing.T) {
 	replacementRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, project_id, environment_id, deployment_id, deployment_task_id,
+			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id,
 			task_id, task_session_id, status, execution_status, payload, metadata, locked_retry_policy,
 			queue_name, max_duration_seconds, trace_id, root_span_id, created_at, updated_at
 		)
-		SELECT $1, org_id, project_id, environment_id, deployment_id, deployment_task_id,
+		SELECT $1, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id,
 		       task_id, task_session_id, 'queued', 'queued', '{}', '{}', '{}',
 		       queue_name, max_duration_seconds, '00000000000000000000000000000001', '0000000000000001', now(), now()
 		  FROM runs
@@ -2467,12 +4139,14 @@ func TestExpireDuePendingWaitpointsPublishesNullTimeoutData(t *testing.T) {
 }
 
 type waitpointTokenIntegrationIDs struct {
-	orgID         uuid.UUID
-	projectID     uuid.UUID
-	environmentID uuid.UUID
-	deploymentID  uuid.UUID
-	taskID        uuid.UUID
-	runID         uuid.UUID
+	orgID               uuid.UUID
+	projectID           uuid.UUID
+	environmentID       uuid.UUID
+	deploymentID        uuid.UUID
+	deploymentSandboxID uuid.UUID
+	workspaceID         uuid.UUID
+	taskID              uuid.UUID
+	runID               uuid.UUID
 }
 
 func shortUUID(id uuid.UUID) string {
@@ -2480,18 +4154,373 @@ func shortUUID(id uuid.UUID) string {
 	return compact[len(compact)-12:]
 }
 
+func seedWorkspaceExec(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs, materialization db.WorkspaceMaterialization) uuid.UUID {
+	t.Helper()
+	execID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_execs (
+			id, org_id, project_id, environment_id, workspace_id,
+			materialization_id, command, state
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, '{"cmd":["true"]}'::jsonb, 'queued')
+	`, execID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, pgvalue.MustUUIDValue(materialization.ID)); err != nil {
+		t.Fatal(err)
+	}
+	return execID
+}
+
+func currentWorkspaceVersionID(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs) uuid.UUID {
+	t.Helper()
+	var versionID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT current_version_id
+		  FROM workspaces
+		 WHERE org_id = $1
+		   AND project_id = $2
+		   AND environment_id = $3
+		   AND id = $4
+	`, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID).Scan(&versionID); err != nil {
+		t.Fatal(err)
+	}
+	return versionID
+}
+
+func seedWorkspaceWriteLease(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs, workerID uuid.UUID) uuid.UUID {
+	t.Helper()
+	materializationID := uuid.Must(uuid.NewV7())
+	leaseID := uuid.Must(uuid.NewV7())
+	baseVersionID := currentWorkspaceVersionID(t, ctx, pool, ids)
+	err := pool.QueryRow(ctx, `
+		SELECT id
+		  FROM workspace_materializations
+		 WHERE org_id = $1
+		   AND project_id = $2
+		   AND environment_id = $3
+		   AND workspace_id = $4
+		   AND worker_instance_id = $5
+		   AND state IN ('requested', 'materializing', 'restoring', 'running', 'pausing', 'paused', 'capturing', 'stopping')
+		 LIMIT 1
+	`, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, workerID).Scan(&materializationID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var imageArtifactID uuid.UUID
+		var rootfsDigest string
+		var imageDigest string
+		var workspaceVersionID uuid.UUID
+		var workspaceArtifactID uuid.UUID
+		var workspaceDigest string
+		var workspaceSize int64
+		var workspaceMediaType string
+		if err := pool.QueryRow(ctx, `
+			SELECT deployment_sandboxes.image_artifact_id,
+			       deployment_sandboxes.rootfs_digest,
+			       deployment_sandboxes.image_digest,
+			       workspace_versions.id,
+			       workspace_versions.artifact_id,
+			       artifacts.digest,
+			       artifacts.size_bytes,
+			       artifacts.media_type
+			  FROM workspaces
+			  JOIN deployment_sandboxes
+			    ON deployment_sandboxes.org_id = workspaces.org_id
+			   AND deployment_sandboxes.project_id = workspaces.project_id
+			   AND deployment_sandboxes.environment_id = workspaces.environment_id
+			   AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
+			  JOIN workspace_versions
+			    ON workspace_versions.org_id = workspaces.org_id
+			   AND workspace_versions.project_id = workspaces.project_id
+			   AND workspace_versions.environment_id = workspaces.environment_id
+			   AND workspace_versions.workspace_id = workspaces.id
+			   AND workspace_versions.id = workspaces.current_version_id
+			  JOIN artifacts
+			    ON artifacts.org_id = workspace_versions.org_id
+			   AND artifacts.project_id = workspace_versions.project_id
+			   AND artifacts.environment_id = workspace_versions.environment_id
+			   AND artifacts.id = workspace_versions.artifact_id
+			 WHERE workspaces.org_id = $1
+			   AND workspaces.project_id = $2
+			   AND workspaces.environment_id = $3
+			   AND workspaces.id = $4
+		`, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID).Scan(&imageArtifactID, &rootfsDigest, &imageDigest, &workspaceVersionID, &workspaceArtifactID, &workspaceDigest, &workspaceSize, &workspaceMediaType); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_materializations (
+			id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id,
+			base_version_id,
+			sandbox_fingerprint, worker_instance_id, requested_cpu_millis, requested_memory_mib,
+			requested_disk_mib, runtime_id,
+			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
+			workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count,
+			workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path,
+			runtime_abi, guestd_abi, adapter_abi,
+			state, materialized_at, last_heartbeat_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'sandbox-fingerprint', $8, 1000, 1024, 4096,
+			'test-runtime',
+			$9, 'oci-tar', $10, $11, 'oci-tar',
+			$12, $13, 0, $14, $15, $16, '/workspace',
+			'test', 'guestd-test', 'adapter-test',
+			'running', now(), now())
+	`, materializationID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, ids.deploymentSandboxID, workspaceVersionID, workerID, imageArtifactID, rootfsDigest, imageDigest, workspaceArtifactID, workspace.ArtifactEncoding, workspaceDigest, workspaceSize, workspaceMediaType); err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_leases (
+			id, org_id, project_id, environment_id, workspace_id, materialization_id,
+			lease_kind, state, owner_run_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token,
+			heartbeat_token, expires_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, 'write', 'active', $7, $8, $8, 1, $9, $10, now() + interval '1 hour')
+	`, leaseID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, materializationID, ids.runID, baseVersionID, "fence-"+shortUUID(leaseID), "heartbeat-"+shortUUID(leaseID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET workspace_materialization_id = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, materializationID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	return leaseID
+}
+
+func seedMaterializationWorker(t *testing.T, ctx context.Context, pool *pgxpool.Pool) uuid.UUID {
+	t.Helper()
+	workerID := uuid.Must(uuid.NewV7())
+	workerResourceID := "materialization-worker-" + shortUUID(workerID)
+	var workerGroupID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO worker_instances (
+			id, worker_group_id, resource_id, total_milli_cpu, total_memory_mib, total_disk_mib,
+			total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib,
+			available_execution_slots, runtime_id, runtime_arch, runtime_abi, rootfs_digest
+		)
+		VALUES ($1, $2, $3, 2000, 2048, 4096, 1, 2000, 2048, 4096, 1,
+			'runtime-test', 'arm64', 'test', 'sha256:rootfs')
+	`, workerID, workerGroupID, workerResourceID); err != nil {
+		t.Fatal(err)
+	}
+	return workerID
+}
+
+func requestWorkspaceMaterializationForTest(ctx context.Context, queries *db.Queries, arg db.EnsureWorkspaceMaterializationRequestedParams) (db.WorkspaceMaterialization, error) {
+	row, err := queries.EnsureWorkspaceMaterializationRequested(ctx, arg)
+	if err != nil {
+		return db.WorkspaceMaterialization{}, err
+	}
+	return db.WorkspaceMaterialization{
+		ID:                          row.ID,
+		OrgID:                       row.OrgID,
+		ProjectID:                   row.ProjectID,
+		EnvironmentID:               row.EnvironmentID,
+		WorkspaceID:                 row.WorkspaceID,
+		DeploymentSandboxID:         row.DeploymentSandboxID,
+		SandboxFingerprint:          row.SandboxFingerprint,
+		BaseVersionID:               row.BaseVersionID,
+		WorkerInstanceID:            row.WorkerInstanceID,
+		ReservationToken:            row.ReservationToken,
+		ReservationExpiresAt:        row.ReservationExpiresAt,
+		ClaimAttempt:                row.ClaimAttempt,
+		DeadLetteredAt:              row.DeadLetteredAt,
+		Priority:                    row.Priority,
+		RequestedCpuMillis:          row.RequestedCpuMillis,
+		RequestedMemoryMib:          row.RequestedMemoryMib,
+		RequestedDiskMib:            row.RequestedDiskMib,
+		RequestedExecutionSlots:     row.RequestedExecutionSlots,
+		ReservedCpuMillis:           row.ReservedCpuMillis,
+		ReservedMemoryMib:           row.ReservedMemoryMib,
+		ReservedDiskMib:             row.ReservedDiskMib,
+		ReservedExecutionSlots:      row.ReservedExecutionSlots,
+		CapacityReservationID:       row.CapacityReservationID,
+		GuestdChannelTokenHash:      row.GuestdChannelTokenHash,
+		GuestdChannelTokenExpiresAt: row.GuestdChannelTokenExpiresAt,
+		RuntimeID:                   row.RuntimeID,
+		State:                       row.State,
+		Request:                     row.Request,
+		LeaseGeneration:             row.LeaseGeneration,
+		DirtyGeneration:             row.DirtyGeneration,
+		FencingGeneration:           row.FencingGeneration,
+		NetworkNamespace:            row.NetworkNamespace,
+		PortNamespace:               row.PortNamespace,
+		ImageArtifactID:             row.ImageArtifactID,
+		ImageArtifactFormat:         row.ImageArtifactFormat,
+		RootfsDigest:                row.RootfsDigest,
+		ImageDigest:                 row.ImageDigest,
+		ImageFormat:                 row.ImageFormat,
+		WorkspaceArtifactID:         row.WorkspaceArtifactID,
+		WorkspaceArtifactEncoding:   row.WorkspaceArtifactEncoding,
+		WorkspaceArtifactEntryCount: row.WorkspaceArtifactEntryCount,
+		WorkspaceArtifactDigest:     row.WorkspaceArtifactDigest,
+		WorkspaceArtifactSizeBytes:  row.WorkspaceArtifactSizeBytes,
+		WorkspaceArtifactMediaType:  row.WorkspaceArtifactMediaType,
+		WorkspaceMountPath:          row.WorkspaceMountPath,
+		RuntimeABI:                  row.RuntimeABI,
+		GuestdAbi:                   row.GuestdAbi,
+		AdapterAbi:                  row.AdapterAbi,
+		LastHeartbeatAt:             row.LastHeartbeatAt,
+		RequestedAt:                 row.RequestedAt,
+		MaterializedAt:              row.MaterializedAt,
+		StoppedAt:                   row.StoppedAt,
+		LostAt:                      row.LostAt,
+		FailedAt:                    row.FailedAt,
+		Error:                       row.Error,
+		CreatedAt:                   row.CreatedAt,
+		UpdatedAt:                   row.UpdatedAt,
+	}, nil
+}
+
+func seedRunningWorkspaceMaterialization(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, ids waitpointTokenIntegrationIDs) db.WorkspaceMaterialization {
+	t.Helper()
+	workerID := seedMaterializationWorker(t, ctx, pool)
+	requested, err := requestWorkspaceMaterializationForTest(ctx, queries, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Request:       []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rootfsDigest string
+	if err := pool.QueryRow(ctx, `
+		SELECT rootfs_digest
+		  FROM deployment_sandboxes
+		 WHERE org_id = $1
+		   AND project_id = $2
+		   AND environment_id = $3
+		   AND id = $4
+	`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentSandboxID).Scan(&rootfsDigest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ClaimWorkspaceMaterialization(ctx, db.ClaimWorkspaceMaterializationParams{
+		AvailableCpuMillis:      2000,
+		AvailableMemoryMib:      2048,
+		AvailableDiskMib:        4096,
+		AvailableExecutionSlots: 1,
+		RootfsDigest:            rootfsDigest,
+		RuntimeABI:              "test",
+		GuestdAbi:               "guestd-test",
+		AdapterAbi:              "adapter-test",
+		WorkerInstanceID:        pgvalue.UUID(workerID),
+		ReservationToken:        "lease-test-token",
+		ReservationExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		GuestdChannelTokenHash:  "channel-token-hash",
+		RuntimeID:               "runtime-test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	running, err := queries.MarkWorkspaceMaterializationRunning(ctx, db.MarkWorkspaceMaterializationRunningParams{
+		ReservationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ID:                   requested.ID,
+		WorkerInstanceID:     pgvalue.UUID(workerID),
+		ReservationToken:     "lease-test-token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return running
+}
+
+func seedWorkspaceVersionArtifact(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs) uuid.UUID {
+	t.Helper()
+	artifactID := uuid.Must(uuid.NewV7())
+	digest := testDigest("workspace-version")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO cas_objects (digest, size_bytes, media_type)
+		VALUES ($1, 10, $2)
+	`, digest, workspace.ArtifactMediaType); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, 'workspace_version', 10, $6)
+	`, artifactID, ids.orgID, ids.projectID, ids.environmentID, digest, workspace.ArtifactMediaType); err != nil {
+		t.Fatal(err)
+	}
+	return artifactID
+}
+
+func seedSandboxImageArtifact(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs) (uuid.UUID, string) {
+	t.Helper()
+	artifactID := uuid.Must(uuid.NewV7())
+	digest := testDigest("sandbox-image")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO cas_objects (digest, size_bytes, media_type)
+		VALUES ($1, 6, $2)
+	`, digest, api.SandboxImageArtifactMediaType); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, 'sandbox_image', 6, $6)
+	`, artifactID, ids.orgID, ids.projectID, ids.environmentID, digest, api.SandboxImageArtifactMediaType); err != nil {
+		t.Fatal(err)
+	}
+	return artifactID, digest
+}
+
+func deploymentSandboxRootfsDigest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs) string {
+	t.Helper()
+	var digest string
+	if err := pool.QueryRow(ctx, `
+		SELECT rootfs_digest
+		  FROM deployment_sandboxes
+		 WHERE org_id = $1
+		   AND project_id = $2
+		   AND environment_id = $3
+		   AND id = $4
+	`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentSandboxID).Scan(&digest); err != nil {
+		t.Fatal(err)
+	}
+	return digest
+}
+
+func deploymentSandboxImageDigest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs) string {
+	t.Helper()
+	var digest string
+	if err := pool.QueryRow(ctx, `
+		SELECT image_digest
+		  FROM deployment_sandboxes
+		 WHERE org_id = $1
+		   AND project_id = $2
+		   AND environment_id = $3
+		   AND id = $4
+	`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentSandboxID).Scan(&digest); err != nil {
+		t.Fatal(err)
+	}
+	return digest
+}
+
+func testDigest(label string) string {
+	sum := sha256.Sum256([]byte(label + ":" + uuid.NewString()))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 func seedWaitpointTokenIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) waitpointTokenIntegrationIDs {
 	t.Helper()
 	ids := waitpointTokenIntegrationIDs{
-		orgID:         dbtest.DefaultOrgID,
-		projectID:     uuid.Must(uuid.NewV7()),
-		environmentID: uuid.Must(uuid.NewV7()),
-		deploymentID:  uuid.Must(uuid.NewV7()),
-		taskID:        uuid.Must(uuid.NewV7()),
-		runID:         uuid.Must(uuid.NewV7()),
+		orgID:               dbtest.DefaultOrgID,
+		projectID:           uuid.Must(uuid.NewV7()),
+		environmentID:       uuid.Must(uuid.NewV7()),
+		deploymentID:        uuid.Must(uuid.NewV7()),
+		deploymentSandboxID: uuid.Must(uuid.NewV7()),
+		workspaceID:         uuid.Must(uuid.NewV7()),
+		taskID:              uuid.Must(uuid.NewV7()),
+		runID:               uuid.Must(uuid.NewV7()),
 	}
 	artifactID := uuid.Must(uuid.NewV7())
 	digest := "sha256:" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	rootfsDigest := "sha256:rootfs"
 	projectSlug := "project-" + shortUUID(ids.projectID)
 	environmentSlug := "env-" + shortUUID(ids.environmentID)
 	var workerGroupID uuid.UUID
@@ -2512,6 +4541,7 @@ func seedWaitpointTokenIntegration(t *testing.T, ctx context.Context, pool *pgxp
 	`, ids.environmentID, ids.orgID, ids.projectID, environmentSlug); err != nil {
 		t.Fatal(err)
 	}
+	imageArtifactID, imageDigest := seedSandboxImageArtifact(t, ctx, pool, ids)
 	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
@@ -2534,6 +4564,18 @@ func seedWaitpointTokenIntegration(t *testing.T, ctx context.Context, pool *pgxp
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
+		INSERT INTO deployment_sandboxes (
+			id, org_id, project_id, environment_id, deployment_id, sandbox_id,
+			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
+			workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format,
+			contract_version, fingerprint
+		)
+		VALUES ($1, $2, $3, $4, $5, 'default', $6, 'oci-tar', $7, $8, 'oci-tar', '/workspace',
+			'test', 'guestd-test', 'adapter-test', 'tar', 1, 'sandbox-fingerprint')
+	`, ids.deploymentSandboxID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, imageArtifactID, rootfsDigest, imageDigest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
 		INSERT INTO tasks (org_id, project_id, environment_id, task_id)
 		VALUES ($1, $2, $3, 'approval-task')
 		ON CONFLICT DO NOTHING
@@ -2542,31 +4584,64 @@ func seedWaitpointTokenIntegration(t *testing.T, ctx context.Context, pool *pgxp
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployment_tasks (
-			id, org_id, project_id, environment_id, deployment_id, task_id, bundle_artifact_id,
+			id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, bundle_artifact_id,
 			queue_name, max_duration_seconds
 		)
-		VALUES ($1, $2, $3, $4, $5, 'approval-task', $6, 'default', 300)
-	`, ids.taskID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, artifactID); err != nil {
+		VALUES ($1, $2, $3, $4, $5, $6, 'approval-task', $7, 'default', 300)
+	`, ids.taskID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentSandboxID, artifactID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspaces (
+			id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint
+		)
+		VALUES ($1, $2, $3, $4, $5, 'default', 'sandbox-fingerprint')
+	`, ids.workspaceID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentSandboxID); err != nil {
+		t.Fatal(err)
+	}
+	initialWorkspaceArtifactID := seedWorkspaceVersionArtifact(t, ctx, pool, ids)
+	initialVersionID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_versions (
+			id, org_id, project_id, environment_id, workspace_id, kind, state,
+			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
+		)
+		SELECT $1, $2, $3, $4, $5, 'system', 'ready',
+		       artifacts.id, $6, 0, artifacts.digest, artifacts.size_bytes, now()
+		  FROM artifacts
+		 WHERE artifacts.org_id = $2
+		   AND artifacts.project_id = $3
+		   AND artifacts.environment_id = $4
+		   AND artifacts.id = $7
+	`, initialVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, workspace.ArtifactEncoding, initialWorkspaceArtifactID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspaces
+		   SET current_version_id = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, initialVersionID, ids.orgID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	taskSessionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO task_sessions (
 			id, org_id, project_id, environment_id, task_id,
-			initial_deployment_id, active_deployment_id
+			initial_deployment_id, active_deployment_id, workspace_id
 		)
-		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5)
-	`, taskSessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
+		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5, $6)
+	`, taskSessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id,
+			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			task_session_id, status, execution_status, payload, queue_name, max_duration_seconds, trace_id, root_span_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'approval-task', $7, 'waiting', 'waiting', '{}', 'default', 300,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'waiting', 'waiting', '{}', 'default', 300,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, ids.runID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, taskSessionID); err != nil {
+	`, ids.runID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, taskSessionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -2606,10 +4681,10 @@ func seedTaskSessionForRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO task_sessions (
 			id, org_id, project_id, environment_id, task_id,
-			initial_deployment_id, active_deployment_id, current_run_id
+			initial_deployment_id, active_deployment_id, workspace_id, current_run_id
 		)
-		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5, $6)
-	`, taskSessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.runID); err != nil {
+		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5, $6, $7)
+	`, taskSessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID, ids.runID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -2621,6 +4696,57 @@ func seedTaskSessionForRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 		t.Fatal(err)
 	}
 	return taskSessionID
+}
+
+func seedQueuedRunForWorkspaceMaterializationTest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs) uuid.UUID {
+	t.Helper()
+	runID := uuid.Must(uuid.NewV7())
+	taskSessionID := uuid.Must(uuid.NewV7())
+	attemptID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO task_sessions (
+			id, org_id, project_id, environment_id, task_id,
+			initial_deployment_id, active_deployment_id, workspace_id
+		)
+		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5, $6)
+	`, taskSessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runs (
+			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			task_session_id, status, execution_status, payload, queue_name, max_duration_seconds,
+			trace_id, root_span_id
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'queued', 'queued', '{}', 'default', 300,
+			'33333333333333333333333333333333', '4444444444444444')
+	`, runID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, taskSessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
+		VALUES ($1, $2, $3, 1, 'queued')
+	`, attemptID, ids.orgID, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET current_attempt_id = $1,
+		       current_attempt_number = 1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, attemptID, ids.orgID, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE task_sessions
+		   SET current_run_id = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, runID, ids.orgID, taskSessionID); err != nil {
+		t.Fatal(err)
+	}
+	return runID
 }
 
 func seedRunningTaskSessionLease(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs) (taskSessionID uuid.UUID, runLeaseID uuid.UUID, workerID uuid.UUID) {
@@ -2647,10 +4773,10 @@ func seedRunningTaskSessionLease(t *testing.T, ctx context.Context, pool *pgxpoo
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO task_sessions (
 			id, org_id, project_id, environment_id, task_id,
-			initial_deployment_id, active_deployment_id, current_run_id
+			initial_deployment_id, active_deployment_id, workspace_id, current_run_id
 		)
-		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5, $6)
-	`, taskSessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.runID); err != nil {
+		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5, $6, $7)
+	`, taskSessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID, ids.runID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -2694,6 +4820,7 @@ func seedRunningTaskSessionLease(t *testing.T, ctx context.Context, pool *pgxpoo
 	if _, err := pool.Exec(ctx, `
 		UPDATE runs
 		   SET task_session_id = $1,
+		       workspace_id = $6,
 		       current_run_lease_id = $2,
 		       current_attempt_id = $3,
 		       current_attempt_number = 1,
@@ -2701,7 +4828,7 @@ func seedRunningTaskSessionLease(t *testing.T, ctx context.Context, pool *pgxpoo
 		       execution_status = 'executing'
 		 WHERE org_id = $4
 		   AND id = $5
-	`, taskSessionID, runLeaseID, attemptID, ids.orgID, ids.runID); err != nil {
+	`, taskSessionID, runLeaseID, attemptID, ids.orgID, ids.runID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

@@ -367,7 +367,6 @@ func testCheckpointWorkspaceBase() api.WorkerCheckpointWorkspaceBase {
 		ArtifactMediaType: "application/vnd.helmr.workspace.v0.tar",
 		ArtifactEncoding:  "tar",
 		MountPath:         "/workspace",
-		VolumeKind:        "copy-on-write",
 	}
 }
 
@@ -397,7 +396,11 @@ func (s *checkpointSession) Stream() io.ReadWriteCloser {
 	return s.stream
 }
 
-func (s *checkpointSession) Close() error {
+func (s *checkpointSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
+	return s.stream, nil
+}
+
+func (s *checkpointSession) Close(context.Context) error {
 	s.closeCount += 1
 	if s.closeErr != nil {
 		return s.closeErr
@@ -407,6 +410,11 @@ func (s *checkpointSession) Close() error {
 	}
 	s.closed = true
 	return s.stream.Close()
+}
+
+func (s *checkpointSession) Wait(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func (s *checkpointSession) CreateSnapshot(_ context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {

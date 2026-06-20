@@ -476,9 +476,6 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	if strings.TrimSpace(workspace.MountPath) == "" {
 		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.workspace_state.base.mount_path is required")
 	}
-	if strings.TrimSpace(workspace.VolumeKind) == "" {
-		return db.MarkRunSuspensionCheckpointReadyParams{}, errors.New("manifest.workspace_state.base.volume_kind is required")
-	}
 	if len(request.Manifest.RuntimeState.MemoryArtifacts) != 1 {
 		return db.MarkRunSuspensionCheckpointReadyParams{}, fmt.Errorf("manifest.runtime_state.memory_artifacts must contain exactly one artifact, got %d", len(request.Manifest.RuntimeState.MemoryArtifacts))
 	}
@@ -525,7 +522,6 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		WorkspaceArtifactMediaType: pgvalue.TextPtr(optionalTrimmedString(workspace.ArtifactMediaType)),
 		WorkspaceArtifactEncoding:  pgvalue.TextPtr(optionalTrimmedString(workspace.ArtifactEncoding)),
 		WorkspaceMountPath:         pgvalue.TextPtr(optionalTrimmedString(workspace.MountPath)),
-		WorkspaceVolumeKind:        pgvalue.TextPtr(optionalTrimmedString(workspace.VolumeKind)),
 		ActiveDurationMs:           request.ActiveDurationMs,
 		CheckpointID:               pgvalue.UUID(checkpointID),
 		RunSuspensionID:            pgvalue.UUID(runSuspensionID),

@@ -238,12 +238,21 @@ expect_workspace_version() {
   local name=$1
   local session_id=$2
   local run_id=$3
+  local session_json
   local workspace_json
+  local workspace_id
   local workspace_version
-  workspace_json="$(api_json GET "/sessions/${session_id}/workspace")"
-  workspace_version="$(printf '%s\n' "${workspace_json}" | jq -er '.current_version_id')" || {
+  session_json="$(api_json GET "/sessions/${session_id}")"
+  workspace_id="$(printf '%s\n' "${session_json}" | jq -er '.workspace_id')" || {
     inspect_run "${run_id}" >&2
-    printf 'FAIL %s: completed session did not publish current workspace version\n' "${name}" >&2
+    printf 'FAIL %s: completed session did not expose workspace_id\n' "${name}" >&2
+    printf '%s\n' "${session_json}" >&2
+    return 1
+  }
+  workspace_json="$(api_json GET "/workspaces/${workspace_id}")"
+  workspace_version="$(printf '%s\n' "${workspace_json}" | jq -er '.workspace.current_version_id')" || {
+    inspect_run "${run_id}" >&2
+    printf 'FAIL %s: completed session workspace did not publish current workspace version\n' "${name}" >&2
     printf '%s\n' "${workspace_json}" >&2
     return 1
   }

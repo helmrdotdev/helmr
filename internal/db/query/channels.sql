@@ -546,9 +546,9 @@ channel_definition AS (
 	       AND NOT EXISTS (SELECT 1 FROM inserted_session_channel)
 	),
 	selected_channel AS (
-	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, backend, next_sequence, created_at FROM inserted_session_channel
+	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at FROM inserted_session_channel
 	    UNION ALL
-	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, backend, next_sequence, created_at FROM existing_session_channel
+	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at FROM existing_session_channel
 	),
 matching_identity_records AS (
     SELECT channel_records.*
@@ -609,13 +609,13 @@ channel_record_count AS (
 	    RETURNING channels.*, channels.next_sequence - 1 AS allocated_sequence
 	),
 	allocated_channel AS (
-	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, backend, next_sequence, created_at, allocated_sequence
+	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at, allocated_sequence
 	      FROM inserted_session_channel
 	     WHERE NOT EXISTS (SELECT 1 FROM existing_record)
 	       AND NOT EXISTS (SELECT 1 FROM conflicting_idempotency_record)
 	       AND COALESCE((SELECT record_count FROM channel_record_count), 0) < sqlc.arg(max_inputs_per_channel)::bigint
 	    UNION ALL
-	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, backend, next_sequence, created_at, allocated_sequence
+	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at, allocated_sequence
 	      FROM allocated_existing_channel
 	),
 inserted_record AS (

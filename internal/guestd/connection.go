@@ -28,7 +28,7 @@ type connectionStart struct {
 	attach       *runv0.ResumeAttach
 }
 
-func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry) (bool, error) {
+func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, workspaceRegistry *workspaceOperationRegistry) (bool, error) {
 	start, err := readConnectionStart(conn)
 	if err != nil {
 		return false, err
@@ -46,6 +46,10 @@ func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logge
 		return false, handleCompileTaskBundle(ctx, conn, cfg, start.streamHeader, start.bodyLen)
 	case transport.StreamTypeRunImage:
 		return false, handleRunConnection(ctx, conn, cfg, logger, registry, start.streamHeader, start.bodyLen)
+	case transport.StreamTypeWorkspaceMaterialize:
+		return false, handleWorkspaceMaterializeConnection(ctx, conn, workspaceRegistry)
+	case transport.StreamTypeWorkspaceOperation:
+		return false, handleWorkspaceOperationConnection(ctx, conn, workspaceRegistry)
 	default:
 		return false, fmt.Errorf("unsupported runtime input type %q", start.streamHeader.Type)
 	}
@@ -240,10 +244,6 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 		drainWorkspaceArtifact(conn, runID)
 		return err
 	}
-	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
-		drainWorkspaceArtifact(conn, runID)
-		return fmt.Errorf("create workspace root: %w", err)
-	}
 	header, bodyLen, err = transport.ReadStreamFrameHeader(conn)
 	if err != nil {
 		return fmt.Errorf("read workspace artifact stream header: %w", err)
@@ -262,26 +262,8 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 		drainStreamBody(conn, bodyLen)
 		return err
 	}
-	body = &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	hashedBody := newDigestingReader(body)
-	extractStats, err := archive.ExtractTarWithStats(hashedBody, workspaceRoot, archive.ExtractOptions{
-		MaxBytes:   workspace.MaxArtifactExtractedBytes,
-		MaxEntries: workspace.MaxArtifactEntries,
-	})
-	if err != nil {
-		if _, drainErr := io.Copy(io.Discard, hashedBody); drainErr != nil {
-			return errors.Join(fmt.Errorf("extract workspace artifact: %w", err), fmt.Errorf("drain workspace artifact: %w", drainErr))
-		}
-		return fmt.Errorf("extract workspace artifact: %w", err)
-	}
-	if _, err := io.Copy(io.Discard, hashedBody); err != nil {
-		return fmt.Errorf("drain workspace artifact: %w", err)
-	}
-	if digest := hashedBody.Digest(); digest != strings.TrimSpace(request.GetWorkspace().GetArtifact().GetDigest()) {
-		return fmt.Errorf("workspace artifact body digest %q does not match declared digest %q", digest, request.GetWorkspace().GetArtifact().GetDigest())
-	}
-	if extractStats.EntryCount != int(request.GetWorkspace().GetArtifact().GetEntryCount()) {
-		return fmt.Errorf("workspace artifact entry_count %d does not match declared entry_count %d", extractStats.EntryCount, request.GetWorkspace().GetArtifact().GetEntryCount())
+	if err := restoreRunWorkspaceArtifact(conn, &request, workspaceRoot, bodyLen); err != nil {
+		return err
 	}
 	runCwd := request.Cwd
 	if strings.TrimSpace(runCwd) == "" {
@@ -289,6 +271,84 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 	}
 	logger.Info("running task", "run_id", request.RunId, "task_id", request.TaskId)
 	return runAdapter(ctx, conn, cfg, image.RootfsDir, deploymentSourceRoot, workspaceRoot, runCwd, image.Config, true, &request, registry)
+}
+
+func restoreRunWorkspaceArtifact(conn io.Reader, request *runv0.RunTaskRequest, workspaceRoot string, bodyLen uint64) error {
+	workspaceParent := filepath.Dir(workspaceRoot)
+	if err := os.MkdirAll(workspaceParent, 0o755); err != nil {
+		drainStreamBody(conn, bodyLen)
+		return fmt.Errorf("create workspace mount parent: %w", err)
+	}
+	stagingRoot, err := os.MkdirTemp(workspaceParent, ".helmr-workspace-restore-*")
+	if err != nil {
+		drainStreamBody(conn, bodyLen)
+		return fmt.Errorf("create workspace restore staging dir: %w", err)
+	}
+	cleanupStaging := func() { _ = os.RemoveAll(stagingRoot) }
+	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
+	hashedBody := newDigestingReader(body)
+	extractStats, err := archive.ExtractTarWithStats(hashedBody, stagingRoot, archive.ExtractOptions{
+		MaxBytes:   workspace.MaxArtifactExtractedBytes,
+		MaxEntries: workspace.MaxArtifactEntries,
+	})
+	if err != nil {
+		if _, drainErr := io.Copy(io.Discard, hashedBody); drainErr != nil {
+			cleanupStaging()
+			return errors.Join(fmt.Errorf("extract workspace artifact: %w", err), fmt.Errorf("drain workspace artifact: %w", drainErr))
+		}
+		cleanupStaging()
+		return fmt.Errorf("extract workspace artifact: %w", err)
+	}
+	if _, err := io.Copy(io.Discard, hashedBody); err != nil {
+		cleanupStaging()
+		return fmt.Errorf("drain workspace artifact: %w", err)
+	}
+	if digest := hashedBody.Digest(); digest != strings.TrimSpace(request.GetWorkspace().GetArtifact().GetDigest()) {
+		cleanupStaging()
+		return fmt.Errorf("workspace artifact body digest %q does not match declared digest %q", digest, request.GetWorkspace().GetArtifact().GetDigest())
+	}
+	if extractStats.EntryCount != int(request.GetWorkspace().GetArtifact().GetEntryCount()) {
+		cleanupStaging()
+		return fmt.Errorf("workspace artifact entry_count %d does not match declared entry_count %d", extractStats.EntryCount, request.GetWorkspace().GetArtifact().GetEntryCount())
+	}
+	if err := replaceWorkspaceRoot(workspaceRoot, stagingRoot); err != nil {
+		cleanupStaging()
+		return fmt.Errorf("replace workspace mount: %w", err)
+	}
+	return nil
+}
+
+func replaceWorkspaceRoot(workspaceRoot string, stagingRoot string) error {
+	workspaceParent := filepath.Dir(workspaceRoot)
+	backupRoot, err := os.MkdirTemp(workspaceParent, ".helmr-workspace-backup-*")
+	if err != nil {
+		return fmt.Errorf("create workspace backup marker: %w", err)
+	}
+	if err := os.Remove(backupRoot); err != nil {
+		return fmt.Errorf("remove workspace backup marker: %w", err)
+	}
+	backupCreated := false
+	if err := os.Rename(workspaceRoot, backupRoot); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("move existing workspace aside: %w", err)
+		}
+	} else {
+		backupCreated = true
+	}
+	if err := os.Rename(stagingRoot, workspaceRoot); err != nil {
+		if backupCreated {
+			if rollbackErr := os.Rename(backupRoot, workspaceRoot); rollbackErr != nil {
+				return errors.Join(fmt.Errorf("install restored workspace: %w", err), fmt.Errorf("rollback workspace restore: %w", rollbackErr))
+			}
+		}
+		return fmt.Errorf("install restored workspace: %w", err)
+	}
+	if backupCreated {
+		if err := os.RemoveAll(backupRoot); err != nil {
+			return fmt.Errorf("remove replaced workspace backup: %w", err)
+		}
+	}
+	return nil
 }
 
 func drainRunRequest(conn io.Reader) {
@@ -347,9 +407,6 @@ func validateWorkspaceArtifact(request *runv0.RunTaskRequest, frameDigest string
 	}
 	if strings.TrimSpace(artifact.Encoding) != workspace.ArtifactEncoding {
 		return fmt.Errorf("unsupported workspace artifact encoding %q", artifact.Encoding)
-	}
-	if strings.TrimSpace(workspaceSpec.VolumeKind) != workspace.VolumeKind {
-		return fmt.Errorf("unsupported workspace volume_kind %q", workspaceSpec.VolumeKind)
 	}
 	if strings.TrimSpace(workspaceSpec.ProjectPath) != strings.TrimSpace(workspaceSpec.Path) {
 		return fmt.Errorf("workspace project_path %q must match workspace path %q", workspaceSpec.ProjectPath, workspaceSpec.Path)
