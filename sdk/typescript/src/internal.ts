@@ -407,7 +407,6 @@ export interface TaskContext {
 
 export interface TaskSessionContext {
   readonly id: string
-  readonly workspace: TaskWorkspace
   input<TSchema extends PayloadSchema<any, any>>(
     definition: ChannelInputDefinition<PayloadSchemaOutput<TSchema>, PayloadSchemaInput<TSchema>> & { readonly schema: TSchema },
   ): ChannelInputHandle<PayloadSchemaOutput<TSchema>>

@@ -44,17 +44,6 @@ export type ListTaskSessionRunsResponse = {
   runs: TaskSessionRun[];
 };
 
-export type TaskSessionWorkspace = {
-  id: string;
-  task_session_id: string;
-  current_version_id?: string;
-  mount_path?: string;
-  state: string;
-  retention_policy?: unknown;
-  created_at: string;
-  updated_at: string;
-};
-
 export type TaskSessionChannel = {
   id: string;
   task_session_id: string;
@@ -126,10 +115,6 @@ export async function cancelTaskSession(id: string, scope: TaskSessionScope, rea
 
 export async function listTaskSessionRuns(id: string, scope: TaskSessionScope): Promise<ListTaskSessionRunsResponse> {
   return request<ListTaskSessionRunsResponse>(`${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/runs`);
-}
-
-export async function getTaskSessionWorkspace(id: string, scope: TaskSessionScope): Promise<TaskSessionWorkspace> {
-  return request<TaskSessionWorkspace>(`${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/workspace`);
 }
 
 export async function listTaskSessionChannels(id: string, scope: TaskSessionScope): Promise<ListTaskSessionChannelsResponse> {

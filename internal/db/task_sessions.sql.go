@@ -183,6 +183,7 @@ INSERT INTO task_sessions (
     task_id,
     initial_deployment_id,
     active_deployment_id,
+    workspace_id,
     external_id,
     start_fingerprint,
     metadata,
@@ -198,9 +199,10 @@ INSERT INTO task_sessions (
     $7,
     $8,
     $9,
-    coalesce($10::jsonb, '{}'::jsonb),
-    coalesce($11::text[], '{}'::text[]),
-    $12
+    $10,
+    coalesce($11::jsonb, '{}'::jsonb),
+    coalesce($12::text[], '{}'::text[]),
+    $13
 )
 RETURNING id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, completed_at, failed_at, closed_at, closed_reason, cancelled_at, terminal_reason, result, expires_at, created_at, updated_at
 `
@@ -213,6 +215,7 @@ type CreateTaskSessionParams struct {
 	TaskID              string             `json:"task_id"`
 	InitialDeploymentID pgtype.UUID        `json:"initial_deployment_id"`
 	ActiveDeploymentID  pgtype.UUID        `json:"active_deployment_id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
 	ExternalID          string             `json:"external_id"`
 	StartFingerprint    string             `json:"start_fingerprint"`
 	Metadata            []byte             `json:"metadata"`
@@ -229,6 +232,7 @@ func (q *Queries) CreateTaskSession(ctx context.Context, arg CreateTaskSessionPa
 		arg.TaskID,
 		arg.InitialDeploymentID,
 		arg.ActiveDeploymentID,
+		arg.WorkspaceID,
 		arg.ExternalID,
 		arg.StartFingerprint,
 		arg.Metadata,
@@ -332,90 +336,6 @@ func (q *Queries) CreateTaskSessionRun(ctx context.Context, arg CreateTaskSessio
 	return i, err
 }
 
-const createTaskSessionWorkspace = `-- name: CreateTaskSessionWorkspace :one
-WITH created_workspace AS (
-    INSERT INTO workspaces (
-        id,
-        org_id,
-        project_id,
-        environment_id,
-        task_session_id,
-        retention_policy
-    ) VALUES (
-        $1,
-        $2,
-        $3,
-        $4,
-        $5,
-        coalesce($6::jsonb, '{}'::jsonb)
-    )
-    RETURNING id, org_id, project_id, environment_id, task_session_id, current_version_id, mount_path, state, retention_policy, created_at, updated_at
-),
-attached_session AS (
-    UPDATE task_sessions
-       SET workspace_id = created_workspace.id,
-           updated_at = now()
-      FROM created_workspace
-     WHERE task_sessions.org_id = created_workspace.org_id
-       AND task_sessions.project_id = created_workspace.project_id
-       AND task_sessions.environment_id = created_workspace.environment_id
-       AND task_sessions.id = created_workspace.task_session_id
-    RETURNING task_sessions.id
-)
-SELECT created_workspace.id, created_workspace.org_id, created_workspace.project_id, created_workspace.environment_id, created_workspace.task_session_id, created_workspace.current_version_id, created_workspace.mount_path, created_workspace.state, created_workspace.retention_policy, created_workspace.created_at, created_workspace.updated_at
-  FROM created_workspace
-  JOIN attached_session ON true
-`
-
-type CreateTaskSessionWorkspaceParams struct {
-	ID              pgtype.UUID `json:"id"`
-	OrgID           pgtype.UUID `json:"org_id"`
-	ProjectID       pgtype.UUID `json:"project_id"`
-	EnvironmentID   pgtype.UUID `json:"environment_id"`
-	TaskSessionID   pgtype.UUID `json:"task_session_id"`
-	RetentionPolicy []byte      `json:"retention_policy"`
-}
-
-type CreateTaskSessionWorkspaceRow struct {
-	ID               pgtype.UUID        `json:"id"`
-	OrgID            pgtype.UUID        `json:"org_id"`
-	ProjectID        pgtype.UUID        `json:"project_id"`
-	EnvironmentID    pgtype.UUID        `json:"environment_id"`
-	TaskSessionID    pgtype.UUID        `json:"task_session_id"`
-	CurrentVersionID pgtype.UUID        `json:"current_version_id"`
-	MountPath        string             `json:"mount_path"`
-	State            WorkspaceState     `json:"state"`
-	RetentionPolicy  []byte             `json:"retention_policy"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-}
-
-func (q *Queries) CreateTaskSessionWorkspace(ctx context.Context, arg CreateTaskSessionWorkspaceParams) (CreateTaskSessionWorkspaceRow, error) {
-	row := q.db.QueryRow(ctx, createTaskSessionWorkspace,
-		arg.ID,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.TaskSessionID,
-		arg.RetentionPolicy,
-	)
-	var i CreateTaskSessionWorkspaceRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.TaskSessionID,
-		&i.CurrentVersionID,
-		&i.MountPath,
-		&i.State,
-		&i.RetentionPolicy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const createTaskStartIdempotency = `-- name: CreateTaskStartIdempotency :one
 INSERT INTO task_start_idempotencies (
     id,
@@ -484,6 +404,93 @@ func (q *Queries) CreateTaskStartIdempotency(ctx context.Context, arg CreateTask
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.LastUsedAt,
+	)
+	return i, err
+}
+
+const createWorkspace = `-- name: CreateWorkspace :one
+INSERT INTO workspaces (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    deployment_sandbox_id,
+    sandbox_id,
+    sandbox_fingerprint,
+    external_id,
+    metadata,
+    tags,
+    retention_policy
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    coalesce($8::text, ''),
+    coalesce($9::jsonb, '{}'::jsonb),
+    coalesce($10::text[], '{}'::text[]),
+    coalesce($11::jsonb, '{}'::jsonb)
+)
+RETURNING id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, state, desired_state, dirty_state, last_materialization_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+`
+
+type CreateWorkspaceParams struct {
+	ID                  pgtype.UUID `json:"id"`
+	OrgID               pgtype.UUID `json:"org_id"`
+	ProjectID           pgtype.UUID `json:"project_id"`
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	DeploymentSandboxID pgtype.UUID `json:"deployment_sandbox_id"`
+	SandboxID           string      `json:"sandbox_id"`
+	SandboxFingerprint  string      `json:"sandbox_fingerprint"`
+	ExternalID          string      `json:"external_id"`
+	Metadata            []byte      `json:"metadata"`
+	Tags                []string    `json:"tags"`
+	RetentionPolicy     []byte      `json:"retention_policy"`
+}
+
+func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, createWorkspace,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DeploymentSandboxID,
+		arg.SandboxID,
+		arg.SandboxFingerprint,
+		arg.ExternalID,
+		arg.Metadata,
+		arg.Tags,
+		arg.RetentionPolicy,
+	)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentSandboxID,
+		&i.SandboxID,
+		&i.SandboxFingerprint,
+		&i.ExternalID,
+		&i.CurrentVersionID,
+		&i.State,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.LastMaterializationID,
+		&i.Metadata,
+		&i.Tags,
+		&i.RetentionPolicy,
+		&i.AutoStopAt,
+		&i.AutoArchiveAt,
+		&i.AutoDeleteAt,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -713,7 +720,7 @@ func (q *Queries) GetTaskSessionByOrgID(ctx context.Context, arg GetTaskSessionB
 }
 
 const getTaskSessionChannelByName = `-- name: GetTaskSessionChannelByName :one
-SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, backend, next_sequence, created_at
+SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at
   FROM channels
  WHERE org_id = $1
    AND project_id = $2
@@ -751,53 +758,8 @@ func (q *Queries) GetTaskSessionChannelByName(ctx context.Context, arg GetTaskSe
 		&i.DefinitionID,
 		&i.Name,
 		&i.Direction,
-		&i.Backend,
 		&i.NextSequence,
 		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const getTaskSessionWorkspace = `-- name: GetTaskSessionWorkspace :one
-SELECT workspaces.id, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.task_session_id, workspaces.current_version_id, workspaces.mount_path, workspaces.state, workspaces.retention_policy, workspaces.created_at, workspaces.updated_at
-  FROM task_sessions
-  JOIN workspaces ON workspaces.org_id = task_sessions.org_id
-                 AND workspaces.project_id = task_sessions.project_id
-                 AND workspaces.environment_id = task_sessions.environment_id
-                 AND workspaces.id = task_sessions.workspace_id
- WHERE task_sessions.org_id = $1
-   AND task_sessions.project_id = $2
-   AND task_sessions.environment_id = $3
-   AND task_sessions.id = $4
-`
-
-type GetTaskSessionWorkspaceParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	TaskSessionID pgtype.UUID `json:"task_session_id"`
-}
-
-func (q *Queries) GetTaskSessionWorkspace(ctx context.Context, arg GetTaskSessionWorkspaceParams) (Workspace, error) {
-	row := q.db.QueryRow(ctx, getTaskSessionWorkspace,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.TaskSessionID,
-	)
-	var i Workspace
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.TaskSessionID,
-		&i.CurrentVersionID,
-		&i.MountPath,
-		&i.State,
-		&i.RetentionPolicy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1008,8 +970,109 @@ func (q *Queries) GetTaskStartIdempotency(ctx context.Context, arg GetTaskStartI
 	return i, err
 }
 
+const getWorkspaceForTaskStart = `-- name: GetWorkspaceForTaskStart :one
+SELECT workspaces.id,
+       workspaces.org_id,
+       workspaces.project_id,
+       workspaces.environment_id,
+       workspaces.deployment_sandbox_id,
+       workspaces.sandbox_id,
+       workspaces.sandbox_fingerprint,
+       workspaces.state,
+       workspaces.archived_at,
+       workspaces.deleted_at,
+       deployment_sandboxes.workspace_mount_path,
+       deployment_sandboxes.resource_floor AS deployment_sandbox_resource_floor,
+       deployment_sandboxes.disk_floor_mib AS deployment_sandbox_disk_floor_mib,
+       deployment_sandboxes.network_policy AS deployment_sandbox_network_policy,
+       deployment_sandboxes.rootfs_digest AS deployment_sandbox_rootfs_digest,
+       deployment_sandboxes.runtime_abi AS deployment_sandbox_runtime_abi,
+       deployment_sandboxes.guestd_abi AS deployment_sandbox_guestd_abi,
+       deployment_sandboxes.adapter_abi AS deployment_sandbox_adapter_abi,
+       deployment_sandboxes.filesystem_format AS deployment_sandbox_filesystem_format,
+       deployment_sandboxes.contract_version AS deployment_sandbox_contract_version,
+       deployment_sandboxes.fingerprint AS deployment_sandbox_fingerprint
+  FROM workspaces
+  JOIN deployment_sandboxes
+    ON deployment_sandboxes.org_id = workspaces.org_id
+   AND deployment_sandboxes.project_id = workspaces.project_id
+   AND deployment_sandboxes.environment_id = workspaces.environment_id
+   AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
+ WHERE workspaces.org_id = $1
+   AND workspaces.project_id = $2
+   AND workspaces.environment_id = $3
+   AND workspaces.id = $4
+   AND workspaces.deleted_at IS NULL
+ LIMIT 1
+`
+
+type GetWorkspaceForTaskStartParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+type GetWorkspaceForTaskStartRow struct {
+	ID                                pgtype.UUID        `json:"id"`
+	OrgID                             pgtype.UUID        `json:"org_id"`
+	ProjectID                         pgtype.UUID        `json:"project_id"`
+	EnvironmentID                     pgtype.UUID        `json:"environment_id"`
+	DeploymentSandboxID               pgtype.UUID        `json:"deployment_sandbox_id"`
+	SandboxID                         string             `json:"sandbox_id"`
+	SandboxFingerprint                string             `json:"sandbox_fingerprint"`
+	State                             WorkspaceState     `json:"state"`
+	ArchivedAt                        pgtype.Timestamptz `json:"archived_at"`
+	DeletedAt                         pgtype.Timestamptz `json:"deleted_at"`
+	WorkspaceMountPath                string             `json:"workspace_mount_path"`
+	DeploymentSandboxResourceFloor    []byte             `json:"deployment_sandbox_resource_floor"`
+	DeploymentSandboxDiskFloorMib     int64              `json:"deployment_sandbox_disk_floor_mib"`
+	DeploymentSandboxNetworkPolicy    []byte             `json:"deployment_sandbox_network_policy"`
+	DeploymentSandboxRootfsDigest     string             `json:"deployment_sandbox_rootfs_digest"`
+	DeploymentSandboxRuntimeAbi       string             `json:"deployment_sandbox_runtime_abi"`
+	DeploymentSandboxGuestdAbi        string             `json:"deployment_sandbox_guestd_abi"`
+	DeploymentSandboxAdapterAbi       string             `json:"deployment_sandbox_adapter_abi"`
+	DeploymentSandboxFilesystemFormat string             `json:"deployment_sandbox_filesystem_format"`
+	DeploymentSandboxContractVersion  int32              `json:"deployment_sandbox_contract_version"`
+	DeploymentSandboxFingerprint      string             `json:"deployment_sandbox_fingerprint"`
+}
+
+func (q *Queries) GetWorkspaceForTaskStart(ctx context.Context, arg GetWorkspaceForTaskStartParams) (GetWorkspaceForTaskStartRow, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceForTaskStart,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+	)
+	var i GetWorkspaceForTaskStartRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentSandboxID,
+		&i.SandboxID,
+		&i.SandboxFingerprint,
+		&i.State,
+		&i.ArchivedAt,
+		&i.DeletedAt,
+		&i.WorkspaceMountPath,
+		&i.DeploymentSandboxResourceFloor,
+		&i.DeploymentSandboxDiskFloorMib,
+		&i.DeploymentSandboxNetworkPolicy,
+		&i.DeploymentSandboxRootfsDigest,
+		&i.DeploymentSandboxRuntimeAbi,
+		&i.DeploymentSandboxGuestdAbi,
+		&i.DeploymentSandboxAdapterAbi,
+		&i.DeploymentSandboxFilesystemFormat,
+		&i.DeploymentSandboxContractVersion,
+		&i.DeploymentSandboxFingerprint,
+	)
+	return i, err
+}
+
 const listTaskSessionChannels = `-- name: ListTaskSessionChannels :many
-SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, backend, next_sequence, created_at
+SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at
   FROM channels
  WHERE org_id = $1
    AND project_id = $2
@@ -1048,7 +1111,6 @@ func (q *Queries) ListTaskSessionChannels(ctx context.Context, arg ListTaskSessi
 			&i.DefinitionID,
 			&i.Name,
 			&i.Direction,
-			&i.Backend,
 			&i.NextSequence,
 			&i.CreatedAt,
 		); err != nil {

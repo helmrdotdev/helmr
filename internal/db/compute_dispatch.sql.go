@@ -325,6 +325,70 @@ func (q *Queries) EnsureRuntimeReleaseSelection(ctx context.Context, runtimeID s
 }
 
 const getWorkerInstanceQueueCapacity = `-- name: GetWorkerInstanceQueueCapacity :one
+SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu - active_materializations.used_milli_cpu, 0)::bigint AS available_milli_cpu,
+       GREATEST(worker_instances.available_memory_mib - active.used_memory_mib - active_materializations.used_memory_mib, 0)::bigint AS available_memory_mib,
+       GREATEST(worker_instances.available_disk_mib - active.used_disk_mib - active_materializations.used_disk_mib, 0)::bigint AS available_disk_mib,
+       GREATEST(worker_instances.available_execution_slots - active.used_slots - active_materializations.used_slots, 0)::int AS available_execution_slots
+  FROM worker_instances
+  LEFT JOIN LATERAL (
+      SELECT COALESCE(sum(run_runtime_requirements.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
+             COALESCE(sum(run_runtime_requirements.requested_memory_mib), 0)::bigint AS used_memory_mib,
+             COALESCE(sum(run_runtime_requirements.requested_disk_mib), 0)::bigint AS used_disk_mib,
+             COALESCE(sum(run_runtime_requirements.requested_execution_slots), 0)::int AS used_slots
+        FROM run_leases
+        JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_leases.org_id
+                             AND run_runtime_requirements.run_id = run_leases.run_id
+       WHERE run_leases.worker_instance_id = worker_instances.id
+         AND run_leases.status IN ('leased', 'running')
+  ) active ON true
+  LEFT JOIN LATERAL (
+      SELECT COALESCE(sum(workspace_materializations.reserved_cpu_millis), 0)::bigint AS used_milli_cpu,
+             COALESCE(sum(workspace_materializations.reserved_memory_mib), 0)::bigint AS used_memory_mib,
+             COALESCE(sum(workspace_materializations.reserved_disk_mib), 0)::bigint AS used_disk_mib,
+             COALESCE(sum(workspace_materializations.reserved_execution_slots), 0)::int AS used_slots
+        FROM workspace_materializations
+       WHERE workspace_materializations.worker_instance_id = worker_instances.id
+         AND workspace_materializations.state IN ('materializing', 'restoring', 'running', 'pausing', 'paused', 'capturing', 'stopping')
+         AND (
+             workspace_materializations.state NOT IN ('materializing', 'restoring')
+             OR workspace_materializations.reservation_expires_at IS NULL
+             OR workspace_materializations.reservation_expires_at > now()
+         )
+         AND NOT EXISTS (
+             SELECT 1
+               FROM runs
+               JOIN run_leases ON run_leases.org_id = runs.org_id
+                              AND run_leases.run_id = runs.id
+              WHERE runs.org_id = workspace_materializations.org_id
+                AND runs.workspace_materialization_id = workspace_materializations.id
+                AND run_leases.worker_instance_id = worker_instances.id
+                AND run_leases.status IN ('leased', 'running')
+         )
+  ) active_materializations ON true
+ WHERE worker_instances.id = $1
+   AND worker_instances.status = 'active'
+`
+
+type GetWorkerInstanceQueueCapacityRow struct {
+	AvailableMilliCpu       int64 `json:"available_milli_cpu"`
+	AvailableMemoryMib      int64 `json:"available_memory_mib"`
+	AvailableDiskMib        int64 `json:"available_disk_mib"`
+	AvailableExecutionSlots int32 `json:"available_execution_slots"`
+}
+
+func (q *Queries) GetWorkerInstanceQueueCapacity(ctx context.Context, id pgtype.UUID) (GetWorkerInstanceQueueCapacityRow, error) {
+	row := q.db.QueryRow(ctx, getWorkerInstanceQueueCapacity, id)
+	var i GetWorkerInstanceQueueCapacityRow
+	err := row.Scan(
+		&i.AvailableMilliCpu,
+		&i.AvailableMemoryMib,
+		&i.AvailableDiskMib,
+		&i.AvailableExecutionSlots,
+	)
+	return i, err
+}
+
+const getWorkerInstanceRunDispatchCapacity = `-- name: GetWorkerInstanceRunDispatchCapacity :one
 SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu, 0)::bigint AS available_milli_cpu,
        GREATEST(worker_instances.available_memory_mib - active.used_memory_mib, 0)::bigint AS available_memory_mib,
        GREATEST(worker_instances.available_disk_mib - active.used_disk_mib, 0)::bigint AS available_disk_mib,
@@ -345,16 +409,16 @@ SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu, 0)
    AND worker_instances.status = 'active'
 `
 
-type GetWorkerInstanceQueueCapacityRow struct {
+type GetWorkerInstanceRunDispatchCapacityRow struct {
 	AvailableMilliCpu       int64 `json:"available_milli_cpu"`
 	AvailableMemoryMib      int64 `json:"available_memory_mib"`
 	AvailableDiskMib        int64 `json:"available_disk_mib"`
 	AvailableExecutionSlots int32 `json:"available_execution_slots"`
 }
 
-func (q *Queries) GetWorkerInstanceQueueCapacity(ctx context.Context, id pgtype.UUID) (GetWorkerInstanceQueueCapacityRow, error) {
-	row := q.db.QueryRow(ctx, getWorkerInstanceQueueCapacity, id)
-	var i GetWorkerInstanceQueueCapacityRow
+func (q *Queries) GetWorkerInstanceRunDispatchCapacity(ctx context.Context, id pgtype.UUID) (GetWorkerInstanceRunDispatchCapacityRow, error) {
+	row := q.db.QueryRow(ctx, getWorkerInstanceRunDispatchCapacity, id)
+	var i GetWorkerInstanceRunDispatchCapacityRow
 	err := row.Scan(
 		&i.AvailableMilliCpu,
 		&i.AvailableMemoryMib,

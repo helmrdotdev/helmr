@@ -117,7 +117,7 @@ func secretSetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			secret, err := control.SetSecret(cmd.Context(), args[0], value, client.SetSecretOptions(secretOptions(projectID, environmentID)))
+			secret, err := control.SetSecret(cmd.Context(), args[0], value, client.SecretOptions(secretOptions(projectID, environmentID)))
 			if err != nil {
 				return err
 			}

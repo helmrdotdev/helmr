@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package helmr.workspace.v0;
+
+option go_package = "github.com/helmrdotdev/helmr/internal/proto/workspace/v0;workspacev0";
+
+message WorkspaceOperationEnvelope {
+  string operation_id = 1;
+  string materialization_id = 2;
+  string workspace_id = 3;
+  string channel_token = 4;
+  uint64 fencing_generation = 5;
+  string instance_lease_id = 6;
+  string write_lease_id = 7;
+  string fencing_token = 8;
+  int64 operation_expires_at_unix_nano = 9;
+  string request_fingerprint = 10;
+}
+
+message WorkspaceArtifact {
+  string digest = 1;
+  string media_type = 2;
+  string encoding = 3;
+  uint64 size_bytes = 4;
+  uint32 entry_count = 5;
+}
+
+message MaterializeWorkspaceRequest {
+  WorkspaceOperationEnvelope envelope = 1;
+  string mount_path = 2;
+  string base_version_id = 3;
+  WorkspaceArtifact base_artifact = 4;
+  WorkspaceArtifact sandbox_artifact = 5;
+}
+
+message MaterializeWorkspaceResponse {
+  string state = 1;
+  string guestd_channel_token_hash = 2;
+}
+
+message HeartbeatWorkspaceRequest {
+  WorkspaceOperationEnvelope envelope = 1;
+  string state = 2;
+  uint64 dirty_generation = 3;
+}
+
+message HeartbeatWorkspaceResponse {
+  string state = 1;
+  bool stop_requested = 2;
+}
+
+message CaptureWorkspaceRequest {
+  WorkspaceOperationEnvelope envelope = 1;
+  string base_version_id = 2;
+  uint64 dirty_generation = 3;
+}
+
+message CaptureWorkspaceResponse {
+  WorkspaceArtifact artifact = 1;
+}
+
+message StopWorkspaceRequest {
+  WorkspaceOperationEnvelope envelope = 1;
+  bool capture_before_stop = 2;
+}
+
+message StopWorkspaceResponse {
+  string state = 1;
+  WorkspaceArtifact captured_artifact = 2;
+}
+
+message WorkspaceOperationRequest {
+  WorkspaceOperationEnvelope envelope = 1;
+  string operation_kind = 2;
+  string request_json = 3;
+}
+
+message WorkspaceOperationResult {
+  string result_json = 1;
+  string error_json = 2;
+}

@@ -650,8 +650,8 @@ export const schemaPayload = task({
         runId: ctx.run.id,
         sessionId: ctx.session.id,
         taskId: ctx.task.id,
-        workspacePath: ctx.session.workspace.path,
-        projectPath: ctx.session.workspace.projectPath,
+        workspacePath: ctx.workspace.path,
+        projectPath: ctx.workspace.projectPath,
       })`,
     )
     const result = await runAdapterTask(cwd, "context", {
@@ -1717,39 +1717,16 @@ function sampleTaskContextJSON(options: {
   readonly runId: string
   readonly sessionId?: string
   readonly taskId: string
-  readonly refKind?: string
-  readonly pullRequest?: {
-    readonly number: number
-    readonly baseRef: string
-    readonly baseSha: string
-    readonly headRef: string
-    readonly headSha: string
-  }
 }): string {
   return JSON.stringify({
     run: { id: options.runId },
     task: { id: options.taskId },
-    source: {
-      kind: "github",
-      repository: "helmrdotdev/helmr",
-      requestedRef: "main",
-      resolvedSha: "0123456789abcdef0123456789abcdef01234567",
-      refKind: options.refKind ?? "branch",
-      refName: "main",
-      fullRef: "refs/heads/main",
-      defaultBranch: "main",
-      ...(options.pullRequest === undefined ? {} : { pullRequest: options.pullRequest }),
-    },
     workspace: {
       path: "/workspace",
       projectPath: "/workspace",
     },
     session: {
       id: options.sessionId ?? "session-1",
-      workspace: {
-        path: "/workspace",
-        projectPath: "/workspace",
-      },
     },
   })
 }

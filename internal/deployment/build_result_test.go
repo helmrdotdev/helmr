@@ -13,15 +13,23 @@ func TestValidateWorkerDeploymentBuildResultRequiresReportedArtifacts(t *testing
 		BuildManifestDigest:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		DeploymentManifestDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		Tasks: []api.WorkerDeploymentBuildTask{{
-			TaskID:             "deploy",
-			FilePath:           "src/task.ts",
-			ExportName:         "deploy",
-			HandlerEntrypoint:  "src/task.ts#deploy",
-			BundleDigest:       "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-			RequestedMilliCPU:  1000,
-			RequestedMemoryMiB: 1024,
-			QueueName:          "task/deploy",
-			MaxDurationSeconds: 300,
+			TaskID:                     "deploy",
+			SandboxID:                  "default",
+			SandboxFingerprint:         "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+			SandboxImageArtifact:       api.CASObject{Digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", SizeBytes: 1, MediaType: api.SandboxImageArtifactMediaType},
+			SandboxImageArtifactFormat: "oci-tar",
+			SandboxImageDigest:         "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+			SandboxImageFormat:         "oci-tar",
+			WorkspaceMountPath:         "/workspace",
+			FilesystemFormat:           "tar",
+			FilePath:                   "src/task.ts",
+			ExportName:                 "deploy",
+			HandlerEntrypoint:          "src/task.ts#deploy",
+			BundleDigest:               "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			RequestedMilliCPU:          1000,
+			RequestedMemoryMiB:         1024,
+			QueueName:                  "task/deploy",
+			MaxDurationSeconds:         300,
 		}},
 		CASObjects: []api.CASObject{{
 			Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -31,6 +39,10 @@ func TestValidateWorkerDeploymentBuildResultRequiresReportedArtifacts(t *testing
 			Digest:    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 			SizeBytes: 1,
 			MediaType: api.DeploymentManifestArtifactMediaType,
+		}, {
+			Digest:    "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+			SizeBytes: 1,
+			MediaType: api.SandboxImageArtifactMediaType,
 		}},
 	}
 
@@ -147,6 +159,36 @@ func TestValidateWorkerDeploymentBuildResultAcceptsDefaultQueueFromDottedTaskID(
 	result.Tasks[0].QueueName = "task/build.test"
 	if _, err := ValidateBuildResult(result); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestValidateWorkerDeploymentBuildResultAcceptsSharedSandboxDefinition(t *testing.T) {
+	result := validBuildResult()
+	second := result.Tasks[0]
+	second.TaskID = "deploy.more"
+	second.FilePath = "src/more.ts"
+	second.HandlerEntrypoint = "src/more.ts#deploy"
+	second.QueueName = "task/deploy.more"
+	result.Tasks = append(result.Tasks, second)
+
+	if _, err := ValidateBuildResult(result); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateWorkerDeploymentBuildResultRejectsConflictingSandboxDefinition(t *testing.T) {
+	result := validBuildResult()
+	second := result.Tasks[0]
+	second.TaskID = "deploy.more"
+	second.FilePath = "src/more.ts"
+	second.HandlerEntrypoint = "src/more.ts#deploy"
+	second.QueueName = "task/deploy.more"
+	second.SandboxFingerprint = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	result.Tasks = append(result.Tasks, second)
+
+	_, err := ValidateBuildResult(result)
+	if err == nil || !strings.Contains(err.Error(), `sandbox_id "default" has conflicting definitions`) {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -303,15 +345,23 @@ func TestValidateWorkerDeploymentBuildResultChecksMediaTypes(t *testing.T) {
 		BuildManifestDigest:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		DeploymentManifestDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		Tasks: []api.WorkerDeploymentBuildTask{{
-			TaskID:             "deploy",
-			FilePath:           "src/task.ts",
-			ExportName:         "deploy",
-			HandlerEntrypoint:  "src/task.ts#deploy",
-			BundleDigest:       "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-			RequestedMilliCPU:  1000,
-			RequestedMemoryMiB: 1024,
-			QueueName:          "task/deploy",
-			MaxDurationSeconds: 300,
+			TaskID:                     "deploy",
+			SandboxID:                  "default",
+			SandboxFingerprint:         "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+			SandboxImageArtifact:       api.CASObject{Digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", SizeBytes: 1, MediaType: api.SandboxImageArtifactMediaType},
+			SandboxImageArtifactFormat: "oci-tar",
+			SandboxImageDigest:         "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+			SandboxImageFormat:         "oci-tar",
+			WorkspaceMountPath:         "/workspace",
+			FilesystemFormat:           "tar",
+			FilePath:                   "src/task.ts",
+			ExportName:                 "deploy",
+			HandlerEntrypoint:          "src/task.ts#deploy",
+			BundleDigest:               "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			RequestedMilliCPU:          1000,
+			RequestedMemoryMiB:         1024,
+			QueueName:                  "task/deploy",
+			MaxDurationSeconds:         300,
 		}},
 		CASObjects: []api.CASObject{{
 			Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -325,6 +375,10 @@ func TestValidateWorkerDeploymentBuildResultChecksMediaTypes(t *testing.T) {
 			Digest:    "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 			SizeBytes: 1,
 			MediaType: "application/octet-stream",
+		}, {
+			Digest:    "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+			SizeBytes: 1,
+			MediaType: api.SandboxImageArtifactMediaType,
 		}},
 	}
 
@@ -347,6 +401,10 @@ func validBuildResultCASObjects() []api.CASObject {
 		Digest:    "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 		SizeBytes: 1,
 		MediaType: api.TaskBundleArtifactMediaType,
+	}, {
+		Digest:    "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+		SizeBytes: 1,
+		MediaType: api.SandboxImageArtifactMediaType,
 	}}
 }
 
@@ -355,15 +413,23 @@ func validBuildResult() api.WorkerDeploymentBuildResult {
 		BuildManifestDigest:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		DeploymentManifestDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		Tasks: []api.WorkerDeploymentBuildTask{{
-			TaskID:             "deploy",
-			FilePath:           "src/task.ts",
-			ExportName:         "deploy",
-			HandlerEntrypoint:  "src/task.ts#deploy",
-			BundleDigest:       "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-			RequestedMilliCPU:  1000,
-			RequestedMemoryMiB: 1024,
-			QueueName:          "task/deploy",
-			MaxDurationSeconds: 300,
+			TaskID:                     "deploy",
+			SandboxID:                  "default",
+			SandboxFingerprint:         "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+			SandboxImageArtifact:       api.CASObject{Digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", SizeBytes: 1, MediaType: api.SandboxImageArtifactMediaType},
+			SandboxImageArtifactFormat: "oci-tar",
+			SandboxImageDigest:         "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+			SandboxImageFormat:         "oci-tar",
+			WorkspaceMountPath:         "/workspace",
+			FilesystemFormat:           "tar",
+			FilePath:                   "src/task.ts",
+			ExportName:                 "deploy",
+			HandlerEntrypoint:          "src/task.ts#deploy",
+			BundleDigest:               "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			RequestedMilliCPU:          1000,
+			RequestedMemoryMiB:         1024,
+			QueueName:                  "task/deploy",
+			MaxDurationSeconds:         300,
 		}},
 		CASObjects: validBuildResultCASObjects(),
 	}

@@ -5,10 +5,12 @@ const base = image("github-pr-review")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
   .run(["npm", "install", "-g", "bun@1.3.10"])
-  .copy("/workspace/package.json", source.file("package.json"))
+  .copy("/opt/helmr-task/package.json", source.file("package.json"))
+  .workdir("/opt/helmr-task")
   .run(["bun", "install"], {
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("github-pr-review-bun") }],
   })
+  .workdir("/workspace")
 
 const sbx = sandbox("github-pr-review")
   .image(base)

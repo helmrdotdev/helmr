@@ -14,10 +14,12 @@ const base = image("cli-tooling")
   .workdir("/workspace")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .run(["sh", "-ceu", installTools])
-  .copy("/workspace/package.json", source.file("package.json"))
+  .copy("/opt/helmr-task/package.json", source.file("package.json"))
+  .workdir("/opt/helmr-task")
   .run(["bun", "install"], {
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("cli-tooling-bun") }],
   })
+  .workdir("/workspace")
 
 const sbx = sandbox("cli-tooling")
   .image(base)

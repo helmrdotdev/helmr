@@ -17,7 +17,6 @@ type WorkspaceArtifact struct {
 	Digest     string
 	MediaType  string
 	Encoding   string
-	VolumeKind string
 	SizeBytes  int64
 	EntryCount int
 }
@@ -65,7 +64,6 @@ func CreateWorkspaceArtifactFromRootWithExcludes(root string, tempDir string, tr
 		Digest:     tarArchive.Digest,
 		MediaType:  ArtifactMediaType,
 		Encoding:   ArtifactEncoding,
-		VolumeKind: VolumeKind,
 		SizeBytes:  tarArchive.SizeBytes,
 		EntryCount: tarArchive.EntryCount,
 	}, cleanup, nil

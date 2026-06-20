@@ -301,6 +301,27 @@ variable "worker_vm_scratch_disk_mib" {
   default     = 32768
 }
 
+variable "worker_capacity_vcpus" {
+  description = "Total vCPU capacity advertised by dev workers. Leave null to advertise one VM's vCPU count."
+  type        = number
+  default     = null
+  nullable    = true
+}
+
+variable "worker_capacity_memory_mib" {
+  description = "Total memory capacity in MiB advertised by dev workers. Leave null to advertise one VM's memory."
+  type        = number
+  default     = null
+  nullable    = true
+}
+
+variable "worker_execution_slots" {
+  description = "Total execution slots advertised by dev workers. Leave null to advertise one slot."
+  type        = number
+  default     = null
+  nullable    = true
+}
+
 variable "secret_encryption_key_old_arn" {
   description = "Optional Secrets Manager ARN for HELMR_SECRET_ENCRYPTION_KEY_OLD during Helmr-managed secret re-encryption."
   type        = string

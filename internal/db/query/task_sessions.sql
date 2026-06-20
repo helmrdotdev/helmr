@@ -15,6 +15,7 @@ INSERT INTO task_sessions (
     task_id,
     initial_deployment_id,
     active_deployment_id,
+    workspace_id,
     external_id,
     start_fingerprint,
     metadata,
@@ -28,6 +29,7 @@ INSERT INTO task_sessions (
     sqlc.arg(task_id),
     sqlc.arg(initial_deployment_id),
     sqlc.arg(active_deployment_id),
+    sqlc.arg(workspace_id),
     sqlc.arg(external_id),
     sqlc.arg(start_fingerprint),
     coalesce(sqlc.arg(metadata)::jsonb, '{}'::jsonb),
@@ -36,39 +38,68 @@ INSERT INTO task_sessions (
 )
 RETURNING *;
 
--- name: CreateTaskSessionWorkspace :one
-WITH created_workspace AS (
-    INSERT INTO workspaces (
-        id,
-        org_id,
-        project_id,
-        environment_id,
-        task_session_id,
-        retention_policy
-    ) VALUES (
-        sqlc.arg(id),
-        sqlc.arg(org_id),
-        sqlc.arg(project_id),
-        sqlc.arg(environment_id),
-        sqlc.arg(task_session_id),
-        coalesce(sqlc.arg(retention_policy)::jsonb, '{}'::jsonb)
-    )
-    RETURNING *
-),
-attached_session AS (
-    UPDATE task_sessions
-       SET workspace_id = created_workspace.id,
-           updated_at = now()
-      FROM created_workspace
-     WHERE task_sessions.org_id = created_workspace.org_id
-       AND task_sessions.project_id = created_workspace.project_id
-       AND task_sessions.environment_id = created_workspace.environment_id
-       AND task_sessions.id = created_workspace.task_session_id
-    RETURNING task_sessions.id
+-- name: CreateWorkspace :one
+INSERT INTO workspaces (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    deployment_sandbox_id,
+    sandbox_id,
+    sandbox_fingerprint,
+    external_id,
+    metadata,
+    tags,
+    retention_policy
+) VALUES (
+    sqlc.arg(id),
+    sqlc.arg(org_id),
+    sqlc.arg(project_id),
+    sqlc.arg(environment_id),
+    sqlc.arg(deployment_sandbox_id),
+    sqlc.arg(sandbox_id),
+    sqlc.arg(sandbox_fingerprint),
+    coalesce(sqlc.arg(external_id)::text, ''),
+    coalesce(sqlc.arg(metadata)::jsonb, '{}'::jsonb),
+    coalesce(sqlc.arg(tags)::text[], '{}'::text[]),
+    coalesce(sqlc.arg(retention_policy)::jsonb, '{}'::jsonb)
 )
-SELECT created_workspace.*
-  FROM created_workspace
-  JOIN attached_session ON true;
+RETURNING *;
+
+-- name: GetWorkspaceForTaskStart :one
+SELECT workspaces.id,
+       workspaces.org_id,
+       workspaces.project_id,
+       workspaces.environment_id,
+       workspaces.deployment_sandbox_id,
+       workspaces.sandbox_id,
+       workspaces.sandbox_fingerprint,
+       workspaces.state,
+       workspaces.archived_at,
+       workspaces.deleted_at,
+       deployment_sandboxes.workspace_mount_path,
+       deployment_sandboxes.resource_floor AS deployment_sandbox_resource_floor,
+       deployment_sandboxes.disk_floor_mib AS deployment_sandbox_disk_floor_mib,
+       deployment_sandboxes.network_policy AS deployment_sandbox_network_policy,
+       deployment_sandboxes.rootfs_digest AS deployment_sandbox_rootfs_digest,
+       deployment_sandboxes.runtime_abi AS deployment_sandbox_runtime_abi,
+       deployment_sandboxes.guestd_abi AS deployment_sandbox_guestd_abi,
+       deployment_sandboxes.adapter_abi AS deployment_sandbox_adapter_abi,
+       deployment_sandboxes.filesystem_format AS deployment_sandbox_filesystem_format,
+       deployment_sandboxes.contract_version AS deployment_sandbox_contract_version,
+       deployment_sandboxes.fingerprint AS deployment_sandbox_fingerprint
+  FROM workspaces
+  JOIN deployment_sandboxes
+    ON deployment_sandboxes.org_id = workspaces.org_id
+   AND deployment_sandboxes.project_id = workspaces.project_id
+   AND deployment_sandboxes.environment_id = workspaces.environment_id
+   AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
+ WHERE workspaces.org_id = sqlc.arg(org_id)
+   AND workspaces.project_id = sqlc.arg(project_id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.id = sqlc.arg(workspace_id)
+   AND workspaces.deleted_at IS NULL
+ LIMIT 1;
 
 -- name: SetTaskSessionCurrentRun :one
 UPDATE task_sessions
@@ -371,18 +402,6 @@ SELECT task_session_runs.*,
    AND task_session_runs.environment_id = sqlc.arg(environment_id)
    AND task_session_runs.task_session_id = sqlc.arg(task_session_id)
  ORDER BY task_session_runs.turn_index ASC, task_session_runs.created_at ASC;
-
--- name: GetTaskSessionWorkspace :one
-SELECT workspaces.*
-  FROM task_sessions
-  JOIN workspaces ON workspaces.org_id = task_sessions.org_id
-                 AND workspaces.project_id = task_sessions.project_id
-                 AND workspaces.environment_id = task_sessions.environment_id
-                 AND workspaces.id = task_sessions.workspace_id
- WHERE task_sessions.org_id = sqlc.arg(org_id)
-   AND task_sessions.project_id = sqlc.arg(project_id)
-   AND task_sessions.environment_id = sqlc.arg(environment_id)
-   AND task_sessions.id = sqlc.arg(task_session_id);
 
 -- name: GetTaskSessionChannelByName :one
 SELECT *

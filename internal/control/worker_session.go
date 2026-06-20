@@ -56,7 +56,12 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("select runtime release"))
 		return
 	}
-	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), pgvalue.UUID(worker.WorkerInstanceID))
+	if err := s.markStaleWorkspaceMaterializationsLost(r.Context()); err != nil {
+		s.log.Error("mark stale workspace materializations lost failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
+		writeError(w, errors.New("reap stale workspace materializations"))
+		return
+	}
+	capacity, err := s.db.GetWorkerInstanceRunDispatchCapacity(r.Context(), pgvalue.UUID(worker.WorkerInstanceID))
 	if isNoRows(err) {
 		writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{})
 		return
@@ -432,13 +437,13 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		DispatchLeaseID:             leaseIDs.queueLeaseID,
 		RunStatus:                   status,
 		WorkspaceLeaseID:            workspaceFields.leaseID,
+		WorkspaceFencingToken:       workspaceFields.fencingToken,
 		WorkspaceArtifactDigest:     workspaceFields.artifactDigest,
 		WorkspaceArtifactSizeBytes:  workspaceFields.artifactSizeBytes,
 		WorkspaceArtifactMediaType:  workspaceFields.artifactMediaType,
 		WorkspaceArtifactEncoding:   workspaceFields.artifactEncoding,
 		WorkspaceArtifactEntryCount: workspaceFields.artifactEntryCount,
 		WorkspaceMountPath:          workspaceFields.mountPath,
-		WorkspaceVolumeKind:         workspaceFields.volumeKind,
 		WorkspaceBaseVersionID:      workspaceFields.baseVersionID,
 		AttemptStatus:               db.RunAttemptStatus(status),
 		ExitCode:                    exitCode,
@@ -875,6 +880,7 @@ func releaseOutput(result api.WorkerReleaseResult, status db.RunStatus, exitCode
 
 type releaseWorkspaceCommitFields struct {
 	leaseID            pgtype.UUID
+	fencingToken       pgtype.Text
 	baseVersionID      pgtype.UUID
 	artifactDigest     pgtype.Text
 	artifactSizeBytes  pgtype.Int8
@@ -882,7 +888,6 @@ type releaseWorkspaceCommitFields struct {
 	artifactEncoding   pgtype.Text
 	artifactEntryCount pgtype.Int4
 	mountPath          pgtype.Text
-	volumeKind         pgtype.Text
 }
 
 func releaseWorkspaceFields(workspace *api.WorkerWorkspace) (releaseWorkspaceCommitFields, error) {
@@ -892,6 +897,10 @@ func releaseWorkspaceFields(workspace *api.WorkerWorkspace) (releaseWorkspaceCom
 	leaseID, err := parseRequiredWorkspaceUUID("workspace.write_lease_id", workspace.WriteLeaseID)
 	if err != nil {
 		return releaseWorkspaceCommitFields{}, err
+	}
+	fencingToken := strings.TrimSpace(workspace.WriteFencingToken)
+	if fencingToken == "" {
+		return releaseWorkspaceCommitFields{}, errors.New("workspace.write_fencing_token is required")
 	}
 	baseVersionID, err := parseOptionalWorkspaceUUID("workspace.base_version_id", workspace.BaseVersionID)
 	if err != nil {
@@ -923,12 +932,9 @@ func releaseWorkspaceFields(workspace *api.WorkerWorkspace) (releaseWorkspaceCom
 	if mountPath == "" {
 		return releaseWorkspaceCommitFields{}, errors.New("workspace.mount_path is required")
 	}
-	volumeKind := strings.TrimSpace(workspace.VolumeKind)
-	if volumeKind == "" {
-		return releaseWorkspaceCommitFields{}, errors.New("workspace.volume_kind is required")
-	}
 	return releaseWorkspaceCommitFields{
 		leaseID:            leaseID,
+		fencingToken:       pgvalue.Text(fencingToken),
 		baseVersionID:      baseVersionID,
 		artifactDigest:     pgvalue.Text(digest),
 		artifactSizeBytes:  pgtype.Int8{Int64: artifact.SizeBytes, Valid: true},
@@ -936,7 +942,6 @@ func releaseWorkspaceFields(workspace *api.WorkerWorkspace) (releaseWorkspaceCom
 		artifactEncoding:   pgvalue.Text(encoding),
 		artifactEntryCount: pgtype.Int4{Int32: artifact.EntryCount, Valid: true},
 		mountPath:          pgvalue.Text(mountPath),
-		volumeKind:         pgvalue.Text(volumeKind),
 	}, nil
 }
 
@@ -1115,10 +1120,10 @@ func workerWorkspaceFromLease(row db.LeaseRunLeaseRow) api.WorkerWorkspace {
 		return api.WorkerWorkspace{}
 	}
 	workspace := api.WorkerWorkspace{
-		ID:           pgvalue.MustUUIDValue(row.WorkspaceID).String(),
-		WriteLeaseID: pgvalue.MustUUIDValue(row.WorkspaceLeaseID).String(),
-		MountPath:    row.WorkspaceMountPath.String,
-		VolumeKind:   row.WorkspaceVolumeKind.String,
+		ID:                pgvalue.MustUUIDValue(row.WorkspaceID).String(),
+		WriteLeaseID:      pgvalue.MustUUIDValue(row.WorkspaceLeaseID).String(),
+		WriteFencingToken: row.WorkspaceFencingToken.String,
+		MountPath:         row.WorkspaceMountPath.String,
 	}
 	if row.WorkspaceBaseVersionID.Valid {
 		workspace.BaseVersionID = pgvalue.MustUUIDValue(row.WorkspaceBaseVersionID).String()

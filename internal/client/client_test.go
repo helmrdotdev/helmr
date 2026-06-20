@@ -925,7 +925,7 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 			Config:              json.RawMessage(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
 		},
 		WorkspaceState: api.WorkerCheckpointWorkspaceState{
-			Base: api.WorkerCheckpointWorkspaceBase{ArtifactDigest: "sha256:workspace", MountPath: "/workspace", VolumeKind: "copy-on-write"},
+			Base: api.WorkerCheckpointWorkspaceBase{ArtifactDigest: "sha256:workspace", MountPath: "/workspace"},
 		},
 	}
 }

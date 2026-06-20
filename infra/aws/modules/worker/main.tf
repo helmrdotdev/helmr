@@ -7,6 +7,17 @@ locals {
   disk_environment = var.worker_disk_mib == null ? {} : {
     HELMR_WORKER_DISK_MIB = tostring(var.worker_disk_mib)
   }
+  capacity_environment = merge(
+    var.worker_capacity_vcpus == null ? {} : {
+      HELMR_WORKER_CAPACITY_VCPUS = tostring(var.worker_capacity_vcpus)
+    },
+    var.worker_capacity_memory_mib == null ? {} : {
+      HELMR_WORKER_CAPACITY_MEMORY_MIB = tostring(var.worker_capacity_memory_mib)
+    },
+    var.worker_execution_slots == null ? {} : {
+      HELMR_WORKER_EXECUTION_SLOTS = tostring(var.worker_execution_slots)
+    },
+  )
 
   managed_worker_environment = merge({
     HELMR_CONTROL_URL                       = var.worker_control_url
@@ -32,7 +43,7 @@ locals {
     HELMR_VM_MEMORY_MIB                     = tostring(var.vm_memory_mib)
     HELMR_VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
     HELMR_VM_HEALTH_TIMEOUT                 = "120s"
-  }, local.disk_environment)
+  }, local.disk_environment, local.capacity_environment)
 
   reserved_worker_environment_keys = toset(concat(keys(local.managed_worker_environment), ["HELMR_CHECKPOINT_ENCRYPTION_KEY", "HELMR_WORKER_RESOURCE_ID"]))
   worker_environment_conflicts     = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)

@@ -26,6 +26,7 @@ type TaskStartOptions struct {
 	IdempotencyKey     string          `json:"idempotency_key,omitempty"`
 	IdempotencyKeyTTL  string          `json:"idempotency_key_ttl,omitempty"`
 	ExpiresAt          *time.Time      `json:"expires_at,omitempty"`
+	WorkspaceID        string          `json:"workspace_id,omitempty"`
 }
 
 func (o *TaskStartOptions) UnmarshalJSON(data []byte) error {
@@ -120,23 +121,11 @@ type ListTaskSessionRunsResponse struct {
 	Runs []TaskSessionRunResponse `json:"runs"`
 }
 
-type TaskSessionWorkspaceResponse struct {
-	ID               string          `json:"id"`
-	TaskSessionID    string          `json:"task_session_id"`
-	CurrentVersionID string          `json:"current_version_id,omitempty"`
-	MountPath        string          `json:"mount_path,omitempty"`
-	State            string          `json:"state"`
-	RetentionPolicy  json.RawMessage `json:"retention_policy,omitempty"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
-}
-
 type TaskSessionChannelResponse struct {
 	ID            string    `json:"id"`
 	TaskSessionID string    `json:"task_session_id"`
 	Name          string    `json:"name"`
 	Direction     string    `json:"direction"`
-	Backend       string    `json:"backend,omitempty"`
 	NextSequence  int64     `json:"next_sequence"`
 	CreatedAt     time.Time `json:"created_at"`
 }

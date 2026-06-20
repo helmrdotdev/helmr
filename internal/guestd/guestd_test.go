@@ -25,7 +25,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/safepath"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
-	workspacepkg "github.com/helmrdotdev/helmr/internal/workspace"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -650,6 +650,51 @@ func TestHandleRunConnectionAcceptsEmptyWorkspaceArtifact(t *testing.T) {
 	}
 	if complete.ExitCode != 1 {
 		t.Fatalf("complete = %+v", complete)
+	}
+}
+
+func TestRestoreRunWorkspaceArtifactReplacesImageWorkspace(t *testing.T) {
+	imageRoot := t.TempDir()
+	workspaceRoot := filepath.Join(imageRoot, "workspace")
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, "node_modules", "dep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspaceRoot, "node_modules", "dep", "package.json"), []byte(`{"name":"dep"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	artifact := testTar(t, []byte("marker"), &tar.Header{Name: "marker.txt", Mode: 0o644, Size: int64(len("marker"))})
+	request := testRunTaskRequest()
+	request.Workspace.Artifact.Digest = sha256sum.DigestBytes(artifact)
+	request.Workspace.Artifact.SizeBytes = uint64(len(artifact))
+	request.Workspace.Artifact.EntryCount = 1
+
+	if err := restoreRunWorkspaceArtifact(bytes.NewReader(artifact), request, workspaceRoot, uint64(len(artifact))); err != nil {
+		t.Fatal(err)
+	}
+	if got := readText(t, filepath.Join(workspaceRoot, "marker.txt")); got != "marker" {
+		t.Fatalf("marker = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(workspaceRoot, "node_modules", "dep", "package.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("image workspace content leaked into restored workspace: %v", err)
+	}
+}
+
+func TestReplaceWorkspaceRootRollsBackWhenStagingInstallFails(t *testing.T) {
+	parent := t.TempDir()
+	workspaceRoot := filepath.Join(parent, "workspace")
+	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspaceRoot, "old.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missingStaging := filepath.Join(parent, "missing-staging")
+
+	if err := replaceWorkspaceRoot(workspaceRoot, missingStaging); err == nil {
+		t.Fatal("expected install failure")
+	}
+	if got := readText(t, filepath.Join(workspaceRoot, "old.txt")); got != "old" {
+		t.Fatalf("workspace was not rolled back, old.txt = %q", got)
 	}
 }
 
@@ -1901,7 +1946,17 @@ func TestWorkspaceRootForImageRejectsSymlinkMount(t *testing.T) {
 	}
 }
 
-func TestMaterializeDeploymentSourceForRuntimePlacesSourceUnderLaunchCwd(t *testing.T) {
+func TestTaskSourceRootIgnoresImageWorkdir(t *testing.T) {
+	got, err := taskSourceRoot("/workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != defaultTaskSourceRoot {
+		t.Fatalf("task source root = %q", got)
+	}
+}
+
+func TestMaterializeDeploymentSourceForRuntimePlacesSourceOutsideWorkspace(t *testing.T) {
 	imageRoot := t.TempDir()
 	sourceRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(sourceRoot, "tasks"), 0o755); err != nil {
@@ -1916,26 +1971,29 @@ func TestMaterializeDeploymentSourceForRuntimePlacesSourceUnderLaunchCwd(t *test
 	if err := os.WriteFile(filepath.Join(sourceRoot, "node_modules", "dep", "package.json"), []byte(`{"name":"dep"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(imageRoot, "workspace", "node_modules", "dep"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(imageRoot, "opt", "helmr-task", "node_modules", "dep"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	taskCwd, err := materializeDeploymentSourceForRuntime(imageRoot, sourceRoot, "/workspace", &resolvedRuntimeUser{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())})
+	taskCwd, err := materializeDeploymentSourceForRuntime(imageRoot, sourceRoot, defaultTaskSourceRoot, &resolvedRuntimeUser{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if taskCwd != "/workspace/.helmr/deployment-source" {
+	if taskCwd != "/opt/helmr-task/.helmr/deployment-source" {
 		t.Fatalf("task cwd = %q", taskCwd)
 	}
-	if got := readText(t, filepath.Join(imageRoot, "workspace", ".helmr", "deployment-source", "tasks", "task.ts")); got != "task" {
+	if got := readText(t, filepath.Join(imageRoot, "opt", "helmr-task", ".helmr", "deployment-source", "tasks", "task.ts")); got != "task" {
 		t.Fatalf("deployment source = %q", got)
 	}
-	if _, err := os.Stat(filepath.Join(imageRoot, "workspace", ".helmr", "deployment-source", "node_modules", "dep", "package.json")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(imageRoot, "opt", "helmr-task", ".helmr", "deployment-source", "node_modules", "dep", "package.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("deployment source dependencies leaked into runtime: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(imageRoot, "workspace", "node_modules", "dep")); err != nil {
-		t.Fatalf("workspace dependencies missing: %v", err)
+	if _, err := os.Stat(filepath.Join(imageRoot, "workspace", "node_modules", "dep")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("workspace dependencies leaked into workspace: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(imageRoot, "opt", "helmr-task", "node_modules", "dep")); err != nil {
+		t.Fatalf("runtime dependencies missing: %v", err)
 	}
 }
 
@@ -2078,15 +2136,15 @@ func TestApplySecretsExplicitOwnerParentsRemainTraversable(t *testing.T) {
 
 func TestWorkspaceArtifactExcludesWorkspaceRelativeSecrets(t *testing.T) {
 	root := t.TempDir()
-	workspace := filepath.Join(root, "workspace")
-	if err := os.MkdirAll(workspace, 0o755); err != nil {
+	workspaceRoot := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(workspace, "public.txt"), []byte("public"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(workspaceRoot, "public.txt"), []byte("public"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	env := []string{}
-	secretPaths, err := applySecretsWithWorkspacePaths(root, workspace, &runv0.RunTaskRequest{
+	secretPaths, err := applySecretsWithWorkspacePaths(root, workspaceRoot, &runv0.RunTaskRequest{
 		Secrets: []*runv0.SecretInject{
 			{
 				Name:       "file-token",
@@ -2107,14 +2165,14 @@ func TestWorkspaceArtifactExcludesWorkspaceRelativeSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(workspace, "secret-dir", "nested.txt"), []byte("dir-secret"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(workspaceRoot, "secret-dir", "nested.txt"), []byte("dir-secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	artifact, cleanup, err := workspacepkg.CreateWorkspaceArtifactFromRootWithExcludes(
-		workspace,
+	artifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRootWithExcludes(
+		workspaceRoot,
 		t.TempDir(),
-		workspace,
-		workspaceSecretExcludePatterns(workspace, secretPaths),
+		workspaceRoot,
+		workspaceSecretExcludePatterns(workspaceRoot, secretPaths),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -2464,8 +2522,7 @@ func testRunTaskRequest() *runv0.RunTaskRequest {
 				SizeBytes:  1024,
 				EntryCount: 1,
 			},
-			VolumeKind: "copy-on-write",
-			Writable:   true,
+			Writable: true,
 		},
 	}
 }

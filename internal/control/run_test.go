@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -83,6 +84,10 @@ func testDeploymentTaskID() pgtype.UUID {
 	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000305"))
 }
 
+func testDeploymentSandboxID() pgtype.UUID {
+	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000307"))
+}
+
 func testArtifactID() pgtype.UUID {
 	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000306"))
 }
@@ -152,6 +157,34 @@ func testRunRuntimeRequirements() compute.RunRuntimeRequirements {
 	}
 }
 
+func testSandboxFingerprint() string {
+	return "sha256:" + strings.Repeat("7", 64)
+}
+
+func fakeWorkspaceForTaskStart(workspaceID pgtype.UUID) db.GetWorkspaceForTaskStartRow {
+	return db.GetWorkspaceForTaskStartRow{
+		ID:                                workspaceID,
+		OrgID:                             pgvalue.UUID(dbtest.DefaultOrgID),
+		ProjectID:                         testProjectID(),
+		EnvironmentID:                     testEnvironmentID(),
+		DeploymentSandboxID:               testDeploymentSandboxID(),
+		SandboxID:                         "default",
+		SandboxFingerprint:                testSandboxFingerprint(),
+		State:                             db.WorkspaceStateActive,
+		WorkspaceMountPath:                "/workspace",
+		DeploymentSandboxResourceFloor:    []byte(`{"milli_cpu":1000,"memory_mib":512,"disk_mib":1024}`),
+		DeploymentSandboxDiskFloorMib:     1024,
+		DeploymentSandboxNetworkPolicy:    []byte(`{"internet":"egress"}`),
+		DeploymentSandboxRootfsDigest:     "sha256:" + strings.Repeat("f", 64),
+		DeploymentSandboxRuntimeAbi:       testWorkerCapabilities().RuntimeABI,
+		DeploymentSandboxGuestdAbi:        "helmr.guestd.v0",
+		DeploymentSandboxAdapterAbi:       "helmr.adapter.v0",
+		DeploymentSandboxFilesystemFormat: "tar",
+		DeploymentSandboxContractVersion:  1,
+		DeploymentSandboxFingerprint:      testSandboxFingerprint(),
+	}
+}
+
 func TestAPIKeyRunCreateRejectsActorWithoutEnvironmentScope(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{kind: auth.ActorKindAPIKey, role: auth.RoleOwner}})
@@ -182,7 +215,7 @@ func TestAPIKeyRunCreateUsesActorEnvironmentScope(t *testing.T) {
 		projectID:     testProjectIDString(),
 		environmentID: testEnvironmentIDString(),
 		permissions:   []auth.Permission{auth.PermissionRunsCreate},
-	}},
+	}, CAS: &fakeCAS{}},
 	)
 	bodyBytes, err := json.Marshal(api.TaskStartRequest{})
 	if err != nil {
@@ -409,7 +442,7 @@ func TestAppendTaskSessionChannelInputReturnsDuplicateIdempotencyStatus(t *testi
 			CorrelationID:          "thread-1",
 			Sequence:               1,
 			ContentType:            "application/json",
-			IdempotencyKey:         "slack-action-1",
+			IdempotencyKey:         "external-action-1",
 			IdempotencyFingerprint: "fingerprint-1",
 			ExternalEventID:        "event-1",
 			AuthSubjectType:        "api_key",
@@ -421,7 +454,7 @@ func TestAppendTaskSessionChannelInputReturnsDuplicateIdempotencyStatus(t *testi
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/channels/approval/inputs", strings.NewReader(`{"data":{"approved":true},"correlation_id":"thread-1","external_event_id":"event-1"}`))
 	req.Header.Set("authorization", "Bearer test-key")
-	req.Header.Set("idempotency-key", "slack-action-1")
+	req.Header.Set("idempotency-key", "external-action-1")
 	rec := httptest.NewRecorder()
 
 	server.ServeHTTP(rec, req)
@@ -478,7 +511,7 @@ func TestAppendTaskSessionChannelInputReturnsDuplicateAfterTerminalSession(t *te
 			CorrelationID:          "thread-1",
 			Sequence:               1,
 			ContentType:            "application/json",
-			IdempotencyKey:         "slack-action-1",
+			IdempotencyKey:         "external-action-1",
 			IdempotencyFingerprint: fingerprint,
 			ExternalEventID:        "event-1",
 			AuthSubjectType:        "api_key",
@@ -490,7 +523,7 @@ func TestAppendTaskSessionChannelInputReturnsDuplicateAfterTerminalSession(t *te
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/channels/approval/inputs", strings.NewReader(`{"data":{"approved":true},"correlation_id":"thread-1","external_event_id":"event-1"}`))
 	req.Header.Set("authorization", "Bearer test-key")
-	req.Header.Set("idempotency-key", "slack-action-1")
+	req.Header.Set("idempotency-key", "external-action-1")
 	rec := httptest.NewRecorder()
 
 	server.ServeHTTP(rec, req)
@@ -537,7 +570,6 @@ func TestListTaskSessionChannelsReturnsChannelSummary(t *testing.T) {
 			TaskSessionID: sessionID,
 			Name:          "approval",
 			Direction:     db.ChannelDirectionInput,
-			Backend:       "inline",
 			NextSequence:  2,
 			CreatedAt:     testTime(),
 		}},
@@ -602,7 +634,7 @@ func TestAppendTaskSessionChannelInputRejectsClosedInputWithStableCode(t *testin
 
 func TestTaskStartRejectsDeploymentSelection(t *testing.T) {
 	store := &fakeStore{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", strings.NewReader(`{"options":{"version":"20260101.99"}}`))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -620,7 +652,7 @@ func TestTaskStartRejectsDeploymentSelection(t *testing.T) {
 
 func TestTaskStartRejectsOversizedExternalID(t *testing.T) {
 	store := &fakeStore{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", strings.NewReader(`{"external_id":"`+strings.Repeat("x", maxTaskSessionExternalIDBytes+1)+`"}`))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -633,6 +665,445 @@ func TestTaskStartRejectsOversizedExternalID(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "external_id must be at most") {
 		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestWorkspaceMaterializeEnsuresRunnableMaterializationCreated(t *testing.T) {
+	workspaceID := uuid.Must(uuid.NewV7())
+	store := &fakeStore{ensureWorkspaceMaterializationInserted: true}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/"+workspaceID.String()+"/materialize", strings.NewReader(`{}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.ensureWorkspaceMaterializationCalls != 1 {
+		t.Fatalf("EnsureWorkspaceMaterializationRequested calls = %d, want 1", store.ensureWorkspaceMaterializationCalls)
+	}
+	if got := pgvalue.MustUUIDValue(store.ensureWorkspaceMaterialization.WorkspaceID); got != workspaceID {
+		t.Fatalf("materialization workspace_id = %s, want %s", got, workspaceID)
+	}
+	if store.ensureWorkspaceMaterialization.Priority != 0 {
+		t.Fatalf("materialization priority = %d, want 0", store.ensureWorkspaceMaterialization.Priority)
+	}
+	if string(store.ensureWorkspaceMaterialization.Request) != `{"source":"api"}` {
+		t.Fatalf("request = %s", string(store.ensureWorkspaceMaterialization.Request))
+	}
+	var response api.WorkspaceMaterializationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.WorkspaceID != workspaceID.String() {
+		t.Fatalf("response workspace_id = %q, want %s", response.WorkspaceID, workspaceID)
+	}
+	if response.DeploymentSandboxID != pgvalue.MustUUIDValue(testDeploymentSandboxID()).String() {
+		t.Fatalf("response deployment_sandbox_id = %q, want %s", response.DeploymentSandboxID, pgvalue.MustUUIDValue(testDeploymentSandboxID()))
+	}
+	if response.State != string(db.WorkspaceMaterializationStateRequested) {
+		t.Fatalf("response state = %q, want %s", response.State, db.WorkspaceMaterializationStateRequested)
+	}
+}
+
+func TestWorkspaceCreateResolvesSandboxSelectorAndReplaysIdempotency(t *testing.T) {
+	store := &fakeStore{}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	body := `{"sandbox_id":"test-sandbox","deployment_id":"` + pgvalue.MustUUIDValue(testDeploymentID()).String() + `","external_id":"case-1","metadata":{"owner":"platform"},"tags":["smoke"],"idempotency_key":"workspace-key"}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/workspaces", strings.NewReader(body))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.resolveDeploymentSandboxCalls != 1 {
+		t.Fatalf("ResolveDeploymentSandboxForWorkspaceCreate calls = %d, want 1", store.resolveDeploymentSandboxCalls)
+	}
+	if store.resolveDeploymentSandbox.SandboxID != "test-sandbox" {
+		t.Fatalf("resolved sandbox_id = %q, want test-sandbox", store.resolveDeploymentSandbox.SandboxID)
+	}
+	if store.resolveDeploymentSandbox.DeploymentID != testDeploymentID() {
+		t.Fatalf("resolved deployment_id = %s, want %s", pgvalue.MustUUIDValue(store.resolveDeploymentSandbox.DeploymentID), pgvalue.MustUUIDValue(testDeploymentID()))
+	}
+	if store.createWorkspaceCalls != 1 {
+		t.Fatalf("CreateWorkspaceFromSandbox calls = %d, want 1", store.createWorkspaceCalls)
+	}
+	if store.workspace.DeploymentSandboxID != testDeploymentSandboxID() {
+		t.Fatalf("created deployment_sandbox_id = %s, want %s", pgvalue.MustUUIDValue(store.workspace.DeploymentSandboxID), pgvalue.MustUUIDValue(testDeploymentSandboxID()))
+	}
+	if len(store.createdWorkspaceOperationIdempotencies) != 1 {
+		t.Fatalf("workspace operation idempotencies = %d, want 1", len(store.createdWorkspaceOperationIdempotencies))
+	}
+	idempotency := store.createdWorkspaceOperationIdempotencies[0]
+	if idempotency.WorkspaceID.Valid {
+		t.Fatalf("workspace.create idempotency workspace_id = %s, want null", pgvalue.MustUUIDValue(idempotency.WorkspaceID))
+	}
+	if idempotency.ResponseResourceID.Valid {
+		t.Fatalf("pending idempotency response_resource_id = %s, want null", pgvalue.MustUUIDValue(idempotency.ResponseResourceID))
+	}
+	if store.workspaceOperationIdempotency.ResponseResourceID != store.workspace.ID {
+		t.Fatalf("completed idempotency response_resource_id = %s, want workspace %s", pgvalue.MustUUIDValue(store.workspaceOperationIdempotency.ResponseResourceID), pgvalue.MustUUIDValue(store.workspace.ID))
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/workspaces", strings.NewReader(body))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("retry status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.createWorkspaceCalls != 1 {
+		t.Fatalf("CreateWorkspaceFromSandbox calls after retry = %d, want 1", store.createWorkspaceCalls)
+	}
+	var response api.WorkspaceEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.IsCached {
+		t.Fatalf("retry response is_cached = false, want true")
+	}
+	if response.Workspace.ID != pgvalue.MustUUIDValue(store.workspace.ID).String() {
+		t.Fatalf("retry workspace id = %q, want %s", response.Workspace.ID, pgvalue.MustUUIDValue(store.workspace.ID))
+	}
+}
+
+func TestWorkspaceCreateRejectsIdempotencyFingerprintMismatch(t *testing.T) {
+	store := &fakeStore{}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	firstBody := `{"sandbox_id":"test-sandbox","external_id":"case-1","idempotency_key":"workspace-key"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/workspaces", strings.NewReader(firstBody))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("first status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	secondBody := `{"sandbox_id":"test-sandbox","external_id":"case-2","idempotency_key":"workspace-key"}`
+	req = httptest.NewRequest(http.MethodPost, "/api/workspaces", strings.NewReader(secondBody))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("mismatch status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "idempotency_fingerprint_mismatch") {
+		t.Fatalf("mismatch body = %s", rec.Body.String())
+	}
+	if store.createWorkspaceCalls != 1 {
+		t.Fatalf("CreateWorkspaceFromSandbox calls = %d, want 1", store.createWorkspaceCalls)
+	}
+}
+
+func TestWorkspaceCreateReturnsPendingForInFlightIdempotency(t *testing.T) {
+	store := &fakeStore{}
+	fingerprint, err := workspaceCreateFingerprint(api.WorkspaceCreateRequest{SandboxID: "test-sandbox", ExternalID: "case-1"}, []byte(`{}`), []string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.workspaceOperationIdempotency = db.WorkspaceOperationIdempotency{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
+		ProjectID:          testProjectID(),
+		EnvironmentID:      testEnvironmentID(),
+		OperationKind:      workspaceCreateOperationKind,
+		IdempotencyKey:     "workspace-key",
+		RequestFingerprint: fingerprint,
+		ExpiresAt:          pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	req := httptest.NewRequest(http.MethodPost, "/api/workspaces", strings.NewReader(`{"sandbox_id":"test-sandbox","external_id":"case-1","idempotency_key":"workspace-key"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Retry-After") != "1" {
+		t.Fatalf("Retry-After = %q", rec.Header().Get("Retry-After"))
+	}
+	if !strings.Contains(rec.Body.String(), "workspace_operation_pending") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	if store.createWorkspaceCalls != 0 {
+		t.Fatalf("CreateWorkspaceFromSandbox calls = %d, want 0", store.createWorkspaceCalls)
+	}
+}
+
+func TestWorkspaceCreateRejectsDeploymentSandboxSelector(t *testing.T) {
+	store := &fakeStore{}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	req := httptest.NewRequest(http.MethodPost, "/api/workspaces", strings.NewReader(`{"deployment_sandbox_id":"`+pgvalue.MustUUIDValue(testDeploymentSandboxID()).String()+`"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "unknown field") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	if store.createWorkspaceCalls != 0 {
+		t.Fatalf("CreateWorkspaceFromSandbox calls = %d, want 0", store.createWorkspaceCalls)
+	}
+}
+
+func TestWorkspaceCreateRejectsUndeployedSandboxAsConflict(t *testing.T) {
+	store := &fakeStore{}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	req := httptest.NewRequest(http.MethodPost, "/api/workspaces", strings.NewReader(`{"sandbox_id":"missing-sandbox"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "sandbox_not_deployed") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	if store.createWorkspaceCalls != 0 {
+		t.Fatalf("CreateWorkspaceFromSandbox calls = %d, want 0", store.createWorkspaceCalls)
+	}
+}
+
+func TestWorkspaceMaterializeRejectsPublicPriority(t *testing.T) {
+	workspaceID := uuid.Must(uuid.NewV7())
+	store := &fakeStore{ensureWorkspaceMaterializationInserted: true}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/"+workspaceID.String()+"/materialize", strings.NewReader(`{"priority":5}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "unknown field") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	if store.ensureWorkspaceMaterializationCalls != 0 {
+		t.Fatalf("EnsureWorkspaceMaterializationRequested calls = %d, want 0", store.ensureWorkspaceMaterializationCalls)
+	}
+}
+
+func TestWorkspaceConnectReturnsExistingRunnableMaterialization(t *testing.T) {
+	workspaceID := uuid.Must(uuid.NewV7())
+	store := &fakeStore{ensureWorkspaceMaterializationState: db.WorkspaceMaterializationStateRunning}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/"+workspaceID.String()+"/connect", strings.NewReader(`{}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.ensureWorkspaceMaterializationCalls != 1 {
+		t.Fatalf("EnsureWorkspaceMaterializationRequested calls = %d, want 1", store.ensureWorkspaceMaterializationCalls)
+	}
+	if got := pgvalue.MustUUIDValue(store.ensureWorkspaceMaterialization.WorkspaceID); got != workspaceID {
+		t.Fatalf("materialization workspace_id = %s, want %s", got, workspaceID)
+	}
+	var response api.WorkspaceMaterializationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.WorkspaceID != workspaceID.String() {
+		t.Fatalf("response workspace_id = %q, want %s", response.WorkspaceID, workspaceID)
+	}
+	if response.State != string(db.WorkspaceMaterializationStateRunning) {
+		t.Fatalf("response state = %q, want %s", response.State, db.WorkspaceMaterializationStateRunning)
+	}
+}
+
+func TestWorkspaceMaterializeReturnsServerErrorWhenEnsureFails(t *testing.T) {
+	workspaceID := uuid.Must(uuid.NewV7())
+	store := &fakeStore{ensureWorkspaceMaterializationErr: errors.New("database unavailable")}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/"+workspaceID.String()+"/materialize", strings.NewReader(`{}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.ensureWorkspaceMaterializationCalls != 1 {
+		t.Fatalf("EnsureWorkspaceMaterializationRequested calls = %d, want 1", store.ensureWorkspaceMaterializationCalls)
+	}
+	if !strings.Contains(rec.Body.String(), "ensure workspace materialization") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestTaskStartAttachesCompatibleWorkspace(t *testing.T) {
+	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &fakeStore{attachedWorkspace: fakeWorkspaceForTaskStart(workspaceID)}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+		Options: api.TaskStartOptions{WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.TaskStartResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Session.WorkspaceID != pgvalue.MustUUIDValue(workspaceID).String() {
+		t.Fatalf("workspace_id = %q, want %s", response.Session.WorkspaceID, pgvalue.MustUUIDValue(workspaceID).String())
+	}
+	if store.createWorkspaceCalls != 0 {
+		t.Fatalf("CreateWorkspace calls = %d, want 0", store.createWorkspaceCalls)
+	}
+	if store.ensureWorkspaceMaterializationCalls != 1 {
+		t.Fatalf("EnsureWorkspaceMaterializationRequested calls = %d, want 1", store.ensureWorkspaceMaterializationCalls)
+	}
+	if store.ensureWorkspaceMaterialization.WorkspaceID != workspaceID {
+		t.Fatalf("materialization workspace_id = %s, want %s", pgvalue.MustUUIDValue(store.ensureWorkspaceMaterialization.WorkspaceID), pgvalue.MustUUIDValue(workspaceID))
+	}
+	if store.ensureWorkspaceMaterialization.Priority != 0 {
+		t.Fatalf("materialization priority = %d, want 0", store.ensureWorkspaceMaterialization.Priority)
+	}
+	if store.setQueuedRunWorkspaceMaterializationCalls != 1 {
+		t.Fatalf("SetQueuedRunWorkspaceMaterialization calls = %d, want 1", store.setQueuedRunWorkspaceMaterializationCalls)
+	}
+	if store.setQueuedRunWorkspaceMaterialization.WorkspaceMaterializationID != store.ensureWorkspaceMaterialization.ID {
+		t.Fatalf("run materialization_id = %s, want %s", pgvalue.MustUUIDValue(store.setQueuedRunWorkspaceMaterialization.WorkspaceMaterializationID), pgvalue.MustUUIDValue(store.ensureWorkspaceMaterialization.ID))
+	}
+}
+
+func TestTaskStartCreatesArtifactBackedWorkspaceForColdStart(t *testing.T) {
+	store := &fakeStore{}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", strings.NewReader(`{}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.createWorkspaceCalls != 1 {
+		t.Fatalf("CreateWorkspaceFromSandbox calls = %d, want 1", store.createWorkspaceCalls)
+	}
+	if !store.workspace.CurrentVersionID.Valid {
+		t.Fatalf("created workspace current_version_id is not set: %+v", store.workspace)
+	}
+	if len(store.artifacts) != 1 {
+		t.Fatalf("created artifacts = %d, want 1", len(store.artifacts))
+	}
+	if len(store.casObjects) != 1 {
+		t.Fatalf("upserted CAS objects = %d, want 1", len(store.casObjects))
+	}
+	if store.artifacts[0].Digest != store.casObjects[0].Digest {
+		t.Fatalf("artifact digest = %s, want CAS object digest %s", store.artifacts[0].Digest, store.casObjects[0].Digest)
+	}
+	if store.artifacts[0].Kind != db.ArtifactKindWorkspaceVersion {
+		t.Fatalf("artifact kind = %s, want %s", store.artifacts[0].Kind, db.ArtifactKindWorkspaceVersion)
+	}
+	casEvent := "cas:" + store.artifacts[0].Digest
+	artifactEvent := "artifact:" + store.artifacts[0].Digest
+	casEventIndex, artifactEventIndex := -1, -1
+	for i, event := range store.artifactAuthorityEvents {
+		if event == casEvent {
+			casEventIndex = i
+		}
+		if event == artifactEvent {
+			artifactEventIndex = i
+		}
+	}
+	if casEventIndex == -1 || artifactEventIndex == -1 || casEventIndex > artifactEventIndex {
+		t.Fatalf("artifact authority event order = %v, want %q before %q", store.artifactAuthorityEvents, casEvent, artifactEvent)
+	}
+	if store.ensureWorkspaceMaterializationCalls != 1 {
+		t.Fatalf("EnsureWorkspaceMaterializationRequested calls = %d, want 1", store.ensureWorkspaceMaterializationCalls)
+	}
+	if store.ensureWorkspaceMaterialization.WorkspaceID != store.workspace.ID {
+		t.Fatalf("materialization workspace_id = %s, want %s", pgvalue.MustUUIDValue(store.ensureWorkspaceMaterialization.WorkspaceID), pgvalue.MustUUIDValue(store.workspace.ID))
+	}
+	if store.setQueuedRunWorkspaceMaterializationCalls != 1 {
+		t.Fatalf("SetQueuedRunWorkspaceMaterialization calls = %d, want 1", store.setQueuedRunWorkspaceMaterializationCalls)
+	}
+	if store.setQueuedRunWorkspaceMaterialization.WorkspaceMaterializationID != store.ensureWorkspaceMaterialization.ID {
+		t.Fatalf("run materialization_id = %s, want %s", pgvalue.MustUUIDValue(store.setQueuedRunWorkspaceMaterialization.WorkspaceMaterializationID), pgvalue.MustUUIDValue(store.ensureWorkspaceMaterialization.ID))
+	}
+}
+
+func TestTaskStartRejectsIncompatibleWorkspaceBeforeSessionCreation(t *testing.T) {
+	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	workspace := fakeWorkspaceForTaskStart(workspaceID)
+	workspace.SandboxFingerprint = "sha256:" + strings.Repeat("9", 64)
+	store := &fakeStore{attachedWorkspace: workspace}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+		Options: api.TaskStartOptions{WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	requireErrorCode(t, rec.Body.Bytes(), "workspace_sandbox_incompatible")
+	if store.taskSession.ID.Valid || store.run.ID.Valid || store.createWorkspaceCalls != 0 {
+		t.Fatalf("unexpected DB side effects: session=%v run=%v createWorkspaceCalls=%d", store.taskSession.ID.Valid, store.run.ID.Valid, store.createWorkspaceCalls)
+	}
+}
+
+func TestTaskStartRejectsWorkspaceResourceFloorBeforeSessionCreation(t *testing.T) {
+	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	workspace := fakeWorkspaceForTaskStart(workspaceID)
+	workspace.DeploymentSandboxResourceFloor = []byte(`{"milli_cpu":100,"memory_mib":512,"disk_mib":1024}`)
+	store := &fakeStore{attachedWorkspace: workspace}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+		Options: api.TaskStartOptions{WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	requireErrorCode(t, rec.Body.Bytes(), "workspace_resource_floor_unsatisfied")
+	if store.taskSession.ID.Valid || store.run.ID.Valid || store.createWorkspaceCalls != 0 {
+		t.Fatalf("unexpected DB side effects: session=%v run=%v createWorkspaceCalls=%d", store.taskSession.ID.Valid, store.run.ID.Valid, store.createWorkspaceCalls)
 	}
 }
 
@@ -689,7 +1160,7 @@ func TestTaskStartExternalIDRejectsDifferentFingerprint(t *testing.T) {
 			UpdatedAt:        testTime(),
 		},
 	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 	bodyBytes, err := json.Marshal(api.TaskStartRequest{
 		ExternalID: "durable-1",
 		Payload:    json.RawMessage(`{"env":"prod"}`),
@@ -712,7 +1183,7 @@ func TestTaskStartExternalIDRejectsDifferentFingerprint(t *testing.T) {
 func TestTaskStartExternalIDReturnsExistingSessionOK(t *testing.T) {
 	store := &fakeStore{}
 	eventStream := newTestEventStream(t)
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, EventStream: eventStream})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: eventStream})
 	bodyBytes, err := json.Marshal(api.TaskStartRequest{
 		ExternalID: "durable-1",
 		Payload:    json.RawMessage(`{"env":"prod"}`),
@@ -752,7 +1223,7 @@ func TestTaskStartExternalIDReturnsExistingSessionOK(t *testing.T) {
 
 func TestTaskStartExternalIDRejectsExpiredOpenSession(t *testing.T) {
 	store := &fakeStore{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 	bodyBytes, err := json.Marshal(api.TaskStartRequest{
 		ExternalID: "durable-1",
 		Payload:    json.RawMessage(`{"env":"prod"}`),
@@ -822,7 +1293,7 @@ func TestTaskStartExternalIDUniqueRaceReturnsExistingSessionOK(t *testing.T) {
 			UpdatedAt:        testTime(),
 		},
 	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 	bodyBytes, err := json.Marshal(api.TaskStartRequest{
 		ExternalID: "durable-1",
 		Payload:    payload,
@@ -848,7 +1319,7 @@ func TestTaskStartExternalIDUniqueRaceReturnsExistingSessionOK(t *testing.T) {
 
 func TestTaskStartExternalIDWithoutCurrentRunReturnsConflict(t *testing.T) {
 	store := &fakeStore{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 	bodyBytes, err := json.Marshal(api.TaskStartRequest{
 		ExternalID: "durable-1",
 		Payload:    json.RawMessage(`{"env":"prod"}`),
@@ -1700,6 +2171,7 @@ type fakeStore struct {
 	defaultEnvironmentID                        pgtype.UUID
 	logCursor                                   int64
 	casObjects                                  []db.UpsertCasObjectParams
+	artifactAuthorityEvents                     []string
 	getCasObjectErr                             error
 	sessionID                                   pgtype.UUID
 	executionWorkerInstanceID                   pgtype.UUID
@@ -1715,14 +2187,32 @@ type fakeStore struct {
 	activeQueueLeaseMissing                     bool
 	renewErr                                    error
 	listQueueScopes                             db.ListQueueScopesParams
+	markStaleWorkspaceMaterializationsLostCalls int
+	workerQueueCapacity                         db.GetWorkerInstanceQueueCapacityRow
+	workerQueueCapacitySet                      bool
+	claimWorkspaceMaterialization               db.ClaimWorkspaceMaterializationParams
+	claimWorkspaceMaterializationCalls          int
 	waitpointToken                              db.WaitpointToken
 	publicAccessToken                           db.PublicAccessToken
 	createPublicAccessToken                     db.CreatePublicAccessTokenParams
 	taskSession                                 db.TaskSession
 	lockTaskSession                             db.TaskSession
 	createTaskSessionErr                        error
+	ensureWorkspaceMaterialization              db.EnsureWorkspaceMaterializationRequestedParams
+	ensureWorkspaceMaterializationCalls         int
+	ensureWorkspaceMaterializationInserted      bool
+	ensureWorkspaceMaterializationState         db.WorkspaceMaterializationState
+	ensureWorkspaceMaterializationErr           error
+	setQueuedRunWorkspaceMaterialization        db.SetQueuedRunWorkspaceMaterializationParams
+	setQueuedRunWorkspaceMaterializationCalls   int
+	resolveDeploymentSandbox                    db.ResolveDeploymentSandboxForWorkspaceCreateParams
+	resolveDeploymentSandboxCalls               int
+	workspaceOperationIdempotency               db.WorkspaceOperationIdempotency
+	createdWorkspaceOperationIdempotencies      []db.CreateWorkspaceOperationIdempotencyParams
 	getTaskSessionByExternalIDMisses            int
 	workspace                                   db.Workspace
+	attachedWorkspace                           db.GetWorkspaceForTaskStartRow
+	createWorkspaceCalls                        int
 	startIdempotency                            db.GetTaskStartIdempotencyRow
 	appendSessionChannelInput                   db.AppendSessionChannelInputRow
 	appendSessionChannelInputCalls              int
@@ -1787,6 +2277,7 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		EnvironmentID:         arg.EnvironmentID,
 		DeploymentID:          arg.DeploymentID,
 		DeploymentTaskID:      arg.DeploymentTaskID,
+		WorkspaceID:           arg.WorkspaceID,
 		DeploymentVersion:     arg.DeploymentVersion,
 		ApiVersion:            arg.ApiVersion,
 		SdkVersion:            arg.SdkVersion,
@@ -1830,6 +2321,7 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		EnvironmentID:     f.run.EnvironmentID,
 		DeploymentID:      f.run.DeploymentID,
 		DeploymentTaskID:  f.run.DeploymentTaskID,
+		WorkspaceID:       f.run.WorkspaceID,
 		TaskSessionID:     f.run.TaskSessionID,
 		DeploymentVersion: f.run.DeploymentVersion,
 		ApiVersion:        f.run.ApiVersion,
@@ -1899,6 +2391,7 @@ func (f *fakeStore) CreateTaskSession(_ context.Context, arg db.CreateTaskSessio
 		StartFingerprint:    arg.StartFingerprint,
 		Status:              db.TaskSessionStatusOpen,
 		CurrentRunVersion:   1,
+		WorkspaceID:         arg.WorkspaceID,
 		Metadata:            arg.Metadata,
 		Tags:                arg.Tags,
 		TerminalReason:      []byte(`{}`),
@@ -1909,31 +2402,221 @@ func (f *fakeStore) CreateTaskSession(_ context.Context, arg db.CreateTaskSessio
 	return f.taskSession, nil
 }
 
-func (f *fakeStore) CreateTaskSessionWorkspace(_ context.Context, arg db.CreateTaskSessionWorkspaceParams) (db.CreateTaskSessionWorkspaceRow, error) {
+func (f *fakeStore) CreateWorkspace(_ context.Context, arg db.CreateWorkspaceParams) (db.Workspace, error) {
+	f.createWorkspaceCalls++
 	now := testTime()
 	f.workspace = db.Workspace{
-		ID:              arg.ID,
-		OrgID:           arg.OrgID,
-		ProjectID:       arg.ProjectID,
-		EnvironmentID:   arg.EnvironmentID,
-		TaskSessionID:   arg.TaskSessionID,
-		State:           db.WorkspaceStateActive,
-		RetentionPolicy: arg.RetentionPolicy,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:                  arg.ID,
+		OrgID:               arg.OrgID,
+		ProjectID:           arg.ProjectID,
+		EnvironmentID:       arg.EnvironmentID,
+		DeploymentSandboxID: arg.DeploymentSandboxID,
+		SandboxID:           arg.SandboxID,
+		SandboxFingerprint:  arg.SandboxFingerprint,
+		ExternalID:          arg.ExternalID,
+		State:               db.WorkspaceStateActive,
+		DesiredState:        db.WorkspaceDesiredStateActive,
+		DirtyState:          db.WorkspaceDirtyStateClean,
+		Metadata:            arg.Metadata,
+		Tags:                arg.Tags,
+		RetentionPolicy:     arg.RetentionPolicy,
+		LastActivityAt:      now,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
-	f.taskSession.WorkspaceID = arg.ID
-	return db.CreateTaskSessionWorkspaceRow{
-		ID:              f.workspace.ID,
-		OrgID:           f.workspace.OrgID,
-		ProjectID:       f.workspace.ProjectID,
-		EnvironmentID:   f.workspace.EnvironmentID,
-		TaskSessionID:   f.workspace.TaskSessionID,
-		State:           f.workspace.State,
-		RetentionPolicy: f.workspace.RetentionPolicy,
-		CreatedAt:       f.workspace.CreatedAt,
-		UpdatedAt:       f.workspace.UpdatedAt,
+	return f.workspace, nil
+}
+
+func (f *fakeStore) CreateWorkspaceFromSandbox(_ context.Context, arg db.CreateWorkspaceFromSandboxParams) (db.CreateWorkspaceFromSandboxRow, error) {
+	f.createWorkspaceCalls++
+	now := testTime()
+	f.workspace = db.Workspace{
+		ID:                  arg.ID,
+		OrgID:               arg.OrgID,
+		ProjectID:           arg.ProjectID,
+		EnvironmentID:       arg.EnvironmentID,
+		DeploymentSandboxID: arg.DeploymentSandboxID,
+		SandboxID:           "test-sandbox",
+		SandboxFingerprint:  "test-sandbox-fingerprint",
+		ExternalID:          arg.ExternalID,
+		State:               db.WorkspaceStateActive,
+		DesiredState:        db.WorkspaceDesiredStateActive,
+		DirtyState:          db.WorkspaceDirtyStateClean,
+		CurrentVersionID:    arg.InitialVersionID,
+		Metadata:            arg.Metadata,
+		Tags:                arg.Tags,
+		RetentionPolicy:     arg.RetentionPolicy,
+		LastActivityAt:      now,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+	return db.CreateWorkspaceFromSandboxRow{
+		ID:                    f.workspace.ID,
+		OrgID:                 f.workspace.OrgID,
+		ProjectID:             f.workspace.ProjectID,
+		EnvironmentID:         f.workspace.EnvironmentID,
+		DeploymentSandboxID:   f.workspace.DeploymentSandboxID,
+		SandboxID:             f.workspace.SandboxID,
+		SandboxFingerprint:    f.workspace.SandboxFingerprint,
+		ExternalID:            f.workspace.ExternalID,
+		CurrentVersionID:      f.workspace.CurrentVersionID,
+		State:                 f.workspace.State,
+		DesiredState:          f.workspace.DesiredState,
+		DirtyState:            f.workspace.DirtyState,
+		LastMaterializationID: f.workspace.LastMaterializationID,
+		Metadata:              f.workspace.Metadata,
+		Tags:                  f.workspace.Tags,
+		RetentionPolicy:       f.workspace.RetentionPolicy,
+		AutoStopAt:            f.workspace.AutoStopAt,
+		AutoArchiveAt:         f.workspace.AutoArchiveAt,
+		AutoDeleteAt:          f.workspace.AutoDeleteAt,
+		LastActivityAt:        f.workspace.LastActivityAt,
+		CreatedAt:             f.workspace.CreatedAt,
+		UpdatedAt:             f.workspace.UpdatedAt,
+		ArchivedAt:            f.workspace.ArchivedAt,
+		DeletedAt:             f.workspace.DeletedAt,
 	}, nil
+}
+
+func (f *fakeStore) ResolveDeploymentSandboxForWorkspaceCreate(_ context.Context, arg db.ResolveDeploymentSandboxForWorkspaceCreateParams) (db.DeploymentSandbox, error) {
+	f.resolveDeploymentSandbox = arg
+	f.resolveDeploymentSandboxCalls++
+	if arg.SandboxID != "test-sandbox" {
+		return db.DeploymentSandbox{}, pgx.ErrNoRows
+	}
+	return db.DeploymentSandbox{
+		ID:            testDeploymentSandboxID(),
+		OrgID:         arg.OrgID,
+		ProjectID:     arg.ProjectID,
+		EnvironmentID: arg.EnvironmentID,
+		DeploymentID:  testDeploymentID(),
+		SandboxID:     arg.SandboxID,
+		Fingerprint:   "test-sandbox-fingerprint",
+		CreatedAt:     testTime(),
+	}, nil
+}
+
+func (f *fakeStore) GetWorkspace(_ context.Context, arg db.GetWorkspaceParams) (db.Workspace, error) {
+	if f.workspace.ID.Valid &&
+		f.workspace.OrgID == arg.OrgID &&
+		f.workspace.ProjectID == arg.ProjectID &&
+		f.workspace.EnvironmentID == arg.EnvironmentID &&
+		f.workspace.ID == arg.ID {
+		return f.workspace, nil
+	}
+	return db.Workspace{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) GetWorkspaceOperationIdempotency(_ context.Context, arg db.GetWorkspaceOperationIdempotencyParams) (db.WorkspaceOperationIdempotency, error) {
+	row := f.workspaceOperationIdempotency
+	if row.ID.Valid &&
+		row.OrgID == arg.OrgID &&
+		row.ProjectID == arg.ProjectID &&
+		row.EnvironmentID == arg.EnvironmentID &&
+		!row.WorkspaceID.Valid &&
+		row.OperationKind == arg.OperationKind &&
+		row.IdempotencyKey == arg.IdempotencyKey {
+		return row, nil
+	}
+	return db.WorkspaceOperationIdempotency{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) CreateWorkspaceOperationIdempotency(_ context.Context, arg db.CreateWorkspaceOperationIdempotencyParams) (db.WorkspaceOperationIdempotency, error) {
+	if f.workspaceOperationIdempotency.ID.Valid &&
+		f.workspaceOperationIdempotency.OrgID == arg.OrgID &&
+		f.workspaceOperationIdempotency.ProjectID == arg.ProjectID &&
+		f.workspaceOperationIdempotency.EnvironmentID == arg.EnvironmentID &&
+		!f.workspaceOperationIdempotency.WorkspaceID.Valid &&
+		f.workspaceOperationIdempotency.OperationKind == arg.OperationKind &&
+		f.workspaceOperationIdempotency.IdempotencyKey == arg.IdempotencyKey {
+		return db.WorkspaceOperationIdempotency{}, &pgconn.PgError{Code: "23505"}
+	}
+	f.createdWorkspaceOperationIdempotencies = append(f.createdWorkspaceOperationIdempotencies, arg)
+	row := db.WorkspaceOperationIdempotency{
+		ID:                   arg.ID,
+		OrgID:                arg.OrgID,
+		ProjectID:            arg.ProjectID,
+		EnvironmentID:        arg.EnvironmentID,
+		WorkspaceID:          arg.WorkspaceID,
+		OperationKind:        arg.OperationKind,
+		IdempotencyKey:       arg.IdempotencyKey,
+		RequestFingerprint:   arg.RequestFingerprint,
+		ResponseResourceType: arg.ResponseResourceType,
+		ResponseResourceID:   arg.ResponseResourceID,
+		ResponseBody:         arg.ResponseBody,
+		ExpiresAt:            arg.ExpiresAt,
+		CreatedAt:            testTime(),
+		LastUsedAt:           testTime(),
+	}
+	f.workspaceOperationIdempotency = row
+	return row, nil
+}
+
+func (f *fakeStore) CompleteWorkspaceOperationIdempotency(_ context.Context, arg db.CompleteWorkspaceOperationIdempotencyParams) (db.WorkspaceOperationIdempotency, error) {
+	row := f.workspaceOperationIdempotency
+	if row.ID.Valid &&
+		row.OrgID == arg.OrgID &&
+		row.ProjectID == arg.ProjectID &&
+		row.EnvironmentID == arg.EnvironmentID &&
+		!row.WorkspaceID.Valid &&
+		row.OperationKind == arg.OperationKind &&
+		row.IdempotencyKey == arg.IdempotencyKey &&
+		row.RequestFingerprint == arg.RequestFingerprint &&
+		!row.ResponseResourceID.Valid {
+		row.ResponseResourceType = arg.ResponseResourceType
+		row.ResponseResourceID = arg.ResponseResourceID
+		row.ResponseBody = arg.ResponseBody
+		row.LastUsedAt = testTime()
+		f.workspaceOperationIdempotency = row
+		return row, nil
+	}
+	return db.WorkspaceOperationIdempotency{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) GetWorkspaceForTaskStart(_ context.Context, arg db.GetWorkspaceForTaskStartParams) (db.GetWorkspaceForTaskStartRow, error) {
+	if f.attachedWorkspace.ID.Valid &&
+		f.attachedWorkspace.OrgID == arg.OrgID &&
+		f.attachedWorkspace.ProjectID == arg.ProjectID &&
+		f.attachedWorkspace.EnvironmentID == arg.EnvironmentID &&
+		f.attachedWorkspace.ID == arg.WorkspaceID {
+		return f.attachedWorkspace, nil
+	}
+	return db.GetWorkspaceForTaskStartRow{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) EnsureWorkspaceMaterializationRequested(_ context.Context, arg db.EnsureWorkspaceMaterializationRequestedParams) (db.EnsureWorkspaceMaterializationRequestedRow, error) {
+	f.ensureWorkspaceMaterialization = arg
+	f.ensureWorkspaceMaterializationCalls++
+	if f.ensureWorkspaceMaterializationErr != nil {
+		return db.EnsureWorkspaceMaterializationRequestedRow{}, f.ensureWorkspaceMaterializationErr
+	}
+	state := f.ensureWorkspaceMaterializationState
+	if state == "" {
+		state = db.WorkspaceMaterializationStateRequested
+	}
+	now := testTime()
+	return db.EnsureWorkspaceMaterializationRequestedRow{
+		ID:                  arg.ID,
+		OrgID:               arg.OrgID,
+		ProjectID:           arg.ProjectID,
+		EnvironmentID:       arg.EnvironmentID,
+		WorkspaceID:         arg.WorkspaceID,
+		DeploymentSandboxID: testDeploymentSandboxID(),
+		Priority:            arg.Priority,
+		State:               state,
+		Request:             arg.Request,
+		RequestedAt:         now,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+		Inserted:            f.ensureWorkspaceMaterializationInserted,
+	}, nil
+}
+
+func (f *fakeStore) SetQueuedRunWorkspaceMaterialization(_ context.Context, arg db.SetQueuedRunWorkspaceMaterializationParams) error {
+	f.setQueuedRunWorkspaceMaterialization = arg
+	f.setQueuedRunWorkspaceMaterializationCalls++
+	f.run.WorkspaceMaterializationID = arg.WorkspaceMaterializationID
+	return nil
 }
 
 func (f *fakeStore) SetTaskSessionCurrentRun(_ context.Context, arg db.SetTaskSessionCurrentRunParams) (db.TaskSession, error) {

@@ -13,6 +13,7 @@ import (
 
 const (
 	defaultRuntimeWorkdir = "/workspace"
+	defaultTaskSourceRoot = "/opt/helmr-task"
 	defaultRuntimePath    = "/usr/local/bin:/usr/bin:/bin"
 )
 
@@ -36,8 +37,8 @@ func installAdapterBundle(adapterBundlePath, imageRoot string) error {
 	return copyTreeSkipping(adapterBundlePath, target, nil)
 }
 
-func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, launchCwd string, runtimeUser *resolvedRuntimeUser) (string, error) {
-	runtimePath := path.Join(launchCwd, ".helmr", "deployment-source")
+func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, taskSourceRoot string, runtimeUser *resolvedRuntimeUser) (string, error) {
+	runtimePath := path.Join(taskSourceRoot, ".helmr", "deployment-source")
 	if isReservedRuntimePath(runtimePath) {
 		return "", fmt.Errorf("deployment source path %s conflicts with reserved runtime paths", runtimePath)
 	}
@@ -64,6 +65,30 @@ func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, 
 		}
 	}
 	return runtimePath, nil
+}
+
+func taskSourceRoot(workspaceMountPath string) (string, error) {
+	root := defaultTaskSourceRoot
+	if !strings.HasPrefix(root, "/") {
+		return "", fmt.Errorf("task source root must be absolute: %q", root)
+	}
+	for part := range strings.SplitSeq(root, "/") {
+		if part == ".." {
+			return "", fmt.Errorf("task source root %q contains unsafe path components", root)
+		}
+	}
+	clean := path.Clean(root)
+	if clean == "/" {
+		return "", errors.New("task source root must not be root")
+	}
+	if isReservedRuntimePath(clean) {
+		return "", fmt.Errorf("task source root %s conflicts with reserved runtime paths", clean)
+	}
+	workspaceMountPath = path.Clean(workspaceMountPath)
+	if clean == workspaceMountPath || strings.HasPrefix(clean, workspaceMountPath+"/") {
+		return "", fmt.Errorf("task source root %s must be outside workspace mount path %s", clean, workspaceMountPath)
+	}
+	return clean, nil
 }
 
 func isDeploymentSourceRuntimeExcluded(rel string, isDir bool) bool {

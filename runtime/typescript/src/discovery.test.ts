@@ -334,26 +334,12 @@ function sampleTaskContextJSON(runId: string, taskId: string): string {
   return JSON.stringify({
     run: { id: runId },
     task: { id: taskId },
-    source: {
-      kind: "github",
-      repository: "helmrdotdev/helmr",
-      requestedRef: "main",
-      resolvedSha: "0123456789abcdef0123456789abcdef01234567",
-      refKind: "branch",
-      refName: "main",
-      fullRef: "refs/heads/main",
-      defaultBranch: "main",
-    },
     workspace: {
       path: "/workspace",
       projectPath: "/workspace",
     },
     session: {
       id: "session-1",
-      workspace: {
-        path: "/workspace",
-        projectPath: "/workspace",
-      },
     },
   })
 }

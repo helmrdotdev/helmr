@@ -13,7 +13,7 @@ import (
 
 const appendChannelRecord = `-- name: AppendChannelRecord :one
 WITH locked_channel AS (
-    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, backend, next_sequence, created_at
+    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at
       FROM channels
      WHERE channels.org_id = $1
        AND channels.project_id = $2
@@ -28,7 +28,7 @@ allocated_channel AS (
       FROM locked_channel
      WHERE channels.org_id = locked_channel.org_id
        AND channels.id = locked_channel.id
-    RETURNING channels.id, channels.org_id, channels.project_id, channels.environment_id, channels.task_session_id, channels.definition_id, channels.name, channels.direction, channels.backend, channels.next_sequence, channels.created_at, channels.next_sequence - 1 AS allocated_sequence
+    RETURNING channels.id, channels.org_id, channels.project_id, channels.environment_id, channels.task_session_id, channels.definition_id, channels.name, channels.direction, channels.next_sequence, channels.created_at, channels.next_sequence - 1 AS allocated_sequence
 ),
 inserted_record AS (
     INSERT INTO channel_records (
@@ -261,7 +261,7 @@ channel_definition AS (
 	      JOIN channel_definition ON channel_definition.deployment_id = current_run_lease.deployment_id
 	    ON CONFLICT (org_id, task_session_id, name, direction)
 	    DO UPDATE SET next_sequence = channels.next_sequence + 1
-	    RETURNING channels.id, channels.org_id, channels.project_id, channels.environment_id, channels.task_session_id, channels.definition_id, channels.name, channels.direction, channels.backend, channels.next_sequence, channels.created_at, channels.next_sequence - 1 AS allocated_sequence
+	    RETURNING channels.id, channels.org_id, channels.project_id, channels.environment_id, channels.task_session_id, channels.definition_id, channels.name, channels.direction, channels.next_sequence, channels.created_at, channels.next_sequence - 1 AS allocated_sequence
 	),
 inserted_record AS (
     INSERT INTO channel_records (
@@ -526,10 +526,10 @@ channel_definition AS (
 	      JOIN channel_definition ON channel_definition.deployment_id = target_run.deployment_id
 	    ON CONFLICT (org_id, task_session_id, name, direction)
 	    DO NOTHING
-	    RETURNING channels.id, channels.org_id, channels.project_id, channels.environment_id, channels.task_session_id, channels.definition_id, channels.name, channels.direction, channels.backend, channels.next_sequence, channels.created_at, 1::bigint AS allocated_sequence
+	    RETURNING channels.id, channels.org_id, channels.project_id, channels.environment_id, channels.task_session_id, channels.definition_id, channels.name, channels.direction, channels.next_sequence, channels.created_at, 1::bigint AS allocated_sequence
 	),
 	existing_session_channel AS (
-	    SELECT channels.id, channels.org_id, channels.project_id, channels.environment_id, channels.task_session_id, channels.definition_id, channels.name, channels.direction, channels.backend, channels.next_sequence, channels.created_at
+	    SELECT channels.id, channels.org_id, channels.project_id, channels.environment_id, channels.task_session_id, channels.definition_id, channels.name, channels.direction, channels.next_sequence, channels.created_at
 	      FROM channels
 	      JOIN target_run ON target_run.task_session_id = channels.task_session_id
 	      JOIN input_values ON input_values.channel = channels.name
@@ -538,9 +538,9 @@ channel_definition AS (
 	       AND NOT EXISTS (SELECT 1 FROM inserted_session_channel)
 	),
 	selected_channel AS (
-	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, backend, next_sequence, created_at FROM inserted_session_channel
+	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at FROM inserted_session_channel
 	    UNION ALL
-	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, backend, next_sequence, created_at FROM existing_session_channel
+	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at FROM existing_session_channel
 	),
 matching_identity_records AS (
     SELECT channel_records.id, channel_records.org_id, channel_records.project_id, channel_records.environment_id, channel_records.channel_id, channel_records.sequence, channel_records.data, channel_records.correlation_id, channel_records.content_type, channel_records.object_refs, channel_records.idempotency_key, channel_records.idempotency_fingerprint, channel_records.external_event_id, channel_records.actor, channel_records.source, channel_records.auth_subject_type, channel_records.auth_subject_id, channel_records.public_access_token_id, channel_records.created_at
@@ -598,16 +598,16 @@ channel_record_count AS (
 	       AND NOT EXISTS (SELECT 1 FROM existing_record)
 	       AND NOT EXISTS (SELECT 1 FROM conflicting_idempotency_record)
 	       AND COALESCE((SELECT record_count FROM channel_record_count), 0) < $10::bigint
-	    RETURNING channels.id, channels.org_id, channels.project_id, channels.environment_id, channels.task_session_id, channels.definition_id, channels.name, channels.direction, channels.backend, channels.next_sequence, channels.created_at, channels.next_sequence - 1 AS allocated_sequence
+	    RETURNING channels.id, channels.org_id, channels.project_id, channels.environment_id, channels.task_session_id, channels.definition_id, channels.name, channels.direction, channels.next_sequence, channels.created_at, channels.next_sequence - 1 AS allocated_sequence
 	),
 	allocated_channel AS (
-	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, backend, next_sequence, created_at, allocated_sequence
+	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at, allocated_sequence
 	      FROM inserted_session_channel
 	     WHERE NOT EXISTS (SELECT 1 FROM existing_record)
 	       AND NOT EXISTS (SELECT 1 FROM conflicting_idempotency_record)
 	       AND COALESCE((SELECT record_count FROM channel_record_count), 0) < $10::bigint
 	    UNION ALL
-	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, backend, next_sequence, created_at, allocated_sequence
+	    SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at, allocated_sequence
 	      FROM allocated_existing_channel
 	),
 inserted_record AS (

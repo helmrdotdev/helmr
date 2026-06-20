@@ -35,6 +35,70 @@ func (c *Client) LeaseDeploymentBuild(ctx context.Context, capabilities api.Work
 	return response, nil
 }
 
+func (c *Client) ClaimWorkspaceMaterialization(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerWorkspaceMaterializationClaimResponse, error) {
+	var response api.WorkerWorkspaceMaterializationClaimResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/materializations/claim", api.WorkerWorkspaceMaterializationClaimRequest{Capabilities: capabilities}, &response); err != nil {
+		return api.WorkerWorkspaceMaterializationClaimResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) RenewWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationRenewRequest) (api.WorkspaceMaterializationResponse, error) {
+	var response api.WorkspaceMaterializationResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/materializations/renew", request, &response); err != nil {
+		return api.WorkspaceMaterializationResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) MarkWorkspaceMaterializationRunning(ctx context.Context, request api.WorkerWorkspaceMaterializationRunningRequest) (api.WorkspaceMaterializationResponse, error) {
+	var response api.WorkspaceMaterializationResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/materializations/running", request, &response); err != nil {
+		return api.WorkspaceMaterializationResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) StopWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error) {
+	var response api.WorkspaceMaterializationResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/materializations/stop", request, &response); err != nil {
+		return api.WorkspaceMaterializationResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) FailWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationFailRequest) (api.WorkspaceMaterializationResponse, error) {
+	var response api.WorkspaceMaterializationResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/materializations/fail", request, &response); err != nil {
+		return api.WorkspaceMaterializationResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ClaimWorkspaceMaterializationOperation(ctx context.Context, request api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error) {
+	var response api.WorkerWorkspaceOperationClaimResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/materializations/operations/claim", request, &response); err != nil {
+		return api.WorkerWorkspaceOperationClaimResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) StartWorkspaceMaterializationOperation(ctx context.Context, request api.WorkerWorkspaceOperationStartRequest) (api.WorkspaceOperationResponse, error) {
+	var response api.WorkspaceOperationResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/materializations/operations/start", request, &response); err != nil {
+		return api.WorkspaceOperationResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CompleteWorkspaceMaterializationOperation(ctx context.Context, request api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error) {
+	var response api.WorkspaceOperationResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/materializations/operations/complete", request, &response); err != nil {
+		return api.WorkspaceOperationResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) ActivateWorker(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerStatusResponse, error) {
 	var response api.WorkerStatusResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/activate", api.WorkerActivateRequest{Capabilities: capabilities}, &response); err != nil {

@@ -12,7 +12,7 @@ const guideInputs = source.directory("guides")
 const base = image("helmr-runtime-smoke")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
-  .copy("/workspace", dependencyInputs)
+  .copy("/opt/helmr-task", dependencyInputs)
   .copy("/opt/helmr-dev-workflows/guides", guideInputs)
   .run([
     "sh",
@@ -24,9 +24,11 @@ const base = image("helmr-runtime-smoke")
     ].join(" && "),
   ])
   .run(["npm", "install", "-g", "bun@1.3.10"])
+  .workdir("/opt/helmr-task")
   .run(["bun", "install", "--frozen-lockfile"], {
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("runtime-smoke-bun") }],
   })
+  .workdir("/workspace")
 
 const sbx = sandbox("helmr-runtime-smoke")
   .image(base)
@@ -35,6 +37,7 @@ const sbx = sandbox("helmr-runtime-smoke")
 const payload = z.object({
   scenario: z.string().default("release-smoke"),
   marker: z.string().optional(),
+  expectedWorkspaceMarker: z.string().optional(),
   expectedEnvironment: z.enum(["production", "staging", "unknown"]).default("unknown"),
   exerciseWaitpoint: z.boolean().default(false),
   waitpointTokenId: z.string().optional(),
@@ -74,11 +77,11 @@ export const runtimeSmoke = task({
         attemptNumber: ctx.run.attemptNumber ?? null,
         sessionId: ctx.session.id,
         snapshotVersion: ctx.run.snapshotVersion ?? null,
-        workspace: ctx.session.workspace,
+        workspace: ctx.workspace,
       },
     })
 
-    checks.push(await collectCheck("workspace-filesystem", () => checkWorkspace(marker, input.largeFileKiB)))
+    checks.push(await collectCheck("workspace-filesystem", () => checkWorkspace(marker, input.largeFileKiB, input.expectedWorkspaceMarker)))
     checks.push(await collectCheck("source-bundle", () => checkBundledGuides()))
     checks.push(await collectCheck("node-version", () => checkCommand("node-version", ["node", "--version"])))
     checks.push(await collectCheck("bun-version", () => checkCommand("bun-version", ["bun", "--version"])))
@@ -157,11 +160,19 @@ async function collectCheck(name: string, run: () => Promise<Check>): Promise<Ch
   }
 }
 
-async function checkWorkspace(marker: string, largeFileKiB: number): Promise<Check> {
+async function checkWorkspace(marker: string, largeFileKiB: number, expectedPreviousMarker?: string): Promise<Check> {
   const nestedDir = "workspace-smoke/nested"
   await mkdir(nestedDir, { recursive: true })
   const id = randomUUID()
   const smallPath = `${nestedDir}/marker.txt`
+  let previousMarkerMatched = false
+  if (expectedPreviousMarker !== undefined) {
+    const previous = await readFile(smallPath, "utf8")
+    if (!previous.includes(expectedPreviousMarker)) {
+      throw new Error(`workspace marker file did not contain expected previous marker ${expectedPreviousMarker}`)
+    }
+    previousMarkerMatched = true
+  }
   await writeFile(smallPath, `marker=${marker}\nid=${id}\n`)
   const readBack = await readFile(smallPath, "utf8")
   if (!readBack.includes(marker) || !readBack.includes(id)) {
@@ -188,6 +199,7 @@ async function checkWorkspace(marker: string, largeFileKiB: number): Promise<Che
       largePath,
       largeBytes: largeStat.size,
       digest,
+      previousMarkerMatched,
     },
   }
 }

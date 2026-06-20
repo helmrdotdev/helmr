@@ -86,6 +86,9 @@ module "worker" {
   vm_vcpus                     = var.worker_vm_vcpus
   vm_memory_mib                = var.worker_vm_memory_mib
   vm_scratch_disk_mib          = var.worker_vm_scratch_disk_mib
+  worker_capacity_vcpus        = var.worker_capacity_vcpus
+  worker_capacity_memory_mib   = var.worker_capacity_memory_mib
+  worker_execution_slots       = var.worker_execution_slots
   buildkit_slirp_cidr          = var.worker_buildkit_slirp_cidr
   worker_control_url           = local.worker_control_url
   cas_uri                      = module.control.cas_uri

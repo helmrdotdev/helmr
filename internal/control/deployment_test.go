@@ -644,19 +644,36 @@ func (f *fakeStore) GetCurrentDeploymentTask(_ context.Context, arg db.GetCurren
 		return db.GetCurrentDeploymentTaskRow{}, pgx.ErrNoRows
 	}
 	return db.GetCurrentDeploymentTaskRow{
-		ID:                     testDeploymentTaskID(),
-		OrgID:                  arg.OrgID,
-		ProjectID:              arg.ProjectID,
-		EnvironmentID:          arg.EnvironmentID,
-		DeploymentID:           testDeploymentID(),
-		TaskID:                 arg.TaskID,
-		FilePath:               "tasks/deploy.ts",
-		ExportName:             "deploy",
-		SecretDeclarations:     f.currentDeploymentTaskSecretDeclarations,
-		MaxDurationSeconds:     300,
-		CreatedAt:              testTime(),
-		BundleDigest:           "sha256:" + strings.Repeat("b", 64),
-		DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
+		ID:                                testDeploymentTaskID(),
+		OrgID:                             arg.OrgID,
+		ProjectID:                         arg.ProjectID,
+		EnvironmentID:                     arg.EnvironmentID,
+		DeploymentID:                      testDeploymentID(),
+		DeploymentSandboxID:               testDeploymentSandboxID(),
+		SandboxID:                         "default",
+		SandboxFingerprint:                testSandboxFingerprint(),
+		WorkspaceMountPath:                "/workspace",
+		DeploymentSandboxResourceFloor:    []byte(`{"milli_cpu":1000,"memory_mib":512,"disk_mib":1024}`),
+		DeploymentSandboxDiskFloorMib:     1024,
+		DeploymentSandboxNetworkPolicy:    []byte(`{"internet":"egress"}`),
+		DeploymentSandboxRootfsDigest:     "sha256:" + strings.Repeat("f", 64),
+		DeploymentSandboxRuntimeAbi:       testWorkerCapabilities().RuntimeABI,
+		DeploymentSandboxGuestdAbi:        "helmr.guestd.v0",
+		DeploymentSandboxAdapterAbi:       "helmr.adapter.v0",
+		DeploymentSandboxFilesystemFormat: "tar",
+		DeploymentSandboxContractVersion:  1,
+		TaskID:                            arg.TaskID,
+		FilePath:                          "tasks/deploy.ts",
+		ExportName:                        "deploy",
+		RequestedMilliCpu:                 1000,
+		RequestedMemoryMib:                512,
+		RequestedDiskMib:                  1024,
+		NetworkPolicy:                     []byte(`{"internet":"egress"}`),
+		SecretDeclarations:                f.currentDeploymentTaskSecretDeclarations,
+		MaxDurationSeconds:                300,
+		CreatedAt:                         testTime(),
+		BundleDigest:                      "sha256:" + strings.Repeat("b", 64),
+		DeploymentSourceDigest:            "sha256:" + strings.Repeat("a", 64),
 	}, nil
 }
 
@@ -845,6 +862,20 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 }
 
 func (f *fakeStore) CreateArtifact(_ context.Context, arg db.CreateArtifactParams) (db.Artifact, error) {
+	var foundCASObject bool
+	for _, object := range f.casObjects {
+		if object.Digest == arg.Digest {
+			foundCASObject = true
+			if object.SizeBytes != arg.SizeBytes || object.MediaType != arg.MediaType {
+				return db.Artifact{}, errors.New("artifact CAS metadata mismatch")
+			}
+			break
+		}
+	}
+	if !foundCASObject {
+		return db.Artifact{}, errors.New("artifact CAS object missing")
+	}
+	f.artifactAuthorityEvents = append(f.artifactAuthorityEvents, "artifact:"+arg.Digest)
 	artifact := db.Artifact{
 		ID:                        arg.ID,
 		OrgID:                     arg.OrgID,
@@ -862,6 +893,7 @@ func (f *fakeStore) CreateArtifact(_ context.Context, arg db.CreateArtifactParam
 }
 
 func (f *fakeStore) UpsertCasObject(_ context.Context, arg db.UpsertCasObjectParams) (db.CasObject, error) {
+	f.artifactAuthorityEvents = append(f.artifactAuthorityEvents, "cas:"+arg.Digest)
 	f.casObjects = append(f.casObjects, arg)
 	return db.CasObject{
 		Digest:    arg.Digest,
@@ -994,43 +1026,75 @@ func (f *fakeStore) GetDeploymentTask(_ context.Context, arg db.GetDeploymentTas
 	f.getDeploymentTaskCalls++
 	if len(f.deploymentTasks) == 0 && arg.TaskID == "deploy" && arg.DeploymentID == testDeploymentID() {
 		return db.GetDeploymentTaskRow{
-			ID:                     testDeploymentTaskID(),
-			OrgID:                  arg.OrgID,
-			ProjectID:              arg.ProjectID,
-			EnvironmentID:          arg.EnvironmentID,
-			DeploymentID:           arg.DeploymentID,
-			TaskID:                 arg.TaskID,
-			FilePath:               "tasks/deploy.ts",
-			ExportName:             "deploy",
-			MaxDurationSeconds:     300,
-			CreatedAt:              testTime(),
-			DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
+			ID:                                testDeploymentTaskID(),
+			OrgID:                             arg.OrgID,
+			ProjectID:                         arg.ProjectID,
+			EnvironmentID:                     arg.EnvironmentID,
+			DeploymentID:                      arg.DeploymentID,
+			DeploymentSandboxID:               testDeploymentSandboxID(),
+			SandboxID:                         "default",
+			SandboxFingerprint:                testSandboxFingerprint(),
+			WorkspaceMountPath:                "/workspace",
+			DeploymentSandboxResourceFloor:    []byte(`{"milli_cpu":1000,"memory_mib":512,"disk_mib":1024}`),
+			DeploymentSandboxDiskFloorMib:     1024,
+			DeploymentSandboxNetworkPolicy:    []byte(`{"internet":"egress"}`),
+			DeploymentSandboxRootfsDigest:     "sha256:" + strings.Repeat("f", 64),
+			DeploymentSandboxRuntimeAbi:       testWorkerCapabilities().RuntimeABI,
+			DeploymentSandboxGuestdAbi:        "helmr.guestd.v0",
+			DeploymentSandboxAdapterAbi:       "helmr.adapter.v0",
+			DeploymentSandboxFilesystemFormat: "tar",
+			DeploymentSandboxContractVersion:  1,
+			TaskID:                            arg.TaskID,
+			FilePath:                          "tasks/deploy.ts",
+			ExportName:                        "deploy",
+			RequestedMilliCpu:                 1000,
+			RequestedMemoryMib:                512,
+			RequestedDiskMib:                  1024,
+			NetworkPolicy:                     []byte(`{"internet":"egress"}`),
+			MaxDurationSeconds:                300,
+			CreatedAt:                         testTime(),
+			DeploymentSourceDigest:            "sha256:" + strings.Repeat("a", 64),
 		}, nil
 	}
 	for _, task := range f.deploymentTasks {
 		if task.OrgID == arg.OrgID && task.ProjectID == arg.ProjectID && task.EnvironmentID == arg.EnvironmentID && task.DeploymentID == arg.DeploymentID && task.TaskID == arg.TaskID {
 			return db.GetDeploymentTaskRow{
-				ID:                     task.ID,
-				OrgID:                  task.OrgID,
-				ProjectID:              task.ProjectID,
-				EnvironmentID:          task.EnvironmentID,
-				DeploymentID:           task.DeploymentID,
-				TaskID:                 task.TaskID,
-				FilePath:               task.FilePath,
-				ExportName:             task.ExportName,
-				HandlerEntrypoint:      task.HandlerEntrypoint,
-				BundleArtifactID:       task.BundleArtifactID,
-				BundleDigest:           "sha256:" + strings.Repeat("b", 64),
-				RequestedMilliCpu:      task.RequestedMilliCpu,
-				RequestedMemoryMib:     task.RequestedMemoryMib,
-				SecretDeclarations:     task.SecretDeclarations,
-				ResourceRequirements:   task.ResourceRequirements,
-				QueueName:              task.QueueName,
-				QueueConcurrencyLimit:  task.QueueConcurrencyLimit,
-				Ttl:                    task.Ttl,
-				MaxDurationSeconds:     task.MaxDurationSeconds,
-				CreatedAt:              task.CreatedAt,
-				DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
+				ID:                                task.ID,
+				OrgID:                             task.OrgID,
+				ProjectID:                         task.ProjectID,
+				EnvironmentID:                     task.EnvironmentID,
+				DeploymentID:                      task.DeploymentID,
+				DeploymentSandboxID:               task.DeploymentSandboxID,
+				SandboxID:                         firstNonEmptyString(task.TaskID, "default"),
+				SandboxFingerprint:                testSandboxFingerprint(),
+				WorkspaceMountPath:                "/workspace",
+				DeploymentSandboxResourceFloor:    []byte(`{"milli_cpu":1000,"memory_mib":512,"disk_mib":1024}`),
+				DeploymentSandboxDiskFloorMib:     1024,
+				DeploymentSandboxNetworkPolicy:    []byte(`{"internet":"egress"}`),
+				DeploymentSandboxRootfsDigest:     "sha256:" + strings.Repeat("f", 64),
+				DeploymentSandboxRuntimeAbi:       testWorkerCapabilities().RuntimeABI,
+				DeploymentSandboxGuestdAbi:        "helmr.guestd.v0",
+				DeploymentSandboxAdapterAbi:       "helmr.adapter.v0",
+				DeploymentSandboxFilesystemFormat: "tar",
+				DeploymentSandboxContractVersion:  1,
+				TaskID:                            task.TaskID,
+				FilePath:                          task.FilePath,
+				ExportName:                        task.ExportName,
+				HandlerEntrypoint:                 task.HandlerEntrypoint,
+				BundleArtifactID:                  task.BundleArtifactID,
+				BundleDigest:                      "sha256:" + strings.Repeat("b", 64),
+				RequestedMilliCpu:                 task.RequestedMilliCpu,
+				RequestedMemoryMib:                task.RequestedMemoryMib,
+				RequestedDiskMib:                  task.RequestedDiskMib,
+				SecretDeclarations:                task.SecretDeclarations,
+				ResourceRequirements:              task.ResourceRequirements,
+				NetworkPolicy:                     []byte(`{"internet":"egress"}`),
+				QueueName:                         task.QueueName,
+				QueueConcurrencyLimit:             task.QueueConcurrencyLimit,
+				Ttl:                               task.Ttl,
+				MaxDurationSeconds:                task.MaxDurationSeconds,
+				CreatedAt:                         task.CreatedAt,
+				DeploymentSourceDigest:            "sha256:" + strings.Repeat("a", 64),
 			}, nil
 		}
 	}

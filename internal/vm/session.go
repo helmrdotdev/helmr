@@ -16,9 +16,16 @@ type RestoringConnector interface {
 	Restore(context.Context, RestoreRequest) (Session, error)
 }
 
+type MaterializingConnector interface {
+	Connector
+	Materialize(context.Context, MaterializeRequest) (Session, error)
+}
+
 type Session interface {
 	Stream() io.ReadWriteCloser
-	Close() error
+	OpenStream(context.Context) (io.ReadWriteCloser, error)
+	Wait(context.Context) error
+	Close(context.Context) error
 }
 
 type CheckpointableSession interface {
@@ -62,6 +69,20 @@ type RestoreRequest struct {
 	Manifest             []byte
 	Checkpoint           CheckpointIdentity
 	Network              compute.NetworkPolicy
+}
+
+type MaterializeRequest struct {
+	ID                         string
+	RootfsDigest               string
+	ImageDigest                string
+	ImageFormat                string
+	WorkspaceArtifactPath      string
+	WorkspaceArtifactDigest    string
+	WorkspaceArtifactMediaType string
+	WorkspaceArtifactEncoding  string
+	WorkspaceMountPath         string
+	BaseVersionID              string
+	Network                    compute.NetworkPolicy
 }
 
 type CheckpointIdentity struct {

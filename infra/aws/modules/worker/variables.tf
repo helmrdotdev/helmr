@@ -171,6 +171,42 @@ variable "vm_scratch_disk_mib" {
   }
 }
 
+variable "worker_capacity_vcpus" {
+  description = "Total vCPU capacity advertised by the worker for concurrent materializations and runs."
+  type        = number
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.worker_capacity_vcpus == null || var.worker_capacity_vcpus >= var.vm_vcpus
+    error_message = "worker_capacity_vcpus must be null or at least vm_vcpus."
+  }
+}
+
+variable "worker_capacity_memory_mib" {
+  description = "Total memory capacity in MiB advertised by the worker for concurrent materializations and runs."
+  type        = number
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.worker_capacity_memory_mib == null || var.worker_capacity_memory_mib >= var.vm_memory_mib
+    error_message = "worker_capacity_memory_mib must be null or at least vm_memory_mib."
+  }
+}
+
+variable "worker_execution_slots" {
+  description = "Total execution slots advertised by the worker for concurrent materializations and runs."
+  type        = number
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.worker_execution_slots == null || var.worker_execution_slots > 0
+    error_message = "worker_execution_slots must be null or positive."
+  }
+}
+
 variable "worker_control_url" {
   description = "Worker-facing control-plane API URL for HELMR_CONTROL_URL. Prefer a private DNS name that matches the HTTPS certificate."
   type        = string

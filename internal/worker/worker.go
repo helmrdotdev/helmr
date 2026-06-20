@@ -17,6 +17,14 @@ import (
 type ControlClient interface {
 	LeaseDeploymentBuild(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerDeploymentBuildLeaseResponse, error)
 	CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result api.WorkerDeploymentBuildResult) (api.WorkerDeploymentBuildResponse, error)
+	ClaimWorkspaceMaterialization(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerWorkspaceMaterializationClaimResponse, error)
+	RenewWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationRenewRequest) (api.WorkspaceMaterializationResponse, error)
+	MarkWorkspaceMaterializationRunning(ctx context.Context, request api.WorkerWorkspaceMaterializationRunningRequest) (api.WorkspaceMaterializationResponse, error)
+	StopWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error)
+	FailWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationFailRequest) (api.WorkspaceMaterializationResponse, error)
+	ClaimWorkspaceMaterializationOperation(ctx context.Context, request api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error)
+	StartWorkspaceMaterializationOperation(ctx context.Context, request api.WorkerWorkspaceOperationStartRequest) (api.WorkspaceOperationResponse, error)
+	CompleteWorkspaceMaterializationOperation(ctx context.Context, request api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error)
 	LeaseRun(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerRunLeaseResponse, error)
 	StartRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerStartResponse, error)
 	RenewRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerRenewResponse, error)
@@ -29,6 +37,18 @@ type Executor interface {
 
 type DeploymentBuilder interface {
 	BuildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) api.WorkerDeploymentBuildResult
+}
+
+type Materializer interface {
+	RunWorkspaceMaterialization(ctx context.Context, materialization api.WorkerWorkspaceMaterialization, client interface {
+		RenewWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationRenewRequest) (api.WorkspaceMaterializationResponse, error)
+		MarkWorkspaceMaterializationRunning(context.Context, api.WorkerWorkspaceMaterializationRunningRequest) (api.WorkspaceMaterializationResponse, error)
+		StopWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error)
+		FailWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationFailRequest) (api.WorkspaceMaterializationResponse, error)
+		ClaimWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error)
+		StartWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationStartRequest) (api.WorkspaceOperationResponse, error)
+		CompleteWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error)
+	}) error
 }
 
 type runLeaseState struct {
@@ -56,12 +76,16 @@ type Runner struct {
 	client            ControlClient
 	executor          Executor
 	deploymentBuilder DeploymentBuilder
+	materializer      Materializer
 	capabilities      api.WorkerCapabilities
 	pollEvery         time.Duration
 	renewEvery        time.Duration
 	renewWait         time.Duration
 	releaseWait       time.Duration
 	log               *slog.Logger
+	materializationMu sync.Mutex
+	materializationWG sync.WaitGroup
+	materializing     bool
 }
 
 type Option func(*Runner)
@@ -87,6 +111,12 @@ func WithLogger(log *slog.Logger) Option {
 func WithDeploymentBuilder(builder DeploymentBuilder) Option {
 	return func(runner *Runner) {
 		runner.deploymentBuilder = builder
+	}
+}
+
+func WithMaterializer(materializer Materializer) Option {
+	return func(runner *Runner) {
+		runner.materializer = materializer
 	}
 }
 
@@ -138,6 +168,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			r.waitForMaterializations()
 			return ctx.Err()
 		case <-timer.C:
 		}
@@ -153,6 +184,26 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 		timer.Reset(delay)
 	}
+}
+
+func (r *Runner) tryReserveMaterialization() bool {
+	r.materializationMu.Lock()
+	defer r.materializationMu.Unlock()
+	if r.materializing {
+		return false
+	}
+	r.materializing = true
+	return true
+}
+
+func (r *Runner) releaseMaterializationReservation() {
+	r.materializationMu.Lock()
+	defer r.materializationMu.Unlock()
+	r.materializing = false
+}
+
+func (r *Runner) waitForMaterializations() {
+	r.materializationWG.Wait()
 }
 
 func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
@@ -177,6 +228,27 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 			}
 			return true, nil
 		}
+	}
+	if r.materializer != nil && r.tryReserveMaterialization() {
+		claimed, err := r.client.ClaimWorkspaceMaterialization(ctx, r.capabilities)
+		if err != nil {
+			r.releaseMaterializationReservation()
+			return false, fmt.Errorf("claim workspace materialization: %w", err)
+		}
+		if claimed.Materialization != nil {
+			materialization := *claimed.Materialization
+			r.log.Info("worker claimed workspace materialization", "workspace_id", materialization.WorkspaceID, "materialization_id", materialization.ID)
+			r.materializationWG.Add(1)
+			go func() {
+				defer r.materializationWG.Done()
+				defer r.releaseMaterializationReservation()
+				if err := r.materializer.RunWorkspaceMaterialization(ctx, materialization, r.client); err != nil && ctx.Err() == nil {
+					r.log.Error("workspace materialization failed", "workspace_id", materialization.WorkspaceID, "materialization_id", materialization.ID, "error", err)
+				}
+			}()
+			return true, nil
+		}
+		r.releaseMaterializationReservation()
 	}
 	leased, err := r.client.LeaseRun(ctx, r.capabilities)
 	if err != nil {

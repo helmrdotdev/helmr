@@ -47,7 +47,7 @@ func TestDeploymentTaskSecretNames(t *testing.T) {
 
 func TestCreateRunWithoutSecretsAllowsDeveloper(t *testing.T) {
 	store := &fakeStore{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{role: auth.RoleDeveloper}, Secrets: fakeSecrets{}})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{role: auth.RoleDeveloper}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}})
 	bodyBytes, err := json.Marshal(api.TaskStartRequest{})
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestAPIKeyRunCreateAllowsDeclaredTaskSecrets(t *testing.T) {
 		projectID:     testProjectIDString(),
 		environmentID: testEnvironmentIDString(),
 		permissions:   []auth.Permission{auth.PermissionRunsCreate},
-	}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}},
+	}, CAS: &fakeCAS{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}},
 	)
 	bodyBytes, err := json.Marshal(api.TaskStartRequest{})
 	if err != nil {
@@ -101,6 +101,7 @@ func TestCreateScheduleRunUsesDeclaredTaskSecrets(t *testing.T) {
 	server := &Server{
 		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		db:          store,
+		cas:         &fakeCAS{},
 		secrets:     fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}},
 		runEnqueuer: runEnqueuer,
 		eventStream: newTestEventStream(t),

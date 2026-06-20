@@ -18,6 +18,8 @@ const (
 	StreamTypeDeploymentSource     StreamType = "deployment-source"
 	StreamTypeWorkspaceArtifact    StreamType = "workspace-artifact"
 	StreamTypeCheckpointPauseReady StreamType = "checkpoint-pause-ready"
+	StreamTypeWorkspaceMaterialize StreamType = "workspace-materialize"
+	StreamTypeWorkspaceOperation   StreamType = "workspace-operation"
 )
 
 type StreamHeader struct {
@@ -26,6 +28,8 @@ type StreamHeader struct {
 	TaskID       string     `json:"task_id,omitempty"`
 	WaitpointID  string     `json:"waitpoint_id,omitempty"`
 	CheckpointID string     `json:"checkpoint_id,omitempty"`
+	WorkspaceID  string     `json:"workspace_id,omitempty"`
+	OperationID  string     `json:"operation_id,omitempty"`
 	BodyDigest   *string    `json:"body_digest,omitempty"`
 	EntryCount   *int       `json:"entry_count,omitempty"`
 }

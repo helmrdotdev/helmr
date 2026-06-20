@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -51,6 +52,9 @@ var (
 	errChannelInputLimitExceeded       = codedError{code: "channel_input_limit_exceeded", message: "channel input limit exceeded"}
 	errSessionInputClosed              = codedError{code: "session_input_closed", message: "session current run is not accepting input"}
 	errTaskSessionExpiresAtPatch       = codedError{code: "session_expires_at_not_extendable", message: "session expires_at can only extend an existing future expiry"}
+	errSandboxNotDeployed              = codedError{code: "sandbox_not_deployed", message: "task sandbox is not deployed"}
+	errWorkspaceSandboxIncompatible    = codedError{code: "workspace_sandbox_incompatible", message: "workspace sandbox is incompatible with this task"}
+	errWorkspaceResourceFloor          = codedError{code: "workspace_resource_floor_unsatisfied", message: "workspace resource floor is lower than this task requires"}
 )
 
 type taskStartSource struct {
@@ -210,6 +214,10 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 	if err := validateTaskSessionExternalID(externalID); err != nil {
 		return taskStartResult{}, err
 	}
+	requestedWorkspaceID, err := parseOptionalWorkspaceID(request.Options.WorkspaceID)
+	if err != nil {
+		return taskStartResult{}, err
+	}
 	metadata, err := normalizedJSONObject(request.Options.Metadata, "metadata")
 	if err != nil {
 		return taskStartResult{}, err
@@ -332,7 +340,6 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 	versionMetadata := requestVersionMetadataFromContext(ctx)
 	runID := uuid.Must(uuid.NewV7())
 	sessionID := uuid.Must(uuid.NewV7())
-	workspaceID := uuid.Must(uuid.NewV7())
 	traceID, err := tracing.NewTraceID()
 	if err != nil {
 		return taskStartResult{}, fmt.Errorf("generate run trace id: %w", err)
@@ -407,6 +414,10 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 	if startClaim.resolved && !resolvedClaimIsStale {
 		return taskStartResult{}, errTaskStartPending
 	}
+	workspace, err := s.createOrAttachTaskStartWorkspace(ctx, store, actor.OrgID, projectID, environmentID, deploymentTask, requestedWorkspaceID)
+	if err != nil {
+		return taskStartResult{}, err
+	}
 	session, err := store.CreateTaskSession(ctx, db.CreateTaskSessionParams{
 		ID:                  pgvalue.UUID(sessionID),
 		OrgID:               pgvalue.UUID(actor.OrgID),
@@ -415,6 +426,7 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 		TaskID:              taskID,
 		InitialDeploymentID: deploymentTask.DeploymentID,
 		ActiveDeploymentID:  deploymentTask.DeploymentID,
+		WorkspaceID:         workspace.ID,
 		ExternalID:          externalID,
 		StartFingerprint:    startFingerprint.String,
 		Metadata:            metadata,
@@ -435,16 +447,6 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 		}
 		return taskStartResult{}, err
 	}
-	if _, err := store.CreateTaskSessionWorkspace(ctx, db.CreateTaskSessionWorkspaceParams{
-		ID:              pgvalue.UUID(workspaceID),
-		OrgID:           pgvalue.UUID(actor.OrgID),
-		ProjectID:       projectID,
-		EnvironmentID:   environmentID,
-		TaskSessionID:   session.ID,
-		RetentionPolicy: []byte(`{}`),
-	}); err != nil {
-		return taskStartResult{}, err
-	}
 	run, err := store.CreateScopedRun(ctx, db.CreateScopedRunParams{
 		ID:                    pgvalue.UUID(runID),
 		OrgID:                 pgvalue.UUID(actor.OrgID),
@@ -452,6 +454,7 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 		EnvironmentID:         environmentID,
 		DeploymentID:          deploymentTask.DeploymentID,
 		DeploymentTaskID:      deploymentTask.ID,
+		WorkspaceID:           workspace.ID,
 		DeploymentVersion:     deploymentTask.DeploymentVersion,
 		ApiVersion:            versionMetadata.APIVersion,
 		SdkVersion:            firstNonEmptyString(versionMetadata.SDKVersion, deploymentTask.SdkVersion),
@@ -482,6 +485,36 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 		if isNoRows(err) && source.scheduleInstanceID.Valid {
 			return taskStartResult{}, schedule.ErrTriggerSuperseded
 		}
+		return taskStartResult{}, err
+	}
+	materializationRequest, err := json.Marshal(map[string]string{
+		"source": "task_start",
+		"run_id": pgvalue.MustUUIDValue(run.ID).String(),
+	})
+	if err != nil {
+		return taskStartResult{}, err
+	}
+	materialization, err := store.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		WorkspaceID:   workspace.ID,
+		Priority:      scheduling.priority,
+		Request:       materializationRequest,
+	})
+	if err != nil {
+		if isNoRows(err) {
+			return taskStartResult{}, s.workspaceMaterializationPrerequisiteErrorWithStore(ctx, store, pgvalue.UUID(actor.OrgID), projectID, environmentID, workspace.ID)
+		}
+		return taskStartResult{}, err
+	}
+	if err := store.SetQueuedRunWorkspaceMaterialization(ctx, db.SetQueuedRunWorkspaceMaterializationParams{
+		OrgID:                      pgvalue.UUID(actor.OrgID),
+		RunID:                      run.ID,
+		WorkspaceID:                workspace.ID,
+		WorkspaceMaterializationID: materialization.ID,
+	}); err != nil {
 		return taskStartResult{}, err
 	}
 	if _, err := store.CreateTaskSessionRun(ctx, db.CreateTaskSessionRunParams{
@@ -546,6 +579,144 @@ func validateTaskSessionExternalID(value string) error {
 		return fmt.Errorf("external_id must be at most %d bytes", maxTaskSessionExternalIDBytes)
 	}
 	return nil
+}
+
+func parseOptionalWorkspaceID(raw string) (pgtype.UUID, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return pgtype.UUID{}, nil
+	}
+	parsed, err := uuid.Parse(raw)
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("workspace_id is invalid: %w", err)
+	}
+	return pgvalue.UUID(parsed), nil
+}
+
+func (s *Server) createOrAttachTaskStartWorkspace(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, task db.GetDeploymentTaskRow, requestedWorkspaceID pgtype.UUID) (db.Workspace, error) {
+	if !requestedWorkspaceID.Valid {
+		workspaceArtifact, initialWorkspace, err := s.createInitialWorkspaceArtifact(ctx, store, orgID, projectID, environmentID)
+		if err != nil {
+			return db.Workspace{}, err
+		}
+		workspace, err := store.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
+			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:                     pgvalue.UUID(orgID),
+			ProjectID:                 projectID,
+			EnvironmentID:             environmentID,
+			DeploymentSandboxID:       task.DeploymentSandboxID,
+			ExternalID:                "",
+			Metadata:                  []byte(`{}`),
+			Tags:                      []string{},
+			RetentionPolicy:           []byte(`{}`),
+			InitialVersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			InitialArtifactID:         workspaceArtifact.ID,
+			InitialArtifactEncoding:   initialWorkspace.Encoding,
+			InitialArtifactEntryCount: int32(initialWorkspace.EntryCount),
+			InitialContentDigest:      workspaceArtifact.Digest,
+			InitialSizeBytes:          workspaceArtifact.SizeBytes,
+		})
+		if isNoRows(err) {
+			return db.Workspace{}, errSandboxNotDeployed
+		}
+		if err != nil {
+			return db.Workspace{}, err
+		}
+		return workspaceFromCreateWorkspaceFromSandbox(workspace), nil
+	}
+	workspace, err := store.GetWorkspaceForTaskStart(ctx, db.GetWorkspaceForTaskStartParams{
+		OrgID:         pgvalue.UUID(orgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		WorkspaceID:   requestedWorkspaceID,
+	})
+	if isNoRows(err) {
+		return db.Workspace{}, errWorkspaceSandboxIncompatible
+	}
+	if err != nil {
+		return db.Workspace{}, err
+	}
+	if !workspace.DeploymentSandboxID.Valid {
+		return db.Workspace{}, errSandboxNotDeployed
+	}
+	if workspace.ArchivedAt.Valid || workspace.DeletedAt.Valid || workspace.State != db.WorkspaceStateActive {
+		return db.Workspace{}, errWorkspaceSandboxIncompatible
+	}
+	if workspace.SandboxID != task.SandboxID ||
+		workspace.SandboxFingerprint != task.SandboxFingerprint ||
+		workspace.DeploymentSandboxFingerprint != task.SandboxFingerprint {
+		return db.Workspace{}, errWorkspaceSandboxIncompatible
+	}
+	if workspace.WorkspaceMountPath != task.WorkspaceMountPath ||
+		workspace.DeploymentSandboxRuntimeAbi != task.DeploymentSandboxRuntimeAbi ||
+		workspace.DeploymentSandboxGuestdAbi != task.DeploymentSandboxGuestdAbi ||
+		workspace.DeploymentSandboxAdapterAbi != task.DeploymentSandboxAdapterAbi ||
+		workspace.DeploymentSandboxFilesystemFormat != task.DeploymentSandboxFilesystemFormat ||
+		workspace.DeploymentSandboxContractVersion != task.DeploymentSandboxContractVersion {
+		return db.Workspace{}, errWorkspaceSandboxIncompatible
+	}
+	if !jsonPayloadsEqual(workspace.DeploymentSandboxNetworkPolicy, task.DeploymentSandboxNetworkPolicy) {
+		return db.Workspace{}, errWorkspaceSandboxIncompatible
+	}
+	if err := workspaceResourceFloorSatisfies(workspace, task); err != nil {
+		return db.Workspace{}, err
+	}
+	return db.Workspace{
+		ID:                  workspace.ID,
+		OrgID:               workspace.OrgID,
+		ProjectID:           workspace.ProjectID,
+		EnvironmentID:       workspace.EnvironmentID,
+		DeploymentSandboxID: workspace.DeploymentSandboxID,
+		SandboxID:           workspace.SandboxID,
+		SandboxFingerprint:  workspace.SandboxFingerprint,
+		State:               workspace.State,
+		ArchivedAt:          workspace.ArchivedAt,
+		DeletedAt:           workspace.DeletedAt,
+	}, nil
+}
+
+func jsonPayloadsEqual(left []byte, right []byte) bool {
+	leftCanonical, err := canonicalJSON(left)
+	if err != nil {
+		return false
+	}
+	rightCanonical, err := canonicalJSON(right)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(leftCanonical, rightCanonical)
+}
+
+func workspaceResourceFloorSatisfies(workspace db.GetWorkspaceForTaskStartRow, task db.GetDeploymentTaskRow) error {
+	floor, err := decodeWorkspaceResourceFloor(workspace.DeploymentSandboxResourceFloor)
+	if err != nil {
+		return errWorkspaceResourceFloor
+	}
+	if task.RequestedMilliCpu > floor.milliCPU ||
+		task.RequestedMemoryMib > floor.memoryMiB ||
+		task.RequestedDiskMib > workspace.DeploymentSandboxDiskFloorMib {
+		return errWorkspaceResourceFloor
+	}
+	return nil
+}
+
+type workspaceResourceFloor struct {
+	milliCPU  int64
+	memoryMiB int64
+}
+
+func decodeWorkspaceResourceFloor(raw []byte) (workspaceResourceFloor, error) {
+	var decoded struct {
+		MilliCPU  int64 `json:"milli_cpu"`
+		MemoryMiB int64 `json:"memory_mib"`
+	}
+	if len(raw) == 0 {
+		return workspaceResourceFloor{}, errors.New("workspace resource floor is empty")
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return workspaceResourceFloor{}, err
+	}
+	return workspaceResourceFloor{milliCPU: decoded.MilliCPU, memoryMiB: decoded.MemoryMiB}, nil
 }
 
 func (s *Server) createTaskStartIdempotency(ctx context.Context, store db.Querier, binding taskStartIdempotencyBinding, externalID string, source taskStartSource) (taskStartResult, bool, error) {
@@ -717,6 +888,7 @@ func taskStartRequestFingerprint(taskID string, payload json.RawMessage, options
 			Priority           int32  `json:"priority,omitempty"`
 			TTL                string `json:"ttl,omitempty"`
 			MaxDurationSeconds int32  `json:"max_duration_seconds,omitempty"`
+			WorkspaceID        string `json:"workspace_id,omitempty"`
 		} `json:"options"`
 		RetryPolicy json.RawMessage `json:"retry_policy,omitempty"`
 	}{
@@ -737,6 +909,7 @@ func taskStartRequestFingerprint(taskID string, payload json.RawMessage, options
 	fingerprint.Options.Priority = options.Priority
 	fingerprint.Options.TTL = strings.TrimSpace(options.TTL)
 	fingerprint.Options.MaxDurationSeconds = options.MaxDurationSeconds
+	fingerprint.Options.WorkspaceID = strings.TrimSpace(options.WorkspaceID)
 	body, err := json.Marshal(fingerprint)
 	if err != nil {
 		return pgtype.Text{}, fmt.Errorf("task start fingerprint encode failed: %w", err)
@@ -845,7 +1018,7 @@ func waitTimeout(seconds int32) time.Duration {
 
 func (s *Server) writeTaskStartError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, errTaskArchived), errors.Is(err, errTaskNotDeployed), errors.Is(err, errTaskStartSessionFingerprint), errors.Is(err, errTaskStartIdempotencyFingerprint), errors.Is(err, errTaskStartIdempotencyExternalID), errors.Is(err, errTaskSessionTerminated), errors.Is(err, errTaskSessionNoCurrentRun):
+	case errors.Is(err, errTaskArchived), errors.Is(err, errTaskNotDeployed), errors.Is(err, errTaskStartSessionFingerprint), errors.Is(err, errTaskStartIdempotencyFingerprint), errors.Is(err, errTaskStartIdempotencyExternalID), errors.Is(err, errTaskSessionTerminated), errors.Is(err, errTaskSessionNoCurrentRun), errors.Is(err, errSandboxNotDeployed), errors.Is(err, errWorkspaceSandboxIncompatible), errors.Is(err, errWorkspaceResourceFloor):
 		writeError(w, conflict(err))
 	case errors.Is(err, errTaskStartPending):
 		w.Header().Set("Retry-After", "1")
@@ -1292,40 +1465,6 @@ func (s *Server) listTaskSessionRuns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.ListTaskSessionRunsResponse{Runs: response})
 }
 
-func (s *Server) getTaskSessionWorkspace(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.loadTaskSessionForRequest(w, r, auth.PermissionRunsRead)
-	if !ok {
-		return
-	}
-	workspace, err := s.db.GetTaskSessionWorkspace(r.Context(), db.GetTaskSessionWorkspaceParams{
-		OrgID:         session.OrgID,
-		ProjectID:     session.ProjectID,
-		EnvironmentID: session.EnvironmentID,
-		TaskSessionID: session.ID,
-	})
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("workspace not found")))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("get session workspace"))
-		return
-	}
-	response := api.TaskSessionWorkspaceResponse{
-		ID:              pgvalue.MustUUIDValue(workspace.ID).String(),
-		TaskSessionID:   pgvalue.MustUUIDValue(workspace.TaskSessionID).String(),
-		MountPath:       workspace.MountPath,
-		State:           string(workspace.State),
-		RetentionPolicy: json.RawMessage(workspace.RetentionPolicy),
-		CreatedAt:       workspace.CreatedAt.Time,
-		UpdatedAt:       workspace.UpdatedAt.Time,
-	}
-	if workspace.CurrentVersionID.Valid {
-		response.CurrentVersionID = pgvalue.MustUUIDValue(workspace.CurrentVersionID).String()
-	}
-	writeJSON(w, http.StatusOK, response)
-}
-
 func (s *Server) listTaskSessionChannels(w http.ResponseWriter, r *http.Request) {
 	session, ok := s.loadTaskSessionForRequest(w, r, auth.PermissionRunsRead)
 	if !ok {
@@ -1348,7 +1487,6 @@ func (s *Server) listTaskSessionChannels(w http.ResponseWriter, r *http.Request)
 			TaskSessionID: pgvalue.MustUUIDValue(channel.TaskSessionID).String(),
 			Name:          channel.Name,
 			Direction:     string(channel.Direction),
-			Backend:       string(channel.Backend),
 			NextSequence:  channel.NextSequence,
 			CreatedAt:     pgvalue.Time(channel.CreatedAt),
 		})

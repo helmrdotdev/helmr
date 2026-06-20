@@ -394,8 +394,6 @@ type WaitpointTokenOptions struct {
 	Status        string
 }
 
-type SetSecretOptions = SecretOptions
-
 func (c *Client) ListSecrets(ctx context.Context, opts ...SecretOptions) (api.ListSecretsResponse, error) {
 	path, err := c.secretCollectionPath(opts...)
 	if err != nil {
@@ -428,7 +426,7 @@ func (c *Client) GetSecret(ctx context.Context, name string, opts ...SecretOptio
 	return response, nil
 }
 
-func (c *Client) SetSecret(ctx context.Context, name string, value string, opts ...SetSecretOptions) (api.SecretResponse, error) {
+func (c *Client) SetSecret(ctx context.Context, name string, value string, opts ...SecretOptions) (api.SecretResponse, error) {
 	var response api.SecretResponse
 	request := api.SetSecretRequest{Value: value}
 	path, scoped, err := c.secretItemPathWithScope(name, opts...)

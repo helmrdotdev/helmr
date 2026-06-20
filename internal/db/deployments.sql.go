@@ -233,6 +233,146 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 	return i, err
 }
 
+const createDeploymentSandbox = `-- name: CreateDeploymentSandbox :one
+INSERT INTO deployment_sandboxes (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    deployment_id,
+    sandbox_id,
+    image_artifact_id,
+    image_artifact_format,
+    rootfs_digest,
+    image_digest,
+    image_format,
+    workspace_mount_path,
+    resource_floor,
+    disk_floor_mib,
+    network_policy,
+    runtime_abi,
+    guestd_abi,
+    adapter_abi,
+    filesystem_format,
+    default_uid,
+    default_gid,
+    default_workdir,
+    contract_version,
+    fingerprint
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    coalesce($13::jsonb, '{}'::jsonb),
+    $14,
+    coalesce($15::jsonb, '{}'::jsonb),
+    $16,
+    $17,
+    $18,
+    $19,
+    $20,
+    $21,
+    $22,
+    $23,
+    $24
+)
+RETURNING id, org_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, resource_floor, disk_floor_mib, network_policy, runtime_abi, guestd_abi, adapter_abi, filesystem_format, default_uid, default_gid, default_workdir, contract_version, fingerprint, created_at
+`
+
+type CreateDeploymentSandboxParams struct {
+	ID                  pgtype.UUID `json:"id"`
+	OrgID               pgtype.UUID `json:"org_id"`
+	ProjectID           pgtype.UUID `json:"project_id"`
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	DeploymentID        pgtype.UUID `json:"deployment_id"`
+	SandboxID           string      `json:"sandbox_id"`
+	ImageArtifactID     pgtype.UUID `json:"image_artifact_id"`
+	ImageArtifactFormat string      `json:"image_artifact_format"`
+	RootfsDigest        string      `json:"rootfs_digest"`
+	ImageDigest         string      `json:"image_digest"`
+	ImageFormat         string      `json:"image_format"`
+	WorkspaceMountPath  string      `json:"workspace_mount_path"`
+	ResourceFloor       []byte      `json:"resource_floor"`
+	DiskFloorMib        int64       `json:"disk_floor_mib"`
+	NetworkPolicy       []byte      `json:"network_policy"`
+	RuntimeABI          string      `json:"runtime_abi"`
+	GuestdAbi           string      `json:"guestd_abi"`
+	AdapterAbi          string      `json:"adapter_abi"`
+	FilesystemFormat    string      `json:"filesystem_format"`
+	DefaultUid          pgtype.Int8 `json:"default_uid"`
+	DefaultGid          pgtype.Int8 `json:"default_gid"`
+	DefaultWorkdir      string      `json:"default_workdir"`
+	ContractVersion     int32       `json:"contract_version"`
+	Fingerprint         string      `json:"fingerprint"`
+}
+
+func (q *Queries) CreateDeploymentSandbox(ctx context.Context, arg CreateDeploymentSandboxParams) (DeploymentSandbox, error) {
+	row := q.db.QueryRow(ctx, createDeploymentSandbox,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+		arg.SandboxID,
+		arg.ImageArtifactID,
+		arg.ImageArtifactFormat,
+		arg.RootfsDigest,
+		arg.ImageDigest,
+		arg.ImageFormat,
+		arg.WorkspaceMountPath,
+		arg.ResourceFloor,
+		arg.DiskFloorMib,
+		arg.NetworkPolicy,
+		arg.RuntimeABI,
+		arg.GuestdAbi,
+		arg.AdapterAbi,
+		arg.FilesystemFormat,
+		arg.DefaultUid,
+		arg.DefaultGid,
+		arg.DefaultWorkdir,
+		arg.ContractVersion,
+		arg.Fingerprint,
+	)
+	var i DeploymentSandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.SandboxID,
+		&i.ImageArtifactID,
+		&i.ImageArtifactFormat,
+		&i.RootfsDigest,
+		&i.ImageDigest,
+		&i.ImageFormat,
+		&i.WorkspaceMountPath,
+		&i.ResourceFloor,
+		&i.DiskFloorMib,
+		&i.NetworkPolicy,
+		&i.RuntimeABI,
+		&i.GuestdAbi,
+		&i.AdapterAbi,
+		&i.FilesystemFormat,
+		&i.DefaultUid,
+		&i.DefaultGid,
+		&i.DefaultWorkdir,
+		&i.ContractVersion,
+		&i.Fingerprint,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createDeploymentTask = `-- name: CreateDeploymentTask :one
 WITH catalog_task AS (
     INSERT INTO tasks (
@@ -246,7 +386,7 @@ WITH catalog_task AS (
         $2,
         $3,
         $4,
-        $6,
+        $7,
         NULL,
         now()
     )
@@ -261,6 +401,7 @@ INSERT INTO deployment_tasks (
     project_id,
     environment_id,
     deployment_id,
+    deployment_sandbox_id,
     task_id,
     file_path,
     export_name,
@@ -297,14 +438,15 @@ INSERT INTO deployment_tasks (
     $15,
     $16,
     $17,
-    coalesce($18::jsonb, '[]'::jsonb),
-    $19,
+    $18,
+    coalesce($19::jsonb, '[]'::jsonb),
     $20,
     $21,
     $22,
-    coalesce($23::jsonb, 'false'::jsonb)
+    $23,
+    coalesce($24::jsonb, 'false'::jsonb)
   FROM catalog_task
-RETURNING id, org_id, project_id, environment_id, deployment_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, secret_declarations, resource_requirements, network_policy, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_duration_seconds, retry_policy, created_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, secret_declarations, resource_requirements, network_policy, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_duration_seconds, retry_policy, created_at
 `
 
 type CreateDeploymentTaskParams struct {
@@ -313,6 +455,7 @@ type CreateDeploymentTaskParams struct {
 	ProjectID             pgtype.UUID `json:"project_id"`
 	EnvironmentID         pgtype.UUID `json:"environment_id"`
 	DeploymentID          pgtype.UUID `json:"deployment_id"`
+	DeploymentSandboxID   pgtype.UUID `json:"deployment_sandbox_id"`
 	TaskID                string      `json:"task_id"`
 	FilePath              string      `json:"file_path"`
 	ExportName            string      `json:"export_name"`
@@ -340,6 +483,7 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentID,
+		arg.DeploymentSandboxID,
 		arg.TaskID,
 		arg.FilePath,
 		arg.ExportName,
@@ -366,6 +510,7 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
+		&i.DeploymentSandboxID,
 		&i.TaskID,
 		&i.FilePath,
 		&i.ExportName,
@@ -517,7 +662,19 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 }
 
 const getCurrentDeploymentTask = `-- name: GetCurrentDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.retry_policy, deployment_tasks.created_at,
+SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.retry_policy, deployment_tasks.created_at,
+       deployment_sandboxes.sandbox_id,
+       deployment_sandboxes.fingerprint AS sandbox_fingerprint,
+       deployment_sandboxes.workspace_mount_path,
+       deployment_sandboxes.resource_floor AS deployment_sandbox_resource_floor,
+       deployment_sandboxes.disk_floor_mib AS deployment_sandbox_disk_floor_mib,
+       deployment_sandboxes.network_policy AS deployment_sandbox_network_policy,
+       deployment_sandboxes.rootfs_digest AS deployment_sandbox_rootfs_digest,
+       deployment_sandboxes.runtime_abi AS deployment_sandbox_runtime_abi,
+       deployment_sandboxes.guestd_abi AS deployment_sandbox_guestd_abi,
+       deployment_sandboxes.adapter_abi AS deployment_sandbox_adapter_abi,
+       deployment_sandboxes.filesystem_format AS deployment_sandbox_filesystem_format,
+       deployment_sandboxes.contract_version AS deployment_sandbox_contract_version,
        deployments.version AS deployment_version,
        deployments.api_version,
        deployments.sdk_version,
@@ -530,6 +687,11 @@ SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id
                   AND deployments.project_id = deployment_tasks.project_id
                   AND deployments.environment_id = deployment_tasks.environment_id
                   AND deployments.id = deployment_tasks.deployment_id
+  JOIN deployment_sandboxes
+    ON deployment_sandboxes.org_id = deployment_tasks.org_id
+   AND deployment_sandboxes.project_id = deployment_tasks.project_id
+   AND deployment_sandboxes.environment_id = deployment_tasks.environment_id
+   AND deployment_sandboxes.id = deployment_tasks.deployment_sandbox_id
   JOIN artifacts AS task_bundle_artifacts
     ON task_bundle_artifacts.org_id = deployment_tasks.org_id
    AND task_bundle_artifacts.project_id = deployment_tasks.project_id
@@ -560,37 +722,50 @@ type GetCurrentDeploymentTaskParams struct {
 }
 
 type GetCurrentDeploymentTaskRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	DeploymentID           pgtype.UUID        `json:"deployment_id"`
-	TaskID                 string             `json:"task_id"`
-	FilePath               string             `json:"file_path"`
-	ExportName             string             `json:"export_name"`
-	HandlerEntrypoint      string             `json:"handler_entrypoint"`
-	BundleArtifactID       pgtype.UUID        `json:"bundle_artifact_id"`
-	BundleFormatVersion    int32              `json:"bundle_format_version"`
-	RequestedMilliCpu      int64              `json:"requested_milli_cpu"`
-	RequestedMemoryMib     int64              `json:"requested_memory_mib"`
-	RequestedDiskMib       int64              `json:"requested_disk_mib"`
-	SecretDeclarations     []byte             `json:"secret_declarations"`
-	ResourceRequirements   []byte             `json:"resource_requirements"`
-	NetworkPolicy          []byte             `json:"network_policy"`
-	ScheduleDeclarations   []byte             `json:"schedule_declarations"`
-	QueueName              string             `json:"queue_name"`
-	QueueConcurrencyLimit  pgtype.Int4        `json:"queue_concurrency_limit"`
-	Ttl                    string             `json:"ttl"`
-	MaxDurationSeconds     int32              `json:"max_duration_seconds"`
-	RetryPolicy            []byte             `json:"retry_policy"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	DeploymentVersion      string             `json:"deployment_version"`
-	ApiVersion             string             `json:"api_version"`
-	SdkVersion             string             `json:"sdk_version"`
-	CliVersion             string             `json:"cli_version"`
-	WorkerProtocolVersion  string             `json:"worker_protocol_version"`
-	BundleDigest           string             `json:"bundle_digest"`
-	DeploymentSourceDigest string             `json:"deployment_source_digest"`
+	ID                                pgtype.UUID        `json:"id"`
+	OrgID                             pgtype.UUID        `json:"org_id"`
+	ProjectID                         pgtype.UUID        `json:"project_id"`
+	EnvironmentID                     pgtype.UUID        `json:"environment_id"`
+	DeploymentID                      pgtype.UUID        `json:"deployment_id"`
+	DeploymentSandboxID               pgtype.UUID        `json:"deployment_sandbox_id"`
+	TaskID                            string             `json:"task_id"`
+	FilePath                          string             `json:"file_path"`
+	ExportName                        string             `json:"export_name"`
+	HandlerEntrypoint                 string             `json:"handler_entrypoint"`
+	BundleArtifactID                  pgtype.UUID        `json:"bundle_artifact_id"`
+	BundleFormatVersion               int32              `json:"bundle_format_version"`
+	RequestedMilliCpu                 int64              `json:"requested_milli_cpu"`
+	RequestedMemoryMib                int64              `json:"requested_memory_mib"`
+	RequestedDiskMib                  int64              `json:"requested_disk_mib"`
+	SecretDeclarations                []byte             `json:"secret_declarations"`
+	ResourceRequirements              []byte             `json:"resource_requirements"`
+	NetworkPolicy                     []byte             `json:"network_policy"`
+	ScheduleDeclarations              []byte             `json:"schedule_declarations"`
+	QueueName                         string             `json:"queue_name"`
+	QueueConcurrencyLimit             pgtype.Int4        `json:"queue_concurrency_limit"`
+	Ttl                               string             `json:"ttl"`
+	MaxDurationSeconds                int32              `json:"max_duration_seconds"`
+	RetryPolicy                       []byte             `json:"retry_policy"`
+	CreatedAt                         pgtype.Timestamptz `json:"created_at"`
+	SandboxID                         string             `json:"sandbox_id"`
+	SandboxFingerprint                string             `json:"sandbox_fingerprint"`
+	WorkspaceMountPath                string             `json:"workspace_mount_path"`
+	DeploymentSandboxResourceFloor    []byte             `json:"deployment_sandbox_resource_floor"`
+	DeploymentSandboxDiskFloorMib     int64              `json:"deployment_sandbox_disk_floor_mib"`
+	DeploymentSandboxNetworkPolicy    []byte             `json:"deployment_sandbox_network_policy"`
+	DeploymentSandboxRootfsDigest     string             `json:"deployment_sandbox_rootfs_digest"`
+	DeploymentSandboxRuntimeAbi       string             `json:"deployment_sandbox_runtime_abi"`
+	DeploymentSandboxGuestdAbi        string             `json:"deployment_sandbox_guestd_abi"`
+	DeploymentSandboxAdapterAbi       string             `json:"deployment_sandbox_adapter_abi"`
+	DeploymentSandboxFilesystemFormat string             `json:"deployment_sandbox_filesystem_format"`
+	DeploymentSandboxContractVersion  int32              `json:"deployment_sandbox_contract_version"`
+	DeploymentVersion                 string             `json:"deployment_version"`
+	ApiVersion                        string             `json:"api_version"`
+	SdkVersion                        string             `json:"sdk_version"`
+	CliVersion                        string             `json:"cli_version"`
+	WorkerProtocolVersion             string             `json:"worker_protocol_version"`
+	BundleDigest                      string             `json:"bundle_digest"`
+	DeploymentSourceDigest            string             `json:"deployment_source_digest"`
 }
 
 func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDeploymentTaskParams) (GetCurrentDeploymentTaskRow, error) {
@@ -607,6 +782,7 @@ func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDe
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
+		&i.DeploymentSandboxID,
 		&i.TaskID,
 		&i.FilePath,
 		&i.ExportName,
@@ -626,6 +802,18 @@ func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDe
 		&i.MaxDurationSeconds,
 		&i.RetryPolicy,
 		&i.CreatedAt,
+		&i.SandboxID,
+		&i.SandboxFingerprint,
+		&i.WorkspaceMountPath,
+		&i.DeploymentSandboxResourceFloor,
+		&i.DeploymentSandboxDiskFloorMib,
+		&i.DeploymentSandboxNetworkPolicy,
+		&i.DeploymentSandboxRootfsDigest,
+		&i.DeploymentSandboxRuntimeAbi,
+		&i.DeploymentSandboxGuestdAbi,
+		&i.DeploymentSandboxAdapterAbi,
+		&i.DeploymentSandboxFilesystemFormat,
+		&i.DeploymentSandboxContractVersion,
 		&i.DeploymentVersion,
 		&i.ApiVersion,
 		&i.SdkVersion,
@@ -900,7 +1088,19 @@ func (q *Queries) GetDeploymentQueueConfig(ctx context.Context, arg GetDeploymen
 }
 
 const getDeploymentTask = `-- name: GetDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.retry_policy, deployment_tasks.created_at,
+SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.retry_policy, deployment_tasks.created_at,
+       deployment_sandboxes.sandbox_id,
+       deployment_sandboxes.fingerprint AS sandbox_fingerprint,
+       deployment_sandboxes.workspace_mount_path,
+       deployment_sandboxes.resource_floor AS deployment_sandbox_resource_floor,
+       deployment_sandboxes.disk_floor_mib AS deployment_sandbox_disk_floor_mib,
+       deployment_sandboxes.network_policy AS deployment_sandbox_network_policy,
+       deployment_sandboxes.rootfs_digest AS deployment_sandbox_rootfs_digest,
+       deployment_sandboxes.runtime_abi AS deployment_sandbox_runtime_abi,
+       deployment_sandboxes.guestd_abi AS deployment_sandbox_guestd_abi,
+       deployment_sandboxes.adapter_abi AS deployment_sandbox_adapter_abi,
+       deployment_sandboxes.filesystem_format AS deployment_sandbox_filesystem_format,
+       deployment_sandboxes.contract_version AS deployment_sandbox_contract_version,
        deployments.version AS deployment_version,
        deployments.api_version,
        deployments.sdk_version,
@@ -913,6 +1113,11 @@ SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id
                   AND deployments.project_id = deployment_tasks.project_id
                   AND deployments.environment_id = deployment_tasks.environment_id
                   AND deployments.id = deployment_tasks.deployment_id
+  JOIN deployment_sandboxes
+    ON deployment_sandboxes.org_id = deployment_tasks.org_id
+   AND deployment_sandboxes.project_id = deployment_tasks.project_id
+   AND deployment_sandboxes.environment_id = deployment_tasks.environment_id
+   AND deployment_sandboxes.id = deployment_tasks.deployment_sandbox_id
   JOIN artifacts AS task_bundle_artifacts
     ON task_bundle_artifacts.org_id = deployment_tasks.org_id
    AND task_bundle_artifacts.project_id = deployment_tasks.project_id
@@ -941,37 +1146,50 @@ type GetDeploymentTaskParams struct {
 }
 
 type GetDeploymentTaskRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	DeploymentID           pgtype.UUID        `json:"deployment_id"`
-	TaskID                 string             `json:"task_id"`
-	FilePath               string             `json:"file_path"`
-	ExportName             string             `json:"export_name"`
-	HandlerEntrypoint      string             `json:"handler_entrypoint"`
-	BundleArtifactID       pgtype.UUID        `json:"bundle_artifact_id"`
-	BundleFormatVersion    int32              `json:"bundle_format_version"`
-	RequestedMilliCpu      int64              `json:"requested_milli_cpu"`
-	RequestedMemoryMib     int64              `json:"requested_memory_mib"`
-	RequestedDiskMib       int64              `json:"requested_disk_mib"`
-	SecretDeclarations     []byte             `json:"secret_declarations"`
-	ResourceRequirements   []byte             `json:"resource_requirements"`
-	NetworkPolicy          []byte             `json:"network_policy"`
-	ScheduleDeclarations   []byte             `json:"schedule_declarations"`
-	QueueName              string             `json:"queue_name"`
-	QueueConcurrencyLimit  pgtype.Int4        `json:"queue_concurrency_limit"`
-	Ttl                    string             `json:"ttl"`
-	MaxDurationSeconds     int32              `json:"max_duration_seconds"`
-	RetryPolicy            []byte             `json:"retry_policy"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	DeploymentVersion      string             `json:"deployment_version"`
-	ApiVersion             string             `json:"api_version"`
-	SdkVersion             string             `json:"sdk_version"`
-	CliVersion             string             `json:"cli_version"`
-	WorkerProtocolVersion  string             `json:"worker_protocol_version"`
-	BundleDigest           string             `json:"bundle_digest"`
-	DeploymentSourceDigest string             `json:"deployment_source_digest"`
+	ID                                pgtype.UUID        `json:"id"`
+	OrgID                             pgtype.UUID        `json:"org_id"`
+	ProjectID                         pgtype.UUID        `json:"project_id"`
+	EnvironmentID                     pgtype.UUID        `json:"environment_id"`
+	DeploymentID                      pgtype.UUID        `json:"deployment_id"`
+	DeploymentSandboxID               pgtype.UUID        `json:"deployment_sandbox_id"`
+	TaskID                            string             `json:"task_id"`
+	FilePath                          string             `json:"file_path"`
+	ExportName                        string             `json:"export_name"`
+	HandlerEntrypoint                 string             `json:"handler_entrypoint"`
+	BundleArtifactID                  pgtype.UUID        `json:"bundle_artifact_id"`
+	BundleFormatVersion               int32              `json:"bundle_format_version"`
+	RequestedMilliCpu                 int64              `json:"requested_milli_cpu"`
+	RequestedMemoryMib                int64              `json:"requested_memory_mib"`
+	RequestedDiskMib                  int64              `json:"requested_disk_mib"`
+	SecretDeclarations                []byte             `json:"secret_declarations"`
+	ResourceRequirements              []byte             `json:"resource_requirements"`
+	NetworkPolicy                     []byte             `json:"network_policy"`
+	ScheduleDeclarations              []byte             `json:"schedule_declarations"`
+	QueueName                         string             `json:"queue_name"`
+	QueueConcurrencyLimit             pgtype.Int4        `json:"queue_concurrency_limit"`
+	Ttl                               string             `json:"ttl"`
+	MaxDurationSeconds                int32              `json:"max_duration_seconds"`
+	RetryPolicy                       []byte             `json:"retry_policy"`
+	CreatedAt                         pgtype.Timestamptz `json:"created_at"`
+	SandboxID                         string             `json:"sandbox_id"`
+	SandboxFingerprint                string             `json:"sandbox_fingerprint"`
+	WorkspaceMountPath                string             `json:"workspace_mount_path"`
+	DeploymentSandboxResourceFloor    []byte             `json:"deployment_sandbox_resource_floor"`
+	DeploymentSandboxDiskFloorMib     int64              `json:"deployment_sandbox_disk_floor_mib"`
+	DeploymentSandboxNetworkPolicy    []byte             `json:"deployment_sandbox_network_policy"`
+	DeploymentSandboxRootfsDigest     string             `json:"deployment_sandbox_rootfs_digest"`
+	DeploymentSandboxRuntimeAbi       string             `json:"deployment_sandbox_runtime_abi"`
+	DeploymentSandboxGuestdAbi        string             `json:"deployment_sandbox_guestd_abi"`
+	DeploymentSandboxAdapterAbi       string             `json:"deployment_sandbox_adapter_abi"`
+	DeploymentSandboxFilesystemFormat string             `json:"deployment_sandbox_filesystem_format"`
+	DeploymentSandboxContractVersion  int32              `json:"deployment_sandbox_contract_version"`
+	DeploymentVersion                 string             `json:"deployment_version"`
+	ApiVersion                        string             `json:"api_version"`
+	SdkVersion                        string             `json:"sdk_version"`
+	CliVersion                        string             `json:"cli_version"`
+	WorkerProtocolVersion             string             `json:"worker_protocol_version"`
+	BundleDigest                      string             `json:"bundle_digest"`
+	DeploymentSourceDigest            string             `json:"deployment_source_digest"`
 }
 
 func (q *Queries) GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskParams) (GetDeploymentTaskRow, error) {
@@ -989,6 +1207,7 @@ func (q *Queries) GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskPa
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
+		&i.DeploymentSandboxID,
 		&i.TaskID,
 		&i.FilePath,
 		&i.ExportName,
@@ -1008,6 +1227,18 @@ func (q *Queries) GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskPa
 		&i.MaxDurationSeconds,
 		&i.RetryPolicy,
 		&i.CreatedAt,
+		&i.SandboxID,
+		&i.SandboxFingerprint,
+		&i.WorkspaceMountPath,
+		&i.DeploymentSandboxResourceFloor,
+		&i.DeploymentSandboxDiskFloorMib,
+		&i.DeploymentSandboxNetworkPolicy,
+		&i.DeploymentSandboxRootfsDigest,
+		&i.DeploymentSandboxRuntimeAbi,
+		&i.DeploymentSandboxGuestdAbi,
+		&i.DeploymentSandboxAdapterAbi,
+		&i.DeploymentSandboxFilesystemFormat,
+		&i.DeploymentSandboxContractVersion,
 		&i.DeploymentVersion,
 		&i.ApiVersion,
 		&i.SdkVersion,
@@ -1230,7 +1461,7 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 }
 
 const listDeploymentTasks = `-- name: ListDeploymentTasks :many
-SELECT id, org_id, project_id, environment_id, deployment_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, secret_declarations, resource_requirements, network_policy, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_duration_seconds, retry_policy, created_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, secret_declarations, resource_requirements, network_policy, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_duration_seconds, retry_policy, created_at
   FROM deployment_tasks
  WHERE org_id = $1
    AND project_id = $2
@@ -1266,6 +1497,7 @@ func (q *Queries) ListDeploymentTasks(ctx context.Context, arg ListDeploymentTas
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.DeploymentID,
+			&i.DeploymentSandboxID,
 			&i.TaskID,
 			&i.FilePath,
 			&i.ExportName,

@@ -122,6 +122,7 @@ const DeploymentSourceArtifactMediaType = "application/vnd.helmr.deployment-sour
 const TaskBundleArtifactMediaType = "application/vnd.helmr.task-bundle.v0+proto"
 const DeploymentManifestArtifactMediaType = "application/vnd.helmr.deployment-manifest.v0+json"
 const BuildManifestArtifactMediaType = "application/vnd.helmr.build-manifest.v0+json"
+const SandboxImageArtifactMediaType = "application/vnd.helmr.sandbox-image.v0.oci-tar"
 
 type DeploymentSourceArtifact struct {
 	Digest    string `json:"digest"`
