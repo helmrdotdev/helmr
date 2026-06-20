@@ -18,8 +18,6 @@ DROP INDEX IF EXISTS workspace_operation_idempotencies_workspace_idx;
 DROP INDEX IF EXISTS workspace_materialization_operations_worker_claim_idx;
 DROP INDEX IF EXISTS workspace_materialization_operations_claim_idx;
 DROP INDEX IF EXISTS workspace_ports_active_idx;
-DROP INDEX IF EXISTS workspace_pty_stream_chunks_offset_range_idx;
-DROP INDEX IF EXISTS workspace_exec_stream_chunks_offset_range_idx;
 DROP INDEX IF EXISTS workspace_materializations_heartbeat_idx;
 DROP INDEX IF EXISTS workspace_materializations_claim_idx;
 DROP INDEX IF EXISTS workspace_materializations_one_active_idx;

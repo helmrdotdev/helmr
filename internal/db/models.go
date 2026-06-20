@@ -1978,7 +1978,6 @@ type WorkspacePtyStream string
 const (
 	WorkspacePtyStreamInput  WorkspacePtyStream = "input"
 	WorkspacePtyStreamOutput WorkspacePtyStream = "output"
-	WorkspacePtyStreamResize WorkspacePtyStream = "resize"
 )
 
 func (e *WorkspacePtyStream) Scan(src interface{}) error {
@@ -3218,7 +3217,6 @@ type WorkspaceExecStreamChunk struct {
 	WorkspaceID   pgtype.UUID         `json:"workspace_id"`
 	ExecID        pgtype.UUID         `json:"exec_id"`
 	Stream        WorkspaceExecStream `json:"stream"`
-	Sequence      int64               `json:"sequence"`
 	OffsetStart   int64               `json:"offset_start"`
 	OffsetEnd     int64               `json:"offset_end"`
 	Data          []byte              `json:"data"`
@@ -3421,12 +3419,9 @@ type WorkspacePtyStreamChunk struct {
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
 	PtySessionID  pgtype.UUID        `json:"pty_session_id"`
 	Stream        WorkspacePtyStream `json:"stream"`
-	Sequence      int64              `json:"sequence"`
 	OffsetStart   int64              `json:"offset_start"`
 	OffsetEnd     int64              `json:"offset_end"`
 	Data          []byte             `json:"data"`
-	Cols          pgtype.Int4        `json:"cols"`
-	Rows          pgtype.Int4        `json:"rows"`
 	ObservedAt    pgtype.Timestamptz `json:"observed_at"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }

@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
 CREATE TABLE organizations (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
@@ -638,8 +640,7 @@ CREATE TYPE workspace_pty_state AS ENUM (
 
 CREATE TYPE workspace_pty_stream AS ENUM (
     'input',
-    'output',
-    'resize'
+    'output'
 );
 
 CREATE TYPE workspace_port_protocol AS ENUM (
@@ -1573,13 +1574,11 @@ CREATE TABLE workspace_exec_stream_chunks (
     workspace_id UUID NOT NULL,
     exec_id UUID NOT NULL,
     stream workspace_exec_stream NOT NULL,
-    sequence BIGINT NOT NULL CHECK (sequence > 0),
     offset_start BIGINT NOT NULL CHECK (offset_start >= 0),
     offset_end BIGINT NOT NULL CHECK (offset_end > offset_start),
     data BYTEA NOT NULL,
     observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, exec_id, stream, sequence),
     UNIQUE (org_id, exec_id, stream, offset_start),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, exec_id)
         REFERENCES workspace_execs(org_id, project_id, environment_id, workspace_id, id)
@@ -1594,15 +1593,11 @@ CREATE TABLE workspace_pty_stream_chunks (
     workspace_id UUID NOT NULL,
     pty_session_id UUID NOT NULL,
     stream workspace_pty_stream NOT NULL,
-    sequence BIGINT NOT NULL CHECK (sequence > 0),
     offset_start BIGINT NOT NULL CHECK (offset_start >= 0),
     offset_end BIGINT NOT NULL CHECK (offset_end > offset_start),
     data BYTEA NOT NULL,
-    cols INTEGER,
-    rows INTEGER,
     observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, pty_session_id, stream, sequence),
     UNIQUE (org_id, pty_session_id, stream, offset_start),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, pty_session_id)
         REFERENCES workspace_pty_sessions(org_id, project_id, environment_id, workspace_id, id)
@@ -2653,10 +2648,20 @@ CREATE UNIQUE INDEX workspace_leases_one_active_writer_materialization_idx ON wo
     WHERE lease_kind = 'write' AND state IN ('active', 'releasing');
 CREATE INDEX workspace_leases_expiry_idx ON workspace_leases(org_id, expires_at)
     WHERE state IN ('active', 'releasing');
-CREATE UNIQUE INDEX workspace_exec_stream_chunks_offset_range_idx
-    ON workspace_exec_stream_chunks(exec_id, stream, int8range(offset_start, offset_end, '[)'));
-CREATE UNIQUE INDEX workspace_pty_stream_chunks_offset_range_idx
-    ON workspace_pty_stream_chunks(pty_session_id, stream, int8range(offset_start, offset_end, '[)'));
+ALTER TABLE workspace_exec_stream_chunks
+    ADD CONSTRAINT workspace_exec_stream_chunks_no_overlap
+    EXCLUDE USING gist (
+        exec_id WITH =,
+        stream WITH =,
+        int8range(offset_start, offset_end, '[)') WITH &&
+    );
+ALTER TABLE workspace_pty_stream_chunks
+    ADD CONSTRAINT workspace_pty_stream_chunks_no_overlap
+    EXCLUDE USING gist (
+        pty_session_id WITH =,
+        stream WITH =,
+        int8range(offset_start, offset_end, '[)') WITH &&
+    );
 CREATE UNIQUE INDEX workspace_ports_active_idx ON workspace_ports(materialization_id, port, protocol)
     WHERE state IN ('exposing', 'open');
 CREATE UNIQUE INDEX workspace_operation_idempotencies_workspace_idx

@@ -78,6 +78,7 @@ func testUpWithExternalPostgres(t *testing.T, ctx context.Context, dsn string) {
 	if !exists {
 		t.Fatal("runs table was not created")
 	}
+	assertWorkspaceStreamSchema(t, dbctx, pool)
 	if err := Down(dbctx, dsn); err != nil {
 		t.Fatalf("down migration failed: %v", err)
 	}
@@ -95,6 +96,55 @@ func testUpWithExternalPostgres(t *testing.T, ctx context.Context, dsn string) {
 	}
 	if !exists {
 		t.Fatal("runs table was not recreated after down migration")
+	}
+}
+
+func assertWorkspaceStreamSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	var hasSequence bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			  FROM information_schema.columns
+			 WHERE table_schema = 'public'
+			   AND table_name IN ('workspace_exec_stream_chunks', 'workspace_pty_stream_chunks')
+			   AND column_name = 'sequence'
+		)
+	`).Scan(&hasSequence); err != nil {
+		t.Fatal(err)
+	}
+	if hasSequence {
+		t.Fatal("workspace stream chunks must use offset cursors, not sequence columns")
+	}
+	var hasResize bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			  FROM pg_enum
+			  JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+			 WHERE pg_type.typname = 'workspace_pty_stream'
+			   AND pg_enum.enumlabel = 'resize'
+		)
+	`).Scan(&hasResize); err != nil {
+		t.Fatal(err)
+	}
+	if hasResize {
+		t.Fatal("PTY resize must be a control verb, not a byte stream")
+	}
+	var constraintCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_constraint
+		 WHERE conname IN (
+		 	'workspace_exec_stream_chunks_no_overlap',
+		 	'workspace_pty_stream_chunks_no_overlap'
+		 )
+		   AND contype = 'x'
+	`).Scan(&constraintCount); err != nil {
+		t.Fatal(err)
+	}
+	if constraintCount != 2 {
+		t.Fatalf("workspace stream overlap exclusion constraints = %d, want 2", constraintCount)
 	}
 }
 
