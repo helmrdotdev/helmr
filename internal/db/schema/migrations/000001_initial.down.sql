@@ -133,6 +133,8 @@ DROP TYPE IF EXISTS run_usage_event_kind;
 DROP TABLE IF EXISTS run_retry_decisions;
 DROP TABLE IF EXISTS workspace_operation_idempotencies;
 DROP TABLE IF EXISTS workspace_materialization_operations;
+DROP TABLE IF EXISTS workspace_pty_stream_chunk_receipts;
+DROP TABLE IF EXISTS workspace_exec_stream_chunk_receipts;
 DROP TABLE IF EXISTS workspace_pty_stream_chunks;
 DROP TABLE IF EXISTS workspace_exec_stream_chunks;
 ALTER TABLE workspaces DROP CONSTRAINT IF EXISTS workspaces_current_version_id_fkey;

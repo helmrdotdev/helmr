@@ -417,6 +417,78 @@ func (q *Queries) FailWorkspaceMaterializationOperation(ctx context.Context, arg
 	return i, err
 }
 
+const getActiveWorkspaceMaterializationOperationByResource = `-- name: GetActiveWorkspaceMaterializationOperationByResource :one
+SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at
+  FROM workspace_materialization_operations
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND workspace_id = $4
+   AND materialization_id = $5
+   AND operation_kind = $6
+   AND resource_kind = $7
+   AND resource_id = $8
+   AND state IN ('queued', 'claimed', 'running')
+ ORDER BY requested_at ASC
+ LIMIT 1
+`
+
+type GetActiveWorkspaceMaterializationOperationByResourceParams struct {
+	OrgID             pgtype.UUID `json:"org_id"`
+	ProjectID         pgtype.UUID `json:"project_id"`
+	EnvironmentID     pgtype.UUID `json:"environment_id"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	MaterializationID pgtype.UUID `json:"materialization_id"`
+	OperationKind     string      `json:"operation_kind"`
+	ResourceKind      string      `json:"resource_kind"`
+	ResourceID        pgtype.UUID `json:"resource_id"`
+}
+
+func (q *Queries) GetActiveWorkspaceMaterializationOperationByResource(ctx context.Context, arg GetActiveWorkspaceMaterializationOperationByResourceParams) (WorkspaceMaterializationOperation, error) {
+	row := q.db.QueryRow(ctx, getActiveWorkspaceMaterializationOperationByResource,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.MaterializationID,
+		arg.OperationKind,
+		arg.ResourceKind,
+		arg.ResourceID,
+	)
+	var i WorkspaceMaterializationOperation
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.MaterializationID,
+		&i.OperationKind,
+		&i.ResourceKind,
+		&i.ResourceID,
+		&i.RequestFingerprint,
+		&i.OperationExpiresAt,
+		&i.State,
+		&i.Priority,
+		&i.InstanceLeaseID,
+		&i.WriteLeaseID,
+		&i.FencingToken,
+		&i.FencingGeneration,
+		&i.Request,
+		&i.Result,
+		&i.Error,
+		&i.ClaimedByWorkerInstanceID,
+		&i.ClaimToken,
+		&i.ClaimAttempt,
+		&i.ClaimExpiresAt,
+		&i.RequestedAt,
+		&i.ClaimedAt,
+		&i.CompletedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getWorkspaceMaterializationOperation = `-- name: GetWorkspaceMaterializationOperation :one
 SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at
   FROM workspace_materialization_operations
@@ -544,10 +616,16 @@ SELECT $1,
   FROM active_materialization
   LEFT JOIN active_write_lease ON true
  WHERE (
-       $9::uuid IS NULL
-       AND coalesce($10::text, '') = ''
+       (
+           $9::uuid IS NULL
+           AND coalesce($10::text, '') = ''
+       )
+       OR active_write_lease.id IS NOT NULL
    )
-    OR active_write_lease.id IS NOT NULL
+   AND (
+       $2::text NOT IN ('StartExec', 'CreatePty', 'ResizePty', 'ClosePty')
+       OR active_write_lease.id IS NOT NULL
+   )
 RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at
 `
 

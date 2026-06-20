@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/workspace"
+	"github.com/helmrdotdev/helmr/internal/workspaceop"
 )
 
 func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
@@ -119,7 +120,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 			ChannelToken:               "channel-token",
 			FencingGeneration:          1,
 			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         workspaceOperationRequestFingerprint("noop", `{}`),
+			RequestFingerprint:         workspaceop.RequestFingerprint("noop", `{}`),
 		},
 		OperationKind: "noop",
 		RequestJson:   `{}`,
@@ -152,7 +153,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 			ChannelToken:               "channel-token",
 			FencingGeneration:          1,
 			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         workspaceOperationRequestFingerprint("noop", `{}`),
+			RequestFingerprint:         workspaceop.RequestFingerprint("noop", `{}`),
 		},
 		OperationKind: "noop",
 		RequestJson:   `{}`,
@@ -178,7 +179,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 			ChannelToken:               "channel-token",
 			FencingGeneration:          2,
 			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         workspaceOperationRequestFingerprint("noop", `{}`),
+			RequestFingerprint:         workspaceop.RequestFingerprint("noop", `{}`),
 		},
 		OperationKind: "noop",
 		RequestJson:   `{}`,
@@ -210,7 +211,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 			ChannelToken:               "channel-token",
 			FencingGeneration:          1,
 			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         workspaceOperationRequestFingerprint("noop", `{}`),
+			RequestFingerprint:         workspaceop.RequestFingerprint("noop", `{}`),
 		},
 		OperationKind: "noop",
 		RequestJson:   `{}`,

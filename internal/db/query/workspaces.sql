@@ -227,3 +227,20 @@ UPDATE workspace_operation_idempotencies
    AND workspace_operation_idempotencies.response_resource_id IS NULL
    AND workspace_operation_idempotencies.expires_at > now()
 RETURNING *;
+
+-- name: CompleteWorkspaceScopedOperationIdempotency :one
+UPDATE workspace_operation_idempotencies
+   SET response_resource_type = sqlc.arg(response_resource_type),
+       response_resource_id = sqlc.arg(response_resource_id),
+       response_body = coalesce(sqlc.arg(response_body)::jsonb, '{}'::jsonb),
+       last_used_at = now()
+ WHERE workspace_operation_idempotencies.org_id = sqlc.arg(org_id)
+   AND workspace_operation_idempotencies.project_id = sqlc.arg(project_id)
+   AND workspace_operation_idempotencies.environment_id = sqlc.arg(environment_id)
+   AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)
+   AND workspace_operation_idempotencies.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_operation_idempotencies.idempotency_key = sqlc.arg(idempotency_key)
+   AND workspace_operation_idempotencies.request_fingerprint = sqlc.arg(request_fingerprint)
+   AND workspace_operation_idempotencies.response_resource_id IS NULL
+   AND workspace_operation_idempotencies.expires_at > now()
+RETURNING *;

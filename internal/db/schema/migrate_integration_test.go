@@ -146,6 +146,23 @@ func assertWorkspaceStreamSchema(t *testing.T, ctx context.Context, pool *pgxpoo
 	if constraintCount != 2 {
 		t.Fatalf("workspace stream overlap exclusion constraints = %d, want 2", constraintCount)
 	}
+	var hasActiveResourceIndex bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			  FROM pg_indexes
+			 WHERE schemaname = 'public'
+			   AND tablename = 'workspace_materialization_operations'
+			   AND indexname = 'workspace_materialization_operations_active_resource_idx'
+			   AND indexdef ILIKE '%WHERE%state%queued%'
+			   AND indexdef ILIKE '%resource_id IS NOT NULL%'
+		)
+	`).Scan(&hasActiveResourceIndex); err != nil {
+		t.Fatal(err)
+	}
+	if !hasActiveResourceIndex {
+		t.Fatal("workspace materialization operations must prevent duplicate active resource dispatch")
+	}
 }
 
 func freePostgresPort(t *testing.T) int {

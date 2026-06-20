@@ -612,12 +612,7 @@ CREATE TYPE workspace_exec_state AS ENUM (
     'queued',
     'materializing',
     'running',
-    'stdin_closed',
-    'cancel_requested',
-    'kill_requested',
     'exited',
-    'cancelled',
-    'killed',
     'lost',
     'failed'
 );
@@ -1351,6 +1346,7 @@ CREATE TABLE workspace_execs (
     stdout_cursor BIGINT NOT NULL DEFAULT 0 CHECK (stdout_cursor >= 0),
     stderr_cursor BIGINT NOT NULL DEFAULT 0 CHECK (stderr_cursor >= 0),
     stdin_cursor BIGINT NOT NULL DEFAULT 0 CHECK (stdin_cursor >= 0),
+    stdin_delivered_cursor BIGINT NOT NULL DEFAULT 0 CHECK (stdin_delivered_cursor >= 0 AND stdin_delivered_cursor <= stdin_cursor),
     stdin_closed_at TIMESTAMPTZ,
     created_by_subject_type TEXT NOT NULL DEFAULT '',
     created_by_subject_id TEXT NOT NULL DEFAULT '',
@@ -1392,6 +1388,7 @@ CREATE TABLE workspace_pty_sessions (
     process_id TEXT NOT NULL DEFAULT '',
     output_cursor BIGINT NOT NULL DEFAULT 0 CHECK (output_cursor >= 0),
     input_cursor BIGINT NOT NULL DEFAULT 0 CHECK (input_cursor >= 0),
+    input_delivered_cursor BIGINT NOT NULL DEFAULT 0 CHECK (input_delivered_cursor >= 0 AND input_delivered_cursor <= input_cursor),
     created_by_subject_type TEXT NOT NULL DEFAULT '',
     created_by_subject_id TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1585,6 +1582,26 @@ CREATE TABLE workspace_exec_stream_chunks (
         ON DELETE CASCADE
 );
 
+CREATE TABLE workspace_exec_stream_chunk_receipts (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    workspace_id UUID NOT NULL,
+    exec_id UUID NOT NULL,
+    stream workspace_exec_stream NOT NULL,
+    offset_start BIGINT NOT NULL CHECK (offset_start >= 0),
+    offset_end BIGINT NOT NULL CHECK (offset_end > offset_start),
+    data_sha256 BYTEA NOT NULL CHECK (length(data_sha256) = 32),
+    data_size INTEGER NOT NULL CHECK (data_size >= 0),
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, exec_id, stream, offset_start),
+    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, exec_id)
+        REFERENCES workspace_execs(org_id, project_id, environment_id, workspace_id, id)
+        ON DELETE CASCADE
+);
+
 CREATE TABLE workspace_pty_stream_chunks (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
@@ -1596,6 +1613,26 @@ CREATE TABLE workspace_pty_stream_chunks (
     offset_start BIGINT NOT NULL CHECK (offset_start >= 0),
     offset_end BIGINT NOT NULL CHECK (offset_end > offset_start),
     data BYTEA NOT NULL,
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, pty_session_id, stream, offset_start),
+    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, pty_session_id)
+        REFERENCES workspace_pty_sessions(org_id, project_id, environment_id, workspace_id, id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE workspace_pty_stream_chunk_receipts (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    workspace_id UUID NOT NULL,
+    pty_session_id UUID NOT NULL,
+    stream workspace_pty_stream NOT NULL,
+    offset_start BIGINT NOT NULL CHECK (offset_start >= 0),
+    offset_end BIGINT NOT NULL CHECK (offset_end > offset_start),
+    data_sha256 BYTEA NOT NULL CHECK (length(data_sha256) = 32),
+    data_size INTEGER NOT NULL CHECK (data_size >= 0),
     observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, pty_session_id, stream, offset_start),
@@ -2655,8 +2692,22 @@ ALTER TABLE workspace_exec_stream_chunks
         stream WITH =,
         int8range(offset_start, offset_end, '[)') WITH &&
     );
+ALTER TABLE workspace_exec_stream_chunk_receipts
+    ADD CONSTRAINT workspace_exec_stream_chunk_receipts_no_overlap
+    EXCLUDE USING gist (
+        exec_id WITH =,
+        stream WITH =,
+        int8range(offset_start, offset_end, '[)') WITH &&
+    );
 ALTER TABLE workspace_pty_stream_chunks
     ADD CONSTRAINT workspace_pty_stream_chunks_no_overlap
+    EXCLUDE USING gist (
+        pty_session_id WITH =,
+        stream WITH =,
+        int8range(offset_start, offset_end, '[)') WITH &&
+    );
+ALTER TABLE workspace_pty_stream_chunk_receipts
+    ADD CONSTRAINT workspace_pty_stream_chunk_receipts_no_overlap
     EXCLUDE USING gist (
         pty_session_id WITH =,
         stream WITH =,
@@ -2676,6 +2727,9 @@ CREATE INDEX workspace_materialization_operations_claim_idx
 CREATE INDEX workspace_materialization_operations_worker_claim_idx
     ON workspace_materialization_operations(claimed_by_worker_instance_id, state, claim_expires_at)
     WHERE state = 'claimed';
+CREATE UNIQUE INDEX workspace_materialization_operations_active_resource_idx
+    ON workspace_materialization_operations(org_id, project_id, environment_id, materialization_id, operation_kind, resource_kind, resource_id)
+    WHERE state IN ('queued', 'claimed', 'running') AND resource_id IS NOT NULL;
 CREATE UNIQUE INDEX channels_task_session_name_idx ON channels(org_id, task_session_id, name, direction);
 CREATE INDEX channel_definitions_lookup_idx ON channel_definitions(org_id, project_id, environment_id, deployment_id, task_id, name, direction);
 CREATE INDEX channel_records_sequence_idx ON channel_records(org_id, channel_id, sequence, id);

@@ -270,6 +270,9 @@ export interface Workspace {
 
 export interface WorkspaceHandle {
   readonly id: string
+  exec(command: readonly string[], opts?: WorkspaceExecCreateOptions): Promise<WorkspaceExecHandle>
+  readonly execs: WorkspaceExecsApi
+  readonly pty: WorkspacePtyApi
   retrieve(opts?: WorkspaceRetrieveOptions): Promise<Workspace>
   update(opts: WorkspaceUpdateOptions): Promise<Workspace>
   delete(opts?: WorkspaceRetrieveOptions): Promise<Workspace>
@@ -336,6 +339,157 @@ export interface WorkspaceMaterialization {
   readonly lastHeartbeatAt: string | null
   readonly createdAt: string
   readonly updatedAt: string
+}
+
+export type WorkspaceExecState =
+  | "queued"
+  | "materializing"
+  | "running"
+  | "exited"
+  | "lost"
+  | "failed"
+
+export interface WorkspaceExec {
+  readonly id: string
+  readonly workspaceId: string
+  readonly materializationId: string | null
+  readonly command: readonly string[]
+  readonly cwd: string
+  readonly envShape: Record<string, string>
+  readonly filesystemMode: "read" | "write" | string
+  readonly state: WorkspaceExecState
+  readonly detached: boolean
+  readonly processId: string | null
+  readonly exitCode: number | null
+  readonly signal: string | null
+  readonly error: unknown
+  readonly stdoutCursor: number
+  readonly stderrCursor: number
+  readonly stdinCursor: number
+  readonly stdinClosedAt: string | null
+  readonly createdAt: string
+  readonly startedAt: string | null
+  readonly exitedAt: string | null
+  readonly updatedAt: string
+}
+
+export interface WorkspaceExecHandle {
+  readonly id: string
+  readonly workspaceId: string
+  retrieve(opts?: WorkspaceRetrieveOptions): Promise<WorkspaceExec>
+  readonly stdout: WorkspaceExecReadableStreamApi
+  readonly stderr: WorkspaceExecReadableStreamApi
+  readonly stdin: WorkspaceExecStdinApi
+  wait(opts?: WorkspaceExecWaitOptions): Promise<WorkspaceExec>
+}
+
+export interface WorkspaceExecsApi {
+  retrieve(id: string, opts?: WorkspaceRetrieveOptions): WorkspaceExecHandle
+  list(opts?: WorkspaceExecListOptions): Promise<WorkspaceExec[]>
+}
+
+export interface WorkspaceExecCreateOptions extends WorkspaceRetrieveOptions {
+  readonly cwd?: string
+  readonly env?: Record<string, string>
+  readonly detached?: boolean
+  readonly idempotencyKey?: string
+}
+
+export interface WorkspaceExecListOptions extends WorkspaceRetrieveOptions {
+  readonly state?: WorkspaceExecState
+  readonly limit?: number
+}
+
+export interface WorkspaceExecWaitOptions extends WorkspaceRetrieveOptions {
+  readonly pollIntervalMs?: number
+}
+
+export interface WorkspaceExecReadableStreamApi {
+  list(opts?: WorkspaceStreamListOptions): Promise<WorkspaceStreamChunk[]>
+  stream(opts?: WorkspaceStreamFollowOptions): AsyncIterable<WorkspaceStreamChunk>
+}
+
+export interface WorkspaceExecStdinApi {
+  write(data: string | Uint8Array, opts: WorkspaceStreamWriteOptions): Promise<WorkspaceStreamChunk>
+  close(opts?: WorkspaceRetrieveOptions): Promise<WorkspaceExec>
+}
+
+export type WorkspacePtyState = "creating" | "open" | "resizing" | "closing" | "closed" | "lost" | "failed"
+
+export interface WorkspacePty {
+  readonly id: string
+  readonly workspaceId: string
+  readonly materializationId: string | null
+  readonly cwd: string
+  readonly cols: number
+  readonly rows: number
+  readonly filesystemMode: "read" | "write" | string
+  readonly state: WorkspacePtyState
+  readonly processId: string | null
+  readonly outputCursor: number
+  readonly inputCursor: number
+  readonly error: unknown
+  readonly createdAt: string
+  readonly startedAt: string | null
+  readonly closedAt: string | null
+  readonly updatedAt: string
+}
+
+export interface WorkspacePtyHandle {
+  readonly id: string
+  readonly workspaceId: string
+  retrieve(opts?: WorkspaceRetrieveOptions): Promise<WorkspacePty>
+  readonly output: WorkspacePtyOutputApi
+  input(data: string | Uint8Array, opts: WorkspaceStreamWriteOptions): Promise<WorkspaceStreamChunk>
+  resize(cols: number, rows: number, opts?: WorkspaceRetrieveOptions): Promise<WorkspacePty>
+  close(opts?: WorkspaceRetrieveOptions): Promise<WorkspacePty>
+}
+
+export interface WorkspacePtyApi {
+  create(opts?: WorkspacePtyCreateOptions): Promise<WorkspacePtyHandle>
+  retrieve(id: string, opts?: WorkspaceRetrieveOptions): WorkspacePtyHandle
+  list(opts?: WorkspacePtyListOptions): Promise<WorkspacePty[]>
+}
+
+export interface WorkspacePtyCreateOptions extends WorkspaceRetrieveOptions {
+  readonly cwd?: string
+  readonly cols?: number
+  readonly rows?: number
+  readonly idempotencyKey?: string
+}
+
+export interface WorkspacePtyListOptions extends WorkspaceRetrieveOptions {
+  readonly state?: WorkspacePtyState
+  readonly limit?: number
+}
+
+export interface WorkspacePtyOutputApi {
+  list(opts?: WorkspaceStreamListOptions): Promise<WorkspaceStreamChunk[]>
+  stream(opts?: WorkspaceStreamFollowOptions): AsyncIterable<WorkspaceStreamChunk>
+}
+
+export interface WorkspaceStreamChunk {
+  readonly id: string
+  readonly stream: string
+  readonly offsetStart: number
+  readonly offsetEnd: number
+  readonly data: Uint8Array
+  readonly observedAt: string
+  readonly createdAt: string
+}
+
+export interface WorkspaceStreamListOptions extends WorkspaceRetrieveOptions {
+  readonly cursor?: number
+  readonly limit?: number
+}
+
+export interface WorkspaceStreamFollowOptions extends WorkspaceRetrieveOptions {
+  readonly fromCursor?: number
+  readonly limit?: number
+}
+
+export interface WorkspaceStreamWriteOptions extends WorkspaceRetrieveOptions {
+  readonly offset: number
 }
 
 export interface SchedulesApi {
@@ -809,6 +963,36 @@ export class HelmrClient {
   #openWorkspace(id: string): WorkspaceHandle {
     return {
       id,
+      exec: async (command, opts = {}) => {
+        return await this.#createWorkspaceExec(id, command, opts)
+      },
+      execs: {
+        retrieve: (execId: string): WorkspaceExecHandle => {
+          return this.#openWorkspaceExec(id, execId)
+        },
+        list: async (opts = {}) => {
+          const response = await this.#json<ListWorkspaceExecsResponse>(
+            `${workspaceResourcePath(id, opts)}/execs${workspacePrimitiveListQuery(opts)}`,
+            requestSignal(opts.signal),
+          )
+          return response.execs.map(workspaceExecFromResponse)
+        },
+      },
+      pty: {
+        create: async (opts = {}) => {
+          return await this.#createWorkspacePty(id, opts)
+        },
+        retrieve: (ptyId: string): WorkspacePtyHandle => {
+          return this.#openWorkspacePty(id, ptyId)
+        },
+        list: async (opts = {}) => {
+          const response = await this.#json<ListWorkspacePtySessionsResponse>(
+            `${workspaceResourcePath(id, opts)}/pty${workspacePrimitiveListQuery(opts)}`,
+            requestSignal(opts.signal),
+          )
+          return response.ptys.map(workspacePtyFromResponse)
+        },
+      },
       retrieve: async (opts = {}) => {
         const response = await this.#json<WorkspaceEnvelopeResponse>(
           workspaceResourcePath(id, opts),
@@ -858,6 +1042,178 @@ export class HelmrClient {
       },
     }
   }
+
+  async #createWorkspaceExec(id: string, command: readonly string[], opts: WorkspaceExecCreateOptions): Promise<WorkspaceExecHandle> {
+    const response = await this.#json<WorkspaceExecEnvelopeResponse>(
+      `${workspaceResourcePath(id, opts)}/execs`,
+      {
+        method: "POST",
+        body: JSON.stringify(workspaceExecCreateBody(command, opts)),
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal),
+      },
+    )
+    return this.#openWorkspaceExec(id, response.exec.id)
+  }
+
+  #openWorkspaceExec(workspaceId: string, execId: string): WorkspaceExecHandle {
+    const client = this
+    return {
+      id: execId,
+      workspaceId,
+      retrieve: async (opts = {}) => {
+        const response = await client.#json<WorkspaceExecEnvelopeResponse>(
+          `${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}`,
+          requestSignal(opts.signal),
+        )
+        return workspaceExecFromResponse(response.exec)
+      },
+      stdout: client.#workspaceExecReadableStreamApi(workspaceId, execId, "stdout"),
+      stderr: client.#workspaceExecReadableStreamApi(workspaceId, execId, "stderr"),
+      stdin: {
+        write: async (data, opts) => {
+          const response = await client.#json<WorkspaceExecStreamChunkResponse>(
+            `${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}/stdin`,
+            {
+              method: "POST",
+              body: JSON.stringify(workspaceStreamWriteBody(data, opts)),
+              headers: { "content-type": "application/json" },
+              ...requestSignal(opts.signal),
+            },
+          )
+          return workspaceStreamChunkFromResponse(response)
+        },
+        close: async (opts = {}) => {
+          const response = await client.#json<WorkspaceExecEnvelopeResponse>(
+            `${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}/stdin/close`,
+            {
+              method: "POST",
+              body: "{}",
+              headers: { "content-type": "application/json" },
+              ...requestSignal(opts.signal),
+            },
+          )
+          return workspaceExecFromResponse(response.exec)
+        },
+      },
+      wait: async (opts = {}) => {
+        return await client.#waitWorkspaceExec(workspaceId, execId, opts)
+      },
+    }
+  }
+
+  async #waitWorkspaceExec(workspaceId: string, execId: string, opts: WorkspaceExecWaitOptions): Promise<WorkspaceExec> {
+    const pollIntervalMs = opts.pollIntervalMs ?? 250
+    for (;;) {
+      const response = await this.#json<WorkspaceExecEnvelopeResponse>(
+        `${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}`,
+        requestSignal(opts.signal),
+      )
+      const exec = workspaceExecFromResponse(response.exec)
+      if (workspaceExecTerminal(exec.state)) return exec
+      await delay(pollIntervalMs, opts.signal)
+    }
+  }
+
+  async #createWorkspacePty(id: string, opts: WorkspacePtyCreateOptions): Promise<WorkspacePtyHandle> {
+    const response = await this.#json<WorkspacePtyEnvelopeResponse>(
+      `${workspaceResourcePath(id, opts)}/pty`,
+      {
+        method: "POST",
+        body: JSON.stringify(workspacePtyCreateBody(opts)),
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal),
+      },
+    )
+    return this.#openWorkspacePty(id, response.pty.id)
+  }
+
+  #openWorkspacePty(workspaceId: string, ptyId: string): WorkspacePtyHandle {
+    const client = this
+    return {
+      id: ptyId,
+      workspaceId,
+      retrieve: async (opts = {}) => {
+        const response = await client.#json<WorkspacePtyEnvelopeResponse>(
+          `${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}`,
+          requestSignal(opts.signal),
+        )
+        return workspacePtyFromResponse(response.pty)
+      },
+      output: client.#workspacePtyOutputApi(workspaceId, ptyId),
+      input: async (data, opts) => {
+        const response = await client.#json<WorkspacePtyStreamChunkResponse>(
+          `${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/input`,
+          {
+            method: "POST",
+            body: JSON.stringify(workspaceStreamWriteBody(data, opts)),
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal),
+          },
+        )
+        return workspaceStreamChunkFromResponse(response)
+      },
+      resize: async (cols, rows, opts = {}) => {
+        const response = await client.#json<WorkspacePtyEnvelopeResponse>(
+          `${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/resize`,
+          {
+            method: "POST",
+            body: JSON.stringify({ cols, rows }),
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal),
+          },
+        )
+        return workspacePtyFromResponse(response.pty)
+      },
+      close: async (opts = {}) => {
+        return await client.#requestWorkspacePtyClose(workspaceId, ptyId, opts)
+      },
+    }
+  }
+
+  async #requestWorkspacePtyClose(workspaceId: string, ptyId: string, opts: WorkspaceRetrieveOptions): Promise<WorkspacePty> {
+    const response = await this.#json<WorkspacePtyEnvelopeResponse>(
+      `${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/close`,
+      {
+        method: "POST",
+        body: "{}",
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal),
+      },
+    )
+    return workspacePtyFromResponse(response.pty)
+  }
+
+  #workspaceExecReadableStreamApi(workspaceId: string, execId: string, stream: "stdout" | "stderr"): WorkspaceExecReadableStreamApi {
+    return {
+      list: async (opts = {}) => {
+        const response = await this.#json<ListWorkspaceExecStreamChunksResponse>(
+          `${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}/${stream}${workspaceStreamListQuery(opts)}`,
+          requestSignal(opts.signal),
+        )
+        return response.chunks.map(workspaceStreamChunkFromResponse)
+      },
+      stream: (opts = {}) => this.#unsupportedWorkspaceStreamFollow(opts),
+    }
+  }
+
+  #workspacePtyOutputApi(workspaceId: string, ptyId: string): WorkspacePtyOutputApi {
+    return {
+      list: async (opts = {}) => {
+        const response = await this.#json<ListWorkspacePtyStreamChunksResponse>(
+          `${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/output${workspaceStreamListQuery(opts)}`,
+          requestSignal(opts.signal),
+        )
+        return response.chunks.map(workspaceStreamChunkFromResponse)
+      },
+      stream: (opts = {}) => this.#unsupportedWorkspaceStreamFollow(opts),
+    }
+  }
+
+  async *#unsupportedWorkspaceStreamFollow(_opts: WorkspaceStreamFollowOptions): AsyncIterable<WorkspaceStreamChunk> {
+    throw new Error("workspace_stream_follow_unsupported")
+  }
+
 
   #openSession<TOutput = unknown>(id: string): OpenTaskSessionApi<TOutput> {
     return {
@@ -1624,6 +1980,94 @@ interface WorkspaceMaterializationResponse {
   readonly updated_at: string
 }
 
+interface WorkspaceExecResponse {
+  readonly id: string
+  readonly workspace_id: string
+  readonly materialization_id?: string | null
+  readonly command: readonly string[]
+  readonly cwd: string
+  readonly env_shape?: Record<string, string>
+  readonly filesystem_mode: string
+  readonly state: WorkspaceExecState
+  readonly detached: boolean
+  readonly process_id?: string | null
+  readonly exit_code?: number | null
+  readonly signal?: string | null
+  readonly error?: unknown
+  readonly stdout_cursor: number
+  readonly stderr_cursor: number
+  readonly stdin_cursor: number
+  readonly stdin_closed_at?: string | null
+  readonly created_at: string
+  readonly started_at?: string | null
+  readonly exited_at?: string | null
+  readonly updated_at: string
+}
+
+interface WorkspaceExecEnvelopeResponse {
+  readonly exec: WorkspaceExecResponse
+  readonly is_cached?: boolean
+}
+
+interface ListWorkspaceExecsResponse {
+  readonly execs: readonly WorkspaceExecResponse[]
+}
+
+interface WorkspacePtyResponse {
+  readonly id: string
+  readonly workspace_id: string
+  readonly materialization_id?: string | null
+  readonly cwd: string
+  readonly cols: number
+  readonly rows: number
+  readonly filesystem_mode: string
+  readonly state: WorkspacePtyState
+  readonly process_id?: string | null
+  readonly output_cursor: number
+  readonly input_cursor: number
+  readonly error?: unknown
+  readonly created_at: string
+  readonly started_at?: string | null
+  readonly closed_at?: string | null
+  readonly updated_at: string
+}
+
+interface WorkspacePtyEnvelopeResponse {
+  readonly pty: WorkspacePtyResponse
+}
+
+interface ListWorkspacePtySessionsResponse {
+  readonly ptys: readonly WorkspacePtyResponse[]
+}
+
+interface WorkspaceExecStreamChunkResponse {
+  readonly id: string
+  readonly stream: string
+  readonly offset_start: number
+  readonly offset_end: number
+  readonly data: string
+  readonly observed_at: string
+  readonly created_at: string
+}
+
+interface WorkspacePtyStreamChunkResponse {
+  readonly id: string
+  readonly stream: string
+  readonly offset_start: number
+  readonly offset_end: number
+  readonly data: string
+  readonly observed_at: string
+  readonly created_at: string
+}
+
+interface ListWorkspaceExecStreamChunksResponse {
+  readonly chunks: readonly WorkspaceExecStreamChunkResponse[]
+}
+
+interface ListWorkspacePtyStreamChunksResponse {
+  readonly chunks: readonly WorkspacePtyStreamChunkResponse[]
+}
+
 interface ListRunWaitpointsResponse {
   readonly waitpoints: readonly PendingWaitpointResponse[]
   readonly next_cursor?: string | null
@@ -1905,6 +2349,38 @@ function workspaceMaterializeBody(opts: WorkspaceMaterializeOptions): Record<str
   }
 }
 
+function workspaceExecCreateBody(command: readonly string[], opts: WorkspaceExecCreateOptions): Record<string, unknown> {
+  if (command.length === 0) {
+    throw new Error("workspace.exec command must not be empty")
+  }
+  return {
+    command: [...command],
+    ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
+    ...(opts.env === undefined ? {} : { env: opts.env }),
+    ...(opts.detached === undefined ? {} : { detached: opts.detached }),
+    ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
+  }
+}
+
+function workspacePtyCreateBody(opts: WorkspacePtyCreateOptions): Record<string, unknown> {
+  return {
+    ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
+    ...(opts.cols === undefined ? {} : { cols: opts.cols }),
+    ...(opts.rows === undefined ? {} : { rows: opts.rows }),
+    ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
+  }
+}
+
+function workspaceStreamWriteBody(data: string | Uint8Array, opts: WorkspaceStreamWriteOptions): Record<string, unknown> {
+  if (opts.offset < 0 || !Number.isSafeInteger(opts.offset)) {
+    throw new Error("workspace stream offset must be a non-negative integer")
+  }
+  return {
+    offset: opts.offset,
+    data: base64Encode(data),
+  }
+}
+
 function workspaceListQuery(opts: WorkspaceListOptions): string {
   const query = new URLSearchParams()
   if (opts.projectId !== undefined) query.set("project_id", opts.projectId)
@@ -1912,6 +2388,20 @@ function workspaceListQuery(opts: WorkspaceListOptions): string {
   if (opts.state !== undefined) query.set("state", opts.state)
   if (opts.externalId !== undefined) query.set("external_id", opts.externalId)
   if (opts.tag !== undefined) query.set("tag", opts.tag)
+  if (opts.limit !== undefined) query.set("limit", String(opts.limit))
+  return query.size === 0 ? "" : `?${query}`
+}
+
+function workspacePrimitiveListQuery(opts: WorkspaceExecListOptions | WorkspacePtyListOptions): string {
+  const query = new URLSearchParams()
+  if (opts.state !== undefined) query.set("state", opts.state)
+  if (opts.limit !== undefined) query.set("limit", String(opts.limit))
+  return query.size === 0 ? "" : `?${query}`
+}
+
+function workspaceStreamListQuery(opts: WorkspaceStreamListOptions): string {
+  const query = new URLSearchParams()
+  if (opts.cursor !== undefined) query.set("cursor", String(opts.cursor))
   if (opts.limit !== undefined) query.set("limit", String(opts.limit))
   return query.size === 0 ? "" : `?${query}`
 }
@@ -1960,6 +2450,69 @@ function workspaceMaterializationFromResponse(response: WorkspaceMaterialization
     createdAt: response.created_at,
     updatedAt: response.updated_at,
   }
+}
+
+function workspaceExecFromResponse(response: WorkspaceExecResponse): WorkspaceExec {
+  return {
+    id: response.id,
+    workspaceId: response.workspace_id,
+    materializationId: response.materialization_id ?? null,
+    command: response.command,
+    cwd: response.cwd,
+    envShape: response.env_shape ?? {},
+    filesystemMode: response.filesystem_mode,
+    state: response.state,
+    detached: response.detached,
+    processId: response.process_id ?? null,
+    exitCode: response.exit_code ?? null,
+    signal: response.signal ?? null,
+    error: response.error ?? {},
+    stdoutCursor: response.stdout_cursor,
+    stderrCursor: response.stderr_cursor,
+    stdinCursor: response.stdin_cursor,
+    stdinClosedAt: response.stdin_closed_at ?? null,
+    createdAt: response.created_at,
+    startedAt: response.started_at ?? null,
+    exitedAt: response.exited_at ?? null,
+    updatedAt: response.updated_at,
+  }
+}
+
+function workspacePtyFromResponse(response: WorkspacePtyResponse): WorkspacePty {
+  return {
+    id: response.id,
+    workspaceId: response.workspace_id,
+    materializationId: response.materialization_id ?? null,
+    cwd: response.cwd,
+    cols: response.cols,
+    rows: response.rows,
+    filesystemMode: response.filesystem_mode,
+    state: response.state,
+    processId: response.process_id ?? null,
+    outputCursor: response.output_cursor,
+    inputCursor: response.input_cursor,
+    error: response.error ?? {},
+    createdAt: response.created_at,
+    startedAt: response.started_at ?? null,
+    closedAt: response.closed_at ?? null,
+    updatedAt: response.updated_at,
+  }
+}
+
+function workspaceStreamChunkFromResponse(response: WorkspaceExecStreamChunkResponse | WorkspacePtyStreamChunkResponse): WorkspaceStreamChunk {
+  return {
+    id: response.id,
+    stream: response.stream,
+    offsetStart: response.offset_start,
+    offsetEnd: response.offset_end,
+    data: base64Decode(response.data),
+    observedAt: response.observed_at,
+    createdAt: response.created_at,
+  }
+}
+
+function workspaceExecTerminal(state: WorkspaceExecState): boolean {
+  return state === "exited" || state === "lost" || state === "failed"
 }
 
 function scheduleFromResponse(response: ScheduleResponse): Schedule {
@@ -2060,6 +2613,30 @@ function retrieveOptions(signal: AbortSignal | undefined): RetrieveRunOptions {
 
 function requestSignal(signal: AbortSignal | undefined): RequestInit {
   return signal === undefined ? {} : { signal }
+}
+
+function base64Encode(data: string | Uint8Array): string {
+  const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(bytes).toString("base64")
+  }
+  let binary = ""
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+  return btoa(binary)
+}
+
+function base64Decode(data: string): Uint8Array {
+  if (typeof Buffer !== "undefined") {
+    return new Uint8Array(Buffer.from(data, "base64"))
+  }
+  const binary = atob(data)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return bytes
 }
 
 function waitSignal(

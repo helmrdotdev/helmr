@@ -38,7 +38,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"compute":            {"sha256sum"},
 		"config":             {"auth"},
 		"console":            {},
-		"control":            {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "pgvalue", "publicaccess", "schedule", "secret", "sha256sum", "tracing", "waitpoint", "workspace"},
+		"control":            {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "pgvalue", "publicaccess", "schedule", "secret", "sha256sum", "tracing", "waitpoint", "workspace", "workspaceop"},
 		"db":                 {},
 		"db/dbtest":          {},
 		"db/schema":          {},
@@ -48,7 +48,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"email":              {},
 		"executor":           {"api", "archive", "builder", "cas", "checkpoint", "compute", "proto/bundle/v0", "proto/run/v0", "proto/workspace/v0", "sha256sum", "task", "transport", "vm", "workspace"},
 		"firecracker":        {"cas", "compute", "sha256sum", "vm"},
-		"guestd":             {"archive", "proto/run/v0", "proto/workspace/v0", "safepath", "sha256sum", "transport", "workspace"},
+		"guestd":             {"archive", "proto/run/v0", "proto/workspace/v0", "safepath", "sha256sum", "transport", "workspace", "workspaceop"},
 		"pgvalue":            {},
 		"proto/bundle/v0":    {},
 		"proto/run/v0":       {},
@@ -67,6 +67,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"waitpoint":          {"auth"},
 		"worker":             {"api", "client", "compute"},
 		"workspace":          {"archive", "safepath"},
+		"workspaceop":        {},
 	}
 	normalizeGraph(expected)
 

@@ -166,6 +166,15 @@ UNION ALL
 SELECT * FROM inserted
 LIMIT 1;
 
+-- name: GetWorkspaceMaterialization :one
+SELECT *
+  FROM workspace_materializations
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND id = sqlc.arg(id);
+
 -- name: GetWorkspaceMaterializationPrerequisites :one
 SELECT workspaces.id AS workspace_id,
        workspaces.current_version_id,
@@ -362,6 +371,50 @@ lost_operations AS (
        AND workspace_materialization_operations.materialization_id = stopped.id
        AND workspace_materialization_operations.state IN ('queued', 'claimed', 'running')
     RETURNING workspace_materialization_operations.id
+),
+lost_execs AS (
+    UPDATE workspace_execs
+       SET state = 'lost',
+           error = jsonb_build_object('code', 'workspace_materialization_stopped'),
+           exited_at = coalesce(exited_at, now()),
+           updated_at = now()
+      FROM stopped
+     WHERE workspace_execs.org_id = stopped.org_id
+       AND workspace_execs.project_id = stopped.project_id
+       AND workspace_execs.environment_id = stopped.environment_id
+       AND workspace_execs.workspace_id = stopped.workspace_id
+       AND workspace_execs.materialization_id = stopped.id
+       AND workspace_execs.state IN ('queued', 'materializing', 'running')
+    RETURNING workspace_execs.id
+),
+lost_ptys AS (
+    UPDATE workspace_pty_sessions
+       SET state = 'lost',
+           error = jsonb_build_object('code', 'workspace_materialization_stopped'),
+           closed_at = coalesce(closed_at, now()),
+           updated_at = now()
+      FROM stopped
+     WHERE workspace_pty_sessions.org_id = stopped.org_id
+       AND workspace_pty_sessions.project_id = stopped.project_id
+       AND workspace_pty_sessions.environment_id = stopped.environment_id
+       AND workspace_pty_sessions.workspace_id = stopped.workspace_id
+       AND workspace_pty_sessions.materialization_id = stopped.id
+       AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
+    RETURNING workspace_pty_sessions.id
+),
+released_leases AS (
+    UPDATE workspace_leases
+       SET state = 'released',
+           released_at = coalesce(released_at, now()),
+           updated_at = now()
+      FROM stopped
+     WHERE workspace_leases.org_id = stopped.org_id
+       AND workspace_leases.project_id = stopped.project_id
+       AND workspace_leases.environment_id = stopped.environment_id
+       AND workspace_leases.workspace_id = stopped.workspace_id
+       AND workspace_leases.materialization_id = stopped.id
+       AND workspace_leases.state IN ('active', 'releasing')
+    RETURNING workspace_leases.id
 )
 SELECT * FROM stopped;
 
@@ -409,6 +462,50 @@ lost_operations AS (
        AND workspace_materialization_operations.materialization_id = failed.id
        AND workspace_materialization_operations.state IN ('queued', 'claimed', 'running')
     RETURNING workspace_materialization_operations.id
+),
+lost_execs AS (
+    UPDATE workspace_execs
+       SET state = 'lost',
+           error = jsonb_build_object('code', 'workspace_materialization_failed'),
+           exited_at = coalesce(exited_at, now()),
+           updated_at = now()
+      FROM failed
+     WHERE workspace_execs.org_id = failed.org_id
+       AND workspace_execs.project_id = failed.project_id
+       AND workspace_execs.environment_id = failed.environment_id
+       AND workspace_execs.workspace_id = failed.workspace_id
+       AND workspace_execs.materialization_id = failed.id
+       AND workspace_execs.state IN ('queued', 'materializing', 'running')
+    RETURNING workspace_execs.id
+),
+lost_ptys AS (
+    UPDATE workspace_pty_sessions
+       SET state = 'lost',
+           error = jsonb_build_object('code', 'workspace_materialization_failed'),
+           closed_at = coalesce(closed_at, now()),
+           updated_at = now()
+      FROM failed
+     WHERE workspace_pty_sessions.org_id = failed.org_id
+       AND workspace_pty_sessions.project_id = failed.project_id
+       AND workspace_pty_sessions.environment_id = failed.environment_id
+       AND workspace_pty_sessions.workspace_id = failed.workspace_id
+       AND workspace_pty_sessions.materialization_id = failed.id
+       AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
+    RETURNING workspace_pty_sessions.id
+),
+released_leases AS (
+    UPDATE workspace_leases
+       SET state = 'released',
+           released_at = coalesce(released_at, now()),
+           updated_at = now()
+      FROM failed
+     WHERE workspace_leases.org_id = failed.org_id
+       AND workspace_leases.project_id = failed.project_id
+       AND workspace_leases.environment_id = failed.environment_id
+       AND workspace_leases.workspace_id = failed.workspace_id
+       AND workspace_leases.materialization_id = failed.id
+       AND workspace_leases.state IN ('active', 'releasing')
+    RETURNING workspace_leases.id
 )
 SELECT * FROM failed;
 
@@ -448,5 +545,49 @@ lost_operations AS (
        AND workspace_materialization_operations.materialization_id = lost.id
        AND workspace_materialization_operations.state IN ('queued', 'claimed', 'running')
     RETURNING workspace_materialization_operations.id
+),
+lost_execs AS (
+    UPDATE workspace_execs
+       SET state = 'lost',
+           error = jsonb_build_object('code', 'workspace_materialization_lost'),
+           exited_at = coalesce(exited_at, now()),
+           updated_at = now()
+      FROM lost
+     WHERE workspace_execs.org_id = lost.org_id
+       AND workspace_execs.project_id = lost.project_id
+       AND workspace_execs.environment_id = lost.environment_id
+       AND workspace_execs.workspace_id = lost.workspace_id
+       AND workspace_execs.materialization_id = lost.id
+       AND workspace_execs.state IN ('queued', 'materializing', 'running')
+    RETURNING workspace_execs.id
+),
+lost_ptys AS (
+    UPDATE workspace_pty_sessions
+       SET state = 'lost',
+           error = jsonb_build_object('code', 'workspace_materialization_lost'),
+           closed_at = coalesce(closed_at, now()),
+           updated_at = now()
+      FROM lost
+     WHERE workspace_pty_sessions.org_id = lost.org_id
+       AND workspace_pty_sessions.project_id = lost.project_id
+       AND workspace_pty_sessions.environment_id = lost.environment_id
+       AND workspace_pty_sessions.workspace_id = lost.workspace_id
+       AND workspace_pty_sessions.materialization_id = lost.id
+       AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
+    RETURNING workspace_pty_sessions.id
+),
+released_leases AS (
+    UPDATE workspace_leases
+       SET state = 'released',
+           released_at = coalesce(released_at, now()),
+           updated_at = now()
+      FROM lost
+     WHERE workspace_leases.org_id = lost.org_id
+       AND workspace_leases.project_id = lost.project_id
+       AND workspace_leases.environment_id = lost.environment_id
+       AND workspace_leases.workspace_id = lost.workspace_id
+       AND workspace_leases.materialization_id = lost.id
+       AND workspace_leases.state IN ('active', 'releasing')
+    RETURNING workspace_leases.id
 )
 SELECT * FROM lost;

@@ -614,6 +614,50 @@ lost_operations AS (
        AND workspace_materialization_operations.materialization_id = failed.id
        AND workspace_materialization_operations.state IN ('queued', 'claimed', 'running')
     RETURNING workspace_materialization_operations.id
+),
+lost_execs AS (
+    UPDATE workspace_execs
+       SET state = 'lost',
+           error = jsonb_build_object('code', 'workspace_materialization_failed'),
+           exited_at = coalesce(exited_at, now()),
+           updated_at = now()
+      FROM failed
+     WHERE workspace_execs.org_id = failed.org_id
+       AND workspace_execs.project_id = failed.project_id
+       AND workspace_execs.environment_id = failed.environment_id
+       AND workspace_execs.workspace_id = failed.workspace_id
+       AND workspace_execs.materialization_id = failed.id
+       AND workspace_execs.state IN ('queued', 'materializing', 'running')
+    RETURNING workspace_execs.id
+),
+lost_ptys AS (
+    UPDATE workspace_pty_sessions
+       SET state = 'lost',
+           error = jsonb_build_object('code', 'workspace_materialization_failed'),
+           closed_at = coalesce(closed_at, now()),
+           updated_at = now()
+      FROM failed
+     WHERE workspace_pty_sessions.org_id = failed.org_id
+       AND workspace_pty_sessions.project_id = failed.project_id
+       AND workspace_pty_sessions.environment_id = failed.environment_id
+       AND workspace_pty_sessions.workspace_id = failed.workspace_id
+       AND workspace_pty_sessions.materialization_id = failed.id
+       AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
+    RETURNING workspace_pty_sessions.id
+),
+released_leases AS (
+    UPDATE workspace_leases
+       SET state = 'released',
+           released_at = coalesce(released_at, now()),
+           updated_at = now()
+      FROM failed
+     WHERE workspace_leases.org_id = failed.org_id
+       AND workspace_leases.project_id = failed.project_id
+       AND workspace_leases.environment_id = failed.environment_id
+       AND workspace_leases.workspace_id = failed.workspace_id
+       AND workspace_leases.materialization_id = failed.id
+       AND workspace_leases.state IN ('active', 'releasing')
+    RETURNING workspace_leases.id
 )
 SELECT id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, worker_instance_id, reservation_token, reservation_expires_at, claim_attempt, dead_lettered_at, priority, requested_cpu_millis, requested_memory_mib, requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots, capacity_reservation_id, guestd_channel_token_hash, guestd_channel_token_expires_at, runtime_id, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, materialized_at, stopped_at, lost_at, failed_at, error, created_at, updated_at FROM failed
 `
@@ -695,6 +739,95 @@ func (q *Queries) FailWorkspaceMaterialization(ctx context.Context, arg FailWork
 		arg.Error,
 	)
 	var i FailWorkspaceMaterializationRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.DeploymentSandboxID,
+		&i.SandboxFingerprint,
+		&i.BaseVersionID,
+		&i.WorkerInstanceID,
+		&i.ReservationToken,
+		&i.ReservationExpiresAt,
+		&i.ClaimAttempt,
+		&i.DeadLetteredAt,
+		&i.Priority,
+		&i.RequestedCpuMillis,
+		&i.RequestedMemoryMib,
+		&i.RequestedDiskMib,
+		&i.RequestedExecutionSlots,
+		&i.ReservedCpuMillis,
+		&i.ReservedMemoryMib,
+		&i.ReservedDiskMib,
+		&i.ReservedExecutionSlots,
+		&i.CapacityReservationID,
+		&i.GuestdChannelTokenHash,
+		&i.GuestdChannelTokenExpiresAt,
+		&i.RuntimeID,
+		&i.State,
+		&i.Request,
+		&i.LeaseGeneration,
+		&i.DirtyGeneration,
+		&i.FencingGeneration,
+		&i.NetworkNamespace,
+		&i.PortNamespace,
+		&i.ImageArtifactID,
+		&i.ImageArtifactFormat,
+		&i.RootfsDigest,
+		&i.ImageDigest,
+		&i.ImageFormat,
+		&i.WorkspaceArtifactID,
+		&i.WorkspaceArtifactEncoding,
+		&i.WorkspaceArtifactEntryCount,
+		&i.WorkspaceArtifactDigest,
+		&i.WorkspaceArtifactSizeBytes,
+		&i.WorkspaceArtifactMediaType,
+		&i.WorkspaceMountPath,
+		&i.RuntimeABI,
+		&i.GuestdAbi,
+		&i.AdapterAbi,
+		&i.LastHeartbeatAt,
+		&i.RequestedAt,
+		&i.MaterializedAt,
+		&i.StoppedAt,
+		&i.LostAt,
+		&i.FailedAt,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getWorkspaceMaterialization = `-- name: GetWorkspaceMaterialization :one
+SELECT id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, worker_instance_id, reservation_token, reservation_expires_at, claim_attempt, dead_lettered_at, priority, requested_cpu_millis, requested_memory_mib, requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots, capacity_reservation_id, guestd_channel_token_hash, guestd_channel_token_expires_at, runtime_id, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, materialized_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
+  FROM workspace_materializations
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND workspace_id = $4
+   AND id = $5
+`
+
+type GetWorkspaceMaterializationParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetWorkspaceMaterialization(ctx context.Context, arg GetWorkspaceMaterializationParams) (WorkspaceMaterialization, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceMaterialization,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.ID,
+	)
+	var i WorkspaceMaterialization
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -902,6 +1035,50 @@ lost_operations AS (
        AND workspace_materialization_operations.materialization_id = lost.id
        AND workspace_materialization_operations.state IN ('queued', 'claimed', 'running')
     RETURNING workspace_materialization_operations.id
+),
+lost_execs AS (
+    UPDATE workspace_execs
+       SET state = 'lost',
+           error = jsonb_build_object('code', 'workspace_materialization_lost'),
+           exited_at = coalesce(exited_at, now()),
+           updated_at = now()
+      FROM lost
+     WHERE workspace_execs.org_id = lost.org_id
+       AND workspace_execs.project_id = lost.project_id
+       AND workspace_execs.environment_id = lost.environment_id
+       AND workspace_execs.workspace_id = lost.workspace_id
+       AND workspace_execs.materialization_id = lost.id
+       AND workspace_execs.state IN ('queued', 'materializing', 'running')
+    RETURNING workspace_execs.id
+),
+lost_ptys AS (
+    UPDATE workspace_pty_sessions
+       SET state = 'lost',
+           error = jsonb_build_object('code', 'workspace_materialization_lost'),
+           closed_at = coalesce(closed_at, now()),
+           updated_at = now()
+      FROM lost
+     WHERE workspace_pty_sessions.org_id = lost.org_id
+       AND workspace_pty_sessions.project_id = lost.project_id
+       AND workspace_pty_sessions.environment_id = lost.environment_id
+       AND workspace_pty_sessions.workspace_id = lost.workspace_id
+       AND workspace_pty_sessions.materialization_id = lost.id
+       AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
+    RETURNING workspace_pty_sessions.id
+),
+released_leases AS (
+    UPDATE workspace_leases
+       SET state = 'released',
+           released_at = coalesce(released_at, now()),
+           updated_at = now()
+      FROM lost
+     WHERE workspace_leases.org_id = lost.org_id
+       AND workspace_leases.project_id = lost.project_id
+       AND workspace_leases.environment_id = lost.environment_id
+       AND workspace_leases.workspace_id = lost.workspace_id
+       AND workspace_leases.materialization_id = lost.id
+       AND workspace_leases.state IN ('active', 'releasing')
+    RETURNING workspace_leases.id
 )
 SELECT id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, worker_instance_id, reservation_token, reservation_expires_at, claim_attempt, dead_lettered_at, priority, requested_cpu_millis, requested_memory_mib, requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots, capacity_reservation_id, guestd_channel_token_hash, guestd_channel_token_expires_at, runtime_id, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, materialized_at, stopped_at, lost_at, failed_at, error, created_at, updated_at FROM lost
 `
@@ -1264,6 +1441,50 @@ lost_operations AS (
        AND workspace_materialization_operations.materialization_id = stopped.id
        AND workspace_materialization_operations.state IN ('queued', 'claimed', 'running')
     RETURNING workspace_materialization_operations.id
+),
+lost_execs AS (
+    UPDATE workspace_execs
+       SET state = 'lost',
+           error = jsonb_build_object('code', 'workspace_materialization_stopped'),
+           exited_at = coalesce(exited_at, now()),
+           updated_at = now()
+      FROM stopped
+     WHERE workspace_execs.org_id = stopped.org_id
+       AND workspace_execs.project_id = stopped.project_id
+       AND workspace_execs.environment_id = stopped.environment_id
+       AND workspace_execs.workspace_id = stopped.workspace_id
+       AND workspace_execs.materialization_id = stopped.id
+       AND workspace_execs.state IN ('queued', 'materializing', 'running')
+    RETURNING workspace_execs.id
+),
+lost_ptys AS (
+    UPDATE workspace_pty_sessions
+       SET state = 'lost',
+           error = jsonb_build_object('code', 'workspace_materialization_stopped'),
+           closed_at = coalesce(closed_at, now()),
+           updated_at = now()
+      FROM stopped
+     WHERE workspace_pty_sessions.org_id = stopped.org_id
+       AND workspace_pty_sessions.project_id = stopped.project_id
+       AND workspace_pty_sessions.environment_id = stopped.environment_id
+       AND workspace_pty_sessions.workspace_id = stopped.workspace_id
+       AND workspace_pty_sessions.materialization_id = stopped.id
+       AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
+    RETURNING workspace_pty_sessions.id
+),
+released_leases AS (
+    UPDATE workspace_leases
+       SET state = 'released',
+           released_at = coalesce(released_at, now()),
+           updated_at = now()
+      FROM stopped
+     WHERE workspace_leases.org_id = stopped.org_id
+       AND workspace_leases.project_id = stopped.project_id
+       AND workspace_leases.environment_id = stopped.environment_id
+       AND workspace_leases.workspace_id = stopped.workspace_id
+       AND workspace_leases.materialization_id = stopped.id
+       AND workspace_leases.state IN ('active', 'releasing')
+    RETURNING workspace_leases.id
 )
 SELECT id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, worker_instance_id, reservation_token, reservation_expires_at, claim_attempt, dead_lettered_at, priority, requested_cpu_millis, requested_memory_mib, requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots, capacity_reservation_id, guestd_channel_token_hash, guestd_channel_token_expires_at, runtime_id, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, materialized_at, stopped_at, lost_at, failed_at, error, created_at, updated_at FROM stopped
 `

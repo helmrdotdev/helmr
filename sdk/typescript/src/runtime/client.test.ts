@@ -277,6 +277,116 @@ test("workspaces create list update materialize and connect use workspace routes
   ])
 })
 
+test("workspace exec handle uses direct workspace exec routes", async () => {
+  const requests: Array<{ url: string; method: string; body: unknown }> = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    const method = init?.method ?? "GET"
+    const body = init?.body === undefined ? undefined : JSON.parse(String(init.body))
+    requests.push({ url, method, body })
+    if (url.endsWith("/stdout?cursor=0&limit=10")) {
+      return Response.json({ chunks: [workspaceStreamChunkFixture({ data: Buffer.from("ok\n").toString("base64") })] })
+    }
+    if (url.endsWith("/stdin")) {
+      return Response.json(workspaceStreamChunkFixture({ stream: "stdin", data: body.data }))
+    }
+    if (url.endsWith("/stdin/close")) {
+      return Response.json({ exec: workspaceExecFixture({ stdin_closed_at: "2026-04-20T00:01:00Z" }) })
+    }
+    if (url.endsWith("/execs") || url.includes("/execs?")) {
+      return method === "GET"
+        ? Response.json({ execs: [workspaceExecFixture({ state: "running" })] })
+        : Response.json({ exec: workspaceExecFixture({ state: "queued" }) }, { status: 201 })
+    }
+    return Response.json({ exec: workspaceExecFixture({ state: "running" }) })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const handle = await client.workspaces.open("workspace-1").exec(["bash", "-lc", "echo ok"], {
+    cwd: "/workspace",
+    env: { NODE_ENV: "test" },
+    detached: true,
+    idempotencyKey: "exec-key",
+  })
+  const listed = await client.workspaces.open("workspace-1").execs.list({ state: "running", limit: 5 })
+  const stdout = await handle.stdout.list({ cursor: 0, limit: 10 })
+  const stdin = await handle.stdin.write("input\n", { offset: 0 })
+  await handle.stdin.close()
+
+  expect(handle.id).toBe("exec-1")
+  expect(listed[0]?.state).toBe("running")
+  expect(new TextDecoder().decode(stdout[0]?.data)).toBe("ok\n")
+  expect(new TextDecoder().decode(stdin.data)).toBe("input\n")
+  expect(requests.map((request) => [request.method, request.url, request.body])).toEqual([
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/execs", {
+      command: ["bash", "-lc", "echo ok"],
+      cwd: "/workspace",
+      detached: true,
+      env: { NODE_ENV: "test" },
+      idempotency_key: "exec-key",
+    }],
+    ["GET", "https://api.example.test/api/workspaces/workspace-1/execs?state=running&limit=5", undefined],
+    ["GET", "https://api.example.test/api/workspaces/workspace-1/execs/exec-1/stdout?cursor=0&limit=10", undefined],
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/execs/exec-1/stdin", {
+      data: Buffer.from("input\n").toString("base64"),
+      offset: 0,
+    }],
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/execs/exec-1/stdin/close", {}],
+  ])
+})
+
+test("workspace pty handle uses direct workspace pty routes", async () => {
+  const requests: Array<{ url: string; method: string; body: unknown }> = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    const method = init?.method ?? "GET"
+    const body = init?.body === undefined ? undefined : JSON.parse(String(init.body))
+    requests.push({ url, method, body })
+    if (url.endsWith("/output?cursor=2")) {
+      return Response.json({ chunks: [workspaceStreamChunkFixture({ stream: "output", offset_start: 2, offset_end: 4, data: Buffer.from("$ ").toString("base64") })] })
+    }
+    if (url.endsWith("/input")) {
+      return Response.json(workspaceStreamChunkFixture({ stream: "input", data: body.data }))
+    }
+    if (url.endsWith("/resize")) {
+      return Response.json({ pty: workspacePtyFixture({ cols: 100, rows: 40, state: "resizing" }) })
+    }
+    if (url.endsWith("/close")) {
+      return Response.json({ pty: workspacePtyFixture({ state: "closing" }) })
+    }
+    if (url.endsWith("/pty") || url.includes("/pty?")) {
+      return method === "GET"
+        ? Response.json({ ptys: [workspacePtyFixture({ state: "open" })] })
+        : Response.json({ pty: workspacePtyFixture({ state: "creating" }) }, { status: 201 })
+    }
+    return Response.json({ pty: workspacePtyFixture({ state: "open" }) })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const handle = await client.workspaces.open("workspace-1").pty.create({ cwd: "/workspace", cols: 80, rows: 24, idempotencyKey: "pty-key" })
+  const listed = await client.workspaces.open("workspace-1").pty.list({ state: "open" })
+  const output = await handle.output.list({ cursor: 2 })
+  const input = await handle.input("ls\n", { offset: 0 })
+  await handle.resize(100, 40)
+  await handle.close()
+
+  expect(handle.id).toBe("pty-1")
+  expect(listed[0]?.state).toBe("open")
+  expect(new TextDecoder().decode(output[0]?.data)).toBe("$ ")
+  expect(new TextDecoder().decode(input.data)).toBe("ls\n")
+  expect(requests.map((request) => [request.method, request.url, request.body])).toEqual([
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/pty", { cols: 80, cwd: "/workspace", idempotency_key: "pty-key", rows: 24 }],
+    ["GET", "https://api.example.test/api/workspaces/workspace-1/pty?state=open", undefined],
+    ["GET", "https://api.example.test/api/workspaces/workspace-1/pty/pty-1/output?cursor=2", undefined],
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/pty/pty-1/input", {
+      data: Buffer.from("ls\n").toString("base64"),
+      offset: 0,
+    }],
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/pty/pty-1/resize", { cols: 100, rows: 40 }],
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/pty/pty-1/close", {}],
+  ])
+})
+
 test("http transport is explicit and warns, including localhost", async () => {
   const warnings: unknown[][] = []
   console.warn = (...args: unknown[]) => warnings.push(args)
@@ -2341,6 +2451,115 @@ function workspaceMaterializationFixture(overrides: Partial<{
     last_heartbeat_at: null,
     created_at: "2026-04-20T00:00:00Z",
     updated_at: "2026-04-20T00:00:00Z",
+    ...overrides,
+  }
+}
+
+function workspaceExecFixture(overrides: Partial<{
+  readonly id: string
+  readonly workspace_id: string
+  readonly materialization_id: string | null
+  readonly command: readonly string[]
+  readonly cwd: string
+  readonly env_shape: Record<string, string>
+  readonly filesystem_mode: string
+  readonly state: string
+  readonly detached: boolean
+  readonly process_id: string | null
+  readonly exit_code: number | null
+  readonly signal: string | null
+  readonly error: unknown
+  readonly stdout_cursor: number
+  readonly stderr_cursor: number
+  readonly stdin_cursor: number
+  readonly stdin_closed_at: string | null
+  readonly created_at: string
+  readonly started_at: string | null
+  readonly exited_at: string | null
+  readonly updated_at: string
+}> = {}) {
+  return {
+    id: "exec-1",
+    workspace_id: "workspace-1",
+    materialization_id: "materialization-1",
+    command: ["bash", "-lc", "echo ok"],
+    cwd: "/workspace",
+    env_shape: {},
+    filesystem_mode: "write",
+    state: "queued",
+    detached: false,
+    process_id: null,
+    exit_code: null,
+    signal: null,
+    error: {},
+    stdout_cursor: 0,
+    stderr_cursor: 0,
+    stdin_cursor: 0,
+    stdin_closed_at: null,
+    created_at: "2026-04-20T00:00:00Z",
+    started_at: null,
+    exited_at: null,
+    updated_at: "2026-04-20T00:00:00Z",
+    ...overrides,
+  }
+}
+
+function workspacePtyFixture(overrides: Partial<{
+  readonly id: string
+  readonly workspace_id: string
+  readonly materialization_id: string | null
+  readonly cwd: string
+  readonly cols: number
+  readonly rows: number
+  readonly filesystem_mode: string
+  readonly state: string
+  readonly process_id: string | null
+  readonly output_cursor: number
+  readonly input_cursor: number
+  readonly error: unknown
+  readonly created_at: string
+  readonly started_at: string | null
+  readonly closed_at: string | null
+  readonly updated_at: string
+}> = {}) {
+  return {
+    id: "pty-1",
+    workspace_id: "workspace-1",
+    materialization_id: "materialization-1",
+    cwd: "/workspace",
+    cols: 80,
+    rows: 24,
+    filesystem_mode: "write",
+    state: "creating",
+    process_id: null,
+    output_cursor: 0,
+    input_cursor: 0,
+    error: {},
+    created_at: "2026-04-20T00:00:00Z",
+    started_at: null,
+    closed_at: null,
+    updated_at: "2026-04-20T00:00:00Z",
+    ...overrides,
+  }
+}
+
+function workspaceStreamChunkFixture(overrides: Partial<{
+  readonly id: string
+  readonly stream: string
+  readonly offset_start: number
+  readonly offset_end: number
+  readonly data: string
+  readonly observed_at: string
+  readonly created_at: string
+}> = {}) {
+  return {
+    id: "chunk-1",
+    stream: "stdout",
+    offset_start: 0,
+    offset_end: 3,
+    data: Buffer.from("abc").toString("base64"),
+    observed_at: "2026-04-20T00:00:00Z",
+    created_at: "2026-04-20T00:00:00Z",
     ...overrides,
   }
 }

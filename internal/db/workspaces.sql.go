@@ -140,6 +140,70 @@ func (q *Queries) CompleteWorkspaceOperationIdempotency(ctx context.Context, arg
 	return i, err
 }
 
+const completeWorkspaceScopedOperationIdempotency = `-- name: CompleteWorkspaceScopedOperationIdempotency :one
+UPDATE workspace_operation_idempotencies
+   SET response_resource_type = $1,
+       response_resource_id = $2,
+       response_body = coalesce($3::jsonb, '{}'::jsonb),
+       last_used_at = now()
+ WHERE workspace_operation_idempotencies.org_id = $4
+   AND workspace_operation_idempotencies.project_id = $5
+   AND workspace_operation_idempotencies.environment_id = $6
+   AND workspace_operation_idempotencies.operation_kind = $7
+   AND workspace_operation_idempotencies.workspace_id = $8
+   AND workspace_operation_idempotencies.idempotency_key = $9
+   AND workspace_operation_idempotencies.request_fingerprint = $10
+   AND workspace_operation_idempotencies.response_resource_id IS NULL
+   AND workspace_operation_idempotencies.expires_at > now()
+RETURNING id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at
+`
+
+type CompleteWorkspaceScopedOperationIdempotencyParams struct {
+	ResponseResourceType string      `json:"response_resource_type"`
+	ResponseResourceID   pgtype.UUID `json:"response_resource_id"`
+	ResponseBody         []byte      `json:"response_body"`
+	OrgID                pgtype.UUID `json:"org_id"`
+	ProjectID            pgtype.UUID `json:"project_id"`
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+	OperationKind        string      `json:"operation_kind"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	IdempotencyKey       string      `json:"idempotency_key"`
+	RequestFingerprint   string      `json:"request_fingerprint"`
+}
+
+func (q *Queries) CompleteWorkspaceScopedOperationIdempotency(ctx context.Context, arg CompleteWorkspaceScopedOperationIdempotencyParams) (WorkspaceOperationIdempotency, error) {
+	row := q.db.QueryRow(ctx, completeWorkspaceScopedOperationIdempotency,
+		arg.ResponseResourceType,
+		arg.ResponseResourceID,
+		arg.ResponseBody,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.OperationKind,
+		arg.WorkspaceID,
+		arg.IdempotencyKey,
+		arg.RequestFingerprint,
+	)
+	var i WorkspaceOperationIdempotency
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.OperationKind,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.ResponseResourceType,
+		&i.ResponseResourceID,
+		&i.ResponseBody,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+	)
+	return i, err
+}
+
 const createWorkspaceFromSandbox = `-- name: CreateWorkspaceFromSandbox :one
 WITH created_workspace AS (
     INSERT INTO workspaces (

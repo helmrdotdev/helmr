@@ -2,9 +2,7 @@ package guestd
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/workspace"
+	"github.com/helmrdotdev/helmr/internal/workspaceop"
 )
 
 type workspaceOperationRegistry struct {
@@ -31,8 +30,16 @@ type workspaceMaterializationEntry struct {
 	workspaceID       string
 	fencingGeneration uint64
 	imageRoot         string
+	imageConfig       ociRuntimeConfig
+	runtimeUser       *resolvedRuntimeUser
+	workspaceMount    string
 	workspaceRoot     string
 	cleanup           func()
+	events            chan *workspacev0.WorkspaceOperationEvent
+	eventsDone        chan struct{}
+	eventsDoneOnce    sync.Once
+	processesMu       sync.Mutex
+	processes         map[string]*workspaceProcess
 	active            int
 	retired           bool
 }
@@ -180,31 +187,46 @@ func restoreMaterializedWorkspace(conn io.Reader, request *workspacev0.Materiali
 	if sandbox.GetSizeBytes() == 0 {
 		return entry, errors.New("workspace materialize sandbox_artifact size_bytes is required")
 	}
-	imageRoot, cleanupImage, err := restoreMaterializedSandboxImage(conn, request)
+	image, cleanupImage, err := restoreMaterializedSandboxImage(conn, request)
 	if err != nil {
 		return entry, err
 	}
-	entry.imageRoot = imageRoot
-	entry.cleanup = cleanupImage
-	workspaceRoot, err := workspaceRootForImage(imageRoot, mountPath)
-	if err != nil {
+	entry.imageRoot = image.RootfsDir
+	entry.imageConfig = image.Config
+	entry.workspaceMount = mountPath
+	entry.processes = map[string]*workspaceProcess{}
+	entry.events = make(chan *workspacev0.WorkspaceOperationEvent, 1024)
+	entry.eventsDone = make(chan struct{})
+	entry.cleanup = func() {
+		entry.stopWorkspaceProcesses()
+		entry.closeEvents()
 		cleanupImage()
+	}
+	runtimeUser, err := resolveRuntimeUser(entry.imageRoot, entry.imageConfig.User)
+	if err != nil {
+		entry.cleanup()
+		return workspaceMaterializationEntry{}, fmt.Errorf("resolve workspace runtime user: %w", err)
+	}
+	entry.runtimeUser = runtimeUser
+	workspaceRoot, err := workspaceRootForImage(entry.imageRoot, mountPath)
+	if err != nil {
+		entry.cleanup()
 		return workspaceMaterializationEntry{}, fmt.Errorf("resolve workspace mount: %w", err)
 	}
 	entry.workspaceRoot = workspaceRoot
 	header, bodyLen, err := transport.ReadStreamFrameHeader(conn)
 	if err != nil {
-		cleanupImage()
+		entry.cleanup()
 		return workspaceMaterializationEntry{}, fmt.Errorf("read workspace artifact stream header: %w", err)
 	}
 	if header.Type != transport.StreamTypeWorkspaceArtifact {
 		drainStreamBody(conn, bodyLen)
-		cleanupImage()
+		entry.cleanup()
 		return workspaceMaterializationEntry{}, fmt.Errorf("unsupported workspace materialize input type %q", header.Type)
 	}
 	if header.WorkspaceID != strings.TrimSpace(request.GetEnvelope().GetWorkspaceId()) {
 		drainStreamBody(conn, bodyLen)
-		cleanupImage()
+		entry.cleanup()
 		return workspaceMaterializationEntry{}, fmt.Errorf("workspace artifact workspace_id %q does not match materialize workspace_id %q", header.WorkspaceID, request.GetEnvelope().GetWorkspaceId())
 	}
 	frameDigest := ""
@@ -213,24 +235,24 @@ func restoreMaterializedWorkspace(conn io.Reader, request *workspacev0.Materiali
 	}
 	if frameDigest != "" && frameDigest != strings.TrimSpace(artifact.GetDigest()) {
 		drainStreamBody(conn, bodyLen)
-		cleanupImage()
+		entry.cleanup()
 		return workspaceMaterializationEntry{}, fmt.Errorf("workspace artifact digest %q does not match frame digest %q", artifact.GetDigest(), frameDigest)
 	}
 	if artifact.GetSizeBytes() != bodyLen {
 		drainStreamBody(conn, bodyLen)
-		cleanupImage()
+		entry.cleanup()
 		return workspaceMaterializationEntry{}, fmt.Errorf("workspace artifact size_bytes %d does not match frame size %d", artifact.GetSizeBytes(), bodyLen)
 	}
 	workspaceParent := filepath.Dir(workspaceRoot)
 	if err := os.MkdirAll(workspaceParent, 0o755); err != nil {
 		drainStreamBody(conn, bodyLen)
-		cleanupImage()
+		entry.cleanup()
 		return workspaceMaterializationEntry{}, fmt.Errorf("create workspace mount parent: %w", err)
 	}
 	stagingRoot, err := os.MkdirTemp(workspaceParent, ".helmr-workspace-restore-*")
 	if err != nil {
 		drainStreamBody(conn, bodyLen)
-		cleanupImage()
+		entry.cleanup()
 		return workspaceMaterializationEntry{}, fmt.Errorf("create workspace restore staging dir: %w", err)
 	}
 	cleanupStaging := func() { _ = os.RemoveAll(stagingRoot) }
@@ -243,59 +265,59 @@ func restoreMaterializedWorkspace(conn io.Reader, request *workspacev0.Materiali
 	if err != nil {
 		if _, drainErr := io.Copy(io.Discard, hashedBody); drainErr != nil {
 			cleanupStaging()
-			cleanupImage()
+			entry.cleanup()
 			return workspaceMaterializationEntry{}, errors.Join(fmt.Errorf("extract workspace artifact: %w", err), fmt.Errorf("drain workspace artifact: %w", drainErr))
 		}
 		cleanupStaging()
-		cleanupImage()
+		entry.cleanup()
 		return workspaceMaterializationEntry{}, fmt.Errorf("extract workspace artifact: %w", err)
 	}
 	if _, err := io.Copy(io.Discard, hashedBody); err != nil {
 		cleanupStaging()
-		cleanupImage()
+		entry.cleanup()
 		return workspaceMaterializationEntry{}, fmt.Errorf("drain workspace artifact: %w", err)
 	}
 	if digest := hashedBody.Digest(); digest != strings.TrimSpace(artifact.GetDigest()) {
 		cleanupStaging()
-		cleanupImage()
+		entry.cleanup()
 		return workspaceMaterializationEntry{}, fmt.Errorf("workspace artifact body digest %q does not match declared digest %q", digest, artifact.GetDigest())
 	}
 	if stats.EntryCount != int(artifact.GetEntryCount()) {
 		cleanupStaging()
-		cleanupImage()
+		entry.cleanup()
 		return workspaceMaterializationEntry{}, fmt.Errorf("workspace artifact entry_count %d does not match declared entry_count %d", stats.EntryCount, artifact.GetEntryCount())
 	}
 	if err := os.RemoveAll(workspaceRoot); err != nil {
 		cleanupStaging()
-		cleanupImage()
+		entry.cleanup()
 		return workspaceMaterializationEntry{}, fmt.Errorf("replace workspace mount: remove existing mount: %w", err)
 	}
 	if err := os.Rename(stagingRoot, workspaceRoot); err != nil {
 		cleanupStaging()
-		cleanupImage()
+		entry.cleanup()
 		return workspaceMaterializationEntry{}, fmt.Errorf("replace workspace mount: %w", err)
 	}
 	return entry, nil
 }
 
-func restoreMaterializedSandboxImage(conn io.Reader, request *workspacev0.MaterializeWorkspaceRequest) (string, func(), error) {
+func restoreMaterializedSandboxImage(conn io.Reader, request *workspacev0.MaterializeWorkspaceRequest) (ociImage, func(), error) {
 	cleanup := func() {}
 	header, bodyLen, err := transport.ReadStreamFrameHeader(conn)
 	if err != nil {
-		return "", cleanup, fmt.Errorf("read sandbox image stream header: %w", err)
+		return ociImage{}, cleanup, fmt.Errorf("read sandbox image stream header: %w", err)
 	}
 	if header.Type != transport.StreamTypeRunImage {
 		drainStreamBody(conn, bodyLen)
-		return "", cleanup, fmt.Errorf("unsupported workspace materialize sandbox input type %q", header.Type)
+		return ociImage{}, cleanup, fmt.Errorf("unsupported workspace materialize sandbox input type %q", header.Type)
 	}
 	if header.WorkspaceID != strings.TrimSpace(request.GetEnvelope().GetWorkspaceId()) {
 		drainStreamBody(conn, bodyLen)
-		return "", cleanup, fmt.Errorf("sandbox image workspace_id %q does not match materialize workspace_id %q", header.WorkspaceID, request.GetEnvelope().GetWorkspaceId())
+		return ociImage{}, cleanup, fmt.Errorf("sandbox image workspace_id %q does not match materialize workspace_id %q", header.WorkspaceID, request.GetEnvelope().GetWorkspaceId())
 	}
 	sandbox := request.GetSandboxArtifact()
 	if sandbox.GetSizeBytes() != bodyLen {
 		drainStreamBody(conn, bodyLen)
-		return "", cleanup, fmt.Errorf("sandbox image artifact size_bytes %d does not match frame size %d", sandbox.GetSizeBytes(), bodyLen)
+		return ociImage{}, cleanup, fmt.Errorf("sandbox image artifact size_bytes %d does not match frame size %d", sandbox.GetSizeBytes(), bodyLen)
 	}
 	frameDigest := ""
 	if header.BodyDigest != nil {
@@ -303,33 +325,77 @@ func restoreMaterializedSandboxImage(conn io.Reader, request *workspacev0.Materi
 	}
 	if frameDigest != "" && frameDigest != strings.TrimSpace(sandbox.GetDigest()) {
 		drainStreamBody(conn, bodyLen)
-		return "", cleanup, fmt.Errorf("sandbox image artifact digest %q does not match frame digest %q", sandbox.GetDigest(), frameDigest)
+		return ociImage{}, cleanup, fmt.Errorf("sandbox image artifact digest %q does not match frame digest %q", sandbox.GetDigest(), frameDigest)
 	}
 	imageRoot, err := os.MkdirTemp("", "helmr-workspace-image-*")
 	if err != nil {
 		drainStreamBody(conn, bodyLen)
-		return "", cleanup, fmt.Errorf("create sandbox image root: %w", err)
+		return ociImage{}, cleanup, fmt.Errorf("create sandbox image root: %w", err)
 	}
 	cleanup = func() { _ = os.RemoveAll(imageRoot) }
 	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
 	hashedBody := newDigestingReader(body)
-	if _, err := unpackOCIImage(hashedBody, imageRoot); err != nil {
+	image, err := unpackOCIImage(hashedBody, imageRoot)
+	if err != nil {
 		if _, drainErr := io.Copy(io.Discard, hashedBody); drainErr != nil {
 			cleanup()
-			return "", func() {}, errors.Join(fmt.Errorf("extract sandbox image artifact: %w", err), fmt.Errorf("drain sandbox image artifact: %w", drainErr))
+			return ociImage{}, func() {}, errors.Join(fmt.Errorf("extract sandbox image artifact: %w", err), fmt.Errorf("drain sandbox image artifact: %w", drainErr))
 		}
 		cleanup()
-		return "", func() {}, fmt.Errorf("extract sandbox image artifact: %w", err)
+		return ociImage{}, func() {}, fmt.Errorf("extract sandbox image artifact: %w", err)
 	}
 	if _, err := io.Copy(io.Discard, hashedBody); err != nil {
 		cleanup()
-		return "", func() {}, fmt.Errorf("drain sandbox image artifact: %w", err)
+		return ociImage{}, func() {}, fmt.Errorf("drain sandbox image artifact: %w", err)
 	}
 	if digest := hashedBody.Digest(); digest != strings.TrimSpace(sandbox.GetDigest()) {
 		cleanup()
-		return "", func() {}, fmt.Errorf("sandbox image artifact body digest %q does not match declared digest %q", digest, sandbox.GetDigest())
+		return ociImage{}, func() {}, fmt.Errorf("sandbox image artifact body digest %q does not match declared digest %q", digest, sandbox.GetDigest())
 	}
-	return imageRoot, cleanup, nil
+	return image, cleanup, nil
+}
+
+func handleWorkspaceEventsConnection(ctx context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
+	var envelope workspacev0.WorkspaceOperationEnvelope
+	if err := transport.ReadProtoFrame(conn, &envelope); err != nil {
+		return fmt.Errorf("read workspace events envelope: %w", err)
+	}
+	if strings.TrimSpace(envelope.MaterializationId) == "" {
+		return errors.New("workspace events materialization_id is required")
+	}
+	if strings.TrimSpace(envelope.WorkspaceId) == "" {
+		return errors.New("workspace events workspace_id is required")
+	}
+	entry, release, ok := registry.acquire(envelope.MaterializationId, envelope.WorkspaceId, envelope.ChannelToken, envelope.FencingGeneration)
+	if !ok {
+		return errors.New("workspace events channel token or fencing generation is invalid")
+	}
+	defer release()
+	if entry.events == nil {
+		return errors.New("workspace events channel is not available")
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-entry.eventsDone:
+			return nil
+		case event, ok := <-entry.events:
+			if !ok {
+				return nil
+			}
+			if event.Envelope == nil {
+				event.Envelope = &workspacev0.WorkspaceOperationEnvelope{
+					MaterializationId: envelope.MaterializationId,
+					WorkspaceId:       envelope.WorkspaceId,
+					FencingGeneration: envelope.FencingGeneration,
+				}
+			}
+			if err := transport.WriteProtoFrame(conn, event); err != nil {
+				return fmt.Errorf("write workspace operation event: %w", err)
+			}
+		}
+	}
 }
 
 func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
@@ -366,7 +432,7 @@ func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, r
 	if fingerprint == "" {
 		return errors.New("workspace operation request_fingerprint is required")
 	}
-	if actual := workspaceOperationRequestFingerprint(request.OperationKind, request.RequestJson); actual != fingerprint {
+	if actual := workspaceop.RequestFingerprint(request.OperationKind, request.RequestJson); actual != fingerprint {
 		return fmt.Errorf("workspace operation request_fingerprint %q does not match request %q", fingerprint, actual)
 	}
 	switch strings.TrimSpace(request.OperationKind) {
@@ -374,6 +440,14 @@ func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, r
 		return transport.WriteProtoFrame(conn, &workspacev0.WorkspaceOperationResult{
 			ResultJson: `{"ok":true}`,
 		})
+	case "StartExec":
+		return writeWorkspaceOperationResult(conn, entry.startWorkspaceExec(request.GetEnvelope(), request.RequestJson))
+	case "CreatePty":
+		return writeWorkspaceOperationResult(conn, entry.createWorkspacePty(request.GetEnvelope(), request.RequestJson))
+	case "ResizePty":
+		return writeWorkspaceOperationResult(conn, entry.resizeWorkspacePty(request.RequestJson))
+	case "ClosePty":
+		return writeWorkspaceOperationResult(conn, entry.closeWorkspacePty(request.RequestJson))
 	default:
 		return transport.WriteProtoFrame(conn, &workspacev0.WorkspaceOperationResult{
 			ErrorJson: fmt.Sprintf(`{"message":"unsupported workspace operation %q"}`, strings.TrimSpace(request.OperationKind)),
@@ -381,10 +455,11 @@ func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, r
 	}
 }
 
-func workspaceOperationRequestFingerprint(operationKind string, requestJSON string) string {
-	hash := sha256.New()
-	_, _ = hash.Write([]byte(strings.TrimSpace(operationKind)))
-	_, _ = hash.Write([]byte{0})
-	_, _ = hash.Write([]byte(strings.TrimSpace(requestJSON)))
-	return hex.EncodeToString(hash.Sum(nil))
+func writeWorkspaceOperationResult(conn io.Writer, err error) error {
+	result := &workspacev0.WorkspaceOperationResult{ResultJson: `{"ok":true}`}
+	if err != nil {
+		result.ResultJson = ""
+		result.ErrorJson = workspaceOperationErrorJSON(err)
+	}
+	return transport.WriteProtoFrame(conn, result)
 }

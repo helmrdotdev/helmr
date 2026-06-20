@@ -26,25 +26,9 @@ func (f deploymentBuilderFunc) BuildDeployment(ctx context.Context, lease api.Wo
 	return f(ctx, lease, deployment)
 }
 
-type materializerFunc func(ctx context.Context, materialization api.WorkerWorkspaceMaterialization, client interface {
-	RenewWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationRenewRequest) (api.WorkspaceMaterializationResponse, error)
-	MarkWorkspaceMaterializationRunning(context.Context, api.WorkerWorkspaceMaterializationRunningRequest) (api.WorkspaceMaterializationResponse, error)
-	StopWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error)
-	FailWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationFailRequest) (api.WorkspaceMaterializationResponse, error)
-	ClaimWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error)
-	StartWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationStartRequest) (api.WorkspaceOperationResponse, error)
-	CompleteWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error)
-}) error
+type materializerFunc func(ctx context.Context, materialization api.WorkerWorkspaceMaterialization, client api.WorkerWorkspaceMaterializerControlClient) error
 
-func (f materializerFunc) RunWorkspaceMaterialization(ctx context.Context, materialization api.WorkerWorkspaceMaterialization, client interface {
-	RenewWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationRenewRequest) (api.WorkspaceMaterializationResponse, error)
-	MarkWorkspaceMaterializationRunning(context.Context, api.WorkerWorkspaceMaterializationRunningRequest) (api.WorkspaceMaterializationResponse, error)
-	StopWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error)
-	FailWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationFailRequest) (api.WorkspaceMaterializationResponse, error)
-	ClaimWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error)
-	StartWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationStartRequest) (api.WorkspaceOperationResponse, error)
-	CompleteWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error)
-}) error {
+func (f materializerFunc) RunWorkspaceMaterialization(ctx context.Context, materialization api.WorkerWorkspaceMaterialization, client api.WorkerWorkspaceMaterializerControlClient) error {
 	return f(ctx, materialization, client)
 }
 
@@ -84,15 +68,7 @@ func TestRunOnceStartsWorkspaceMaterializationWithoutRunLease(t *testing.T) {
 		t.Fatal("executor should not run for materialization-only work")
 		return api.WorkerReleaseResult{}
 	}))
-	runner.materializer = materializerFunc(func(_ context.Context, materialization api.WorkerWorkspaceMaterialization, _ interface {
-		RenewWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationRenewRequest) (api.WorkspaceMaterializationResponse, error)
-		MarkWorkspaceMaterializationRunning(context.Context, api.WorkerWorkspaceMaterializationRunningRequest) (api.WorkspaceMaterializationResponse, error)
-		StopWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error)
-		FailWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationFailRequest) (api.WorkspaceMaterializationResponse, error)
-		ClaimWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error)
-		StartWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationStartRequest) (api.WorkspaceOperationResponse, error)
-		CompleteWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error)
-	}) error {
+	runner.materializer = materializerFunc(func(_ context.Context, materialization api.WorkerWorkspaceMaterialization, _ api.WorkerWorkspaceMaterializerControlClient) error {
 		called <- materialization
 		return nil
 	})
@@ -135,15 +111,7 @@ func TestRunOnceSkipsSecondWorkspaceMaterializationClaimWhileActive(t *testing.T
 		t.Fatal("executor should not run")
 		return api.WorkerReleaseResult{}
 	}))
-	runner.materializer = materializerFunc(func(context.Context, api.WorkerWorkspaceMaterialization, interface {
-		RenewWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationRenewRequest) (api.WorkspaceMaterializationResponse, error)
-		MarkWorkspaceMaterializationRunning(context.Context, api.WorkerWorkspaceMaterializationRunningRequest) (api.WorkspaceMaterializationResponse, error)
-		StopWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error)
-		FailWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationFailRequest) (api.WorkspaceMaterializationResponse, error)
-		ClaimWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error)
-		StartWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationStartRequest) (api.WorkspaceOperationResponse, error)
-		CompleteWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error)
-	}) error {
+	runner.materializer = materializerFunc(func(context.Context, api.WorkerWorkspaceMaterialization, api.WorkerWorkspaceMaterializerControlClient) error {
 		started <- struct{}{}
 		<-block
 		return nil
@@ -194,15 +162,7 @@ func TestRunWaitsForWorkspaceMaterializationOnShutdown(t *testing.T) {
 		t.Fatal("executor should not run")
 		return api.WorkerReleaseResult{}
 	}))
-	runner.materializer = materializerFunc(func(ctx context.Context, _ api.WorkerWorkspaceMaterialization, _ interface {
-		RenewWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationRenewRequest) (api.WorkspaceMaterializationResponse, error)
-		MarkWorkspaceMaterializationRunning(context.Context, api.WorkerWorkspaceMaterializationRunningRequest) (api.WorkspaceMaterializationResponse, error)
-		StopWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error)
-		FailWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationFailRequest) (api.WorkspaceMaterializationResponse, error)
-		ClaimWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error)
-		StartWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationStartRequest) (api.WorkspaceOperationResponse, error)
-		CompleteWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error)
-	}) error {
+	runner.materializer = materializerFunc(func(ctx context.Context, _ api.WorkerWorkspaceMaterialization, _ api.WorkerWorkspaceMaterializerControlClient) error {
 		started <- struct{}{}
 		<-ctx.Done()
 		<-release
@@ -725,6 +685,50 @@ func (f *fakeClient) StartWorkspaceMaterializationOperation(context.Context, api
 func (f *fakeClient) CompleteWorkspaceMaterializationOperation(_ context.Context, request api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error) {
 	f.operationComplete = request
 	return api.WorkspaceOperationResponse{ID: request.OperationID, State: "completed"}, nil
+}
+
+func (f *fakeClient) MarkWorkspaceExecStarted(context.Context, api.WorkerWorkspaceExecStartedRequest) (api.WorkspaceExecEnvelope, error) {
+	return api.WorkspaceExecEnvelope{}, nil
+}
+
+func (f *fakeClient) AppendWorkspaceExecOutput(context.Context, api.WorkerWorkspaceExecOutputRequest) (api.ListWorkspaceExecStreamChunksResponse, error) {
+	return api.ListWorkspaceExecStreamChunksResponse{}, nil
+}
+
+func (f *fakeClient) ListWorkspaceExecInput(context.Context, api.WorkerWorkspaceExecInputRequest) (api.WorkerWorkspaceExecInputResponse, error) {
+	return api.WorkerWorkspaceExecInputResponse{}, nil
+}
+
+func (f *fakeClient) AdvanceWorkspaceExecInputDelivered(context.Context, api.WorkerWorkspaceExecInputDeliveredRequest) (api.WorkspaceExecEnvelope, error) {
+	return api.WorkspaceExecEnvelope{}, nil
+}
+
+func (f *fakeClient) MarkWorkspaceExecExited(context.Context, api.WorkerWorkspaceExecExitedRequest) (api.WorkspaceExecEnvelope, error) {
+	return api.WorkspaceExecEnvelope{}, nil
+}
+
+func (f *fakeClient) MarkWorkspacePtyOpened(context.Context, api.WorkerWorkspacePtyOpenedRequest) (api.WorkspacePtyEnvelope, error) {
+	return api.WorkspacePtyEnvelope{}, nil
+}
+
+func (f *fakeClient) AppendWorkspacePtyOutput(context.Context, api.WorkerWorkspacePtyOutputRequest) (api.ListWorkspacePtyStreamChunksResponse, error) {
+	return api.ListWorkspacePtyStreamChunksResponse{}, nil
+}
+
+func (f *fakeClient) ListWorkspacePtyInput(context.Context, api.WorkerWorkspacePtyInputRequest) (api.WorkerWorkspacePtyInputResponse, error) {
+	return api.WorkerWorkspacePtyInputResponse{}, nil
+}
+
+func (f *fakeClient) AdvanceWorkspacePtyInputDelivered(context.Context, api.WorkerWorkspacePtyInputDeliveredRequest) (api.WorkspacePtyEnvelope, error) {
+	return api.WorkspacePtyEnvelope{}, nil
+}
+
+func (f *fakeClient) MarkWorkspacePtyResizeApplied(context.Context, api.WorkerWorkspacePtyResizeAppliedRequest) (api.WorkspacePtyEnvelope, error) {
+	return api.WorkspacePtyEnvelope{}, nil
+}
+
+func (f *fakeClient) MarkWorkspacePtyClosed(context.Context, api.WorkerWorkspacePtyClosedRequest) (api.WorkspacePtyEnvelope, error) {
+	return api.WorkspacePtyEnvelope{}, nil
 }
 
 func (f *fakeClient) LeaseRun(context.Context, api.WorkerCapabilities) (api.WorkerRunLeaseResponse, error) {

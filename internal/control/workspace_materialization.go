@@ -393,7 +393,26 @@ func (s *Server) workerMarkMaterializationRunningTransition(ctx context.Context,
 	if err != nil {
 		return db.WorkspaceMaterialization{}, err
 	}
-	return s.db.MarkWorkspaceMaterializationRunning(ctx, params)
+	if s.tx == nil {
+		return db.WorkspaceMaterialization{}, errors.New("workspace materialization running transition requires transactional store")
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return db.WorkspaceMaterialization{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	store := db.New(tx)
+	row, err := store.MarkWorkspaceMaterializationRunning(ctx, params)
+	if err != nil {
+		return db.WorkspaceMaterialization{}, err
+	}
+	if err := enqueuePendingWorkspacePrimitiveOperations(ctx, store, row); err != nil {
+		return db.WorkspaceMaterialization{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.WorkspaceMaterialization{}, err
+	}
+	return row, nil
 }
 
 func (s *Server) workerStopMaterializationTransition(ctx context.Context, orgID string, materializationID string, reservationToken string) (db.WorkspaceMaterialization, error) {

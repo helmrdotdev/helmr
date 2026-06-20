@@ -2,6 +2,7 @@ package control
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -152,8 +153,19 @@ func (s *Server) workerCompleteWorkspaceMaterializationOperation(w http.Response
 	}
 	worker := workerFromContext(r.Context())
 	var row db.WorkspaceMaterializationOperation
+	if s.tx == nil {
+		writeError(w, errors.New("workspace operation complete requires transactional store"))
+		return
+	}
+	tx, err := s.tx.Begin(r.Context())
+	if err != nil {
+		writeError(w, errors.New("complete workspace operation"))
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	store := db.New(tx)
 	if len(failure) > 0 {
-		failed, failErr := s.db.FailWorkspaceMaterializationOperation(r.Context(), db.FailWorkspaceMaterializationOperationParams{
+		failed, failErr := store.FailWorkspaceMaterializationOperation(r.Context(), db.FailWorkspaceMaterializationOperationParams{
 			OrgID:            orgID,
 			ID:               operationID,
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -163,7 +175,7 @@ func (s *Server) workerCompleteWorkspaceMaterializationOperation(w http.Response
 		row = failedWorkspaceOperation(failed)
 		err = failErr
 	} else {
-		completed, completeErr := s.db.CompleteWorkspaceMaterializationOperation(r.Context(), db.CompleteWorkspaceMaterializationOperationParams{
+		completed, completeErr := store.CompleteWorkspaceMaterializationOperation(r.Context(), db.CompleteWorkspaceMaterializationOperationParams{
 			OrgID:            orgID,
 			ID:               operationID,
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -172,6 +184,9 @@ func (s *Server) workerCompleteWorkspaceMaterializationOperation(w http.Response
 		})
 		row = completedWorkspaceOperation(completed)
 		err = completeErr
+		if err == nil && row.OperationKind == workspaceOperationKindResizePty {
+			err = completeWorkspacePtyResizeOperation(r.Context(), store, row)
+		}
 	}
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("workspace operation claim is stale")))
@@ -182,7 +197,56 @@ func (s *Server) workerCompleteWorkspaceMaterializationOperation(w http.Response
 		writeError(w, errors.New("complete workspace operation"))
 		return
 	}
+	if err := tx.Commit(r.Context()); err != nil {
+		s.log.Error("commit workspace operation completion failed", "worker_instance_id", worker.WorkerInstanceID.String(), "operation_id", request.OperationID, "error", err)
+		writeError(w, errors.New("complete workspace operation"))
+		return
+	}
 	writeJSON(w, http.StatusOK, workspaceOperationResponse(row))
+}
+
+func completeWorkspacePtyResizeOperation(ctx context.Context, store db.Querier, operation db.WorkspaceMaterializationOperation) error {
+	if !operation.ResourceID.Valid {
+		return errors.New("ResizePty operation resource_id is required")
+	}
+	var request struct {
+		Cols int32 `json:"cols"`
+		Rows int32 `json:"rows"`
+	}
+	if err := json.Unmarshal(operation.Request, &request); err != nil {
+		return fmt.Errorf("decode ResizePty request: %w", err)
+	}
+	row, err := store.MarkWorkspacePtyResizeApplied(ctx, db.MarkWorkspacePtyResizeAppliedParams{
+		OrgID:             operation.OrgID,
+		ProjectID:         operation.ProjectID,
+		EnvironmentID:     operation.EnvironmentID,
+		WorkspaceID:       operation.WorkspaceID,
+		ID:                operation.ResourceID,
+		MaterializationID: operation.MaterializationID,
+	})
+	if err == nil {
+		if row.Cols != request.Cols || row.Rows != request.Rows {
+			return conflict(errWorkspaceLifecycleEventConflict)
+		}
+		return nil
+	}
+	if !isNoRows(err) {
+		return err
+	}
+	existing, getErr := store.GetWorkspacePtySession(ctx, db.GetWorkspacePtySessionParams{
+		OrgID:         operation.OrgID,
+		ProjectID:     operation.ProjectID,
+		EnvironmentID: operation.EnvironmentID,
+		WorkspaceID:   operation.WorkspaceID,
+		ID:            operation.ResourceID,
+	})
+	if getErr == nil && workspacePtyResizeAppliedEventMatches(existing, operation.MaterializationID, request.Cols, request.Rows) {
+		return nil
+	}
+	if getErr == nil {
+		return conflict(errWorkspaceLifecycleEventConflict)
+	}
+	return getErr
 }
 
 func startedWorkspaceOperation(row db.StartWorkspaceMaterializationOperationRow) db.WorkspaceMaterializationOperation {

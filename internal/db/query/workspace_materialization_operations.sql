@@ -65,10 +65,16 @@ SELECT sqlc.arg(id),
   FROM active_materialization
   LEFT JOIN active_write_lease ON true
  WHERE (
-       sqlc.narg(write_lease_id)::uuid IS NULL
-       AND coalesce(sqlc.arg(fencing_token)::text, '') = ''
+       (
+           sqlc.narg(write_lease_id)::uuid IS NULL
+           AND coalesce(sqlc.arg(fencing_token)::text, '') = ''
+       )
+       OR active_write_lease.id IS NOT NULL
    )
-    OR active_write_lease.id IS NOT NULL
+   AND (
+       sqlc.arg(operation_kind)::text NOT IN ('StartExec', 'CreatePty', 'ResizePty', 'ClosePty')
+       OR active_write_lease.id IS NOT NULL
+   )
 RETURNING *;
 
 -- name: GetWorkspaceMaterializationOperation :one
@@ -79,6 +85,21 @@ SELECT *
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id);
+
+-- name: GetActiveWorkspaceMaterializationOperationByResource :one
+SELECT *
+  FROM workspace_materialization_operations
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND materialization_id = sqlc.arg(materialization_id)
+   AND operation_kind = sqlc.arg(operation_kind)
+   AND resource_kind = sqlc.arg(resource_kind)
+   AND resource_id = sqlc.arg(resource_id)
+   AND state IN ('queued', 'claimed', 'running')
+ ORDER BY requested_at ASC
+ LIMIT 1;
 
 -- name: ClaimWorkspaceMaterializationOperation :one
 WITH exhausted AS (

@@ -773,6 +773,1058 @@ func (x *WorkspaceOperationResult) GetErrorJson() string {
 	return ""
 }
 
+type WorkspaceExecStarted struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ExecId        string                 `protobuf:"bytes,1,opt,name=exec_id,json=execId,proto3" json:"exec_id,omitempty"`
+	ProcessId     string                 `protobuf:"bytes,2,opt,name=process_id,json=processId,proto3" json:"process_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspaceExecStarted) Reset() {
+	*x = WorkspaceExecStarted{}
+	mi := &file_workspace_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspaceExecStarted) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspaceExecStarted) ProtoMessage() {}
+
+func (x *WorkspaceExecStarted) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspaceExecStarted.ProtoReflect.Descriptor instead.
+func (*WorkspaceExecStarted) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *WorkspaceExecStarted) GetExecId() string {
+	if x != nil {
+		return x.ExecId
+	}
+	return ""
+}
+
+func (x *WorkspaceExecStarted) GetProcessId() string {
+	if x != nil {
+		return x.ProcessId
+	}
+	return ""
+}
+
+type WorkspaceExecOutputChunk struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ExecId        string                 `protobuf:"bytes,1,opt,name=exec_id,json=execId,proto3" json:"exec_id,omitempty"`
+	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspaceExecOutputChunk) Reset() {
+	*x = WorkspaceExecOutputChunk{}
+	mi := &file_workspace_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspaceExecOutputChunk) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspaceExecOutputChunk) ProtoMessage() {}
+
+func (x *WorkspaceExecOutputChunk) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspaceExecOutputChunk.ProtoReflect.Descriptor instead.
+func (*WorkspaceExecOutputChunk) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *WorkspaceExecOutputChunk) GetExecId() string {
+	if x != nil {
+		return x.ExecId
+	}
+	return ""
+}
+
+func (x *WorkspaceExecOutputChunk) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+type WorkspaceExecExited struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ExecId        string                 `protobuf:"bytes,1,opt,name=exec_id,json=execId,proto3" json:"exec_id,omitempty"`
+	ExitCode      int32                  `protobuf:"varint,2,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	Signal        string                 `protobuf:"bytes,3,opt,name=signal,proto3" json:"signal,omitempty"`
+	ErrorJson     string                 `protobuf:"bytes,4,opt,name=error_json,json=errorJson,proto3" json:"error_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspaceExecExited) Reset() {
+	*x = WorkspaceExecExited{}
+	mi := &file_workspace_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspaceExecExited) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspaceExecExited) ProtoMessage() {}
+
+func (x *WorkspaceExecExited) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspaceExecExited.ProtoReflect.Descriptor instead.
+func (*WorkspaceExecExited) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *WorkspaceExecExited) GetExecId() string {
+	if x != nil {
+		return x.ExecId
+	}
+	return ""
+}
+
+func (x *WorkspaceExecExited) GetExitCode() int32 {
+	if x != nil {
+		return x.ExitCode
+	}
+	return 0
+}
+
+func (x *WorkspaceExecExited) GetSignal() string {
+	if x != nil {
+		return x.Signal
+	}
+	return ""
+}
+
+func (x *WorkspaceExecExited) GetErrorJson() string {
+	if x != nil {
+		return x.ErrorJson
+	}
+	return ""
+}
+
+type WorkspaceExecError struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ExecId        string                 `protobuf:"bytes,1,opt,name=exec_id,json=execId,proto3" json:"exec_id,omitempty"`
+	ErrorJson     string                 `protobuf:"bytes,2,opt,name=error_json,json=errorJson,proto3" json:"error_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspaceExecError) Reset() {
+	*x = WorkspaceExecError{}
+	mi := &file_workspace_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspaceExecError) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspaceExecError) ProtoMessage() {}
+
+func (x *WorkspaceExecError) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspaceExecError.ProtoReflect.Descriptor instead.
+func (*WorkspaceExecError) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *WorkspaceExecError) GetExecId() string {
+	if x != nil {
+		return x.ExecId
+	}
+	return ""
+}
+
+func (x *WorkspaceExecError) GetErrorJson() string {
+	if x != nil {
+		return x.ErrorJson
+	}
+	return ""
+}
+
+type WorkspacePtyOpened struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PtyId         string                 `protobuf:"bytes,1,opt,name=pty_id,json=ptyId,proto3" json:"pty_id,omitempty"`
+	ProcessId     string                 `protobuf:"bytes,2,opt,name=process_id,json=processId,proto3" json:"process_id,omitempty"`
+	Cols          uint32                 `protobuf:"varint,3,opt,name=cols,proto3" json:"cols,omitempty"`
+	Rows          uint32                 `protobuf:"varint,4,opt,name=rows,proto3" json:"rows,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspacePtyOpened) Reset() {
+	*x = WorkspacePtyOpened{}
+	mi := &file_workspace_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspacePtyOpened) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspacePtyOpened) ProtoMessage() {}
+
+func (x *WorkspacePtyOpened) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspacePtyOpened.ProtoReflect.Descriptor instead.
+func (*WorkspacePtyOpened) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *WorkspacePtyOpened) GetPtyId() string {
+	if x != nil {
+		return x.PtyId
+	}
+	return ""
+}
+
+func (x *WorkspacePtyOpened) GetProcessId() string {
+	if x != nil {
+		return x.ProcessId
+	}
+	return ""
+}
+
+func (x *WorkspacePtyOpened) GetCols() uint32 {
+	if x != nil {
+		return x.Cols
+	}
+	return 0
+}
+
+func (x *WorkspacePtyOpened) GetRows() uint32 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+type WorkspacePtyOutputChunk struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PtyId         string                 `protobuf:"bytes,1,opt,name=pty_id,json=ptyId,proto3" json:"pty_id,omitempty"`
+	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspacePtyOutputChunk) Reset() {
+	*x = WorkspacePtyOutputChunk{}
+	mi := &file_workspace_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspacePtyOutputChunk) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspacePtyOutputChunk) ProtoMessage() {}
+
+func (x *WorkspacePtyOutputChunk) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspacePtyOutputChunk.ProtoReflect.Descriptor instead.
+func (*WorkspacePtyOutputChunk) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *WorkspacePtyOutputChunk) GetPtyId() string {
+	if x != nil {
+		return x.PtyId
+	}
+	return ""
+}
+
+func (x *WorkspacePtyOutputChunk) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+type WorkspacePtyResizeApplied struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PtyId         string                 `protobuf:"bytes,1,opt,name=pty_id,json=ptyId,proto3" json:"pty_id,omitempty"`
+	Cols          uint32                 `protobuf:"varint,2,opt,name=cols,proto3" json:"cols,omitempty"`
+	Rows          uint32                 `protobuf:"varint,3,opt,name=rows,proto3" json:"rows,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspacePtyResizeApplied) Reset() {
+	*x = WorkspacePtyResizeApplied{}
+	mi := &file_workspace_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspacePtyResizeApplied) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspacePtyResizeApplied) ProtoMessage() {}
+
+func (x *WorkspacePtyResizeApplied) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspacePtyResizeApplied.ProtoReflect.Descriptor instead.
+func (*WorkspacePtyResizeApplied) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *WorkspacePtyResizeApplied) GetPtyId() string {
+	if x != nil {
+		return x.PtyId
+	}
+	return ""
+}
+
+func (x *WorkspacePtyResizeApplied) GetCols() uint32 {
+	if x != nil {
+		return x.Cols
+	}
+	return 0
+}
+
+func (x *WorkspacePtyResizeApplied) GetRows() uint32 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+type WorkspacePtyClosed struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PtyId         string                 `protobuf:"bytes,1,opt,name=pty_id,json=ptyId,proto3" json:"pty_id,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	ErrorJson     string                 `protobuf:"bytes,3,opt,name=error_json,json=errorJson,proto3" json:"error_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspacePtyClosed) Reset() {
+	*x = WorkspacePtyClosed{}
+	mi := &file_workspace_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspacePtyClosed) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspacePtyClosed) ProtoMessage() {}
+
+func (x *WorkspacePtyClosed) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspacePtyClosed.ProtoReflect.Descriptor instead.
+func (*WorkspacePtyClosed) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *WorkspacePtyClosed) GetPtyId() string {
+	if x != nil {
+		return x.PtyId
+	}
+	return ""
+}
+
+func (x *WorkspacePtyClosed) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *WorkspacePtyClosed) GetErrorJson() string {
+	if x != nil {
+		return x.ErrorJson
+	}
+	return ""
+}
+
+type WorkspacePtyError struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PtyId         string                 `protobuf:"bytes,1,opt,name=pty_id,json=ptyId,proto3" json:"pty_id,omitempty"`
+	ErrorJson     string                 `protobuf:"bytes,2,opt,name=error_json,json=errorJson,proto3" json:"error_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspacePtyError) Reset() {
+	*x = WorkspacePtyError{}
+	mi := &file_workspace_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspacePtyError) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspacePtyError) ProtoMessage() {}
+
+func (x *WorkspacePtyError) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspacePtyError.ProtoReflect.Descriptor instead.
+func (*WorkspacePtyError) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *WorkspacePtyError) GetPtyId() string {
+	if x != nil {
+		return x.PtyId
+	}
+	return ""
+}
+
+func (x *WorkspacePtyError) GetErrorJson() string {
+	if x != nil {
+		return x.ErrorJson
+	}
+	return ""
+}
+
+type WorkspaceOperationEvent struct {
+	state    protoimpl.MessageState      `protogen:"open.v1"`
+	Envelope *WorkspaceOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
+	// Types that are valid to be assigned to Event:
+	//
+	//	*WorkspaceOperationEvent_ExecStarted
+	//	*WorkspaceOperationEvent_ExecStdoutChunk
+	//	*WorkspaceOperationEvent_ExecStderrChunk
+	//	*WorkspaceOperationEvent_ExecExited
+	//	*WorkspaceOperationEvent_ExecError
+	//	*WorkspaceOperationEvent_PtyOpened
+	//	*WorkspaceOperationEvent_PtyOutputChunk
+	//	*WorkspaceOperationEvent_PtyResizeApplied
+	//	*WorkspaceOperationEvent_PtyClosed
+	//	*WorkspaceOperationEvent_PtyError
+	Event         isWorkspaceOperationEvent_Event `protobuf_oneof:"event"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspaceOperationEvent) Reset() {
+	*x = WorkspaceOperationEvent{}
+	mi := &file_workspace_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspaceOperationEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspaceOperationEvent) ProtoMessage() {}
+
+func (x *WorkspaceOperationEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspaceOperationEvent.ProtoReflect.Descriptor instead.
+func (*WorkspaceOperationEvent) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *WorkspaceOperationEvent) GetEnvelope() *WorkspaceOperationEnvelope {
+	if x != nil {
+		return x.Envelope
+	}
+	return nil
+}
+
+func (x *WorkspaceOperationEvent) GetEvent() isWorkspaceOperationEvent_Event {
+	if x != nil {
+		return x.Event
+	}
+	return nil
+}
+
+func (x *WorkspaceOperationEvent) GetExecStarted() *WorkspaceExecStarted {
+	if x != nil {
+		if x, ok := x.Event.(*WorkspaceOperationEvent_ExecStarted); ok {
+			return x.ExecStarted
+		}
+	}
+	return nil
+}
+
+func (x *WorkspaceOperationEvent) GetExecStdoutChunk() *WorkspaceExecOutputChunk {
+	if x != nil {
+		if x, ok := x.Event.(*WorkspaceOperationEvent_ExecStdoutChunk); ok {
+			return x.ExecStdoutChunk
+		}
+	}
+	return nil
+}
+
+func (x *WorkspaceOperationEvent) GetExecStderrChunk() *WorkspaceExecOutputChunk {
+	if x != nil {
+		if x, ok := x.Event.(*WorkspaceOperationEvent_ExecStderrChunk); ok {
+			return x.ExecStderrChunk
+		}
+	}
+	return nil
+}
+
+func (x *WorkspaceOperationEvent) GetExecExited() *WorkspaceExecExited {
+	if x != nil {
+		if x, ok := x.Event.(*WorkspaceOperationEvent_ExecExited); ok {
+			return x.ExecExited
+		}
+	}
+	return nil
+}
+
+func (x *WorkspaceOperationEvent) GetExecError() *WorkspaceExecError {
+	if x != nil {
+		if x, ok := x.Event.(*WorkspaceOperationEvent_ExecError); ok {
+			return x.ExecError
+		}
+	}
+	return nil
+}
+
+func (x *WorkspaceOperationEvent) GetPtyOpened() *WorkspacePtyOpened {
+	if x != nil {
+		if x, ok := x.Event.(*WorkspaceOperationEvent_PtyOpened); ok {
+			return x.PtyOpened
+		}
+	}
+	return nil
+}
+
+func (x *WorkspaceOperationEvent) GetPtyOutputChunk() *WorkspacePtyOutputChunk {
+	if x != nil {
+		if x, ok := x.Event.(*WorkspaceOperationEvent_PtyOutputChunk); ok {
+			return x.PtyOutputChunk
+		}
+	}
+	return nil
+}
+
+func (x *WorkspaceOperationEvent) GetPtyResizeApplied() *WorkspacePtyResizeApplied {
+	if x != nil {
+		if x, ok := x.Event.(*WorkspaceOperationEvent_PtyResizeApplied); ok {
+			return x.PtyResizeApplied
+		}
+	}
+	return nil
+}
+
+func (x *WorkspaceOperationEvent) GetPtyClosed() *WorkspacePtyClosed {
+	if x != nil {
+		if x, ok := x.Event.(*WorkspaceOperationEvent_PtyClosed); ok {
+			return x.PtyClosed
+		}
+	}
+	return nil
+}
+
+func (x *WorkspaceOperationEvent) GetPtyError() *WorkspacePtyError {
+	if x != nil {
+		if x, ok := x.Event.(*WorkspaceOperationEvent_PtyError); ok {
+			return x.PtyError
+		}
+	}
+	return nil
+}
+
+type isWorkspaceOperationEvent_Event interface {
+	isWorkspaceOperationEvent_Event()
+}
+
+type WorkspaceOperationEvent_ExecStarted struct {
+	ExecStarted *WorkspaceExecStarted `protobuf:"bytes,2,opt,name=exec_started,json=execStarted,proto3,oneof"`
+}
+
+type WorkspaceOperationEvent_ExecStdoutChunk struct {
+	ExecStdoutChunk *WorkspaceExecOutputChunk `protobuf:"bytes,3,opt,name=exec_stdout_chunk,json=execStdoutChunk,proto3,oneof"`
+}
+
+type WorkspaceOperationEvent_ExecStderrChunk struct {
+	ExecStderrChunk *WorkspaceExecOutputChunk `protobuf:"bytes,4,opt,name=exec_stderr_chunk,json=execStderrChunk,proto3,oneof"`
+}
+
+type WorkspaceOperationEvent_ExecExited struct {
+	ExecExited *WorkspaceExecExited `protobuf:"bytes,5,opt,name=exec_exited,json=execExited,proto3,oneof"`
+}
+
+type WorkspaceOperationEvent_ExecError struct {
+	ExecError *WorkspaceExecError `protobuf:"bytes,6,opt,name=exec_error,json=execError,proto3,oneof"`
+}
+
+type WorkspaceOperationEvent_PtyOpened struct {
+	PtyOpened *WorkspacePtyOpened `protobuf:"bytes,7,opt,name=pty_opened,json=ptyOpened,proto3,oneof"`
+}
+
+type WorkspaceOperationEvent_PtyOutputChunk struct {
+	PtyOutputChunk *WorkspacePtyOutputChunk `protobuf:"bytes,8,opt,name=pty_output_chunk,json=ptyOutputChunk,proto3,oneof"`
+}
+
+type WorkspaceOperationEvent_PtyResizeApplied struct {
+	PtyResizeApplied *WorkspacePtyResizeApplied `protobuf:"bytes,9,opt,name=pty_resize_applied,json=ptyResizeApplied,proto3,oneof"`
+}
+
+type WorkspaceOperationEvent_PtyClosed struct {
+	PtyClosed *WorkspacePtyClosed `protobuf:"bytes,10,opt,name=pty_closed,json=ptyClosed,proto3,oneof"`
+}
+
+type WorkspaceOperationEvent_PtyError struct {
+	PtyError *WorkspacePtyError `protobuf:"bytes,11,opt,name=pty_error,json=ptyError,proto3,oneof"`
+}
+
+func (*WorkspaceOperationEvent_ExecStarted) isWorkspaceOperationEvent_Event() {}
+
+func (*WorkspaceOperationEvent_ExecStdoutChunk) isWorkspaceOperationEvent_Event() {}
+
+func (*WorkspaceOperationEvent_ExecStderrChunk) isWorkspaceOperationEvent_Event() {}
+
+func (*WorkspaceOperationEvent_ExecExited) isWorkspaceOperationEvent_Event() {}
+
+func (*WorkspaceOperationEvent_ExecError) isWorkspaceOperationEvent_Event() {}
+
+func (*WorkspaceOperationEvent_PtyOpened) isWorkspaceOperationEvent_Event() {}
+
+func (*WorkspaceOperationEvent_PtyOutputChunk) isWorkspaceOperationEvent_Event() {}
+
+func (*WorkspaceOperationEvent_PtyResizeApplied) isWorkspaceOperationEvent_Event() {}
+
+func (*WorkspaceOperationEvent_PtyClosed) isWorkspaceOperationEvent_Event() {}
+
+func (*WorkspaceOperationEvent_PtyError) isWorkspaceOperationEvent_Event() {}
+
+type WorkspaceStreamAck struct {
+	state         protoimpl.MessageState      `protogen:"open.v1"`
+	Envelope      *WorkspaceOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
+	ResourceKind  string                      `protobuf:"bytes,2,opt,name=resource_kind,json=resourceKind,proto3" json:"resource_kind,omitempty"`
+	ResourceId    string                      `protobuf:"bytes,3,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	Stream        string                      `protobuf:"bytes,4,opt,name=stream,proto3" json:"stream,omitempty"`
+	DurableOffset uint64                      `protobuf:"varint,5,opt,name=durable_offset,json=durableOffset,proto3" json:"durable_offset,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspaceStreamAck) Reset() {
+	*x = WorkspaceStreamAck{}
+	mi := &file_workspace_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspaceStreamAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspaceStreamAck) ProtoMessage() {}
+
+func (x *WorkspaceStreamAck) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspaceStreamAck.ProtoReflect.Descriptor instead.
+func (*WorkspaceStreamAck) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *WorkspaceStreamAck) GetEnvelope() *WorkspaceOperationEnvelope {
+	if x != nil {
+		return x.Envelope
+	}
+	return nil
+}
+
+func (x *WorkspaceStreamAck) GetResourceKind() string {
+	if x != nil {
+		return x.ResourceKind
+	}
+	return ""
+}
+
+func (x *WorkspaceStreamAck) GetResourceId() string {
+	if x != nil {
+		return x.ResourceId
+	}
+	return ""
+}
+
+func (x *WorkspaceStreamAck) GetStream() string {
+	if x != nil {
+		return x.Stream
+	}
+	return ""
+}
+
+func (x *WorkspaceStreamAck) GetDurableOffset() uint64 {
+	if x != nil {
+		return x.DurableOffset
+	}
+	return 0
+}
+
+type WorkspaceInputChunk struct {
+	state         protoimpl.MessageState      `protogen:"open.v1"`
+	Envelope      *WorkspaceOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
+	ResourceKind  string                      `protobuf:"bytes,2,opt,name=resource_kind,json=resourceKind,proto3" json:"resource_kind,omitempty"`
+	ResourceId    string                      `protobuf:"bytes,3,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	Stream        string                      `protobuf:"bytes,4,opt,name=stream,proto3" json:"stream,omitempty"`
+	OffsetStart   uint64                      `protobuf:"varint,5,opt,name=offset_start,json=offsetStart,proto3" json:"offset_start,omitempty"`
+	Data          []byte                      `protobuf:"bytes,6,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspaceInputChunk) Reset() {
+	*x = WorkspaceInputChunk{}
+	mi := &file_workspace_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspaceInputChunk) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspaceInputChunk) ProtoMessage() {}
+
+func (x *WorkspaceInputChunk) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspaceInputChunk.ProtoReflect.Descriptor instead.
+func (*WorkspaceInputChunk) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *WorkspaceInputChunk) GetEnvelope() *WorkspaceOperationEnvelope {
+	if x != nil {
+		return x.Envelope
+	}
+	return nil
+}
+
+func (x *WorkspaceInputChunk) GetResourceKind() string {
+	if x != nil {
+		return x.ResourceKind
+	}
+	return ""
+}
+
+func (x *WorkspaceInputChunk) GetResourceId() string {
+	if x != nil {
+		return x.ResourceId
+	}
+	return ""
+}
+
+func (x *WorkspaceInputChunk) GetStream() string {
+	if x != nil {
+		return x.Stream
+	}
+	return ""
+}
+
+func (x *WorkspaceInputChunk) GetOffsetStart() uint64 {
+	if x != nil {
+		return x.OffsetStart
+	}
+	return 0
+}
+
+func (x *WorkspaceInputChunk) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+type WorkspaceInputClose struct {
+	state         protoimpl.MessageState      `protogen:"open.v1"`
+	Envelope      *WorkspaceOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
+	ResourceKind  string                      `protobuf:"bytes,2,opt,name=resource_kind,json=resourceKind,proto3" json:"resource_kind,omitempty"`
+	ResourceId    string                      `protobuf:"bytes,3,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	Stream        string                      `protobuf:"bytes,4,opt,name=stream,proto3" json:"stream,omitempty"`
+	Offset        uint64                      `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspaceInputClose) Reset() {
+	*x = WorkspaceInputClose{}
+	mi := &file_workspace_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspaceInputClose) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspaceInputClose) ProtoMessage() {}
+
+func (x *WorkspaceInputClose) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspaceInputClose.ProtoReflect.Descriptor instead.
+func (*WorkspaceInputClose) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *WorkspaceInputClose) GetEnvelope() *WorkspaceOperationEnvelope {
+	if x != nil {
+		return x.Envelope
+	}
+	return nil
+}
+
+func (x *WorkspaceInputClose) GetResourceKind() string {
+	if x != nil {
+		return x.ResourceKind
+	}
+	return ""
+}
+
+func (x *WorkspaceInputClose) GetResourceId() string {
+	if x != nil {
+		return x.ResourceId
+	}
+	return ""
+}
+
+func (x *WorkspaceInputClose) GetStream() string {
+	if x != nil {
+		return x.Stream
+	}
+	return ""
+}
+
+func (x *WorkspaceInputClose) GetOffset() uint64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+type WorkspaceInputFrame struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Frame:
+	//
+	//	*WorkspaceInputFrame_Chunk
+	//	*WorkspaceInputFrame_Close
+	Frame         isWorkspaceInputFrame_Frame `protobuf_oneof:"frame"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspaceInputFrame) Reset() {
+	*x = WorkspaceInputFrame{}
+	mi := &file_workspace_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspaceInputFrame) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspaceInputFrame) ProtoMessage() {}
+
+func (x *WorkspaceInputFrame) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspaceInputFrame.ProtoReflect.Descriptor instead.
+func (*WorkspaceInputFrame) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *WorkspaceInputFrame) GetFrame() isWorkspaceInputFrame_Frame {
+	if x != nil {
+		return x.Frame
+	}
+	return nil
+}
+
+func (x *WorkspaceInputFrame) GetChunk() *WorkspaceInputChunk {
+	if x != nil {
+		if x, ok := x.Frame.(*WorkspaceInputFrame_Chunk); ok {
+			return x.Chunk
+		}
+	}
+	return nil
+}
+
+func (x *WorkspaceInputFrame) GetClose() *WorkspaceInputClose {
+	if x != nil {
+		if x, ok := x.Frame.(*WorkspaceInputFrame_Close); ok {
+			return x.Close
+		}
+	}
+	return nil
+}
+
+type isWorkspaceInputFrame_Frame interface {
+	isWorkspaceInputFrame_Frame()
+}
+
+type WorkspaceInputFrame_Chunk struct {
+	Chunk *WorkspaceInputChunk `protobuf:"bytes,1,opt,name=chunk,proto3,oneof"`
+}
+
+type WorkspaceInputFrame_Close struct {
+	Close *WorkspaceInputClose `protobuf:"bytes,2,opt,name=close,proto3,oneof"`
+}
+
+func (*WorkspaceInputFrame_Chunk) isWorkspaceInputFrame_Frame() {}
+
+func (*WorkspaceInputFrame_Close) isWorkspaceInputFrame_Frame() {}
+
 var File_workspace_proto protoreflect.FileDescriptor
 
 const file_workspace_proto_rawDesc = "" +
@@ -836,7 +1888,90 @@ const file_workspace_proto_rawDesc = "" +
 	"\vresult_json\x18\x01 \x01(\tR\n" +
 	"resultJson\x12\x1d\n" +
 	"\n" +
-	"error_json\x18\x02 \x01(\tR\terrorJsonBFZDgithub.com/helmrdotdev/helmr/internal/proto/workspace/v0;workspacev0b\x06proto3"
+	"error_json\x18\x02 \x01(\tR\terrorJson\"N\n" +
+	"\x14WorkspaceExecStarted\x12\x17\n" +
+	"\aexec_id\x18\x01 \x01(\tR\x06execId\x12\x1d\n" +
+	"\n" +
+	"process_id\x18\x02 \x01(\tR\tprocessId\"G\n" +
+	"\x18WorkspaceExecOutputChunk\x12\x17\n" +
+	"\aexec_id\x18\x01 \x01(\tR\x06execId\x12\x12\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"\x82\x01\n" +
+	"\x13WorkspaceExecExited\x12\x17\n" +
+	"\aexec_id\x18\x01 \x01(\tR\x06execId\x12\x1b\n" +
+	"\texit_code\x18\x02 \x01(\x05R\bexitCode\x12\x16\n" +
+	"\x06signal\x18\x03 \x01(\tR\x06signal\x12\x1d\n" +
+	"\n" +
+	"error_json\x18\x04 \x01(\tR\terrorJson\"L\n" +
+	"\x12WorkspaceExecError\x12\x17\n" +
+	"\aexec_id\x18\x01 \x01(\tR\x06execId\x12\x1d\n" +
+	"\n" +
+	"error_json\x18\x02 \x01(\tR\terrorJson\"r\n" +
+	"\x12WorkspacePtyOpened\x12\x15\n" +
+	"\x06pty_id\x18\x01 \x01(\tR\x05ptyId\x12\x1d\n" +
+	"\n" +
+	"process_id\x18\x02 \x01(\tR\tprocessId\x12\x12\n" +
+	"\x04cols\x18\x03 \x01(\rR\x04cols\x12\x12\n" +
+	"\x04rows\x18\x04 \x01(\rR\x04rows\"D\n" +
+	"\x17WorkspacePtyOutputChunk\x12\x15\n" +
+	"\x06pty_id\x18\x01 \x01(\tR\x05ptyId\x12\x12\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"Z\n" +
+	"\x19WorkspacePtyResizeApplied\x12\x15\n" +
+	"\x06pty_id\x18\x01 \x01(\tR\x05ptyId\x12\x12\n" +
+	"\x04cols\x18\x02 \x01(\rR\x04cols\x12\x12\n" +
+	"\x04rows\x18\x03 \x01(\rR\x04rows\"b\n" +
+	"\x12WorkspacePtyClosed\x12\x15\n" +
+	"\x06pty_id\x18\x01 \x01(\tR\x05ptyId\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x1d\n" +
+	"\n" +
+	"error_json\x18\x03 \x01(\tR\terrorJson\"I\n" +
+	"\x11WorkspacePtyError\x12\x15\n" +
+	"\x06pty_id\x18\x01 \x01(\tR\x05ptyId\x12\x1d\n" +
+	"\n" +
+	"error_json\x18\x02 \x01(\tR\terrorJson\"\x9a\a\n" +
+	"\x17WorkspaceOperationEvent\x12J\n" +
+	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12M\n" +
+	"\fexec_started\x18\x02 \x01(\v2(.helmr.workspace.v0.WorkspaceExecStartedH\x00R\vexecStarted\x12Z\n" +
+	"\x11exec_stdout_chunk\x18\x03 \x01(\v2,.helmr.workspace.v0.WorkspaceExecOutputChunkH\x00R\x0fexecStdoutChunk\x12Z\n" +
+	"\x11exec_stderr_chunk\x18\x04 \x01(\v2,.helmr.workspace.v0.WorkspaceExecOutputChunkH\x00R\x0fexecStderrChunk\x12J\n" +
+	"\vexec_exited\x18\x05 \x01(\v2'.helmr.workspace.v0.WorkspaceExecExitedH\x00R\n" +
+	"execExited\x12G\n" +
+	"\n" +
+	"exec_error\x18\x06 \x01(\v2&.helmr.workspace.v0.WorkspaceExecErrorH\x00R\texecError\x12G\n" +
+	"\n" +
+	"pty_opened\x18\a \x01(\v2&.helmr.workspace.v0.WorkspacePtyOpenedH\x00R\tptyOpened\x12W\n" +
+	"\x10pty_output_chunk\x18\b \x01(\v2+.helmr.workspace.v0.WorkspacePtyOutputChunkH\x00R\x0eptyOutputChunk\x12]\n" +
+	"\x12pty_resize_applied\x18\t \x01(\v2-.helmr.workspace.v0.WorkspacePtyResizeAppliedH\x00R\x10ptyResizeApplied\x12G\n" +
+	"\n" +
+	"pty_closed\x18\n" +
+	" \x01(\v2&.helmr.workspace.v0.WorkspacePtyClosedH\x00R\tptyClosed\x12D\n" +
+	"\tpty_error\x18\v \x01(\v2%.helmr.workspace.v0.WorkspacePtyErrorH\x00R\bptyErrorB\a\n" +
+	"\x05event\"\xe5\x01\n" +
+	"\x12WorkspaceStreamAck\x12J\n" +
+	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12#\n" +
+	"\rresource_kind\x18\x02 \x01(\tR\fresourceKind\x12\x1f\n" +
+	"\vresource_id\x18\x03 \x01(\tR\n" +
+	"resourceId\x12\x16\n" +
+	"\x06stream\x18\x04 \x01(\tR\x06stream\x12%\n" +
+	"\x0edurable_offset\x18\x05 \x01(\x04R\rdurableOffset\"\xf6\x01\n" +
+	"\x13WorkspaceInputChunk\x12J\n" +
+	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12#\n" +
+	"\rresource_kind\x18\x02 \x01(\tR\fresourceKind\x12\x1f\n" +
+	"\vresource_id\x18\x03 \x01(\tR\n" +
+	"resourceId\x12\x16\n" +
+	"\x06stream\x18\x04 \x01(\tR\x06stream\x12!\n" +
+	"\foffset_start\x18\x05 \x01(\x04R\voffsetStart\x12\x12\n" +
+	"\x04data\x18\x06 \x01(\fR\x04data\"\xd7\x01\n" +
+	"\x13WorkspaceInputClose\x12J\n" +
+	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12#\n" +
+	"\rresource_kind\x18\x02 \x01(\tR\fresourceKind\x12\x1f\n" +
+	"\vresource_id\x18\x03 \x01(\tR\n" +
+	"resourceId\x12\x16\n" +
+	"\x06stream\x18\x04 \x01(\tR\x06stream\x12\x16\n" +
+	"\x06offset\x18\x05 \x01(\x04R\x06offset\"\xa0\x01\n" +
+	"\x13WorkspaceInputFrame\x12?\n" +
+	"\x05chunk\x18\x01 \x01(\v2'.helmr.workspace.v0.WorkspaceInputChunkH\x00R\x05chunk\x12?\n" +
+	"\x05close\x18\x02 \x01(\v2'.helmr.workspace.v0.WorkspaceInputCloseH\x00R\x05closeB\a\n" +
+	"\x05frameBFZDgithub.com/helmrdotdev/helmr/internal/proto/workspace/v0;workspacev0b\x06proto3"
 
 var (
 	file_workspace_proto_rawDescOnce sync.Once
@@ -850,7 +1985,7 @@ func file_workspace_proto_rawDescGZIP() []byte {
 	return file_workspace_proto_rawDescData
 }
 
-var file_workspace_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_workspace_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_workspace_proto_goTypes = []any{
 	(*WorkspaceOperationEnvelope)(nil),   // 0: helmr.workspace.v0.WorkspaceOperationEnvelope
 	(*WorkspaceArtifact)(nil),            // 1: helmr.workspace.v0.WorkspaceArtifact
@@ -864,22 +1999,52 @@ var file_workspace_proto_goTypes = []any{
 	(*StopWorkspaceResponse)(nil),        // 9: helmr.workspace.v0.StopWorkspaceResponse
 	(*WorkspaceOperationRequest)(nil),    // 10: helmr.workspace.v0.WorkspaceOperationRequest
 	(*WorkspaceOperationResult)(nil),     // 11: helmr.workspace.v0.WorkspaceOperationResult
+	(*WorkspaceExecStarted)(nil),         // 12: helmr.workspace.v0.WorkspaceExecStarted
+	(*WorkspaceExecOutputChunk)(nil),     // 13: helmr.workspace.v0.WorkspaceExecOutputChunk
+	(*WorkspaceExecExited)(nil),          // 14: helmr.workspace.v0.WorkspaceExecExited
+	(*WorkspaceExecError)(nil),           // 15: helmr.workspace.v0.WorkspaceExecError
+	(*WorkspacePtyOpened)(nil),           // 16: helmr.workspace.v0.WorkspacePtyOpened
+	(*WorkspacePtyOutputChunk)(nil),      // 17: helmr.workspace.v0.WorkspacePtyOutputChunk
+	(*WorkspacePtyResizeApplied)(nil),    // 18: helmr.workspace.v0.WorkspacePtyResizeApplied
+	(*WorkspacePtyClosed)(nil),           // 19: helmr.workspace.v0.WorkspacePtyClosed
+	(*WorkspacePtyError)(nil),            // 20: helmr.workspace.v0.WorkspacePtyError
+	(*WorkspaceOperationEvent)(nil),      // 21: helmr.workspace.v0.WorkspaceOperationEvent
+	(*WorkspaceStreamAck)(nil),           // 22: helmr.workspace.v0.WorkspaceStreamAck
+	(*WorkspaceInputChunk)(nil),          // 23: helmr.workspace.v0.WorkspaceInputChunk
+	(*WorkspaceInputClose)(nil),          // 24: helmr.workspace.v0.WorkspaceInputClose
+	(*WorkspaceInputFrame)(nil),          // 25: helmr.workspace.v0.WorkspaceInputFrame
 }
 var file_workspace_proto_depIdxs = []int32{
-	0, // 0: helmr.workspace.v0.MaterializeWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
-	1, // 1: helmr.workspace.v0.MaterializeWorkspaceRequest.base_artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
-	1, // 2: helmr.workspace.v0.MaterializeWorkspaceRequest.sandbox_artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
-	0, // 3: helmr.workspace.v0.HeartbeatWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
-	0, // 4: helmr.workspace.v0.CaptureWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
-	1, // 5: helmr.workspace.v0.CaptureWorkspaceResponse.artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
-	0, // 6: helmr.workspace.v0.StopWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
-	1, // 7: helmr.workspace.v0.StopWorkspaceResponse.captured_artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
-	0, // 8: helmr.workspace.v0.WorkspaceOperationRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	0,  // 0: helmr.workspace.v0.MaterializeWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
+	1,  // 1: helmr.workspace.v0.MaterializeWorkspaceRequest.base_artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
+	1,  // 2: helmr.workspace.v0.MaterializeWorkspaceRequest.sandbox_artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
+	0,  // 3: helmr.workspace.v0.HeartbeatWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
+	0,  // 4: helmr.workspace.v0.CaptureWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
+	1,  // 5: helmr.workspace.v0.CaptureWorkspaceResponse.artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
+	0,  // 6: helmr.workspace.v0.StopWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
+	1,  // 7: helmr.workspace.v0.StopWorkspaceResponse.captured_artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
+	0,  // 8: helmr.workspace.v0.WorkspaceOperationRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
+	0,  // 9: helmr.workspace.v0.WorkspaceOperationEvent.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
+	12, // 10: helmr.workspace.v0.WorkspaceOperationEvent.exec_started:type_name -> helmr.workspace.v0.WorkspaceExecStarted
+	13, // 11: helmr.workspace.v0.WorkspaceOperationEvent.exec_stdout_chunk:type_name -> helmr.workspace.v0.WorkspaceExecOutputChunk
+	13, // 12: helmr.workspace.v0.WorkspaceOperationEvent.exec_stderr_chunk:type_name -> helmr.workspace.v0.WorkspaceExecOutputChunk
+	14, // 13: helmr.workspace.v0.WorkspaceOperationEvent.exec_exited:type_name -> helmr.workspace.v0.WorkspaceExecExited
+	15, // 14: helmr.workspace.v0.WorkspaceOperationEvent.exec_error:type_name -> helmr.workspace.v0.WorkspaceExecError
+	16, // 15: helmr.workspace.v0.WorkspaceOperationEvent.pty_opened:type_name -> helmr.workspace.v0.WorkspacePtyOpened
+	17, // 16: helmr.workspace.v0.WorkspaceOperationEvent.pty_output_chunk:type_name -> helmr.workspace.v0.WorkspacePtyOutputChunk
+	18, // 17: helmr.workspace.v0.WorkspaceOperationEvent.pty_resize_applied:type_name -> helmr.workspace.v0.WorkspacePtyResizeApplied
+	19, // 18: helmr.workspace.v0.WorkspaceOperationEvent.pty_closed:type_name -> helmr.workspace.v0.WorkspacePtyClosed
+	20, // 19: helmr.workspace.v0.WorkspaceOperationEvent.pty_error:type_name -> helmr.workspace.v0.WorkspacePtyError
+	0,  // 20: helmr.workspace.v0.WorkspaceStreamAck.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
+	0,  // 21: helmr.workspace.v0.WorkspaceInputChunk.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
+	0,  // 22: helmr.workspace.v0.WorkspaceInputClose.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
+	23, // 23: helmr.workspace.v0.WorkspaceInputFrame.chunk:type_name -> helmr.workspace.v0.WorkspaceInputChunk
+	24, // 24: helmr.workspace.v0.WorkspaceInputFrame.close:type_name -> helmr.workspace.v0.WorkspaceInputClose
+	25, // [25:25] is the sub-list for method output_type
+	25, // [25:25] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_workspace_proto_init() }
@@ -887,13 +2052,29 @@ func file_workspace_proto_init() {
 	if File_workspace_proto != nil {
 		return
 	}
+	file_workspace_proto_msgTypes[21].OneofWrappers = []any{
+		(*WorkspaceOperationEvent_ExecStarted)(nil),
+		(*WorkspaceOperationEvent_ExecStdoutChunk)(nil),
+		(*WorkspaceOperationEvent_ExecStderrChunk)(nil),
+		(*WorkspaceOperationEvent_ExecExited)(nil),
+		(*WorkspaceOperationEvent_ExecError)(nil),
+		(*WorkspaceOperationEvent_PtyOpened)(nil),
+		(*WorkspaceOperationEvent_PtyOutputChunk)(nil),
+		(*WorkspaceOperationEvent_PtyResizeApplied)(nil),
+		(*WorkspaceOperationEvent_PtyClosed)(nil),
+		(*WorkspaceOperationEvent_PtyError)(nil),
+	}
+	file_workspace_proto_msgTypes[25].OneofWrappers = []any{
+		(*WorkspaceInputFrame_Chunk)(nil),
+		(*WorkspaceInputFrame_Close)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_workspace_proto_rawDesc), len(file_workspace_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

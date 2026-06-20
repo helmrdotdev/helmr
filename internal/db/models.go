@@ -1478,17 +1478,12 @@ func (ns NullWorkspaceDirtyState) Value() (driver.Value, error) {
 type WorkspaceExecState string
 
 const (
-	WorkspaceExecStateQueued          WorkspaceExecState = "queued"
-	WorkspaceExecStateMaterializing   WorkspaceExecState = "materializing"
-	WorkspaceExecStateRunning         WorkspaceExecState = "running"
-	WorkspaceExecStateStdinClosed     WorkspaceExecState = "stdin_closed"
-	WorkspaceExecStateCancelRequested WorkspaceExecState = "cancel_requested"
-	WorkspaceExecStateKillRequested   WorkspaceExecState = "kill_requested"
-	WorkspaceExecStateExited          WorkspaceExecState = "exited"
-	WorkspaceExecStateCancelled       WorkspaceExecState = "cancelled"
-	WorkspaceExecStateKilled          WorkspaceExecState = "killed"
-	WorkspaceExecStateLost            WorkspaceExecState = "lost"
-	WorkspaceExecStateFailed          WorkspaceExecState = "failed"
+	WorkspaceExecStateQueued        WorkspaceExecState = "queued"
+	WorkspaceExecStateMaterializing WorkspaceExecState = "materializing"
+	WorkspaceExecStateRunning       WorkspaceExecState = "running"
+	WorkspaceExecStateExited        WorkspaceExecState = "exited"
+	WorkspaceExecStateLost          WorkspaceExecState = "lost"
+	WorkspaceExecStateFailed        WorkspaceExecState = "failed"
 )
 
 func (e *WorkspaceExecState) Scan(src interface{}) error {
@@ -3200,6 +3195,7 @@ type WorkspaceExec struct {
 	StdoutCursor         int64                   `json:"stdout_cursor"`
 	StderrCursor         int64                   `json:"stderr_cursor"`
 	StdinCursor          int64                   `json:"stdin_cursor"`
+	StdinDeliveredCursor int64                   `json:"stdin_delivered_cursor"`
 	StdinClosedAt        pgtype.Timestamptz      `json:"stdin_closed_at"`
 	CreatedBySubjectType string                  `json:"created_by_subject_type"`
 	CreatedBySubjectID   string                  `json:"created_by_subject_id"`
@@ -3220,6 +3216,22 @@ type WorkspaceExecStreamChunk struct {
 	OffsetStart   int64               `json:"offset_start"`
 	OffsetEnd     int64               `json:"offset_end"`
 	Data          []byte              `json:"data"`
+	ObservedAt    pgtype.Timestamptz  `json:"observed_at"`
+	CreatedAt     pgtype.Timestamptz  `json:"created_at"`
+}
+
+type WorkspaceExecStreamChunkReceipt struct {
+	ID            pgtype.UUID         `json:"id"`
+	OrgID         pgtype.UUID         `json:"org_id"`
+	ProjectID     pgtype.UUID         `json:"project_id"`
+	EnvironmentID pgtype.UUID         `json:"environment_id"`
+	WorkspaceID   pgtype.UUID         `json:"workspace_id"`
+	ExecID        pgtype.UUID         `json:"exec_id"`
+	Stream        WorkspaceExecStream `json:"stream"`
+	OffsetStart   int64               `json:"offset_start"`
+	OffsetEnd     int64               `json:"offset_end"`
+	DataSha256    []byte              `json:"data_sha256"`
+	DataSize      int32               `json:"data_size"`
 	ObservedAt    pgtype.Timestamptz  `json:"observed_at"`
 	CreatedAt     pgtype.Timestamptz  `json:"created_at"`
 }
@@ -3402,6 +3414,7 @@ type WorkspacePtySession struct {
 	ProcessID            string                  `json:"process_id"`
 	OutputCursor         int64                   `json:"output_cursor"`
 	InputCursor          int64                   `json:"input_cursor"`
+	InputDeliveredCursor int64                   `json:"input_delivered_cursor"`
 	CreatedBySubjectType string                  `json:"created_by_subject_type"`
 	CreatedBySubjectID   string                  `json:"created_by_subject_id"`
 	CreatedAt            pgtype.Timestamptz      `json:"created_at"`
@@ -3422,6 +3435,22 @@ type WorkspacePtyStreamChunk struct {
 	OffsetStart   int64              `json:"offset_start"`
 	OffsetEnd     int64              `json:"offset_end"`
 	Data          []byte             `json:"data"`
+	ObservedAt    pgtype.Timestamptz `json:"observed_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type WorkspacePtyStreamChunkReceipt struct {
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         pgtype.UUID        `json:"org_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	PtySessionID  pgtype.UUID        `json:"pty_session_id"`
+	Stream        WorkspacePtyStream `json:"stream"`
+	OffsetStart   int64              `json:"offset_start"`
+	OffsetEnd     int64              `json:"offset_end"`
+	DataSha256    []byte             `json:"data_sha256"`
+	DataSize      int32              `json:"data_size"`
 	ObservedAt    pgtype.Timestamptz `json:"observed_at"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }

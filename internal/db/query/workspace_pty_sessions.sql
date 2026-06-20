@@ -70,6 +70,18 @@ UPDATE workspace_pty_sessions
    AND state IN ('creating')
 RETURNING *;
 
+-- name: ListWorkspacePtySessionsAwaitingDispatch :many
+SELECT *
+  FROM workspace_pty_sessions
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND materialization_id = sqlc.arg(materialization_id)
+   AND state IN ('creating')
+ ORDER BY created_at ASC, id ASC
+ LIMIT sqlc.arg(limit_count);
+
 -- name: MarkWorkspacePtyOpen :one
 UPDATE workspace_pty_sessions
    SET state = 'open',
@@ -81,6 +93,7 @@ UPDATE workspace_pty_sessions
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
+   AND materialization_id = sqlc.arg(materialization_id)
    AND state IN ('creating', 'open')
 RETURNING *;
 
@@ -95,7 +108,7 @@ UPDATE workspace_pty_sessions
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
-   AND state IN ('creating', 'open', 'resizing')
+   AND state IN ('open', 'resizing')
 RETURNING *;
 
 -- name: MarkWorkspacePtyResizeApplied :one
@@ -107,6 +120,7 @@ UPDATE workspace_pty_sessions
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
+   AND materialization_id = sqlc.arg(materialization_id)
    AND state = 'resizing'
 RETURNING *;
 
@@ -119,35 +133,77 @@ UPDATE workspace_pty_sessions
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
-   AND state IN ('creating', 'open', 'resizing')
+   AND state IN ('open', 'resizing', 'closing')
 RETURNING *;
 
 -- name: MarkWorkspacePtyClosed :one
-UPDATE workspace_pty_sessions
-   SET state = 'closed',
-       closed_at = coalesce(closed_at, now()),
-       updated_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(id)
-   AND state IN ('creating', 'open', 'resizing', 'closing')
-RETURNING *;
+WITH updated_pty AS (
+    UPDATE workspace_pty_sessions
+       SET state = 'closed',
+           closed_at = coalesce(closed_at, now()),
+           updated_at = now()
+     WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
+       AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
+       AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
+       AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
+       AND workspace_pty_sessions.id = sqlc.arg(id)
+       AND workspace_pty_sessions.materialization_id = sqlc.arg(materialization_id)
+       AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
+    RETURNING *
+),
+released_write_lease AS (
+    UPDATE workspace_leases
+       SET state = 'released',
+           released_at = now(),
+           updated_at = now()
+      FROM updated_pty
+     WHERE workspace_leases.org_id = updated_pty.org_id
+       AND workspace_leases.project_id = updated_pty.project_id
+       AND workspace_leases.environment_id = updated_pty.environment_id
+       AND workspace_leases.workspace_id = updated_pty.workspace_id
+       AND workspace_leases.id = updated_pty.write_lease_id
+       AND workspace_leases.owner_pty_session_id = updated_pty.id
+       AND workspace_leases.lease_kind = 'write'
+       AND workspace_leases.state IN ('active', 'releasing')
+    RETURNING workspace_leases.id
+)
+SELECT *
+  FROM updated_pty;
 
--- name: MarkWorkspacePtySessionsLostForMaterialization :many
-UPDATE workspace_pty_sessions
-   SET state = 'lost',
-       error = jsonb_build_object('kind', 'workspace_materialization_lost'),
-       closed_at = coalesce(closed_at, now()),
-       updated_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND materialization_id = sqlc.arg(materialization_id)
-   AND state IN ('creating', 'open', 'resizing', 'closing')
-RETURNING *;
+-- name: MarkWorkspacePtyFailed :one
+WITH updated_pty AS (
+    UPDATE workspace_pty_sessions
+       SET state = 'failed',
+           error = coalesce(sqlc.arg(error)::jsonb, '{}'::jsonb),
+           closed_at = coalesce(closed_at, now()),
+           updated_at = now()
+     WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
+       AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
+       AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
+       AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
+       AND workspace_pty_sessions.id = sqlc.arg(id)
+       AND workspace_pty_sessions.materialization_id = sqlc.arg(materialization_id)
+       AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
+    RETURNING *
+),
+released_write_lease AS (
+    UPDATE workspace_leases
+       SET state = 'released',
+           released_at = now(),
+           updated_at = now()
+      FROM updated_pty
+     WHERE workspace_leases.org_id = updated_pty.org_id
+       AND workspace_leases.project_id = updated_pty.project_id
+       AND workspace_leases.environment_id = updated_pty.environment_id
+       AND workspace_leases.workspace_id = updated_pty.workspace_id
+       AND workspace_leases.id = updated_pty.write_lease_id
+       AND workspace_leases.owner_pty_session_id = updated_pty.id
+       AND workspace_leases.lease_kind = 'write'
+       AND workspace_leases.state IN ('active', 'releasing')
+    RETURNING workspace_leases.id
+)
+SELECT *
+  FROM updated_pty;
 
 -- name: LockWorkspacePtyForStreamAppend :one
 SELECT id,
@@ -192,6 +248,33 @@ INSERT INTO workspace_pty_stream_chunks (
 )
 RETURNING *;
 
+-- name: InsertWorkspacePtyOutputStreamChunk :one
+INSERT INTO workspace_pty_stream_chunks (
+    org_id,
+    project_id,
+    environment_id,
+    workspace_id,
+    pty_session_id,
+    stream,
+    offset_start,
+    offset_end,
+    data,
+    observed_at
+) VALUES (
+    sqlc.arg(org_id),
+    sqlc.arg(project_id),
+    sqlc.arg(environment_id),
+    sqlc.arg(workspace_id),
+    sqlc.arg(pty_session_id),
+    sqlc.arg(stream)::workspace_pty_stream,
+    sqlc.arg(offset_start),
+    sqlc.arg(offset_end),
+    sqlc.arg(data),
+    coalesce(sqlc.narg(observed_at), now())
+)
+ON CONFLICT DO NOTHING
+RETURNING *;
+
 -- name: AdvanceWorkspacePtyStreamCursor :one
 UPDATE workspace_pty_sessions
    SET input_cursor = CASE WHEN sqlc.arg(stream)::workspace_pty_stream = 'input' THEN sqlc.arg(offset_end) ELSE input_cursor END,
@@ -208,9 +291,102 @@ UPDATE workspace_pty_sessions
        END
 RETURNING *;
 
+-- name: AdvanceWorkspacePtyOutputCursor :one
+WITH RECURSIVE current_cursor AS (
+    SELECT CASE sqlc.arg(stream)::workspace_pty_stream
+             WHEN 'output' THEN output_cursor
+             ELSE -1
+           END AS cursor
+      FROM workspace_pty_sessions
+     WHERE org_id = sqlc.arg(org_id)
+       AND project_id = sqlc.arg(project_id)
+       AND environment_id = sqlc.arg(environment_id)
+       AND workspace_id = sqlc.arg(workspace_id)
+       AND id = sqlc.arg(pty_session_id)
+     FOR UPDATE
+),
+contiguous(end_offset) AS (
+    SELECT cursor FROM current_cursor
+    UNION
+    SELECT chunks.offset_end
+      FROM contiguous
+      JOIN workspace_pty_stream_chunks AS chunks
+        ON chunks.org_id = sqlc.arg(org_id)
+       AND chunks.project_id = sqlc.arg(project_id)
+       AND chunks.environment_id = sqlc.arg(environment_id)
+       AND chunks.workspace_id = sqlc.arg(workspace_id)
+       AND chunks.pty_session_id = sqlc.arg(pty_session_id)
+       AND chunks.stream = sqlc.arg(stream)::workspace_pty_stream
+       AND chunks.offset_start = contiguous.end_offset
+),
+advanced AS (
+    SELECT max(end_offset)::bigint AS cursor FROM contiguous
+)
+UPDATE workspace_pty_sessions
+   SET output_cursor = CASE WHEN sqlc.arg(stream)::workspace_pty_stream = 'output' THEN advanced.cursor ELSE output_cursor END,
+       updated_at = now()
+  FROM advanced
+ WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
+   AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
+   AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
+   AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_pty_sessions.id = sqlc.arg(pty_session_id)
+   AND sqlc.arg(stream)::workspace_pty_stream = 'output'
+RETURNING workspace_pty_sessions.*;
+
+-- name: DeleteWorkspacePtyStreamChunksBefore :exec
+DELETE FROM workspace_pty_stream_chunks
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND pty_session_id = sqlc.arg(pty_session_id)
+   AND stream = sqlc.arg(stream)::workspace_pty_stream
+   AND offset_end <= sqlc.arg(retain_after_offset);
+
 -- name: GetWorkspacePtyStreamChunkAtOffset :one
 SELECT *
   FROM workspace_pty_stream_chunks
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND pty_session_id = sqlc.arg(pty_session_id)
+   AND stream = sqlc.arg(stream)::workspace_pty_stream
+   AND offset_start = sqlc.arg(offset_start);
+
+-- name: InsertWorkspacePtyStreamChunkReceipt :one
+INSERT INTO workspace_pty_stream_chunk_receipts (
+    org_id,
+    project_id,
+    environment_id,
+    workspace_id,
+    pty_session_id,
+    stream,
+    offset_start,
+    offset_end,
+    data_sha256,
+    data_size,
+    observed_at
+) VALUES (
+    sqlc.arg(org_id),
+    sqlc.arg(project_id),
+    sqlc.arg(environment_id),
+    sqlc.arg(workspace_id),
+    sqlc.arg(pty_session_id),
+    sqlc.arg(stream)::workspace_pty_stream,
+    sqlc.arg(offset_start),
+    sqlc.arg(offset_end),
+    sqlc.arg(data_sha256),
+    sqlc.arg(data_size),
+    coalesce(sqlc.narg(observed_at), now())
+)
+ON CONFLICT DO NOTHING
+RETURNING *;
+
+-- name: GetWorkspacePtyStreamChunkReceiptAtOffset :one
+SELECT *
+  FROM workspace_pty_stream_chunk_receipts
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
@@ -242,3 +418,47 @@ SELECT coalesce(min(offset_start), 0)::bigint AS earliest_offset,
    AND workspace_id = sqlc.arg(workspace_id)
    AND pty_session_id = sqlc.arg(pty_session_id)
    AND stream = sqlc.arg(stream)::workspace_pty_stream;
+
+-- name: ListWorkspacePtyInputChunksAfterDelivered :many
+SELECT chunks.*
+  FROM workspace_pty_sessions
+  JOIN workspace_pty_stream_chunks AS chunks
+    ON chunks.org_id = workspace_pty_sessions.org_id
+   AND chunks.project_id = workspace_pty_sessions.project_id
+   AND chunks.environment_id = workspace_pty_sessions.environment_id
+   AND chunks.workspace_id = workspace_pty_sessions.workspace_id
+   AND chunks.pty_session_id = workspace_pty_sessions.id
+   AND chunks.stream = 'input'
+ WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
+   AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
+   AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
+   AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_pty_sessions.id = sqlc.arg(pty_session_id)
+   AND chunks.offset_end > workspace_pty_sessions.input_delivered_cursor
+ ORDER BY chunks.offset_start ASC
+ LIMIT sqlc.arg(limit_count);
+
+-- name: AdvanceWorkspacePtyInputDeliveredCursor :one
+UPDATE workspace_pty_sessions
+   SET input_delivered_cursor = sqlc.arg(offset_end),
+       updated_at = now()
+ WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
+   AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
+   AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
+   AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_pty_sessions.id = sqlc.arg(pty_session_id)
+   AND sqlc.arg(offset_start) = workspace_pty_sessions.input_delivered_cursor
+   AND sqlc.arg(offset_end) <= workspace_pty_sessions.input_cursor
+   AND EXISTS (
+       SELECT 1
+         FROM workspace_pty_stream_chunks AS chunks
+        WHERE chunks.org_id = workspace_pty_sessions.org_id
+          AND chunks.project_id = workspace_pty_sessions.project_id
+          AND chunks.environment_id = workspace_pty_sessions.environment_id
+          AND chunks.workspace_id = workspace_pty_sessions.workspace_id
+          AND chunks.pty_session_id = workspace_pty_sessions.id
+          AND chunks.stream = 'input'
+          AND chunks.offset_start = sqlc.arg(offset_start)
+          AND chunks.offset_end = sqlc.arg(offset_end)
+   )
+RETURNING *;
