@@ -1418,9 +1418,25 @@ released_write_lease AS (
        AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
+),
+stream_wakeups AS (
+    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
+    SELECT updated_exec.org_id,
+           updated_exec.project_id,
+           updated_exec.environment_id,
+           updated_exec.workspace_id,
+           'workspace_exec',
+           updated_exec.id,
+           stream_names.stream,
+           stream_names.cursor_offset,
+           'terminal'
+      FROM updated_exec
+      CROSS JOIN LATERAL (VALUES ('stdout', updated_exec.stdout_cursor), ('stderr', updated_exec.stderr_cursor)) AS stream_names(stream, cursor_offset)
+    RETURNING id
 )
 SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, request_fingerprint, process_id, exit_code, signal, error, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
   FROM updated_exec
+ WHERE (SELECT count(*) FROM stream_wakeups) >= 0
 `
 
 type MarkWorkspaceExecExitedParams struct {

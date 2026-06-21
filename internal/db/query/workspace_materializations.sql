@@ -385,7 +385,7 @@ lost_execs AS (
        AND workspace_execs.workspace_id = stopped.workspace_id
        AND workspace_execs.materialization_id = stopped.id
        AND workspace_execs.state IN ('queued', 'materializing', 'running')
-    RETURNING workspace_execs.id
+    RETURNING workspace_execs.*
 ),
 lost_ptys AS (
     UPDATE workspace_pty_sessions
@@ -400,7 +400,7 @@ lost_ptys AS (
        AND workspace_pty_sessions.workspace_id = stopped.workspace_id
        AND workspace_pty_sessions.materialization_id = stopped.id
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING workspace_pty_sessions.id
+    RETURNING workspace_pty_sessions.*
 ),
 released_leases AS (
     UPDATE workspace_leases
@@ -415,8 +415,36 @@ released_leases AS (
        AND workspace_leases.materialization_id = stopped.id
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
+),
+stream_wakeups AS (
+    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
+    SELECT lost_execs.org_id,
+           lost_execs.project_id,
+           lost_execs.environment_id,
+           lost_execs.workspace_id,
+           'workspace_exec',
+           lost_execs.id,
+           stream_names.stream,
+           stream_names.cursor_offset,
+           'terminal'
+      FROM lost_execs
+      CROSS JOIN LATERAL (VALUES ('stdout', lost_execs.stdout_cursor), ('stderr', lost_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
+    UNION ALL
+    SELECT lost_ptys.org_id,
+           lost_ptys.project_id,
+           lost_ptys.environment_id,
+           lost_ptys.workspace_id,
+           'workspace_pty',
+           lost_ptys.id,
+           'output',
+           lost_ptys.output_cursor,
+           'terminal'
+      FROM lost_ptys
+    RETURNING id
 )
-SELECT * FROM stopped;
+SELECT *
+  FROM stopped
+ WHERE (SELECT count(*) FROM stream_wakeups) >= 0;
 
 -- name: FailWorkspaceMaterialization :one
 WITH target AS MATERIALIZED (
@@ -476,7 +504,7 @@ lost_execs AS (
        AND workspace_execs.workspace_id = failed.workspace_id
        AND workspace_execs.materialization_id = failed.id
        AND workspace_execs.state IN ('queued', 'materializing', 'running')
-    RETURNING workspace_execs.id
+    RETURNING workspace_execs.*
 ),
 lost_ptys AS (
     UPDATE workspace_pty_sessions
@@ -491,7 +519,7 @@ lost_ptys AS (
        AND workspace_pty_sessions.workspace_id = failed.workspace_id
        AND workspace_pty_sessions.materialization_id = failed.id
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING workspace_pty_sessions.id
+    RETURNING workspace_pty_sessions.*
 ),
 released_leases AS (
     UPDATE workspace_leases
@@ -506,8 +534,36 @@ released_leases AS (
        AND workspace_leases.materialization_id = failed.id
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
+),
+stream_wakeups AS (
+    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
+    SELECT lost_execs.org_id,
+           lost_execs.project_id,
+           lost_execs.environment_id,
+           lost_execs.workspace_id,
+           'workspace_exec',
+           lost_execs.id,
+           stream_names.stream,
+           stream_names.cursor_offset,
+           'terminal'
+      FROM lost_execs
+      CROSS JOIN LATERAL (VALUES ('stdout', lost_execs.stdout_cursor), ('stderr', lost_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
+    UNION ALL
+    SELECT lost_ptys.org_id,
+           lost_ptys.project_id,
+           lost_ptys.environment_id,
+           lost_ptys.workspace_id,
+           'workspace_pty',
+           lost_ptys.id,
+           'output',
+           lost_ptys.output_cursor,
+           'terminal'
+      FROM lost_ptys
+    RETURNING id
 )
-SELECT * FROM failed;
+SELECT *
+  FROM failed
+ WHERE (SELECT count(*) FROM stream_wakeups) >= 0;
 
 -- name: MarkStaleWorkspaceMaterializationsLost :many
 WITH lost AS (
@@ -559,7 +615,7 @@ lost_execs AS (
        AND workspace_execs.workspace_id = lost.workspace_id
        AND workspace_execs.materialization_id = lost.id
        AND workspace_execs.state IN ('queued', 'materializing', 'running')
-    RETURNING workspace_execs.id
+    RETURNING workspace_execs.*
 ),
 lost_ptys AS (
     UPDATE workspace_pty_sessions
@@ -574,7 +630,7 @@ lost_ptys AS (
        AND workspace_pty_sessions.workspace_id = lost.workspace_id
        AND workspace_pty_sessions.materialization_id = lost.id
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING workspace_pty_sessions.id
+    RETURNING workspace_pty_sessions.*
 ),
 released_leases AS (
     UPDATE workspace_leases
@@ -589,5 +645,33 @@ released_leases AS (
        AND workspace_leases.materialization_id = lost.id
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
+),
+stream_wakeups AS (
+    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
+    SELECT lost_execs.org_id,
+           lost_execs.project_id,
+           lost_execs.environment_id,
+           lost_execs.workspace_id,
+           'workspace_exec',
+           lost_execs.id,
+           stream_names.stream,
+           stream_names.cursor_offset,
+           'terminal'
+      FROM lost_execs
+      CROSS JOIN LATERAL (VALUES ('stdout', lost_execs.stdout_cursor), ('stderr', lost_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
+    UNION ALL
+    SELECT lost_ptys.org_id,
+           lost_ptys.project_id,
+           lost_ptys.environment_id,
+           lost_ptys.workspace_id,
+           'workspace_pty',
+           lost_ptys.id,
+           'output',
+           lost_ptys.output_cursor,
+           'terminal'
+      FROM lost_ptys
+    RETURNING id
 )
-SELECT * FROM lost;
+SELECT *
+  FROM lost
+ WHERE (SELECT count(*) FROM stream_wakeups) >= 0;

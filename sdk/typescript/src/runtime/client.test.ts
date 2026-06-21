@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 
-import { HelmrClient, waitpointTokenClientMethod } from "./client"
+import { HelmrClient, WorkspaceStreamError, WorkspaceStreamTerminalError, waitpointTokenClientMethod } from "./client"
 import { runStateBooleans } from "./run"
 import { PayloadSchemaValidationError, idempotencyKeys, image, sandbox, source, task, type PayloadSchema } from "../index"
 import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER, HELMR_SDK_VERSION, HELMR_SDK_VERSION_HEADER } from "../version"
@@ -383,6 +383,116 @@ test("workspace pty handle uses direct workspace pty routes", async () => {
     ["POST", "https://api.example.test/api/workspaces/workspace-1/pty/pty-1/resize", { cols: 100, rows: 40 }],
     ["POST", "https://api.example.test/api/workspaces/workspace-1/pty/pty-1/close", {}],
   ])
+})
+
+test("workspace exec stdout stream follows SSE chunks and closes on terminal", async () => {
+  const requested: Array<{ url: string; accept: string | null }> = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requested.push({ url: String(input), accept: new Headers(init?.headers).get("accept") })
+    return workspaceStreamSseResponse([
+      ["workspace_stream_chunk", "5", workspaceStreamChunkFixture({ offset_start: 0, offset_end: 5, data: Buffer.from("hello").toString("base64") })],
+      ["workspace_stream_terminal", "5", {
+        resource_kind: "workspace_exec",
+        resource_id: "exec-1",
+        stream: "stdout",
+        state: "exited",
+        cursor: 5,
+      }],
+    ])
+  }) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const chunks = []
+  for await (const chunk of client.workspaces.open("workspace-1").execs.retrieve("exec-1").stdout.stream({ fromCursor: 0, follow: true })) {
+    chunks.push(new TextDecoder().decode(chunk.data))
+  }
+
+  expect(chunks).toEqual(["hello"])
+  expect(requested).toEqual([{ url: "https://api.example.test/api/workspaces/workspace-1/execs/exec-1/stdout?follow=1&cursor=0", accept: "text/event-stream" }])
+})
+
+test("workspace stream reconnects with last DB offset cursor", async () => {
+  let call = 0
+  const requested: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    call += 1
+    requested.push(String(input))
+    if (call === 1) {
+      return workspaceStreamSseResponse([
+        ["workspace_stream_chunk", "4", workspaceStreamChunkFixture({ offset_start: 0, offset_end: 4, data: Buffer.from("ping").toString("base64") })],
+      ])
+    }
+    return workspaceStreamSseResponse([
+      ["workspace_stream_chunk", "8", workspaceStreamChunkFixture({ offset_start: 4, offset_end: 8, data: Buffer.from("pong").toString("base64") })],
+      ["workspace_stream_terminal", "8", {
+        resource_kind: "workspace_exec",
+        resource_id: "exec-1",
+        stream: "stderr",
+        state: "exited",
+        cursor: 8,
+      }],
+    ])
+  }) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const chunks = []
+  for await (const chunk of client.workspaces.open("workspace-1").execs.retrieve("exec-1").stderr.stream({ fromCursor: 0, follow: true })) {
+    chunks.push(new TextDecoder().decode(chunk.data))
+  }
+
+  expect(chunks).toEqual(["ping", "pong"])
+  expect(requested).toEqual([
+    "https://api.example.test/api/workspaces/workspace-1/execs/exec-1/stderr?follow=1&cursor=0",
+    "https://api.example.test/api/workspaces/workspace-1/execs/exec-1/stderr?follow=1&cursor=4",
+  ])
+})
+
+test("workspace pty output stream surfaces lost terminal as typed error", async () => {
+  globalThis.fetch = (async () =>
+    workspaceStreamSseResponse([
+      ["workspace_stream_lost", "0", {
+        resource_kind: "workspace_pty",
+        resource_id: "pty-1",
+        stream: "output",
+        state: "lost",
+        cursor: 0,
+        error: { code: "workspace_materialization_lost" },
+      }],
+    ])) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  let terminal: WorkspaceStreamTerminalError | undefined
+  try {
+    for await (const _chunk of client.workspaces.open("workspace-1").pty.retrieve("pty-1").output.stream({ fromCursor: 0, follow: true })) {
+      // lost terminal should fail before yielding chunks
+    }
+  } catch (error) {
+    if (error instanceof WorkspaceStreamTerminalError) {
+      terminal = error
+    } else {
+      throw error
+    }
+  }
+  expect(terminal).toBeInstanceOf(WorkspaceStreamTerminalError)
+  expect(terminal?.terminal.error).toEqual({ code: "workspace_materialization_lost" })
+})
+
+test("workspace stream surfaces cursor expiry as typed error", async () => {
+  globalThis.fetch = (async () =>
+    workspaceStreamSseResponse([
+      ["workspace_stream_error", "0", {
+        code: "workspace_stream_cursor_expired",
+        message: "workspace stream cursor expired; earliest available cursor is 10",
+        cursor: 0,
+      }],
+    ])) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await expect((async () => {
+    for await (const _chunk of client.workspaces.open("workspace-1").execs.retrieve("exec-1").stdout.stream({ fromCursor: 0, follow: true })) {
+      // cursor expiry should fail before yielding chunks
+    }
+  })()).rejects.toBeInstanceOf(WorkspaceStreamError)
 })
 
 test("http transport is explicit and warns, including localhost", async () => {
@@ -2560,6 +2670,21 @@ function workspaceStreamChunkFixture(overrides: Partial<{
     created_at: "2026-04-20T00:00:00Z",
     ...overrides,
   }
+}
+
+function workspaceStreamSseResponse(frames: readonly (readonly [string, string, unknown])[]): Response {
+  const encoder = new TextEncoder()
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        for (const [event, id, data] of frames) {
+          controller.enqueue(encoder.encode(`id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
+        }
+        controller.close()
+      },
+    }),
+    { status: 200, headers: { "content-type": "text/event-stream" } },
+  )
 }
 
 function channelRecordFixture(overrides: Partial<{

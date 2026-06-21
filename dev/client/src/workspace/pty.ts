@@ -1,7 +1,7 @@
-import { HelmrClient, type WorkspacePty, type WorkspaceStreamChunk } from "../../../../sdk/typescript/src/index"
+import { HelmrClient, type WorkspacePty } from "../../../../sdk/typescript/src/index"
 import { assert, assertEqual } from "../assert"
 import { readConfig, requestScope } from "../config"
-import { byteLength, chunksText, currentDeployment, delay, expectStreamFollowUnsupported, waitForRunningMaterialization } from "./common"
+import { byteLength, chunksText, collectStream, currentDeployment, delay, waitForCollectedText, waitForRunningMaterialization, waitForStreamDone } from "./common"
 
 interface PtySmokeEvidence {
   readonly marker: string
@@ -62,7 +62,8 @@ async function runWorkspacePtySmoke(): Promise<PtySmokeEvidence> {
     rows: 24,
     idempotencyKey: `workspace-pty-open:${config.marker}`,
   })
-  await expectStreamFollowUnsupported(pty.output.stream(scope))
+  const streamAbort = new AbortController()
+  const outputCollector = collectStream(pty.output.stream({ ...scope, signal: streamAbort.signal, fromCursor: 0, follow: true }))
   const opened = await waitForPtyState(() => pty.retrieve(scope), "open")
   const openedAt = Date.now()
   assert(opened.processId !== null && opened.processId !== "", "pty process id was not persisted")
@@ -72,7 +73,7 @@ async function runWorkspacePtySmoke(): Promise<PtySmokeEvidence> {
   const inputChunk = await pty.input(firstInput, { ...scope, offset: 0 })
   assertEqual(inputChunk.offsetStart, 0, "pty input offset_start mismatch")
   assertEqual(inputChunk.offsetEnd, byteLength(firstInput), "pty input offset_end mismatch")
-  const output = await waitForOutput((opts) => pty.output.list({ ...scope, ...opts }), `PTY_MARKER:${config.marker}`)
+  await waitForCollectedText(outputCollector, `PTY_MARKER:${config.marker}`, "pty output")
   const inputOutputAt = Date.now()
 
   const resizing = await pty.resize(100, 40, scope)
@@ -86,6 +87,8 @@ async function runWorkspacePtySmoke(): Promise<PtySmokeEvidence> {
   assert(closing.state === "closing" || closing.state === "closed", `unexpected pty close state ${closing.state}`)
   const closed = await waitForPtyTerminal(() => pty.retrieve(scope))
   const closedAt = Date.now()
+  await waitForStreamDone(outputCollector, "pty output")
+  streamAbort.abort()
   assertEqual(closed.state, "closed", "pty did not close cleanly")
 
   const listed = await handle.pty.list({ ...scope, limit: 20 })
@@ -104,7 +107,7 @@ async function runWorkspacePtySmoke(): Promise<PtySmokeEvidence> {
     materializationId: running.id,
     ptyId: pty.id,
     processId: opened.processId,
-    output,
+    output: chunksText(outputCollector.chunks),
     inputCursor: closed.inputCursor,
     outputCursor: closed.outputCursor,
     finalState: closed.state,
@@ -151,15 +154,4 @@ async function waitForPtyTerminal(read: () => Promise<WorkspacePty>): Promise<Wo
     await delay(500)
   }
   throw new Error("pty did not reach a terminal state")
-}
-
-async function waitForOutput(read: (opts?: { cursor?: number; limit?: number }) => Promise<readonly WorkspaceStreamChunk[]>, expected: string): Promise<string> {
-  for (let attempt = 0; attempt < 240; attempt += 1) {
-    const text = chunksText(await read({ cursor: 0, limit: 100 }))
-    if (text.includes(expected)) {
-      return text
-    }
-    await delay(500)
-  }
-  throw new Error(`pty output did not include ${expected}`)
 }

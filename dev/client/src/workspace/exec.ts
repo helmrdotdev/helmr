@@ -1,7 +1,7 @@
 import { HelmrClient, type WorkspaceExec } from "../../../../sdk/typescript/src/index"
 import { assert, assertEqual } from "../assert"
 import { readConfig, requestScope } from "../config"
-import { byteLength, currentDeployment, expectStreamFollowUnsupported, waitForRunningMaterialization, waitForStreamText } from "./common"
+import { byteLength, chunksText, collectStream, currentDeployment, waitForCollectedText, waitForRunningMaterialization, waitForStreamDone } from "./common"
 
 interface ExecSmokeEvidence {
   readonly marker: string
@@ -76,9 +76,12 @@ async function runWorkspaceExecSmoke(): Promise<ExecSmokeEvidence> {
     env: { SMOKE_MARKER: config.marker },
     idempotencyKey: `workspace-exec-command:${config.marker}`,
   })
-  await expectStreamFollowUnsupported(exec.stdout.stream(scope))
+  const streamAbort = new AbortController()
+  const streamScope = { ...scope, signal: streamAbort.signal }
+  const stdoutCollector = collectStream(exec.stdout.stream({ ...streamScope, fromCursor: 0, follow: true }))
+  const stderrCollector = collectStream(exec.stderr.stream({ ...streamScope, fromCursor: 0, follow: true }))
 
-  const firstStdout = await waitForStreamText(() => exec.stdout.list({ ...scope, cursor: 0, limit: 100 }), `EXEC_STDOUT_START:${config.marker}`)
+  const firstStdout = await waitForCollectedText(stdoutCollector, `EXEC_STDOUT_START:${config.marker}`, "exec stdout")
   const firstStdoutAt = Date.now()
   assert(firstStdout.includes(`EXEC_STDOUT_START:${config.marker}`), "exec stdout start marker was not persisted")
 
@@ -91,14 +94,16 @@ async function runWorkspaceExecSmoke(): Promise<ExecSmokeEvidence> {
 
   const terminal = await exec.wait({ ...scope, pollIntervalMs: 500 })
   const exitedAt = Date.now()
+  await Promise.all([waitForStreamDone(stdoutCollector, "exec stdout"), waitForStreamDone(stderrCollector, "exec stderr")])
+  streamAbort.abort()
   assertEqual(terminal.state, "exited", "exec did not reach exited state")
   assertEqual(terminal.exitCode, 7, "exec exit code mismatch")
   assert(terminal.processId !== null && terminal.processId !== "", "exec process id was not persisted")
   const exitCode = terminal.exitCode
   assert(exitCode !== null, "exec exit code was not persisted")
 
-  const stdout = await waitForStreamText(() => exec.stdout.list({ ...scope, cursor: 0, limit: 100 }), `EXEC_STDIN:client-input:${config.marker}`)
-  const stderr = await waitForStreamText(() => exec.stderr.list({ ...scope, cursor: 0, limit: 100 }), `EXEC_STDERR_DONE:client-input:${config.marker}`)
+  const stdout = chunksText(stdoutCollector.chunks)
+  const stderr = chunksText(stderrCollector.chunks)
   assert(stdout.includes(`EXEC_STDIN:client-input:${config.marker}`), "exec stdin was not observed in stdout")
   assert(stderr.includes(`EXEC_STDERR_START:${config.marker}`), "exec stderr start marker was not persisted")
   assert(stderr.includes(`EXEC_STDERR_DONE:client-input:${config.marker}`), "exec stderr done marker was not persisted")

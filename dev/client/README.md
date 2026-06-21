@@ -48,13 +48,13 @@ bun run --cwd dev/client workspace:ports
 ```
 
 `workspace:exec` creates a direct workspace, materializes it, starts a real
-workspace exec, verifies stdout/stderr replay, writes and closes stdin, waits
-for the durable exit code, and confirms stream follow fails explicitly with
-`workspace_stream_follow_unsupported`.
+workspace exec, follows stdout/stderr through server push, writes and closes
+stdin, waits for the durable exit code, and verifies retained replay after the
+stream completes.
 
 `workspace:pty` creates a direct workspace, materializes it, opens a PTY,
-verifies output replay, writes input, resizes, closes, and confirms stream
-follow fails explicitly with `workspace_stream_follow_unsupported`.
+follows output through server push, writes input, resizes, closes, and verifies
+retained replay after terminal close.
 
 `workspace:files` and `workspace:ports` remain planned-surface diagnostics until
 their public SDK and REST primitives are implemented.

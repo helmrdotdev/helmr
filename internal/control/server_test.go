@@ -31,6 +31,7 @@ type testServerConfig struct {
 	DispatchQueue       dispatch.Queue
 	ScheduleEngine      ScheduleRegistrar
 	EventStream         *EventStream
+	WorkspaceStreams    *WorkspaceStreamNotifier
 	WorkerTokenSecret   []byte
 	WorkerTokenTTL      time.Duration
 	WorkerRegisterToken string
@@ -89,6 +90,9 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	}
 	if testCfg.EventStream != nil {
 		cfg.EventStream = testCfg.EventStream
+	}
+	if testCfg.WorkspaceStreams != nil {
+		cfg.WorkspaceStreams = testCfg.WorkspaceStreams
 	}
 	if len(testCfg.WorkerTokenSecret) > 0 {
 		cfg.WorkerTokenSecret = testCfg.WorkerTokenSecret

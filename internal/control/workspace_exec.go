@@ -167,9 +167,18 @@ func (s *Server) listWorkspaceExecStream(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	cursor, err := parseWorkspaceStreamCursor(r)
+	cursor, err := parseWorkspaceStreamFollowCursor(r)
 	if err != nil {
 		writeError(w, badRequest(err))
+		return
+	}
+	if workspaceStreamFollowRequested(r) {
+		limit, err := parseWorkspacePrimitiveLimit(r, 100, 500)
+		if err != nil {
+			writeError(w, badRequest(err))
+			return
+		}
+		s.followWorkspaceExecStream(w, r, exec, stream, cursor, limit)
 		return
 	}
 	limit, err := parseWorkspacePrimitiveLimit(r, 100, 500)

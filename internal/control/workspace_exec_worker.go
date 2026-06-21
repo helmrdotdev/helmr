@@ -493,6 +493,19 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 			return db.WorkspaceExecStreamChunk{}, err
 		}
 	}
+	if _, err := store.CreateWorkspaceStreamWakeup(ctx, db.CreateWorkspaceStreamWakeupParams{
+		OrgID:            exec.OrgID,
+		ProjectID:        exec.ProjectID,
+		EnvironmentID:    exec.EnvironmentID,
+		WorkspaceID:      exec.WorkspaceID,
+		ResourceKind:     "workspace_exec",
+		ResourceID:       exec.ID,
+		Stream:           string(stream),
+		CursorOffset:     chunk.OffsetEnd,
+		NotificationKind: "chunk",
+	}); err != nil {
+		return db.WorkspaceExecStreamChunk{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return db.WorkspaceExecStreamChunk{}, err
 	}

@@ -3455,6 +3455,23 @@ type WorkspacePtyStreamChunkReceipt struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
+type WorkspaceStreamWakeup struct {
+	ID               int64              `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	ResourceKind     string             `json:"resource_kind"`
+	ResourceID       pgtype.UUID        `json:"resource_id"`
+	Stream           string             `json:"stream"`
+	CursorOffset     int64              `json:"cursor_offset"`
+	NotificationKind string             `json:"notification_kind"`
+	Attempts         int32              `json:"attempts"`
+	LockedUntil      pgtype.Timestamptz `json:"locked_until"`
+	LastError        string             `json:"last_error"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type WorkspaceVersion struct {
 	ID                      pgtype.UUID           `json:"id"`
 	OrgID                   pgtype.UUID           `json:"org_id"`

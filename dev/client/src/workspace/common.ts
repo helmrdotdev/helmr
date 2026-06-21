@@ -68,16 +68,46 @@ export async function waitForStreamText(
   throw new Error(`${label} did not include ${expected}`)
 }
 
-export async function expectStreamFollowUnsupported(stream: AsyncIterable<WorkspaceStreamChunk>): Promise<void> {
-  try {
-    for await (const _chunk of stream) {
-      throw new Error("workspace stream follow yielded a chunk")
+export interface StreamCollector {
+  readonly chunks: WorkspaceStreamChunk[]
+  readonly done: Promise<void>
+}
+
+export function collectStream(stream: AsyncIterable<WorkspaceStreamChunk>): StreamCollector {
+  const chunks: WorkspaceStreamChunk[] = []
+  const done = (async () => {
+    for await (const chunk of stream) {
+      chunks.push(chunk)
     }
-  } catch (error) {
-    assert(error instanceof Error && error.message === "workspace_stream_follow_unsupported", `unexpected stream follow error: ${String(error)}`)
-    return
+  })()
+  return { chunks, done }
+}
+
+export async function waitForStreamDone(collector: StreamCollector, label = "stream", timeoutMs = 60_000): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      collector.done,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${label} did not finish within ${timeoutMs}ms`)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout)
+    }
   }
-  throw new Error("workspace stream follow completed without explicit unsupported error")
+}
+
+export async function waitForCollectedText(collector: StreamCollector, expected: string, label = "stream"): Promise<string> {
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    const text = chunksText(collector.chunks)
+    if (text.includes(expected)) {
+      return text
+    }
+    await delay(500)
+  }
+  throw new Error(`${label} did not include ${expected}`)
 }
 
 export function chunksText(chunks: readonly WorkspaceStreamChunk[]): string {

@@ -478,6 +478,15 @@ export interface WorkspaceStreamChunk {
   readonly createdAt: string
 }
 
+export interface WorkspaceStreamTerminal {
+  readonly resourceKind: string
+  readonly resourceId: string
+  readonly stream: string
+  readonly state: string
+  readonly cursor: number
+  readonly error: unknown | null
+}
+
 export interface WorkspaceStreamListOptions extends WorkspaceRetrieveOptions {
   readonly cursor?: number
   readonly limit?: number
@@ -486,10 +495,37 @@ export interface WorkspaceStreamListOptions extends WorkspaceRetrieveOptions {
 export interface WorkspaceStreamFollowOptions extends WorkspaceRetrieveOptions {
   readonly fromCursor?: number
   readonly limit?: number
+  readonly follow?: boolean
 }
 
 export interface WorkspaceStreamWriteOptions extends WorkspaceRetrieveOptions {
   readonly offset: number
+}
+
+type WorkspaceStreamFollowEvent =
+  | { readonly kind: "chunk"; readonly chunk: WorkspaceStreamChunk }
+  | { readonly kind: "terminal"; readonly terminal: WorkspaceStreamTerminal }
+
+export class WorkspaceStreamTerminalError extends Error {
+  readonly terminal: WorkspaceStreamTerminal
+
+  constructor(terminal: WorkspaceStreamTerminal) {
+    super(`workspace stream terminal: ${terminal.state}`)
+    this.name = "WorkspaceStreamTerminalError"
+    this.terminal = terminal
+  }
+}
+
+export class WorkspaceStreamError extends Error {
+  readonly code: string
+  readonly cursor?: number
+
+  constructor(code: string, message?: string, cursor?: number) {
+    super(message ?? code)
+    this.name = "WorkspaceStreamError"
+    this.code = code
+    if (cursor !== undefined) this.cursor = cursor
+  }
 }
 
 export interface SchedulesApi {
@@ -1193,7 +1229,7 @@ export class HelmrClient {
         )
         return response.chunks.map(workspaceStreamChunkFromResponse)
       },
-      stream: (opts = {}) => this.#unsupportedWorkspaceStreamFollow(opts),
+      stream: (opts = {}) => this.#streamWorkspaceReadable(`${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}/${stream}`, opts),
     }
   }
 
@@ -1206,14 +1242,56 @@ export class HelmrClient {
         )
         return response.chunks.map(workspaceStreamChunkFromResponse)
       },
-      stream: (opts = {}) => this.#unsupportedWorkspaceStreamFollow(opts),
+      stream: (opts = {}) => this.#streamWorkspaceReadable(`${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/output`, opts),
     }
   }
 
-  async *#unsupportedWorkspaceStreamFollow(_opts: WorkspaceStreamFollowOptions): AsyncIterable<WorkspaceStreamChunk> {
-    throw new Error("workspace_stream_follow_unsupported")
+  async *#streamWorkspaceReadable(path: string, opts: WorkspaceStreamFollowOptions): AsyncIterable<WorkspaceStreamChunk> {
+    let cursor = opts.fromCursor
+    for (;;) {
+      try {
+        let terminal = false
+        for await (const event of this.#streamWorkspaceReadableOnce(path, { cursor, limit: opts.limit, signal: opts.signal })) {
+          if (event.kind === "chunk") {
+            cursor = event.chunk.offsetEnd
+            yield event.chunk
+            continue
+          }
+          if (event.kind === "terminal") {
+            terminal = true
+            if (event.terminal.state === "lost" || event.terminal.state === "failed") {
+              throw new WorkspaceStreamTerminalError(event.terminal)
+            }
+            break
+          }
+        }
+        if (terminal) {
+          return
+        }
+      } catch (error) {
+        throwIfAborted(opts.signal)
+        if (workspaceStreamErrorIsFatal(error)) {
+          throw error
+        }
+      }
+      await delay(RUN_EVENT_RECONNECT_DELAY_MS, opts.signal)
+    }
   }
 
+  async *#streamWorkspaceReadableOnce(
+    path: string,
+    opts: { readonly cursor?: number | undefined; readonly limit?: number | undefined; readonly signal?: AbortSignal | undefined },
+  ): AsyncIterable<WorkspaceStreamFollowEvent> {
+    const query = new URLSearchParams()
+    query.set("follow", "1")
+    if (opts.cursor !== undefined) query.set("cursor", String(opts.cursor))
+    if (opts.limit !== undefined) query.set("limit", String(opts.limit))
+    const response = await this.#fetch(`${path}?${query}`, {
+      headers: { accept: "text/event-stream" },
+      ...requestSignal(opts.signal),
+    })
+    yield* parseWorkspaceStreamSse(response)
+  }
 
   #openSession<TOutput = unknown>(id: string): OpenTaskSessionApi<TOutput> {
     return {
@@ -2068,6 +2146,21 @@ interface ListWorkspacePtyStreamChunksResponse {
   readonly chunks: readonly WorkspacePtyStreamChunkResponse[]
 }
 
+interface WorkspaceStreamTerminalResponse {
+  readonly resource_kind: string
+  readonly resource_id: string
+  readonly stream: string
+  readonly state: string
+  readonly cursor: number
+  readonly error?: unknown
+}
+
+interface WorkspaceStreamErrorResponse {
+  readonly code: string
+  readonly message?: string
+  readonly cursor?: number
+}
+
 interface ListRunWaitpointsResponse {
   readonly waitpoints: readonly PendingWaitpointResponse[]
   readonly next_cursor?: string | null
@@ -2513,6 +2606,17 @@ function workspaceStreamChunkFromResponse(response: WorkspaceExecStreamChunkResp
   }
 }
 
+function workspaceStreamTerminalFromResponse(response: WorkspaceStreamTerminalResponse): WorkspaceStreamTerminal {
+  return {
+    resourceKind: response.resource_kind,
+    resourceId: response.resource_id,
+    stream: response.stream,
+    state: response.state,
+    cursor: response.cursor,
+    error: response.error ?? null,
+  }
+}
+
 function workspaceExecTerminal(state: WorkspaceExecState): boolean {
   return state === "exited" || state === "lost" || state === "failed"
 }
@@ -2797,6 +2901,45 @@ async function* parseSse(response: Response): AsyncIterable<RunEventRecord> {
   }
 }
 
+async function* parseWorkspaceStreamSse(response: Response): AsyncIterable<WorkspaceStreamFollowEvent> {
+  const reader = response.body?.getReader()
+  if (reader === undefined) {
+    return
+  }
+  const decoder = new TextDecoder()
+  let buffer = ""
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) {
+        buffer += decoder.decode()
+        const finalEvent = parseWorkspaceStreamSseFrame(buffer)
+        if (finalEvent !== undefined) {
+          yield finalEvent
+        }
+        return
+      }
+      buffer += decoder.decode(value, { stream: true })
+      let boundary = findSseBoundary(buffer)
+      while (boundary !== -1) {
+        const delimiter = buffer.startsWith("\r\n\r\n", boundary) ? 4 : 2
+        const raw = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + delimiter)
+        const event = parseWorkspaceStreamSseFrame(raw)
+        if (event !== undefined) {
+          yield event
+        }
+        boundary = findSseBoundary(buffer)
+      }
+      if (buffer.length > MAX_SSE_BUFFER_CHARS) {
+        throw new SseFrameTooLargeError()
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 async function* parseChannelRecordSse<TData = unknown>(response: Response): AsyncIterable<ChannelRecord<TData>> {
   const reader = response.body?.getReader()
   if (reader === undefined) {
@@ -2834,6 +2977,35 @@ async function* parseChannelRecordSse<TData = unknown>(response: Response): Asyn
   } finally {
     reader.releaseLock()
   }
+}
+
+function parseWorkspaceStreamSseFrame(raw: string): WorkspaceStreamFollowEvent | undefined {
+  const data = raw
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+  if (data === "") {
+    return undefined
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(data)
+  } catch {
+    throw new SseProtocolError("SSE workspace stream data must be valid JSON", sseFrameCursor(raw))
+  }
+  const event = sseFrameEvent(raw)
+  if (event === "workspace_stream_chunk") {
+    return { kind: "chunk", chunk: workspaceStreamChunkFromResponse(parsed as WorkspaceExecStreamChunkResponse | WorkspacePtyStreamChunkResponse) }
+  }
+  if (event === "workspace_stream_terminal" || event === "workspace_stream_lost") {
+    return { kind: "terminal", terminal: workspaceStreamTerminalFromResponse(parsed as WorkspaceStreamTerminalResponse) }
+  }
+  if (event === "workspace_stream_error") {
+    const record = parsed as WorkspaceStreamErrorResponse
+    throw new WorkspaceStreamError(record.code, record.message, record.cursor)
+  }
+  throw new SseProtocolError(`unsupported workspace stream SSE event ${event}`, sseFrameCursor(raw))
 }
 
 function parseChannelRecordSseFrame<TData = unknown>(raw: string): ChannelRecord<TData> | undefined {
@@ -2908,6 +3080,16 @@ function sseFrameCursor(raw: string): number | undefined {
   return undefined
 }
 
+function sseFrameEvent(raw: string): string {
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.startsWith("event:")) {
+      continue
+    }
+    return line.slice(6).trim()
+  }
+  return "message"
+}
+
 function findSseBoundary(buffer: string): number {
   const lf = buffer.indexOf("\n\n")
   const crlf = buffer.indexOf("\r\n\r\n")
@@ -2949,6 +3131,31 @@ function runEventKindIsTerminal(kind: string | undefined): boolean {
 }
 
 function runEventStreamErrorIsFatal(error: unknown): boolean {
+  if (error instanceof AuthError) {
+    return true
+  }
+  if (error instanceof HelmrApiError) {
+    return helmrApiErrorIsFatal(error)
+  }
+  if (error instanceof SyntaxError) {
+    return true
+  }
+  if (error instanceof SseFrameTooLargeError) {
+    return true
+  }
+  if (error instanceof SseProtocolError) {
+    return true
+  }
+  return !transportErrorIsRetryable(error)
+}
+
+function workspaceStreamErrorIsFatal(error: unknown): boolean {
+  if (error instanceof WorkspaceStreamError) {
+    return true
+  }
+  if (error instanceof WorkspaceStreamTerminalError) {
+    return true
+  }
   if (error instanceof AuthError) {
     return true
   }

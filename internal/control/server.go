@@ -58,6 +58,7 @@ type Server struct {
 	dispatchQueue       dispatch.Queue
 	scheduleEngine      ScheduleRegistrar
 	eventStream         *EventStream
+	workspaceStreams    *WorkspaceStreamNotifier
 	workerLeaseScanSeed atomic.Uint64
 	workerTokenSecret   []byte
 	workerTokenTTL      time.Duration
@@ -114,15 +115,16 @@ type ServerConfig struct {
 	TX          TxBeginner
 	ReadinessDB db.DBTX
 
-	Auth           auth.Authenticator
-	CAS            cas.Store
-	Secrets        SecretManager
-	RunEnqueuer    RunEnqueuer
-	DispatchQueue  dispatch.Queue
-	ScheduleEngine ScheduleRegistrar
-	EventStream    *EventStream
-	Mailer         email.Sender
-	AuthProvider   AuthProvider
+	Auth             auth.Authenticator
+	CAS              cas.Store
+	Secrets          SecretManager
+	RunEnqueuer      RunEnqueuer
+	DispatchQueue    dispatch.Queue
+	ScheduleEngine   ScheduleRegistrar
+	EventStream      *EventStream
+	WorkspaceStreams *WorkspaceStreamNotifier
+	Mailer           email.Sender
+	AuthProvider     AuthProvider
 
 	WorkerTokenSecret   []byte
 	WorkerTokenTTL      time.Duration
@@ -178,6 +180,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		dispatchQueue:       cfg.DispatchQueue,
 		scheduleEngine:      cfg.ScheduleEngine,
 		eventStream:         cfg.EventStream,
+		workspaceStreams:    cfg.WorkspaceStreams,
 		workerTokenSecret:   cfg.WorkerTokenSecret,
 		workerTokenTTL:      workerTokenTTL,
 		workerRegisterToken: strings.TrimSpace(cfg.WorkerRegisterToken),

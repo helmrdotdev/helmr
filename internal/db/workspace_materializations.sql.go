@@ -628,7 +628,7 @@ lost_execs AS (
        AND workspace_execs.workspace_id = failed.workspace_id
        AND workspace_execs.materialization_id = failed.id
        AND workspace_execs.state IN ('queued', 'materializing', 'running')
-    RETURNING workspace_execs.id
+    RETURNING workspace_execs.id, workspace_execs.org_id, workspace_execs.project_id, workspace_execs.environment_id, workspace_execs.workspace_id, workspace_execs.materialization_id, workspace_execs.instance_lease_id, workspace_execs.write_lease_id, workspace_execs.command, workspace_execs.cwd, workspace_execs.env_shape, workspace_execs.filesystem_mode, workspace_execs.state, workspace_execs.detached, workspace_execs.idempotency_key, workspace_execs.request_fingerprint, workspace_execs.process_id, workspace_execs.exit_code, workspace_execs.signal, workspace_execs.error, workspace_execs.stdout_cursor, workspace_execs.stderr_cursor, workspace_execs.stdin_cursor, workspace_execs.stdin_delivered_cursor, workspace_execs.stdin_closed_at, workspace_execs.created_by_subject_type, workspace_execs.created_by_subject_id, workspace_execs.created_at, workspace_execs.started_at, workspace_execs.exited_at, workspace_execs.updated_at
 ),
 lost_ptys AS (
     UPDATE workspace_pty_sessions
@@ -643,7 +643,7 @@ lost_ptys AS (
        AND workspace_pty_sessions.workspace_id = failed.workspace_id
        AND workspace_pty_sessions.materialization_id = failed.id
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING workspace_pty_sessions.id
+    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
 ),
 released_leases AS (
     UPDATE workspace_leases
@@ -658,8 +658,36 @@ released_leases AS (
        AND workspace_leases.materialization_id = failed.id
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
+),
+stream_wakeups AS (
+    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
+    SELECT lost_execs.org_id,
+           lost_execs.project_id,
+           lost_execs.environment_id,
+           lost_execs.workspace_id,
+           'workspace_exec',
+           lost_execs.id,
+           stream_names.stream,
+           stream_names.cursor_offset,
+           'terminal'
+      FROM lost_execs
+      CROSS JOIN LATERAL (VALUES ('stdout', lost_execs.stdout_cursor), ('stderr', lost_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
+    UNION ALL
+    SELECT lost_ptys.org_id,
+           lost_ptys.project_id,
+           lost_ptys.environment_id,
+           lost_ptys.workspace_id,
+           'workspace_pty',
+           lost_ptys.id,
+           'output',
+           lost_ptys.output_cursor,
+           'terminal'
+      FROM lost_ptys
+    RETURNING id
 )
-SELECT id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, worker_instance_id, reservation_token, reservation_expires_at, claim_attempt, dead_lettered_at, priority, requested_cpu_millis, requested_memory_mib, requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots, capacity_reservation_id, guestd_channel_token_hash, guestd_channel_token_expires_at, runtime_id, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, materialized_at, stopped_at, lost_at, failed_at, error, created_at, updated_at FROM failed
+SELECT id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, worker_instance_id, reservation_token, reservation_expires_at, claim_attempt, dead_lettered_at, priority, requested_cpu_millis, requested_memory_mib, requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots, capacity_reservation_id, guestd_channel_token_hash, guestd_channel_token_expires_at, runtime_id, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, materialized_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
+  FROM failed
+ WHERE (SELECT count(*) FROM stream_wakeups) >= 0
 `
 
 type FailWorkspaceMaterializationParams struct {
@@ -1049,7 +1077,7 @@ lost_execs AS (
        AND workspace_execs.workspace_id = lost.workspace_id
        AND workspace_execs.materialization_id = lost.id
        AND workspace_execs.state IN ('queued', 'materializing', 'running')
-    RETURNING workspace_execs.id
+    RETURNING workspace_execs.id, workspace_execs.org_id, workspace_execs.project_id, workspace_execs.environment_id, workspace_execs.workspace_id, workspace_execs.materialization_id, workspace_execs.instance_lease_id, workspace_execs.write_lease_id, workspace_execs.command, workspace_execs.cwd, workspace_execs.env_shape, workspace_execs.filesystem_mode, workspace_execs.state, workspace_execs.detached, workspace_execs.idempotency_key, workspace_execs.request_fingerprint, workspace_execs.process_id, workspace_execs.exit_code, workspace_execs.signal, workspace_execs.error, workspace_execs.stdout_cursor, workspace_execs.stderr_cursor, workspace_execs.stdin_cursor, workspace_execs.stdin_delivered_cursor, workspace_execs.stdin_closed_at, workspace_execs.created_by_subject_type, workspace_execs.created_by_subject_id, workspace_execs.created_at, workspace_execs.started_at, workspace_execs.exited_at, workspace_execs.updated_at
 ),
 lost_ptys AS (
     UPDATE workspace_pty_sessions
@@ -1064,7 +1092,7 @@ lost_ptys AS (
        AND workspace_pty_sessions.workspace_id = lost.workspace_id
        AND workspace_pty_sessions.materialization_id = lost.id
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING workspace_pty_sessions.id
+    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
 ),
 released_leases AS (
     UPDATE workspace_leases
@@ -1079,8 +1107,36 @@ released_leases AS (
        AND workspace_leases.materialization_id = lost.id
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
+),
+stream_wakeups AS (
+    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
+    SELECT lost_execs.org_id,
+           lost_execs.project_id,
+           lost_execs.environment_id,
+           lost_execs.workspace_id,
+           'workspace_exec',
+           lost_execs.id,
+           stream_names.stream,
+           stream_names.cursor_offset,
+           'terminal'
+      FROM lost_execs
+      CROSS JOIN LATERAL (VALUES ('stdout', lost_execs.stdout_cursor), ('stderr', lost_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
+    UNION ALL
+    SELECT lost_ptys.org_id,
+           lost_ptys.project_id,
+           lost_ptys.environment_id,
+           lost_ptys.workspace_id,
+           'workspace_pty',
+           lost_ptys.id,
+           'output',
+           lost_ptys.output_cursor,
+           'terminal'
+      FROM lost_ptys
+    RETURNING id
 )
-SELECT id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, worker_instance_id, reservation_token, reservation_expires_at, claim_attempt, dead_lettered_at, priority, requested_cpu_millis, requested_memory_mib, requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots, capacity_reservation_id, guestd_channel_token_hash, guestd_channel_token_expires_at, runtime_id, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, materialized_at, stopped_at, lost_at, failed_at, error, created_at, updated_at FROM lost
+SELECT id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, worker_instance_id, reservation_token, reservation_expires_at, claim_attempt, dead_lettered_at, priority, requested_cpu_millis, requested_memory_mib, requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots, capacity_reservation_id, guestd_channel_token_hash, guestd_channel_token_expires_at, runtime_id, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, materialized_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
+  FROM lost
+ WHERE (SELECT count(*) FROM stream_wakeups) >= 0
 `
 
 type MarkStaleWorkspaceMaterializationsLostRow struct {
@@ -1455,7 +1511,7 @@ lost_execs AS (
        AND workspace_execs.workspace_id = stopped.workspace_id
        AND workspace_execs.materialization_id = stopped.id
        AND workspace_execs.state IN ('queued', 'materializing', 'running')
-    RETURNING workspace_execs.id
+    RETURNING workspace_execs.id, workspace_execs.org_id, workspace_execs.project_id, workspace_execs.environment_id, workspace_execs.workspace_id, workspace_execs.materialization_id, workspace_execs.instance_lease_id, workspace_execs.write_lease_id, workspace_execs.command, workspace_execs.cwd, workspace_execs.env_shape, workspace_execs.filesystem_mode, workspace_execs.state, workspace_execs.detached, workspace_execs.idempotency_key, workspace_execs.request_fingerprint, workspace_execs.process_id, workspace_execs.exit_code, workspace_execs.signal, workspace_execs.error, workspace_execs.stdout_cursor, workspace_execs.stderr_cursor, workspace_execs.stdin_cursor, workspace_execs.stdin_delivered_cursor, workspace_execs.stdin_closed_at, workspace_execs.created_by_subject_type, workspace_execs.created_by_subject_id, workspace_execs.created_at, workspace_execs.started_at, workspace_execs.exited_at, workspace_execs.updated_at
 ),
 lost_ptys AS (
     UPDATE workspace_pty_sessions
@@ -1470,7 +1526,7 @@ lost_ptys AS (
        AND workspace_pty_sessions.workspace_id = stopped.workspace_id
        AND workspace_pty_sessions.materialization_id = stopped.id
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING workspace_pty_sessions.id
+    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
 ),
 released_leases AS (
     UPDATE workspace_leases
@@ -1485,8 +1541,36 @@ released_leases AS (
        AND workspace_leases.materialization_id = stopped.id
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
+),
+stream_wakeups AS (
+    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
+    SELECT lost_execs.org_id,
+           lost_execs.project_id,
+           lost_execs.environment_id,
+           lost_execs.workspace_id,
+           'workspace_exec',
+           lost_execs.id,
+           stream_names.stream,
+           stream_names.cursor_offset,
+           'terminal'
+      FROM lost_execs
+      CROSS JOIN LATERAL (VALUES ('stdout', lost_execs.stdout_cursor), ('stderr', lost_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
+    UNION ALL
+    SELECT lost_ptys.org_id,
+           lost_ptys.project_id,
+           lost_ptys.environment_id,
+           lost_ptys.workspace_id,
+           'workspace_pty',
+           lost_ptys.id,
+           'output',
+           lost_ptys.output_cursor,
+           'terminal'
+      FROM lost_ptys
+    RETURNING id
 )
-SELECT id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, worker_instance_id, reservation_token, reservation_expires_at, claim_attempt, dead_lettered_at, priority, requested_cpu_millis, requested_memory_mib, requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots, capacity_reservation_id, guestd_channel_token_hash, guestd_channel_token_expires_at, runtime_id, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, materialized_at, stopped_at, lost_at, failed_at, error, created_at, updated_at FROM stopped
+SELECT id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, worker_instance_id, reservation_token, reservation_expires_at, claim_attempt, dead_lettered_at, priority, requested_cpu_millis, requested_memory_mib, requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots, capacity_reservation_id, guestd_channel_token_hash, guestd_channel_token_expires_at, runtime_id, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, materialized_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
+  FROM stopped
+ WHERE (SELECT count(*) FROM stream_wakeups) >= 0
 `
 
 type StopWorkspaceMaterializationParams struct {

@@ -166,9 +166,24 @@ released_write_lease AS (
        AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
+),
+stream_wakeups AS (
+    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
+    SELECT updated_pty.org_id,
+           updated_pty.project_id,
+           updated_pty.environment_id,
+           updated_pty.workspace_id,
+           'workspace_pty',
+           updated_pty.id,
+           'output',
+           updated_pty.output_cursor,
+           'terminal'
+      FROM updated_pty
+    RETURNING id
 )
 SELECT *
-  FROM updated_pty;
+  FROM updated_pty
+ WHERE (SELECT count(*) FROM stream_wakeups) >= 0;
 
 -- name: MarkWorkspacePtyFailed :one
 WITH updated_pty AS (
@@ -201,9 +216,24 @@ released_write_lease AS (
        AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
+),
+stream_wakeups AS (
+    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
+    SELECT updated_pty.org_id,
+           updated_pty.project_id,
+           updated_pty.environment_id,
+           updated_pty.workspace_id,
+           'workspace_pty',
+           updated_pty.id,
+           'output',
+           updated_pty.output_cursor,
+           'terminal'
+      FROM updated_pty
+    RETURNING id
 )
 SELECT *
-  FROM updated_pty;
+  FROM updated_pty
+ WHERE (SELECT count(*) FROM stream_wakeups) >= 0;
 
 -- name: LockWorkspacePtyForStreamAppend :one
 SELECT id,

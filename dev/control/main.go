@@ -89,9 +89,19 @@ func main() {
 		log.Error("configure event stream", "error", err)
 		os.Exit(1)
 	}
+	workspaceStreams, err := control.NewWorkspaceStreamNotifier(log, queries, redisClient)
+	if err != nil {
+		log.Error("configure workspace stream notifier", "error", err)
+		os.Exit(1)
+	}
 	go func() {
 		if err := eventStream.RunPublisher(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("event stream publisher stopped", "error", err)
+		}
+	}()
+	go func() {
+		if err := workspaceStreams.RunPublisher(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("workspace stream notifier stopped", "error", err)
 		}
 	}()
 	keyring, err := secret.KeyringFromBase64(cfg.secretEncryptionKey, cfg.secretEncryptionKeyOld)
@@ -135,6 +145,7 @@ func main() {
 		AuthSecret:          []byte(cfg.authSecret),
 		PublicURL:           publicURL,
 		EventStream:         eventStream,
+		WorkspaceStreams:    workspaceStreams,
 	})
 	if err != nil {
 		log.Error("configure control server", "error", err)

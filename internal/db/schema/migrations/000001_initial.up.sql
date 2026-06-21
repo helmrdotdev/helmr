@@ -2030,6 +2030,30 @@ CREATE INDEX event_outbox_ready_idx
     ON event_outbox (created_at, id)
     WHERE published_at IS NULL;
 
+CREATE TABLE workspace_stream_wakeups (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    workspace_id UUID NOT NULL,
+    resource_kind TEXT NOT NULL CHECK (resource_kind IN ('workspace_exec', 'workspace_pty')),
+    resource_id UUID NOT NULL,
+    stream TEXT NOT NULL CHECK (btrim(stream) <> ''),
+    cursor_offset BIGINT NOT NULL CHECK (cursor_offset >= 0),
+    notification_kind TEXT NOT NULL CHECK (notification_kind IN ('chunk', 'terminal')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    locked_until TIMESTAMPTZ,
+    last_error TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
+        REFERENCES workspaces(org_id, project_id, environment_id, id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX workspace_stream_wakeups_ready_idx
+    ON workspace_stream_wakeups (locked_until, id)
+    WHERE attempts < 25;
+
 CREATE TYPE run_log_stream AS ENUM (
     'stdout',
     'stderr'
