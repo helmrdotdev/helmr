@@ -561,6 +561,7 @@ type StopWorkspaceRequest struct {
 	state             protoimpl.MessageState      `protogen:"open.v1"`
 	Envelope          *WorkspaceOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
 	CaptureBeforeStop bool                        `protobuf:"varint,2,opt,name=capture_before_stop,json=captureBeforeStop,proto3" json:"capture_before_stop,omitempty"`
+	FinalizeStop      bool                        `protobuf:"varint,3,opt,name=finalize_stop,json=finalizeStop,proto3" json:"finalize_stop,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -609,10 +610,18 @@ func (x *StopWorkspaceRequest) GetCaptureBeforeStop() bool {
 	return false
 }
 
+func (x *StopWorkspaceRequest) GetFinalizeStop() bool {
+	if x != nil {
+		return x.FinalizeStop
+	}
+	return false
+}
+
 type StopWorkspaceResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	State            string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
 	CapturedArtifact *WorkspaceArtifact     `protobuf:"bytes,2,opt,name=captured_artifact,json=capturedArtifact,proto3" json:"captured_artifact,omitempty"`
+	ErrorJson        string                 `protobuf:"bytes,3,opt,name=error_json,json=errorJson,proto3" json:"error_json,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -659,6 +668,13 @@ func (x *StopWorkspaceResponse) GetCapturedArtifact() *WorkspaceArtifact {
 		return x.CapturedArtifact
 	}
 	return nil
+}
+
+func (x *StopWorkspaceResponse) GetErrorJson() string {
+	if x != nil {
+		return x.ErrorJson
+	}
+	return ""
 }
 
 type WorkspaceOperationRequest struct {
@@ -1873,13 +1889,16 @@ const file_workspace_proto_rawDesc = "" +
 	"\x0fbase_version_id\x18\x02 \x01(\tR\rbaseVersionId\x12)\n" +
 	"\x10dirty_generation\x18\x03 \x01(\x04R\x0fdirtyGeneration\"]\n" +
 	"\x18CaptureWorkspaceResponse\x12A\n" +
-	"\bartifact\x18\x01 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\bartifact\"\x92\x01\n" +
+	"\bartifact\x18\x01 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\bartifact\"\xb7\x01\n" +
 	"\x14StopWorkspaceRequest\x12J\n" +
 	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12.\n" +
-	"\x13capture_before_stop\x18\x02 \x01(\bR\x11captureBeforeStop\"\x81\x01\n" +
+	"\x13capture_before_stop\x18\x02 \x01(\bR\x11captureBeforeStop\x12#\n" +
+	"\rfinalize_stop\x18\x03 \x01(\bR\ffinalizeStop\"\xa0\x01\n" +
 	"\x15StopWorkspaceResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12R\n" +
-	"\x11captured_artifact\x18\x02 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\x10capturedArtifact\"\xb1\x01\n" +
+	"\x11captured_artifact\x18\x02 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\x10capturedArtifact\x12\x1d\n" +
+	"\n" +
+	"error_json\x18\x03 \x01(\tR\terrorJson\"\xb1\x01\n" +
 	"\x19WorkspaceOperationRequest\x12J\n" +
 	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12%\n" +
 	"\x0eoperation_kind\x18\x02 \x01(\tR\roperationKind\x12!\n" +

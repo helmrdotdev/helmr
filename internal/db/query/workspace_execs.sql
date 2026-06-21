@@ -82,7 +82,7 @@ SELECT EXISTS (
        AND workspace_execs.environment_id = sqlc.arg(environment_id)
        AND workspace_execs.workspace_id = sqlc.arg(workspace_id)
        AND workspace_execs.filesystem_mode = 'write'
-       AND workspace_execs.state NOT IN ('exited', 'lost', 'failed')
+       AND workspace_execs.state NOT IN ('exited', 'terminated', 'lost', 'failed')
     UNION ALL
     SELECT 1
       FROM workspace_pty_sessions
@@ -119,35 +119,101 @@ UPDATE workspace_execs
 RETURNING *;
 
 -- name: ListWorkspaceExecsAwaitingDispatch :many
-SELECT *
+SELECT workspace_execs.*
   FROM workspace_execs
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND materialization_id = sqlc.arg(materialization_id)
-   AND state IN ('materializing', 'queued')
- ORDER BY created_at ASC, id ASC
+  JOIN workspace_materializations
+    ON workspace_materializations.org_id = workspace_execs.org_id
+   AND workspace_materializations.project_id = workspace_execs.project_id
+   AND workspace_materializations.environment_id = workspace_execs.environment_id
+   AND workspace_materializations.workspace_id = workspace_execs.workspace_id
+   AND workspace_materializations.id = workspace_execs.materialization_id
+ WHERE workspace_execs.org_id = sqlc.arg(org_id)
+   AND workspace_execs.project_id = sqlc.arg(project_id)
+   AND workspace_execs.environment_id = sqlc.arg(environment_id)
+   AND workspace_execs.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_execs.materialization_id = sqlc.arg(materialization_id)
+   AND workspace_execs.state IN ('materializing', 'queued')
+   AND workspace_materializations.state = 'running'
+ ORDER BY workspace_execs.created_at ASC, workspace_execs.id ASC
  LIMIT sqlc.arg(limit_count);
 
 -- name: MarkWorkspaceExecStarted :one
-UPDATE workspace_execs
-   SET state = 'running',
-       process_id = sqlc.arg(process_id),
-       started_at = coalesce(started_at, now()),
-       updated_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(id)
-   AND materialization_id = sqlc.arg(materialization_id)
-   AND state IN ('queued', 'materializing', 'running')
-RETURNING *;
+WITH target AS MATERIALIZED (
+    SELECT workspace_execs.*
+      FROM workspace_execs
+      JOIN workspace_materializations
+        ON workspace_materializations.org_id = workspace_execs.org_id
+       AND workspace_materializations.project_id = workspace_execs.project_id
+       AND workspace_materializations.environment_id = workspace_execs.environment_id
+       AND workspace_materializations.workspace_id = workspace_execs.workspace_id
+       AND workspace_materializations.id = workspace_execs.materialization_id
+     WHERE workspace_execs.org_id = sqlc.arg(org_id)
+       AND workspace_execs.project_id = sqlc.arg(project_id)
+       AND workspace_execs.environment_id = sqlc.arg(environment_id)
+       AND workspace_execs.workspace_id = sqlc.arg(workspace_id)
+       AND workspace_execs.id = sqlc.arg(id)
+       AND workspace_execs.materialization_id = sqlc.arg(materialization_id)
+       AND workspace_execs.state IN ('queued', 'materializing', 'running')
+       AND workspace_materializations.state = 'running'
+     FOR UPDATE OF workspace_execs, workspace_materializations
+),
+updated_exec AS (
+    UPDATE workspace_execs
+       SET state = 'running',
+           process_id = sqlc.arg(process_id),
+           started_at = coalesce(workspace_execs.started_at, now()),
+           updated_at = now()
+      FROM target
+     WHERE workspace_execs.org_id = target.org_id
+       AND workspace_execs.project_id = target.project_id
+       AND workspace_execs.environment_id = target.environment_id
+       AND workspace_execs.workspace_id = target.workspace_id
+       AND workspace_execs.id = target.id
+    RETURNING workspace_execs.*
+),
+dirtied_materialization AS (
+    UPDATE workspace_materializations
+       SET dirty_generation = workspace_materializations.dirty_generation + 1,
+           updated_at = now()
+      FROM target
+      JOIN updated_exec ON updated_exec.id = target.id
+      JOIN workspace_leases
+        ON workspace_leases.org_id = updated_exec.org_id
+       AND workspace_leases.project_id = updated_exec.project_id
+       AND workspace_leases.environment_id = updated_exec.environment_id
+       AND workspace_leases.workspace_id = updated_exec.workspace_id
+       AND workspace_leases.id = updated_exec.write_lease_id
+       AND workspace_leases.owner_exec_id = updated_exec.id
+       AND workspace_leases.lease_kind = 'write'
+       AND workspace_leases.state = 'active'
+     WHERE target.state <> 'running'
+       AND updated_exec.filesystem_mode = 'write'
+       AND workspace_materializations.org_id = updated_exec.org_id
+       AND workspace_materializations.project_id = updated_exec.project_id
+       AND workspace_materializations.environment_id = updated_exec.environment_id
+       AND workspace_materializations.workspace_id = updated_exec.workspace_id
+       AND workspace_materializations.id = updated_exec.materialization_id
+       AND workspace_materializations.fencing_generation = workspace_leases.acquired_fencing_generation
+    RETURNING workspace_materializations.*
+),
+updated_workspace AS (
+    UPDATE workspaces
+       SET dirty_state = 'dirty',
+           updated_at = now()
+      FROM dirtied_materialization
+     WHERE workspaces.org_id = dirtied_materialization.org_id
+       AND workspaces.project_id = dirtied_materialization.project_id
+       AND workspaces.environment_id = dirtied_materialization.environment_id
+       AND workspaces.id = dirtied_materialization.workspace_id
+    RETURNING workspaces.id
+)
+SELECT *
+  FROM updated_exec
+ WHERE (SELECT count(*) FROM updated_workspace) >= 0;
 
 -- name: CloseWorkspaceExecStdin :one
 UPDATE workspace_execs
-   SET stdin_closed_at = coalesce(stdin_closed_at, now()),
+   SET stdin_closed_at = coalesce(workspace_execs.stdin_closed_at, now()),
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
@@ -164,7 +230,7 @@ WITH updated_exec AS (
            exit_code = sqlc.narg(exit_code),
            signal = coalesce(sqlc.arg(signal)::text, workspace_execs.signal),
            error = coalesce(sqlc.arg(error)::jsonb, '{}'::jsonb),
-           exited_at = coalesce(exited_at, now()),
+           exited_at = coalesce(workspace_execs.exited_at, now()),
            updated_at = now()
      WHERE workspace_execs.org_id = sqlc.arg(org_id)
        AND workspace_execs.project_id = sqlc.arg(project_id)

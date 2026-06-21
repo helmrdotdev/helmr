@@ -44,7 +44,7 @@ var (
 )
 
 func (s *Server) createWorkspaceExec(w http.ResponseWriter, r *http.Request) {
-	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionRunsCreate)
+	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspacesWrite)
 	if !ok {
 		return
 	}
@@ -83,7 +83,7 @@ func (s *Server) createWorkspaceExec(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listWorkspaceExecs(w http.ResponseWriter, r *http.Request) {
-	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionRunsRead)
+	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspacesRead)
 	if !ok {
 		return
 	}
@@ -116,7 +116,7 @@ func (s *Server) listWorkspaceExecs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getWorkspaceExec(w http.ResponseWriter, r *http.Request) {
-	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionRunsRead)
+	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionWorkspacesRead)
 	if !ok {
 		return
 	}
@@ -124,7 +124,7 @@ func (s *Server) getWorkspaceExec(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) closeWorkspaceExecStdin(w http.ResponseWriter, r *http.Request) {
-	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionRunsManage)
+	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionWorkspacesWrite)
 	if !ok {
 		return
 	}
@@ -137,7 +137,7 @@ func (s *Server) closeWorkspaceExecStdin(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) writeWorkspaceExecStdin(w http.ResponseWriter, r *http.Request) {
-	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionRunsManage)
+	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionWorkspacesWrite)
 	if !ok {
 		return
 	}
@@ -163,7 +163,7 @@ func (s *Server) listWorkspaceExecStderr(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) listWorkspaceExecStream(w http.ResponseWriter, r *http.Request, stream db.WorkspaceExecStream) {
-	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionRunsRead)
+	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionWorkspacesRead)
 	if !ok {
 		return
 	}
@@ -263,7 +263,7 @@ func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.A
 	defer func() { _ = tx.Rollback(ctx) }()
 	store := db.New(tx)
 	if idempotencyKey != "" {
-		_, err = store.CreateWorkspaceOperationIdempotency(ctx, db.CreateWorkspaceOperationIdempotencyParams{
+		idempotency, err := ensureWorkspaceOperationIdempotency(ctx, store, db.EnsureWorkspaceOperationIdempotencyParams{
 			ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                pgvalue.UUID(actor.OrgID),
 			ProjectID:            workspace.ProjectID,
@@ -277,22 +277,14 @@ func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.A
 			ResponseBody:         []byte(`{}`),
 			ExpiresAt:            pgvalue.Timestamptz(time.Now().Add(workspaceExecIdempotencyTTL)),
 		})
-		if isUniqueViolation(err) {
-			cached, getErr := s.db.GetWorkspaceScopedOperationIdempotency(ctx, db.GetWorkspaceScopedOperationIdempotencyParams{
-				OrgID:          pgvalue.UUID(actor.OrgID),
-				ProjectID:      workspace.ProjectID,
-				EnvironmentID:  workspace.EnvironmentID,
-				WorkspaceID:    workspace.ID,
-				OperationKind:  workspaceExecCreateOperationKind,
-				IdempotencyKey: idempotencyKey,
-			})
-			if getErr != nil {
-				return db.WorkspaceExec{}, false, getErr
-			}
-			if cached.RequestFingerprint != fingerprint {
+		if err != nil {
+			return db.WorkspaceExec{}, false, err
+		}
+		if !idempotency.Inserted {
+			if idempotency.RequestFingerprint != fingerprint {
 				return db.WorkspaceExec{}, false, errWorkspaceOperationIdempotencyUsed
 			}
-			if !cached.ResponseResourceID.Valid {
+			if !idempotency.ResponseResourceID.Valid {
 				return db.WorkspaceExec{}, false, errWorkspaceOperationPending
 			}
 			row, getExecErr := s.db.GetWorkspaceExec(ctx, db.GetWorkspaceExecParams{
@@ -300,12 +292,9 @@ func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.A
 				ProjectID:     workspace.ProjectID,
 				EnvironmentID: workspace.EnvironmentID,
 				WorkspaceID:   workspace.ID,
-				ID:            cached.ResponseResourceID,
+				ID:            idempotency.ResponseResourceID,
 			})
 			return row, true, getExecErr
-		}
-		if err != nil {
-			return db.WorkspaceExec{}, false, err
 		}
 	}
 	if err := ensureWorkspacePrimitiveWriterAvailable(ctx, store, pgvalue.UUID(actor.OrgID), workspace.ProjectID, workspace.EnvironmentID, workspace.ID); err != nil {
@@ -709,7 +698,7 @@ func workspaceExecCreateFingerprint(command []string, cwd string, envShape []byt
 
 func workspaceExecStateTerminal(state db.WorkspaceExecState) bool {
 	switch state {
-	case db.WorkspaceExecStateExited, db.WorkspaceExecStateLost, db.WorkspaceExecStateFailed:
+	case db.WorkspaceExecStateExited, db.WorkspaceExecStateLost, db.WorkspaceExecStateFailed, db.WorkspaceExecStateTerminated:
 		return true
 	default:
 		return false

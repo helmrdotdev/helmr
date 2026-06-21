@@ -42,7 +42,7 @@ buildGoModule {
     fileset = runtimeFiles;
   };
 
-  vendorHash = "sha256-y19LqH2qoMT2WfSUyKJ33M2CCpTR5/HT3w4zLQ/lMfY=";
+  vendorHash = "sha256-Rz1taAyIIUWDQwpsQIUKNJ4vpS7u1NouZw/alRWiClQ=";
   subPackages = [ "cmd/helmr" ];
 
   ldflags = [

@@ -220,7 +220,7 @@ test("workspaces.open is lazy and does not call materialize or connect", () => {
   expect(calls).toBe(0)
 })
 
-test("workspaces create list update materialize and connect use workspace routes", async () => {
+test("workspaces create list update materialize connect and stop use workspace routes", async () => {
   const requests: Array<{ url: string; method: string; body: unknown }> = []
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
@@ -229,6 +229,9 @@ test("workspaces create list update materialize and connect use workspace routes
     requests.push({ url, method, body })
     if (url.endsWith("/materialize") || url.endsWith("/connect")) {
       return Response.json(workspaceMaterializationFixture())
+    }
+    if (url.endsWith("/stop")) {
+      return Response.json({ workspace_id: "workspace-1", state: "stopping", materialization: workspaceMaterializationFixture({ state: "stopping" }) })
     }
     if (method === "GET" && url.includes("/workspaces?")) {
       return Response.json({ workspaces: [workspaceFixture({ tags: ["prod"] })] })
@@ -252,12 +255,14 @@ test("workspaces create list update materialize and connect use workspace routes
   const updated = await client.workspaces.update("workspace-1", { metadata: { owner: "platform" }, tags: ["prod"] })
   const materialized = await client.workspaces.materialize("workspace-1")
   const connected = await client.workspaces.open("workspace-1").connect()
+  const stopped = await client.workspaces.open("workspace-1").stop({ idempotencyKey: "stop-key" })
 
   expect(created.metadata).toEqual({ owner: "platform" })
   expect(listed[0]?.tags).toEqual(["prod"])
   expect(updated.id).toBe("workspace-1")
   expect(materialized.workspaceId).toBe("workspace-1")
   expect(connected.workspaceId).toBe("workspace-1")
+  expect(stopped.materialization?.state).toBe("stopping")
   expect(requests.map((request) => [request.method, request.url, request.body])).toEqual([
     ["POST", "https://api.example.test/api/projects/project-1/environments/env-1/workspaces", {
       deployment_id: "deployment-1",
@@ -272,6 +277,7 @@ test("workspaces create list update materialize and connect use workspace routes
     ["PATCH", "https://api.example.test/api/workspaces/workspace-1", { metadata: { owner: "platform" }, tags: ["prod"] }],
     ["POST", "https://api.example.test/api/workspaces/workspace-1/materialize", {}],
     ["POST", "https://api.example.test/api/workspaces/workspace-1/connect", {}],
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/stop", { idempotency_key: "stop-key" }],
   ])
 })
 

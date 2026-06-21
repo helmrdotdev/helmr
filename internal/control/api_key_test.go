@@ -185,6 +185,36 @@ func TestIssueAPIKeySupportsTasksDeploy(t *testing.T) {
 	}
 }
 
+func TestIssueAPIKeySupportsWorkspaceScopes(t *testing.T) {
+	store := &apiKeyStore{role: db.OrgMemberRoleOwner}
+	server := testAPIKeyServer(store)
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", strings.NewReader(`{"name":"workspace","expires_in_days":30,"permissions":[{"scopes":["workspaces:read","workspaces:write","workspaces:manage"]}]}`))
+	addSessionCookie(req)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var issued api.APIKeyIssued
+	if err := json.Unmarshal(rec.Body.Bytes(), &issued); err != nil {
+		t.Fatal(err)
+	}
+	wantScopes := []api.APIKeyScope{api.APIKeyScopeWorkspacesRead, api.APIKeyScopeWorkspacesWrite, api.APIKeyScopeWorkspacesManage}
+	if len(issued.Permissions) != 1 || !slices.Equal(issued.Permissions[0].Scopes, wantScopes) {
+		t.Fatalf("permissions = %+v, want %+v", issued.Permissions, wantScopes)
+	}
+	wantPermissions := []string{string(auth.PermissionWorkspacesRead), string(auth.PermissionWorkspacesWrite), string(auth.PermissionWorkspacesManage)}
+	gotPermissions := make([]string, 0, len(store.grants))
+	for _, grant := range store.grants {
+		gotPermissions = append(gotPermissions, grant.Permission)
+	}
+	if !slices.Equal(gotPermissions, wantPermissions) {
+		t.Fatalf("grants = %+v, want %+v", gotPermissions, wantPermissions)
+	}
+}
+
 func TestIssueAPIKeySupportsChannelScopes(t *testing.T) {
 	store := &apiKeyStore{role: db.OrgMemberRoleOwner}
 	server := testAPIKeyServer(store)

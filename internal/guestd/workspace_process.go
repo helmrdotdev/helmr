@@ -130,7 +130,7 @@ func (entry *workspaceMaterializationEntry) startWorkspaceExec(envelope *workspa
 	}
 	process := &workspaceProcess{resourceKind: "exec", resourceID: execID, cmd: cmd, stdin: stdin, done: make(chan struct{})}
 	if err := entry.registerWorkspaceProcess(process); err != nil {
-		_ = signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
+		_ = signalWorkspaceProcess(cmd.Process.Pid, syscall.SIGKILL)
 		_ = stdin.Close()
 		_ = closeReadCloser(stdout)
 		_ = closeReadCloser(stderr)
@@ -193,7 +193,7 @@ func (entry *workspaceMaterializationEntry) createWorkspacePty(envelope *workspa
 	}
 	process := &workspaceProcess{resourceKind: "pty", resourceID: ptyID, cmd: cmd, pty: tty, stdin: tty, done: make(chan struct{})}
 	if err := entry.registerWorkspaceProcess(process); err != nil {
-		_ = signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
+		_ = signalWorkspaceProcess(cmd.Process.Pid, syscall.SIGKILL)
 		_ = tty.Close()
 		return err
 	}
@@ -235,7 +235,7 @@ func (entry *workspaceMaterializationEntry) closeWorkspacePty(requestJSON string
 	if process == nil {
 		return fmt.Errorf("workspace pty %q is not open", strings.TrimSpace(request.PtyID))
 	}
-	if err := signalProcessGroup(process.cmd.Process.Pid, syscall.SIGTERM); err != nil {
+	if err := signalWorkspaceProcess(process.cmd.Process.Pid, syscall.SIGTERM); err != nil {
 		return err
 	}
 	go forceKillWorkspacePtyAfter(process.done, process.cmd.Process.Pid, workspacePtyCloseKillAfter)
@@ -253,7 +253,7 @@ func forceKillWorkspacePtyAfter(done <-chan struct{}, pgid int, delay time.Durat
 		case <-done:
 			return
 		default:
-			_ = signalProcessGroup(pgid, syscall.SIGKILL)
+			_ = signalWorkspaceProcess(pgid, syscall.SIGKILL)
 		}
 	}
 }
@@ -520,7 +520,7 @@ func (entry *workspaceMaterializationEntry) stopWorkspaceProcesses() {
 	entry.processesMu.Unlock()
 	for _, process := range processes {
 		if process.cmd != nil && process.cmd.Process != nil {
-			_ = signalProcessGroup(process.cmd.Process.Pid, syscall.SIGKILL)
+			_ = signalWorkspaceProcess(process.cmd.Process.Pid, syscall.SIGKILL)
 		}
 		if process.stdin != nil {
 			_ = process.stdin.Close()
@@ -635,17 +635,6 @@ func normalizeWorkspacePtySize(cols int32, rows int32) (int32, int32) {
 		rows = 24
 	}
 	return cols, rows
-}
-
-func signalProcessGroup(pgid int, signal syscall.Signal) error {
-	if pgid <= 0 {
-		return os.ErrProcessDone
-	}
-	err := syscall.Kill(-pgid, signal)
-	if errors.Is(err, syscall.ESRCH) {
-		return os.ErrProcessDone
-	}
-	return err
 }
 
 func workspaceProcessExit(err error) (int32, string, string) {

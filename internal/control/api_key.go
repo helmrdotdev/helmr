@@ -239,6 +239,12 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeRunsRead, true
 	case string(api.APIKeyScopeRunsManage):
 		return api.APIKeyScopeRunsManage, true
+	case string(api.APIKeyScopeWorkspacesRead):
+		return api.APIKeyScopeWorkspacesRead, true
+	case string(api.APIKeyScopeWorkspacesWrite):
+		return api.APIKeyScopeWorkspacesWrite, true
+	case string(api.APIKeyScopeWorkspacesManage):
+		return api.APIKeyScopeWorkspacesManage, true
 	case string(api.APIKeyScopeRunWaitpointsRead):
 		return api.APIKeyScopeRunWaitpointsRead, true
 	case string(api.APIKeyScopeChannelsWrite):
@@ -266,6 +272,12 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionRunsRead, true
 	case api.APIKeyScopeRunsManage:
 		return auth.PermissionRunsManage, true
+	case api.APIKeyScopeWorkspacesRead:
+		return auth.PermissionWorkspacesRead, true
+	case api.APIKeyScopeWorkspacesWrite:
+		return auth.PermissionWorkspacesWrite, true
+	case api.APIKeyScopeWorkspacesManage:
+		return auth.PermissionWorkspacesManage, true
 	case api.APIKeyScopeRunWaitpointsRead:
 		return auth.PermissionRunWaitpointsRead, true
 	case api.APIKeyScopeChannelsWrite:
@@ -293,6 +305,12 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeRunsRead, true
 	case string(auth.PermissionRunsManage):
 		return api.APIKeyScopeRunsManage, true
+	case string(auth.PermissionWorkspacesRead):
+		return api.APIKeyScopeWorkspacesRead, true
+	case string(auth.PermissionWorkspacesWrite):
+		return api.APIKeyScopeWorkspacesWrite, true
+	case string(auth.PermissionWorkspacesManage):
+		return api.APIKeyScopeWorkspacesManage, true
 	case string(auth.PermissionRunWaitpointsRead):
 		return api.APIKeyScopeRunWaitpointsRead, true
 	case string(auth.PermissionChannelsWrite):

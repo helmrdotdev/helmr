@@ -694,6 +694,10 @@ func (f *fakeClient) MarkWorkspaceMaterializationRunning(context.Context, api.Wo
 	return api.WorkspaceMaterializationResponse{State: "running"}, nil
 }
 
+func (f *fakeClient) CaptureWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationCaptureRequest) (api.WorkerWorkspaceMaterializationCaptureResponse, error) {
+	return api.WorkerWorkspaceMaterializationCaptureResponse{VersionID: "version-1"}, nil
+}
+
 func (f *fakeClient) StopWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error) {
 	f.materializationStops++
 	return api.WorkspaceMaterializationResponse{State: "stopped"}, nil

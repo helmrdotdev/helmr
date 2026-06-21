@@ -27,9 +27,62 @@ const (
 	maxWorkspaceListLimit          = int32(200)
 	defaultWorkspaceIdempotencyTTL = 24 * time.Hour
 	workspaceCreateOperationKind   = "workspace.create"
+	workspaceStopOperationKind     = "workspace.stop"
 )
 
 var errWorkspaceOperationPending = codedError{code: "idempotency_pending", message: "workspace_operation_pending"}
+
+type workspaceOperationIdempotencyStore interface {
+	EnsureWorkspaceOperationIdempotency(context.Context, db.EnsureWorkspaceOperationIdempotencyParams) (db.EnsureWorkspaceOperationIdempotencyRow, error)
+	GetWorkspaceOperationIdempotency(context.Context, db.GetWorkspaceOperationIdempotencyParams) (db.WorkspaceOperationIdempotency, error)
+	GetWorkspaceScopedOperationIdempotency(context.Context, db.GetWorkspaceScopedOperationIdempotencyParams) (db.WorkspaceOperationIdempotency, error)
+}
+
+func ensureWorkspaceOperationIdempotency(ctx context.Context, store workspaceOperationIdempotencyStore, params db.EnsureWorkspaceOperationIdempotencyParams) (db.EnsureWorkspaceOperationIdempotencyRow, error) {
+	row, err := store.EnsureWorkspaceOperationIdempotency(ctx, params)
+	if !isNoRows(err) {
+		return row, err
+	}
+	var existing db.WorkspaceOperationIdempotency
+	if params.WorkspaceID.Valid {
+		existing, err = store.GetWorkspaceScopedOperationIdempotency(ctx, db.GetWorkspaceScopedOperationIdempotencyParams{
+			OrgID:          params.OrgID,
+			ProjectID:      params.ProjectID,
+			EnvironmentID:  params.EnvironmentID,
+			WorkspaceID:    params.WorkspaceID,
+			OperationKind:  params.OperationKind,
+			IdempotencyKey: params.IdempotencyKey,
+		})
+	} else {
+		existing, err = store.GetWorkspaceOperationIdempotency(ctx, db.GetWorkspaceOperationIdempotencyParams{
+			OrgID:          params.OrgID,
+			ProjectID:      params.ProjectID,
+			EnvironmentID:  params.EnvironmentID,
+			OperationKind:  params.OperationKind,
+			IdempotencyKey: params.IdempotencyKey,
+		})
+	}
+	if err != nil {
+		return db.EnsureWorkspaceOperationIdempotencyRow{}, err
+	}
+	return db.EnsureWorkspaceOperationIdempotencyRow{
+		ID:                   existing.ID,
+		OrgID:                existing.OrgID,
+		ProjectID:            existing.ProjectID,
+		EnvironmentID:        existing.EnvironmentID,
+		WorkspaceID:          existing.WorkspaceID,
+		OperationKind:        existing.OperationKind,
+		IdempotencyKey:       existing.IdempotencyKey,
+		RequestFingerprint:   existing.RequestFingerprint,
+		ResponseResourceType: existing.ResponseResourceType,
+		ResponseResourceID:   existing.ResponseResourceID,
+		ResponseBody:         existing.ResponseBody,
+		ExpiresAt:            existing.ExpiresAt,
+		CreatedAt:            existing.CreatedAt,
+		LastUsedAt:           existing.LastUsedAt,
+		Inserted:             false,
+	}, nil
+}
 
 func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
@@ -47,7 +100,7 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
+	if !actor.HasPermission(auth.PermissionWorkspacesWrite, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
@@ -70,7 +123,7 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
+	if !actor.HasPermission(auth.PermissionWorkspacesRead, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
@@ -106,7 +159,7 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
-	row, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionRunsRead)
+	row, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspacesRead)
 	if !ok {
 		return
 	}
@@ -114,7 +167,7 @@ func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) patchWorkspace(w http.ResponseWriter, r *http.Request) {
-	current, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionRunsManage)
+	current, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspacesManage)
 	if !ok {
 		return
 	}
@@ -157,7 +210,7 @@ func (s *Server) patchWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
-	current, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionRunsManage)
+	current, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspacesManage)
 	if !ok {
 		return
 	}
@@ -264,7 +317,7 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 		commit = func() error { return tx.Commit(ctx) }
 	}
 	if idempotencyKey != "" {
-		_, err = workspaceStore.CreateWorkspaceOperationIdempotency(ctx, db.CreateWorkspaceOperationIdempotencyParams{
+		idempotency, err := ensureWorkspaceOperationIdempotency(ctx, workspaceStore, db.EnsureWorkspaceOperationIdempotencyParams{
 			ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                pgvalue.UUID(actor.OrgID),
 			ProjectID:            projectID,
@@ -278,33 +331,23 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 			ResponseBody:         []byte(`{}`),
 			ExpiresAt:            pgvalue.Timestamptz(time.Now().Add(idempotencyTTL)),
 		})
-		if isUniqueViolation(err) {
-			cached, getErr := s.db.GetWorkspaceOperationIdempotency(ctx, db.GetWorkspaceOperationIdempotencyParams{
-				OrgID:          pgvalue.UUID(actor.OrgID),
-				ProjectID:      projectID,
-				EnvironmentID:  environmentID,
-				OperationKind:  workspaceCreateOperationKind,
-				IdempotencyKey: idempotencyKey,
-			})
-			if getErr != nil {
-				return db.Workspace{}, false, getErr
-			}
-			if cached.RequestFingerprint != fingerprint {
+		if err != nil {
+			return db.Workspace{}, false, err
+		}
+		if !idempotency.Inserted {
+			if idempotency.RequestFingerprint != fingerprint {
 				return db.Workspace{}, false, codedError{code: "idempotency_fingerprint_mismatch", message: "idempotency_key was already used with different workspace create parameters"}
 			}
-			if !cached.ResponseResourceID.Valid {
+			if !idempotency.ResponseResourceID.Valid {
 				return db.Workspace{}, false, errWorkspaceOperationPending
 			}
 			row, getWorkspaceErr := s.db.GetWorkspace(ctx, db.GetWorkspaceParams{
 				OrgID:         pgvalue.UUID(actor.OrgID),
 				ProjectID:     projectID,
 				EnvironmentID: environmentID,
-				ID:            cached.ResponseResourceID,
+				ID:            idempotency.ResponseResourceID,
 			})
 			return row, true, getWorkspaceErr
-		}
-		if err != nil {
-			return db.Workspace{}, false, err
 		}
 	}
 	workspaceArtifact, emptyArtifact, err := s.createInitialWorkspaceArtifact(ctx, workspaceStore, actor.OrgID, projectID, environmentID)

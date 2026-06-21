@@ -71,31 +71,97 @@ UPDATE workspace_pty_sessions
 RETURNING *;
 
 -- name: ListWorkspacePtySessionsAwaitingDispatch :many
-SELECT *
+SELECT workspace_pty_sessions.*
   FROM workspace_pty_sessions
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND materialization_id = sqlc.arg(materialization_id)
-   AND state IN ('creating')
- ORDER BY created_at ASC, id ASC
+  JOIN workspace_materializations
+    ON workspace_materializations.org_id = workspace_pty_sessions.org_id
+   AND workspace_materializations.project_id = workspace_pty_sessions.project_id
+   AND workspace_materializations.environment_id = workspace_pty_sessions.environment_id
+   AND workspace_materializations.workspace_id = workspace_pty_sessions.workspace_id
+   AND workspace_materializations.id = workspace_pty_sessions.materialization_id
+ WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
+   AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
+   AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
+   AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_pty_sessions.materialization_id = sqlc.arg(materialization_id)
+   AND workspace_pty_sessions.state IN ('creating')
+   AND workspace_materializations.state = 'running'
+ ORDER BY workspace_pty_sessions.created_at ASC, workspace_pty_sessions.id ASC
  LIMIT sqlc.arg(limit_count);
 
 -- name: MarkWorkspacePtyOpen :one
-UPDATE workspace_pty_sessions
-   SET state = 'open',
-       process_id = sqlc.arg(process_id),
-       started_at = coalesce(started_at, now()),
-       updated_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(id)
-   AND materialization_id = sqlc.arg(materialization_id)
-   AND state IN ('creating', 'open')
-RETURNING *;
+WITH target AS MATERIALIZED (
+    SELECT workspace_pty_sessions.*
+      FROM workspace_pty_sessions
+      JOIN workspace_materializations
+        ON workspace_materializations.org_id = workspace_pty_sessions.org_id
+       AND workspace_materializations.project_id = workspace_pty_sessions.project_id
+       AND workspace_materializations.environment_id = workspace_pty_sessions.environment_id
+       AND workspace_materializations.workspace_id = workspace_pty_sessions.workspace_id
+       AND workspace_materializations.id = workspace_pty_sessions.materialization_id
+     WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
+       AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
+       AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
+       AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
+       AND workspace_pty_sessions.id = sqlc.arg(id)
+       AND workspace_pty_sessions.materialization_id = sqlc.arg(materialization_id)
+       AND workspace_pty_sessions.state IN ('creating', 'open')
+       AND workspace_materializations.state = 'running'
+     FOR UPDATE OF workspace_pty_sessions, workspace_materializations
+),
+updated_pty AS (
+    UPDATE workspace_pty_sessions
+       SET state = 'open',
+           process_id = sqlc.arg(process_id),
+           started_at = coalesce(workspace_pty_sessions.started_at, now()),
+           updated_at = now()
+      FROM target
+     WHERE workspace_pty_sessions.org_id = target.org_id
+       AND workspace_pty_sessions.project_id = target.project_id
+       AND workspace_pty_sessions.environment_id = target.environment_id
+       AND workspace_pty_sessions.workspace_id = target.workspace_id
+       AND workspace_pty_sessions.id = target.id
+    RETURNING workspace_pty_sessions.*
+),
+dirtied_materialization AS (
+    UPDATE workspace_materializations
+       SET dirty_generation = workspace_materializations.dirty_generation + 1,
+           updated_at = now()
+      FROM target
+      JOIN updated_pty ON updated_pty.id = target.id
+      JOIN workspace_leases
+        ON workspace_leases.org_id = updated_pty.org_id
+       AND workspace_leases.project_id = updated_pty.project_id
+       AND workspace_leases.environment_id = updated_pty.environment_id
+       AND workspace_leases.workspace_id = updated_pty.workspace_id
+       AND workspace_leases.id = updated_pty.write_lease_id
+       AND workspace_leases.owner_pty_session_id = updated_pty.id
+       AND workspace_leases.lease_kind = 'write'
+       AND workspace_leases.state = 'active'
+     WHERE target.state <> 'open'
+       AND updated_pty.filesystem_mode = 'write'
+       AND workspace_materializations.org_id = updated_pty.org_id
+       AND workspace_materializations.project_id = updated_pty.project_id
+       AND workspace_materializations.environment_id = updated_pty.environment_id
+       AND workspace_materializations.workspace_id = updated_pty.workspace_id
+       AND workspace_materializations.id = updated_pty.materialization_id
+       AND workspace_materializations.fencing_generation = workspace_leases.acquired_fencing_generation
+    RETURNING workspace_materializations.*
+),
+updated_workspace AS (
+    UPDATE workspaces
+       SET dirty_state = 'dirty',
+           updated_at = now()
+      FROM dirtied_materialization
+     WHERE workspaces.org_id = dirtied_materialization.org_id
+       AND workspaces.project_id = dirtied_materialization.project_id
+       AND workspaces.environment_id = dirtied_materialization.environment_id
+       AND workspaces.id = dirtied_materialization.workspace_id
+    RETURNING workspaces.id
+)
+SELECT *
+  FROM updated_pty
+ WHERE (SELECT count(*) FROM updated_workspace) >= 0;
 
 -- name: ResizeWorkspacePtySession :one
 UPDATE workspace_pty_sessions
@@ -140,7 +206,7 @@ RETURNING *;
 WITH updated_pty AS (
     UPDATE workspace_pty_sessions
        SET state = 'closed',
-           closed_at = coalesce(closed_at, now()),
+           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
            updated_at = now()
      WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
        AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
@@ -190,7 +256,7 @@ WITH updated_pty AS (
     UPDATE workspace_pty_sessions
        SET state = 'failed',
            error = coalesce(sqlc.arg(error)::jsonb, '{}'::jsonb),
-           closed_at = coalesce(closed_at, now()),
+           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
            updated_at = now()
      WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
        AND workspace_pty_sessions.project_id = sqlc.arg(project_id)

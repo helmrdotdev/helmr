@@ -586,6 +586,7 @@ CREATE TYPE workspace_materialization_operation_state AS ENUM (
     'running',
     'completed',
     'failed',
+    'cancelled',
     'lost',
     'expired'
 );
@@ -613,6 +614,7 @@ CREATE TYPE workspace_exec_state AS ENUM (
     'materializing',
     'running',
     'exited',
+    'terminated',
     'lost',
     'failed'
 );

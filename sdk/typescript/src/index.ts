@@ -117,6 +117,8 @@ export type {
   WorkspacePtyOutputApi,
   WorkspacePtyState,
   WorkspaceRetrieveOptions,
+  WorkspaceStopOptions,
+  WorkspaceStopResult,
   WorkspaceStreamChunk,
   WorkspaceStreamError,
   WorkspaceStreamFollowOptions,

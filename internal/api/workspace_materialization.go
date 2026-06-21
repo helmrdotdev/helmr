@@ -10,6 +10,19 @@ type WorkspaceMaterializeRequest struct {
 	EnvironmentID string `json:"environment_id,omitempty"`
 }
 
+type WorkspaceStopRequest struct {
+	ProjectID         string `json:"project_id,omitempty"`
+	EnvironmentID     string `json:"environment_id,omitempty"`
+	IdempotencyKey    string `json:"idempotency_key,omitempty"`
+	IdempotencyKeyTTL string `json:"idempotency_key_ttl,omitempty"`
+}
+
+type WorkspaceStopResponse struct {
+	WorkspaceID     string                            `json:"workspace_id"`
+	State           string                            `json:"state"`
+	Materialization *WorkspaceMaterializationResponse `json:"materialization,omitempty"`
+}
+
 type WorkspaceMaterializationResponse struct {
 	ID                   string     `json:"id"`
 	ProjectID            string     `json:"project_id"`
@@ -21,6 +34,7 @@ type WorkspaceMaterializationResponse struct {
 	State                string     `json:"state"`
 	ClaimAttempt         int32      `json:"claim_attempt"`
 	FencingGeneration    int64      `json:"fencing_generation"`
+	DirtyGeneration      int64      `json:"dirty_generation"`
 	ReservationExpiresAt *time.Time `json:"reservation_expires_at,omitempty"`
 	LastHeartbeatAt      *time.Time `json:"last_heartbeat_at,omitempty"`
 	CreatedAt            time.Time  `json:"created_at"`
@@ -78,6 +92,24 @@ type WorkerWorkspaceMaterializationStopRequest struct {
 	OrgID             string `json:"org_id"`
 	MaterializationID string `json:"materialization_id"`
 	ReservationToken  string `json:"reservation_token"`
+}
+
+type WorkerWorkspaceMaterializationCaptureRequest struct {
+	OrgID              string `json:"org_id"`
+	ProjectID          string `json:"project_id"`
+	EnvironmentID      string `json:"environment_id"`
+	WorkspaceID        string `json:"workspace_id"`
+	MaterializationID  string `json:"materialization_id"`
+	ReservationToken   string `json:"reservation_token"`
+	ArtifactDigest     string `json:"artifact_digest"`
+	ArtifactSizeBytes  int64  `json:"artifact_size_bytes"`
+	ArtifactMediaType  string `json:"artifact_media_type"`
+	ArtifactEncoding   string `json:"artifact_encoding"`
+	ArtifactEntryCount int32  `json:"artifact_entry_count"`
+}
+
+type WorkerWorkspaceMaterializationCaptureResponse struct {
+	VersionID string `json:"version_id"`
 }
 
 type WorkerWorkspaceMaterializationFailRequest struct {

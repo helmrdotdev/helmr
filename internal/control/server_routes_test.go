@@ -166,6 +166,7 @@ POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspac
 POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/close
 POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/input
 POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/resize
+POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/stop
 POST /api/public-access-tokens
 POST /api/runs/{id}/cancel
 POST /api/schedules
@@ -204,6 +205,7 @@ POST /api/worker/workspaces/execs/input
 POST /api/worker/workspaces/execs/input-delivered
 POST /api/worker/workspaces/execs/output
 POST /api/worker/workspaces/execs/started
+POST /api/worker/workspaces/materializations/capture
 POST /api/worker/workspaces/materializations/claim
 POST /api/worker/workspaces/materializations/fail
 POST /api/worker/workspaces/materializations/operations/claim
@@ -228,6 +230,7 @@ POST /api/workspaces/{workspaceID}/pty
 POST /api/workspaces/{workspaceID}/pty/{ptyID}/close
 POST /api/workspaces/{workspaceID}/pty/{ptyID}/input
 POST /api/workspaces/{workspaceID}/pty/{ptyID}/resize
+POST /api/workspaces/{workspaceID}/stop
 PUT /api/projects/{projectID}/environments/{environmentID}/schedules/{id}
 PUT /api/projects/{projectID}/environments/{environmentID}/secrets/{name}
 PUT /api/schedules/{id}

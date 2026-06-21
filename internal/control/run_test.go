@@ -838,6 +838,57 @@ func TestWorkspaceCreateReturnsPendingForInFlightIdempotency(t *testing.T) {
 	}
 }
 
+func TestWorkspaceStopIdempotencyResponseReplaysCompletedResponse(t *testing.T) {
+	fingerprint, err := workspaceStopFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	response := api.WorkspaceStopResponse{WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String(), State: "no_active_materialization"}
+	body, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, ok, err := workspaceStopIdempotencyResponse(db.EnsureWorkspaceOperationIdempotencyRow{
+		RequestFingerprint: fingerprint,
+		ResponseResourceID: workspaceID,
+		ResponseBody:       body,
+		Inserted:           false,
+	}, fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("replayed = false, want true")
+	}
+	if replayed.WorkspaceID != response.WorkspaceID || replayed.State != response.State {
+		t.Fatalf("replayed response = %+v, want %+v", replayed, response)
+	}
+}
+
+func TestWorkspaceStopIdempotencyResponseRejectsPendingAndMismatch(t *testing.T) {
+	fingerprint, err := workspaceStopFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, replayed, err := workspaceStopIdempotencyResponse(db.EnsureWorkspaceOperationIdempotencyRow{
+		RequestFingerprint: fingerprint,
+		Inserted:           false,
+	}, fingerprint)
+	if !errors.Is(err, errWorkspaceOperationPending) || replayed {
+		t.Fatalf("pending err = %v replayed=%v, want idempotency pending without replay", err, replayed)
+	}
+	_, replayed, err = workspaceStopIdempotencyResponse(db.EnsureWorkspaceOperationIdempotencyRow{
+		RequestFingerprint: "different",
+		ResponseResourceID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ResponseBody:       []byte(`{"workspace_id":"w","state":"no_active_materialization"}`),
+		Inserted:           false,
+	}, fingerprint)
+	if !errors.Is(err, errWorkspaceOperationIdempotencyUsed) || replayed {
+		t.Fatalf("mismatch err = %v replayed=%v, want fingerprint mismatch without replay", err, replayed)
+	}
+}
+
 func TestWorkspaceCreateRejectsDeploymentSandboxSelector(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
@@ -2208,7 +2259,7 @@ type fakeStore struct {
 	resolveDeploymentSandbox                    db.ResolveDeploymentSandboxForWorkspaceCreateParams
 	resolveDeploymentSandboxCalls               int
 	workspaceOperationIdempotency               db.WorkspaceOperationIdempotency
-	createdWorkspaceOperationIdempotencies      []db.CreateWorkspaceOperationIdempotencyParams
+	createdWorkspaceOperationIdempotencies      []db.EnsureWorkspaceOperationIdempotencyParams
 	getTaskSessionByExternalIDMisses            int
 	workspace                                   db.Workspace
 	attachedWorkspace                           db.GetWorkspaceForTaskStartRow
@@ -2521,7 +2572,7 @@ func (f *fakeStore) GetWorkspaceOperationIdempotency(_ context.Context, arg db.G
 	return db.WorkspaceOperationIdempotency{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) CreateWorkspaceOperationIdempotency(_ context.Context, arg db.CreateWorkspaceOperationIdempotencyParams) (db.WorkspaceOperationIdempotency, error) {
+func (f *fakeStore) EnsureWorkspaceOperationIdempotency(_ context.Context, arg db.EnsureWorkspaceOperationIdempotencyParams) (db.EnsureWorkspaceOperationIdempotencyRow, error) {
 	if f.workspaceOperationIdempotency.ID.Valid &&
 		f.workspaceOperationIdempotency.OrgID == arg.OrgID &&
 		f.workspaceOperationIdempotency.ProjectID == arg.ProjectID &&
@@ -2529,10 +2580,27 @@ func (f *fakeStore) CreateWorkspaceOperationIdempotency(_ context.Context, arg d
 		!f.workspaceOperationIdempotency.WorkspaceID.Valid &&
 		f.workspaceOperationIdempotency.OperationKind == arg.OperationKind &&
 		f.workspaceOperationIdempotency.IdempotencyKey == arg.IdempotencyKey {
-		return db.WorkspaceOperationIdempotency{}, &pgconn.PgError{Code: "23505"}
+		row := f.workspaceOperationIdempotency
+		return db.EnsureWorkspaceOperationIdempotencyRow{
+			ID:                   row.ID,
+			OrgID:                row.OrgID,
+			ProjectID:            row.ProjectID,
+			EnvironmentID:        row.EnvironmentID,
+			WorkspaceID:          row.WorkspaceID,
+			OperationKind:        row.OperationKind,
+			IdempotencyKey:       row.IdempotencyKey,
+			RequestFingerprint:   row.RequestFingerprint,
+			ResponseResourceType: row.ResponseResourceType,
+			ResponseResourceID:   row.ResponseResourceID,
+			ResponseBody:         row.ResponseBody,
+			ExpiresAt:            row.ExpiresAt,
+			CreatedAt:            row.CreatedAt,
+			LastUsedAt:           row.LastUsedAt,
+			Inserted:             false,
+		}, nil
 	}
 	f.createdWorkspaceOperationIdempotencies = append(f.createdWorkspaceOperationIdempotencies, arg)
-	row := db.WorkspaceOperationIdempotency{
+	row := db.EnsureWorkspaceOperationIdempotencyRow{
 		ID:                   arg.ID,
 		OrgID:                arg.OrgID,
 		ProjectID:            arg.ProjectID,
@@ -2547,8 +2615,24 @@ func (f *fakeStore) CreateWorkspaceOperationIdempotency(_ context.Context, arg d
 		ExpiresAt:            arg.ExpiresAt,
 		CreatedAt:            testTime(),
 		LastUsedAt:           testTime(),
+		Inserted:             true,
 	}
-	f.workspaceOperationIdempotency = row
+	f.workspaceOperationIdempotency = db.WorkspaceOperationIdempotency{
+		ID:                   row.ID,
+		OrgID:                row.OrgID,
+		ProjectID:            row.ProjectID,
+		EnvironmentID:        row.EnvironmentID,
+		WorkspaceID:          row.WorkspaceID,
+		OperationKind:        row.OperationKind,
+		IdempotencyKey:       row.IdempotencyKey,
+		RequestFingerprint:   row.RequestFingerprint,
+		ResponseResourceType: row.ResponseResourceType,
+		ResponseResourceID:   row.ResponseResourceID,
+		ResponseBody:         row.ResponseBody,
+		ExpiresAt:            row.ExpiresAt,
+		CreatedAt:            row.CreatedAt,
+		LastUsedAt:           row.LastUsedAt,
+	}
 	return row, nil
 }
 
@@ -3062,6 +3146,9 @@ func (f fakeAuth) Authenticate(context.Context, string) (auth.Actor, error) {
 			auth.PermissionRunsCreate,
 			auth.PermissionRunsRead,
 			auth.PermissionRunsManage,
+			auth.PermissionWorkspacesRead,
+			auth.PermissionWorkspacesWrite,
+			auth.PermissionWorkspacesManage,
 			auth.PermissionRunWaitpointsRead,
 			auth.PermissionChannelsWrite,
 			auth.PermissionSecretsWrite,

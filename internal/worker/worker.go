@@ -20,6 +20,7 @@ type ControlClient interface {
 	ClaimWorkspaceMaterialization(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerWorkspaceMaterializationClaimResponse, error)
 	RenewWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationRenewRequest) (api.WorkspaceMaterializationResponse, error)
 	MarkWorkspaceMaterializationRunning(ctx context.Context, request api.WorkerWorkspaceMaterializationRunningRequest) (api.WorkspaceMaterializationResponse, error)
+	CaptureWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationCaptureRequest) (api.WorkerWorkspaceMaterializationCaptureResponse, error)
 	StopWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error)
 	FailWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationFailRequest) (api.WorkspaceMaterializationResponse, error)
 	ClaimWorkspaceMaterializationOperation(ctx context.Context, request api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error)

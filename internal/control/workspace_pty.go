@@ -34,7 +34,7 @@ var (
 )
 
 func (s *Server) createWorkspacePty(w http.ResponseWriter, r *http.Request) {
-	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionRunsCreate)
+	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspacesWrite)
 	if !ok {
 		return
 	}
@@ -68,7 +68,7 @@ func (s *Server) createWorkspacePty(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listWorkspacePtys(w http.ResponseWriter, r *http.Request) {
-	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionRunsRead)
+	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspacesRead)
 	if !ok {
 		return
 	}
@@ -121,7 +121,7 @@ func normalizeWorkspacePtyStateFilter(raw string) (db.WorkspacePtyState, error) 
 }
 
 func (s *Server) getWorkspacePty(w http.ResponseWriter, r *http.Request) {
-	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionRunsRead)
+	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionWorkspacesRead)
 	if !ok {
 		return
 	}
@@ -129,7 +129,7 @@ func (s *Server) getWorkspacePty(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeWorkspacePtyInput(w http.ResponseWriter, r *http.Request) {
-	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionRunsManage)
+	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionWorkspacesWrite)
 	if !ok {
 		return
 	}
@@ -147,7 +147,7 @@ func (s *Server) writeWorkspacePtyInput(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) listWorkspacePtyOutput(w http.ResponseWriter, r *http.Request) {
-	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionRunsRead)
+	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionWorkspacesRead)
 	if !ok {
 		return
 	}
@@ -196,7 +196,7 @@ func (s *Server) listWorkspacePtyOutput(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) resizeWorkspacePty(w http.ResponseWriter, r *http.Request) {
-	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionRunsManage)
+	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionWorkspacesWrite)
 	if !ok {
 		return
 	}
@@ -223,7 +223,7 @@ func (s *Server) closeWorkspacePty(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) requestWorkspacePtyClose(w http.ResponseWriter, r *http.Request) {
-	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionRunsManage)
+	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionWorkspacesWrite)
 	if !ok {
 		return
 	}
@@ -320,7 +320,7 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 	defer func() { _ = tx.Rollback(ctx) }()
 	store := db.New(tx)
 	if idempotencyKey != "" {
-		_, err = store.CreateWorkspaceOperationIdempotency(ctx, db.CreateWorkspaceOperationIdempotencyParams{
+		idempotency, err := ensureWorkspaceOperationIdempotency(ctx, store, db.EnsureWorkspaceOperationIdempotencyParams{
 			ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                pgvalue.UUID(actor.OrgID),
 			ProjectID:            workspace.ProjectID,
@@ -334,22 +334,14 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 			ResponseBody:         []byte(`{}`),
 			ExpiresAt:            pgvalue.Timestamptz(time.Now().Add(workspaceExecIdempotencyTTL)),
 		})
-		if isUniqueViolation(err) {
-			cached, getErr := s.db.GetWorkspaceScopedOperationIdempotency(ctx, db.GetWorkspaceScopedOperationIdempotencyParams{
-				OrgID:          pgvalue.UUID(actor.OrgID),
-				ProjectID:      workspace.ProjectID,
-				EnvironmentID:  workspace.EnvironmentID,
-				WorkspaceID:    workspace.ID,
-				OperationKind:  workspacePtyCreateOperationKind,
-				IdempotencyKey: idempotencyKey,
-			})
-			if getErr != nil {
-				return db.WorkspacePtySession{}, false, getErr
-			}
-			if cached.RequestFingerprint != fingerprint {
+		if err != nil {
+			return db.WorkspacePtySession{}, false, err
+		}
+		if !idempotency.Inserted {
+			if idempotency.RequestFingerprint != fingerprint {
 				return db.WorkspacePtySession{}, false, errWorkspaceOperationIdempotencyUsed
 			}
-			if !cached.ResponseResourceID.Valid {
+			if !idempotency.ResponseResourceID.Valid {
 				return db.WorkspacePtySession{}, false, errWorkspaceOperationPending
 			}
 			row, getPtyErr := s.db.GetWorkspacePtySession(ctx, db.GetWorkspacePtySessionParams{
@@ -357,12 +349,9 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 				ProjectID:     workspace.ProjectID,
 				EnvironmentID: workspace.EnvironmentID,
 				WorkspaceID:   workspace.ID,
-				ID:            cached.ResponseResourceID,
+				ID:            idempotency.ResponseResourceID,
 			})
 			return row, true, getPtyErr
-		}
-		if err != nil {
-			return db.WorkspacePtySession{}, false, err
 		}
 	}
 	if err := ensureWorkspacePrimitiveWriterAvailable(ctx, store, pgvalue.UUID(actor.OrgID), workspace.ProjectID, workspace.EnvironmentID, workspace.ID); err != nil {

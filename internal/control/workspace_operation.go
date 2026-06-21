@@ -351,7 +351,7 @@ func workspaceOperationResponse(row db.WorkspaceMaterializationOperation) api.Wo
 	switch row.State {
 	case db.WorkspaceMaterializationOperationStateCompleted:
 		response.Result = optionalRawMessage(row.Result)
-	case db.WorkspaceMaterializationOperationStateFailed, db.WorkspaceMaterializationOperationStateLost, db.WorkspaceMaterializationOperationStateExpired:
+	case db.WorkspaceMaterializationOperationStateFailed, db.WorkspaceMaterializationOperationStateCancelled, db.WorkspaceMaterializationOperationStateLost, db.WorkspaceMaterializationOperationStateExpired:
 		response.Error = optionalRawMessage(row.Error)
 	}
 	if row.InstanceLeaseID.Valid {

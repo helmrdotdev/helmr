@@ -278,6 +278,7 @@ export interface WorkspaceHandle {
   delete(opts?: WorkspaceRetrieveOptions): Promise<Workspace>
   materialize(opts?: WorkspaceMaterializeOptions): Promise<WorkspaceMaterialization>
   connect(opts?: WorkspaceMaterializeOptions): Promise<WorkspaceMaterialization>
+  stop(opts?: WorkspaceStopOptions): Promise<WorkspaceStopResult>
 }
 
 export interface WorkspacesApi {
@@ -289,6 +290,7 @@ export interface WorkspacesApi {
   readonly delete: (idOrHandle: string | WorkspaceHandle, opts?: WorkspaceRetrieveOptions) => Promise<Workspace>
   readonly materialize: (idOrHandle: string | WorkspaceHandle, opts?: WorkspaceMaterializeOptions) => Promise<WorkspaceMaterialization>
   readonly connect: (idOrHandle: string | WorkspaceHandle, opts?: WorkspaceMaterializeOptions) => Promise<WorkspaceMaterialization>
+  readonly stop: (idOrHandle: string | WorkspaceHandle, opts?: WorkspaceStopOptions) => Promise<WorkspaceStopResult>
 }
 
 export interface WorkspaceCreateOptions {
@@ -324,6 +326,11 @@ export interface WorkspaceUpdateOptions extends WorkspaceRetrieveOptions {
 
 export interface WorkspaceMaterializeOptions extends WorkspaceRetrieveOptions {}
 
+export interface WorkspaceStopOptions extends WorkspaceRetrieveOptions {
+  readonly idempotencyKey?: string
+  readonly idempotencyKeyTTL?: string
+}
+
 export interface WorkspaceMaterialization {
   readonly id: string
   readonly projectId: string
@@ -341,11 +348,18 @@ export interface WorkspaceMaterialization {
   readonly updatedAt: string
 }
 
+export interface WorkspaceStopResult {
+  readonly workspaceId: string
+  readonly state: string
+  readonly materialization: WorkspaceMaterialization | null
+}
+
 export type WorkspaceExecState =
   | "queued"
   | "materializing"
   | "running"
   | "exited"
+  | "terminated"
   | "lost"
   | "failed"
 
@@ -816,6 +830,9 @@ export class HelmrClient {
     connect: async (idOrHandle: string | WorkspaceHandle, opts: WorkspaceMaterializeOptions = {}): Promise<WorkspaceMaterialization> => {
       return await this.#openWorkspace(workspaceId(idOrHandle)).connect(opts)
     },
+    stop: async (idOrHandle: string | WorkspaceHandle, opts: WorkspaceStopOptions = {}): Promise<WorkspaceStopResult> => {
+      return await this.#openWorkspace(workspaceId(idOrHandle)).stop(opts)
+    },
   }
 
   readonly waitpoints = {
@@ -1075,6 +1092,18 @@ export class HelmrClient {
           },
         )
         return workspaceMaterializationFromResponse(response)
+      },
+      stop: async (opts = {}) => {
+        const response = await this.#json<WorkspaceStopResponse>(
+          `${workspaceResourcePath(id, opts)}/stop`,
+          {
+            method: "POST",
+            body: JSON.stringify(workspaceStopBody(opts)),
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal),
+          },
+        )
+        return workspaceStopFromResponse(response)
       },
     }
   }
@@ -2058,6 +2087,12 @@ interface WorkspaceMaterializationResponse {
   readonly updated_at: string
 }
 
+interface WorkspaceStopResponse {
+  readonly workspace_id: string
+  readonly state: string
+  readonly materialization?: WorkspaceMaterializationResponse | null
+}
+
 interface WorkspaceExecResponse {
   readonly id: string
   readonly workspace_id: string
@@ -2446,6 +2481,13 @@ function workspaceMaterializeBody(opts: WorkspaceMaterializeOptions): Record<str
   return {}
 }
 
+function workspaceStopBody(opts: WorkspaceStopOptions): Record<string, unknown> {
+  return {
+    ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
+    ...(opts.idempotencyKeyTTL === undefined ? {} : { idempotency_key_ttl: opts.idempotencyKeyTTL }),
+  }
+}
+
 function workspaceExecCreateBody(command: readonly string[], opts: WorkspaceExecCreateOptions): Record<string, unknown> {
   if (command.length === 0) {
     throw new Error("workspace.exec command must not be empty")
@@ -2547,6 +2589,14 @@ function workspaceMaterializationFromResponse(response: WorkspaceMaterialization
   }
 }
 
+function workspaceStopFromResponse(response: WorkspaceStopResponse): WorkspaceStopResult {
+  return {
+    workspaceId: response.workspace_id,
+    state: response.state,
+    materialization: response.materialization == null ? null : workspaceMaterializationFromResponse(response.materialization),
+  }
+}
+
 function workspaceExecFromResponse(response: WorkspaceExecResponse): WorkspaceExec {
   return {
     id: response.id,
@@ -2618,7 +2668,7 @@ function workspaceStreamTerminalFromResponse(response: WorkspaceStreamTerminalRe
 }
 
 function workspaceExecTerminal(state: WorkspaceExecState): boolean {
-  return state === "exited" || state === "lost" || state === "failed"
+  return state === "exited" || state === "terminated" || state === "lost" || state === "failed"
 }
 
 function scheduleFromResponse(response: ScheduleResponse): Schedule {

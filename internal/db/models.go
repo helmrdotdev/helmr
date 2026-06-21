@@ -1482,6 +1482,7 @@ const (
 	WorkspaceExecStateMaterializing WorkspaceExecState = "materializing"
 	WorkspaceExecStateRunning       WorkspaceExecState = "running"
 	WorkspaceExecStateExited        WorkspaceExecState = "exited"
+	WorkspaceExecStateTerminated    WorkspaceExecState = "terminated"
 	WorkspaceExecStateLost          WorkspaceExecState = "lost"
 	WorkspaceExecStateFailed        WorkspaceExecState = "failed"
 )
@@ -1701,6 +1702,7 @@ const (
 	WorkspaceMaterializationOperationStateRunning   WorkspaceMaterializationOperationState = "running"
 	WorkspaceMaterializationOperationStateCompleted WorkspaceMaterializationOperationState = "completed"
 	WorkspaceMaterializationOperationStateFailed    WorkspaceMaterializationOperationState = "failed"
+	WorkspaceMaterializationOperationStateCancelled WorkspaceMaterializationOperationState = "cancelled"
 	WorkspaceMaterializationOperationStateLost      WorkspaceMaterializationOperationState = "lost"
 	WorkspaceMaterializationOperationStateExpired   WorkspaceMaterializationOperationState = "expired"
 )

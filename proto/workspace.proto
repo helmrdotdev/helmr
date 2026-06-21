@@ -62,11 +62,13 @@ message CaptureWorkspaceResponse {
 message StopWorkspaceRequest {
   WorkspaceOperationEnvelope envelope = 1;
   bool capture_before_stop = 2;
+  bool finalize_stop = 3;
 }
 
 message StopWorkspaceResponse {
   string state = 1;
   WorkspaceArtifact captured_artifact = 2;
+  string error_json = 3;
 }
 
 message WorkspaceOperationRequest {

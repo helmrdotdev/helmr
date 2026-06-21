@@ -352,7 +352,7 @@ func (q *Queries) BindWorkspaceExecMaterialization(ctx context.Context, arg Bind
 
 const closeWorkspaceExecStdin = `-- name: CloseWorkspaceExecStdin :one
 UPDATE workspace_execs
-   SET stdin_closed_at = coalesce(stdin_closed_at, now()),
+   SET stdin_closed_at = coalesce(workspace_execs.stdin_closed_at, now()),
        updated_at = now()
  WHERE org_id = $1
    AND project_id = $2
@@ -1208,15 +1208,22 @@ func (q *Queries) ListWorkspaceExecs(ctx context.Context, arg ListWorkspaceExecs
 }
 
 const listWorkspaceExecsAwaitingDispatch = `-- name: ListWorkspaceExecsAwaitingDispatch :many
-SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, request_fingerprint, process_id, exit_code, signal, error, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
+SELECT workspace_execs.id, workspace_execs.org_id, workspace_execs.project_id, workspace_execs.environment_id, workspace_execs.workspace_id, workspace_execs.materialization_id, workspace_execs.instance_lease_id, workspace_execs.write_lease_id, workspace_execs.command, workspace_execs.cwd, workspace_execs.env_shape, workspace_execs.filesystem_mode, workspace_execs.state, workspace_execs.detached, workspace_execs.idempotency_key, workspace_execs.request_fingerprint, workspace_execs.process_id, workspace_execs.exit_code, workspace_execs.signal, workspace_execs.error, workspace_execs.stdout_cursor, workspace_execs.stderr_cursor, workspace_execs.stdin_cursor, workspace_execs.stdin_delivered_cursor, workspace_execs.stdin_closed_at, workspace_execs.created_by_subject_type, workspace_execs.created_by_subject_id, workspace_execs.created_at, workspace_execs.started_at, workspace_execs.exited_at, workspace_execs.updated_at
   FROM workspace_execs
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND workspace_id = $4
-   AND materialization_id = $5
-   AND state IN ('materializing', 'queued')
- ORDER BY created_at ASC, id ASC
+  JOIN workspace_materializations
+    ON workspace_materializations.org_id = workspace_execs.org_id
+   AND workspace_materializations.project_id = workspace_execs.project_id
+   AND workspace_materializations.environment_id = workspace_execs.environment_id
+   AND workspace_materializations.workspace_id = workspace_execs.workspace_id
+   AND workspace_materializations.id = workspace_execs.materialization_id
+ WHERE workspace_execs.org_id = $1
+   AND workspace_execs.project_id = $2
+   AND workspace_execs.environment_id = $3
+   AND workspace_execs.workspace_id = $4
+   AND workspace_execs.materialization_id = $5
+   AND workspace_execs.state IN ('materializing', 'queued')
+   AND workspace_materializations.state = 'running'
+ ORDER BY workspace_execs.created_at ASC, workspace_execs.id ASC
  LIMIT $6
 `
 
@@ -1392,7 +1399,7 @@ WITH updated_exec AS (
            exit_code = $2,
            signal = coalesce($3::text, workspace_execs.signal),
            error = coalesce($4::jsonb, '{}'::jsonb),
-           exited_at = coalesce(exited_at, now()),
+           exited_at = coalesce(workspace_execs.exited_at, now()),
            updated_at = now()
      WHERE workspace_execs.org_id = $5
        AND workspace_execs.project_id = $6
@@ -1537,42 +1544,135 @@ func (q *Queries) MarkWorkspaceExecExited(ctx context.Context, arg MarkWorkspace
 }
 
 const markWorkspaceExecStarted = `-- name: MarkWorkspaceExecStarted :one
-UPDATE workspace_execs
-   SET state = 'running',
-       process_id = $1,
-       started_at = coalesce(started_at, now()),
-       updated_at = now()
- WHERE org_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND workspace_id = $5
-   AND id = $6
-   AND materialization_id = $7
-   AND state IN ('queued', 'materializing', 'running')
-RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, request_fingerprint, process_id, exit_code, signal, error, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
+WITH target AS MATERIALIZED (
+    SELECT workspace_execs.id, workspace_execs.org_id, workspace_execs.project_id, workspace_execs.environment_id, workspace_execs.workspace_id, workspace_execs.materialization_id, workspace_execs.instance_lease_id, workspace_execs.write_lease_id, workspace_execs.command, workspace_execs.cwd, workspace_execs.env_shape, workspace_execs.filesystem_mode, workspace_execs.state, workspace_execs.detached, workspace_execs.idempotency_key, workspace_execs.request_fingerprint, workspace_execs.process_id, workspace_execs.exit_code, workspace_execs.signal, workspace_execs.error, workspace_execs.stdout_cursor, workspace_execs.stderr_cursor, workspace_execs.stdin_cursor, workspace_execs.stdin_delivered_cursor, workspace_execs.stdin_closed_at, workspace_execs.created_by_subject_type, workspace_execs.created_by_subject_id, workspace_execs.created_at, workspace_execs.started_at, workspace_execs.exited_at, workspace_execs.updated_at
+      FROM workspace_execs
+      JOIN workspace_materializations
+        ON workspace_materializations.org_id = workspace_execs.org_id
+       AND workspace_materializations.project_id = workspace_execs.project_id
+       AND workspace_materializations.environment_id = workspace_execs.environment_id
+       AND workspace_materializations.workspace_id = workspace_execs.workspace_id
+       AND workspace_materializations.id = workspace_execs.materialization_id
+     WHERE workspace_execs.org_id = $1
+       AND workspace_execs.project_id = $2
+       AND workspace_execs.environment_id = $3
+       AND workspace_execs.workspace_id = $4
+       AND workspace_execs.id = $5
+       AND workspace_execs.materialization_id = $6
+       AND workspace_execs.state IN ('queued', 'materializing', 'running')
+       AND workspace_materializations.state = 'running'
+     FOR UPDATE OF workspace_execs, workspace_materializations
+),
+updated_exec AS (
+    UPDATE workspace_execs
+       SET state = 'running',
+           process_id = $7,
+           started_at = coalesce(workspace_execs.started_at, now()),
+           updated_at = now()
+      FROM target
+     WHERE workspace_execs.org_id = target.org_id
+       AND workspace_execs.project_id = target.project_id
+       AND workspace_execs.environment_id = target.environment_id
+       AND workspace_execs.workspace_id = target.workspace_id
+       AND workspace_execs.id = target.id
+    RETURNING workspace_execs.id, workspace_execs.org_id, workspace_execs.project_id, workspace_execs.environment_id, workspace_execs.workspace_id, workspace_execs.materialization_id, workspace_execs.instance_lease_id, workspace_execs.write_lease_id, workspace_execs.command, workspace_execs.cwd, workspace_execs.env_shape, workspace_execs.filesystem_mode, workspace_execs.state, workspace_execs.detached, workspace_execs.idempotency_key, workspace_execs.request_fingerprint, workspace_execs.process_id, workspace_execs.exit_code, workspace_execs.signal, workspace_execs.error, workspace_execs.stdout_cursor, workspace_execs.stderr_cursor, workspace_execs.stdin_cursor, workspace_execs.stdin_delivered_cursor, workspace_execs.stdin_closed_at, workspace_execs.created_by_subject_type, workspace_execs.created_by_subject_id, workspace_execs.created_at, workspace_execs.started_at, workspace_execs.exited_at, workspace_execs.updated_at
+),
+dirtied_materialization AS (
+    UPDATE workspace_materializations
+       SET dirty_generation = workspace_materializations.dirty_generation + 1,
+           updated_at = now()
+      FROM target
+      JOIN updated_exec ON updated_exec.id = target.id
+      JOIN workspace_leases
+        ON workspace_leases.org_id = updated_exec.org_id
+       AND workspace_leases.project_id = updated_exec.project_id
+       AND workspace_leases.environment_id = updated_exec.environment_id
+       AND workspace_leases.workspace_id = updated_exec.workspace_id
+       AND workspace_leases.id = updated_exec.write_lease_id
+       AND workspace_leases.owner_exec_id = updated_exec.id
+       AND workspace_leases.lease_kind = 'write'
+       AND workspace_leases.state = 'active'
+     WHERE target.state <> 'running'
+       AND updated_exec.filesystem_mode = 'write'
+       AND workspace_materializations.org_id = updated_exec.org_id
+       AND workspace_materializations.project_id = updated_exec.project_id
+       AND workspace_materializations.environment_id = updated_exec.environment_id
+       AND workspace_materializations.workspace_id = updated_exec.workspace_id
+       AND workspace_materializations.id = updated_exec.materialization_id
+       AND workspace_materializations.fencing_generation = workspace_leases.acquired_fencing_generation
+    RETURNING workspace_materializations.id, workspace_materializations.org_id, workspace_materializations.project_id, workspace_materializations.environment_id, workspace_materializations.workspace_id, workspace_materializations.deployment_sandbox_id, workspace_materializations.sandbox_fingerprint, workspace_materializations.base_version_id, workspace_materializations.worker_instance_id, workspace_materializations.reservation_token, workspace_materializations.reservation_expires_at, workspace_materializations.claim_attempt, workspace_materializations.dead_lettered_at, workspace_materializations.priority, workspace_materializations.requested_cpu_millis, workspace_materializations.requested_memory_mib, workspace_materializations.requested_disk_mib, workspace_materializations.requested_execution_slots, workspace_materializations.reserved_cpu_millis, workspace_materializations.reserved_memory_mib, workspace_materializations.reserved_disk_mib, workspace_materializations.reserved_execution_slots, workspace_materializations.capacity_reservation_id, workspace_materializations.guestd_channel_token_hash, workspace_materializations.guestd_channel_token_expires_at, workspace_materializations.runtime_id, workspace_materializations.state, workspace_materializations.request, workspace_materializations.lease_generation, workspace_materializations.dirty_generation, workspace_materializations.fencing_generation, workspace_materializations.network_namespace, workspace_materializations.port_namespace, workspace_materializations.image_artifact_id, workspace_materializations.image_artifact_format, workspace_materializations.rootfs_digest, workspace_materializations.image_digest, workspace_materializations.image_format, workspace_materializations.workspace_artifact_id, workspace_materializations.workspace_artifact_encoding, workspace_materializations.workspace_artifact_entry_count, workspace_materializations.workspace_artifact_digest, workspace_materializations.workspace_artifact_size_bytes, workspace_materializations.workspace_artifact_media_type, workspace_materializations.workspace_mount_path, workspace_materializations.runtime_abi, workspace_materializations.guestd_abi, workspace_materializations.adapter_abi, workspace_materializations.last_heartbeat_at, workspace_materializations.requested_at, workspace_materializations.materialized_at, workspace_materializations.stopped_at, workspace_materializations.lost_at, workspace_materializations.failed_at, workspace_materializations.error, workspace_materializations.created_at, workspace_materializations.updated_at
+),
+updated_workspace AS (
+    UPDATE workspaces
+       SET dirty_state = 'dirty',
+           updated_at = now()
+      FROM dirtied_materialization
+     WHERE workspaces.org_id = dirtied_materialization.org_id
+       AND workspaces.project_id = dirtied_materialization.project_id
+       AND workspaces.environment_id = dirtied_materialization.environment_id
+       AND workspaces.id = dirtied_materialization.workspace_id
+    RETURNING workspaces.id
+)
+SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, request_fingerprint, process_id, exit_code, signal, error, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
+  FROM updated_exec
+ WHERE (SELECT count(*) FROM updated_workspace) >= 0
 `
 
 type MarkWorkspaceExecStartedParams struct {
-	ProcessID         string      `json:"process_id"`
 	OrgID             pgtype.UUID `json:"org_id"`
 	ProjectID         pgtype.UUID `json:"project_id"`
 	EnvironmentID     pgtype.UUID `json:"environment_id"`
 	WorkspaceID       pgtype.UUID `json:"workspace_id"`
 	ID                pgtype.UUID `json:"id"`
 	MaterializationID pgtype.UUID `json:"materialization_id"`
+	ProcessID         string      `json:"process_id"`
 }
 
-func (q *Queries) MarkWorkspaceExecStarted(ctx context.Context, arg MarkWorkspaceExecStartedParams) (WorkspaceExec, error) {
+type MarkWorkspaceExecStartedRow struct {
+	ID                   pgtype.UUID             `json:"id"`
+	OrgID                pgtype.UUID             `json:"org_id"`
+	ProjectID            pgtype.UUID             `json:"project_id"`
+	EnvironmentID        pgtype.UUID             `json:"environment_id"`
+	WorkspaceID          pgtype.UUID             `json:"workspace_id"`
+	MaterializationID    pgtype.UUID             `json:"materialization_id"`
+	InstanceLeaseID      pgtype.UUID             `json:"instance_lease_id"`
+	WriteLeaseID         pgtype.UUID             `json:"write_lease_id"`
+	Command              []byte                  `json:"command"`
+	Cwd                  string                  `json:"cwd"`
+	EnvShape             []byte                  `json:"env_shape"`
+	FilesystemMode       WorkspaceFilesystemMode `json:"filesystem_mode"`
+	State                WorkspaceExecState      `json:"state"`
+	Detached             bool                    `json:"detached"`
+	IdempotencyKey       string                  `json:"idempotency_key"`
+	RequestFingerprint   string                  `json:"request_fingerprint"`
+	ProcessID            string                  `json:"process_id"`
+	ExitCode             pgtype.Int4             `json:"exit_code"`
+	Signal               string                  `json:"signal"`
+	Error                []byte                  `json:"error"`
+	StdoutCursor         int64                   `json:"stdout_cursor"`
+	StderrCursor         int64                   `json:"stderr_cursor"`
+	StdinCursor          int64                   `json:"stdin_cursor"`
+	StdinDeliveredCursor int64                   `json:"stdin_delivered_cursor"`
+	StdinClosedAt        pgtype.Timestamptz      `json:"stdin_closed_at"`
+	CreatedBySubjectType string                  `json:"created_by_subject_type"`
+	CreatedBySubjectID   string                  `json:"created_by_subject_id"`
+	CreatedAt            pgtype.Timestamptz      `json:"created_at"`
+	StartedAt            pgtype.Timestamptz      `json:"started_at"`
+	ExitedAt             pgtype.Timestamptz      `json:"exited_at"`
+	UpdatedAt            pgtype.Timestamptz      `json:"updated_at"`
+}
+
+func (q *Queries) MarkWorkspaceExecStarted(ctx context.Context, arg MarkWorkspaceExecStartedParams) (MarkWorkspaceExecStartedRow, error) {
 	row := q.db.QueryRow(ctx, markWorkspaceExecStarted,
-		arg.ProcessID,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
 		arg.ID,
 		arg.MaterializationID,
+		arg.ProcessID,
 	)
-	var i WorkspaceExec
+	var i MarkWorkspaceExecStartedRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -1618,7 +1718,7 @@ SELECT EXISTS (
        AND workspace_execs.environment_id = $3
        AND workspace_execs.workspace_id = $4
        AND workspace_execs.filesystem_mode = 'write'
-       AND workspace_execs.state NOT IN ('exited', 'lost', 'failed')
+       AND workspace_execs.state NOT IN ('exited', 'terminated', 'lost', 'failed')
     UNION ALL
     SELECT 1
       FROM workspace_pty_sessions

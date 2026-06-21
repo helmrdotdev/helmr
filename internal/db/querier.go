@@ -90,7 +90,6 @@ type Querier interface {
 	CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams) (Workspace, error)
 	CreateWorkspaceExec(ctx context.Context, arg CreateWorkspaceExecParams) (WorkspaceExec, error)
 	CreateWorkspaceFromSandbox(ctx context.Context, arg CreateWorkspaceFromSandboxParams) (CreateWorkspaceFromSandboxRow, error)
-	CreateWorkspaceOperationIdempotency(ctx context.Context, arg CreateWorkspaceOperationIdempotencyParams) (WorkspaceOperationIdempotency, error)
 	CreateWorkspacePtySession(ctx context.Context, arg CreateWorkspacePtySessionParams) (WorkspacePtySession, error)
 	CreateWorkspaceStreamWakeup(ctx context.Context, arg CreateWorkspaceStreamWakeupParams) (WorkspaceStreamWakeup, error)
 	DeadLetterRunQueueItem(ctx context.Context, arg DeadLetterRunQueueItemParams) (DeadLetterRunQueueItemRow, error)
@@ -111,6 +110,7 @@ type Querier interface {
 	EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams) (OrgMember, error)
 	EnsureRuntimeReleaseSelection(ctx context.Context, runtimeID string) error
 	EnsureWorkspaceMaterializationRequested(ctx context.Context, arg EnsureWorkspaceMaterializationRequestedParams) (EnsureWorkspaceMaterializationRequestedRow, error)
+	EnsureWorkspaceOperationIdempotency(ctx context.Context, arg EnsureWorkspaceOperationIdempotencyParams) (EnsureWorkspaceOperationIdempotencyRow, error)
 	ExpireDuePendingWaitpoints(ctx context.Context, orgID pgtype.UUID) error
 	ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
 	FailDeletionJob(ctx context.Context, arg FailDeletionJobParams) (DeletionJob, error)
@@ -277,11 +277,11 @@ type Querier interface {
 	MarkScheduleInstanceTriggerFailed(ctx context.Context, arg MarkScheduleInstanceTriggerFailedParams) (int64, error)
 	MarkStaleWorkspaceMaterializationsLost(ctx context.Context, staleBefore pgtype.Timestamptz) ([]MarkStaleWorkspaceMaterializationsLostRow, error)
 	MarkWorkspaceExecExited(ctx context.Context, arg MarkWorkspaceExecExitedParams) (MarkWorkspaceExecExitedRow, error)
-	MarkWorkspaceExecStarted(ctx context.Context, arg MarkWorkspaceExecStartedParams) (WorkspaceExec, error)
+	MarkWorkspaceExecStarted(ctx context.Context, arg MarkWorkspaceExecStartedParams) (MarkWorkspaceExecStartedRow, error)
 	MarkWorkspaceMaterializationRunning(ctx context.Context, arg MarkWorkspaceMaterializationRunningParams) (WorkspaceMaterialization, error)
 	MarkWorkspacePtyClosed(ctx context.Context, arg MarkWorkspacePtyClosedParams) (MarkWorkspacePtyClosedRow, error)
 	MarkWorkspacePtyFailed(ctx context.Context, arg MarkWorkspacePtyFailedParams) (MarkWorkspacePtyFailedRow, error)
-	MarkWorkspacePtyOpen(ctx context.Context, arg MarkWorkspacePtyOpenParams) (WorkspacePtySession, error)
+	MarkWorkspacePtyOpen(ctx context.Context, arg MarkWorkspacePtyOpenParams) (MarkWorkspacePtyOpenRow, error)
 	MarkWorkspacePtyResizeApplied(ctx context.Context, arg MarkWorkspacePtyResizeAppliedParams) (WorkspacePtySession, error)
 	MarkWorkspaceStreamWakeupFailed(ctx context.Context, arg MarkWorkspaceStreamWakeupFailedParams) error
 	MarkWorkspaceWriteLeaseDirty(ctx context.Context, arg MarkWorkspaceWriteLeaseDirtyParams) (MarkWorkspaceWriteLeaseDirtyRow, error)
@@ -291,6 +291,7 @@ type Querier interface {
 	PrepareQueuedRunQueueItem(ctx context.Context, arg PrepareQueuedRunQueueItemParams) (PrepareQueuedRunQueueItemRow, error)
 	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) (PromoteDeploymentRow, error)
 	PromoteWorkspaceCapture(ctx context.Context, arg PromoteWorkspaceCaptureParams) (PromoteWorkspaceCaptureRow, error)
+	PromoteWorkspaceMaterializationStopCapture(ctx context.Context, arg PromoteWorkspaceMaterializationStopCaptureParams) (PromoteWorkspaceMaterializationStopCaptureRow, error)
 	RefreshSession(ctx context.Context, arg RefreshSessionParams) error
 	ReleaseRunLease(ctx context.Context, arg ReleaseRunLeaseParams) (ReleaseRunLeaseRow, error)
 	ReleaseWorkspaceLease(ctx context.Context, arg ReleaseWorkspaceLeaseParams) (WorkspaceLease, error)
@@ -298,6 +299,7 @@ type Querier interface {
 	RenewRunQueueReservation(ctx context.Context, arg RenewRunQueueReservationParams) (RunQueueItem, error)
 	RenewWorkspaceMaterialization(ctx context.Context, arg RenewWorkspaceMaterializationParams) (WorkspaceMaterialization, error)
 	RequestWorkspaceMaterializationOperation(ctx context.Context, arg RequestWorkspaceMaterializationOperationParams) (WorkspaceMaterializationOperation, error)
+	RequestWorkspaceMaterializationStop(ctx context.Context, arg RequestWorkspaceMaterializationStopParams) (RequestWorkspaceMaterializationStopRow, error)
 	RequestWorkspacePtyClose(ctx context.Context, arg RequestWorkspacePtyCloseParams) (WorkspacePtySession, error)
 	RequeueExpiredLeasedRunLeases(ctx context.Context, orgID pgtype.UUID) error
 	RequeueRunQueueItem(ctx context.Context, arg RequeueRunQueueItemParams) (RunQueueItem, error)
@@ -319,6 +321,7 @@ type Querier interface {
 	SetQueuedRunWorkspaceMaterialization(ctx context.Context, arg SetQueuedRunWorkspaceMaterializationParams) error
 	SetTaskSessionCurrentRun(ctx context.Context, arg SetTaskSessionCurrentRunParams) (TaskSession, error)
 	SetWorkerInstanceStatus(ctx context.Context, arg SetWorkerInstanceStatusParams) (WorkerInstance, error)
+	SetWorkspaceDesiredStopped(ctx context.Context, arg SetWorkspaceDesiredStoppedParams) (Workspace, error)
 	SkipScheduleInstanceTrigger(ctx context.Context, arg SkipScheduleInstanceTriggerParams) (SkipScheduleInstanceTriggerRow, error)
 	StartRunLease(ctx context.Context, arg StartRunLeaseParams) (RunStatus, error)
 	StartWorkspaceMaterializationOperation(ctx context.Context, arg StartWorkspaceMaterializationOperationParams) (StartWorkspaceMaterializationOperationRow, error)

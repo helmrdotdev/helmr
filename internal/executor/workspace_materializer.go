@@ -69,16 +69,25 @@ func (m WorkspaceMaterializer) RunWorkspaceMaterialization(ctx context.Context, 
 		_ = m.failMaterialization(client, materialization, err)
 		return err
 	}
-	if _, err := client.MarkWorkspaceMaterializationRunning(renewal.ctx, api.WorkerWorkspaceMaterializationRunningRequest{
+	running, err := client.MarkWorkspaceMaterializationRunning(renewal.ctx, api.WorkerWorkspaceMaterializationRunningRequest{
 		OrgID:             materialization.OrgID,
 		MaterializationID: materialization.ID,
 		ReservationToken:  materialization.ReservationToken,
-	}); err != nil {
+	})
+	if err != nil {
 		if renewalErr := renewal.stopAndWait(); renewalErr != nil {
 			err = renewalErr
 		}
 		_ = m.failMaterialization(client, materialization, err)
 		return fmt.Errorf("mark workspace materialization running: %w", err)
+	}
+	switch strings.TrimSpace(running.State) {
+	case "capturing", "stopping":
+		if err := m.stopControlledWorkspaceMaterialization(renewal.ctx, session, materialization, running, client); err != nil {
+			return err
+		}
+		_ = renewal.stopAndWait()
+		return nil
 	}
 	sessionExited := make(chan error, 1)
 	go func() {
@@ -106,11 +115,6 @@ func (m WorkspaceMaterializer) RunWorkspaceMaterialization(ctx context.Context, 
 	}
 	stopAndReturn := func() error {
 		_ = renewal.stopAndWait()
-		_, _ = client.StopWorkspaceMaterialization(context.Background(), api.WorkerWorkspaceMaterializationStopRequest{
-			OrgID:             materialization.OrgID,
-			MaterializationID: materialization.ID,
-			ReservationToken:  materialization.ReservationToken,
-		})
 		return ctx.Err()
 	}
 	pollEvery := m.PollEvery
@@ -128,10 +132,20 @@ func (m WorkspaceMaterializer) RunWorkspaceMaterialization(ctx context.Context, 
 	poll := time.NewTimer(0)
 	defer poll.Stop()
 	renewDone := renewal.done
+	renewUpdates := renewal.updates
 	for {
 		select {
 		case <-ctx.Done():
 			return stopAndReturn()
+		case update := <-renewUpdates:
+			switch strings.TrimSpace(update.State) {
+			case "capturing", "stopping":
+				if err := m.stopControlledWorkspaceMaterialization(renewal.ctx, session, materialization, update, client); err != nil {
+					return err
+				}
+				_ = renewal.stopAndWait()
+				return nil
+			}
 		case err := <-renewDone:
 			renewDone = nil
 			renewal.once.Do(func() { renewal.err = err })
@@ -221,11 +235,12 @@ func (m WorkspaceMaterializer) RunWorkspaceMaterialization(ctx context.Context, 
 }
 
 type materializationRenewal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	done   chan error
-	once   sync.Once
-	err    error
+	ctx     context.Context
+	cancel  context.CancelFunc
+	done    chan error
+	updates chan api.WorkspaceMaterializationResponse
+	once    sync.Once
+	err     error
 }
 
 func (r *materializationRenewal) stopAndWait() error {
@@ -239,6 +254,7 @@ func (r *materializationRenewal) stopAndWait() error {
 func (m WorkspaceMaterializer) startRenewalLoop(ctx context.Context, request api.WorkerWorkspaceMaterializationRenewRequest, client api.WorkerWorkspaceMaterializerControlClient, every time.Duration) *materializationRenewal {
 	renewCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
+	updates := make(chan api.WorkspaceMaterializationResponse, 1)
 	go func() {
 		var err error
 		defer func() { done <- err }()
@@ -249,15 +265,20 @@ func (m WorkspaceMaterializer) startRenewalLoop(ctx context.Context, request api
 			case <-renewCtx.Done():
 				return
 			case <-ticker.C:
-				if _, renewErr := client.RenewWorkspaceMaterialization(renewCtx, request); renewErr != nil {
+				response, renewErr := client.RenewWorkspaceMaterialization(renewCtx, request)
+				if renewErr != nil {
 					err = fmt.Errorf("renew workspace materialization: %w", renewErr)
 					cancel()
 					return
 				}
+				select {
+				case updates <- response:
+				default:
+				}
 			}
 		}
 	}()
-	return &materializationRenewal{ctx: renewCtx, cancel: cancel, done: done}
+	return &materializationRenewal{ctx: renewCtx, cancel: cancel, done: done, updates: updates}
 }
 
 type materializationFailure struct {
@@ -473,6 +494,164 @@ func (m WorkspaceMaterializer) registerMaterializationContext(ctx context.Contex
 		_ = m.closeSession(session)
 		return ctx.Err()
 	}
+}
+
+func (m WorkspaceMaterializer) stopControlledWorkspaceMaterialization(ctx context.Context, session vm.Session, materialization api.WorkerWorkspaceMaterialization, update api.WorkspaceMaterializationResponse, client api.WorkerWorkspaceMaterializerControlClient) error {
+	capture := strings.TrimSpace(update.State) == "capturing" && update.DirtyGeneration > 0
+	fencingGeneration := materialization.FencingGeneration
+	if update.FencingGeneration > fencingGeneration {
+		fencingGeneration = update.FencingGeneration
+	}
+	artifact, err := m.stopWorkspaceGuest(ctx, session, materialization, fencingGeneration, capture, !capture)
+	if err != nil {
+		if capture {
+			_ = m.failMaterialization(client, materialization, materializationFailure{
+				code: "workspace_materialization_recovery_required",
+				err:  fmt.Errorf("capture workspace before stop: %w", err),
+			})
+		} else {
+			_ = m.failMaterialization(client, materialization, materializationFailure{
+				code: "workspace_materialization_stop_failed",
+				err:  fmt.Errorf("stop workspace guest: %w", err),
+			})
+		}
+		return err
+	}
+	if capture {
+		if _, err := client.CaptureWorkspaceMaterialization(ctx, api.WorkerWorkspaceMaterializationCaptureRequest{
+			OrgID:              materialization.OrgID,
+			ProjectID:          materialization.ProjectID,
+			EnvironmentID:      materialization.EnvironmentID,
+				WorkspaceID:        materialization.WorkspaceID,
+				MaterializationID:  materialization.ID,
+				ReservationToken:   materialization.ReservationToken,
+				ArtifactDigest:     artifact.Digest,
+				ArtifactSizeBytes:  artifact.SizeBytes,
+				ArtifactMediaType:  artifact.MediaType,
+			ArtifactEncoding:   artifact.Encoding,
+			ArtifactEntryCount: int32(artifact.EntryCount),
+		}); err != nil {
+			_ = m.failMaterialization(client, materialization, materializationFailure{
+				code: "workspace_materialization_recovery_required",
+				err:  fmt.Errorf("promote workspace stop capture: %w", err),
+			})
+			return err
+		}
+	}
+	if capture {
+		if _, err := m.stopWorkspaceGuest(ctx, session, materialization, fencingGeneration, false, true); err != nil {
+			_ = m.failMaterialization(client, materialization, materializationFailure{
+				code: "workspace_materialization_stop_failed",
+				err:  fmt.Errorf("finalize workspace stop: %w", err),
+			})
+			return fmt.Errorf("finalize workspace stop: %w", err)
+		}
+	}
+	if _, err := client.StopWorkspaceMaterialization(context.Background(), api.WorkerWorkspaceMaterializationStopRequest{
+		OrgID:             materialization.OrgID,
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+	}); err != nil {
+		return fmt.Errorf("stop workspace materialization: %w", err)
+	}
+	return nil
+}
+
+func (m WorkspaceMaterializer) stopWorkspaceGuest(ctx context.Context, session vm.Session, materialization api.WorkerWorkspaceMaterialization, fencingGeneration int64, capture bool, finalize bool) (workspace.WorkspaceArtifact, error) {
+	channelToken := m.channelToken(materialization)
+	if channelToken == "" {
+		return workspace.WorkspaceArtifact{}, errors.New("workspace materialization guest channel token is required")
+	}
+	if m.CAS == nil {
+		return workspace.WorkspaceArtifact{}, errors.New("workspace materializer CAS is required")
+	}
+	stream, err := session.OpenStream(ctx)
+	if err != nil {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("open workspace stop stream: %w", err)
+	}
+	defer stream.Close()
+	if err := transport.WriteStreamFrameHeader(stream, transport.StreamHeader{
+		Type:        transport.StreamTypeWorkspaceStop,
+		WorkspaceID: materialization.WorkspaceID,
+	}, 0); err != nil {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("write workspace stop header: %w", err)
+	}
+	if err := transport.WriteProtoFrame(stream, &workspacev0.StopWorkspaceRequest{
+		Envelope: &workspacev0.WorkspaceOperationEnvelope{
+			MaterializationId: materialization.ID,
+			WorkspaceId:       materialization.WorkspaceID,
+			ChannelToken:      channelToken,
+			FencingGeneration: uint64(fencingGeneration),
+		},
+		CaptureBeforeStop: capture,
+		FinalizeStop:      finalize,
+	}); err != nil {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("write workspace stop request: %w", err)
+	}
+	var response workspacev0.StopWorkspaceResponse
+	if err := readProtoFrameFromReaderContext(ctx, session, stream, &response); err != nil {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("read workspace stop response: %w", err)
+	}
+	if strings.TrimSpace(response.GetErrorJson()) != "" {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop failed: %s", strings.TrimSpace(response.GetErrorJson()))
+	}
+	expectedState := "stopped"
+	if capture && !finalize {
+		expectedState = "captured"
+	}
+	if strings.TrimSpace(response.State) != expectedState {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop returned state %q", response.State)
+	}
+	if !capture {
+		return workspace.WorkspaceArtifact{}, nil
+	}
+	captured := response.GetCapturedArtifact()
+	if captured == nil {
+		return workspace.WorkspaceArtifact{}, errors.New("workspace stop response missing captured artifact")
+	}
+	if strings.TrimSpace(captured.GetDigest()) == "" {
+		return workspace.WorkspaceArtifact{}, errors.New("workspace stop captured artifact digest is required")
+	}
+	if strings.TrimSpace(captured.GetMediaType()) != workspace.ArtifactMediaType {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop captured artifact media_type %q is unsupported", captured.GetMediaType())
+	}
+	if strings.TrimSpace(captured.GetEncoding()) != workspace.ArtifactEncoding {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop captured artifact encoding %q is unsupported", captured.GetEncoding())
+	}
+	header, bodyLen, err := transport.ReadStreamFrameHeader(stream)
+	if err != nil {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("read workspace stop artifact header: %w", err)
+	}
+	if header.Type != transport.StreamTypeWorkspaceArtifact {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop returned artifact stream type %q", header.Type)
+	}
+	if strings.TrimSpace(header.WorkspaceID) != strings.TrimSpace(materialization.WorkspaceID) {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop artifact workspace_id %q does not match %q", header.WorkspaceID, materialization.WorkspaceID)
+	}
+	if uint64(captured.GetSizeBytes()) != bodyLen {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop artifact size %d does not match frame size %d", captured.GetSizeBytes(), bodyLen)
+	}
+	if header.BodyDigest != nil && strings.TrimSpace(*header.BodyDigest) != strings.TrimSpace(captured.GetDigest()) {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop artifact digest %q does not match frame digest %q", captured.GetDigest(), *header.BodyDigest)
+	}
+	body := &io.LimitedReader{R: stream, N: int64(bodyLen)}
+	object, err := m.CAS.Put(ctx, workspace.ArtifactMediaType, body)
+	if err != nil {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("store workspace stop artifact: %w", err)
+	}
+	if body.N != 0 {
+		return workspace.WorkspaceArtifact{}, errors.New("workspace stop artifact stream ended early")
+	}
+	if object.Digest != strings.TrimSpace(captured.GetDigest()) || object.SizeBytes != int64(captured.GetSizeBytes()) || object.MediaType != workspace.ArtifactMediaType {
+		return workspace.WorkspaceArtifact{}, errors.New("workspace stop artifact CAS metadata mismatch")
+	}
+	return workspace.WorkspaceArtifact{
+		Digest:     object.Digest,
+		MediaType:  object.MediaType,
+		Encoding:   workspace.ArtifactEncoding,
+		SizeBytes:  object.SizeBytes,
+		EntryCount: int(captured.GetEntryCount()),
+	}, nil
 }
 
 func (m WorkspaceMaterializer) dispatchOperation(ctx context.Context, session vm.Session, materialization api.WorkerWorkspaceMaterialization, operation api.WorkerWorkspaceOperation) (api.WorkerWorkspaceOperationCompleteRequest, error) {
@@ -870,7 +1049,7 @@ func workerPrimitiveScope(materialization api.WorkerWorkspaceMaterialization) ap
 
 func workspaceExecStateTerminal(state string) bool {
 	switch strings.TrimSpace(state) {
-	case "exited", "lost", "failed":
+	case "exited", "terminated", "lost", "failed":
 		return true
 	default:
 		return false

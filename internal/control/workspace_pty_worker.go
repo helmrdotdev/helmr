@@ -41,10 +41,23 @@ func (s *Server) workerMarkWorkspacePtyOpened(w http.ResponseWriter, r *http.Req
 		MaterializationID: materialization.ID,
 	})
 	if err != nil {
+		if isNoRows(err) {
+			existing, getErr := s.db.GetWorkspacePtySession(r.Context(), db.GetWorkspacePtySessionParams{
+				OrgID:         materialization.OrgID,
+				ProjectID:     materialization.ProjectID,
+				EnvironmentID: materialization.EnvironmentID,
+				WorkspaceID:   materialization.WorkspaceID,
+				ID:            ptyID,
+			})
+			if getErr == nil && workspacePtyTerminalEventMatches(existing, materialization.ID, false, nil) {
+				writeJSON(w, http.StatusOK, api.WorkspacePtyEnvelope{Pty: workspacePtyResponse(existing)})
+				return
+			}
+		}
 		s.writeWorkspacePrimitiveError(w, "mark workspace pty open", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkspacePtyEnvelope{Pty: workspacePtyResponse(row)})
+	writeJSON(w, http.StatusOK, api.WorkspacePtyEnvelope{Pty: workspacePtyResponse(db.WorkspacePtySession(row))})
 }
 
 func (s *Server) workerAppendWorkspacePtyOutput(w http.ResponseWriter, r *http.Request) {

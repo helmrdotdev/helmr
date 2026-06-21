@@ -2,8 +2,11 @@ package guestd
 
 import (
 	"bytes"
+	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 type recordingWriteCloser struct {
@@ -130,5 +133,29 @@ func TestWorkspacePtyInputCloseIsUnsupported(t *testing.T) {
 	}
 	if stdin.closed {
 		t.Fatal("pty stdin was closed by input close frame")
+	}
+}
+
+func TestSignalWorkspaceProcessDoesNotSignalCallerProcessGroup(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "sleep 30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	defer func() {
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			<-done
+		}
+	}()
+
+	if err := signalWorkspaceProcess(cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		t.Fatalf("signal child: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("child was not terminated")
 	}
 }

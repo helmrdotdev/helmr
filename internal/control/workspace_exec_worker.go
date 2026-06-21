@@ -42,10 +42,23 @@ func (s *Server) workerMarkWorkspaceExecStarted(w http.ResponseWriter, r *http.R
 		MaterializationID: materialization.ID,
 	})
 	if err != nil {
+		if isNoRows(err) {
+			existing, getErr := s.db.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
+				OrgID:         materialization.OrgID,
+				ProjectID:     materialization.ProjectID,
+				EnvironmentID: materialization.EnvironmentID,
+				WorkspaceID:   materialization.WorkspaceID,
+				ID:            execID,
+			})
+			if getErr == nil && workerPrimitiveMaterializationMatches(existing.MaterializationID, materialization.ID) && workspaceExecStateTerminal(existing.State) {
+				writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(existing)})
+				return
+			}
+		}
 		s.writeWorkspacePrimitiveError(w, "mark workspace exec started", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(row)})
+	writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(db.WorkspaceExec(row))})
 }
 
 func (s *Server) workerAppendWorkspaceExecOutput(w http.ResponseWriter, r *http.Request) {
@@ -342,7 +355,7 @@ func workspaceExecTerminalEventMatches(row db.WorkspaceExec, materializationID p
 	if !workerPrimitiveMaterializationMatches(row.MaterializationID, materializationID) {
 		return false
 	}
-	if row.State == db.WorkspaceExecStateLost {
+	if row.State == db.WorkspaceExecStateLost || row.State == db.WorkspaceExecStateTerminated {
 		return true
 	}
 	if row.State != state {

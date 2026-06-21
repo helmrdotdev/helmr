@@ -16,6 +16,9 @@ const (
 	PermissionRunsCreate              Permission = "runs.create"
 	PermissionRunsRead                Permission = "runs.read"
 	PermissionRunsManage              Permission = "runs.manage"
+	PermissionWorkspacesRead          Permission = "workspaces.read"
+	PermissionWorkspacesWrite         Permission = "workspaces.write"
+	PermissionWorkspacesManage        Permission = "workspaces.manage"
 	PermissionRunWaitpointsRead       Permission = "waitpoints.read"
 	PermissionWaitpointTokensCreate   Permission = "waitpoint_tokens.create"
 	PermissionWaitpointTokensRead     Permission = "waitpoint_tokens.read"
@@ -58,6 +61,9 @@ func RoleAllows(role Role, permission Permission) bool {
 		case PermissionRunsCreate,
 			PermissionRunsRead,
 			PermissionRunsManage,
+			PermissionWorkspacesRead,
+			PermissionWorkspacesWrite,
+			PermissionWorkspacesManage,
 			PermissionRunWaitpointsRead,
 			PermissionWaitpointTokensCreate,
 			PermissionWaitpointTokensRead,
@@ -70,7 +76,7 @@ func RoleAllows(role Role, permission Permission) bool {
 		}
 	case RoleViewer:
 		switch permission {
-		case PermissionRunsRead, PermissionRunWaitpointsRead, PermissionWaitpointTokensRead:
+		case PermissionRunsRead, PermissionWorkspacesRead, PermissionRunWaitpointsRead, PermissionWaitpointTokensRead:
 			return true
 		default:
 			return false

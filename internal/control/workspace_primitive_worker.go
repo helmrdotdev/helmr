@@ -60,7 +60,9 @@ func (s *Server) validateWorkerWorkspacePrimitiveScope(ctx context.Context, work
 	if materialization.ReservationExpiresAt.Valid && time.Now().After(materialization.ReservationExpiresAt.Time) {
 		return db.WorkspaceMaterialization{}, conflict(errors.New("workspace materialization reservation expired"))
 	}
-	if materialization.State != db.WorkspaceMaterializationStateRunning {
+	switch materialization.State {
+	case db.WorkspaceMaterializationStateRunning, db.WorkspaceMaterializationStateCapturing, db.WorkspaceMaterializationStateStopping:
+	default:
 		return db.WorkspaceMaterialization{}, conflict(errors.New("workspace materialization is not running"))
 	}
 	return materialization, nil

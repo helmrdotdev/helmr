@@ -222,7 +222,7 @@ func TestWorkspaceMaterializerDispatchesNoopOperationToGuest(t *testing.T) {
 	if len(client.running) != 1 || client.running[0].OrgID != "org-1" || client.running[0].MaterializationID != "mat-1" || client.running[0].ReservationToken != "reservation-token" {
 		t.Fatalf("running request = %+v", client.running)
 	}
-	if client.stops != 1 {
+	if client.stops != 0 {
 		t.Fatalf("stops = %d", client.stops)
 	}
 }
@@ -246,6 +246,339 @@ func TestWorkspaceMaterializerRejectsMismatchedClaimedOperation(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected mismatched claimed operation to fail before guest dispatch")
+	}
+}
+
+func TestWorkspaceMaterializerStopWorkspaceGuestStoresCapturedArtifact(t *testing.T) {
+	client, server := net.Pipe()
+	defer server.Close()
+	store := &fakeCAS{objects: map[string][]byte{}}
+	body := []byte("captured workspace")
+	object := store.put(workspace.ArtifactMediaType, body)
+	session := &workspaceMaterializerTestSession{streams: []io.ReadWriteCloser{client}}
+	materialization := api.WorkerWorkspaceMaterialization{
+		ID:                     "mat-1",
+		WorkspaceID:            "workspace-1",
+		GuestdChannelToken:     "channel-token",
+		GuestdChannelTokenHash: sha256sum.HexBytes([]byte("channel-token")),
+		FencingGeneration:      7,
+	}
+	done := make(chan error, 1)
+	go func() {
+		header, _, err := transport.ReadStreamFrameHeader(server)
+		if err != nil {
+			done <- err
+			return
+		}
+		if header.Type != transport.StreamTypeWorkspaceStop || header.WorkspaceID != "workspace-1" {
+			done <- fmt.Errorf("stop header = %+v", header)
+			return
+		}
+		var request workspacev0.StopWorkspaceRequest
+		if err := transport.ReadProtoFrame(server, &request); err != nil {
+			done <- err
+			return
+		}
+		if !request.GetCaptureBeforeStop() || request.GetFinalizeStop() || request.GetEnvelope().GetChannelToken() != "channel-token" || request.GetEnvelope().GetFencingGeneration() != 7 {
+			done <- fmt.Errorf("stop request = %+v", &request)
+			return
+		}
+		if err := transport.WriteProtoFrame(server, &workspacev0.StopWorkspaceResponse{
+			State: "captured",
+			CapturedArtifact: &workspacev0.WorkspaceArtifact{
+				Digest:     object.Digest,
+				MediaType:  object.MediaType,
+				Encoding:   workspace.ArtifactEncoding,
+				SizeBytes:  uint64(object.SizeBytes),
+				EntryCount: 3,
+			},
+		}); err != nil {
+			done <- err
+			return
+		}
+		entryCount := 3
+		if err := transport.WriteStreamFrameHeader(server, transport.StreamHeader{
+			Type:        transport.StreamTypeWorkspaceArtifact,
+			WorkspaceID: "workspace-1",
+			BodyDigest:  &object.Digest,
+			EntryCount:  &entryCount,
+		}, uint64(len(body))); err != nil {
+			done <- err
+			return
+		}
+		_, err = server.Write(body)
+		done <- err
+	}()
+	artifact, err := (WorkspaceMaterializer{CAS: store}).stopWorkspaceGuest(context.Background(), session, materialization, materialization.FencingGeneration, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if artifact.Digest != object.Digest || artifact.SizeBytes != object.SizeBytes || artifact.EntryCount != 3 {
+		t.Fatalf("captured artifact = %+v, want digest=%s size=%d entries=3", artifact, object.Digest, object.SizeBytes)
+	}
+}
+
+func TestWorkspaceMaterializerControlledStopUsesRenewedFencingGeneration(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	store, materialization := testMaterializationArtifacts(t)
+	materialization.ID = "mat-1"
+	materialization.OrgID = "org-1"
+	materialization.WorkspaceID = "workspace-1"
+	materialization.ReservationToken = "reservation-token"
+	materialization.GuestdChannelToken = "channel-token"
+	materialization.FencingGeneration = 7
+	done := make(chan error, 1)
+	go func() {
+		header, _, err := transport.ReadStreamFrameHeader(serverConn)
+		if err != nil {
+			done <- err
+			return
+		}
+		if header.Type != transport.StreamTypeWorkspaceStop || header.WorkspaceID != "workspace-1" {
+			done <- fmt.Errorf("stop header = %+v", header)
+			return
+		}
+		var request workspacev0.StopWorkspaceRequest
+		if err := transport.ReadProtoFrame(serverConn, &request); err != nil {
+			done <- err
+			return
+		}
+		if got := request.GetEnvelope().GetFencingGeneration(); got != 9 {
+			done <- fmt.Errorf("stop fencing_generation = %d, want 9", got)
+			return
+		}
+		if request.GetCaptureBeforeStop() || !request.GetFinalizeStop() {
+			done <- fmt.Errorf("stop request = %+v", &request)
+			return
+		}
+		done <- transport.WriteProtoFrame(serverConn, &workspacev0.StopWorkspaceResponse{State: "stopped"})
+	}()
+	client := &workspaceMaterializerTestClient{}
+	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMaterialization(context.Background(), &workspaceMaterializerTestSession{
+		streams: []io.ReadWriteCloser{clientConn},
+	}, materialization, api.WorkspaceMaterializationResponse{State: "stopping", FencingGeneration: 9}, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if client.stops != 1 {
+		t.Fatalf("stops = %d, want 1", client.stops)
+	}
+}
+
+func TestWorkspaceMaterializerControlledCleanStopFailureFailsMaterialization(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	_ = serverConn.Close()
+	store, materialization := testMaterializationArtifacts(t)
+	materialization.ID = "mat-1"
+	materialization.OrgID = "org-1"
+	materialization.WorkspaceID = "workspace-1"
+	materialization.ReservationToken = "reservation-token"
+	materialization.GuestdChannelToken = "channel-token"
+	client := &workspaceMaterializerTestClient{}
+	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMaterialization(context.Background(), &workspaceMaterializerTestSession{
+		streams: []io.ReadWriteCloser{clientConn},
+	}, materialization, api.WorkspaceMaterializationResponse{State: "stopping", FencingGeneration: 9}, client)
+	if err == nil {
+		t.Fatal("expected stop failure")
+	}
+	if client.stops != 0 {
+		t.Fatalf("stops = %d, want 0", client.stops)
+	}
+	if len(client.failures) != 1 {
+		t.Fatalf("failures = %+v", client.failures)
+	}
+	if got := string(client.failures[0].Error); !strings.Contains(got, "workspace_materialization_stop_failed") {
+		t.Fatalf("failure error = %s", got)
+	}
+}
+
+func TestWorkspaceMaterializerControlledDirtyStopPromotesBeforeFinalize(t *testing.T) {
+	captureClient, captureServer := net.Pipe()
+	defer captureServer.Close()
+	finalClient, finalServer := net.Pipe()
+	defer finalServer.Close()
+	store := &fakeCAS{objects: map[string][]byte{}}
+	body := []byte("dirty workspace")
+	object := store.put(workspace.ArtifactMediaType, body)
+	materialization := api.WorkerWorkspaceMaterialization{
+		ID:                     "mat-1",
+		OrgID:                  "org-1",
+		ProjectID:              "project-1",
+		EnvironmentID:          "environment-1",
+		WorkspaceID:            "workspace-1",
+		ReservationToken:       "reservation-token",
+		GuestdChannelToken:     "channel-token",
+		GuestdChannelTokenHash: sha256sum.HexBytes([]byte("channel-token")),
+		FencingGeneration:      7,
+	}
+	done := make(chan error, 2)
+	go func() {
+		if _, _, err := transport.ReadStreamFrameHeader(captureServer); err != nil {
+			done <- err
+			return
+		}
+		var request workspacev0.StopWorkspaceRequest
+		if err := transport.ReadProtoFrame(captureServer, &request); err != nil {
+			done <- err
+			return
+		}
+		if !request.GetCaptureBeforeStop() || request.GetFinalizeStop() {
+			done <- fmt.Errorf("capture stop request = %+v", &request)
+			return
+		}
+		if err := transport.WriteProtoFrame(captureServer, &workspacev0.StopWorkspaceResponse{
+			State: "captured",
+			CapturedArtifact: &workspacev0.WorkspaceArtifact{
+				Digest:     object.Digest,
+				MediaType:  object.MediaType,
+				Encoding:   workspace.ArtifactEncoding,
+				SizeBytes:  uint64(object.SizeBytes),
+				EntryCount: 2,
+			},
+		}); err != nil {
+			done <- err
+			return
+		}
+		entryCount := 2
+		if err := transport.WriteStreamFrameHeader(captureServer, transport.StreamHeader{
+			Type:        transport.StreamTypeWorkspaceArtifact,
+			WorkspaceID: "workspace-1",
+			BodyDigest:  &object.Digest,
+			EntryCount:  &entryCount,
+		}, uint64(len(body))); err != nil {
+			done <- err
+			return
+		}
+		_, err := captureServer.Write(body)
+		done <- err
+	}()
+	go func() {
+		if _, _, err := transport.ReadStreamFrameHeader(finalServer); err != nil {
+			done <- err
+			return
+		}
+		var request workspacev0.StopWorkspaceRequest
+		if err := transport.ReadProtoFrame(finalServer, &request); err != nil {
+			done <- err
+			return
+		}
+		if request.GetCaptureBeforeStop() || !request.GetFinalizeStop() {
+			done <- fmt.Errorf("final stop request = %+v", &request)
+			return
+		}
+		done <- transport.WriteProtoFrame(finalServer, &workspacev0.StopWorkspaceResponse{State: "stopped"})
+	}()
+	client := &workspaceMaterializerTestClient{}
+	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMaterialization(context.Background(), &workspaceMaterializerTestSession{
+		streams: []io.ReadWriteCloser{captureClient, finalClient},
+	}, materialization, api.WorkspaceMaterializationResponse{State: "capturing", FencingGeneration: 9, DirtyGeneration: 3}, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(client.captures) != 1 {
+		t.Fatalf("captures = %d, want 1", len(client.captures))
+	}
+	if client.stops != 1 {
+		t.Fatalf("stops = %d, want 1", client.stops)
+	}
+	if len(client.failures) != 0 {
+		t.Fatalf("failures = %+v", client.failures)
+	}
+}
+
+func TestWorkspaceMaterializerControlledDirtyStopFinalizeFailureFailsMaterialization(t *testing.T) {
+	captureClient, captureServer := net.Pipe()
+	defer captureServer.Close()
+	finalClient, finalServer := net.Pipe()
+	_ = finalServer.Close()
+	store := &fakeCAS{objects: map[string][]byte{}}
+	body := []byte("dirty workspace")
+	object := store.put(workspace.ArtifactMediaType, body)
+	materialization := api.WorkerWorkspaceMaterialization{
+		ID:                     "mat-1",
+		OrgID:                  "org-1",
+		ProjectID:              "project-1",
+		EnvironmentID:          "environment-1",
+		WorkspaceID:            "workspace-1",
+		ReservationToken:       "reservation-token",
+		GuestdChannelToken:     "channel-token",
+		GuestdChannelTokenHash: sha256sum.HexBytes([]byte("channel-token")),
+		FencingGeneration:      7,
+	}
+	done := make(chan error, 1)
+	go func() {
+		if _, _, err := transport.ReadStreamFrameHeader(captureServer); err != nil {
+			done <- err
+			return
+		}
+		var request workspacev0.StopWorkspaceRequest
+		if err := transport.ReadProtoFrame(captureServer, &request); err != nil {
+			done <- err
+			return
+		}
+		if !request.GetCaptureBeforeStop() || request.GetFinalizeStop() {
+			done <- fmt.Errorf("capture stop request = %+v", &request)
+			return
+		}
+		if err := transport.WriteProtoFrame(captureServer, &workspacev0.StopWorkspaceResponse{
+			State: "captured",
+			CapturedArtifact: &workspacev0.WorkspaceArtifact{
+				Digest:     object.Digest,
+				MediaType:  object.MediaType,
+				Encoding:   workspace.ArtifactEncoding,
+				SizeBytes:  uint64(object.SizeBytes),
+				EntryCount: 2,
+			},
+		}); err != nil {
+			done <- err
+			return
+		}
+		entryCount := 2
+		if err := transport.WriteStreamFrameHeader(captureServer, transport.StreamHeader{
+			Type:        transport.StreamTypeWorkspaceArtifact,
+			WorkspaceID: "workspace-1",
+			BodyDigest:  &object.Digest,
+			EntryCount:  &entryCount,
+		}, uint64(len(body))); err != nil {
+			done <- err
+			return
+		}
+		_, err := captureServer.Write(body)
+		done <- err
+	}()
+	client := &workspaceMaterializerTestClient{}
+	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMaterialization(context.Background(), &workspaceMaterializerTestSession{
+		streams: []io.ReadWriteCloser{captureClient, finalClient},
+	}, materialization, api.WorkspaceMaterializationResponse{State: "capturing", FencingGeneration: 9, DirtyGeneration: 3}, client)
+	if err == nil {
+		t.Fatal("expected finalize failure")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if len(client.captures) != 1 {
+		t.Fatalf("captures = %d, want 1", len(client.captures))
+	}
+	if client.stops != 0 {
+		t.Fatalf("stops = %d, want 0", client.stops)
+	}
+	if len(client.failures) != 1 {
+		t.Fatalf("failures = %+v", client.failures)
+	}
+	if got := string(client.failures[0].Error); !strings.Contains(got, "workspace_materialization_stop_failed") {
+		t.Fatalf("failure error = %s", got)
 	}
 }
 
@@ -759,6 +1092,7 @@ type workspaceMaterializerTestClient struct {
 	starts           []api.WorkerWorkspaceOperationStartRequest
 	startErrors      []error
 	stops            int
+	captures         []api.WorkerWorkspaceMaterializationCaptureRequest
 	failures         []api.WorkerWorkspaceMaterializationFailRequest
 	execStarted      []api.WorkerWorkspaceExecStartedRequest
 	execOutput       []api.WorkerWorkspaceExecOutputRequest
@@ -788,6 +1122,11 @@ func (c *workspaceMaterializerTestClient) RenewWorkspaceMaterialization(_ contex
 func (c *workspaceMaterializerTestClient) MarkWorkspaceMaterializationRunning(_ context.Context, request api.WorkerWorkspaceMaterializationRunningRequest) (api.WorkspaceMaterializationResponse, error) {
 	c.running = append(c.running, request)
 	return api.WorkspaceMaterializationResponse{State: "running"}, nil
+}
+
+func (c *workspaceMaterializerTestClient) CaptureWorkspaceMaterialization(_ context.Context, request api.WorkerWorkspaceMaterializationCaptureRequest) (api.WorkerWorkspaceMaterializationCaptureResponse, error) {
+	c.captures = append(c.captures, request)
+	return api.WorkerWorkspaceMaterializationCaptureResponse{VersionID: "version-1"}, nil
 }
 
 func (c *workspaceMaterializerTestClient) StopWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error) {

@@ -698,14 +698,14 @@ func (s *guestSession) Close(ctx context.Context) error {
 		if s.networkPolicyCleanup != nil {
 			networkPolicyErr = s.networkPolicyCleanup()
 		}
-		cleanupGuestSessionResources(s.cleanup, stopErr)
+		cleanupGuestSessionResources(s.cleanup)
 		s.err = errors.Join(streamErr, networkPolicyErr, stopErr)
 	})
 	return s.err
 }
 
-func cleanupGuestSessionResources(cleanup func(), stopErr error) {
-	if stopErr != nil || cleanup == nil {
+func cleanupGuestSessionResources(cleanup func()) {
+	if cleanup == nil {
 		return
 	}
 	cleanup()

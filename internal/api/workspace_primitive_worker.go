@@ -117,6 +117,7 @@ type WorkerWorkspacePtyInputDeliveredRequest struct {
 type WorkerWorkspaceMaterializerControlClient interface {
 	RenewWorkspaceMaterialization(context.Context, WorkerWorkspaceMaterializationRenewRequest) (WorkspaceMaterializationResponse, error)
 	MarkWorkspaceMaterializationRunning(context.Context, WorkerWorkspaceMaterializationRunningRequest) (WorkspaceMaterializationResponse, error)
+	CaptureWorkspaceMaterialization(context.Context, WorkerWorkspaceMaterializationCaptureRequest) (WorkerWorkspaceMaterializationCaptureResponse, error)
 	StopWorkspaceMaterialization(context.Context, WorkerWorkspaceMaterializationStopRequest) (WorkspaceMaterializationResponse, error)
 	FailWorkspaceMaterialization(context.Context, WorkerWorkspaceMaterializationFailRequest) (WorkspaceMaterializationResponse, error)
 	ClaimWorkspaceMaterializationOperation(context.Context, WorkerWorkspaceOperationClaimRequest) (WorkerWorkspaceOperationClaimResponse, error)

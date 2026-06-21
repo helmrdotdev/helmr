@@ -115,15 +115,11 @@ func TestIgnoreStopSignalErrorDropsForcedSIGKILL(t *testing.T) {
 	}
 }
 
-func TestCleanupGuestSessionResourcesRequiresStoppedMachine(t *testing.T) {
+func TestCleanupGuestSessionResourcesRunsAfterStopError(t *testing.T) {
 	called := false
-	cleanupGuestSessionResources(func() { called = true }, errors.New("stop failed"))
-	if called {
-		t.Fatal("cleanup ran after stop failure")
-	}
-	cleanupGuestSessionResources(func() { called = true }, nil)
+	cleanupGuestSessionResources(func() { called = true })
 	if !called {
-		t.Fatal("cleanup did not run after successful stop")
+		t.Fatal("cleanup did not run")
 	}
 }
 

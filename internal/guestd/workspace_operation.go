@@ -105,6 +105,26 @@ func (r *workspaceOperationRegistry) release(entry *workspaceMaterializationEntr
 	}
 }
 
+func (r *workspaceOperationRegistry) retire(materializationID string, entry *workspaceMaterializationEntry) {
+	r.mu.Lock()
+	current := r.entries[materializationID]
+	if current != entry {
+		r.mu.Unlock()
+		return
+	}
+	delete(r.entries, materializationID)
+	entry.retired = true
+	var cleanup func()
+	if entry.active == 0 {
+		cleanup = entry.cleanup
+		entry.cleanup = nil
+	}
+	r.mu.Unlock()
+	if cleanup != nil {
+		cleanup()
+	}
+}
+
 func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
 	var request workspacev0.MaterializeWorkspaceRequest
 	if err := transport.ReadProtoFrame(conn, &request); err != nil {
@@ -396,6 +416,87 @@ func handleWorkspaceEventsConnection(ctx context.Context, conn io.ReadWriter, re
 			}
 		}
 	}
+}
+
+func handleWorkspaceStopConnection(_ context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
+	if err := handleWorkspaceStop(conn, registry); err != nil {
+		response := &workspacev0.StopWorkspaceResponse{
+			State:     "failed",
+			ErrorJson: workspaceOperationErrorJSON(err),
+		}
+		if writeErr := transport.WriteProtoFrame(conn, response); writeErr != nil {
+			return errors.Join(err, fmt.Errorf("write workspace stop failure: %w", writeErr))
+		}
+		return nil
+	}
+	return nil
+}
+
+func handleWorkspaceStop(conn io.ReadWriter, registry *workspaceOperationRegistry) error {
+	var request workspacev0.StopWorkspaceRequest
+	if err := transport.ReadProtoFrame(conn, &request); err != nil {
+		return fmt.Errorf("read workspace stop request: %w", err)
+	}
+	envelope := request.GetEnvelope()
+	if envelope == nil {
+		return errors.New("workspace stop envelope is required")
+	}
+	if strings.TrimSpace(envelope.MaterializationId) == "" {
+		return errors.New("workspace stop materialization_id is required")
+	}
+	if strings.TrimSpace(envelope.WorkspaceId) == "" {
+		return errors.New("workspace stop workspace_id is required")
+	}
+	entry, release, ok := registry.acquire(envelope.MaterializationId, envelope.WorkspaceId, envelope.ChannelToken, envelope.FencingGeneration)
+	if !ok {
+		return errors.New("workspace stop channel token or fencing generation is invalid")
+	}
+	defer release()
+	entry.stopWorkspaceProcesses()
+	finalize := request.GetFinalizeStop() || !request.GetCaptureBeforeStop()
+	response := &workspacev0.StopWorkspaceResponse{State: "stopped"}
+	var artifact workspace.WorkspaceArtifact
+	var cleanupArtifact func()
+	if request.GetCaptureBeforeStop() {
+		if finalize {
+			return errors.New("workspace stop capture and finalize must be separate requests")
+		}
+		tempDir, err := mkdirGuestdTemp("helmr-workspace-stop-*")
+		if err != nil {
+			return fmt.Errorf("create workspace stop temp dir: %w", err)
+		}
+		defer os.RemoveAll(tempDir)
+		artifact, cleanupArtifact, err = workspace.CreateWorkspaceArtifactFromRoot(entry.workspaceRoot, tempDir, filepath.Dir(entry.workspaceRoot))
+		if err != nil {
+			return fmt.Errorf("capture workspace stop artifact: %w", err)
+		}
+		defer cleanupArtifact()
+		response.CapturedArtifact = &workspacev0.WorkspaceArtifact{
+			Digest:     artifact.Digest,
+			MediaType:  artifact.MediaType,
+			Encoding:   artifact.Encoding,
+			SizeBytes:  uint64(artifact.SizeBytes),
+			EntryCount: uint32(artifact.EntryCount),
+		}
+		response.State = "captured"
+	}
+	if err := transport.WriteProtoFrame(conn, response); err != nil {
+		return fmt.Errorf("write workspace stop response: %w", err)
+	}
+	if request.GetCaptureBeforeStop() {
+		entryCount := artifact.EntryCount
+		if err := transport.WriteFileFrameWithMetadata(conn, transport.StreamHeader{
+			Type:        transport.StreamTypeWorkspaceArtifact,
+			WorkspaceID: envelope.WorkspaceId,
+			EntryCount:  &entryCount,
+		}, artifact.Path, artifact.Digest, artifact.SizeBytes); err != nil {
+			return fmt.Errorf("write workspace stop artifact: %w", err)
+		}
+	}
+	if finalize {
+		registry.retire(envelope.MaterializationId, entry)
+	}
+	return nil
 }
 
 func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {

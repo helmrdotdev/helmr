@@ -135,6 +135,19 @@ UPDATE workspaces
    AND workspaces.deleted_at IS NULL
 RETURNING *;
 
+-- name: SetWorkspaceDesiredStopped :one
+UPDATE workspaces
+   SET desired_state = 'stopped',
+       updated_at = now()
+ WHERE workspaces.org_id = sqlc.arg(org_id)
+   AND workspaces.project_id = sqlc.arg(project_id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.id = sqlc.arg(id)
+   AND workspaces.state = 'active'
+   AND workspaces.archived_at IS NULL
+   AND workspaces.deleted_at IS NULL
+RETURNING *;
+
 -- name: ArchiveWorkspace :one
 UPDATE workspaces
    SET desired_state = 'archived',
@@ -181,35 +194,83 @@ UPDATE workspace_operation_idempotencies
    AND expires_at > now()
 RETURNING *;
 
--- name: CreateWorkspaceOperationIdempotency :one
-INSERT INTO workspace_operation_idempotencies (
-    id,
-    org_id,
-    project_id,
-    environment_id,
-    workspace_id,
-    operation_kind,
-    idempotency_key,
-    request_fingerprint,
-    response_resource_type,
-    response_resource_id,
-    response_body,
-    expires_at
-) VALUES (
-    sqlc.arg(id),
-    sqlc.arg(org_id),
-    sqlc.arg(project_id),
-    sqlc.arg(environment_id),
-    sqlc.narg(workspace_id),
-    sqlc.arg(operation_kind),
-    sqlc.arg(idempotency_key),
-    sqlc.arg(request_fingerprint),
-    sqlc.arg(response_resource_type),
-    sqlc.narg(response_resource_id),
-    coalesce(sqlc.arg(response_body)::jsonb, '{}'::jsonb),
-    sqlc.arg(expires_at)
+-- name: EnsureWorkspaceOperationIdempotency :one
+WITH replaced AS (
+    UPDATE workspace_operation_idempotencies
+       SET request_fingerprint = sqlc.arg(request_fingerprint),
+           response_resource_type = sqlc.arg(response_resource_type),
+           response_resource_id = sqlc.narg(response_resource_id),
+           response_body = coalesce(sqlc.arg(response_body)::jsonb, '{}'::jsonb),
+           expires_at = sqlc.arg(expires_at),
+           created_at = now(),
+           last_used_at = now()
+     WHERE workspace_operation_idempotencies.org_id = sqlc.arg(org_id)
+       AND workspace_operation_idempotencies.project_id = sqlc.arg(project_id)
+       AND workspace_operation_idempotencies.environment_id = sqlc.arg(environment_id)
+       AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)
+       AND workspace_operation_idempotencies.idempotency_key = sqlc.arg(idempotency_key)
+       AND (
+           (sqlc.narg(workspace_id)::uuid IS NULL AND workspace_operation_idempotencies.workspace_id IS NULL)
+           OR workspace_operation_idempotencies.workspace_id = sqlc.narg(workspace_id)::uuid
+       )
+       AND workspace_operation_idempotencies.expires_at <= now()
+    RETURNING workspace_operation_idempotencies.*, TRUE::boolean AS inserted
+),
+inserted AS (
+    INSERT INTO workspace_operation_idempotencies (
+        id,
+        org_id,
+        project_id,
+        environment_id,
+        workspace_id,
+        operation_kind,
+        idempotency_key,
+        request_fingerprint,
+        response_resource_type,
+        response_resource_id,
+        response_body,
+        expires_at
+    )
+    SELECT
+        sqlc.arg(id),
+        sqlc.arg(org_id),
+        sqlc.arg(project_id),
+        sqlc.arg(environment_id),
+        sqlc.narg(workspace_id),
+        sqlc.arg(operation_kind),
+        sqlc.arg(idempotency_key),
+        sqlc.arg(request_fingerprint),
+        sqlc.arg(response_resource_type),
+        sqlc.narg(response_resource_id),
+        coalesce(sqlc.arg(response_body)::jsonb, '{}'::jsonb),
+        sqlc.arg(expires_at)
+     WHERE NOT EXISTS (SELECT 1 FROM replaced)
+    ON CONFLICT DO NOTHING
+    RETURNING workspace_operation_idempotencies.*, TRUE::boolean AS inserted
+),
+existing AS (
+    UPDATE workspace_operation_idempotencies
+       SET last_used_at = now()
+     WHERE workspace_operation_idempotencies.org_id = sqlc.arg(org_id)
+       AND workspace_operation_idempotencies.project_id = sqlc.arg(project_id)
+       AND workspace_operation_idempotencies.environment_id = sqlc.arg(environment_id)
+       AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)
+       AND workspace_operation_idempotencies.idempotency_key = sqlc.arg(idempotency_key)
+       AND (
+           (sqlc.narg(workspace_id)::uuid IS NULL AND workspace_operation_idempotencies.workspace_id IS NULL)
+           OR workspace_operation_idempotencies.workspace_id = sqlc.narg(workspace_id)::uuid
+       )
+       AND workspace_operation_idempotencies.expires_at > now()
+       AND NOT EXISTS (SELECT 1 FROM replaced)
+       AND NOT EXISTS (SELECT 1 FROM inserted)
+    RETURNING workspace_operation_idempotencies.*, FALSE::boolean AS inserted
 )
-RETURNING *;
+SELECT * FROM replaced
+UNION ALL
+SELECT * FROM inserted
+UNION ALL
+SELECT * FROM existing
+LIMIT 1;
 
 -- name: CompleteWorkspaceOperationIdempotency :one
 UPDATE workspace_operation_idempotencies

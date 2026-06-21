@@ -59,6 +59,14 @@ func (c *Client) MarkWorkspaceMaterializationRunning(ctx context.Context, reques
 	return response, nil
 }
 
+func (c *Client) CaptureWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationCaptureRequest) (api.WorkerWorkspaceMaterializationCaptureResponse, error) {
+	var response api.WorkerWorkspaceMaterializationCaptureResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/materializations/capture", request, &response); err != nil {
+		return api.WorkerWorkspaceMaterializationCaptureResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) StopWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error) {
 	var response api.WorkspaceMaterializationResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/materializations/stop", request, &response); err != nil {
