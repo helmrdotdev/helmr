@@ -261,16 +261,14 @@ test("workspaces create list update materialize and connect use workspace routes
   expect(requests.map((request) => [request.method, request.url, request.body])).toEqual([
     ["POST", "https://api.example.test/api/projects/project-1/environments/env-1/workspaces", {
       deployment_id: "deployment-1",
-      environment_id: "env-1",
       external_id: "case-1",
       idempotency_key: "workspace-key",
       idempotency_key_ttl: "24h",
       metadata: { owner: "platform" },
-      project_id: "project-1",
       sandbox_id: "sandbox-1",
       tags: ["prod"],
     }],
-    ["GET", "https://api.example.test/api/projects/project-1/environments/env-1/workspaces?project_id=project-1&environment_id=env-1&state=active&tag=prod", undefined],
+    ["GET", "https://api.example.test/api/projects/project-1/environments/env-1/workspaces?state=active&tag=prod", undefined],
     ["PATCH", "https://api.example.test/api/workspaces/workspace-1", { metadata: { owner: "platform" }, tags: ["prod"] }],
     ["POST", "https://api.example.test/api/workspaces/workspace-1/materialize", {}],
     ["POST", "https://api.example.test/api/workspaces/workspace-1/connect", {}],

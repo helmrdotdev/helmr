@@ -694,18 +694,21 @@ func (s *guestSession) Close(ctx context.Context) error {
 		if errors.Is(streamErr, net.ErrClosed) || errors.Is(streamErr, os.ErrClosed) {
 			streamErr = nil
 		}
-		if stopErr != nil {
-			s.err = errors.Join(streamErr, stopErr)
-			return
-		}
 		var networkPolicyErr error
 		if s.networkPolicyCleanup != nil {
 			networkPolicyErr = s.networkPolicyCleanup()
 		}
-		s.cleanup()
+		cleanupGuestSessionResources(s.cleanup, stopErr)
 		s.err = errors.Join(streamErr, networkPolicyErr, stopErr)
 	})
 	return s.err
+}
+
+func cleanupGuestSessionResources(cleanup func(), stopErr error) {
+	if stopErr != nil || cleanup == nil {
+		return
+	}
+	cleanup()
 }
 
 func closeGuestStream(ctx context.Context, stream io.Closer) error {

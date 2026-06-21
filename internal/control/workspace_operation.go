@@ -174,6 +174,9 @@ func (s *Server) workerCompleteWorkspaceMaterializationOperation(w http.Response
 		})
 		row = failedWorkspaceOperation(failed)
 		err = failErr
+		if err == nil {
+			err = failWorkspacePrimitiveForOperation(r.Context(), store, row, failure)
+		}
 	} else {
 		completed, completeErr := store.CompleteWorkspaceMaterializationOperation(r.Context(), db.CompleteWorkspaceMaterializationOperationParams{
 			OrgID:            orgID,
@@ -203,6 +206,58 @@ func (s *Server) workerCompleteWorkspaceMaterializationOperation(w http.Response
 		return
 	}
 	writeJSON(w, http.StatusOK, workspaceOperationResponse(row))
+}
+
+type workspacePrimitiveFailureStore interface {
+	MarkWorkspaceExecExited(context.Context, db.MarkWorkspaceExecExitedParams) (db.MarkWorkspaceExecExitedRow, error)
+	MarkWorkspacePtyFailed(context.Context, db.MarkWorkspacePtyFailedParams) (db.MarkWorkspacePtyFailedRow, error)
+}
+
+func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrimitiveFailureStore, operation db.WorkspaceMaterializationOperation, failure []byte) error {
+	if !operation.ResourceID.Valid {
+		return nil
+	}
+	switch operation.OperationKind {
+	case workspaceOperationKindStartExec:
+		if operation.ResourceKind != workspaceOperationResourceExec {
+			return fmt.Errorf("StartExec operation resource_kind = %q, want %q", operation.ResourceKind, workspaceOperationResourceExec)
+		}
+		_, err := store.MarkWorkspaceExecExited(ctx, db.MarkWorkspaceExecExitedParams{
+			State:             db.WorkspaceExecStateFailed,
+			ExitCode:          pgtype.Int4{},
+			Signal:            "",
+			Error:             failure,
+			OrgID:             operation.OrgID,
+			ProjectID:         operation.ProjectID,
+			EnvironmentID:     operation.EnvironmentID,
+			WorkspaceID:       operation.WorkspaceID,
+			ID:                operation.ResourceID,
+			MaterializationID: operation.MaterializationID,
+		})
+		if isNoRows(err) {
+			return nil
+		}
+		return err
+	case workspaceOperationKindCreatePty:
+		if operation.ResourceKind != workspaceOperationResourcePty {
+			return fmt.Errorf("CreatePty operation resource_kind = %q, want %q", operation.ResourceKind, workspaceOperationResourcePty)
+		}
+		_, err := store.MarkWorkspacePtyFailed(ctx, db.MarkWorkspacePtyFailedParams{
+			Error:             failure,
+			OrgID:             operation.OrgID,
+			ProjectID:         operation.ProjectID,
+			EnvironmentID:     operation.EnvironmentID,
+			WorkspaceID:       operation.WorkspaceID,
+			ID:                operation.ResourceID,
+			MaterializationID: operation.MaterializationID,
+		})
+		if isNoRows(err) {
+			return nil
+		}
+		return err
+	default:
+		return nil
+	}
 }
 
 func completeWorkspacePtyResizeOperation(ctx context.Context, store db.Querier, operation db.WorkspaceMaterializationOperation) error {

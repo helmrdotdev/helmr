@@ -107,7 +107,7 @@ func (entry *workspaceMaterializationEntry) startWorkspaceExec(envelope *workspa
 	if err := entry.prepareWorkspaceOwner(); err != nil {
 		return err
 	}
-	cmd, err := adapterCommand(context.Background(), runtimePath, request.Command[1:], launchCwd, env, entry.imageRoot, entry.runtimeUser, true)
+	cmd, err := adapterCommand(context.Background(), runtimePath, request.Command[1:], launchCwd, env, entry.imageRoot, entry.runtimeUser, adapterCommandOptions{ImageMode: true})
 	if err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func (entry *workspaceMaterializationEntry) createWorkspacePty(envelope *workspa
 	if err := entry.prepareWorkspaceOwner(); err != nil {
 		return err
 	}
-	cmd, err := adapterCommand(context.Background(), shell, []string{"-l"}, launchCwd, env, entry.imageRoot, entry.runtimeUser, true)
+	cmd, err := adapterCommand(context.Background(), shell, []string{"-l"}, launchCwd, env, entry.imageRoot, entry.runtimeUser, adapterCommandOptions{ImageMode: true, Pty: true})
 	if err != nil {
 		return err
 	}

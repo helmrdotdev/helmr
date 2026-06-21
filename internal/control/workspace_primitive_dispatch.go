@@ -162,7 +162,10 @@ func materializationFromEnsureRow(row db.EnsureWorkspaceMaterializationRequested
 }
 
 func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, materialization db.WorkspaceMaterialization, operationKind string, resourceKind string, resourceID pgtype.UUID, request []byte, lease workspacePrimitiveOperationLease, priority int32) (db.WorkspaceMaterializationOperation, error) {
-	fingerprint := workspacePrimitiveOperationFingerprint(operationKind, request)
+	fingerprint, err := workspacePrimitiveOperationFingerprint(operationKind, request)
+	if err != nil {
+		return db.WorkspaceMaterializationOperation{}, err
+	}
 	row, err := store.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
 		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OperationKind:      operationKind,
@@ -455,6 +458,6 @@ func workspacePtyCloseOperationRequest(row db.WorkspacePtySession) ([]byte, erro
 	})
 }
 
-func workspacePrimitiveOperationFingerprint(operationKind string, request []byte) string {
-	return workspaceop.RequestFingerprint(operationKind, string(request))
+func workspacePrimitiveOperationFingerprint(operationKind string, request []byte) (string, error) {
+	return workspaceop.CanonicalRequestFingerprint(operationKind, request)
 }

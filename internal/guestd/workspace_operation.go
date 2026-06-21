@@ -405,35 +405,39 @@ func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, r
 	}
 	envelope := request.GetEnvelope()
 	if envelope == nil {
-		return errors.New("workspace operation envelope is required")
+		return writeWorkspaceOperationResult(conn, errors.New("workspace operation envelope is required"))
 	}
 	if strings.TrimSpace(envelope.OperationId) == "" {
-		return errors.New("workspace operation operation_id is required")
+		return writeWorkspaceOperationResult(conn, errors.New("workspace operation operation_id is required"))
 	}
 	if strings.TrimSpace(envelope.MaterializationId) == "" {
-		return errors.New("workspace operation materialization_id is required")
+		return writeWorkspaceOperationResult(conn, errors.New("workspace operation materialization_id is required"))
 	}
 	if strings.TrimSpace(envelope.WorkspaceId) == "" {
-		return errors.New("workspace operation workspace_id is required")
+		return writeWorkspaceOperationResult(conn, errors.New("workspace operation workspace_id is required"))
 	}
 	entry, release, ok := registry.acquire(envelope.MaterializationId, envelope.WorkspaceId, envelope.ChannelToken, envelope.FencingGeneration)
 	if !ok {
-		return errors.New("workspace operation channel token or fencing generation is invalid")
+		return writeWorkspaceOperationResult(conn, errors.New("workspace operation channel token or fencing generation is invalid"))
 	}
 	defer release()
 	_ = entry
 	if envelope.OperationExpiresAtUnixNano <= 0 {
-		return errors.New("workspace operation operation_expires_at is required")
+		return writeWorkspaceOperationResult(conn, errors.New("workspace operation operation_expires_at is required"))
 	}
 	if time.Now().UnixNano() >= envelope.OperationExpiresAtUnixNano {
-		return errors.New("workspace operation expired")
+		return writeWorkspaceOperationResult(conn, errors.New("workspace operation expired"))
 	}
 	fingerprint := strings.TrimSpace(envelope.RequestFingerprint)
 	if fingerprint == "" {
-		return errors.New("workspace operation request_fingerprint is required")
+		return writeWorkspaceOperationResult(conn, errors.New("workspace operation request_fingerprint is required"))
 	}
-	if actual := workspaceop.RequestFingerprint(request.OperationKind, request.RequestJson); actual != fingerprint {
-		return fmt.Errorf("workspace operation request_fingerprint %q does not match request %q", fingerprint, actual)
+	actual, err := workspaceop.CanonicalRequestFingerprint(request.OperationKind, []byte(request.RequestJson))
+	if err != nil {
+		return writeWorkspaceOperationResult(conn, err)
+	}
+	if actual != fingerprint {
+		return writeWorkspaceOperationResult(conn, fmt.Errorf("workspace operation request_fingerprint %q does not match request %q", fingerprint, actual))
 	}
 	switch strings.TrimSpace(request.OperationKind) {
 	case "noop":

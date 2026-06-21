@@ -18,12 +18,6 @@ func Up(ctx context.Context, databaseURL string) error {
 	})
 }
 
-func Down(ctx context.Context, databaseURL string) error {
-	return run(ctx, databaseURL, func(m *migrate.Migrate) error {
-		return m.Down()
-	})
-}
-
 func run(ctx context.Context, databaseURL string, apply func(*migrate.Migrate) error) error {
 	source, err := iofs.New(FS, "migrations")
 	if err != nil {

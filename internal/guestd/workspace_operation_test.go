@@ -3,6 +3,7 @@ package guestd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -17,6 +18,15 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/helmrdotdev/helmr/internal/workspaceop"
 )
+
+func testWorkspaceOperationFingerprint(t *testing.T, operationKind string, requestJSON string) string {
+	t.Helper()
+	fingerprint, err := workspaceop.CanonicalRequestFingerprint(operationKind, []byte(requestJSON))
+	if err != nil {
+		t.Fatal(fmt.Errorf("workspace operation fingerprint: %w", err))
+	}
+	return fingerprint
+}
 
 func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 	tempRoot := t.TempDir()
@@ -120,7 +130,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 			ChannelToken:               "channel-token",
 			FencingGeneration:          1,
 			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         workspaceop.RequestFingerprint("noop", `{}`),
+			RequestFingerprint:         testWorkspaceOperationFingerprint(t, "noop", `{}`),
 		},
 		OperationKind: "noop",
 		RequestJson:   `{}`,
@@ -153,15 +163,21 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 			ChannelToken:               "channel-token",
 			FencingGeneration:          1,
 			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         workspaceop.RequestFingerprint("noop", `{}`),
+			RequestFingerprint:         testWorkspaceOperationFingerprint(t, "noop", `{}`),
 		},
 		OperationKind: "noop",
 		RequestJson:   `{}`,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-errCh; err == nil || !strings.Contains(err.Error(), "channel token or fencing generation is invalid") {
-		t.Fatalf("workspace mismatch err = %v, want channel token/fencing rejection", err)
+	if err := transport.ReadProtoFrame(mismatchClient, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.ResultJson != "" || !strings.Contains(result.ErrorJson, "channel token or fencing generation is invalid") {
+		t.Fatalf("workspace mismatch result_json=%q error_json=%q, want channel token/fencing rejection", result.ResultJson, result.ErrorJson)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
 	}
 
 	advanceFenceClient, advanceFenceServer := net.Pipe()
@@ -179,7 +195,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 			ChannelToken:               "channel-token",
 			FencingGeneration:          2,
 			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         workspaceop.RequestFingerprint("noop", `{}`),
+			RequestFingerprint:         testWorkspaceOperationFingerprint(t, "noop", `{}`),
 		},
 		OperationKind: "noop",
 		RequestJson:   `{}`,
@@ -211,15 +227,21 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 			ChannelToken:               "channel-token",
 			FencingGeneration:          1,
 			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         workspaceop.RequestFingerprint("noop", `{}`),
+			RequestFingerprint:         testWorkspaceOperationFingerprint(t, "noop", `{}`),
 		},
 		OperationKind: "noop",
 		RequestJson:   `{}`,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-errCh; err == nil || !strings.Contains(err.Error(), "channel token or fencing generation is invalid") {
-		t.Fatalf("stale fencing err = %v, want channel token/fencing rejection", err)
+	if err := transport.ReadProtoFrame(staleFenceClient, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.ResultJson != "" || !strings.Contains(result.ErrorJson, "channel token or fencing generation is invalid") {
+		t.Fatalf("stale fencing result_json=%q error_json=%q, want channel token/fencing rejection", result.ResultJson, result.ErrorJson)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
 	}
 }
 

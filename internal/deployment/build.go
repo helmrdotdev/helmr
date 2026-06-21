@@ -185,10 +185,12 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			}
 			imageFile, err := os.Open(imageArtifact.ImageTarPath)
 			if err != nil {
+				cleanupBuildArtifact(imageArtifact)
 				return failedDeploymentBuild(fmt.Errorf("open sandbox %q image artifact: %w", sandbox.id, err))
 			}
 			object, putErr := e.CAS.Put(ctx, api.SandboxImageArtifactMediaType, imageFile)
 			closeErr := imageFile.Close()
+			cleanupBuildArtifact(imageArtifact)
 			if putErr != nil {
 				return failedDeploymentBuild(fmt.Errorf("store sandbox %q image artifact: %w", sandbox.id, putErr))
 			}
@@ -354,6 +356,14 @@ func materializeSourceArtifact(ctx context.Context, workDir string, store cas.St
 		return builder.Source{}, func() {}, fmt.Errorf("close deployment source artifact: %w", err)
 	}
 	return builder.Source{CheckoutRoot: destination, ProjectRoot: destination, SHA: strings.TrimSpace(artifact.Digest)}, cleanup, nil
+}
+
+func cleanupBuildArtifact(artifact builder.Artifact) {
+	root := filepath.Clean(strings.TrimSpace(artifact.RootPath))
+	if root == "" || root == "." || root == string(filepath.Separator) {
+		return
+	}
+	_ = os.RemoveAll(root)
 }
 
 func decodeCatalog(body []byte) (Catalog, error) {

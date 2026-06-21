@@ -15,10 +15,30 @@ import (
 
 func TestWorkspacePrimitiveOperationFingerprintMatchesGuestdContract(t *testing.T) {
 	request := []byte(`{"exec_id":"exec-1","command":["echo","ok"]}`)
-	got := workspacePrimitiveOperationFingerprint(workspaceOperationKindStartExec, request)
-	want := workspaceop.RequestFingerprint(workspaceOperationKindStartExec, string(request))
+	got, err := workspacePrimitiveOperationFingerprint(workspaceOperationKindStartExec, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := workspaceop.CanonicalRequestFingerprint(workspaceOperationKindStartExec, request)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got != want {
 		t.Fatalf("fingerprint = %q, want %q", got, want)
+	}
+}
+
+func TestWorkspacePrimitiveOperationFingerprintIgnoresJSONRepresentation(t *testing.T) {
+	created, err := workspacePrimitiveOperationFingerprint(workspaceOperationKindStartExec, []byte(`{"exec_id":"exec-1","command":["echo","ok"],"detached":false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transported, err := workspaceop.CanonicalRequestFingerprint(workspaceOperationKindStartExec, []byte(`{ "detached": false, "command": [ "echo", "ok" ], "exec_id": "exec-1" }`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created != transported {
+		t.Fatalf("fingerprints differ after JSON re-encoding: %s != %s", created, transported)
 	}
 }
 

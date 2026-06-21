@@ -30,6 +30,7 @@ type Source struct {
 }
 
 type Artifact struct {
+	RootPath     string
 	ImageTarPath string
 	ConfigPath   string
 	ManifestPath string

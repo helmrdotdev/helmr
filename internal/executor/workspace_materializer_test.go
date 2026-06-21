@@ -2,8 +2,6 @@ package executor
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workspace"
+	"github.com/helmrdotdev/helmr/internal/workspaceop"
 )
 
 func testMaterializationArtifacts(t *testing.T) (*fakeCAS, api.WorkerWorkspaceMaterialization) {
@@ -935,11 +934,11 @@ func (c *workspaceMaterializerTestClient) MarkWorkspacePtyClosed(_ context.Conte
 }
 
 func testWorkspaceOperationFingerprint(operationKind string, requestJSON string) string {
-	hash := sha256.New()
-	_, _ = hash.Write([]byte(strings.TrimSpace(operationKind)))
-	_, _ = hash.Write([]byte{0})
-	_, _ = hash.Write([]byte(strings.TrimSpace(requestJSON)))
-	return hex.EncodeToString(hash.Sum(nil))
+	fingerprint, err := workspaceop.CanonicalRequestFingerprint(operationKind, []byte(requestJSON))
+	if err != nil {
+		panic(err)
+	}
+	return fingerprint
 }
 
 func TestValidateWorkspaceInputAckRequiresExpectedScopeAndOffset(t *testing.T) {

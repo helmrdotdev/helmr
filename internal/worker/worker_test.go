@@ -92,18 +92,30 @@ func TestRunOnceStartsWorkspaceMaterializationWithoutRunLease(t *testing.T) {
 	}
 }
 
-func TestRunOnceSkipsSecondWorkspaceMaterializationClaimWhileActive(t *testing.T) {
+func TestRunOnceClaimsWorkspaceMaterializationsWhileAnotherIsActive(t *testing.T) {
 	block := make(chan struct{})
-	started := make(chan struct{}, 1)
+	started := make(chan string, 2)
 	client := &fakeClient{
-		materializationClaim: api.WorkerWorkspaceMaterializationClaimResponse{
-			Materialization: &api.WorkerWorkspaceMaterialization{
-				ID:                "mat-1",
-				OrgID:             "org-1",
-				WorkspaceID:       "workspace-1",
-				ReservationToken:  "reservation-token",
-				FencingGeneration: 1,
-				ExpiresAt:         time.Now().Add(time.Minute),
+		materializationClaimQueue: []api.WorkerWorkspaceMaterializationClaimResponse{
+			{
+				Materialization: &api.WorkerWorkspaceMaterialization{
+					ID:                "mat-1",
+					OrgID:             "org-1",
+					WorkspaceID:       "workspace-1",
+					ReservationToken:  "reservation-token-1",
+					FencingGeneration: 1,
+					ExpiresAt:         time.Now().Add(time.Minute),
+				},
+			},
+			{
+				Materialization: &api.WorkerWorkspaceMaterialization{
+					ID:                "mat-2",
+					OrgID:             "org-1",
+					WorkspaceID:       "workspace-2",
+					ReservationToken:  "reservation-token-2",
+					FencingGeneration: 1,
+					ExpiresAt:         time.Now().Add(time.Minute),
+				},
 			},
 		},
 	}
@@ -111,8 +123,8 @@ func TestRunOnceSkipsSecondWorkspaceMaterializationClaimWhileActive(t *testing.T
 		t.Fatal("executor should not run")
 		return api.WorkerReleaseResult{}
 	}))
-	runner.materializer = materializerFunc(func(context.Context, api.WorkerWorkspaceMaterialization, api.WorkerWorkspaceMaterializerControlClient) error {
-		started <- struct{}{}
+	runner.materializer = materializerFunc(func(_ context.Context, materialization api.WorkerWorkspaceMaterialization, _ api.WorkerWorkspaceMaterializerControlClient) error {
+		started <- materialization.ID
 		<-block
 		return nil
 	})
@@ -125,7 +137,10 @@ func TestRunOnceSkipsSecondWorkspaceMaterializationClaimWhileActive(t *testing.T
 		t.Fatal("first RunOnce worked = false")
 	}
 	select {
-	case <-started:
+	case id := <-started:
+		if id != "mat-1" {
+			t.Fatalf("first materialization id = %q", id)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("materializer did not start")
 	}
@@ -133,11 +148,19 @@ func TestRunOnceSkipsSecondWorkspaceMaterializationClaimWhileActive(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if worked {
-		t.Fatal("second RunOnce worked = true")
+	if !worked {
+		t.Fatal("second RunOnce worked = false")
 	}
-	if client.materializationClaims != 1 {
-		t.Fatalf("materialization claims = %d, want 1", client.materializationClaims)
+	select {
+	case id := <-started:
+		if id != "mat-2" {
+			t.Fatalf("second materialization id = %q", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second materializer did not start")
+	}
+	if client.materializationClaims != 2 {
+		t.Fatalf("materialization claims = %d, want 2", client.materializationClaims)
 	}
 	close(block)
 	runner.waitForMaterializations()
@@ -147,14 +170,16 @@ func TestRunWaitsForWorkspaceMaterializationOnShutdown(t *testing.T) {
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	client := &fakeClient{
-		materializationClaim: api.WorkerWorkspaceMaterializationClaimResponse{
-			Materialization: &api.WorkerWorkspaceMaterialization{
-				ID:                "mat-1",
-				OrgID:             "org-1",
-				WorkspaceID:       "workspace-1",
-				ReservationToken:  "reservation-token",
-				FencingGeneration: 1,
-				ExpiresAt:         time.Now().Add(time.Minute),
+		materializationClaimQueue: []api.WorkerWorkspaceMaterializationClaimResponse{
+			{
+				Materialization: &api.WorkerWorkspaceMaterialization{
+					ID:                "mat-1",
+					OrgID:             "org-1",
+					WorkspaceID:       "workspace-1",
+					ReservationToken:  "reservation-token",
+					FencingGeneration: 1,
+					ExpiresAt:         time.Now().Add(time.Minute),
+				},
 			},
 		},
 	}
@@ -610,30 +635,31 @@ func newTestRunner(t *testing.T, client ControlClient, executor Executor) *Runne
 }
 
 type fakeClient struct {
-	deploymentClaimResponse  api.WorkerDeploymentBuildLeaseResponse
-	deploymentResult         api.WorkerDeploymentBuildResult
-	deploymentCompletions    int
-	deploymentResponseStatus string
-	claimResponse            api.WorkerRunLeaseResponse
-	renewResponse            api.WorkerRenewResponse
-	renewErr                 error
-	startErr                 error
-	releaseErr               error
-	releaseCtxErr            error
-	renewed                  chan<- struct{}
-	renewWaitForCancel       bool
-	starts                   int
-	renews                   int
-	releases                 int
-	releaseLease             api.WorkerRunLease
-	releaseResult            api.WorkerReleaseResult
-	materializationClaim     api.WorkerWorkspaceMaterializationClaimResponse
-	materializationClaims    int
-	materializationStops     int
-	materializationFailures  int
-	operationClaim           api.WorkerWorkspaceOperationClaimResponse
-	operationClaims          int
-	operationComplete        api.WorkerWorkspaceOperationCompleteRequest
+	deploymentClaimResponse   api.WorkerDeploymentBuildLeaseResponse
+	deploymentResult          api.WorkerDeploymentBuildResult
+	deploymentCompletions     int
+	deploymentResponseStatus  string
+	claimResponse             api.WorkerRunLeaseResponse
+	renewResponse             api.WorkerRenewResponse
+	renewErr                  error
+	startErr                  error
+	releaseErr                error
+	releaseCtxErr             error
+	renewed                   chan<- struct{}
+	renewWaitForCancel        bool
+	starts                    int
+	renews                    int
+	releases                  int
+	releaseLease              api.WorkerRunLease
+	releaseResult             api.WorkerReleaseResult
+	materializationClaim      api.WorkerWorkspaceMaterializationClaimResponse
+	materializationClaimQueue []api.WorkerWorkspaceMaterializationClaimResponse
+	materializationClaims     int
+	materializationStops      int
+	materializationFailures   int
+	operationClaim            api.WorkerWorkspaceOperationClaimResponse
+	operationClaims           int
+	operationComplete         api.WorkerWorkspaceOperationCompleteRequest
 }
 
 func (f *fakeClient) LeaseDeploymentBuild(context.Context, api.WorkerCapabilities) (api.WorkerDeploymentBuildLeaseResponse, error) {
@@ -652,6 +678,11 @@ func (f *fakeClient) CompleteDeploymentBuild(_ context.Context, _ api.WorkerDepl
 
 func (f *fakeClient) ClaimWorkspaceMaterialization(context.Context, api.WorkerCapabilities) (api.WorkerWorkspaceMaterializationClaimResponse, error) {
 	f.materializationClaims++
+	if len(f.materializationClaimQueue) > 0 {
+		response := f.materializationClaimQueue[0]
+		f.materializationClaimQueue = f.materializationClaimQueue[1:]
+		return response, nil
+	}
 	return f.materializationClaim, nil
 }
 

@@ -27,6 +27,10 @@ HELMR_API_KEY=... \
 dev/client/scripts/workspace-lifecycle-smoke.sh
 ```
 
+`HELMR_API_KEY` may be either an environment-bound API key or a session token.
+API keys use root API-key routes; session tokens use
+`HELMR_PROJECT`/`HELMR_ENV` scoped routes.
+
 Set `SKIP_DEPLOY=1` to reuse the currently deployed `dev/workflows` task
 project. The smoke creates a direct workspace from the `runtime-smoke` sandbox,
 materializes it, then attaches `runtime-smoke` task runs to that workspace as
@@ -43,7 +47,14 @@ bun run --cwd dev/client workspace:files
 bun run --cwd dev/client workspace:ports
 ```
 
-These currently report `not_implemented` because the corresponding public SDK
-and REST surfaces are not implemented yet. They are separate entrypoints so the
-Phase 7B+ implementation can fill in each primitive without overloading the
-lifecycle smoke.
+`workspace:exec` creates a direct workspace, materializes it, starts a real
+workspace exec, verifies stdout/stderr replay, writes and closes stdin, waits
+for the durable exit code, and confirms stream follow fails explicitly with
+`workspace_stream_follow_unsupported`.
+
+`workspace:pty` creates a direct workspace, materializes it, opens a PTY,
+verifies output replay, writes input, resizes, closes, and confirms stream
+follow fails explicitly with `workspace_stream_follow_unsupported`.
+
+`workspace:files` and `workspace:ports` remain planned-surface diagnostics until
+their public SDK and REST primitives are implemented.

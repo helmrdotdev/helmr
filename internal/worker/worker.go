@@ -86,9 +86,7 @@ type Runner struct {
 	renewWait         time.Duration
 	releaseWait       time.Duration
 	log               *slog.Logger
-	materializationMu sync.Mutex
 	materializationWG sync.WaitGroup
-	materializing     bool
 }
 
 type Option func(*Runner)
@@ -189,22 +187,6 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 }
 
-func (r *Runner) tryReserveMaterialization() bool {
-	r.materializationMu.Lock()
-	defer r.materializationMu.Unlock()
-	if r.materializing {
-		return false
-	}
-	r.materializing = true
-	return true
-}
-
-func (r *Runner) releaseMaterializationReservation() {
-	r.materializationMu.Lock()
-	defer r.materializationMu.Unlock()
-	r.materializing = false
-}
-
 func (r *Runner) waitForMaterializations() {
 	r.materializationWG.Wait()
 }
@@ -232,10 +214,9 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 			return true, nil
 		}
 	}
-	if r.materializer != nil && r.tryReserveMaterialization() {
+	if r.materializer != nil {
 		claimed, err := r.client.ClaimWorkspaceMaterialization(ctx, r.capabilities)
 		if err != nil {
-			r.releaseMaterializationReservation()
 			return false, fmt.Errorf("claim workspace materialization: %w", err)
 		}
 		if claimed.Materialization != nil {
@@ -244,14 +225,12 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 			r.materializationWG.Add(1)
 			go func() {
 				defer r.materializationWG.Done()
-				defer r.releaseMaterializationReservation()
 				if err := r.materializer.RunWorkspaceMaterialization(ctx, materialization, r.client); err != nil && ctx.Err() == nil {
 					r.log.Error("workspace materialization failed", "workspace_id", materialization.WorkspaceID, "materialization_id", materialization.ID, "error", err)
 				}
 			}()
 			return true, nil
 		}
-		r.releaseMaterializationReservation()
 	}
 	leased, err := r.client.LeaseRun(ctx, r.capabilities)
 	if err != nil {

@@ -53,6 +53,9 @@ func TestBuildKitE2E(t *testing.T) {
 	if artifact.ImageTarPath == "" || artifact.ConfigPath == "" || artifact.ManifestPath == "" {
 		t.Fatalf("artifact = %+v", artifact)
 	}
+	if artifact.RootPath == "" {
+		t.Fatalf("artifact root path is empty: %+v", artifact)
+	}
 	if info, err := os.Stat(artifact.ImageTarPath); err != nil {
 		t.Fatal(err)
 	} else if info.Size() == 0 {

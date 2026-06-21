@@ -79,24 +79,6 @@ func testUpWithExternalPostgres(t *testing.T, ctx context.Context, dsn string) {
 		t.Fatal("runs table was not created")
 	}
 	assertWorkspaceStreamSchema(t, dbctx, pool)
-	if err := Down(dbctx, dsn); err != nil {
-		t.Fatalf("down migration failed: %v", err)
-	}
-	if err := pool.QueryRow(dbctx, `SELECT to_regclass('public.runs') IS NOT NULL`).Scan(&exists); err != nil {
-		t.Fatal(err)
-	}
-	if exists {
-		t.Fatal("runs table still exists after down migration")
-	}
-	if err := Up(dbctx, dsn); err != nil {
-		t.Fatalf("migration after down failed: %v", err)
-	}
-	if err := pool.QueryRow(dbctx, `SELECT to_regclass('public.runs') IS NOT NULL`).Scan(&exists); err != nil {
-		t.Fatal(err)
-	}
-	if !exists {
-		t.Fatal("runs table was not recreated after down migration")
-	}
 }
 
 func assertWorkspaceStreamSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {

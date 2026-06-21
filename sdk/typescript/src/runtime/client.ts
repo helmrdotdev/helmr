@@ -738,7 +738,7 @@ export class HelmrClient {
     },
     list: async (opts: TaskSessionListOptions = {}): Promise<TaskSessionSnapshot[]> => {
       const response = await this.#json<ListTaskSessionsResponse>(
-        `/api/sessions${taskSessionListQuery(opts)}`,
+        `${taskSessionCollectionPath(opts)}${taskSessionListQuery(opts)}`,
         requestSignal(opts.signal),
       )
       return response.sessions.map(taskSessionFromResponse)
@@ -2212,12 +2212,20 @@ function channelInputAppendBody(data: unknown, opts: SessionChannelInputSendOpti
 
 function taskSessionListQuery(opts: TaskSessionListOptions): string {
   const query = new URLSearchParams()
-  if (opts.projectId !== undefined) query.set("project_id", opts.projectId)
-  if (opts.environmentId !== undefined) query.set("environment_id", opts.environmentId)
   if (opts.status !== undefined) query.set("status", opts.status)
   if (opts.taskId !== undefined) query.set("task_id", opts.taskId)
   if (opts.limit !== undefined) query.set("limit", String(opts.limit))
   return query.size === 0 ? "" : `?${query}`
+}
+
+function taskSessionCollectionPath(opts: { readonly projectId?: string; readonly environmentId?: string }): string {
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    if (opts.projectId === undefined || opts.environmentId === undefined) {
+      throw new Error("projectId and environmentId must be provided together")
+    }
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/sessions`
+  }
+  return "/api/sessions"
 }
 
 function sessionChannelQuery(opts: SessionChannelListOptions): string {
@@ -2323,8 +2331,6 @@ function workspaceResourcePath(id: string, opts: { readonly projectId?: string; 
 
 function workspaceCreateBody(opts: WorkspaceCreateOptions): Record<string, unknown> {
   return {
-    ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
-    ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
     sandbox_id: opts.sandboxId,
     ...(opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId }),
     ...(opts.externalId === undefined ? {} : { external_id: opts.externalId }),
@@ -2343,10 +2349,8 @@ function workspaceUpdateBody(opts: WorkspaceUpdateOptions): Record<string, unkno
 }
 
 function workspaceMaterializeBody(opts: WorkspaceMaterializeOptions): Record<string, unknown> {
-  return {
-    ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
-    ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
-  }
+  void opts
+  return {}
 }
 
 function workspaceExecCreateBody(command: readonly string[], opts: WorkspaceExecCreateOptions): Record<string, unknown> {
@@ -2383,8 +2387,6 @@ function workspaceStreamWriteBody(data: string | Uint8Array, opts: WorkspaceStre
 
 function workspaceListQuery(opts: WorkspaceListOptions): string {
   const query = new URLSearchParams()
-  if (opts.projectId !== undefined) query.set("project_id", opts.projectId)
-  if (opts.environmentId !== undefined) query.set("environment_id", opts.environmentId)
   if (opts.state !== undefined) query.set("state", opts.state)
   if (opts.externalId !== undefined) query.set("external_id", opts.externalId)
   if (opts.tag !== undefined) query.set("tag", opts.tag)

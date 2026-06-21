@@ -1,6 +1,7 @@
 import { HelmrClient, type TaskStartResult } from "../../../../sdk/typescript/src/index"
 import { assert, assertEqual } from "../assert"
-import { readConfig } from "../config"
+import { readConfig, requestScope } from "../config"
+import { currentDeployment, waitForRunningMaterialization } from "./common"
 
 interface SmokeEvidence {
   readonly marker: string
@@ -34,17 +35,9 @@ interface RuntimeSmokeStartOptions {
   readonly externalId: string
 }
 
-interface CurrentDeploymentResponse {
-  readonly deployment: {
-    readonly id: string
-    readonly tasks: readonly {
-      readonly task_id: string
-    }[]
-  } | null
-}
-
 const config = readConfig()
 const client = new HelmrClient({ url: config.apiUrl, apiKey: config.apiKey })
+const scope = requestScope(config)
 const startRuntimeSmoke = client.tasks.start as unknown as (
   id: "runtime-smoke",
   payload: RuntimeSmokePayload,
@@ -55,10 +48,11 @@ const evidence = await runWorkspaceLifecycleSmoke()
 console.log(JSON.stringify(evidence, null, 2))
 
 async function runWorkspaceLifecycleSmoke(): Promise<SmokeEvidence> {
-  const deployment = await currentDeployment()
+  const deployment = await currentDeployment(config)
   assert(deployment.tasks.some((task) => task.task_id === config.taskId), `current deployment does not include ${config.taskId}`)
 
   const directWorkspace = await client.workspaces.create({
+    ...scope,
     sandboxId: config.sandboxId,
     deploymentId: deployment.id,
     externalId: `${config.marker}-direct`,
@@ -70,6 +64,7 @@ async function runWorkspaceLifecycleSmoke(): Promise<SmokeEvidence> {
   assert(directWorkspace.currentVersionId !== null, "direct workspace did not get initial currentVersionId")
 
   const createdAgain = await client.workspaces.create({
+    ...scope,
     sandboxId: config.sandboxId,
     deploymentId: deployment.id,
     externalId: `${config.marker}-direct`,
@@ -82,20 +77,21 @@ async function runWorkspaceLifecycleSmoke(): Promise<SmokeEvidence> {
 
   const handle = client.workspaces.open(directWorkspace.id)
   assertEqual(handle.id, directWorkspace.id, "workspace open returned an unexpected handle id")
-  const retrievedFromHandle = await handle.retrieve()
+  const retrievedFromHandle = await handle.retrieve(scope)
   assertEqual(retrievedFromHandle.id, directWorkspace.id, "workspace handle retrieve returned a different workspace")
 
   const patched = await handle.update({
+    ...scope,
     metadata: { smoke: "workspace-lifecycle", marker: config.marker, patched: true },
     tags: ["smoke", "workspace-lifecycle", "patched"],
   })
   assertEqual(patched.id, directWorkspace.id, "workspace update returned a different workspace")
   assert(patched.tags.includes("patched"), "workspace update did not persist tags")
 
-  const materialized = await handle.materialize()
-  const connected = await handle.connect()
+  const materialized = await handle.materialize(scope)
+  const connected = await handle.connect(scope)
   assertEqual(connected.id, materialized.id, "connect did not ensure the pending materialization")
-  const running = await waitForRunningMaterialization(handle.id)
+  const running = await waitForRunningMaterialization(client, handle.id, scope)
   assertEqual(running.id, materialized.id, "running materialization id changed")
 
   const sessionsBeforeAttach = await sessionsForTask(config.taskId)
@@ -104,14 +100,14 @@ async function runWorkspaceLifecycleSmoke(): Promise<SmokeEvidence> {
   const first = await startAndWaitRuntime(`${config.marker}-first`, directWorkspace.id)
   const firstSession = await client.sessions.retrieve(first.sessionId)
   assertEqual(firstSession.workspaceId, directWorkspace.id, "first task did not attach to direct workspace")
-  const afterFirst = await client.workspaces.retrieve(directWorkspace.id)
+  const afterFirst = await client.workspaces.retrieve(directWorkspace.id, scope)
   assert(afterFirst.currentVersionId !== null, "workspace lost currentVersionId after first run")
   assert(afterFirst.currentVersionId !== directWorkspace.currentVersionId, "workspace currentVersionId did not advance after first run")
 
   const second = await startAndWaitRuntime(`${config.marker}-second`, directWorkspace.id, `${config.marker}-first`)
   const secondSession = await client.sessions.retrieve(second.sessionId)
   assertEqual(secondSession.workspaceId, directWorkspace.id, "second task did not attach to direct workspace")
-  const afterSecond = await client.workspaces.retrieve(directWorkspace.id)
+  const afterSecond = await client.workspaces.retrieve(directWorkspace.id, scope)
   assert(afterSecond.currentVersionId !== null, "workspace lost currentVersionId after second run")
   assert(afterSecond.currentVersionId !== afterFirst.currentVersionId, "workspace currentVersionId did not advance after second run")
 
@@ -131,18 +127,6 @@ async function runWorkspaceLifecycleSmoke(): Promise<SmokeEvidence> {
       afterSecond: afterSecond.currentVersionId,
     },
   }
-}
-
-async function currentDeployment(): Promise<CurrentDeploymentResponse["deployment"] & { readonly id: string }> {
-  const response = await fetch(`${config.apiUrl.replace(/\/+$/, "")}/api/deployments/current`, {
-    headers: { authorization: `Bearer ${config.apiKey}` },
-  })
-  if (!response.ok) {
-    throw new Error(`current deployment request failed: ${response.status} ${await response.text()}`)
-  }
-  const body = (await response.json()) as CurrentDeploymentResponse
-  assert(body.deployment !== null, "no current deployment is available")
-  return body.deployment
 }
 
 async function startAndWaitRuntime(marker: string, workspaceId?: string, expectedWorkspaceMarker?: string): Promise<{ sessionId: string; runId: string }> {
@@ -170,27 +154,6 @@ async function startAndWaitRuntime(marker: string, workspaceId?: string, expecte
   }
 }
 
-async function waitForRunningMaterialization(workspaceId: string) {
-  for (let attempt = 0; attempt < 180; attempt += 1) {
-    const materialization = await client.workspaces.connect(workspaceId)
-    if (materialization.state === "running") {
-      return materialization
-    }
-    assert(
-      materialization.state === "requested" ||
-        materialization.state === "materializing" ||
-        materialization.state === "restoring",
-      `unexpected materialization state ${materialization.state}`,
-    )
-    await delay(2_000)
-  }
-  throw new Error(`workspace ${workspaceId} materialization did not reach running`)
-}
-
 async function sessionsForTask(taskId: string) {
-  return await client.sessions.list({ taskId, limit: 100 })
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  return await client.sessions.list({ ...scope, taskId, limit: 100 })
 }
