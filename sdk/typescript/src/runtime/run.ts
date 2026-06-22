@@ -66,11 +66,15 @@ export interface WaitpointRef {
 }
 
 export interface RunWaitpointOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly timeoutMs?: number
   readonly signal?: AbortSignal
 }
 
 export interface CancelRunOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly reason?: string
   readonly force?: boolean
   readonly idempotencyKey?: string
@@ -78,22 +82,30 @@ export interface CancelRunOptions {
 }
 
 export interface RetrieveRunOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly signal?: AbortSignal
 }
 
 export interface ListRunsOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly status?: RunStatus | "live" | "all"
   readonly limit?: number
   readonly signal?: AbortSignal
 }
 
 export interface ListRunEventsOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly cursor?: number
   readonly pageSize?: number
   readonly signal?: AbortSignal
 }
 
 export interface SubscribeRunEventsOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly cursor?: number
   readonly signal?: AbortSignal
 }

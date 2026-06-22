@@ -724,11 +724,11 @@ stream_wakeups AS (
            lost_execs.project_id,
            lost_execs.environment_id,
            lost_execs.workspace_id,
-           'workspace_exec',
+           'workspace_exec'::workspace_resource_kind,
            lost_execs.id,
            stream_names.stream,
            stream_names.cursor_offset,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM lost_execs
       CROSS JOIN LATERAL (VALUES ('stdout', lost_execs.stdout_cursor), ('stderr', lost_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
     UNION ALL
@@ -736,11 +736,11 @@ stream_wakeups AS (
            lost_ptys.project_id,
            lost_ptys.environment_id,
            lost_ptys.workspace_id,
-           'workspace_pty',
+           'workspace_pty'::workspace_resource_kind,
            lost_ptys.id,
            'output',
            lost_ptys.output_cursor,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM lost_ptys
     RETURNING id
 )
@@ -1206,11 +1206,11 @@ stream_wakeups AS (
            lost_execs.project_id,
            lost_execs.environment_id,
            lost_execs.workspace_id,
-           'workspace_exec',
+           'workspace_exec'::workspace_resource_kind,
            lost_execs.id,
            stream_names.stream,
            stream_names.cursor_offset,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM lost_execs
       CROSS JOIN LATERAL (VALUES ('stdout', lost_execs.stdout_cursor), ('stderr', lost_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
     UNION ALL
@@ -1218,11 +1218,11 @@ stream_wakeups AS (
            lost_ptys.project_id,
            lost_ptys.environment_id,
            lost_ptys.workspace_id,
-           'workspace_pty',
+           'workspace_pty'::workspace_resource_kind,
            lost_ptys.id,
            'output',
            lost_ptys.output_cursor,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM lost_ptys
     RETURNING id
 )
@@ -1911,11 +1911,11 @@ requested_stream_wakeups AS (
            terminated_requested_execs.project_id,
            terminated_requested_execs.environment_id,
            terminated_requested_execs.workspace_id,
-           'workspace_exec',
+           'workspace_exec'::workspace_resource_kind,
            terminated_requested_execs.id,
            stream_names.stream,
            stream_names.cursor_offset,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM terminated_requested_execs
       CROSS JOIN LATERAL (VALUES ('stdout', terminated_requested_execs.stdout_cursor), ('stderr', terminated_requested_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
     UNION ALL
@@ -1923,11 +1923,11 @@ requested_stream_wakeups AS (
            closed_requested_ptys.project_id,
            closed_requested_ptys.environment_id,
            closed_requested_ptys.workspace_id,
-           'workspace_pty',
+           'workspace_pty'::workspace_resource_kind,
            closed_requested_ptys.id,
            'output',
            closed_requested_ptys.output_cursor,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM closed_requested_ptys
     RETURNING id
 ),
@@ -1981,11 +1981,11 @@ live_pending_stream_wakeups AS (
            terminated_live_pending_execs.project_id,
            terminated_live_pending_execs.environment_id,
            terminated_live_pending_execs.workspace_id,
-           'workspace_exec',
+           'workspace_exec'::workspace_resource_kind,
            terminated_live_pending_execs.id,
            stream_names.stream,
            stream_names.cursor_offset,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM terminated_live_pending_execs
       CROSS JOIN LATERAL (VALUES ('stdout', terminated_live_pending_execs.stdout_cursor), ('stderr', terminated_live_pending_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
     UNION ALL
@@ -1993,11 +1993,11 @@ live_pending_stream_wakeups AS (
            closed_live_pending_ptys.project_id,
            closed_live_pending_ptys.environment_id,
            closed_live_pending_ptys.workspace_id,
-           'workspace_pty',
+           'workspace_pty'::workspace_resource_kind,
            closed_live_pending_ptys.id,
            'output',
            closed_live_pending_ptys.output_cursor,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM closed_live_pending_ptys
     RETURNING id
 ),
@@ -2263,11 +2263,11 @@ stream_wakeups AS (
            terminated_execs.project_id,
            terminated_execs.environment_id,
            terminated_execs.workspace_id,
-           'workspace_exec',
+           'workspace_exec'::workspace_resource_kind,
            terminated_execs.id,
            stream_names.stream,
            stream_names.cursor_offset,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM terminated_execs
       CROSS JOIN LATERAL (VALUES ('stdout', terminated_execs.stdout_cursor), ('stderr', terminated_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
     UNION ALL
@@ -2275,11 +2275,11 @@ stream_wakeups AS (
            closed_ptys.project_id,
            closed_ptys.environment_id,
            closed_ptys.workspace_id,
-           'workspace_pty',
+           'workspace_pty'::workspace_resource_kind,
            closed_ptys.id,
            'output',
            closed_ptys.output_cursor,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM closed_ptys
     RETURNING id
 )

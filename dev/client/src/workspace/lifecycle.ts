@@ -28,6 +28,8 @@ interface RuntimeSmokePayload {
 }
 
 interface RuntimeSmokeStartOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly workspaceId?: string
   readonly priority: number
   readonly metadata: Record<string, unknown>
@@ -76,56 +78,62 @@ async function runWorkspaceLifecycleSmoke(): Promise<SmokeEvidence> {
   assertEqual(createdAgain.id, directWorkspace.id, "workspace create idempotency returned a different workspace")
 
   const handle = client.workspaces.open(directWorkspace.id)
-  assertEqual(handle.id, directWorkspace.id, "workspace open returned an unexpected handle id")
-  const retrievedFromHandle = await handle.retrieve(scope)
-  assertEqual(retrievedFromHandle.id, directWorkspace.id, "workspace handle retrieve returned a different workspace")
+  try {
+    assertEqual(handle.id, directWorkspace.id, "workspace open returned an unexpected handle id")
+    const retrievedFromHandle = await handle.retrieve(scope)
+    assertEqual(retrievedFromHandle.id, directWorkspace.id, "workspace handle retrieve returned a different workspace")
 
-  const patched = await handle.update({
-    ...scope,
-    metadata: { smoke: "workspace-lifecycle", marker: config.marker, patched: true },
-    tags: ["smoke", "workspace-lifecycle", "patched"],
-  })
-  assertEqual(patched.id, directWorkspace.id, "workspace update returned a different workspace")
-  assert(patched.tags.includes("patched"), "workspace update did not persist tags")
+    const patched = await handle.update({
+      ...scope,
+      metadata: { smoke: "workspace-lifecycle", marker: config.marker, patched: true },
+      tags: ["smoke", "workspace-lifecycle", "patched"],
+    })
+    assertEqual(patched.id, directWorkspace.id, "workspace update returned a different workspace")
+    assert(patched.tags.includes("patched"), "workspace update did not persist tags")
 
-  const materialized = await handle.materialize(scope)
-  const connected = await handle.connect(scope)
-  assertEqual(connected.id, materialized.id, "connect did not ensure the pending materialization")
-  const running = await waitForRunningMaterialization(client, handle.id, scope)
-  assertEqual(running.id, materialized.id, "running materialization id changed")
+    const materialized = await handle.materialize(scope)
+    const connected = await handle.connect(scope)
+    assertEqual(connected.id, materialized.id, "connect did not ensure the pending materialization")
+    const running = await waitForRunningMaterialization(client, handle.id, scope)
+    assertEqual(running.id, materialized.id, "running materialization id changed")
 
-  const sessionsBeforeAttach = await sessionsForTask(config.taskId)
-  assert(!sessionsBeforeAttach.some((session) => session.workspaceId === directWorkspace.id), "direct materialization created a task session")
+    const sessionsBeforeAttach = await sessionsForTask(config.taskId)
+    assert(!sessionsBeforeAttach.some((session) => session.workspaceId === directWorkspace.id), "direct materialization created a task session")
 
-  const first = await startAndWaitRuntime(`${config.marker}-first`, directWorkspace.id)
-  const firstSession = await client.sessions.retrieve(first.sessionId)
-  assertEqual(firstSession.workspaceId, directWorkspace.id, "first task did not attach to direct workspace")
-  const afterFirst = await client.workspaces.retrieve(directWorkspace.id, scope)
-  assert(afterFirst.currentVersionId !== null, "workspace lost currentVersionId after first run")
-  assert(afterFirst.currentVersionId !== directWorkspace.currentVersionId, "workspace currentVersionId did not advance after first run")
+    const first = await startAndWaitRuntime(`${config.marker}-first`, directWorkspace.id)
+    const firstSession = await client.sessions.retrieve(first.sessionId, scope)
+    assertEqual(firstSession.workspaceId, directWorkspace.id, "first task did not attach to direct workspace")
+    const afterFirst = await client.workspaces.retrieve(directWorkspace.id, scope)
+    assert(afterFirst.currentVersionId !== null, "workspace lost currentVersionId after first run")
+    assert(afterFirst.currentVersionId !== directWorkspace.currentVersionId, "workspace currentVersionId did not advance after first run")
 
-  const second = await startAndWaitRuntime(`${config.marker}-second`, directWorkspace.id, `${config.marker}-first`)
-  const secondSession = await client.sessions.retrieve(second.sessionId)
-  assertEqual(secondSession.workspaceId, directWorkspace.id, "second task did not attach to direct workspace")
-  const afterSecond = await client.workspaces.retrieve(directWorkspace.id, scope)
-  assert(afterSecond.currentVersionId !== null, "workspace lost currentVersionId after second run")
-  assert(afterSecond.currentVersionId !== afterFirst.currentVersionId, "workspace currentVersionId did not advance after second run")
+    const second = await startAndWaitRuntime(`${config.marker}-second`, directWorkspace.id, `${config.marker}-first`)
+    const secondSession = await client.sessions.retrieve(second.sessionId, scope)
+    assertEqual(secondSession.workspaceId, directWorkspace.id, "second task did not attach to direct workspace")
+    const afterSecond = await client.workspaces.retrieve(directWorkspace.id, scope)
+    assert(afterSecond.currentVersionId !== null, "workspace lost currentVersionId after second run")
+    assert(afterSecond.currentVersionId !== afterFirst.currentVersionId, "workspace currentVersionId did not advance after second run")
 
-  return {
-    marker: config.marker,
-    deploymentId: deployment.id,
-    deploymentSandboxId: directWorkspace.deploymentSandboxId,
-    directWorkspaceId: directWorkspace.id,
-    directMaterializationId: running.id,
-    firstSessionId: first.sessionId,
-    firstRunId: first.runId,
-    secondSessionId: second.sessionId,
-    secondRunId: second.runId,
-    versions: {
-      directInitial: directWorkspace.currentVersionId,
-      afterFirst: afterFirst.currentVersionId,
-      afterSecond: afterSecond.currentVersionId,
-    },
+    return {
+      marker: config.marker,
+      deploymentId: deployment.id,
+      deploymentSandboxId: directWorkspace.deploymentSandboxId,
+      directWorkspaceId: directWorkspace.id,
+      directMaterializationId: running.id,
+      firstSessionId: first.sessionId,
+      firstRunId: first.runId,
+      secondSessionId: second.sessionId,
+      secondRunId: second.runId,
+      versions: {
+        directInitial: directWorkspace.currentVersionId,
+        afterFirst: afterFirst.currentVersionId,
+        afterSecond: afterSecond.currentVersionId,
+      },
+    }
+  } finally {
+    await handle.stop({ ...scope, idempotencyKey: `workspace-lifecycle-cleanup:${config.marker}` }).catch((error: unknown) => {
+      console.error(`workspace lifecycle cleanup failed: ${String(error)}`)
+    })
   }
 }
 
@@ -139,6 +147,7 @@ async function startAndWaitRuntime(marker: string, workspaceId?: string, expecte
       ...(expectedWorkspaceMarker === undefined ? {} : { expectedWorkspaceMarker }),
     },
     {
+      ...scope,
       ...(workspaceId === undefined ? {} : { workspaceId }),
       priority: 25,
       metadata: { smoke: "workspace-lifecycle", marker },
@@ -146,7 +155,7 @@ async function startAndWaitRuntime(marker: string, workspaceId?: string, expecte
       externalId: marker,
     },
   )
-  const run = await client.runs.wait(started.run, { timeoutMs: 900_000 })
+  const run = await client.runs.wait(started.run, { ...scope, timeoutMs: 900_000 })
   assertEqual(run.status, "succeeded", `run ${started.run.id} did not succeed`)
   return {
     sessionId: started.session.id,

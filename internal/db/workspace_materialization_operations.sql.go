@@ -40,34 +40,34 @@ expired AS (
 terminal_start_exec_operations AS (
     SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM exhausted
      WHERE operation_kind = 'start_exec'
-       AND resource_kind = 'workspace_exec'
+       AND resource_kind = 'workspace_exec'::workspace_resource_kind
        AND resource_id IS NOT NULL
     UNION ALL
     SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM expired
      WHERE operation_kind = 'start_exec'
-       AND resource_kind = 'workspace_exec'
+       AND resource_kind = 'workspace_exec'::workspace_resource_kind
        AND resource_id IS NOT NULL
 ),
 terminal_create_pty_operations AS (
     SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM exhausted
      WHERE operation_kind = 'create_pty'
-       AND resource_kind = 'workspace_pty'
+       AND resource_kind = 'workspace_pty'::workspace_resource_kind
        AND resource_id IS NOT NULL
     UNION ALL
     SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM expired
      WHERE operation_kind = 'create_pty'
-       AND resource_kind = 'workspace_pty'
+       AND resource_kind = 'workspace_pty'::workspace_resource_kind
        AND resource_id IS NOT NULL
 ),
 terminal_pty_control_operations AS (
     SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM exhausted
      WHERE operation_kind IN ('resize_pty', 'close_pty')
-       AND resource_kind = 'workspace_pty'
+       AND resource_kind = 'workspace_pty'::workspace_resource_kind
        AND resource_id IS NOT NULL
     UNION ALL
     SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM expired
      WHERE operation_kind IN ('resize_pty', 'close_pty')
-       AND resource_kind = 'workspace_pty'
+       AND resource_kind = 'workspace_pty'::workspace_resource_kind
        AND resource_id IS NOT NULL
 ),
 failed_start_execs AS (
@@ -183,11 +183,11 @@ terminal_operation_stream_wakeups AS (
            failed_start_execs.project_id,
            failed_start_execs.environment_id,
            failed_start_execs.workspace_id,
-           'workspace_exec',
+           'workspace_exec'::workspace_resource_kind,
            failed_start_execs.id,
            stream_names.stream,
            stream_names.cursor_offset,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM failed_start_execs
       CROSS JOIN LATERAL (VALUES ('stdout', failed_start_execs.stdout_cursor), ('stderr', failed_start_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
     UNION ALL
@@ -195,11 +195,11 @@ terminal_operation_stream_wakeups AS (
            failed_create_ptys.project_id,
            failed_create_ptys.environment_id,
            failed_create_ptys.workspace_id,
-           'workspace_pty',
+           'workspace_pty'::workspace_resource_kind,
            failed_create_ptys.id,
            'output',
            failed_create_ptys.output_cursor,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM failed_create_ptys
     RETURNING id
 ),

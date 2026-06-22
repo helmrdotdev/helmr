@@ -289,11 +289,11 @@ stream_wakeups AS (
            updated_pty.project_id,
            updated_pty.environment_id,
            updated_pty.workspace_id,
-           'workspace_pty',
+           'workspace_pty'::workspace_resource_kind,
            updated_pty.id,
            'output',
            updated_pty.output_cursor,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM updated_pty
     RETURNING id
 )
@@ -341,11 +341,11 @@ stream_wakeups AS (
            updated_pty.project_id,
            updated_pty.environment_id,
            updated_pty.workspace_id,
-           'workspace_pty',
+           'workspace_pty'::workspace_resource_kind,
            updated_pty.id,
            'output',
            updated_pty.output_cursor,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM updated_pty
     RETURNING id
 )

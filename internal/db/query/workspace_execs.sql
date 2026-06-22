@@ -263,11 +263,11 @@ stream_wakeups AS (
            updated_exec.project_id,
            updated_exec.environment_id,
            updated_exec.workspace_id,
-           'workspace_exec',
+           'workspace_exec'::workspace_resource_kind,
            updated_exec.id,
            stream_names.stream,
            stream_names.cursor_offset,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM updated_exec
       CROSS JOIN LATERAL (VALUES ('stdout', updated_exec.stdout_cursor), ('stderr', updated_exec.stderr_cursor)) AS stream_names(stream, cursor_offset)
     RETURNING id

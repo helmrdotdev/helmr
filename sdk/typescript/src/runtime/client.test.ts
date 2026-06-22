@@ -567,10 +567,8 @@ test("tasks.start returns session and run handles from the task start response",
     expiresAt: "2026-04-21T00:00:00Z",
   })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/tasks/inspect/start")
+  expect(requestedUrl).toBe("https://api.example.test/api/projects/project-1/environments/env-1/tasks/inspect/start")
   expect(body).toEqual({
-    project_id: "project-1",
-    environment_id: "env-1",
     payload: { issue: 123 },
     external_id: "case-123",
     options: {
@@ -601,12 +599,24 @@ test("tasks.startAndWait posts one start-and-wait request and returns the sessio
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const session = await client.tasks.startAndWait("inspect", { timeoutSeconds: 30 })
+  const session = await client.tasks.startAndWait("inspect", {
+    projectId: "project-1",
+    environmentId: "env-1",
+    timeoutSeconds: 30,
+  })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/tasks/inspect/start-and-wait")
+  expect(requestedUrl).toBe("https://api.example.test/api/projects/project-1/environments/env-1/tasks/inspect/start-and-wait")
   expect(body).toEqual({ timeout_seconds: 30 })
   expect(session.status).toBe("completed")
   expect(session.result).toEqual({ ok: true })
+})
+
+test("tasks.start requires complete project environment scope", async () => {
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+
+  await expect(client.tasks.start("inspect", { projectId: "project-1" })).rejects.toThrow(
+    "projectId and environmentId must be provided together",
+  )
 })
 
 test("tasks.startAndWait retries a pending idempotent start before returning the session", async () => {
@@ -698,6 +708,32 @@ test("sessions facade retrieves state and reads/writes session channels", async 
   expect(bodies).toEqual([
     { timeout_seconds: 10 },
     { data: { approved: true }, correlation_id: "thread-1" },
+  ])
+})
+
+test("sessions facade uses project environment scoped routes when scope is provided", async () => {
+  const requestedUrls: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (url.endsWith("/session-1/channels/agent.report/outputs")) {
+      return Response.json({ records: [] })
+    }
+    return Response.json(taskSessionFixture({ id: "session-1", status: "completed", result: { ok: true } }))
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const session = client.sessions.open("session-1")
+  const scope = { projectId: "project-1", environmentId: "env-1" }
+
+  await session.retrieve(scope)
+  await session.wait(scope)
+  await session.output("agent.report").list(scope)
+
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1",
+    "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1/wait",
+    "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1/channels/agent.report/outputs",
   ])
 })
 
@@ -1133,6 +1169,68 @@ test("runs.cancel posts graceful cancel intent", async () => {
     idempotency_key: "cancel-run-1",
   })
   expect(run.status).toBe("cancelled")
+})
+
+test("runs facade uses project environment scoped routes when scope is provided", async () => {
+  const requestedUrls: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (url.endsWith("/runs")) {
+      return Response.json({ runs: [] })
+    }
+    if (url.endsWith("/cancel")) {
+      return Response.json({
+        run: {
+          id: "run-1",
+          task_id: "inspect",
+          status: "cancelled",
+        },
+        operation: {
+          id: "operation-1",
+          run_id: "run-1",
+          kind: "cancel",
+          status: "applied",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      })
+    }
+    if (url.endsWith("/logs")) {
+      return Response.json({
+        stdout_base64: "b2s=",
+        stderr_base64: "",
+        cursor: "1:0",
+        truncated: false,
+      })
+    }
+    if (url.endsWith("/events")) {
+      return Response.json({ cursor: 0, next_cursor: null, events: [] })
+    }
+    return Response.json({
+      id: "run-1",
+      task_id: "inspect",
+      status: "succeeded",
+      exit_code: 0,
+      pending_waitpoint: null,
+    })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const scope = { projectId: "project-1", environmentId: "env-1" }
+
+  await client.runs.list(scope)
+  await client.runs.retrieve("run-1", scope)
+  await client.runs.cancel("run-1", scope)
+  await client.runs.logs.retrieve("run-1", scope)
+  await client.runs.events.list("run-1", scope)
+
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/projects/project-1/environments/env-1/runs",
+    "https://api.example.test/api/projects/project-1/environments/env-1/runs/run-1",
+    "https://api.example.test/api/projects/project-1/environments/env-1/runs/run-1/cancel",
+    "https://api.example.test/api/projects/project-1/environments/env-1/runs/run-1/logs",
+    "https://api.example.test/api/projects/project-1/environments/env-1/runs/run-1/events",
+  ])
 })
 
 test("task.start validates payload before posting the start request", async () => {

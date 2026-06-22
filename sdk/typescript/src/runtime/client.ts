@@ -127,18 +127,36 @@ export interface TaskSessionListOptions {
   readonly signal?: AbortSignal
 }
 
+export interface TaskSessionRetrieveOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
+  readonly signal?: AbortSignal
+}
+
 export interface TaskSessionWaitOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly timeoutSeconds?: number
   readonly signal?: AbortSignal
 }
 
 export interface TaskSessionCloseOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly reason?: string
   readonly signal?: AbortSignal
 }
 
 export interface TaskSessionCancelOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly reason?: string
+  readonly signal?: AbortSignal
+}
+
+export interface TaskSessionRunsOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly signal?: AbortSignal
 }
 
@@ -170,12 +188,16 @@ export interface SessionChannelInputSendResult<TData = unknown> extends ChannelR
 }
 
 export interface SessionChannelInputSendOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly correlationId?: string
   readonly externalEventId?: string
   readonly signal?: AbortSignal
 }
 
 export interface SessionChannelListOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly cursor?: number
   readonly limit?: number
   readonly correlationId?: string
@@ -183,6 +205,8 @@ export interface SessionChannelListOptions {
 }
 
 export interface SessionChannelOutputStreamOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly cursor?: number
   readonly correlationId?: string
   readonly signal?: AbortSignal
@@ -230,11 +254,11 @@ export interface SessionChannelOutputApi {
 
 export interface OpenTaskSessionApi<TOutput = unknown> {
   readonly id: string
-  retrieve(opts?: { readonly signal?: AbortSignal }): Promise<TaskSessionSnapshot<TOutput>>
+  retrieve(opts?: TaskSessionRetrieveOptions): Promise<TaskSessionSnapshot<TOutput>>
   wait(opts?: TaskSessionWaitOptions): Promise<TaskSessionSnapshot<TOutput>>
   close(opts?: TaskSessionCloseOptions): Promise<TaskSessionSnapshot<TOutput>>
   cancel(opts?: TaskSessionCancelOptions): Promise<TaskSessionSnapshot<TOutput>>
-  runs(opts?: { readonly signal?: AbortSignal }): Promise<TaskSessionRun[]>
+  runs(opts?: TaskSessionRunsOptions): Promise<TaskSessionRun[]>
   input(channel: string): SessionChannelInputApi
   output(channel: string): SessionChannelOutputApi
 }
@@ -696,6 +720,8 @@ export interface RunWaitpointsPage {
 export type WaitpointStatus = "pending" | "completed" | "timed_out" | "cancelled" | "failed"
 
 export interface RunWaitpointListOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly cursor?: string
   readonly limit?: number
   readonly signal?: AbortSignal
@@ -776,7 +802,7 @@ export class HelmrClient {
     },
     retrieve: async <TOutput = unknown>(
       idOrHandle: string | TaskSessionHandle<TOutput>,
-      opts: { readonly signal?: AbortSignal } = {},
+      opts: TaskSessionRetrieveOptions = {},
     ): Promise<TaskSessionSnapshot<TOutput>> => {
       return await this.#openSession<TOutput>(sessionId(idOrHandle)).retrieve(opts)
     },
@@ -955,9 +981,10 @@ export class HelmrClient {
   ): Promise<TaskStartResult<TaskOutput<TTask>>> {
     validateRetryPolicy(opts.retry, "retry")
     const body = taskStartBody(payload, opts, maxDurationSeconds)
+    const path = taskStartPath(taskId, opts, "start")
     const startedAt = Date.now()
     for (;;) {
-      const response = await this.#fetch(`/api/tasks/${encodeURIComponent(taskId)}/start`, {
+      const response = await this.#fetch(path, {
         method: "POST",
         body: JSON.stringify(body),
         headers: { "content-type": "application/json" },
@@ -990,9 +1017,10 @@ export class HelmrClient {
       ...taskStartBody(payload, opts, maxDurationSeconds),
       ...(opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }),
     }
+    const path = taskStartPath(taskId, opts, "start-and-wait")
     const startedAt = Date.now()
     for (;;) {
-      const response = await this.#fetch(`/api/tasks/${encodeURIComponent(taskId)}/start-and-wait`, {
+      const response = await this.#fetch(path, {
         method: "POST",
         body: JSON.stringify(body),
         headers: { "content-type": "application/json" },
@@ -1327,14 +1355,14 @@ export class HelmrClient {
       id,
       retrieve: async (opts = {}) => {
         const response = await this.#json<TaskSessionResponse>(
-          `/api/sessions/${encodeURIComponent(id)}`,
+          taskSessionResourcePath(id, opts, ""),
           requestSignal(opts.signal),
         )
         return taskSessionFromResponse<TOutput>(response)
       },
       wait: async (opts = {}) => {
         const response = await this.#json<TaskSessionResponse>(
-          `/api/sessions/${encodeURIComponent(id)}/wait`,
+          taskSessionResourcePath(id, opts, "/wait"),
           {
             method: "POST",
             body: JSON.stringify(taskSessionWaitBody(opts)),
@@ -1346,7 +1374,7 @@ export class HelmrClient {
       },
       close: async (opts = {}) => {
         const response = await this.#json<TaskSessionResponse>(
-          `/api/sessions/${encodeURIComponent(id)}/close`,
+          taskSessionResourcePath(id, opts, "/close"),
           {
             method: "POST",
             body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
@@ -1358,7 +1386,7 @@ export class HelmrClient {
       },
       cancel: async (opts = {}) => {
         const response = await this.#json<TaskSessionResponse>(
-          `/api/sessions/${encodeURIComponent(id)}/cancel`,
+          taskSessionResourcePath(id, opts, "/cancel"),
           {
             method: "POST",
             body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
@@ -1370,7 +1398,7 @@ export class HelmrClient {
       },
       runs: async (opts = {}) => {
         const response = await this.#json<ListTaskSessionRunsResponse>(
-          `/api/sessions/${encodeURIComponent(id)}/runs`,
+          taskSessionResourcePath(id, opts, "/runs"),
           requestSignal(opts.signal),
         )
         return response.runs.map(taskSessionRunFromResponse)
@@ -1380,7 +1408,7 @@ export class HelmrClient {
         return {
           send: async <TData = unknown>(data: TData, opts: SessionChannelInputSendOptions = {}) => {
             const response = await this.#json<AppendChannelRecordResponse>(
-              `/api/sessions/${encodeURIComponent(id)}/channels/${encodeURIComponent(channel)}/inputs`,
+              taskSessionResourcePath(id, opts, `/channels/${encodeURIComponent(channel)}/inputs`),
               {
                 method: "POST",
                 body: JSON.stringify(channelInputAppendBody(data, opts)),
@@ -1416,7 +1444,7 @@ export class HelmrClient {
     opts: SessionChannelListOptions,
   ): Promise<ChannelRecord<TData>[]> {
     const response = await this.#json<ListChannelRecordsResponse>(
-      `/api/sessions/${encodeURIComponent(sessionID)}/channels/${encodeURIComponent(channel)}/${direction}${sessionChannelQuery(opts)}`,
+      `${taskSessionResourcePath(sessionID, opts, `/channels/${encodeURIComponent(channel)}/${direction}`)}${sessionChannelQuery(opts)}`,
       requestSignal(opts.signal),
     )
     return response.records.map(channelRecordFromResponse<TData>)
@@ -1433,7 +1461,7 @@ export class HelmrClient {
       for (;;) {
         try {
           const response = await client.#fetch(
-            `/api/sessions/${encodeURIComponent(sessionID)}/channels/${encodeURIComponent(channel)}/outputs/stream${sessionChannelStreamQuery(opts, cursor)}`,
+            `${taskSessionResourcePath(sessionID, opts, `/channels/${encodeURIComponent(channel)}/outputs/stream`)}${sessionChannelStreamQuery(opts, cursor)}`,
             {
               headers: { accept: "text/event-stream" },
               ...requestSignal(opts.signal),
@@ -1450,7 +1478,7 @@ export class HelmrClient {
           }
         }
         try {
-          const session = await client.sessions.retrieve(sessionID, retrieveOptions(opts.signal))
+          const session = await client.sessions.retrieve(sessionID, taskSessionRetrieveOptions(opts, opts.signal))
           if (taskSessionTerminal(session.status)) {
             return
           }
@@ -1472,7 +1500,7 @@ export class HelmrClient {
       opts: RetrieveRunOptions = {},
     ): Promise<RunSnapshot<TOutput>> => {
       const response = await this.#json<RunResponse>(
-        `/api/runs/${encodeURIComponent(runId(idOrHandle))}`,
+        runResourcePath(runId(idOrHandle), opts, ""),
         requestSignal(opts.signal),
       )
       return runResponseToSnapshot<TOutput>(response)
@@ -1484,8 +1512,9 @@ export class HelmrClient {
       const id = runId(idOrHandle)
       const timeoutMs = opts.timeoutMs
       const wait = waitSignal(opts.signal, timeoutMs, () => new TimeoutError(`run ${id} did not finish within ${timeoutMs}ms`))
+      const scopedRetrieveOptions = runRetrieveOptions(opts, wait.signal)
       try {
-        let run = await this.#retrieveRunSnapshotWithRetry<TOutput>(id, wait.signal, RUN_EVENT_RECONNECT_DELAY_MS)
+        let run = await this.#retrieveRunSnapshotWithRetry<TOutput>(id, scopedRetrieveOptions, RUN_EVENT_RECONNECT_DELAY_MS)
         if (isTerminalRunStatus(run.status)) {
           return run
         }
@@ -1494,7 +1523,7 @@ export class HelmrClient {
           throwIfAborted(wait.signal)
           let terminalEventSeen = false
           try {
-            for await (const event of this.#streamEventRecordsOnce(id, { cursor, signal: wait.signal })) {
+            for await (const event of this.#streamEventRecordsOnce(id, runEventOptions(scopedRetrieveOptions, cursor))) {
               cursor = nextRunEventCursor(cursor, event)
               if (runEventRecordIsTerminal(event)) {
                 terminalEventSeen = true
@@ -1510,10 +1539,10 @@ export class HelmrClient {
             }
           }
           if (terminalEventSeen) {
-            return await this.#waitForTerminalSnapshot<TOutput>(id, wait.signal)
+            return await this.#waitForTerminalSnapshot<TOutput>(id, scopedRetrieveOptions)
           }
           try {
-            run = await this.runs.retrieve<TOutput>(id, retrieveOptions(wait.signal))
+            run = await this.runs.retrieve<TOutput>(id, scopedRetrieveOptions)
           } catch (error) {
             throwIfAborted(wait.signal)
             if (runSnapshotErrorIsFatal(error)) {
@@ -1536,7 +1565,7 @@ export class HelmrClient {
       opts: CancelRunOptions = {},
     ): Promise<RunSnapshot<TOutput>> => {
       const response = await this.#json<CancelRunResponse>(
-        `/api/runs/${encodeURIComponent(runId(idOrHandle))}/cancel`,
+        runResourcePath(runId(idOrHandle), opts, "/cancel"),
         {
           method: "POST",
           body: JSON.stringify(cancelRunBody(opts)),
@@ -1551,7 +1580,7 @@ export class HelmrClient {
       if (opts.status !== undefined) query.set("status", opts.status)
       if (opts.limit !== undefined) query.set("limit", String(opts.limit))
       const suffix = query.size === 0 ? "" : `?${query}`
-      const response = await this.#json<ListRunsResponse>(`/api/runs${suffix}`, requestSignal(opts.signal))
+      const response = await this.#json<ListRunsResponse>(`${runCollectionPath(opts)}${suffix}`, requestSignal(opts.signal))
       return response.runs.map((run) => runResponseToSnapshot(run))
     },
     waitpoints: {
@@ -1561,7 +1590,7 @@ export class HelmrClient {
       ): Promise<RunWaitpointsPage> => {
         const id = runId(idOrHandle)
         const response = await this.#json<ListRunWaitpointsResponse>(
-          `/api/runs/${encodeURIComponent(id)}/waitpoints${runWaitpointListQuery(opts)}`,
+          `${runResourcePath(id, opts, "/waitpoints")}${runWaitpointListQuery(opts)}`,
           requestSignal(opts.signal),
         )
         return {
@@ -1580,9 +1609,9 @@ export class HelmrClient {
     logs: {
       retrieve: async <TOutput = unknown>(
         idOrHandle: string | RunHandle<TOutput>,
-        opts: { readonly signal?: AbortSignal } = {},
+        opts: RetrieveRunOptions = {},
       ): Promise<LogSnapshot> => {
-        return await this.#retrieveLogs(runId(idOrHandle), opts.signal)
+        return await this.#retrieveLogs(runId(idOrHandle), opts)
       },
     },
     events: {
@@ -1652,10 +1681,10 @@ export class HelmrClient {
     },
   }
 
-  async #retrieveLogs(id: string, signal?: AbortSignal): Promise<LogSnapshot> {
+  async #retrieveLogs(id: string, opts: RetrieveRunOptions = {}): Promise<LogSnapshot> {
     const response = await this.#json<LogSnapshotResponse>(
-      `/api/runs/${encodeURIComponent(id)}/logs`,
-      requestSignal(signal),
+      runResourcePath(id, opts, "/logs"),
+      requestSignal(opts.signal),
     )
     return {
       stdout: decodeBase64Text(response.stdout_base64),
@@ -1674,7 +1703,7 @@ export class HelmrClient {
       if (opts.pageSize !== undefined) query.set("limit", String(opts.pageSize))
       const suffix = query.size === 0 ? "" : `?${query}`
       const page = await this.#json<RunEventRecordPage>(
-        `/api/runs/${encodeURIComponent(id)}/events${suffix}`,
+        `${runResourcePath(id, opts, "/events")}${suffix}`,
         requestSignal(opts.signal),
       )
       events.push(...page.events)
@@ -1694,7 +1723,7 @@ export class HelmrClient {
       for (;;) {
         let checkSnapshot = false
         try {
-          for await (const record of client.#streamEventRecordsOnce(id, { cursor, signal: opts.signal })) {
+          for await (const record of client.#streamEventRecordsOnce(id, runEventOptions(opts, cursor))) {
             cursor = nextRunEventCursor(cursor, record)
             const terminal = runEventRecordIsTerminal(record)
             const event = runEventRecordToRunEvent(record)
@@ -1717,9 +1746,9 @@ export class HelmrClient {
         }
         if (checkSnapshot) {
           try {
-            const run = await client.runs.retrieve(id, retrieveOptions(opts.signal))
+            const run = await client.runs.retrieve(id, runRetrieveOptions(opts, opts.signal))
             if (isTerminalRunStatus(run.status)) {
-              for await (const record of client.#listEventRecordsAfter(id, cursor, opts.signal)) {
+              for await (const record of client.#listEventRecordsAfter(id, cursor, opts)) {
                 cursor = nextRunEventCursor(cursor, record)
                 const terminal = runEventRecordIsTerminal(record)
                 const event = runEventRecordToRunEvent(record)
@@ -1747,12 +1776,12 @@ export class HelmrClient {
 
   async *#streamEventRecordsOnce(
     id: string,
-    opts: { readonly cursor?: number | undefined; readonly signal?: AbortSignal | undefined },
+    opts: ListRunEventsOptions,
   ): AsyncIterable<RunEventRecord> {
     const query = new URLSearchParams()
     query.set("follow", "1")
     if (opts.cursor !== undefined) query.set("cursor", String(opts.cursor))
-    const response = await this.#fetch(`/api/runs/${encodeURIComponent(id)}/events?${query}`, {
+    const response = await this.#fetch(`${runResourcePath(id, opts, "/events")}?${query}`, {
       headers: { accept: "text/event-stream" },
       ...requestSignal(opts.signal),
     })
@@ -1762,7 +1791,7 @@ export class HelmrClient {
   async *#listEventRecordsAfter(
     id: string,
     cursor: number | undefined,
-    signal: AbortSignal | undefined,
+    opts: ListRunEventsOptions,
   ): AsyncIterable<RunEventRecord> {
     let nextCursor = cursor
     for (;;) {
@@ -1770,8 +1799,8 @@ export class HelmrClient {
       if (nextCursor !== undefined) query.set("cursor", String(nextCursor))
       const suffix = query.size === 0 ? "" : `?${query}`
       const page = await this.#json<RunEventRecordPage>(
-        `/api/runs/${encodeURIComponent(id)}/events${suffix}`,
-        requestSignal(signal),
+        `${runResourcePath(id, opts, "/events")}${suffix}`,
+        requestSignal(opts.signal),
       )
       for (const event of page.events) {
         yield event
@@ -1786,32 +1815,32 @@ export class HelmrClient {
     }
   }
 
-  async #waitForTerminalSnapshot<TOutput>(id: string, signal: AbortSignal | undefined): Promise<RunSnapshot<TOutput>> {
+  async #waitForTerminalSnapshot<TOutput>(id: string, opts: RetrieveRunOptions): Promise<RunSnapshot<TOutput>> {
     let retryDelayMs = RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS
     for (;;) {
-      const run = await this.#retrieveRunSnapshotWithRetry<TOutput>(id, signal, retryDelayMs)
+      const run = await this.#retrieveRunSnapshotWithRetry<TOutput>(id, opts, retryDelayMs)
       if (isTerminalRunStatus(run.status)) {
         return run
       }
-      await delay(retryDelayMs, signal)
+      await delay(retryDelayMs, opts.signal)
       retryDelayMs = Math.min(retryDelayMs * 2, RUN_EVENT_RECONNECT_DELAY_MS)
     }
   }
 
   async #retrieveRunSnapshotWithRetry<TOutput>(
     id: string,
-    signal: AbortSignal | undefined,
+    opts: RetrieveRunOptions,
     retryDelayMs: number,
   ): Promise<RunSnapshot<TOutput>> {
     for (;;) {
       try {
-        return await this.runs.retrieve<TOutput>(id, retrieveOptions(signal))
+        return await this.runs.retrieve<TOutput>(id, opts)
       } catch (error) {
-        throwIfAborted(signal)
+        throwIfAborted(opts.signal)
         if (runSnapshotErrorIsFatal(error)) {
           throw error
         }
-        await delay(retryDelayMs, signal)
+        await delay(retryDelayMs, opts.signal)
       }
     }
   }
@@ -2316,12 +2345,25 @@ function taskStartBody(
     ...taskStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL),
   }
   return {
-    ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
-    ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
     ...(payload === undefined ? {} : { payload }),
     ...(opts.externalId === undefined ? {} : { external_id: opts.externalId }),
     ...(Object.keys(runOptions).length === 0 ? {} : { options: runOptions }),
   }
+}
+
+function taskStartPath(
+  taskId: string,
+  opts: { readonly projectId?: string; readonly environmentId?: string },
+  operation: "start" | "start-and-wait",
+): string {
+  const encodedTaskId = encodeURIComponent(taskId)
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    if (opts.projectId === undefined || opts.environmentId === undefined) {
+      throw new Error("projectId and environmentId must be provided together")
+    }
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/tasks/${encodedTaskId}/${operation}`
+  }
+  return `/api/tasks/${encodedTaskId}/${operation}`
 }
 
 function taskSessionWaitBody(opts: TaskSessionWaitOptions): Record<string, unknown> {
@@ -2354,6 +2396,66 @@ function taskSessionCollectionPath(opts: { readonly projectId?: string; readonly
     return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/sessions`
   }
   return "/api/sessions"
+}
+
+function taskSessionResourcePath(
+  id: string,
+  opts: { readonly projectId?: string; readonly environmentId?: string },
+  suffix: string,
+): string {
+  return `${taskSessionCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`
+}
+
+function taskSessionRetrieveOptions(
+  opts: { readonly projectId?: string; readonly environmentId?: string; readonly signal?: AbortSignal },
+  signal: AbortSignal | undefined,
+): TaskSessionRetrieveOptions {
+  return {
+    ...(opts.projectId === undefined ? {} : { projectId: opts.projectId }),
+    ...(opts.environmentId === undefined ? {} : { environmentId: opts.environmentId }),
+    ...(signal === undefined ? {} : { signal }),
+  }
+}
+
+function runCollectionPath(opts: { readonly projectId?: string; readonly environmentId?: string }): string {
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    if (opts.projectId === undefined || opts.environmentId === undefined) {
+      throw new Error("projectId and environmentId must be provided together")
+    }
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/runs`
+  }
+  return "/api/runs"
+}
+
+function runResourcePath(
+  id: string,
+  opts: { readonly projectId?: string; readonly environmentId?: string },
+  suffix: string,
+): string {
+  return `${runCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`
+}
+
+function runRetrieveOptions(
+  opts: { readonly projectId?: string; readonly environmentId?: string },
+  signal: AbortSignal | undefined,
+): RetrieveRunOptions {
+  return {
+    ...(opts.projectId === undefined ? {} : { projectId: opts.projectId }),
+    ...(opts.environmentId === undefined ? {} : { environmentId: opts.environmentId }),
+    ...(signal === undefined ? {} : { signal }),
+  }
+}
+
+function runEventOptions(
+  opts: { readonly projectId?: string; readonly environmentId?: string; readonly signal?: AbortSignal },
+  cursor: number | undefined,
+): ListRunEventsOptions {
+  return {
+    ...(opts.projectId === undefined ? {} : { projectId: opts.projectId }),
+    ...(opts.environmentId === undefined ? {} : { environmentId: opts.environmentId }),
+    ...(opts.signal === undefined ? {} : { signal: opts.signal }),
+    ...(cursor === undefined ? {} : { cursor }),
+  }
 }
 
 function sessionChannelQuery(opts: SessionChannelListOptions): string {
@@ -2768,10 +2870,6 @@ function waitpointTokenPublicAccessToken(target: WaitpointToken | WaitpointToken
     return undefined
   }
   return target.publicAccessToken
-}
-
-function retrieveOptions(signal: AbortSignal | undefined): RetrieveRunOptions {
-  return signal === undefined ? {} : { signal }
 }
 
 function requestSignal(signal: AbortSignal | undefined): RequestInit {

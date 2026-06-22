@@ -130,34 +130,34 @@ expired AS (
 terminal_start_exec_operations AS (
     SELECT * FROM exhausted
      WHERE operation_kind = 'start_exec'
-       AND resource_kind = 'workspace_exec'
+       AND resource_kind = 'workspace_exec'::workspace_resource_kind
        AND resource_id IS NOT NULL
     UNION ALL
     SELECT * FROM expired
      WHERE operation_kind = 'start_exec'
-       AND resource_kind = 'workspace_exec'
+       AND resource_kind = 'workspace_exec'::workspace_resource_kind
        AND resource_id IS NOT NULL
 ),
 terminal_create_pty_operations AS (
     SELECT * FROM exhausted
      WHERE operation_kind = 'create_pty'
-       AND resource_kind = 'workspace_pty'
+       AND resource_kind = 'workspace_pty'::workspace_resource_kind
        AND resource_id IS NOT NULL
     UNION ALL
     SELECT * FROM expired
      WHERE operation_kind = 'create_pty'
-       AND resource_kind = 'workspace_pty'
+       AND resource_kind = 'workspace_pty'::workspace_resource_kind
        AND resource_id IS NOT NULL
 ),
 terminal_pty_control_operations AS (
     SELECT * FROM exhausted
      WHERE operation_kind IN ('resize_pty', 'close_pty')
-       AND resource_kind = 'workspace_pty'
+       AND resource_kind = 'workspace_pty'::workspace_resource_kind
        AND resource_id IS NOT NULL
     UNION ALL
     SELECT * FROM expired
      WHERE operation_kind IN ('resize_pty', 'close_pty')
-       AND resource_kind = 'workspace_pty'
+       AND resource_kind = 'workspace_pty'::workspace_resource_kind
        AND resource_id IS NOT NULL
 ),
 failed_start_execs AS (
@@ -273,11 +273,11 @@ terminal_operation_stream_wakeups AS (
            failed_start_execs.project_id,
            failed_start_execs.environment_id,
            failed_start_execs.workspace_id,
-           'workspace_exec',
+           'workspace_exec'::workspace_resource_kind,
            failed_start_execs.id,
            stream_names.stream,
            stream_names.cursor_offset,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM failed_start_execs
       CROSS JOIN LATERAL (VALUES ('stdout', failed_start_execs.stdout_cursor), ('stderr', failed_start_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
     UNION ALL
@@ -285,11 +285,11 @@ terminal_operation_stream_wakeups AS (
            failed_create_ptys.project_id,
            failed_create_ptys.environment_id,
            failed_create_ptys.workspace_id,
-           'workspace_pty',
+           'workspace_pty'::workspace_resource_kind,
            failed_create_ptys.id,
            'output',
            failed_create_ptys.output_cursor,
-           'terminal'
+           'terminal'::workspace_stream_notification_kind
       FROM failed_create_ptys
     RETURNING id
 ),
