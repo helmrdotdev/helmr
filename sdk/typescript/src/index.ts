@@ -216,7 +216,7 @@ export const runs = new Proxy({} as HelmrClient["runs"], {
   },
 })
 
-export const channels = Object.freeze({
+export const channel = Object.freeze({
   input<TSchema extends PayloadSchema<any, any>>(
     id: string,
     opts: { readonly schema: TSchema },

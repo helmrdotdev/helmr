@@ -1,4 +1,4 @@
-import { cache, channels, image, logger, metadata, sandbox, source, task, wait } from "@helmr/sdk"
+import { cache, channel, image, logger, metadata, sandbox, source, task, wait } from "@helmr/sdk"
 import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { checkCommand as checkProcessCommand } from "../lib/process"
@@ -99,7 +99,7 @@ export const runtimeSmoke = task({
       marker,
       checks: checks.map((check) => check.name),
     })
-    await ctx.session.output(channels.output("runtime-smoke.progress", { schema: z.unknown() })).append({
+    await ctx.session.output(channel.output("runtime-smoke.progress", { schema: z.unknown() })).append({
       marker,
       scenario: input.scenario,
       completedChecks: checks.length,
@@ -139,7 +139,7 @@ export const runtimeSmoke = task({
       checks,
     }
     await writeFile("runtime-smoke-report.json", `${JSON.stringify(report, null, 2)}\n`)
-    await ctx.session.output(channels.output("runtime-smoke.report", { schema: z.unknown() })).append(report, { contentType: "application/vnd.helmr.runtime-smoke+json" })
+    await ctx.session.output(channel.output("runtime-smoke.report", { schema: z.unknown() })).append(report, { contentType: "application/vnd.helmr.runtime-smoke+json" })
     if (failures.length > 0) {
       logger.error({ phase: "runtime-smoke", marker, failures })
       throw new Error(`runtime smoke failed ${failures.length} check(s): ${failures.map((check) => check.name).join(", ")}`)

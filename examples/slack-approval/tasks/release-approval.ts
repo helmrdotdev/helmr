@@ -1,4 +1,4 @@
-import { cache, channels, image, sandbox, source, task, type PayloadSchema } from "@helmr/sdk"
+import { cache, channel, image, sandbox, source, task, type PayloadSchema } from "@helmr/sdk"
 
 interface ReleaseApprovalPayload {
   readonly release: string
@@ -88,7 +88,7 @@ export const releaseApproval = task({
   maxDuration: 86400,
   payload: releasePayload,
   run: async (payload, ctx) => {
-    const approval = channels.input("approval", { schema: approvalDecision })
+    const approval = channel.input("approval", { schema: approvalDecision })
     const decision = await ctx.session.input(approval).wait({
       timeout: 86400,
       tags: ["approval", "channel:slack"],

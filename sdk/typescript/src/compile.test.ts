@@ -975,10 +975,10 @@ export default task({
     const cwd = await taskFixture(
       "wait-session-channel",
       `(() => {
-        const approval = ctx.session.input(channels.input("approval", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
+        const approval = ctx.session.input(channel.input("approval", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
         return approval.wait({ timeout: 5, tags: ["approval"] }).unwrap()
       })()`,
-      `import { channels } from "@helmr/sdk"\n`,
+      `import { channel } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
@@ -1012,13 +1012,13 @@ export default task({
     const cwd = await taskFixture(
       "wait-all",
       `(() => {
-        const approval = ctx.session.input(channels.input("approval", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
+        const approval = ctx.session.input(channel.input("approval", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
         return wait.all([
           wait.for({ seconds: 1 }),
           approval.wait({ correlationId: "thread-1" }),
         ])
       })()`,
-      `import { channels, wait } from "@helmr/sdk"\n`,
+      `import { channel, wait } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
@@ -1064,12 +1064,12 @@ export default task({
     const cwd = await taskFixture(
       "wait-session-channel-twice",
       `(async () => {
-        const numbers = ctx.session.input(channels.input("numbers", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
+        const numbers = ctx.session.input(channel.input("numbers", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
         const first = await numbers.wait().unwrap()
         const second = await numbers.wait().unwrap()
         return [first, second]
       })()`,
-      `import { channels } from "@helmr/sdk"\n`,
+      `import { channel } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
@@ -1115,13 +1115,13 @@ export default task({
     const cwd = await taskFixture(
       "wait-session-channel-correlated",
       `(async () => {
-        const replies = ctx.session.input(channels.input("replies", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
+        const replies = ctx.session.input(channel.input("replies", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
         const firstA = await replies.wait({ correlationId: "thread-a" }).unwrap()
         const firstB = await replies.wait({ correlationId: "thread-b" }).unwrap()
         const secondA = await replies.wait({ correlationId: " thread-a " }).unwrap()
         return [firstA, firstB, secondA]
       })()`,
-      `import { channels } from "@helmr/sdk"\n`,
+      `import { channel } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
@@ -1474,8 +1474,8 @@ export default task({
   test("adapter run emits durable channel output appends", async () => {
     const cwd = await taskFixture(
       "writes-channel-output",
-      "(() => { ctx.session.output(channels.output('agent.report', { schema: { '~standard': { version: 1, vendor: 'test', validate: (value: unknown) => ({ value }) } } })).append({ ok: true }, { contentType: 'application/json', objectRef: { path: 'report.json' } }); return { ok: true } })()",
-      `import { channels } from "@helmr/sdk"\n`,
+      "(() => { ctx.session.output(channel.output('agent.report', { schema: { '~standard': { version: 1, vendor: 'test', validate: (value: unknown) => ({ value }) } } })).append({ ok: true }, { contentType: 'application/json', objectRef: { path: 'report.json' } }); return { ok: true } })()",
+      `import { channel } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "writes-channel-output")
 
