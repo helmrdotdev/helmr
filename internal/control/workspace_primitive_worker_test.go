@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspaceop"
+	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -19,7 +19,7 @@ func TestWorkspacePrimitiveOperationFingerprintMatchesGuestdContract(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := workspaceop.CanonicalRequestFingerprint(workspaceOperationKindStartExec, request)
+	want, err := protocol.RequestFingerprint("StartExec", request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestWorkspacePrimitiveOperationFingerprintIgnoresJSONRepresentation(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	transported, err := workspaceop.CanonicalRequestFingerprint(workspaceOperationKindStartExec, []byte(`{ "detached": false, "command": [ "echo", "ok" ], "exec_id": "exec-1" }`))
+	transported, err := protocol.RequestFingerprint("StartExec", []byte(`{ "detached": false, "command": [ "echo", "ok" ], "exec_id": "exec-1" }`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,6 +157,15 @@ func TestWorkspacePtyClosingRejectsResizeAndAcceptsCloseRetry(t *testing.T) {
 	}
 	if _, err := server.requestWorkspacePtyCloseOperation(context.Background(), pty); err == nil || strings.Contains(err.Error(), "not open") {
 		t.Fatalf("close closing pty err = %v, want close retry to pass application state guard", err)
+	}
+}
+
+func TestNormalizeWorkspaceExecStateFilterRejectsUnknownState(t *testing.T) {
+	if got, err := normalizeWorkspaceExecStateFilter("running"); err != nil || got != db.WorkspaceExecStateRunning {
+		t.Fatalf("running state = %s err=%v", got, err)
+	}
+	if _, err := normalizeWorkspaceExecStateFilter("bogus"); err == nil || !strings.Contains(err.Error(), "state must be one of") {
+		t.Fatalf("bogus state err = %v", err)
 	}
 }
 

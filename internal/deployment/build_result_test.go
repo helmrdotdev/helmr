@@ -73,6 +73,29 @@ func TestDeploymentTaskMaxDurationSecondsRequiresBundleTaskValue(t *testing.T) {
 	}
 }
 
+func TestDeploymentTaskConcurrencyLimitUsesBundleQueue(t *testing.T) {
+	limit := uint32(12)
+	value, err := deploymentTaskConcurrencyLimit(&bundlev0.Bundle{
+		Task: &bundlev0.TaskSpec{Queue: &bundlev0.QueueSpec{ConcurrencyLimit: &limit}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value == nil || *value != 12 {
+		t.Fatalf("concurrency limit = %v, want 12", value)
+	}
+}
+
+func TestDeploymentTaskConcurrencyLimitRejectsOverflow(t *testing.T) {
+	limit := uint32(1 << 31)
+	_, err := deploymentTaskConcurrencyLimit(&bundlev0.Bundle{
+		Task: &bundlev0.TaskSpec{Queue: &bundlev0.QueueSpec{ConcurrencyLimit: &limit}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "concurrency_limit 2147483648 exceeds int32") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestDeploymentTaskRetryPolicyReadsBundleTask(t *testing.T) {
 	retryPolicy := deploymentTaskRetryPolicy(&bundlev0.Bundle{
 		Task: &bundlev0.TaskSpec{RetryPolicyJson: `{"maxAttempts":3,"backoff":{"minMs":1000,"maxMs":30000,"jitter":"full"}}`},
@@ -136,6 +159,97 @@ func TestDeploymentTaskNetworkReadsDenyCIDRs(t *testing.T) {
 	}
 	if !network.Internet || len(network.Deny) != 1 || network.Deny[0] != "10.0.0.0/8" {
 		t.Fatalf("network = %+v", network)
+	}
+}
+
+func TestSandboxContractFingerprintIgnoresNonContractBundleFields(t *testing.T) {
+	base := sandboxFingerprintTestBundle()
+	first, err := sandboxContractFingerprint(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Task = &bundlev0.TaskSpec{Id: "renamed-task", MaxDurationSeconds: 900}
+	base.Image = &bundlev0.ImageSpec{FormatVersion: 99}
+	second, err := sandboxContractFingerprint(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second != first {
+		t.Fatalf("non-contract bundle fields changed fingerprint: %s != %s", second, first)
+	}
+}
+
+func TestSandboxContractFingerprintChangesForContractFields(t *testing.T) {
+	base := sandboxFingerprintTestBundle()
+	first, err := sandboxContractFingerprint(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Sandbox.Workspace.MountPath = "/workspace/project"
+	second, err := sandboxContractFingerprint(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == first {
+		t.Fatalf("workspace mount path did not change fingerprint: %s", second)
+	}
+}
+
+func TestSandboxContractFingerprintCanonicalizesNetworkLists(t *testing.T) {
+	firstBundle := sandboxFingerprintTestBundle()
+	firstBundle.Sandbox.Network.Allow = []string{"b.example", "a.example"}
+	firstBundle.Sandbox.Network.Deny = []string{"10.0.0.0/8", "192.168.0.0/16"}
+	secondBundle := sandboxFingerprintTestBundle()
+	secondBundle.Sandbox.Network.Allow = []string{"a.example", "b.example"}
+	secondBundle.Sandbox.Network.Deny = []string{"192.168.0.0/16", "10.0.0.0/8"}
+	first, err := sandboxContractFingerprint(firstBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := sandboxContractFingerprint(secondBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second != first {
+		t.Fatalf("network set ordering changed fingerprint: %s != %s", second, first)
+	}
+}
+
+func TestSandboxContractFingerprintIgnoresResourceFloors(t *testing.T) {
+	base := sandboxFingerprintTestBundle()
+	first, err := sandboxContractFingerprint(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Sandbox.Resources.Cpu = 8
+	base.Sandbox.Resources.Memory = "16Gi"
+	base.Sandbox.Resources.Disk = "128Gi"
+	second, err := sandboxContractFingerprint(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second != first {
+		t.Fatalf("resource floors changed fingerprint: %s != %s", second, first)
+	}
+}
+
+func sandboxFingerprintTestBundle() *bundlev0.Bundle {
+	return &bundlev0.Bundle{
+		Sandbox: &bundlev0.SandboxSpec{
+			Id: "default",
+			Workspace: &bundlev0.WorkspaceRuntimeBinding{
+				MountPath: "/workspace",
+			},
+			Resources: &bundlev0.Resources{
+				Cpu:    2,
+				Memory: "4Gi",
+				Disk:   "32Gi",
+			},
+			Network: &bundlev0.NetworkPolicy{
+				Internet: true,
+			},
+		},
+		Task: &bundlev0.TaskSpec{Id: "task", MaxDurationSeconds: 300},
 	}
 }
 

@@ -298,6 +298,8 @@ func (s *Server) workerMarkWorkspacePtyResizeApplied(w http.ResponseWriter, r *h
 		WorkspaceID:       materialization.WorkspaceID,
 		ID:                ptyID,
 		MaterializationID: materialization.ID,
+		Cols:              pgtype.Int4{Int32: request.Cols, Valid: true},
+		Rows:              pgtype.Int4{Int32: request.Rows, Valid: true},
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -554,11 +556,11 @@ func (s *Server) appendWorkspacePtyOutputStreamChunk(ctx context.Context, pty db
 		ProjectID:        pty.ProjectID,
 		EnvironmentID:    pty.EnvironmentID,
 		WorkspaceID:      pty.WorkspaceID,
-		ResourceKind:     "workspace_pty",
+		ResourceKind:     db.WorkspaceResourceKindWorkspacePty,
 		ResourceID:       pty.ID,
 		Stream:           string(db.WorkspacePtyStreamOutput),
 		CursorOffset:     chunk.OffsetEnd,
-		NotificationKind: "chunk",
+		NotificationKind: db.WorkspaceStreamNotificationKindChunk,
 	}); err != nil {
 		return db.WorkspacePtyStreamChunk{}, err
 	}

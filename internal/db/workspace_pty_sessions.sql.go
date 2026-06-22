@@ -34,7 +34,7 @@ UPDATE workspace_pty_sessions
           AND chunks.offset_start = $7
           AND chunks.offset_end = $1
    )
-RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
 `
 
 type AdvanceWorkspacePtyInputDeliveredCursorParams struct {
@@ -70,6 +70,8 @@ func (q *Queries) AdvanceWorkspacePtyInputDeliveredCursor(ctx context.Context, a
 		&i.Cwd,
 		&i.Cols,
 		&i.Rows,
+		&i.ResizeCols,
+		&i.ResizeRows,
 		&i.FilesystemMode,
 		&i.State,
 		&i.ProcessID,
@@ -128,7 +130,7 @@ UPDATE workspace_pty_sessions
    AND workspace_pty_sessions.workspace_id = $5
    AND workspace_pty_sessions.id = $6
    AND $1::workspace_pty_stream = 'output'
-RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
 `
 
 type AdvanceWorkspacePtyOutputCursorParams struct {
@@ -162,6 +164,8 @@ func (q *Queries) AdvanceWorkspacePtyOutputCursor(ctx context.Context, arg Advan
 		&i.Cwd,
 		&i.Cols,
 		&i.Rows,
+		&i.ResizeCols,
+		&i.ResizeRows,
 		&i.FilesystemMode,
 		&i.State,
 		&i.ProcessID,
@@ -193,7 +197,7 @@ UPDATE workspace_pty_sessions
          WHEN 'input' THEN input_cursor
          WHEN 'output' THEN output_cursor
        END
-RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
 `
 
 type AdvanceWorkspacePtyStreamCursorParams struct {
@@ -231,6 +235,8 @@ func (q *Queries) AdvanceWorkspacePtyStreamCursor(ctx context.Context, arg Advan
 		&i.Cwd,
 		&i.Cols,
 		&i.Rows,
+		&i.ResizeCols,
+		&i.ResizeRows,
 		&i.FilesystemMode,
 		&i.State,
 		&i.ProcessID,
@@ -261,7 +267,7 @@ UPDATE workspace_pty_sessions
    AND workspace_id = $8
    AND id = $9
    AND state IN ('creating')
-RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
 `
 
 type BindWorkspacePtyMaterializationParams struct {
@@ -301,6 +307,8 @@ func (q *Queries) BindWorkspacePtyMaterialization(ctx context.Context, arg BindW
 		&i.Cwd,
 		&i.Cols,
 		&i.Rows,
+		&i.ResizeCols,
+		&i.ResizeRows,
 		&i.FilesystemMode,
 		&i.State,
 		&i.ProcessID,
@@ -353,7 +361,7 @@ SELECT $1,
    AND workspaces.state = 'active'
    AND workspaces.archived_at IS NULL
    AND workspaces.deleted_at IS NULL
-RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
 `
 
 type CreateWorkspacePtySessionParams struct {
@@ -399,6 +407,8 @@ func (q *Queries) CreateWorkspacePtySession(ctx context.Context, arg CreateWorks
 		&i.Cwd,
 		&i.Cols,
 		&i.Rows,
+		&i.ResizeCols,
+		&i.ResizeRows,
 		&i.FilesystemMode,
 		&i.State,
 		&i.ProcessID,
@@ -451,7 +461,7 @@ func (q *Queries) DeleteWorkspacePtyStreamChunksBefore(ctx context.Context, arg 
 }
 
 const getWorkspacePtySession = `-- name: GetWorkspacePtySession :one
-SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
   FROM workspace_pty_sessions
  WHERE org_id = $1
    AND project_id = $2
@@ -489,6 +499,8 @@ func (q *Queries) GetWorkspacePtySession(ctx context.Context, arg GetWorkspacePt
 		&i.Cwd,
 		&i.Cols,
 		&i.Rows,
+		&i.ResizeCols,
+		&i.ResizeRows,
 		&i.FilesystemMode,
 		&i.State,
 		&i.ProcessID,
@@ -937,7 +949,7 @@ func (q *Queries) ListWorkspacePtyInputChunksAfterDelivered(ctx context.Context,
 }
 
 const listWorkspacePtySessions = `-- name: ListWorkspacePtySessions :many
-SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
   FROM workspace_pty_sessions
  WHERE org_id = $1
    AND project_id = $2
@@ -985,6 +997,8 @@ func (q *Queries) ListWorkspacePtySessions(ctx context.Context, arg ListWorkspac
 			&i.Cwd,
 			&i.Cols,
 			&i.Rows,
+			&i.ResizeCols,
+			&i.ResizeRows,
 			&i.FilesystemMode,
 			&i.State,
 			&i.ProcessID,
@@ -1010,7 +1024,7 @@ func (q *Queries) ListWorkspacePtySessions(ctx context.Context, arg ListWorkspac
 }
 
 const listWorkspacePtySessionsAwaitingDispatch = `-- name: ListWorkspacePtySessionsAwaitingDispatch :many
-SELECT workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+SELECT workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
   FROM workspace_pty_sessions
   JOIN workspace_materializations
     ON workspace_materializations.org_id = workspace_pty_sessions.org_id
@@ -1066,6 +1080,8 @@ func (q *Queries) ListWorkspacePtySessionsAwaitingDispatch(ctx context.Context, 
 			&i.Cwd,
 			&i.Cols,
 			&i.Rows,
+			&i.ResizeCols,
+			&i.ResizeRows,
 			&i.FilesystemMode,
 			&i.State,
 			&i.ProcessID,
@@ -1220,6 +1236,8 @@ const markWorkspacePtyClosed = `-- name: MarkWorkspacePtyClosed :one
 WITH updated_pty AS (
     UPDATE workspace_pty_sessions
        SET state = 'closed',
+           resize_cols = NULL,
+           resize_rows = NULL,
            closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
            updated_at = now()
      WHERE workspace_pty_sessions.org_id = $1
@@ -1229,7 +1247,7 @@ WITH updated_pty AS (
        AND workspace_pty_sessions.id = $5
        AND workspace_pty_sessions.materialization_id = $6
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+    RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
 ),
 released_write_lease AS (
     UPDATE workspace_leases
@@ -1261,7 +1279,7 @@ stream_wakeups AS (
       FROM updated_pty
     RETURNING id
 )
-SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
   FROM updated_pty
  WHERE (SELECT count(*) FROM stream_wakeups) >= 0
 `
@@ -1287,6 +1305,8 @@ type MarkWorkspacePtyClosedRow struct {
 	Cwd                  string                  `json:"cwd"`
 	Cols                 int32                   `json:"cols"`
 	Rows                 int32                   `json:"rows"`
+	ResizeCols           pgtype.Int4             `json:"resize_cols"`
+	ResizeRows           pgtype.Int4             `json:"resize_rows"`
 	FilesystemMode       WorkspaceFilesystemMode `json:"filesystem_mode"`
 	State                WorkspacePtyState       `json:"state"`
 	ProcessID            string                  `json:"process_id"`
@@ -1324,6 +1344,8 @@ func (q *Queries) MarkWorkspacePtyClosed(ctx context.Context, arg MarkWorkspaceP
 		&i.Cwd,
 		&i.Cols,
 		&i.Rows,
+		&i.ResizeCols,
+		&i.ResizeRows,
 		&i.FilesystemMode,
 		&i.State,
 		&i.ProcessID,
@@ -1345,6 +1367,8 @@ const markWorkspacePtyFailed = `-- name: MarkWorkspacePtyFailed :one
 WITH updated_pty AS (
     UPDATE workspace_pty_sessions
        SET state = 'failed',
+           resize_cols = NULL,
+           resize_rows = NULL,
            error = coalesce($1::jsonb, '{}'::jsonb),
            closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
            updated_at = now()
@@ -1355,7 +1379,7 @@ WITH updated_pty AS (
        AND workspace_pty_sessions.id = $6
        AND workspace_pty_sessions.materialization_id = $7
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+    RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
 ),
 released_write_lease AS (
     UPDATE workspace_leases
@@ -1387,7 +1411,7 @@ stream_wakeups AS (
       FROM updated_pty
     RETURNING id
 )
-SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
   FROM updated_pty
  WHERE (SELECT count(*) FROM stream_wakeups) >= 0
 `
@@ -1414,6 +1438,8 @@ type MarkWorkspacePtyFailedRow struct {
 	Cwd                  string                  `json:"cwd"`
 	Cols                 int32                   `json:"cols"`
 	Rows                 int32                   `json:"rows"`
+	ResizeCols           pgtype.Int4             `json:"resize_cols"`
+	ResizeRows           pgtype.Int4             `json:"resize_rows"`
 	FilesystemMode       WorkspaceFilesystemMode `json:"filesystem_mode"`
 	State                WorkspacePtyState       `json:"state"`
 	ProcessID            string                  `json:"process_id"`
@@ -1452,6 +1478,8 @@ func (q *Queries) MarkWorkspacePtyFailed(ctx context.Context, arg MarkWorkspaceP
 		&i.Cwd,
 		&i.Cols,
 		&i.Rows,
+		&i.ResizeCols,
+		&i.ResizeRows,
 		&i.FilesystemMode,
 		&i.State,
 		&i.ProcessID,
@@ -1471,7 +1499,7 @@ func (q *Queries) MarkWorkspacePtyFailed(ctx context.Context, arg MarkWorkspaceP
 
 const markWorkspacePtyOpen = `-- name: MarkWorkspacePtyOpen :one
 WITH target AS MATERIALIZED (
-    SELECT workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+    SELECT workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
       FROM workspace_pty_sessions
       JOIN workspace_materializations
         ON workspace_materializations.org_id = workspace_pty_sessions.org_id
@@ -1501,7 +1529,7 @@ updated_pty AS (
        AND workspace_pty_sessions.environment_id = target.environment_id
        AND workspace_pty_sessions.workspace_id = target.workspace_id
        AND workspace_pty_sessions.id = target.id
-    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
 ),
 dirtied_materialization AS (
     UPDATE workspace_materializations
@@ -1539,7 +1567,7 @@ updated_workspace AS (
        AND workspaces.id = dirtied_materialization.workspace_id
     RETURNING workspaces.id
 )
-SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
   FROM updated_pty
  WHERE (SELECT count(*) FROM updated_workspace) >= 0
 `
@@ -1566,6 +1594,8 @@ type MarkWorkspacePtyOpenRow struct {
 	Cwd                  string                  `json:"cwd"`
 	Cols                 int32                   `json:"cols"`
 	Rows                 int32                   `json:"rows"`
+	ResizeCols           pgtype.Int4             `json:"resize_cols"`
+	ResizeRows           pgtype.Int4             `json:"resize_rows"`
 	FilesystemMode       WorkspaceFilesystemMode `json:"filesystem_mode"`
 	State                WorkspacePtyState       `json:"state"`
 	ProcessID            string                  `json:"process_id"`
@@ -1604,6 +1634,8 @@ func (q *Queries) MarkWorkspacePtyOpen(ctx context.Context, arg MarkWorkspacePty
 		&i.Cwd,
 		&i.Cols,
 		&i.Rows,
+		&i.ResizeCols,
+		&i.ResizeRows,
 		&i.FilesystemMode,
 		&i.State,
 		&i.ProcessID,
@@ -1623,7 +1655,11 @@ func (q *Queries) MarkWorkspacePtyOpen(ctx context.Context, arg MarkWorkspacePty
 
 const markWorkspacePtyResizeApplied = `-- name: MarkWorkspacePtyResizeApplied :one
 UPDATE workspace_pty_sessions
-   SET state = 'open',
+   SET cols = resize_cols,
+       rows = resize_rows,
+       resize_cols = NULL,
+       resize_rows = NULL,
+       state = CASE WHEN state = 'closing' THEN 'closing'::workspace_pty_state ELSE 'open'::workspace_pty_state END,
        updated_at = now()
  WHERE org_id = $1
    AND project_id = $2
@@ -1631,8 +1667,10 @@ UPDATE workspace_pty_sessions
    AND workspace_id = $4
    AND id = $5
    AND materialization_id = $6
-   AND state = 'resizing'
-RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+   AND state IN ('resizing', 'closing')
+   AND resize_cols = $7
+   AND resize_rows = $8
+RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
 `
 
 type MarkWorkspacePtyResizeAppliedParams struct {
@@ -1642,6 +1680,8 @@ type MarkWorkspacePtyResizeAppliedParams struct {
 	WorkspaceID       pgtype.UUID `json:"workspace_id"`
 	ID                pgtype.UUID `json:"id"`
 	MaterializationID pgtype.UUID `json:"materialization_id"`
+	Cols              pgtype.Int4 `json:"cols"`
+	Rows              pgtype.Int4 `json:"rows"`
 }
 
 func (q *Queries) MarkWorkspacePtyResizeApplied(ctx context.Context, arg MarkWorkspacePtyResizeAppliedParams) (WorkspacePtySession, error) {
@@ -1652,6 +1692,8 @@ func (q *Queries) MarkWorkspacePtyResizeApplied(ctx context.Context, arg MarkWor
 		arg.WorkspaceID,
 		arg.ID,
 		arg.MaterializationID,
+		arg.Cols,
+		arg.Rows,
 	)
 	var i WorkspacePtySession
 	err := row.Scan(
@@ -1666,6 +1708,8 @@ func (q *Queries) MarkWorkspacePtyResizeApplied(ctx context.Context, arg MarkWor
 		&i.Cwd,
 		&i.Cols,
 		&i.Rows,
+		&i.ResizeCols,
+		&i.ResizeRows,
 		&i.FilesystemMode,
 		&i.State,
 		&i.ProcessID,
@@ -1686,6 +1730,8 @@ func (q *Queries) MarkWorkspacePtyResizeApplied(ctx context.Context, arg MarkWor
 const requestWorkspacePtyClose = `-- name: RequestWorkspacePtyClose :one
 UPDATE workspace_pty_sessions
    SET state = 'closing',
+       resize_cols = CASE WHEN state IN ('resizing', 'closing') THEN resize_cols ELSE NULL END,
+       resize_rows = CASE WHEN state IN ('resizing', 'closing') THEN resize_rows ELSE NULL END,
        updated_at = now()
  WHERE org_id = $1
    AND project_id = $2
@@ -1693,7 +1739,7 @@ UPDATE workspace_pty_sessions
    AND workspace_id = $4
    AND id = $5
    AND state IN ('open', 'resizing', 'closing')
-RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
 `
 
 type RequestWorkspacePtyCloseParams struct {
@@ -1725,6 +1771,8 @@ func (q *Queries) RequestWorkspacePtyClose(ctx context.Context, arg RequestWorks
 		&i.Cwd,
 		&i.Cols,
 		&i.Rows,
+		&i.ResizeCols,
+		&i.ResizeRows,
 		&i.FilesystemMode,
 		&i.State,
 		&i.ProcessID,
@@ -1744,9 +1792,9 @@ func (q *Queries) RequestWorkspacePtyClose(ctx context.Context, arg RequestWorks
 
 const resizeWorkspacePtySession = `-- name: ResizeWorkspacePtySession :one
 UPDATE workspace_pty_sessions
-   SET cols = $1,
-       rows = $2,
-       state = CASE WHEN state = 'open' THEN 'resizing'::workspace_pty_state ELSE state END,
+   SET resize_cols = $1,
+       resize_rows = $2,
+       state = 'resizing',
        updated_at = now()
  WHERE org_id = $3
    AND project_id = $4
@@ -1754,12 +1802,12 @@ UPDATE workspace_pty_sessions
    AND workspace_id = $6
    AND id = $7
    AND state IN ('open', 'resizing')
-RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
 `
 
 type ResizeWorkspacePtySessionParams struct {
-	Cols          int32       `json:"cols"`
-	Rows          int32       `json:"rows"`
+	Cols          pgtype.Int4 `json:"cols"`
+	Rows          pgtype.Int4 `json:"rows"`
 	OrgID         pgtype.UUID `json:"org_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
@@ -1790,6 +1838,105 @@ func (q *Queries) ResizeWorkspacePtySession(ctx context.Context, arg ResizeWorks
 		&i.Cwd,
 		&i.Cols,
 		&i.Rows,
+		&i.ResizeCols,
+		&i.ResizeRows,
+		&i.FilesystemMode,
+		&i.State,
+		&i.ProcessID,
+		&i.OutputCursor,
+		&i.InputCursor,
+		&i.InputDeliveredCursor,
+		&i.CreatedBySubjectType,
+		&i.CreatedBySubjectID,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.ClosedAt,
+		&i.UpdatedAt,
+		&i.Error,
+	)
+	return i, err
+}
+
+const rollbackWorkspacePtyControlOperation = `-- name: RollbackWorkspacePtyControlOperation :one
+UPDATE workspace_pty_sessions
+   SET state = CASE
+           WHEN $1::workspace_materialization_operation_kind = 'close_pty'
+                AND resize_cols IS NOT NULL
+                AND resize_rows IS NOT NULL
+               THEN 'resizing'::workspace_pty_state
+           ELSE 'open'::workspace_pty_state
+       END,
+       resize_cols = CASE
+           WHEN $1::workspace_materialization_operation_kind = 'close_pty'
+               THEN resize_cols
+           ELSE NULL
+       END,
+       resize_rows = CASE
+           WHEN $1::workspace_materialization_operation_kind = 'close_pty'
+               THEN resize_rows
+           ELSE NULL
+       END,
+       updated_at = now()
+ WHERE workspace_pty_sessions.org_id = $2
+   AND workspace_pty_sessions.project_id = $3
+   AND workspace_pty_sessions.environment_id = $4
+   AND workspace_pty_sessions.workspace_id = $5
+   AND workspace_pty_sessions.id = $6
+   AND workspace_pty_sessions.materialization_id = $7
+   AND (
+       (
+           $1::workspace_materialization_operation_kind = 'resize_pty'
+           AND workspace_pty_sessions.state = 'resizing'
+           AND workspace_pty_sessions.resize_cols = $8
+           AND workspace_pty_sessions.resize_rows = $9
+       )
+       OR (
+           $1::workspace_materialization_operation_kind = 'close_pty'
+           AND workspace_pty_sessions.state = 'closing'
+       )
+   )
+RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, instance_lease_id, write_lease_id, cwd, cols, rows, resize_cols, resize_rows, filesystem_mode, state, process_id, output_cursor, input_cursor, input_delivered_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, closed_at, updated_at, error
+`
+
+type RollbackWorkspacePtyControlOperationParams struct {
+	OperationKind     WorkspaceMaterializationOperationKind `json:"operation_kind"`
+	OrgID             pgtype.UUID                           `json:"org_id"`
+	ProjectID         pgtype.UUID                           `json:"project_id"`
+	EnvironmentID     pgtype.UUID                           `json:"environment_id"`
+	WorkspaceID       pgtype.UUID                           `json:"workspace_id"`
+	ID                pgtype.UUID                           `json:"id"`
+	MaterializationID pgtype.UUID                           `json:"materialization_id"`
+	Cols              pgtype.Int4                           `json:"cols"`
+	Rows              pgtype.Int4                           `json:"rows"`
+}
+
+func (q *Queries) RollbackWorkspacePtyControlOperation(ctx context.Context, arg RollbackWorkspacePtyControlOperationParams) (WorkspacePtySession, error) {
+	row := q.db.QueryRow(ctx, rollbackWorkspacePtyControlOperation,
+		arg.OperationKind,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.ID,
+		arg.MaterializationID,
+		arg.Cols,
+		arg.Rows,
+	)
+	var i WorkspacePtySession
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.MaterializationID,
+		&i.InstanceLeaseID,
+		&i.WriteLeaseID,
+		&i.Cwd,
+		&i.Cols,
+		&i.Rows,
+		&i.ResizeCols,
+		&i.ResizeRows,
 		&i.FilesystemMode,
 		&i.State,
 		&i.ProcessID,

@@ -26,8 +26,8 @@ const (
 	defaultWorkspaceListLimit      = int32(100)
 	maxWorkspaceListLimit          = int32(200)
 	defaultWorkspaceIdempotencyTTL = 24 * time.Hour
-	workspaceCreateOperationKind   = "workspace.create"
-	workspaceStopOperationKind     = "workspace.stop"
+	workspaceCreateOperationKind   = db.WorkspaceOperationIdempotencyKindWorkspaceCreate
+	workspaceStopOperationKind     = db.WorkspaceOperationIdempotencyKindWorkspaceStop
 )
 
 var errWorkspaceOperationPending = codedError{code: "idempotency_pending", message: "workspace_operation_pending"}
@@ -100,7 +100,7 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionWorkspacesWrite, scope) {
+	if !actor.HasPermission(auth.PermissionWorkspaceLifecycleManage, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
@@ -123,7 +123,7 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionWorkspacesRead, scope) {
+	if !actorHasAnyPermission(actor, scope, workspaceReadPermissions()...) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
@@ -159,7 +159,7 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
-	row, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspacesRead)
+	row, ok := s.loadWorkspaceForRequest(w, r, workspaceReadPermissions()...)
 	if !ok {
 		return
 	}
@@ -167,7 +167,7 @@ func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) patchWorkspace(w http.ResponseWriter, r *http.Request) {
-	current, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspacesManage)
+	current, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspaceLifecycleManage)
 	if !ok {
 		return
 	}
@@ -210,7 +210,7 @@ func (s *Server) patchWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
-	current, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspacesManage)
+	current, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspaceLifecycleManage)
 	if !ok {
 		return
 	}
@@ -447,7 +447,7 @@ func (s *Server) createInitialWorkspaceArtifact(ctx context.Context, store db.Qu
 	return workspaceArtifact, emptyArtifact, nil
 }
 
-func (s *Server) loadWorkspaceForRequest(w http.ResponseWriter, r *http.Request, permission auth.Permission) (db.Workspace, bool) {
+func (s *Server) loadWorkspaceForRequest(w http.ResponseWriter, r *http.Request, permissions ...auth.Permission) (db.Workspace, bool) {
 	workspaceID, err := parseUUIDParam(r, "workspaceID")
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -459,7 +459,7 @@ func (s *Server) loadWorkspaceForRequest(w http.ResponseWriter, r *http.Request,
 		writeError(w, badRequest(err))
 		return db.Workspace{}, false
 	}
-	if !actor.HasPermission(permission, scope) {
+	if !actorHasAnyPermission(actor, scope, permissions...) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return db.Workspace{}, false
 	}

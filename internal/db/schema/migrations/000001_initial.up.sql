@@ -591,6 +591,30 @@ CREATE TYPE workspace_materialization_operation_state AS ENUM (
     'expired'
 );
 
+CREATE TYPE workspace_materialization_operation_kind AS ENUM (
+    'start_exec',
+    'create_pty',
+    'resize_pty',
+    'close_pty'
+);
+
+CREATE TYPE workspace_resource_kind AS ENUM (
+    'workspace_exec',
+    'workspace_pty'
+);
+
+CREATE TYPE workspace_stream_notification_kind AS ENUM (
+    'chunk',
+    'terminal'
+);
+
+CREATE TYPE workspace_operation_idempotency_kind AS ENUM (
+    'workspace_create',
+    'workspace_stop',
+    'workspace_exec_create',
+    'workspace_pty_create'
+);
+
 CREATE TYPE workspace_lease_kind AS ENUM (
     'instance',
     'write'
@@ -605,7 +629,6 @@ CREATE TYPE workspace_lease_state AS ENUM (
 );
 
 CREATE TYPE workspace_filesystem_mode AS ENUM (
-    'read',
     'write'
 );
 
@@ -949,6 +972,7 @@ CREATE TABLE workspaces (
     sandbox_fingerprint TEXT NOT NULL CHECK (btrim(sandbox_fingerprint) <> ''),
     external_id TEXT NOT NULL DEFAULT '' CHECK (external_id = btrim(external_id) AND octet_length(external_id) <= 512),
     current_version_id UUID,
+    current_version_required_state workspace_version_state GENERATED ALWAYS AS ('ready'::workspace_version_state) STORED,
     state workspace_state NOT NULL DEFAULT 'active',
     desired_state workspace_desired_state NOT NULL DEFAULT 'active',
     dirty_state workspace_dirty_state NOT NULL DEFAULT 'clean',
@@ -1385,6 +1409,8 @@ CREATE TABLE workspace_pty_sessions (
     cwd TEXT NOT NULL DEFAULT '',
     cols INTEGER NOT NULL CHECK (cols > 0),
     rows INTEGER NOT NULL CHECK (rows > 0),
+    resize_cols INTEGER CHECK (resize_cols IS NULL OR resize_cols > 0),
+    resize_rows INTEGER CHECK (resize_rows IS NULL OR resize_rows > 0),
     filesystem_mode workspace_filesystem_mode NOT NULL DEFAULT 'write',
     state workspace_pty_state NOT NULL DEFAULT 'creating',
     process_id TEXT NOT NULL DEFAULT '',
@@ -1397,7 +1423,11 @@ CREATE TABLE workspace_pty_sessions (
     started_at TIMESTAMPTZ,
     closed_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    error JSONB NOT NULL DEFAULT '{}'::jsonb,
+	    error JSONB NOT NULL DEFAULT '{}'::jsonb,
+	    CHECK (
+	        (resize_cols IS NULL AND resize_rows IS NULL)
+	        OR (resize_cols IS NOT NULL AND resize_rows IS NOT NULL)
+	    ),
     UNIQUE (org_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
@@ -1429,7 +1459,6 @@ CREATE TABLE workspace_ports (
     protocol workspace_port_protocol NOT NULL DEFAULT 'http',
     state workspace_port_state NOT NULL DEFAULT 'exposing',
     auth_mode workspace_port_auth_mode NOT NULL DEFAULT 'private',
-    public_access_token_id UUID,
     url TEXT NOT NULL DEFAULT '',
     expires_at TIMESTAMPTZ,
     created_by_subject_type TEXT NOT NULL DEFAULT '',
@@ -1504,6 +1533,7 @@ CREATE TABLE workspace_versions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, workspace_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
+    UNIQUE (org_id, project_id, environment_id, workspace_id, id, state),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
@@ -1563,6 +1593,12 @@ ALTER TABLE workspaces
     FOREIGN KEY (org_id, project_id, environment_id, id, current_version_id)
     REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id)
     ON DELETE SET NULL (current_version_id)
+    DEFERRABLE INITIALLY DEFERRED;
+
+ALTER TABLE workspaces
+    ADD CONSTRAINT workspaces_current_version_ready_fkey
+    FOREIGN KEY (org_id, project_id, environment_id, id, current_version_id, current_version_required_state)
+    REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id, state)
     DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE workspace_exec_stream_chunks (
@@ -1649,7 +1685,7 @@ CREATE TABLE workspace_operation_idempotencies (
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID,
-    operation_kind TEXT NOT NULL CHECK (btrim(operation_kind) <> ''),
+    operation_kind workspace_operation_idempotency_kind NOT NULL,
     idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
     request_fingerprint TEXT NOT NULL CHECK (btrim(request_fingerprint) <> ''),
     response_resource_type TEXT NOT NULL DEFAULT '',
@@ -1672,9 +1708,9 @@ CREATE TABLE workspace_materialization_operations (
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
     materialization_id UUID NOT NULL,
-    operation_kind TEXT NOT NULL CHECK (btrim(operation_kind) <> ''),
-    resource_kind TEXT NOT NULL DEFAULT '',
-    resource_id UUID,
+    operation_kind workspace_materialization_operation_kind NOT NULL,
+    resource_kind workspace_resource_kind NOT NULL,
+    resource_id UUID NOT NULL,
     request_fingerprint TEXT NOT NULL CHECK (btrim(request_fingerprint) <> ''),
     operation_expires_at TIMESTAMPTZ NOT NULL,
     state workspace_materialization_operation_state NOT NULL DEFAULT 'queued',
@@ -1698,6 +1734,18 @@ CREATE TABLE workspace_materialization_operations (
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
     UNIQUE (org_id, materialization_id, id),
+    CHECK (
+        (
+            operation_kind = 'start_exec'
+            AND resource_kind = 'workspace_exec'
+            AND resource_id IS NOT NULL
+        )
+        OR (
+            operation_kind IN ('create_pty', 'resize_pty', 'close_pty')
+            AND resource_kind = 'workspace_pty'
+            AND resource_id IS NOT NULL
+        )
+    ),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, materialization_id)
         REFERENCES workspace_materializations(org_id, project_id, environment_id, workspace_id, id)
         ON DELETE CASCADE,
@@ -1776,12 +1824,6 @@ CREATE TABLE public_access_tokens (
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE
 );
-
-ALTER TABLE workspace_ports
-    ADD CONSTRAINT workspace_ports_public_access_token_id_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, public_access_token_id)
-    REFERENCES public_access_tokens(org_id, project_id, environment_id, id)
-    ON DELETE SET NULL (public_access_token_id);
 
 CREATE TABLE channel_records (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -2038,11 +2080,11 @@ CREATE TABLE workspace_stream_wakeups (
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
-    resource_kind TEXT NOT NULL CHECK (resource_kind IN ('workspace_exec', 'workspace_pty')),
+    resource_kind workspace_resource_kind NOT NULL,
     resource_id UUID NOT NULL,
     stream TEXT NOT NULL CHECK (btrim(stream) <> ''),
     cursor_offset BIGINT NOT NULL CHECK (cursor_offset >= 0),
-    notification_kind TEXT NOT NULL CHECK (notification_kind IN ('chunk', 'terminal')),
+    notification_kind workspace_stream_notification_kind NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     locked_until TIMESTAMPTZ,
     last_error TEXT NOT NULL DEFAULT '',

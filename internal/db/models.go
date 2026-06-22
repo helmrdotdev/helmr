@@ -1568,7 +1568,6 @@ func (ns NullWorkspaceExecStream) Value() (driver.Value, error) {
 type WorkspaceFilesystemMode string
 
 const (
-	WorkspaceFilesystemModeRead  WorkspaceFilesystemMode = "read"
 	WorkspaceFilesystemModeWrite WorkspaceFilesystemMode = "write"
 )
 
@@ -1694,6 +1693,50 @@ func (ns NullWorkspaceLeaseState) Value() (driver.Value, error) {
 	return string(ns.WorkspaceLeaseState), nil
 }
 
+type WorkspaceMaterializationOperationKind string
+
+const (
+	WorkspaceMaterializationOperationKindStartExec WorkspaceMaterializationOperationKind = "start_exec"
+	WorkspaceMaterializationOperationKindCreatePty WorkspaceMaterializationOperationKind = "create_pty"
+	WorkspaceMaterializationOperationKindResizePty WorkspaceMaterializationOperationKind = "resize_pty"
+	WorkspaceMaterializationOperationKindClosePty  WorkspaceMaterializationOperationKind = "close_pty"
+)
+
+func (e *WorkspaceMaterializationOperationKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = WorkspaceMaterializationOperationKind(s)
+	case string:
+		*e = WorkspaceMaterializationOperationKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for WorkspaceMaterializationOperationKind: %T", src)
+	}
+	return nil
+}
+
+type NullWorkspaceMaterializationOperationKind struct {
+	WorkspaceMaterializationOperationKind WorkspaceMaterializationOperationKind `json:"workspace_materialization_operation_kind"`
+	Valid                                 bool                                  `json:"valid"` // Valid is true if WorkspaceMaterializationOperationKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullWorkspaceMaterializationOperationKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.WorkspaceMaterializationOperationKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.WorkspaceMaterializationOperationKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullWorkspaceMaterializationOperationKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.WorkspaceMaterializationOperationKind), nil
+}
+
 type WorkspaceMaterializationOperationState string
 
 const (
@@ -1791,6 +1834,50 @@ func (ns NullWorkspaceMaterializationState) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.WorkspaceMaterializationState), nil
+}
+
+type WorkspaceOperationIdempotencyKind string
+
+const (
+	WorkspaceOperationIdempotencyKindWorkspaceCreate     WorkspaceOperationIdempotencyKind = "workspace_create"
+	WorkspaceOperationIdempotencyKindWorkspaceStop       WorkspaceOperationIdempotencyKind = "workspace_stop"
+	WorkspaceOperationIdempotencyKindWorkspaceExecCreate WorkspaceOperationIdempotencyKind = "workspace_exec_create"
+	WorkspaceOperationIdempotencyKindWorkspacePtyCreate  WorkspaceOperationIdempotencyKind = "workspace_pty_create"
+)
+
+func (e *WorkspaceOperationIdempotencyKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = WorkspaceOperationIdempotencyKind(s)
+	case string:
+		*e = WorkspaceOperationIdempotencyKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for WorkspaceOperationIdempotencyKind: %T", src)
+	}
+	return nil
+}
+
+type NullWorkspaceOperationIdempotencyKind struct {
+	WorkspaceOperationIdempotencyKind WorkspaceOperationIdempotencyKind `json:"workspace_operation_idempotency_kind"`
+	Valid                             bool                              `json:"valid"` // Valid is true if WorkspaceOperationIdempotencyKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullWorkspaceOperationIdempotencyKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.WorkspaceOperationIdempotencyKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.WorkspaceOperationIdempotencyKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullWorkspaceOperationIdempotencyKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.WorkspaceOperationIdempotencyKind), nil
 }
 
 type WorkspacePortAuthMode string
@@ -2012,6 +2099,48 @@ func (ns NullWorkspacePtyStream) Value() (driver.Value, error) {
 	return string(ns.WorkspacePtyStream), nil
 }
 
+type WorkspaceResourceKind string
+
+const (
+	WorkspaceResourceKindWorkspaceExec WorkspaceResourceKind = "workspace_exec"
+	WorkspaceResourceKindWorkspacePty  WorkspaceResourceKind = "workspace_pty"
+)
+
+func (e *WorkspaceResourceKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = WorkspaceResourceKind(s)
+	case string:
+		*e = WorkspaceResourceKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for WorkspaceResourceKind: %T", src)
+	}
+	return nil
+}
+
+type NullWorkspaceResourceKind struct {
+	WorkspaceResourceKind WorkspaceResourceKind `json:"workspace_resource_kind"`
+	Valid                 bool                  `json:"valid"` // Valid is true if WorkspaceResourceKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullWorkspaceResourceKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.WorkspaceResourceKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.WorkspaceResourceKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullWorkspaceResourceKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.WorkspaceResourceKind), nil
+}
+
 type WorkspaceState string
 
 const (
@@ -2055,6 +2184,48 @@ func (ns NullWorkspaceState) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.WorkspaceState), nil
+}
+
+type WorkspaceStreamNotificationKind string
+
+const (
+	WorkspaceStreamNotificationKindChunk    WorkspaceStreamNotificationKind = "chunk"
+	WorkspaceStreamNotificationKindTerminal WorkspaceStreamNotificationKind = "terminal"
+)
+
+func (e *WorkspaceStreamNotificationKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = WorkspaceStreamNotificationKind(s)
+	case string:
+		*e = WorkspaceStreamNotificationKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for WorkspaceStreamNotificationKind: %T", src)
+	}
+	return nil
+}
+
+type NullWorkspaceStreamNotificationKind struct {
+	WorkspaceStreamNotificationKind WorkspaceStreamNotificationKind `json:"workspace_stream_notification_kind"`
+	Valid                           bool                            `json:"valid"` // Valid is true if WorkspaceStreamNotificationKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullWorkspaceStreamNotificationKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.WorkspaceStreamNotificationKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.WorkspaceStreamNotificationKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullWorkspaceStreamNotificationKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.WorkspaceStreamNotificationKind), nil
 }
 
 type WorkspaceVersionKind string
@@ -3147,30 +3318,31 @@ type WorkerInstanceCredential struct {
 }
 
 type Workspace struct {
-	ID                    pgtype.UUID           `json:"id"`
-	OrgID                 pgtype.UUID           `json:"org_id"`
-	ProjectID             pgtype.UUID           `json:"project_id"`
-	EnvironmentID         pgtype.UUID           `json:"environment_id"`
-	DeploymentSandboxID   pgtype.UUID           `json:"deployment_sandbox_id"`
-	SandboxID             string                `json:"sandbox_id"`
-	SandboxFingerprint    string                `json:"sandbox_fingerprint"`
-	ExternalID            string                `json:"external_id"`
-	CurrentVersionID      pgtype.UUID           `json:"current_version_id"`
-	State                 WorkspaceState        `json:"state"`
-	DesiredState          WorkspaceDesiredState `json:"desired_state"`
-	DirtyState            WorkspaceDirtyState   `json:"dirty_state"`
-	LastMaterializationID pgtype.UUID           `json:"last_materialization_id"`
-	Metadata              []byte                `json:"metadata"`
-	Tags                  []string              `json:"tags"`
-	RetentionPolicy       []byte                `json:"retention_policy"`
-	AutoStopAt            pgtype.Timestamptz    `json:"auto_stop_at"`
-	AutoArchiveAt         pgtype.Timestamptz    `json:"auto_archive_at"`
-	AutoDeleteAt          pgtype.Timestamptz    `json:"auto_delete_at"`
-	LastActivityAt        pgtype.Timestamptz    `json:"last_activity_at"`
-	CreatedAt             pgtype.Timestamptz    `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz    `json:"updated_at"`
-	ArchivedAt            pgtype.Timestamptz    `json:"archived_at"`
-	DeletedAt             pgtype.Timestamptz    `json:"deleted_at"`
+	ID                          pgtype.UUID               `json:"id"`
+	OrgID                       pgtype.UUID               `json:"org_id"`
+	ProjectID                   pgtype.UUID               `json:"project_id"`
+	EnvironmentID               pgtype.UUID               `json:"environment_id"`
+	DeploymentSandboxID         pgtype.UUID               `json:"deployment_sandbox_id"`
+	SandboxID                   string                    `json:"sandbox_id"`
+	SandboxFingerprint          string                    `json:"sandbox_fingerprint"`
+	ExternalID                  string                    `json:"external_id"`
+	CurrentVersionID            pgtype.UUID               `json:"current_version_id"`
+	CurrentVersionRequiredState NullWorkspaceVersionState `json:"current_version_required_state"`
+	State                       WorkspaceState            `json:"state"`
+	DesiredState                WorkspaceDesiredState     `json:"desired_state"`
+	DirtyState                  WorkspaceDirtyState       `json:"dirty_state"`
+	LastMaterializationID       pgtype.UUID               `json:"last_materialization_id"`
+	Metadata                    []byte                    `json:"metadata"`
+	Tags                        []string                  `json:"tags"`
+	RetentionPolicy             []byte                    `json:"retention_policy"`
+	AutoStopAt                  pgtype.Timestamptz        `json:"auto_stop_at"`
+	AutoArchiveAt               pgtype.Timestamptz        `json:"auto_archive_at"`
+	AutoDeleteAt                pgtype.Timestamptz        `json:"auto_delete_at"`
+	LastActivityAt              pgtype.Timestamptz        `json:"last_activity_at"`
+	CreatedAt                   pgtype.Timestamptz        `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz        `json:"updated_at"`
+	ArchivedAt                  pgtype.Timestamptz        `json:"archived_at"`
+	DeletedAt                   pgtype.Timestamptz        `json:"deleted_at"`
 }
 
 type WorkspaceExec struct {
@@ -3332,8 +3504,8 @@ type WorkspaceMaterializationOperation struct {
 	EnvironmentID             pgtype.UUID                            `json:"environment_id"`
 	WorkspaceID               pgtype.UUID                            `json:"workspace_id"`
 	MaterializationID         pgtype.UUID                            `json:"materialization_id"`
-	OperationKind             string                                 `json:"operation_kind"`
-	ResourceKind              string                                 `json:"resource_kind"`
+	OperationKind             WorkspaceMaterializationOperationKind  `json:"operation_kind"`
+	ResourceKind              WorkspaceResourceKind                  `json:"resource_kind"`
 	ResourceID                pgtype.UUID                            `json:"resource_id"`
 	RequestFingerprint        string                                 `json:"request_fingerprint"`
 	OperationExpiresAt        pgtype.Timestamptz                     `json:"operation_expires_at"`
@@ -3357,20 +3529,20 @@ type WorkspaceMaterializationOperation struct {
 }
 
 type WorkspaceOperationIdempotency struct {
-	ID                   pgtype.UUID        `json:"id"`
-	OrgID                pgtype.UUID        `json:"org_id"`
-	ProjectID            pgtype.UUID        `json:"project_id"`
-	EnvironmentID        pgtype.UUID        `json:"environment_id"`
-	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
-	OperationKind        string             `json:"operation_kind"`
-	IdempotencyKey       string             `json:"idempotency_key"`
-	RequestFingerprint   string             `json:"request_fingerprint"`
-	ResponseResourceType string             `json:"response_resource_type"`
-	ResponseResourceID   pgtype.UUID        `json:"response_resource_id"`
-	ResponseBody         []byte             `json:"response_body"`
-	ExpiresAt            pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	LastUsedAt           pgtype.Timestamptz `json:"last_used_at"`
+	ID                   pgtype.UUID                       `json:"id"`
+	OrgID                pgtype.UUID                       `json:"org_id"`
+	ProjectID            pgtype.UUID                       `json:"project_id"`
+	EnvironmentID        pgtype.UUID                       `json:"environment_id"`
+	WorkspaceID          pgtype.UUID                       `json:"workspace_id"`
+	OperationKind        WorkspaceOperationIdempotencyKind `json:"operation_kind"`
+	IdempotencyKey       string                            `json:"idempotency_key"`
+	RequestFingerprint   string                            `json:"request_fingerprint"`
+	ResponseResourceType string                            `json:"response_resource_type"`
+	ResponseResourceID   pgtype.UUID                       `json:"response_resource_id"`
+	ResponseBody         []byte                            `json:"response_body"`
+	ExpiresAt            pgtype.Timestamptz                `json:"expires_at"`
+	CreatedAt            pgtype.Timestamptz                `json:"created_at"`
+	LastUsedAt           pgtype.Timestamptz                `json:"last_used_at"`
 }
 
 type WorkspacePort struct {
@@ -3387,7 +3559,6 @@ type WorkspacePort struct {
 	Protocol             WorkspacePortProtocol `json:"protocol"`
 	State                WorkspacePortState    `json:"state"`
 	AuthMode             WorkspacePortAuthMode `json:"auth_mode"`
-	PublicAccessTokenID  pgtype.UUID           `json:"public_access_token_id"`
 	Url                  string                `json:"url"`
 	ExpiresAt            pgtype.Timestamptz    `json:"expires_at"`
 	CreatedBySubjectType string                `json:"created_by_subject_type"`
@@ -3411,6 +3582,8 @@ type WorkspacePtySession struct {
 	Cwd                  string                  `json:"cwd"`
 	Cols                 int32                   `json:"cols"`
 	Rows                 int32                   `json:"rows"`
+	ResizeCols           pgtype.Int4             `json:"resize_cols"`
+	ResizeRows           pgtype.Int4             `json:"resize_rows"`
 	FilesystemMode       WorkspaceFilesystemMode `json:"filesystem_mode"`
 	State                WorkspacePtyState       `json:"state"`
 	ProcessID            string                  `json:"process_id"`
@@ -3458,20 +3631,20 @@ type WorkspacePtyStreamChunkReceipt struct {
 }
 
 type WorkspaceStreamWakeup struct {
-	ID               int64              `json:"id"`
-	OrgID            pgtype.UUID        `json:"org_id"`
-	ProjectID        pgtype.UUID        `json:"project_id"`
-	EnvironmentID    pgtype.UUID        `json:"environment_id"`
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	ResourceKind     string             `json:"resource_kind"`
-	ResourceID       pgtype.UUID        `json:"resource_id"`
-	Stream           string             `json:"stream"`
-	CursorOffset     int64              `json:"cursor_offset"`
-	NotificationKind string             `json:"notification_kind"`
-	Attempts         int32              `json:"attempts"`
-	LockedUntil      pgtype.Timestamptz `json:"locked_until"`
-	LastError        string             `json:"last_error"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ID               int64                           `json:"id"`
+	OrgID            pgtype.UUID                     `json:"org_id"`
+	ProjectID        pgtype.UUID                     `json:"project_id"`
+	EnvironmentID    pgtype.UUID                     `json:"environment_id"`
+	WorkspaceID      pgtype.UUID                     `json:"workspace_id"`
+	ResourceKind     WorkspaceResourceKind           `json:"resource_kind"`
+	ResourceID       pgtype.UUID                     `json:"resource_id"`
+	Stream           string                          `json:"stream"`
+	CursorOffset     int64                           `json:"cursor_offset"`
+	NotificationKind WorkspaceStreamNotificationKind `json:"notification_kind"`
+	Attempts         int32                           `json:"attempts"`
+	LockedUntil      pgtype.Timestamptz              `json:"locked_until"`
+	LastError        string                          `json:"last_error"`
+	CreatedAt        pgtype.Timestamptz              `json:"created_at"`
 }
 
 type WorkspaceVersion struct {

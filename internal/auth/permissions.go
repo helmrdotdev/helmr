@@ -10,22 +10,35 @@ import (
 type Permission string
 
 const (
-	PermissionAPIKeysManage           Permission = "api_keys.manage"
-	PermissionMembersManage           Permission = "members.manage"
-	PermissionProjectsManage          Permission = "projects.manage"
-	PermissionRunsCreate              Permission = "runs.create"
-	PermissionRunsRead                Permission = "runs.read"
-	PermissionRunsManage              Permission = "runs.manage"
-	PermissionWorkspacesRead          Permission = "workspaces.read"
-	PermissionWorkspacesWrite         Permission = "workspaces.write"
-	PermissionWorkspacesManage        Permission = "workspaces.manage"
-	PermissionRunWaitpointsRead       Permission = "waitpoints.read"
-	PermissionWaitpointTokensCreate   Permission = "waitpoint_tokens.create"
-	PermissionWaitpointTokensRead     Permission = "waitpoint_tokens.read"
-	PermissionWaitpointTokensComplete Permission = "waitpoint_tokens.complete"
-	PermissionChannelsWrite           Permission = "channels.write"
-	PermissionSecretsWrite            Permission = "secrets.write"
-	PermissionTasksDeploy             Permission = "tasks.deploy"
+	PermissionAPIKeysManage            Permission = "api_keys.manage"
+	PermissionMembersManage            Permission = "members.manage"
+	PermissionProjectsManage           Permission = "projects.manage"
+	PermissionRunsCreate               Permission = "runs.create"
+	PermissionRunsRead                 Permission = "runs.read"
+	PermissionRunsManage               Permission = "runs.manage"
+	PermissionWorkspaceLifecycleManage Permission = "workspace.lifecycle.manage"
+	PermissionFilesRead                Permission = "workspace.files.read"
+	PermissionFilesWrite               Permission = "workspace.files.write"
+	PermissionVersionsRead             Permission = "workspace.versions.read"
+	PermissionVersionsCapture          Permission = "workspace.versions.capture"
+	PermissionVersionsRestore          Permission = "workspace.versions.restore"
+	PermissionVersionsDiff             Permission = "workspace.versions.diff"
+	PermissionExecCreate               Permission = "workspace.exec.create"
+	PermissionExecRead                 Permission = "workspace.exec.read"
+	PermissionExecManage               Permission = "workspace.exec.manage"
+	PermissionPtyCreate                Permission = "workspace.pty.create"
+	PermissionPtyRead                  Permission = "workspace.pty.read"
+	PermissionPtyManage                Permission = "workspace.pty.manage"
+	PermissionPortsExpose              Permission = "workspace.ports.expose"
+	PermissionPortsRead                Permission = "workspace.ports.read"
+	PermissionPortsClose               Permission = "workspace.ports.close"
+	PermissionRunWaitpointsRead        Permission = "waitpoints.read"
+	PermissionWaitpointTokensCreate    Permission = "waitpoint_tokens.create"
+	PermissionWaitpointTokensRead      Permission = "waitpoint_tokens.read"
+	PermissionWaitpointTokensComplete  Permission = "waitpoint_tokens.complete"
+	PermissionChannelsWrite            Permission = "channels.write"
+	PermissionSecretsWrite             Permission = "secrets.write"
+	PermissionTasksDeploy              Permission = "tasks.deploy"
 )
 
 type Scope struct {
@@ -61,9 +74,22 @@ func RoleAllows(role Role, permission Permission) bool {
 		case PermissionRunsCreate,
 			PermissionRunsRead,
 			PermissionRunsManage,
-			PermissionWorkspacesRead,
-			PermissionWorkspacesWrite,
-			PermissionWorkspacesManage,
+			PermissionWorkspaceLifecycleManage,
+			PermissionFilesRead,
+			PermissionFilesWrite,
+			PermissionVersionsRead,
+			PermissionVersionsCapture,
+			PermissionVersionsRestore,
+			PermissionVersionsDiff,
+			PermissionExecCreate,
+			PermissionExecRead,
+			PermissionExecManage,
+			PermissionPtyCreate,
+			PermissionPtyRead,
+			PermissionPtyManage,
+			PermissionPortsExpose,
+			PermissionPortsRead,
+			PermissionPortsClose,
 			PermissionRunWaitpointsRead,
 			PermissionWaitpointTokensCreate,
 			PermissionWaitpointTokensRead,
@@ -76,7 +102,14 @@ func RoleAllows(role Role, permission Permission) bool {
 		}
 	case RoleViewer:
 		switch permission {
-		case PermissionRunsRead, PermissionWorkspacesRead, PermissionRunWaitpointsRead, PermissionWaitpointTokensRead:
+		case PermissionRunsRead,
+			PermissionFilesRead,
+			PermissionVersionsRead,
+			PermissionExecRead,
+			PermissionPtyRead,
+			PermissionPortsRead,
+			PermissionRunWaitpointsRead,
+			PermissionWaitpointTokensRead:
 			return true
 		default:
 			return false

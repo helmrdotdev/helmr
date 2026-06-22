@@ -3,8 +3,6 @@ package control
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,12 +16,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
-	workspacePtyCreateOperationKind = "workspace.pty.create"
+	workspacePtyCreateOperationKind = db.WorkspaceOperationIdempotencyKindWorkspacePtyCreate
 	workspacePtyListDefaultLimit    = int32(50)
 	workspacePtyListMaxLimit        = int32(200)
 )
@@ -34,7 +33,7 @@ var (
 )
 
 func (s *Server) createWorkspacePty(w http.ResponseWriter, r *http.Request) {
-	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspacesWrite)
+	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionPtyCreate)
 	if !ok {
 		return
 	}
@@ -54,8 +53,13 @@ func (s *Server) createWorkspacePty(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	fingerprint := workspacePtyCreateFingerprint(cwd, cols, rows)
-	row, cached, err := s.createWorkspacePtyForRequest(r.Context(), actor, workspace, cwd, cols, rows, strings.TrimSpace(request.IdempotencyKey), fingerprint)
+	filesystemMode := db.WorkspaceFilesystemModeWrite
+	fingerprint, err := workspacePtyCreateFingerprint(cwd, cols, rows, filesystemMode)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	row, cached, err := s.createWorkspacePtyForRequest(r.Context(), actor, workspace, cwd, cols, rows, filesystemMode, strings.TrimSpace(request.IdempotencyKey), fingerprint)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "create workspace pty", err)
 		return
@@ -68,7 +72,7 @@ func (s *Server) createWorkspacePty(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listWorkspacePtys(w http.ResponseWriter, r *http.Request) {
-	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspacesRead)
+	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionPtyRead)
 	if !ok {
 		return
 	}
@@ -121,7 +125,7 @@ func normalizeWorkspacePtyStateFilter(raw string) (db.WorkspacePtyState, error) 
 }
 
 func (s *Server) getWorkspacePty(w http.ResponseWriter, r *http.Request) {
-	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionWorkspacesRead)
+	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionPtyRead)
 	if !ok {
 		return
 	}
@@ -129,7 +133,7 @@ func (s *Server) getWorkspacePty(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeWorkspacePtyInput(w http.ResponseWriter, r *http.Request) {
-	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionWorkspacesWrite)
+	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionPtyManage)
 	if !ok {
 		return
 	}
@@ -147,7 +151,7 @@ func (s *Server) writeWorkspacePtyInput(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) listWorkspacePtyOutput(w http.ResponseWriter, r *http.Request) {
-	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionWorkspacesRead)
+	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionPtyRead)
 	if !ok {
 		return
 	}
@@ -196,7 +200,7 @@ func (s *Server) listWorkspacePtyOutput(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) resizeWorkspacePty(w http.ResponseWriter, r *http.Request) {
-	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionWorkspacesWrite)
+	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionPtyManage)
 	if !ok {
 		return
 	}
@@ -223,7 +227,7 @@ func (s *Server) closeWorkspacePty(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) requestWorkspacePtyClose(w http.ResponseWriter, r *http.Request) {
-	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionWorkspacesWrite)
+	pty, ok := s.loadWorkspacePtyForRequest(w, r, auth.PermissionPtyManage)
 	if !ok {
 		return
 	}
@@ -249,8 +253,8 @@ func (s *Server) requestWorkspacePtyResize(ctx context.Context, pty db.Workspace
 	defer func() { _ = tx.Rollback(ctx) }()
 	store := db.New(tx)
 	row, err := store.ResizeWorkspacePtySession(ctx, db.ResizeWorkspacePtySessionParams{
-		Cols:          cols,
-		Rows:          rows,
+		Cols:          pgtype.Int4{Int32: cols, Valid: true},
+		Rows:          pgtype.Int4{Int32: rows, Valid: true},
 		OrgID:         pty.OrgID,
 		ProjectID:     pty.ProjectID,
 		EnvironmentID: pty.EnvironmentID,
@@ -309,7 +313,7 @@ func (s *Server) requestWorkspacePtyCloseOperation(ctx context.Context, pty db.W
 	return row, nil
 }
 
-func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Actor, workspace db.Workspace, cwd string, cols int32, rows int32, idempotencyKey string, fingerprint string) (db.WorkspacePtySession, bool, error) {
+func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Actor, workspace db.Workspace, cwd string, cols int32, rows int32, filesystemMode db.WorkspaceFilesystemMode, idempotencyKey string, fingerprint string) (db.WorkspacePtySession, bool, error) {
 	if s.tx == nil {
 		return db.WorkspacePtySession{}, false, errors.New("transactional workspace storage is not configured")
 	}
@@ -362,7 +366,7 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 		Cwd:                  cwd,
 		Cols:                 cols,
 		Rows:                 rows,
-		FilesystemMode:       db.WorkspaceFilesystemModeWrite,
+		FilesystemMode:       filesystemMode,
 		State:                db.WorkspacePtyStateCreating,
 		CreatedBySubjectType: string(actor.Kind),
 		CreatedBySubjectID:   actorSubjectID(actor),
@@ -553,15 +557,17 @@ func workspacePtyChunkFromReceipt(receipt db.WorkspacePtyStreamChunkReceipt, dat
 	}
 }
 
-func workspacePtyCreateFingerprint(cwd string, cols int32, rows int32) string {
-	payload, _ := json.Marshal(struct {
+func workspacePtyCreateFingerprint(cwd string, cols int32, rows int32, filesystemMode db.WorkspaceFilesystemMode) (string, error) {
+	payload, err := json.Marshal(struct {
 		Cwd  string `json:"cwd"`
 		Cols int32  `json:"cols"`
 		Rows int32  `json:"rows"`
 		Mode string `json:"filesystem_mode"`
-	}{Cwd: cwd, Cols: cols, Rows: rows, Mode: "write"})
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:])
+	}{Cwd: cwd, Cols: cols, Rows: rows, Mode: string(filesystemMode)})
+	if err != nil {
+		return "", fmt.Errorf("encode workspace pty fingerprint payload: %w", err)
+	}
+	return protocol.RequestFingerprint(string(workspacePtyCreateOperationKind), payload)
 }
 
 func (s *Server) ensureWorkspacePtyCursorAvailable(ctx context.Context, pty db.WorkspacePtySession, stream db.WorkspacePtyStream, cursor int64) error {
@@ -644,6 +650,8 @@ func workspacePtyFromClosedRow(row db.MarkWorkspacePtyClosedRow) db.WorkspacePty
 		Cwd:                  row.Cwd,
 		Cols:                 row.Cols,
 		Rows:                 row.Rows,
+		ResizeCols:           row.ResizeCols,
+		ResizeRows:           row.ResizeRows,
 		FilesystemMode:       row.FilesystemMode,
 		State:                row.State,
 		ProcessID:            row.ProcessID,
@@ -673,6 +681,8 @@ func workspacePtyFromFailedRow(row db.MarkWorkspacePtyFailedRow) db.WorkspacePty
 		Cwd:                  row.Cwd,
 		Cols:                 row.Cols,
 		Rows:                 row.Rows,
+		ResizeCols:           row.ResizeCols,
+		ResizeRows:           row.ResizeRows,
 		FilesystemMode:       row.FilesystemMode,
 		State:                row.State,
 		ProcessID:            row.ProcessID,

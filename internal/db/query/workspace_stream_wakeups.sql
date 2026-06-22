@@ -14,11 +14,11 @@ INSERT INTO workspace_stream_wakeups (
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),
-    sqlc.arg(resource_kind),
+    sqlc.arg(resource_kind)::workspace_resource_kind,
     sqlc.arg(resource_id),
     sqlc.arg(stream),
     sqlc.arg(cursor_offset),
-    sqlc.arg(notification_kind)
+    sqlc.arg(notification_kind)::workspace_stream_notification_kind
 )
 RETURNING *;
 
@@ -49,10 +49,19 @@ DELETE FROM workspace_stream_wakeups
  WHERE id = sqlc.arg(id);
 
 -- name: MarkWorkspaceStreamWakeupFailed :exec
+WITH deleted_exhausted_chunk AS (
+    DELETE FROM workspace_stream_wakeups
+     WHERE id = sqlc.arg(id)
+       AND attempts >= sqlc.arg(max_attempts)::int
+       AND notification_kind <> 'terminal'
+    RETURNING id
+)
 UPDATE workspace_stream_wakeups
-   SET locked_until = CASE
-           WHEN attempts >= sqlc.arg(max_attempts)::int THEN NULL
-           ELSE now() + sqlc.arg(retry_after)::interval
+   SET attempts = CASE
+           WHEN attempts >= sqlc.arg(max_attempts)::int THEN sqlc.arg(max_attempts)::int - 1
+           ELSE attempts
        END,
+       locked_until = now() + sqlc.arg(retry_after)::interval,
        last_error = sqlc.arg(last_error)
- WHERE id = sqlc.arg(id);
+ WHERE workspace_stream_wakeups.id = sqlc.arg(id)
+   AND NOT EXISTS (SELECT 1 FROM deleted_exhausted_chunk);

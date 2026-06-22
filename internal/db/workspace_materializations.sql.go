@@ -261,7 +261,7 @@ WITH request_params AS MATERIALIZED (
     SELECT $1::integer AS priority
 ),
 locked_workspace AS MATERIALIZED (
-    SELECT workspaces.id, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_materialization_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
+    SELECT workspaces.id, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_materialization_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
       FROM workspaces
      WHERE workspaces.org_id = $2
        AND workspaces.project_id = $3
@@ -674,10 +674,12 @@ lost_execs AS (
 ),
 lost_ptys AS (
     UPDATE workspace_pty_sessions
-       SET state = 'lost',
-           error = jsonb_build_object('code', 'workspace_materialization_failed'),
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
-           updated_at = now()
+	   SET state = 'lost',
+	       error = jsonb_build_object('code', 'workspace_materialization_failed'),
+	       resize_cols = NULL,
+	       resize_rows = NULL,
+	       closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+	       updated_at = now()
       FROM failed
      WHERE workspace_pty_sessions.org_id = failed.org_id
        AND workspace_pty_sessions.project_id = failed.project_id
@@ -685,7 +687,7 @@ lost_ptys AS (
        AND workspace_pty_sessions.workspace_id = failed.workspace_id
        AND workspace_pty_sessions.materialization_id = failed.id
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
 ),
 closed_ports AS (
     UPDATE workspace_ports
@@ -1121,6 +1123,22 @@ lost_operations AS (
        AND workspace_materialization_operations.state IN ('queued', 'claimed', 'running')
     RETURNING workspace_materialization_operations.id
 ),
+updated_lost_dirty_workspaces AS (
+    UPDATE workspaces
+       SET state = 'recovery_required',
+           dirty_state = 'dirty_state_lost',
+           updated_at = now()
+      FROM lost
+     WHERE lost.dirty_generation > 0
+       AND workspaces.org_id = lost.org_id
+       AND workspaces.project_id = lost.project_id
+       AND workspaces.environment_id = lost.environment_id
+       AND workspaces.id = lost.workspace_id
+       AND workspaces.state = 'active'
+       AND workspaces.archived_at IS NULL
+       AND workspaces.deleted_at IS NULL
+    RETURNING workspaces.id
+),
 lost_execs AS (
     UPDATE workspace_execs
        SET state = 'lost',
@@ -1138,10 +1156,12 @@ lost_execs AS (
 ),
 lost_ptys AS (
     UPDATE workspace_pty_sessions
-       SET state = 'lost',
-           error = jsonb_build_object('code', 'workspace_materialization_lost'),
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
-           updated_at = now()
+	   SET state = 'lost',
+	       error = jsonb_build_object('code', 'workspace_materialization_lost'),
+	       resize_cols = NULL,
+	       resize_rows = NULL,
+	       closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+	       updated_at = now()
       FROM lost
      WHERE workspace_pty_sessions.org_id = lost.org_id
        AND workspace_pty_sessions.project_id = lost.project_id
@@ -1149,7 +1169,7 @@ lost_ptys AS (
        AND workspace_pty_sessions.workspace_id = lost.workspace_id
        AND workspace_pty_sessions.materialization_id = lost.id
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
 ),
 closed_ports AS (
     UPDATE workspace_ports
@@ -1208,7 +1228,8 @@ stream_wakeups AS (
 )
 SELECT id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, worker_instance_id, reservation_token, reservation_expires_at, claim_attempt, dead_lettered_at, priority, requested_cpu_millis, requested_memory_mib, requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots, capacity_reservation_id, guestd_channel_token_hash, guestd_channel_token_expires_at, runtime_id, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, materialized_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
   FROM lost
- WHERE (SELECT count(*) FROM stream_wakeups) >= 0
+ WHERE (SELECT count(*) FROM stream_wakeups)
+     + (SELECT count(*) FROM updated_lost_dirty_workspaces) >= 0
 `
 
 type MarkStaleWorkspaceMaterializationsLostRow struct {
@@ -1740,7 +1761,7 @@ func (q *Queries) RenewWorkspaceMaterialization(ctx context.Context, arg RenewWo
 
 const requestWorkspaceMaterializationStop = `-- name: RequestWorkspaceMaterializationStop :one
 WITH locked_workspace AS MATERIALIZED (
-    SELECT workspaces.id, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_materialization_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
+    SELECT workspaces.id, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_materialization_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
       FROM workspaces
      WHERE workspaces.org_id = $1
        AND workspaces.project_id = $2
@@ -1840,10 +1861,12 @@ terminated_requested_execs AS (
 ),
 closed_requested_ptys AS (
     UPDATE workspace_pty_sessions
-       SET state = 'closed',
-           error = jsonb_build_object('code', 'workspace_materialization_stopped'),
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
-           updated_at = now()
+	   SET state = 'closed',
+	       error = jsonb_build_object('code', 'workspace_materialization_stopped'),
+	       resize_cols = NULL,
+	       resize_rows = NULL,
+	       closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+	       updated_at = now()
       FROM requested_without_worker
      WHERE workspace_pty_sessions.org_id = requested_without_worker.org_id
        AND workspace_pty_sessions.project_id = requested_without_worker.project_id
@@ -1851,7 +1874,7 @@ closed_requested_ptys AS (
        AND workspace_pty_sessions.workspace_id = requested_without_worker.workspace_id
        AND workspace_pty_sessions.materialization_id = requested_without_worker.id
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
 ),
 closed_requested_ports AS (
     UPDATE workspace_ports
@@ -1937,10 +1960,12 @@ terminated_live_pending_execs AS (
 ),
 closed_live_pending_ptys AS (
     UPDATE workspace_pty_sessions
-       SET state = 'closed',
-           error = jsonb_build_object('code', 'workspace_materialization_stopped'),
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
-           updated_at = now()
+	   SET state = 'closed',
+	       error = jsonb_build_object('code', 'workspace_materialization_stopped'),
+	       resize_cols = NULL,
+	       resize_rows = NULL,
+	       closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+	       updated_at = now()
       FROM requested_live_stop
      WHERE workspace_pty_sessions.org_id = requested_live_stop.org_id
        AND workspace_pty_sessions.project_id = requested_live_stop.project_id
@@ -1948,7 +1973,7 @@ closed_live_pending_ptys AS (
        AND workspace_pty_sessions.workspace_id = requested_live_stop.workspace_id
        AND workspace_pty_sessions.materialization_id = requested_live_stop.id
        AND workspace_pty_sessions.state = 'creating'
-    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
 ),
 live_pending_stream_wakeups AS (
     INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
@@ -2177,10 +2202,12 @@ terminated_execs AS (
 ),
 closed_ptys AS (
     UPDATE workspace_pty_sessions
-       SET state = 'closed',
-           error = jsonb_build_object('code', 'workspace_materialization_stopped'),
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
-           updated_at = now()
+	   SET state = 'closed',
+	       error = jsonb_build_object('code', 'workspace_materialization_stopped'),
+	       resize_cols = NULL,
+	       resize_rows = NULL,
+	       closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+	       updated_at = now()
       FROM stopped
      WHERE workspace_pty_sessions.org_id = stopped.org_id
        AND workspace_pty_sessions.project_id = stopped.project_id
@@ -2188,7 +2215,7 @@ closed_ptys AS (
        AND workspace_pty_sessions.workspace_id = stopped.workspace_id
        AND workspace_pty_sessions.materialization_id = stopped.id
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
 ),
 closed_ports AS (
     UPDATE workspace_ports

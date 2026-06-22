@@ -16,19 +16,19 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/workspace"
-	"github.com/helmrdotdev/helmr/internal/workspaceop"
+	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
 )
 
 func testWorkspaceOperationFingerprint(t *testing.T, operationKind string, requestJSON string) string {
 	t.Helper()
-	fingerprint, err := workspaceop.CanonicalRequestFingerprint(operationKind, []byte(requestJSON))
+	fingerprint, err := protocol.RequestFingerprint(operationKind, []byte(requestJSON))
 	if err != nil {
 		t.Fatal(fmt.Errorf("workspace operation fingerprint: %w", err))
 	}
 	return fingerprint
 }
 
-func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
+func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *testing.T) {
 	tempRoot := t.TempDir()
 	root := filepath.Join(tempRoot, "workspace-root")
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -114,6 +114,8 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 	if string(body) != "hello" {
 		t.Fatalf("restored file = %q", body)
 	}
+	operationKind := "ResizePty"
+	operationRequest := `{"pty_id":"pty-1","cols":80,"rows":24}`
 
 	operationClient, operationServer := net.Pipe()
 	defer operationClient.Close()
@@ -130,10 +132,10 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 			ChannelToken:               "channel-token",
 			FencingGeneration:          1,
 			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         testWorkspaceOperationFingerprint(t, "noop", `{}`),
+			RequestFingerprint:         testWorkspaceOperationFingerprint(t, operationKind, operationRequest),
 		},
-		OperationKind: "noop",
-		RequestJson:   `{}`,
+		OperationKind: operationKind,
+		RequestJson:   operationRequest,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -141,8 +143,8 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 	if err := transport.ReadProtoFrame(operationClient, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.ResultJson != `{"ok":true}` || result.ErrorJson != "" {
-		t.Fatalf("operation result_json=%q error_json=%q", result.ResultJson, result.ErrorJson)
+	if result.ResultJson != "" || !strings.Contains(result.ErrorJson, `workspace pty \"pty-1\" is not open`) {
+		t.Fatalf("operation result_json=%q error_json=%q, want authorized primitive handler error", result.ResultJson, result.ErrorJson)
 	}
 	if err := <-errCh; err != nil {
 		t.Fatal(err)
@@ -163,10 +165,10 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 			ChannelToken:               "channel-token",
 			FencingGeneration:          1,
 			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         testWorkspaceOperationFingerprint(t, "noop", `{}`),
+			RequestFingerprint:         testWorkspaceOperationFingerprint(t, operationKind, operationRequest),
 		},
-		OperationKind: "noop",
-		RequestJson:   `{}`,
+		OperationKind: operationKind,
+		RequestJson:   operationRequest,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -195,18 +197,18 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 			ChannelToken:               "channel-token",
 			FencingGeneration:          2,
 			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         testWorkspaceOperationFingerprint(t, "noop", `{}`),
+			RequestFingerprint:         testWorkspaceOperationFingerprint(t, operationKind, operationRequest),
 		},
-		OperationKind: "noop",
-		RequestJson:   `{}`,
+		OperationKind: operationKind,
+		RequestJson:   operationRequest,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := transport.ReadProtoFrame(advanceFenceClient, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.ResultJson != `{"ok":true}` || result.ErrorJson != "" {
-		t.Fatalf("advance fencing operation result_json=%q error_json=%q", result.ResultJson, result.ErrorJson)
+	if result.ResultJson != "" || !strings.Contains(result.ErrorJson, `workspace pty \"pty-1\" is not open`) {
+		t.Fatalf("advance fencing operation result_json=%q error_json=%q, want authorized primitive handler error", result.ResultJson, result.ErrorJson)
 	}
 	if err := <-errCh; err != nil {
 		t.Fatal(err)
@@ -227,10 +229,10 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesNoop(t *testing.T) {
 			ChannelToken:               "channel-token",
 			FencingGeneration:          1,
 			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         testWorkspaceOperationFingerprint(t, "noop", `{}`),
+			RequestFingerprint:         testWorkspaceOperationFingerprint(t, operationKind, operationRequest),
 		},
-		OperationKind: "noop",
-		RequestJson:   `{}`,
+		OperationKind: operationKind,
+		RequestJson:   operationRequest,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +254,7 @@ func TestWorkspaceOperationRegistryDefersRetiredCleanupUntilRelease(t *testing.T
 		t.Fatal(err)
 	}
 	registry := newWorkspaceOperationRegistry()
-	registry.register("mat-1", workspaceMaterializationEntry{
+	registry.register("mat-1", &workspaceMaterializationEntry{
 		workspaceID:       "workspace-1",
 		channelToken:      "token-1",
 		fencingGeneration: 1,
@@ -263,7 +265,7 @@ func TestWorkspaceOperationRegistryDefersRetiredCleanupUntilRelease(t *testing.T
 	if !ok {
 		t.Fatal("expected registry acquire")
 	}
-	registry.register("mat-1", workspaceMaterializationEntry{
+	registry.register("mat-1", &workspaceMaterializationEntry{
 		workspaceID:       "workspace-1",
 		channelToken:      "token-2",
 		fencingGeneration: 2,

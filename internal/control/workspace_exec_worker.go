@@ -511,11 +511,11 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 		ProjectID:        exec.ProjectID,
 		EnvironmentID:    exec.EnvironmentID,
 		WorkspaceID:      exec.WorkspaceID,
-		ResourceKind:     "workspace_exec",
+		ResourceKind:     db.WorkspaceResourceKindWorkspaceExec,
 		ResourceID:       exec.ID,
 		Stream:           string(stream),
 		CursorOffset:     chunk.OffsetEnd,
-		NotificationKind: "chunk",
+		NotificationKind: db.WorkspaceStreamNotificationKindChunk,
 	}); err != nil {
 		return db.WorkspaceExecStreamChunk{}, err
 	}

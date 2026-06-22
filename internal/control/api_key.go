@@ -239,12 +239,38 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeRunsRead, true
 	case string(api.APIKeyScopeRunsManage):
 		return api.APIKeyScopeRunsManage, true
-	case string(api.APIKeyScopeWorkspacesRead):
-		return api.APIKeyScopeWorkspacesRead, true
-	case string(api.APIKeyScopeWorkspacesWrite):
-		return api.APIKeyScopeWorkspacesWrite, true
-	case string(api.APIKeyScopeWorkspacesManage):
-		return api.APIKeyScopeWorkspacesManage, true
+	case string(api.APIKeyScopeWorkspaceLifecycleManage):
+		return api.APIKeyScopeWorkspaceLifecycleManage, true
+	case string(api.APIKeyScopeWorkspaceFilesRead):
+		return api.APIKeyScopeWorkspaceFilesRead, true
+	case string(api.APIKeyScopeWorkspaceFilesWrite):
+		return api.APIKeyScopeWorkspaceFilesWrite, true
+	case string(api.APIKeyScopeWorkspaceVersionsRead):
+		return api.APIKeyScopeWorkspaceVersionsRead, true
+	case string(api.APIKeyScopeWorkspaceVersionsCapture):
+		return api.APIKeyScopeWorkspaceVersionsCapture, true
+	case string(api.APIKeyScopeWorkspaceVersionsRestore):
+		return api.APIKeyScopeWorkspaceVersionsRestore, true
+	case string(api.APIKeyScopeWorkspaceVersionsDiff):
+		return api.APIKeyScopeWorkspaceVersionsDiff, true
+	case string(api.APIKeyScopeWorkspaceExecCreate):
+		return api.APIKeyScopeWorkspaceExecCreate, true
+	case string(api.APIKeyScopeWorkspaceExecRead):
+		return api.APIKeyScopeWorkspaceExecRead, true
+	case string(api.APIKeyScopeWorkspaceExecManage):
+		return api.APIKeyScopeWorkspaceExecManage, true
+	case string(api.APIKeyScopeWorkspacePtyCreate):
+		return api.APIKeyScopeWorkspacePtyCreate, true
+	case string(api.APIKeyScopeWorkspacePtyRead):
+		return api.APIKeyScopeWorkspacePtyRead, true
+	case string(api.APIKeyScopeWorkspacePtyManage):
+		return api.APIKeyScopeWorkspacePtyManage, true
+	case string(api.APIKeyScopeWorkspacePortsExpose):
+		return api.APIKeyScopeWorkspacePortsExpose, true
+	case string(api.APIKeyScopeWorkspacePortsRead):
+		return api.APIKeyScopeWorkspacePortsRead, true
+	case string(api.APIKeyScopeWorkspacePortsClose):
+		return api.APIKeyScopeWorkspacePortsClose, true
 	case string(api.APIKeyScopeRunWaitpointsRead):
 		return api.APIKeyScopeRunWaitpointsRead, true
 	case string(api.APIKeyScopeChannelsWrite):
@@ -272,12 +298,38 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionRunsRead, true
 	case api.APIKeyScopeRunsManage:
 		return auth.PermissionRunsManage, true
-	case api.APIKeyScopeWorkspacesRead:
-		return auth.PermissionWorkspacesRead, true
-	case api.APIKeyScopeWorkspacesWrite:
-		return auth.PermissionWorkspacesWrite, true
-	case api.APIKeyScopeWorkspacesManage:
-		return auth.PermissionWorkspacesManage, true
+	case api.APIKeyScopeWorkspaceLifecycleManage:
+		return auth.PermissionWorkspaceLifecycleManage, true
+	case api.APIKeyScopeWorkspaceFilesRead:
+		return auth.PermissionFilesRead, true
+	case api.APIKeyScopeWorkspaceFilesWrite:
+		return auth.PermissionFilesWrite, true
+	case api.APIKeyScopeWorkspaceVersionsRead:
+		return auth.PermissionVersionsRead, true
+	case api.APIKeyScopeWorkspaceVersionsCapture:
+		return auth.PermissionVersionsCapture, true
+	case api.APIKeyScopeWorkspaceVersionsRestore:
+		return auth.PermissionVersionsRestore, true
+	case api.APIKeyScopeWorkspaceVersionsDiff:
+		return auth.PermissionVersionsDiff, true
+	case api.APIKeyScopeWorkspaceExecCreate:
+		return auth.PermissionExecCreate, true
+	case api.APIKeyScopeWorkspaceExecRead:
+		return auth.PermissionExecRead, true
+	case api.APIKeyScopeWorkspaceExecManage:
+		return auth.PermissionExecManage, true
+	case api.APIKeyScopeWorkspacePtyCreate:
+		return auth.PermissionPtyCreate, true
+	case api.APIKeyScopeWorkspacePtyRead:
+		return auth.PermissionPtyRead, true
+	case api.APIKeyScopeWorkspacePtyManage:
+		return auth.PermissionPtyManage, true
+	case api.APIKeyScopeWorkspacePortsExpose:
+		return auth.PermissionPortsExpose, true
+	case api.APIKeyScopeWorkspacePortsRead:
+		return auth.PermissionPortsRead, true
+	case api.APIKeyScopeWorkspacePortsClose:
+		return auth.PermissionPortsClose, true
 	case api.APIKeyScopeRunWaitpointsRead:
 		return auth.PermissionRunWaitpointsRead, true
 	case api.APIKeyScopeChannelsWrite:
@@ -305,12 +357,38 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeRunsRead, true
 	case string(auth.PermissionRunsManage):
 		return api.APIKeyScopeRunsManage, true
-	case string(auth.PermissionWorkspacesRead):
-		return api.APIKeyScopeWorkspacesRead, true
-	case string(auth.PermissionWorkspacesWrite):
-		return api.APIKeyScopeWorkspacesWrite, true
-	case string(auth.PermissionWorkspacesManage):
-		return api.APIKeyScopeWorkspacesManage, true
+	case string(auth.PermissionWorkspaceLifecycleManage):
+		return api.APIKeyScopeWorkspaceLifecycleManage, true
+	case string(auth.PermissionFilesRead):
+		return api.APIKeyScopeWorkspaceFilesRead, true
+	case string(auth.PermissionFilesWrite):
+		return api.APIKeyScopeWorkspaceFilesWrite, true
+	case string(auth.PermissionVersionsRead):
+		return api.APIKeyScopeWorkspaceVersionsRead, true
+	case string(auth.PermissionVersionsCapture):
+		return api.APIKeyScopeWorkspaceVersionsCapture, true
+	case string(auth.PermissionVersionsRestore):
+		return api.APIKeyScopeWorkspaceVersionsRestore, true
+	case string(auth.PermissionVersionsDiff):
+		return api.APIKeyScopeWorkspaceVersionsDiff, true
+	case string(auth.PermissionExecCreate):
+		return api.APIKeyScopeWorkspaceExecCreate, true
+	case string(auth.PermissionExecRead):
+		return api.APIKeyScopeWorkspaceExecRead, true
+	case string(auth.PermissionExecManage):
+		return api.APIKeyScopeWorkspaceExecManage, true
+	case string(auth.PermissionPtyCreate):
+		return api.APIKeyScopeWorkspacePtyCreate, true
+	case string(auth.PermissionPtyRead):
+		return api.APIKeyScopeWorkspacePtyRead, true
+	case string(auth.PermissionPtyManage):
+		return api.APIKeyScopeWorkspacePtyManage, true
+	case string(auth.PermissionPortsExpose):
+		return api.APIKeyScopeWorkspacePortsExpose, true
+	case string(auth.PermissionPortsRead):
+		return api.APIKeyScopeWorkspacePortsRead, true
+	case string(auth.PermissionPortsClose):
+		return api.APIKeyScopeWorkspacePortsClose, true
 	case string(auth.PermissionRunWaitpointsRead):
 		return api.APIKeyScopeRunWaitpointsRead, true
 	case string(auth.PermissionChannelsWrite):

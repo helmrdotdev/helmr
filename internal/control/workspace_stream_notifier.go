@@ -112,18 +112,18 @@ func (n *WorkspaceStreamNotifier) publishWakeup(ctx context.Context, row db.Clai
 		ID:               row.ID,
 		OrgID:            pgvalue.MustUUIDValue(row.OrgID).String(),
 		WorkspaceID:      pgvalue.MustUUIDValue(row.WorkspaceID).String(),
-		ResourceKind:     row.ResourceKind,
+		ResourceKind:     string(row.ResourceKind),
 		ResourceID:       pgvalue.MustUUIDValue(row.ResourceID).String(),
 		Stream:           row.Stream,
 		CursorOffset:     row.CursorOffset,
-		NotificationKind: row.NotificationKind,
+		NotificationKind: string(row.NotificationKind),
 	})
 	if err != nil {
 		return fmt.Errorf("encode workspace stream wakeup: %w", err)
 	}
 	id := redisEventID(row.ID)
 	err = n.redis.XAdd(ctx, &redis.XAddArgs{
-		Stream: workspaceStreamKey(row.OrgID, row.ResourceKind, row.ResourceID, row.Stream),
+		Stream: workspaceStreamKey(row.OrgID, string(row.ResourceKind), row.ResourceID, row.Stream),
 		MaxLen: workspaceStreamWakeupMaxLen,
 		Approx: true,
 		ID:     id,

@@ -315,6 +315,7 @@ type Querier interface {
 	RevokeOrgSessionsForUser(ctx context.Context, arg RevokeOrgSessionsForUserParams) (int64, error)
 	RevokeSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
 	RevokeSessionsForUser(ctx context.Context, userID pgtype.UUID) (int64, error)
+	RollbackWorkspacePtyControlOperation(ctx context.Context, arg RollbackWorkspacePtyControlOperationParams) (WorkspacePtySession, error)
 	RunLeaseDispatchAttemptsExhausted(ctx context.Context, arg RunLeaseDispatchAttemptsExhaustedParams) (bool, error)
 	ScheduleInstanceTriggerIsCurrent(ctx context.Context, arg ScheduleInstanceTriggerIsCurrentParams) (bool, error)
 	SetDefaultProject(ctx context.Context, arg SetDefaultProjectParams) (int64, error)

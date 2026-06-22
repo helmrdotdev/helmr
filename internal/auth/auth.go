@@ -173,12 +173,38 @@ func normalizeAPIKeyGrantPermission(permission string) []Permission {
 		return []Permission{PermissionRunsRead}
 	case string(PermissionRunsManage):
 		return []Permission{PermissionRunsManage}
-	case string(PermissionWorkspacesRead):
-		return []Permission{PermissionWorkspacesRead}
-	case string(PermissionWorkspacesWrite):
-		return []Permission{PermissionWorkspacesWrite}
-	case string(PermissionWorkspacesManage):
-		return []Permission{PermissionWorkspacesManage}
+	case string(PermissionWorkspaceLifecycleManage):
+		return []Permission{PermissionWorkspaceLifecycleManage}
+	case string(PermissionFilesRead):
+		return []Permission{PermissionFilesRead}
+	case string(PermissionFilesWrite):
+		return []Permission{PermissionFilesWrite}
+	case string(PermissionVersionsRead):
+		return []Permission{PermissionVersionsRead}
+	case string(PermissionVersionsCapture):
+		return []Permission{PermissionVersionsCapture}
+	case string(PermissionVersionsRestore):
+		return []Permission{PermissionVersionsRestore}
+	case string(PermissionVersionsDiff):
+		return []Permission{PermissionVersionsDiff}
+	case string(PermissionExecCreate):
+		return []Permission{PermissionExecCreate}
+	case string(PermissionExecRead):
+		return []Permission{PermissionExecRead}
+	case string(PermissionExecManage):
+		return []Permission{PermissionExecManage}
+	case string(PermissionPtyCreate):
+		return []Permission{PermissionPtyCreate}
+	case string(PermissionPtyRead):
+		return []Permission{PermissionPtyRead}
+	case string(PermissionPtyManage):
+		return []Permission{PermissionPtyManage}
+	case string(PermissionPortsExpose):
+		return []Permission{PermissionPortsExpose}
+	case string(PermissionPortsRead):
+		return []Permission{PermissionPortsRead}
+	case string(PermissionPortsClose):
+		return []Permission{PermissionPortsClose}
 	case string(PermissionRunWaitpointsRead):
 		return []Permission{PermissionRunWaitpointsRead}
 	case string(PermissionChannelsWrite):

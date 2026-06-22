@@ -17,7 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/workspace"
-	"github.com/helmrdotdev/helmr/internal/workspaceop"
+	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
 )
 
 type workspaceOperationRegistry struct {
@@ -48,10 +48,10 @@ func newWorkspaceOperationRegistry() *workspaceOperationRegistry {
 	return &workspaceOperationRegistry{entries: map[string]*workspaceMaterializationEntry{}}
 }
 
-func (r *workspaceOperationRegistry) register(materializationID string, entry workspaceMaterializationEntry) {
+func (r *workspaceOperationRegistry) register(materializationID string, entry *workspaceMaterializationEntry) {
 	r.mu.Lock()
 	previous := r.entries[materializationID]
-	r.entries[materializationID] = &entry
+	r.entries[materializationID] = entry
 	var cleanup func()
 	if previous != nil {
 		previous.retired = true
@@ -160,56 +160,56 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 	})
 }
 
-func restoreMaterializedWorkspace(conn io.Reader, request *workspacev0.MaterializeWorkspaceRequest) (workspaceMaterializationEntry, error) {
-	entry := workspaceMaterializationEntry{}
+func restoreMaterializedWorkspace(conn io.Reader, request *workspacev0.MaterializeWorkspaceRequest) (*workspaceMaterializationEntry, error) {
+	entry := &workspaceMaterializationEntry{}
 	mountPath := filepath.Clean(strings.TrimSpace(request.GetMountPath()))
 	if mountPath == "" || mountPath == "." || mountPath == string(filepath.Separator) || !filepath.IsAbs(mountPath) {
-		return entry, fmt.Errorf("workspace materialize mount_path %q is invalid", request.GetMountPath())
+		return nil, fmt.Errorf("workspace materialize mount_path %q is invalid", request.GetMountPath())
 	}
 	if strings.TrimSpace(request.GetBaseVersionId()) == "" {
-		return entry, errors.New("workspace materialize base_version_id is required")
+		return nil, errors.New("workspace materialize base_version_id is required")
 	}
 	artifact := request.GetBaseArtifact()
 	if artifact == nil {
-		return entry, errors.New("workspace materialize base_artifact is required")
+		return nil, errors.New("workspace materialize base_artifact is required")
 	}
 	if strings.TrimSpace(artifact.GetDigest()) == "" {
-		return entry, errors.New("workspace materialize base_artifact digest is required")
+		return nil, errors.New("workspace materialize base_artifact digest is required")
 	}
 	if strings.TrimSpace(artifact.GetMediaType()) != workspace.ArtifactMediaType {
-		return entry, fmt.Errorf("workspace materialize base_artifact media_type %q is not supported", artifact.GetMediaType())
+		return nil, fmt.Errorf("workspace materialize base_artifact media_type %q is not supported", artifact.GetMediaType())
 	}
 	if strings.TrimSpace(artifact.GetEncoding()) != workspace.ArtifactEncoding {
-		return entry, fmt.Errorf("workspace materialize base_artifact encoding %q is not supported", artifact.GetEncoding())
+		return nil, fmt.Errorf("workspace materialize base_artifact encoding %q is not supported", artifact.GetEncoding())
 	}
 	if artifact.GetSizeBytes() == 0 {
-		return entry, errors.New("workspace materialize base_artifact size_bytes is required")
+		return nil, errors.New("workspace materialize base_artifact size_bytes is required")
 	}
 	if artifact.GetSizeBytes() > uint64(workspace.MaxArtifactArchiveBytes) {
-		return entry, fmt.Errorf("workspace materialize base_artifact size_bytes %d exceeds max %d", artifact.GetSizeBytes(), workspace.MaxArtifactArchiveBytes)
+		return nil, fmt.Errorf("workspace materialize base_artifact size_bytes %d exceeds max %d", artifact.GetSizeBytes(), workspace.MaxArtifactArchiveBytes)
 	}
 	if artifact.GetEntryCount() > uint32(workspace.MaxArtifactEntries) {
-		return entry, fmt.Errorf("workspace materialize base_artifact entry_count %d exceeds max %d", artifact.GetEntryCount(), workspace.MaxArtifactEntries)
+		return nil, fmt.Errorf("workspace materialize base_artifact entry_count %d exceeds max %d", artifact.GetEntryCount(), workspace.MaxArtifactEntries)
 	}
 	sandbox := request.GetSandboxArtifact()
 	if sandbox == nil {
-		return entry, errors.New("workspace materialize sandbox_artifact is required")
+		return nil, errors.New("workspace materialize sandbox_artifact is required")
 	}
 	if strings.TrimSpace(sandbox.GetDigest()) == "" {
-		return entry, errors.New("workspace materialize sandbox_artifact digest is required")
+		return nil, errors.New("workspace materialize sandbox_artifact digest is required")
 	}
 	if strings.TrimSpace(sandbox.GetMediaType()) != "application/vnd.helmr.sandbox-image.v0.oci-tar" {
-		return entry, fmt.Errorf("workspace materialize sandbox_artifact media_type %q is not supported", sandbox.GetMediaType())
+		return nil, fmt.Errorf("workspace materialize sandbox_artifact media_type %q is not supported", sandbox.GetMediaType())
 	}
 	if strings.TrimSpace(sandbox.GetEncoding()) != "oci-tar" {
-		return entry, fmt.Errorf("workspace materialize sandbox_artifact encoding %q is not supported", sandbox.GetEncoding())
+		return nil, fmt.Errorf("workspace materialize sandbox_artifact encoding %q is not supported", sandbox.GetEncoding())
 	}
 	if sandbox.GetSizeBytes() == 0 {
-		return entry, errors.New("workspace materialize sandbox_artifact size_bytes is required")
+		return nil, errors.New("workspace materialize sandbox_artifact size_bytes is required")
 	}
 	image, cleanupImage, err := restoreMaterializedSandboxImage(conn, request)
 	if err != nil {
-		return entry, err
+		return nil, err
 	}
 	entry.imageRoot = image.RootfsDir
 	entry.imageConfig = image.Config
@@ -225,29 +225,29 @@ func restoreMaterializedWorkspace(conn io.Reader, request *workspacev0.Materiali
 	runtimeUser, err := resolveRuntimeUser(entry.imageRoot, entry.imageConfig.User)
 	if err != nil {
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("resolve workspace runtime user: %w", err)
+		return nil, fmt.Errorf("resolve workspace runtime user: %w", err)
 	}
 	entry.runtimeUser = runtimeUser
 	workspaceRoot, err := workspaceRootForImage(entry.imageRoot, mountPath)
 	if err != nil {
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("resolve workspace mount: %w", err)
+		return nil, fmt.Errorf("resolve workspace mount: %w", err)
 	}
 	entry.workspaceRoot = workspaceRoot
 	header, bodyLen, err := transport.ReadStreamFrameHeader(conn)
 	if err != nil {
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("read workspace artifact stream header: %w", err)
+		return nil, fmt.Errorf("read workspace artifact stream header: %w", err)
 	}
 	if header.Type != transport.StreamTypeWorkspaceArtifact {
 		drainStreamBody(conn, bodyLen)
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("unsupported workspace materialize input type %q", header.Type)
+		return nil, fmt.Errorf("unsupported workspace materialize input type %q", header.Type)
 	}
 	if header.WorkspaceID != strings.TrimSpace(request.GetEnvelope().GetWorkspaceId()) {
 		drainStreamBody(conn, bodyLen)
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("workspace artifact workspace_id %q does not match materialize workspace_id %q", header.WorkspaceID, request.GetEnvelope().GetWorkspaceId())
+		return nil, fmt.Errorf("workspace artifact workspace_id %q does not match materialize workspace_id %q", header.WorkspaceID, request.GetEnvelope().GetWorkspaceId())
 	}
 	frameDigest := ""
 	if header.BodyDigest != nil {
@@ -256,24 +256,24 @@ func restoreMaterializedWorkspace(conn io.Reader, request *workspacev0.Materiali
 	if frameDigest != "" && frameDigest != strings.TrimSpace(artifact.GetDigest()) {
 		drainStreamBody(conn, bodyLen)
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("workspace artifact digest %q does not match frame digest %q", artifact.GetDigest(), frameDigest)
+		return nil, fmt.Errorf("workspace artifact digest %q does not match frame digest %q", artifact.GetDigest(), frameDigest)
 	}
 	if artifact.GetSizeBytes() != bodyLen {
 		drainStreamBody(conn, bodyLen)
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("workspace artifact size_bytes %d does not match frame size %d", artifact.GetSizeBytes(), bodyLen)
+		return nil, fmt.Errorf("workspace artifact size_bytes %d does not match frame size %d", artifact.GetSizeBytes(), bodyLen)
 	}
 	workspaceParent := filepath.Dir(workspaceRoot)
 	if err := os.MkdirAll(workspaceParent, 0o755); err != nil {
 		drainStreamBody(conn, bodyLen)
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("create workspace mount parent: %w", err)
+		return nil, fmt.Errorf("create workspace mount parent: %w", err)
 	}
 	stagingRoot, err := os.MkdirTemp(workspaceParent, ".helmr-workspace-restore-*")
 	if err != nil {
 		drainStreamBody(conn, bodyLen)
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("create workspace restore staging dir: %w", err)
+		return nil, fmt.Errorf("create workspace restore staging dir: %w", err)
 	}
 	cleanupStaging := func() { _ = os.RemoveAll(stagingRoot) }
 	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
@@ -286,36 +286,36 @@ func restoreMaterializedWorkspace(conn io.Reader, request *workspacev0.Materiali
 		if _, drainErr := io.Copy(io.Discard, hashedBody); drainErr != nil {
 			cleanupStaging()
 			entry.cleanup()
-			return workspaceMaterializationEntry{}, errors.Join(fmt.Errorf("extract workspace artifact: %w", err), fmt.Errorf("drain workspace artifact: %w", drainErr))
+			return nil, errors.Join(fmt.Errorf("extract workspace artifact: %w", err), fmt.Errorf("drain workspace artifact: %w", drainErr))
 		}
 		cleanupStaging()
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("extract workspace artifact: %w", err)
+		return nil, fmt.Errorf("extract workspace artifact: %w", err)
 	}
 	if _, err := io.Copy(io.Discard, hashedBody); err != nil {
 		cleanupStaging()
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("drain workspace artifact: %w", err)
+		return nil, fmt.Errorf("drain workspace artifact: %w", err)
 	}
 	if digest := hashedBody.Digest(); digest != strings.TrimSpace(artifact.GetDigest()) {
 		cleanupStaging()
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("workspace artifact body digest %q does not match declared digest %q", digest, artifact.GetDigest())
+		return nil, fmt.Errorf("workspace artifact body digest %q does not match declared digest %q", digest, artifact.GetDigest())
 	}
 	if stats.EntryCount != int(artifact.GetEntryCount()) {
 		cleanupStaging()
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("workspace artifact entry_count %d does not match declared entry_count %d", stats.EntryCount, artifact.GetEntryCount())
+		return nil, fmt.Errorf("workspace artifact entry_count %d does not match declared entry_count %d", stats.EntryCount, artifact.GetEntryCount())
 	}
 	if err := os.RemoveAll(workspaceRoot); err != nil {
 		cleanupStaging()
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("replace workspace mount: remove existing mount: %w", err)
+		return nil, fmt.Errorf("replace workspace mount: remove existing mount: %w", err)
 	}
 	if err := os.Rename(stagingRoot, workspaceRoot); err != nil {
 		cleanupStaging()
 		entry.cleanup()
-		return workspaceMaterializationEntry{}, fmt.Errorf("replace workspace mount: %w", err)
+		return nil, fmt.Errorf("replace workspace mount: %w", err)
 	}
 	return entry, nil
 }
@@ -533,7 +533,7 @@ func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, r
 	if fingerprint == "" {
 		return writeWorkspaceOperationResult(conn, errors.New("workspace operation request_fingerprint is required"))
 	}
-	actual, err := workspaceop.CanonicalRequestFingerprint(request.OperationKind, []byte(request.RequestJson))
+	actual, err := protocol.RequestFingerprint(request.OperationKind, []byte(request.RequestJson))
 	if err != nil {
 		return writeWorkspaceOperationResult(conn, err)
 	}
@@ -541,17 +541,13 @@ func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, r
 		return writeWorkspaceOperationResult(conn, fmt.Errorf("workspace operation request_fingerprint %q does not match request %q", fingerprint, actual))
 	}
 	switch strings.TrimSpace(request.OperationKind) {
-	case "noop":
-		return transport.WriteProtoFrame(conn, &workspacev0.WorkspaceOperationResult{
-			ResultJson: `{"ok":true}`,
-		})
-	case "StartExec":
+	case protocol.GuestVerbStartExec:
 		return writeWorkspaceOperationResult(conn, entry.startWorkspaceExec(request.GetEnvelope(), request.RequestJson))
-	case "CreatePty":
+	case protocol.GuestVerbCreatePty:
 		return writeWorkspaceOperationResult(conn, entry.createWorkspacePty(request.GetEnvelope(), request.RequestJson))
-	case "ResizePty":
+	case protocol.GuestVerbResizePty:
 		return writeWorkspaceOperationResult(conn, entry.resizeWorkspacePty(request.RequestJson))
-	case "ClosePty":
+	case protocol.GuestVerbClosePty:
 		return writeWorkspaceOperationResult(conn, entry.closeWorkspacePty(request.RequestJson))
 	default:
 		return transport.WriteProtoFrame(conn, &workspacev0.WorkspaceOperationResult{

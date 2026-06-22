@@ -51,9 +51,9 @@ SELECT sqlc.arg(id),
        active_materialization.environment_id,
        active_materialization.workspace_id,
        active_materialization.id,
-       sqlc.arg(operation_kind),
-       coalesce(sqlc.arg(resource_kind)::text, ''),
-       sqlc.narg(resource_id),
+       sqlc.arg(operation_kind)::workspace_materialization_operation_kind,
+       sqlc.arg(resource_kind)::workspace_resource_kind,
+       sqlc.arg(resource_id),
        sqlc.arg(request_fingerprint),
        sqlc.arg(operation_expires_at),
        sqlc.arg(priority),
@@ -72,7 +72,7 @@ SELECT sqlc.arg(id),
        OR active_write_lease.id IS NOT NULL
    )
    AND (
-       sqlc.arg(operation_kind)::text NOT IN ('StartExec', 'CreatePty', 'ResizePty', 'ClosePty')
+       sqlc.arg(operation_kind)::workspace_materialization_operation_kind NOT IN ('start_exec', 'create_pty', 'resize_pty', 'close_pty')
        OR active_write_lease.id IS NOT NULL
    )
 RETURNING *;
@@ -94,8 +94,8 @@ SELECT *
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND materialization_id = sqlc.arg(materialization_id)
-   AND operation_kind = sqlc.arg(operation_kind)
-   AND resource_kind = sqlc.arg(resource_kind)
+   AND operation_kind = sqlc.arg(operation_kind)::workspace_materialization_operation_kind
+   AND resource_kind = sqlc.arg(resource_kind)::workspace_resource_kind
    AND resource_id = sqlc.arg(resource_id)
    AND state IN ('queued', 'claimed', 'running')
  ORDER BY requested_at ASC
@@ -113,7 +113,7 @@ WITH exhausted AS (
        AND workspace_materialization_operations.state = 'claimed'
        AND workspace_materialization_operations.claim_expires_at <= now()
        AND workspace_materialization_operations.claim_attempt >= sqlc.arg(max_claim_attempts)
-    RETURNING workspace_materialization_operations.id
+    RETURNING workspace_materialization_operations.*
 ),
 expired AS (
     UPDATE workspace_materialization_operations
@@ -125,7 +125,173 @@ expired AS (
        AND workspace_materialization_operations.materialization_id = sqlc.arg(materialization_id)
        AND workspace_materialization_operations.state IN ('queued', 'claimed', 'running')
        AND workspace_materialization_operations.operation_expires_at <= now()
-    RETURNING workspace_materialization_operations.id
+    RETURNING workspace_materialization_operations.*
+),
+terminal_start_exec_operations AS (
+    SELECT * FROM exhausted
+     WHERE operation_kind = 'start_exec'
+       AND resource_kind = 'workspace_exec'
+       AND resource_id IS NOT NULL
+    UNION ALL
+    SELECT * FROM expired
+     WHERE operation_kind = 'start_exec'
+       AND resource_kind = 'workspace_exec'
+       AND resource_id IS NOT NULL
+),
+terminal_create_pty_operations AS (
+    SELECT * FROM exhausted
+     WHERE operation_kind = 'create_pty'
+       AND resource_kind = 'workspace_pty'
+       AND resource_id IS NOT NULL
+    UNION ALL
+    SELECT * FROM expired
+     WHERE operation_kind = 'create_pty'
+       AND resource_kind = 'workspace_pty'
+       AND resource_id IS NOT NULL
+),
+terminal_pty_control_operations AS (
+    SELECT * FROM exhausted
+     WHERE operation_kind IN ('resize_pty', 'close_pty')
+       AND resource_kind = 'workspace_pty'
+       AND resource_id IS NOT NULL
+    UNION ALL
+    SELECT * FROM expired
+     WHERE operation_kind IN ('resize_pty', 'close_pty')
+       AND resource_kind = 'workspace_pty'
+       AND resource_id IS NOT NULL
+),
+failed_start_execs AS (
+    UPDATE workspace_execs
+       SET state = 'failed',
+           error = terminal_start_exec_operations.error,
+           exited_at = coalesce(workspace_execs.exited_at, now()),
+           updated_at = now()
+      FROM terminal_start_exec_operations
+     WHERE workspace_execs.org_id = terminal_start_exec_operations.org_id
+       AND workspace_execs.project_id = terminal_start_exec_operations.project_id
+       AND workspace_execs.environment_id = terminal_start_exec_operations.environment_id
+       AND workspace_execs.workspace_id = terminal_start_exec_operations.workspace_id
+       AND workspace_execs.materialization_id = terminal_start_exec_operations.materialization_id
+       AND workspace_execs.id = terminal_start_exec_operations.resource_id
+       AND workspace_execs.state IN ('queued', 'materializing')
+    RETURNING workspace_execs.*
+),
+failed_create_ptys AS (
+    UPDATE workspace_pty_sessions
+       SET state = 'failed',
+           error = terminal_create_pty_operations.error,
+           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+           updated_at = now()
+      FROM terminal_create_pty_operations
+     WHERE workspace_pty_sessions.org_id = terminal_create_pty_operations.org_id
+       AND workspace_pty_sessions.project_id = terminal_create_pty_operations.project_id
+       AND workspace_pty_sessions.environment_id = terminal_create_pty_operations.environment_id
+       AND workspace_pty_sessions.workspace_id = terminal_create_pty_operations.workspace_id
+       AND workspace_pty_sessions.materialization_id = terminal_create_pty_operations.materialization_id
+       AND workspace_pty_sessions.id = terminal_create_pty_operations.resource_id
+       AND workspace_pty_sessions.state = 'creating'
+    RETURNING workspace_pty_sessions.*
+),
+rolled_back_pty_controls AS (
+    UPDATE workspace_pty_sessions
+       SET state = CASE
+               WHEN terminal_pty_control_operations.operation_kind = 'close_pty'
+                    AND workspace_pty_sessions.resize_cols IS NOT NULL
+                    AND workspace_pty_sessions.resize_rows IS NOT NULL
+                   THEN 'resizing'::workspace_pty_state
+               ELSE 'open'::workspace_pty_state
+           END,
+           resize_cols = CASE
+               WHEN terminal_pty_control_operations.operation_kind = 'close_pty'
+                   THEN workspace_pty_sessions.resize_cols
+               ELSE NULL
+           END,
+           resize_rows = CASE
+               WHEN terminal_pty_control_operations.operation_kind = 'close_pty'
+                   THEN workspace_pty_sessions.resize_rows
+               ELSE NULL
+           END,
+           updated_at = now()
+      FROM terminal_pty_control_operations
+     WHERE workspace_pty_sessions.org_id = terminal_pty_control_operations.org_id
+       AND workspace_pty_sessions.project_id = terminal_pty_control_operations.project_id
+       AND workspace_pty_sessions.environment_id = terminal_pty_control_operations.environment_id
+       AND workspace_pty_sessions.workspace_id = terminal_pty_control_operations.workspace_id
+       AND workspace_pty_sessions.materialization_id = terminal_pty_control_operations.materialization_id
+       AND workspace_pty_sessions.id = terminal_pty_control_operations.resource_id
+       AND (
+           (
+               terminal_pty_control_operations.operation_kind = 'resize_pty'
+               AND workspace_pty_sessions.state = 'resizing'
+               AND workspace_pty_sessions.resize_cols::text = terminal_pty_control_operations.request->>'cols'
+               AND workspace_pty_sessions.resize_rows::text = terminal_pty_control_operations.request->>'rows'
+           )
+           OR (
+               terminal_pty_control_operations.operation_kind = 'close_pty'
+               AND workspace_pty_sessions.state = 'closing'
+           )
+       )
+    RETURNING workspace_pty_sessions.*
+),
+released_terminal_operation_write_leases AS (
+    UPDATE workspace_leases
+       SET state = 'released',
+           released_at = coalesce(workspace_leases.released_at, now()),
+           updated_at = now()
+      FROM (
+          SELECT write_lease_id,
+                 org_id,
+                 project_id,
+                 environment_id,
+                 workspace_id,
+                 materialization_id
+            FROM failed_start_execs
+           WHERE write_lease_id IS NOT NULL
+          UNION ALL
+          SELECT write_lease_id,
+                 org_id,
+                 project_id,
+                 environment_id,
+                 workspace_id,
+                 materialization_id
+            FROM failed_create_ptys
+           WHERE write_lease_id IS NOT NULL
+      ) AS terminal_operations
+     WHERE workspace_leases.org_id = terminal_operations.org_id
+       AND workspace_leases.project_id = terminal_operations.project_id
+       AND workspace_leases.environment_id = terminal_operations.environment_id
+       AND workspace_leases.workspace_id = terminal_operations.workspace_id
+       AND workspace_leases.materialization_id = terminal_operations.materialization_id
+       AND workspace_leases.id = terminal_operations.write_lease_id
+       AND workspace_leases.lease_kind = 'write'
+       AND workspace_leases.state IN ('active', 'releasing')
+    RETURNING workspace_leases.id
+),
+terminal_operation_stream_wakeups AS (
+    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
+    SELECT failed_start_execs.org_id,
+           failed_start_execs.project_id,
+           failed_start_execs.environment_id,
+           failed_start_execs.workspace_id,
+           'workspace_exec',
+           failed_start_execs.id,
+           stream_names.stream,
+           stream_names.cursor_offset,
+           'terminal'
+      FROM failed_start_execs
+      CROSS JOIN LATERAL (VALUES ('stdout', failed_start_execs.stdout_cursor), ('stderr', failed_start_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
+    UNION ALL
+    SELECT failed_create_ptys.org_id,
+           failed_create_ptys.project_id,
+           failed_create_ptys.environment_id,
+           failed_create_ptys.workspace_id,
+           'workspace_pty',
+           failed_create_ptys.id,
+           'output',
+           failed_create_ptys.output_cursor,
+           'terminal'
+      FROM failed_create_ptys
+    RETURNING id
 ),
 candidate AS (
     SELECT workspace_materialization_operations.id
@@ -146,29 +312,31 @@ candidate AS (
            )
        )
        AND workspace_materialization_operations.claim_attempt < sqlc.arg(max_claim_attempts)
-	       AND workspace_materialization_operations.operation_expires_at > now()
-	       AND workspace_materializations.worker_instance_id = sqlc.arg(worker_instance_id)
-	       AND workspace_materializations.reservation_token = sqlc.arg(reservation_token)
-	       AND workspace_materializations.state IN ('running', 'paused')
-	       AND (
-	           workspace_materialization_operations.write_lease_id IS NULL
-	           OR EXISTS (
-	               SELECT 1
-	                 FROM workspace_leases
-	                WHERE workspace_leases.org_id = workspace_materialization_operations.org_id
-	                  AND workspace_leases.project_id = workspace_materialization_operations.project_id
-	                  AND workspace_leases.environment_id = workspace_materialization_operations.environment_id
-	                  AND workspace_leases.workspace_id = workspace_materialization_operations.workspace_id
-	                  AND workspace_leases.materialization_id = workspace_materialization_operations.materialization_id
-	                  AND workspace_leases.id = workspace_materialization_operations.write_lease_id
-	                  AND workspace_leases.lease_kind = 'write'
-	                  AND workspace_leases.state = 'active'
-	                  AND workspace_leases.fencing_token = workspace_materialization_operations.fencing_token
-	                  AND workspace_leases.acquired_fencing_generation = workspace_materialization_operations.fencing_generation
-	                  AND workspace_leases.expires_at > now()
-	           )
-	       )
-	     ORDER BY workspace_materialization_operations.priority DESC,
+       AND workspace_materialization_operations.operation_expires_at > now()
+       AND (SELECT count(*) FROM released_terminal_operation_write_leases) >= 0
+       AND (SELECT count(*) FROM terminal_operation_stream_wakeups) >= 0
+       AND workspace_materializations.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND workspace_materializations.reservation_token = sqlc.arg(reservation_token)
+       AND workspace_materializations.state IN ('running', 'paused')
+       AND (
+           workspace_materialization_operations.write_lease_id IS NULL
+           OR EXISTS (
+               SELECT 1
+                 FROM workspace_leases
+                WHERE workspace_leases.org_id = workspace_materialization_operations.org_id
+                  AND workspace_leases.project_id = workspace_materialization_operations.project_id
+                  AND workspace_leases.environment_id = workspace_materialization_operations.environment_id
+                  AND workspace_leases.workspace_id = workspace_materialization_operations.workspace_id
+                  AND workspace_leases.materialization_id = workspace_materialization_operations.materialization_id
+                  AND workspace_leases.id = workspace_materialization_operations.write_lease_id
+                  AND workspace_leases.lease_kind = 'write'
+                  AND workspace_leases.state = 'active'
+                  AND workspace_leases.fencing_token = workspace_materialization_operations.fencing_token
+                  AND workspace_leases.acquired_fencing_generation = workspace_materialization_operations.fencing_generation
+                  AND workspace_leases.expires_at > now()
+           )
+       )
+     ORDER BY workspace_materialization_operations.priority DESC,
               workspace_materialization_operations.requested_at ASC
      LIMIT 1
      FOR UPDATE SKIP LOCKED

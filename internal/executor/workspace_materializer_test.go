@@ -19,7 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workspace"
-	"github.com/helmrdotdev/helmr/internal/workspaceop"
+	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
 )
 
 func testMaterializationArtifacts(t *testing.T) (*fakeCAS, api.WorkerWorkspaceMaterialization) {
@@ -64,7 +64,7 @@ func testMaterializationArtifacts(t *testing.T) (*fakeCAS, api.WorkerWorkspaceMa
 	}
 }
 
-func TestWorkspaceMaterializerDispatchesNoopOperationToGuest(t *testing.T) {
+func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	initialClient, initialServer := net.Pipe()
@@ -170,7 +170,7 @@ func TestWorkspaceMaterializerDispatchesNoopOperationToGuest(t *testing.T) {
 			t.Errorf("read operation request: %v", err)
 			return
 		}
-		if request.OperationKind != "noop" || request.GetEnvelope().GetChannelToken() != "channel-token" || request.GetEnvelope().GetFencingToken() != "fence-1" || request.GetEnvelope().GetFencingGeneration() != 2 {
+		if request.OperationKind != "StartExec" || request.GetEnvelope().GetChannelToken() != "channel-token" || request.GetEnvelope().GetFencingToken() != "fence-1" || request.GetEnvelope().GetFencingGeneration() != 2 {
 			t.Errorf("operation request kind=%q channel_token=%q fencing_token=%q fencing_generation=%d", request.OperationKind, request.GetEnvelope().GetChannelToken(), request.GetEnvelope().GetFencingToken(), request.GetEnvelope().GetFencingGeneration())
 			return
 		}
@@ -185,12 +185,12 @@ func TestWorkspaceMaterializerDispatchesNoopOperationToGuest(t *testing.T) {
 				OrgID:              "org-1",
 				WorkspaceID:        "workspace-1",
 				MaterializationID:  "mat-1",
-				OperationKind:      "noop",
+				OperationKind:      "StartExec",
 				FencingToken:       "fence-1",
 				FencingGeneration:  2,
-				RequestFingerprint: testWorkspaceOperationFingerprint("noop", `{}`),
+				RequestFingerprint: testWorkspaceOperationFingerprint("StartExec", `{"exec_id":"exec-1","command":["echo","ok"],"detached":false}`),
 				OperationExpiresAt: time.Now().Add(time.Hour),
-				Request:            []byte(`{}`),
+				Request:            []byte(`{"exec_id":"exec-1","command":["echo","ok"],"detached":false}`),
 			},
 			ClaimToken: "claim-token",
 		},
@@ -238,8 +238,8 @@ func TestWorkspaceMaterializerRejectsMismatchedClaimedOperation(t *testing.T) {
 			OrgID:              "org-1",
 			WorkspaceID:        "workspace-2",
 			MaterializationID:  "mat-2",
-			OperationKind:      "noop",
-			RequestFingerprint: testWorkspaceOperationFingerprint("noop", `{}`),
+			OperationKind:      "StartExec",
+			RequestFingerprint: testWorkspaceOperationFingerprint("StartExec", `{"exec_id":"exec-1","command":["echo","ok"],"detached":false}`),
 			OperationExpiresAt: time.Now().Add(time.Hour),
 		},
 		ClaimToken: "claim-token",
@@ -653,7 +653,7 @@ func TestWorkspaceMaterializerFailsStartupWhenGuestDoesNotRegister(t *testing.T)
 		Connector: workspaceMaterializerTestConnector{session: &workspaceMaterializerTestSession{
 			initial:   initialClient,
 			streams:   []io.ReadWriteCloser{newBlockingReadWriteCloser()},
-			operation: noopReadWriteCloser{},
+			operation: discardReadWriteCloser{},
 		}},
 		CAS:            store,
 		TempDir:        t.TempDir(),
@@ -691,7 +691,7 @@ func TestWorkspaceMaterializerFailsMaterializationOnFatalHeartbeatError(t *testi
 		Connector: workspaceMaterializerTestConnector{session: &workspaceMaterializerTestSession{
 			initial:   initialClient,
 			streams:   []io.ReadWriteCloser{newBlockingReadWriteCloser()},
-			operation: noopReadWriteCloser{},
+			operation: discardReadWriteCloser{},
 		}},
 		CAS:       store,
 		TempDir:   t.TempDir(),
@@ -731,7 +731,7 @@ func TestWorkspaceMaterializerFailsMaterializationWhenSessionExits(t *testing.T)
 		Connector: workspaceMaterializerTestConnector{session: &workspaceMaterializerTestSession{
 			initial:   initialClient,
 			streams:   []io.ReadWriteCloser{newBlockingReadWriteCloser()},
-			operation: noopReadWriteCloser{},
+			operation: discardReadWriteCloser{},
 			exit:      exit,
 		}},
 		CAS:       store,
@@ -844,11 +844,11 @@ func TestWorkspaceMaterializerRetriesCompletionWithGuestResult(t *testing.T) {
 				OrgID:              "org-1",
 				WorkspaceID:        "workspace-1",
 				MaterializationID:  "mat-1",
-				OperationKind:      "noop",
+				OperationKind:      "StartExec",
 				FencingGeneration:  1,
-				RequestFingerprint: testWorkspaceOperationFingerprint("noop", `{}`),
+				RequestFingerprint: testWorkspaceOperationFingerprint("StartExec", `{"exec_id":"exec-1","command":["echo","ok"],"detached":false}`),
 				OperationExpiresAt: time.Now().Add(time.Hour),
-				Request:            []byte(`{}`),
+				Request:            []byte(`{"exec_id":"exec-1","command":["echo","ok"],"detached":false}`),
 			},
 			ClaimToken: "claim-token",
 		},
@@ -1273,7 +1273,7 @@ func (c *workspaceMaterializerTestClient) MarkWorkspacePtyClosed(_ context.Conte
 }
 
 func testWorkspaceOperationFingerprint(operationKind string, requestJSON string) string {
-	fingerprint, err := workspaceop.CanonicalRequestFingerprint(operationKind, []byte(requestJSON))
+	fingerprint, err := protocol.RequestFingerprint(operationKind, []byte(requestJSON))
 	if err != nil {
 		panic(err)
 	}
@@ -1729,11 +1729,11 @@ func TestReportWorkspaceInputRelayFailureIgnoresContextCancellation(t *testing.T
 	}
 }
 
-type noopReadWriteCloser struct{}
+type discardReadWriteCloser struct{}
 
-func (noopReadWriteCloser) Read([]byte) (int, error)    { return 0, io.EOF }
-func (noopReadWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
-func (noopReadWriteCloser) Close() error                { return nil }
+func (discardReadWriteCloser) Read([]byte) (int, error)    { return 0, io.EOF }
+func (discardReadWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (discardReadWriteCloser) Close() error                { return nil }
 
 type blockingReadWriteCloser struct {
 	once sync.Once

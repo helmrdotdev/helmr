@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,12 +17,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
-	workspaceExecCreateOperationKind = "workspace.exec.create"
+	workspaceExecCreateOperationKind = db.WorkspaceOperationIdempotencyKindWorkspaceExecCreate
 	workspaceExecIdempotencyTTL      = 24 * time.Hour
 	workspaceExecListDefaultLimit    = int32(50)
 	workspaceExecListMaxLimit        = int32(200)
@@ -44,7 +44,7 @@ var (
 )
 
 func (s *Server) createWorkspaceExec(w http.ResponseWriter, r *http.Request) {
-	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspacesWrite)
+	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionExecCreate)
 	if !ok {
 		return
 	}
@@ -69,8 +69,13 @@ func (s *Server) createWorkspaceExec(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	fingerprint := workspaceExecCreateFingerprint(command, cwd, envShape, request.Detached)
-	row, cached, err := s.createWorkspaceExecForRequest(r.Context(), actor, workspace, command, cwd, envShape, request.Detached, strings.TrimSpace(request.IdempotencyKey), fingerprint)
+	filesystemMode := db.WorkspaceFilesystemModeWrite
+	fingerprint, err := workspaceExecCreateFingerprint(command, cwd, envShape, request.Detached, filesystemMode)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	row, cached, err := s.createWorkspaceExecForRequest(r.Context(), actor, workspace, command, cwd, envShape, request.Detached, filesystemMode, strings.TrimSpace(request.IdempotencyKey), fingerprint)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "create workspace exec", err)
 		return
@@ -83,7 +88,7 @@ func (s *Server) createWorkspaceExec(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listWorkspaceExecs(w http.ResponseWriter, r *http.Request) {
-	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionWorkspacesRead)
+	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionExecRead)
 	if !ok {
 		return
 	}
@@ -94,7 +99,12 @@ func (s *Server) listWorkspaceExecs(w http.ResponseWriter, r *http.Request) {
 	}
 	state := pgtype.Text{}
 	if raw := strings.TrimSpace(r.URL.Query().Get("state")); raw != "" {
-		state = pgvalue.Text(raw)
+		normalized, err := normalizeWorkspaceExecStateFilter(raw)
+		if err != nil {
+			writeError(w, badRequest(err))
+			return
+		}
+		state = pgvalue.Text(string(normalized))
 	}
 	rows, err := s.db.ListWorkspaceExecs(r.Context(), db.ListWorkspaceExecsParams{
 		OrgID:         workspace.OrgID,
@@ -115,8 +125,23 @@ func (s *Server) listWorkspaceExecs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.ListWorkspaceExecsResponse{Execs: out})
 }
 
+func normalizeWorkspaceExecStateFilter(raw string) (db.WorkspaceExecState, error) {
+	switch db.WorkspaceExecState(strings.TrimSpace(raw)) {
+	case db.WorkspaceExecStateQueued,
+		db.WorkspaceExecStateMaterializing,
+		db.WorkspaceExecStateRunning,
+		db.WorkspaceExecStateExited,
+		db.WorkspaceExecStateTerminated,
+		db.WorkspaceExecStateLost,
+		db.WorkspaceExecStateFailed:
+		return db.WorkspaceExecState(strings.TrimSpace(raw)), nil
+	default:
+		return "", errors.New("state must be one of queued, materializing, running, exited, terminated, lost, failed")
+	}
+}
+
 func (s *Server) getWorkspaceExec(w http.ResponseWriter, r *http.Request) {
-	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionWorkspacesRead)
+	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionExecRead)
 	if !ok {
 		return
 	}
@@ -124,7 +149,7 @@ func (s *Server) getWorkspaceExec(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) closeWorkspaceExecStdin(w http.ResponseWriter, r *http.Request) {
-	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionWorkspacesWrite)
+	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionExecManage)
 	if !ok {
 		return
 	}
@@ -137,7 +162,7 @@ func (s *Server) closeWorkspaceExecStdin(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) writeWorkspaceExecStdin(w http.ResponseWriter, r *http.Request) {
-	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionWorkspacesWrite)
+	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionExecManage)
 	if !ok {
 		return
 	}
@@ -163,7 +188,7 @@ func (s *Server) listWorkspaceExecStderr(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) listWorkspaceExecStream(w http.ResponseWriter, r *http.Request, stream db.WorkspaceExecStream) {
-	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionWorkspacesRead)
+	exec, ok := s.loadWorkspaceExecForRequest(w, r, auth.PermissionExecRead)
 	if !ok {
 		return
 	}
@@ -252,7 +277,7 @@ func (s *Server) requestWorkspaceExecStdinClose(ctx context.Context, exec db.Wor
 	return row, nil
 }
 
-func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.Actor, workspace db.Workspace, command []string, cwd string, envShape []byte, detached bool, idempotencyKey string, fingerprint string) (db.WorkspaceExec, bool, error) {
+func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.Actor, workspace db.Workspace, command []string, cwd string, envShape []byte, detached bool, filesystemMode db.WorkspaceFilesystemMode, idempotencyKey string, fingerprint string) (db.WorkspaceExec, bool, error) {
 	if s.tx == nil {
 		return db.WorkspaceExec{}, false, errors.New("transactional workspace storage is not configured")
 	}
@@ -309,7 +334,7 @@ func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.A
 		Command:              commandJSON,
 		Cwd:                  cwd,
 		EnvShape:             envShape,
-		FilesystemMode:       db.WorkspaceFilesystemModeWrite,
+		FilesystemMode:       filesystemMode,
 		State:                db.WorkspaceExecStateMaterializing,
 		Detached:             detached,
 		IdempotencyKey:       idempotencyKey,
@@ -684,16 +709,18 @@ func workspaceExecEnvShape(env map[string]string) ([]byte, error) {
 	return out, nil
 }
 
-func workspaceExecCreateFingerprint(command []string, cwd string, envShape []byte, detached bool) string {
-	payload, _ := json.Marshal(struct {
+func workspaceExecCreateFingerprint(command []string, cwd string, envShape []byte, detached bool, filesystemMode db.WorkspaceFilesystemMode) (string, error) {
+	payload, err := json.Marshal(struct {
 		Command  []string        `json:"command"`
 		Cwd      string          `json:"cwd"`
 		EnvShape json.RawMessage `json:"env_shape"`
 		Detached bool            `json:"detached"`
 		Mode     string          `json:"filesystem_mode"`
-	}{Command: command, Cwd: cwd, EnvShape: envShape, Detached: detached, Mode: "write"})
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:])
+	}{Command: command, Cwd: cwd, EnvShape: envShape, Detached: detached, Mode: string(filesystemMode)})
+	if err != nil {
+		return "", fmt.Errorf("encode workspace exec fingerprint payload: %w", err)
+	}
+	return protocol.RequestFingerprint(string(workspaceExecCreateOperationKind), payload)
 }
 
 func workspaceExecStateTerminal(state db.WorkspaceExecState) bool {

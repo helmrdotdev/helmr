@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspaceop"
+	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -18,13 +18,13 @@ const (
 	workspacePrimitiveWriteLeaseTTL = 24 * time.Hour
 	workspaceDispatchListLimit      = int32(1000)
 
-	workspaceOperationKindStartExec = "StartExec"
-	workspaceOperationKindCreatePty = "CreatePty"
-	workspaceOperationKindResizePty = "ResizePty"
-	workspaceOperationKindClosePty  = "ClosePty"
+	workspaceOperationKindStartExec = db.WorkspaceMaterializationOperationKindStartExec
+	workspaceOperationKindCreatePty = db.WorkspaceMaterializationOperationKindCreatePty
+	workspaceOperationKindResizePty = db.WorkspaceMaterializationOperationKindResizePty
+	workspaceOperationKindClosePty  = db.WorkspaceMaterializationOperationKindClosePty
 
-	workspaceOperationResourceExec = "workspace_exec"
-	workspaceOperationResourcePty  = "workspace_pty"
+	workspaceOperationResourceExec = db.WorkspaceResourceKindWorkspaceExec
+	workspaceOperationResourcePty  = db.WorkspaceResourceKindWorkspacePty
 )
 
 type workspacePrimitiveOperationLease struct {
@@ -43,7 +43,7 @@ type workspacePrimitiveControlTarget struct {
 	name              string
 	scope             workspacePrimitiveResourceScope
 	materializationID pgtype.UUID
-	resourceKind      string
+	resourceKind      db.WorkspaceResourceKind
 	resourceID        pgtype.UUID
 }
 
@@ -161,7 +161,7 @@ func materializationFromEnsureRow(row db.EnsureWorkspaceMaterializationRequested
 	}
 }
 
-func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, materialization db.WorkspaceMaterialization, operationKind string, resourceKind string, resourceID pgtype.UUID, request []byte, lease workspacePrimitiveOperationLease, priority int32) (db.WorkspaceMaterializationOperation, error) {
+func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, materialization db.WorkspaceMaterialization, operationKind db.WorkspaceMaterializationOperationKind, resourceKind db.WorkspaceResourceKind, resourceID pgtype.UUID, request []byte, lease workspacePrimitiveOperationLease, priority int32) (db.WorkspaceMaterializationOperation, error) {
 	fingerprint, err := workspacePrimitiveOperationFingerprint(operationKind, request)
 	if err != nil {
 		return db.WorkspaceMaterializationOperation{}, err
@@ -351,7 +351,7 @@ func ensureWorkspacePtyWriteLease(ctx context.Context, store db.Querier, materia
 	return row, lease, nil
 }
 
-func requestWorkspacePrimitiveControlOperation(ctx context.Context, store db.Querier, target workspacePrimitiveControlTarget, operationKind string, request []byte, ensureWriteLease func(context.Context, db.Querier, db.WorkspaceMaterialization) (workspacePrimitiveOperationLease, error)) error {
+func requestWorkspacePrimitiveControlOperation(ctx context.Context, store db.Querier, target workspacePrimitiveControlTarget, operationKind db.WorkspaceMaterializationOperationKind, request []byte, ensureWriteLease func(context.Context, db.Querier, db.WorkspaceMaterialization) (workspacePrimitiveOperationLease, error)) error {
 	if !target.materializationID.Valid {
 		return conflict(codedError{code: "workspace_materialization_not_runnable", message: target.name + " is not bound to a runnable materialization"})
 	}
@@ -376,7 +376,7 @@ func requestWorkspacePrimitiveControlOperation(ctx context.Context, store db.Que
 	return err
 }
 
-func requestWorkspaceExecControlOperation(ctx context.Context, store db.Querier, row db.WorkspaceExec, operationKind string, request []byte) error {
+func requestWorkspaceExecControlOperation(ctx context.Context, store db.Querier, row db.WorkspaceExec, operationKind db.WorkspaceMaterializationOperationKind, request []byte) error {
 	target := workspacePrimitiveControlTarget{
 		name:              "workspace exec",
 		scope:             workspacePrimitiveScopeForExec(row),
@@ -390,7 +390,7 @@ func requestWorkspaceExecControlOperation(ctx context.Context, store db.Querier,
 	})
 }
 
-func requestWorkspacePtyControlOperation(ctx context.Context, store db.Querier, row db.WorkspacePtySession, operationKind string, request []byte) error {
+func requestWorkspacePtyControlOperation(ctx context.Context, store db.Querier, row db.WorkspacePtySession, operationKind db.WorkspaceMaterializationOperationKind, request []byte) error {
 	target := workspacePrimitiveControlTarget{
 		name:              "workspace pty",
 		scope:             workspacePrimitiveScopeForPty(row),
@@ -439,14 +439,17 @@ func workspacePtyCreateOperationRequest(row db.WorkspacePtySession) ([]byte, err
 }
 
 func workspacePtyResizeOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
+	if !row.ResizeCols.Valid || !row.ResizeRows.Valid {
+		return nil, errors.New("workspace pty resize target is required")
+	}
 	return json.Marshal(struct {
 		PtyID string `json:"pty_id"`
 		Cols  int32  `json:"cols"`
 		Rows  int32  `json:"rows"`
 	}{
 		PtyID: pgvalue.MustUUIDValue(row.ID).String(),
-		Cols:  row.Cols,
-		Rows:  row.Rows,
+		Cols:  row.ResizeCols.Int32,
+		Rows:  row.ResizeRows.Int32,
 	})
 }
 
@@ -458,6 +461,10 @@ func workspacePtyCloseOperationRequest(row db.WorkspacePtySession) ([]byte, erro
 	})
 }
 
-func workspacePrimitiveOperationFingerprint(operationKind string, request []byte) (string, error) {
-	return workspaceop.CanonicalRequestFingerprint(operationKind, request)
+func workspacePrimitiveOperationFingerprint(operationKind db.WorkspaceMaterializationOperationKind, request []byte) (string, error) {
+	guestVerb, err := workspaceOperationGuestVerb(operationKind)
+	if err != nil {
+		return "", err
+	}
+	return protocol.RequestFingerprint(guestVerb, request)
 }

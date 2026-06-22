@@ -370,7 +370,7 @@ export interface WorkspaceExec {
   readonly command: readonly string[]
   readonly cwd: string
   readonly envShape: Record<string, string>
-  readonly filesystemMode: "read" | "write" | string
+  readonly filesystemMode: "write"
   readonly state: WorkspaceExecState
   readonly detached: boolean
   readonly processId: string | null
@@ -437,7 +437,7 @@ export interface WorkspacePty {
   readonly cwd: string
   readonly cols: number
   readonly rows: number
-  readonly filesystemMode: "read" | "write" | string
+  readonly filesystemMode: "write"
   readonly state: WorkspacePtyState
   readonly processId: string | null
   readonly outputCursor: number
@@ -2605,7 +2605,7 @@ function workspaceExecFromResponse(response: WorkspaceExecResponse): WorkspaceEx
     command: response.command,
     cwd: response.cwd,
     envShape: response.env_shape ?? {},
-    filesystemMode: response.filesystem_mode,
+    filesystemMode: workspaceFilesystemModeFromResponse(response.filesystem_mode),
     state: response.state,
     detached: response.detached,
     processId: response.process_id ?? null,
@@ -2631,7 +2631,7 @@ function workspacePtyFromResponse(response: WorkspacePtyResponse): WorkspacePty 
     cwd: response.cwd,
     cols: response.cols,
     rows: response.rows,
-    filesystemMode: response.filesystem_mode,
+    filesystemMode: workspaceFilesystemModeFromResponse(response.filesystem_mode),
     state: response.state,
     processId: response.process_id ?? null,
     outputCursor: response.output_cursor,
@@ -2665,6 +2665,13 @@ function workspaceStreamTerminalFromResponse(response: WorkspaceStreamTerminalRe
     cursor: response.cursor,
     error: response.error ?? null,
   }
+}
+
+function workspaceFilesystemModeFromResponse(value: string): "write" {
+  if (value === "write") {
+    return "write"
+  }
+  throw new Error(`unsupported workspace filesystem mode ${JSON.stringify(value)}`)
 }
 
 function workspaceExecTerminal(state: WorkspaceExecState): boolean {

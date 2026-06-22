@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/workspaceop"
+	"github.com/helmrdotdev/helmr/internal/stablejson"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -57,7 +57,7 @@ func canonicalIdempotencyKey(key string) string {
 }
 
 func canonicalJSON(raw json.RawMessage) (json.RawMessage, error) {
-	canonical, err := workspaceop.CanonicalJSON(raw)
+	canonical, err := stablejson.Encode(raw)
 	if err != nil {
 		return nil, err
 	}

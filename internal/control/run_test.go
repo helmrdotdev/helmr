@@ -708,6 +708,156 @@ func TestWorkspaceMaterializeEnsuresRunnableMaterializationCreated(t *testing.T)
 	}
 }
 
+func TestWorkspaceMaterializeAllowsPrimitiveReadPermissions(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		permission auth.Permission
+	}{
+		{name: "exec read", permission: auth.PermissionExecRead},
+		{name: "pty read", permission: auth.PermissionPtyRead},
+		{name: "ports read", permission: auth.PermissionPortsRead},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			workspaceID := uuid.Must(uuid.NewV7())
+			store := &fakeStore{ensureWorkspaceMaterializationInserted: true}
+			server := newTestServer(testServerConfig{
+				Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+				DB:          store,
+				Auth:        fakeAuth{permissions: []auth.Permission{tt.permission}},
+				CAS:         &fakeCAS{},
+				Secrets:     fakeSecrets{},
+				EventStream: newTestEventStream(t),
+			})
+			req := httptest.NewRequest(http.MethodPost, "/api/workspaces/"+workspaceID.String()+"/materialize", strings.NewReader(`{}`))
+			req.Header.Set("authorization", "Bearer test-key")
+			rec := httptest.NewRecorder()
+
+			server.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+			if store.ensureWorkspaceMaterializationCalls != 1 {
+				t.Fatalf("EnsureWorkspaceMaterializationRequested calls = %d, want 1", store.ensureWorkspaceMaterializationCalls)
+			}
+		})
+	}
+}
+
+func TestWorkspaceListAndGetAllowPrimitiveWorkspacePermissions(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		permission auth.Permission
+	}{
+		{name: "files read", permission: auth.PermissionFilesRead},
+		{name: "exec create", permission: auth.PermissionExecCreate},
+		{name: "ports close", permission: auth.PermissionPortsClose},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			workspaceID := uuid.Must(uuid.NewV7())
+			store := &fakeStore{workspace: testWorkspaceRow(workspaceID)}
+			server := newTestServer(testServerConfig{
+				Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+				DB:          store,
+				Auth:        fakeAuth{permissions: []auth.Permission{tt.permission}},
+				CAS:         &fakeCAS{},
+				Secrets:     fakeSecrets{},
+				EventStream: newTestEventStream(t),
+			})
+
+			for _, path := range []string{
+				"/api/workspaces",
+				"/api/workspaces/" + workspaceID.String(),
+			} {
+				req := httptest.NewRequest(http.MethodGet, path, nil)
+				req.Header.Set("authorization", "Bearer test-key")
+				rec := httptest.NewRecorder()
+
+				server.ServeHTTP(rec, req)
+
+				if rec.Code != http.StatusOK {
+					t.Fatalf("%s status = %d body=%s", path, rec.Code, rec.Body.String())
+				}
+			}
+		})
+	}
+}
+
+func TestWorkspaceListAndGetRejectUnrelatedPermission(t *testing.T) {
+	workspaceID := uuid.Must(uuid.NewV7())
+	store := &fakeStore{workspace: testWorkspaceRow(workspaceID)}
+	server := newTestServer(testServerConfig{
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DB:          store,
+		Auth:        fakeAuth{permissions: []auth.Permission{auth.PermissionRunsRead}},
+		CAS:         &fakeCAS{},
+		Secrets:     fakeSecrets{},
+		EventStream: newTestEventStream(t),
+	})
+
+	for _, path := range []string{
+		"/api/workspaces",
+		"/api/workspaces/" + workspaceID.String(),
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("authorization", "Bearer test-key")
+		rec := httptest.NewRecorder()
+
+		server.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s status = %d body=%s", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestWorkspacePrimitiveCreateFingerprintsUseCanonicalProtocol(t *testing.T) {
+	envShape := []byte(`{"B":"2","A":"1"}`)
+	execFingerprint, err := workspaceExecCreateFingerprint([]string{"echo", "ok"}, "/workspace", envShape, false, db.WorkspaceFilesystemModeWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execFingerprintAgain, err := workspaceExecCreateFingerprint([]string{"echo", "ok"}, "/workspace", []byte(`{"A":"1","B":"2"}`), false, db.WorkspaceFilesystemModeWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execFingerprint != execFingerprintAgain {
+		t.Fatalf("exec fingerprint changed with JSON field order: %q != %q", execFingerprint, execFingerprintAgain)
+	}
+	ptyFingerprint, err := workspacePtyCreateFingerprint("/workspace", 80, 24, db.WorkspaceFilesystemModeWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ptyFingerprintAgain, err := workspacePtyCreateFingerprint("/workspace", 80, 24, db.WorkspaceFilesystemModeWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ptyFingerprintAgain != ptyFingerprint {
+		t.Fatalf("pty fingerprint changed across identical inputs: %q != %q", ptyFingerprint, ptyFingerprintAgain)
+	}
+}
+
+func testWorkspaceRow(id uuid.UUID) db.Workspace {
+	now := testTime()
+	return db.Workspace{
+		ID:                  pgvalue.UUID(id),
+		OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+		ProjectID:           testProjectID(),
+		EnvironmentID:       testEnvironmentID(),
+		DeploymentSandboxID: testDeploymentSandboxID(),
+		SandboxID:           "test-sandbox",
+		SandboxFingerprint:  "test-sandbox-fingerprint",
+		State:               db.WorkspaceStateActive,
+		DesiredState:        db.WorkspaceDesiredStateActive,
+		DirtyState:          db.WorkspaceDirtyStateClean,
+		Metadata:            []byte(`{}`),
+		Tags:                []string{},
+		LastActivityAt:      now,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+}
+
 func TestWorkspaceCreateResolvesSandboxSelectorAndReplaysIdempotency(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
@@ -2558,6 +2708,16 @@ func (f *fakeStore) GetWorkspace(_ context.Context, arg db.GetWorkspaceParams) (
 	return db.Workspace{}, pgx.ErrNoRows
 }
 
+func (f *fakeStore) ListWorkspaces(_ context.Context, arg db.ListWorkspacesParams) ([]db.Workspace, error) {
+	if f.workspace.ID.Valid &&
+		f.workspace.OrgID == arg.OrgID &&
+		f.workspace.ProjectID == arg.ProjectID &&
+		f.workspace.EnvironmentID == arg.EnvironmentID {
+		return []db.Workspace{f.workspace}, nil
+	}
+	return []db.Workspace{}, nil
+}
+
 func (f *fakeStore) GetWorkspaceOperationIdempotency(_ context.Context, arg db.GetWorkspaceOperationIdempotencyParams) (db.WorkspaceOperationIdempotency, error) {
 	row := f.workspaceOperationIdempotency
 	if row.ID.Valid &&
@@ -3146,9 +3306,22 @@ func (f fakeAuth) Authenticate(context.Context, string) (auth.Actor, error) {
 			auth.PermissionRunsCreate,
 			auth.PermissionRunsRead,
 			auth.PermissionRunsManage,
-			auth.PermissionWorkspacesRead,
-			auth.PermissionWorkspacesWrite,
-			auth.PermissionWorkspacesManage,
+			auth.PermissionWorkspaceLifecycleManage,
+			auth.PermissionFilesRead,
+			auth.PermissionFilesWrite,
+			auth.PermissionVersionsRead,
+			auth.PermissionVersionsCapture,
+			auth.PermissionVersionsRestore,
+			auth.PermissionVersionsDiff,
+			auth.PermissionExecCreate,
+			auth.PermissionExecRead,
+			auth.PermissionExecManage,
+			auth.PermissionPtyCreate,
+			auth.PermissionPtyRead,
+			auth.PermissionPtyManage,
+			auth.PermissionPortsExpose,
+			auth.PermissionPortsRead,
+			auth.PermissionPortsClose,
 			auth.PermissionRunWaitpointsRead,
 			auth.PermissionChannelsWrite,
 			auth.PermissionSecretsWrite,

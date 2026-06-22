@@ -176,7 +176,7 @@ UPDATE workspace_operation_idempotencies
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
-   AND operation_kind = sqlc.arg(operation_kind)
+   AND operation_kind = sqlc.arg(operation_kind)::workspace_operation_idempotency_kind
    AND workspace_id IS NULL
    AND idempotency_key = sqlc.arg(idempotency_key)
    AND expires_at > now()
@@ -189,7 +189,7 @@ UPDATE workspace_operation_idempotencies
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND operation_kind = sqlc.arg(operation_kind)
+   AND operation_kind = sqlc.arg(operation_kind)::workspace_operation_idempotency_kind
    AND idempotency_key = sqlc.arg(idempotency_key)
    AND expires_at > now()
 RETURNING *;
@@ -207,7 +207,7 @@ WITH replaced AS (
      WHERE workspace_operation_idempotencies.org_id = sqlc.arg(org_id)
        AND workspace_operation_idempotencies.project_id = sqlc.arg(project_id)
        AND workspace_operation_idempotencies.environment_id = sqlc.arg(environment_id)
-       AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)
+       AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)::workspace_operation_idempotency_kind
        AND workspace_operation_idempotencies.idempotency_key = sqlc.arg(idempotency_key)
        AND (
            (sqlc.narg(workspace_id)::uuid IS NULL AND workspace_operation_idempotencies.workspace_id IS NULL)
@@ -237,7 +237,7 @@ inserted AS (
         sqlc.arg(project_id),
         sqlc.arg(environment_id),
         sqlc.narg(workspace_id),
-        sqlc.arg(operation_kind),
+        sqlc.arg(operation_kind)::workspace_operation_idempotency_kind,
         sqlc.arg(idempotency_key),
         sqlc.arg(request_fingerprint),
         sqlc.arg(response_resource_type),
@@ -254,7 +254,7 @@ existing AS (
      WHERE workspace_operation_idempotencies.org_id = sqlc.arg(org_id)
        AND workspace_operation_idempotencies.project_id = sqlc.arg(project_id)
        AND workspace_operation_idempotencies.environment_id = sqlc.arg(environment_id)
-       AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)
+       AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)::workspace_operation_idempotency_kind
        AND workspace_operation_idempotencies.idempotency_key = sqlc.arg(idempotency_key)
        AND (
            (sqlc.narg(workspace_id)::uuid IS NULL AND workspace_operation_idempotencies.workspace_id IS NULL)
@@ -281,7 +281,7 @@ UPDATE workspace_operation_idempotencies
  WHERE workspace_operation_idempotencies.org_id = sqlc.arg(org_id)
    AND workspace_operation_idempotencies.project_id = sqlc.arg(project_id)
    AND workspace_operation_idempotencies.environment_id = sqlc.arg(environment_id)
-   AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)
+   AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)::workspace_operation_idempotency_kind
    AND workspace_operation_idempotencies.workspace_id IS NULL
    AND workspace_operation_idempotencies.idempotency_key = sqlc.arg(idempotency_key)
    AND workspace_operation_idempotencies.request_fingerprint = sqlc.arg(request_fingerprint)
@@ -298,7 +298,7 @@ UPDATE workspace_operation_idempotencies
  WHERE workspace_operation_idempotencies.org_id = sqlc.arg(org_id)
    AND workspace_operation_idempotencies.project_id = sqlc.arg(project_id)
    AND workspace_operation_idempotencies.environment_id = sqlc.arg(environment_id)
-   AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)
+   AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)::workspace_operation_idempotency_kind
    AND workspace_operation_idempotencies.workspace_id = sqlc.arg(workspace_id)
    AND workspace_operation_idempotencies.idempotency_key = sqlc.arg(idempotency_key)
    AND workspace_operation_idempotencies.request_fingerprint = sqlc.arg(request_fingerprint)

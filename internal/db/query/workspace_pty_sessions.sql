@@ -165,9 +165,9 @@ SELECT *
 
 -- name: ResizeWorkspacePtySession :one
 UPDATE workspace_pty_sessions
-   SET cols = sqlc.arg(cols),
-       rows = sqlc.arg(rows),
-       state = CASE WHEN state = 'open' THEN 'resizing'::workspace_pty_state ELSE state END,
+   SET resize_cols = sqlc.arg(cols),
+       resize_rows = sqlc.arg(rows),
+       state = 'resizing',
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
@@ -179,7 +179,11 @@ RETURNING *;
 
 -- name: MarkWorkspacePtyResizeApplied :one
 UPDATE workspace_pty_sessions
-   SET state = 'open',
+   SET cols = resize_cols,
+       rows = resize_rows,
+       resize_cols = NULL,
+       resize_rows = NULL,
+       state = CASE WHEN state = 'closing' THEN 'closing'::workspace_pty_state ELSE 'open'::workspace_pty_state END,
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
@@ -187,12 +191,16 @@ UPDATE workspace_pty_sessions
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
    AND materialization_id = sqlc.arg(materialization_id)
-   AND state = 'resizing'
+   AND state IN ('resizing', 'closing')
+   AND resize_cols = sqlc.arg(cols)
+   AND resize_rows = sqlc.arg(rows)
 RETURNING *;
 
 -- name: RequestWorkspacePtyClose :one
 UPDATE workspace_pty_sessions
    SET state = 'closing',
+       resize_cols = CASE WHEN state IN ('resizing', 'closing') THEN resize_cols ELSE NULL END,
+       resize_rows = CASE WHEN state IN ('resizing', 'closing') THEN resize_rows ELSE NULL END,
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
@@ -202,10 +210,52 @@ UPDATE workspace_pty_sessions
    AND state IN ('open', 'resizing', 'closing')
 RETURNING *;
 
+-- name: RollbackWorkspacePtyControlOperation :one
+UPDATE workspace_pty_sessions
+   SET state = CASE
+           WHEN sqlc.arg(operation_kind)::workspace_materialization_operation_kind = 'close_pty'
+                AND resize_cols IS NOT NULL
+                AND resize_rows IS NOT NULL
+               THEN 'resizing'::workspace_pty_state
+           ELSE 'open'::workspace_pty_state
+       END,
+       resize_cols = CASE
+           WHEN sqlc.arg(operation_kind)::workspace_materialization_operation_kind = 'close_pty'
+               THEN resize_cols
+           ELSE NULL
+       END,
+       resize_rows = CASE
+           WHEN sqlc.arg(operation_kind)::workspace_materialization_operation_kind = 'close_pty'
+               THEN resize_rows
+           ELSE NULL
+       END,
+       updated_at = now()
+ WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
+   AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
+   AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
+   AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_pty_sessions.id = sqlc.arg(id)
+   AND workspace_pty_sessions.materialization_id = sqlc.arg(materialization_id)
+   AND (
+       (
+           sqlc.arg(operation_kind)::workspace_materialization_operation_kind = 'resize_pty'
+           AND workspace_pty_sessions.state = 'resizing'
+           AND workspace_pty_sessions.resize_cols = sqlc.narg(cols)
+           AND workspace_pty_sessions.resize_rows = sqlc.narg(rows)
+       )
+       OR (
+           sqlc.arg(operation_kind)::workspace_materialization_operation_kind = 'close_pty'
+           AND workspace_pty_sessions.state = 'closing'
+       )
+   )
+RETURNING *;
+
 -- name: MarkWorkspacePtyClosed :one
 WITH updated_pty AS (
     UPDATE workspace_pty_sessions
        SET state = 'closed',
+           resize_cols = NULL,
+           resize_rows = NULL,
            closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
            updated_at = now()
      WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
@@ -255,6 +305,8 @@ SELECT *
 WITH updated_pty AS (
     UPDATE workspace_pty_sessions
        SET state = 'failed',
+           resize_cols = NULL,
+           resize_rows = NULL,
            error = coalesce(sqlc.arg(error)::jsonb, '{}'::jsonb),
            closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
            updated_at = now()

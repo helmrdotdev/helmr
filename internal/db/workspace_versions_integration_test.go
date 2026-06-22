@@ -2,14 +2,12 @@ package db_test
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5"
 )
 
 func TestWorkspaceMaterializationRequiresReadyCurrentVersion(t *testing.T) {
@@ -37,21 +35,8 @@ func TestWorkspaceMaterializationRequiresReadyCurrentVersion(t *testing.T) {
 		   AND environment_id = $4
 		   AND id = $5
 	`, versionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	queries := db.New(pool)
-	_, err = queries.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         pgvalue.UUID(ids.orgID),
-		ProjectID:     pgvalue.UUID(ids.projectID),
-		EnvironmentID: pgvalue.UUID(ids.environmentID),
-		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
-		Priority:      0,
-		Request:       []byte(`{"source":"test"}`),
-	})
-	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("EnsureWorkspaceMaterializationRequested err = %v, want no rows for non-ready current version", err)
+	if err == nil {
+		t.Fatal("direct current_version_id update to non-ready version succeeded, want constraint error")
 	}
 }
 

@@ -470,10 +470,12 @@ terminated_requested_execs AS (
 ),
 closed_requested_ptys AS (
     UPDATE workspace_pty_sessions
-       SET state = 'closed',
-           error = jsonb_build_object('code', 'workspace_materialization_stopped'),
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
-           updated_at = now()
+	   SET state = 'closed',
+	       error = jsonb_build_object('code', 'workspace_materialization_stopped'),
+	       resize_cols = NULL,
+	       resize_rows = NULL,
+	       closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+	       updated_at = now()
       FROM requested_without_worker
      WHERE workspace_pty_sessions.org_id = requested_without_worker.org_id
        AND workspace_pty_sessions.project_id = requested_without_worker.project_id
@@ -567,10 +569,12 @@ terminated_live_pending_execs AS (
 ),
 closed_live_pending_ptys AS (
     UPDATE workspace_pty_sessions
-       SET state = 'closed',
-           error = jsonb_build_object('code', 'workspace_materialization_stopped'),
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
-           updated_at = now()
+	   SET state = 'closed',
+	       error = jsonb_build_object('code', 'workspace_materialization_stopped'),
+	       resize_cols = NULL,
+	       resize_rows = NULL,
+	       closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+	       updated_at = now()
       FROM requested_live_stop
      WHERE workspace_pty_sessions.org_id = requested_live_stop.org_id
        AND workspace_pty_sessions.project_id = requested_live_stop.project_id
@@ -775,10 +779,12 @@ terminated_execs AS (
 ),
 closed_ptys AS (
     UPDATE workspace_pty_sessions
-       SET state = 'closed',
-           error = jsonb_build_object('code', 'workspace_materialization_stopped'),
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
-           updated_at = now()
+	   SET state = 'closed',
+	       error = jsonb_build_object('code', 'workspace_materialization_stopped'),
+	       resize_cols = NULL,
+	       resize_rows = NULL,
+	       closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+	       updated_at = now()
       FROM stopped
      WHERE workspace_pty_sessions.org_id = stopped.org_id
        AND workspace_pty_sessions.project_id = stopped.project_id
@@ -938,10 +944,12 @@ lost_execs AS (
 ),
 lost_ptys AS (
     UPDATE workspace_pty_sessions
-       SET state = 'lost',
-           error = jsonb_build_object('code', 'workspace_materialization_failed'),
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
-           updated_at = now()
+	   SET state = 'lost',
+	       error = jsonb_build_object('code', 'workspace_materialization_failed'),
+	       resize_cols = NULL,
+	       resize_rows = NULL,
+	       closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+	       updated_at = now()
       FROM failed
      WHERE workspace_pty_sessions.org_id = failed.org_id
        AND workspace_pty_sessions.project_id = failed.project_id
@@ -1047,6 +1055,22 @@ lost_operations AS (
        AND workspace_materialization_operations.state IN ('queued', 'claimed', 'running')
     RETURNING workspace_materialization_operations.id
 ),
+updated_lost_dirty_workspaces AS (
+    UPDATE workspaces
+       SET state = 'recovery_required',
+           dirty_state = 'dirty_state_lost',
+           updated_at = now()
+      FROM lost
+     WHERE lost.dirty_generation > 0
+       AND workspaces.org_id = lost.org_id
+       AND workspaces.project_id = lost.project_id
+       AND workspaces.environment_id = lost.environment_id
+       AND workspaces.id = lost.workspace_id
+       AND workspaces.state = 'active'
+       AND workspaces.archived_at IS NULL
+       AND workspaces.deleted_at IS NULL
+    RETURNING workspaces.id
+),
 lost_execs AS (
     UPDATE workspace_execs
        SET state = 'lost',
@@ -1064,10 +1088,12 @@ lost_execs AS (
 ),
 lost_ptys AS (
     UPDATE workspace_pty_sessions
-       SET state = 'lost',
-           error = jsonb_build_object('code', 'workspace_materialization_lost'),
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
-           updated_at = now()
+	   SET state = 'lost',
+	       error = jsonb_build_object('code', 'workspace_materialization_lost'),
+	       resize_cols = NULL,
+	       resize_rows = NULL,
+	       closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+	       updated_at = now()
       FROM lost
      WHERE workspace_pty_sessions.org_id = lost.org_id
        AND workspace_pty_sessions.project_id = lost.project_id
@@ -1134,4 +1160,5 @@ stream_wakeups AS (
 )
 SELECT *
   FROM lost
- WHERE (SELECT count(*) FROM stream_wakeups) >= 0;
+ WHERE (SELECT count(*) FROM stream_wakeups)
+     + (SELECT count(*) FROM updated_lost_dirty_workspaces) >= 0;

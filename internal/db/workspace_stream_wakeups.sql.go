@@ -41,20 +41,20 @@ type ClaimWorkspaceStreamWakeupsParams struct {
 }
 
 type ClaimWorkspaceStreamWakeupsRow struct {
-	ID               int64              `json:"id"`
-	OrgID            pgtype.UUID        `json:"org_id"`
-	ProjectID        pgtype.UUID        `json:"project_id"`
-	EnvironmentID    pgtype.UUID        `json:"environment_id"`
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	ResourceKind     string             `json:"resource_kind"`
-	ResourceID       pgtype.UUID        `json:"resource_id"`
-	Stream           string             `json:"stream"`
-	CursorOffset     int64              `json:"cursor_offset"`
-	NotificationKind string             `json:"notification_kind"`
-	Attempts         int32              `json:"attempts"`
-	LockedUntil      pgtype.Timestamptz `json:"locked_until"`
-	LastError        string             `json:"last_error"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ID               int64                           `json:"id"`
+	OrgID            pgtype.UUID                     `json:"org_id"`
+	ProjectID        pgtype.UUID                     `json:"project_id"`
+	EnvironmentID    pgtype.UUID                     `json:"environment_id"`
+	WorkspaceID      pgtype.UUID                     `json:"workspace_id"`
+	ResourceKind     WorkspaceResourceKind           `json:"resource_kind"`
+	ResourceID       pgtype.UUID                     `json:"resource_id"`
+	Stream           string                          `json:"stream"`
+	CursorOffset     int64                           `json:"cursor_offset"`
+	NotificationKind WorkspaceStreamNotificationKind `json:"notification_kind"`
+	Attempts         int32                           `json:"attempts"`
+	LockedUntil      pgtype.Timestamptz              `json:"locked_until"`
+	LastError        string                          `json:"last_error"`
+	CreatedAt        pgtype.Timestamptz              `json:"created_at"`
 }
 
 func (q *Queries) ClaimWorkspaceStreamWakeups(ctx context.Context, arg ClaimWorkspaceStreamWakeupsParams) ([]ClaimWorkspaceStreamWakeupsRow, error) {
@@ -108,25 +108,25 @@ INSERT INTO workspace_stream_wakeups (
     $2,
     $3,
     $4,
-    $5,
+    $5::workspace_resource_kind,
     $6,
     $7,
     $8,
-    $9
+    $9::workspace_stream_notification_kind
 )
 RETURNING id, org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind, attempts, locked_until, last_error, created_at
 `
 
 type CreateWorkspaceStreamWakeupParams struct {
-	OrgID            pgtype.UUID `json:"org_id"`
-	ProjectID        pgtype.UUID `json:"project_id"`
-	EnvironmentID    pgtype.UUID `json:"environment_id"`
-	WorkspaceID      pgtype.UUID `json:"workspace_id"`
-	ResourceKind     string      `json:"resource_kind"`
-	ResourceID       pgtype.UUID `json:"resource_id"`
-	Stream           string      `json:"stream"`
-	CursorOffset     int64       `json:"cursor_offset"`
-	NotificationKind string      `json:"notification_kind"`
+	OrgID            pgtype.UUID                     `json:"org_id"`
+	ProjectID        pgtype.UUID                     `json:"project_id"`
+	EnvironmentID    pgtype.UUID                     `json:"environment_id"`
+	WorkspaceID      pgtype.UUID                     `json:"workspace_id"`
+	ResourceKind     WorkspaceResourceKind           `json:"resource_kind"`
+	ResourceID       pgtype.UUID                     `json:"resource_id"`
+	Stream           string                          `json:"stream"`
+	CursorOffset     int64                           `json:"cursor_offset"`
+	NotificationKind WorkspaceStreamNotificationKind `json:"notification_kind"`
 }
 
 func (q *Queries) CreateWorkspaceStreamWakeup(ctx context.Context, arg CreateWorkspaceStreamWakeupParams) (WorkspaceStreamWakeup, error) {
@@ -172,13 +172,22 @@ func (q *Queries) DeleteWorkspaceStreamWakeup(ctx context.Context, id int64) err
 }
 
 const markWorkspaceStreamWakeupFailed = `-- name: MarkWorkspaceStreamWakeupFailed :exec
+WITH deleted_exhausted_chunk AS (
+    DELETE FROM workspace_stream_wakeups
+     WHERE id = $4
+       AND attempts >= $1::int
+       AND notification_kind <> 'terminal'
+    RETURNING id
+)
 UPDATE workspace_stream_wakeups
-   SET locked_until = CASE
-           WHEN attempts >= $1::int THEN NULL
-           ELSE now() + $2::interval
+   SET attempts = CASE
+           WHEN attempts >= $1::int THEN $1::int - 1
+           ELSE attempts
        END,
+       locked_until = now() + $2::interval,
        last_error = $3
- WHERE id = $4
+ WHERE workspace_stream_wakeups.id = $4
+   AND NOT EXISTS (SELECT 1 FROM deleted_exhausted_chunk)
 `
 
 type MarkWorkspaceStreamWakeupFailedParams struct {

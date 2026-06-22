@@ -49,7 +49,23 @@ func (s *Server) requestWorkspaceMaterialization(w http.ResponseWriter, r *http.
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionWorkspacesWrite, scope) {
+	if !actorHasAnyPermission(actor, scope,
+		auth.PermissionWorkspaceLifecycleManage,
+		auth.PermissionFilesRead,
+		auth.PermissionFilesWrite,
+		auth.PermissionVersionsRead,
+		auth.PermissionVersionsCapture,
+		auth.PermissionVersionsRestore,
+		auth.PermissionExecRead,
+		auth.PermissionExecCreate,
+		auth.PermissionExecManage,
+		auth.PermissionPtyRead,
+		auth.PermissionPtyCreate,
+		auth.PermissionPtyManage,
+		auth.PermissionPortsRead,
+		auth.PermissionPortsExpose,
+		auth.PermissionPortsClose,
+	) {
 		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
@@ -100,7 +116,15 @@ func (s *Server) stopWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionWorkspacesWrite, scope) {
+	if !actorHasAnyPermission(actor, scope,
+		auth.PermissionWorkspaceLifecycleManage,
+		auth.PermissionFilesWrite,
+		auth.PermissionVersionsCapture,
+		auth.PermissionVersionsRestore,
+		auth.PermissionExecManage,
+		auth.PermissionPtyManage,
+		auth.PermissionPortsClose,
+	) {
 		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
@@ -120,6 +144,36 @@ func (s *Server) stopWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func actorHasAnyPermission(actor auth.Actor, scope auth.Scope, permissions ...auth.Permission) bool {
+	for _, permission := range permissions {
+		if actor.HasPermission(permission, scope) {
+			return true
+		}
+	}
+	return false
+}
+
+func workspaceReadPermissions() []auth.Permission {
+	return []auth.Permission{
+		auth.PermissionWorkspaceLifecycleManage,
+		auth.PermissionFilesRead,
+		auth.PermissionFilesWrite,
+		auth.PermissionVersionsRead,
+		auth.PermissionVersionsCapture,
+		auth.PermissionVersionsRestore,
+		auth.PermissionVersionsDiff,
+		auth.PermissionExecCreate,
+		auth.PermissionExecRead,
+		auth.PermissionExecManage,
+		auth.PermissionPtyCreate,
+		auth.PermissionPtyRead,
+		auth.PermissionPtyManage,
+		auth.PermissionPortsExpose,
+		auth.PermissionPortsRead,
+		auth.PermissionPortsClose,
+	}
 }
 
 func (s *Server) requestWorkspaceStopForRequest(ctx context.Context, actor auth.Actor, projectID pgtype.UUID, environmentID pgtype.UUID, workspaceID pgtype.UUID, request api.WorkspaceStopRequest, fingerprint string) (api.WorkspaceStopResponse, error) {
@@ -312,7 +366,7 @@ func workspaceStopFingerprint() (string, error) {
 	payload, err := json.Marshal(struct {
 		Operation string `json:"operation"`
 	}{
-		Operation: workspaceStopOperationKind,
+		Operation: string(workspaceStopOperationKind),
 	})
 	if err != nil {
 		return "", err
@@ -585,12 +639,12 @@ func (s *Server) workerCaptureWorkspaceMaterialization(w http.ResponseWriter, r 
 	version, err := store.PromoteWorkspaceMaterializationStopCapture(r.Context(), db.PromoteWorkspaceMaterializationStopCaptureParams{
 		OrgID:              params.OrgID,
 		ID:                 params.ID,
-			WorkspaceID:        pgvalue.UUID(workspaceID),
-			WorkerInstanceID:   params.WorkerInstanceID,
-			ReservationToken:   params.ReservationToken,
-			ProjectID:          pgvalue.UUID(projectID),
-			EnvironmentID:      pgvalue.UUID(environmentID),
-			ArtifactID:         artifact.ID,
+		WorkspaceID:        pgvalue.UUID(workspaceID),
+		WorkerInstanceID:   params.WorkerInstanceID,
+		ReservationToken:   params.ReservationToken,
+		ProjectID:          pgvalue.UUID(projectID),
+		EnvironmentID:      pgvalue.UUID(environmentID),
+		ArtifactID:         artifact.ID,
 		SizeBytes:          request.ArtifactSizeBytes,
 		ArtifactEncoding:   strings.TrimSpace(request.ArtifactEncoding),
 		ContentDigest:      digest,

@@ -9,8 +9,9 @@ import (
 )
 
 type primitiveFailureStore struct {
-	execExited []db.MarkWorkspaceExecExitedParams
-	ptyFailed  []db.MarkWorkspacePtyFailedParams
+	execExited          []db.MarkWorkspaceExecExitedParams
+	ptyFailed           []db.MarkWorkspacePtyFailedParams
+	ptyControlRollbacks []db.RollbackWorkspacePtyControlOperationParams
 }
 
 func (s *primitiveFailureStore) MarkWorkspaceExecExited(_ context.Context, params db.MarkWorkspaceExecExitedParams) (db.MarkWorkspaceExecExitedRow, error) {
@@ -21,6 +22,11 @@ func (s *primitiveFailureStore) MarkWorkspaceExecExited(_ context.Context, param
 func (s *primitiveFailureStore) MarkWorkspacePtyFailed(_ context.Context, params db.MarkWorkspacePtyFailedParams) (db.MarkWorkspacePtyFailedRow, error) {
 	s.ptyFailed = append(s.ptyFailed, params)
 	return db.MarkWorkspacePtyFailedRow{}, nil
+}
+
+func (s *primitiveFailureStore) RollbackWorkspacePtyControlOperation(_ context.Context, params db.RollbackWorkspacePtyControlOperationParams) (db.WorkspacePtySession, error) {
+	s.ptyControlRollbacks = append(s.ptyControlRollbacks, params)
+	return db.WorkspacePtySession{}, nil
 }
 
 func TestFailWorkspacePrimitiveForOperationMarksStartExecFailed(t *testing.T) {
@@ -47,8 +53,8 @@ func TestFailWorkspacePrimitiveForOperationMarksStartExecFailed(t *testing.T) {
 	if got.ExitCode.Valid {
 		t.Fatalf("exec exit_code valid = true, want false")
 	}
-	if len(store.ptyFailed) != 0 {
-		t.Fatalf("pty failures = %d, want 0", len(store.ptyFailed))
+	if len(store.ptyFailed) != 0 || len(store.ptyControlRollbacks) != 0 {
+		t.Fatalf("pty cleanup = failed %d rollbacks %d, want none", len(store.ptyFailed), len(store.ptyControlRollbacks))
 	}
 }
 
@@ -75,12 +81,38 @@ func TestFailWorkspacePrimitiveForOperationMarksCreatePtyFailed(t *testing.T) {
 	}
 }
 
-func TestFailWorkspacePrimitiveForOperationIgnoresNonLifecycleOperations(t *testing.T) {
+func TestFailWorkspacePrimitiveForOperationRollsBackPtyControlOperations(t *testing.T) {
 	store := &primitiveFailureStore{}
-	operation := testWorkspaceMaterializationOperation(workspaceOperationKindResizePty, workspaceOperationResourcePty)
 
-	if err := failWorkspacePrimitiveForOperation(context.Background(), store, operation, []byte(`{"code":"resize_failed"}`)); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		kind    db.WorkspaceMaterializationOperationKind
+		request []byte
+	}{
+		{kind: workspaceOperationKindResizePty, request: []byte(`{"pty_id":"pty-1","cols":120,"rows":40}`)},
+		{kind: workspaceOperationKindClosePty, request: []byte(`{"pty_id":"pty-1"}`)},
+	} {
+		operation := testWorkspaceMaterializationOperation(tc.kind, workspaceOperationResourcePty)
+		operation.Request = tc.request
+		if err := failWorkspacePrimitiveForOperation(context.Background(), store, operation, []byte(`{"code":"control_failed"}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(store.ptyControlRollbacks) != 2 {
+		t.Fatalf("pty control rollbacks = %d, want 2", len(store.ptyControlRollbacks))
+	}
+	for _, got := range store.ptyControlRollbacks {
+		if got.ID != testControlUUID(6) || got.MaterializationID != testControlUUID(5) {
+			t.Fatalf("rollback scope = %+v", got)
+		}
+	}
+	if store.ptyControlRollbacks[0].OperationKind != workspaceOperationKindResizePty ||
+		!store.ptyControlRollbacks[0].Cols.Valid || store.ptyControlRollbacks[0].Cols.Int32 != 120 ||
+		!store.ptyControlRollbacks[0].Rows.Valid || store.ptyControlRollbacks[0].Rows.Int32 != 40 {
+		t.Fatalf("resize rollback target = %+v", store.ptyControlRollbacks[0])
+	}
+	if store.ptyControlRollbacks[1].OperationKind != workspaceOperationKindClosePty ||
+		store.ptyControlRollbacks[1].Cols.Valid || store.ptyControlRollbacks[1].Rows.Valid {
+		t.Fatalf("close rollback target = %+v", store.ptyControlRollbacks[1])
 	}
 	if len(store.execExited) != 0 || len(store.ptyFailed) != 0 {
 		t.Fatalf("primitive failures = exec %d pty %d, want none", len(store.execExited), len(store.ptyFailed))
@@ -99,7 +131,7 @@ func TestFailWorkspacePrimitiveForOperationRejectsLifecycleResourceMismatch(t *t
 	}
 }
 
-func testWorkspaceMaterializationOperation(kind string, resourceKind string) db.WorkspaceMaterializationOperation {
+func testWorkspaceMaterializationOperation(kind db.WorkspaceMaterializationOperationKind, resourceKind db.WorkspaceResourceKind) db.WorkspaceMaterializationOperation {
 	return db.WorkspaceMaterializationOperation{
 		OrgID:             testControlUUID(1),
 		ProjectID:         testControlUUID(2),
