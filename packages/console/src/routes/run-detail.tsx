@@ -409,10 +409,15 @@ export function RunDetail() {
   const params = useParams();
   const [searchParams] = useSearchParams();
   const scope = useScope();
-  const runID = createMemo(() => params["id"]?.trim() ?? "");
+  const sessionID = createMemo(() => params["session_id"]?.trim() ?? "");
+  const runID = createMemo(() => params["run_id"]?.trim() ?? "");
   const projectID = createMemo(() => searchParamValue(searchParams["project_id"]) || scope.selectedProjectID());
   const environmentID = createMemo(() => searchParamValue(searchParams["environment_id"]) || scope.selectedEnvironmentID());
   const hasRunID = createMemo(() => runID() !== "");
+  const parentSessionHref = createMemo(() => {
+    if (!sessionID() || !projectID() || !environmentID()) return "/sessions";
+    return sessionHref(sessionID(), projectID(), environmentID());
+  });
   const run = createQuery(() => ({
     queryKey: ["run", runID(), projectID(), environmentID()],
     queryFn: () => getRun(runID(), projectID(), environmentID()),
@@ -477,7 +482,7 @@ export function RunDetail() {
     <section class={ui.page}>
       <div class={ui.pageHeader}>
         <div>
-          <A href="/runs" class={ui.backLink}>Runs</A>
+          <A href={parentSessionHref()} class={ui.backLink}>Session</A>
           <div class={ui.pageTitle}>
             <h1 class={ui.h1}>{run.data?.task_id ?? "Run"}</h1>
             <Show when={run.data}>{(current) => <StatusBadge status={current().status} />}</Show>

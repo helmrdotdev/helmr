@@ -76,7 +76,7 @@ export function ProjectNew() {
       rememberProjectScope(project);
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
-      navigate("/tasks", { replace: wasFirstProject });
+      navigate("/", { replace: wasFirstProject });
     } catch (e) {
       setError(createErrorMessage(e));
     } finally {

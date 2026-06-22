@@ -88,7 +88,6 @@ export interface TaskSessionHandle<TOutput = unknown> {
   readonly id: string
   readonly taskId: string
   readonly currentRunId: string | null
-  readonly output?: TOutput
 }
 
 export interface TaskStartResult<TOutput = unknown> {
@@ -128,18 +127,36 @@ export interface TaskSessionListOptions {
   readonly signal?: AbortSignal
 }
 
+export interface TaskSessionRetrieveOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
+  readonly signal?: AbortSignal
+}
+
 export interface TaskSessionWaitOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly timeoutSeconds?: number
   readonly signal?: AbortSignal
 }
 
 export interface TaskSessionCloseOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly reason?: string
   readonly signal?: AbortSignal
 }
 
 export interface TaskSessionCancelOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly reason?: string
+  readonly signal?: AbortSignal
+}
+
+export interface TaskSessionRunsOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly signal?: AbortSignal
 }
 
@@ -171,12 +188,16 @@ export interface SessionChannelInputSendResult<TData = unknown> extends ChannelR
 }
 
 export interface SessionChannelInputSendOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly correlationId?: string
   readonly externalEventId?: string
   readonly signal?: AbortSignal
 }
 
 export interface SessionChannelListOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly cursor?: number
   readonly limit?: number
   readonly correlationId?: string
@@ -184,6 +205,8 @@ export interface SessionChannelListOptions {
 }
 
 export interface SessionChannelOutputStreamOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly cursor?: number
   readonly correlationId?: string
   readonly signal?: AbortSignal
@@ -231,11 +254,11 @@ export interface SessionChannelOutputApi {
 
 export interface OpenTaskSessionApi<TOutput = unknown> {
   readonly id: string
-  retrieve(opts?: { readonly signal?: AbortSignal }): Promise<TaskSessionSnapshot<TOutput>>
+  retrieve(opts?: TaskSessionRetrieveOptions): Promise<TaskSessionSnapshot<TOutput>>
   wait(opts?: TaskSessionWaitOptions): Promise<TaskSessionSnapshot<TOutput>>
   close(opts?: TaskSessionCloseOptions): Promise<TaskSessionSnapshot<TOutput>>
   cancel(opts?: TaskSessionCancelOptions): Promise<TaskSessionSnapshot<TOutput>>
-  runs(opts?: { readonly signal?: AbortSignal }): Promise<TaskSessionRun[]>
+  runs(opts?: TaskSessionRunsOptions): Promise<TaskSessionRun[]>
   input(channel: string): SessionChannelInputApi
   output(channel: string): SessionChannelOutputApi
 }
@@ -271,11 +294,15 @@ export interface Workspace {
 
 export interface WorkspaceHandle {
   readonly id: string
+  exec(command: readonly string[], opts?: WorkspaceExecCreateOptions): Promise<WorkspaceExecHandle>
+  readonly execs: WorkspaceExecsApi
+  readonly pty: WorkspacePtyApi
   retrieve(opts?: WorkspaceRetrieveOptions): Promise<Workspace>
   update(opts: WorkspaceUpdateOptions): Promise<Workspace>
   delete(opts?: WorkspaceRetrieveOptions): Promise<Workspace>
   materialize(opts?: WorkspaceMaterializeOptions): Promise<WorkspaceMaterialization>
   connect(opts?: WorkspaceMaterializeOptions): Promise<WorkspaceMaterialization>
+  stop(opts?: WorkspaceStopOptions): Promise<WorkspaceStopResult>
 }
 
 export interface WorkspacesApi {
@@ -287,6 +314,7 @@ export interface WorkspacesApi {
   readonly delete: (idOrHandle: string | WorkspaceHandle, opts?: WorkspaceRetrieveOptions) => Promise<Workspace>
   readonly materialize: (idOrHandle: string | WorkspaceHandle, opts?: WorkspaceMaterializeOptions) => Promise<WorkspaceMaterialization>
   readonly connect: (idOrHandle: string | WorkspaceHandle, opts?: WorkspaceMaterializeOptions) => Promise<WorkspaceMaterialization>
+  readonly stop: (idOrHandle: string | WorkspaceHandle, opts?: WorkspaceStopOptions) => Promise<WorkspaceStopResult>
 }
 
 export interface WorkspaceCreateOptions {
@@ -322,6 +350,11 @@ export interface WorkspaceUpdateOptions extends WorkspaceRetrieveOptions {
 
 export interface WorkspaceMaterializeOptions extends WorkspaceRetrieveOptions {}
 
+export interface WorkspaceStopOptions extends WorkspaceRetrieveOptions {
+  readonly idempotencyKey?: string
+  readonly idempotencyKeyTTL?: string
+}
+
 export interface WorkspaceMaterialization {
   readonly id: string
   readonly projectId: string
@@ -337,6 +370,200 @@ export interface WorkspaceMaterialization {
   readonly lastHeartbeatAt: string | null
   readonly createdAt: string
   readonly updatedAt: string
+}
+
+export interface WorkspaceStopResult {
+  readonly workspaceId: string
+  readonly state: string
+  readonly materialization: WorkspaceMaterialization | null
+}
+
+export type WorkspaceExecState =
+  | "queued"
+  | "materializing"
+  | "running"
+  | "exited"
+  | "terminated"
+  | "lost"
+  | "failed"
+
+export interface WorkspaceExec {
+  readonly id: string
+  readonly workspaceId: string
+  readonly materializationId: string | null
+  readonly command: readonly string[]
+  readonly cwd: string
+  readonly envShape: Record<string, string>
+  readonly filesystemMode: "write"
+  readonly state: WorkspaceExecState
+  readonly detached: boolean
+  readonly processId: string | null
+  readonly exitCode: number | null
+  readonly signal: string | null
+  readonly error: unknown
+  readonly stdoutCursor: number
+  readonly stderrCursor: number
+  readonly stdinCursor: number
+  readonly stdinClosedAt: string | null
+  readonly createdAt: string
+  readonly startedAt: string | null
+  readonly exitedAt: string | null
+  readonly updatedAt: string
+}
+
+export interface WorkspaceExecHandle {
+  readonly id: string
+  readonly workspaceId: string
+  retrieve(opts?: WorkspaceRetrieveOptions): Promise<WorkspaceExec>
+  readonly stdout: WorkspaceExecReadableStreamApi
+  readonly stderr: WorkspaceExecReadableStreamApi
+  readonly stdin: WorkspaceExecStdinApi
+  wait(opts?: WorkspaceExecWaitOptions): Promise<WorkspaceExec>
+}
+
+export interface WorkspaceExecsApi {
+  retrieve(id: string, opts?: WorkspaceRetrieveOptions): WorkspaceExecHandle
+  list(opts?: WorkspaceExecListOptions): Promise<WorkspaceExec[]>
+}
+
+export interface WorkspaceExecCreateOptions extends WorkspaceRetrieveOptions {
+  readonly cwd?: string
+  readonly env?: Record<string, string>
+  readonly detached?: boolean
+  readonly idempotencyKey?: string
+}
+
+export interface WorkspaceExecListOptions extends WorkspaceRetrieveOptions {
+  readonly state?: WorkspaceExecState
+  readonly limit?: number
+}
+
+export interface WorkspaceExecWaitOptions extends WorkspaceRetrieveOptions {
+  readonly pollIntervalMs?: number
+}
+
+export interface WorkspaceExecReadableStreamApi {
+  list(opts?: WorkspaceStreamListOptions): Promise<WorkspaceStreamChunk[]>
+  stream(opts?: WorkspaceStreamFollowOptions): AsyncIterable<WorkspaceStreamChunk>
+}
+
+export interface WorkspaceExecStdinApi {
+  write(data: string | Uint8Array, opts: WorkspaceStreamWriteOptions): Promise<WorkspaceStreamChunk>
+  close(opts?: WorkspaceRetrieveOptions): Promise<WorkspaceExec>
+}
+
+export type WorkspacePtyState = "creating" | "open" | "resizing" | "closing" | "closed" | "lost" | "failed"
+
+export interface WorkspacePty {
+  readonly id: string
+  readonly workspaceId: string
+  readonly materializationId: string | null
+  readonly cwd: string
+  readonly cols: number
+  readonly rows: number
+  readonly filesystemMode: "write"
+  readonly state: WorkspacePtyState
+  readonly processId: string | null
+  readonly outputCursor: number
+  readonly inputCursor: number
+  readonly error: unknown
+  readonly createdAt: string
+  readonly startedAt: string | null
+  readonly closedAt: string | null
+  readonly updatedAt: string
+}
+
+export interface WorkspacePtyHandle {
+  readonly id: string
+  readonly workspaceId: string
+  retrieve(opts?: WorkspaceRetrieveOptions): Promise<WorkspacePty>
+  readonly output: WorkspacePtyOutputApi
+  input(data: string | Uint8Array, opts: WorkspaceStreamWriteOptions): Promise<WorkspaceStreamChunk>
+  resize(cols: number, rows: number, opts?: WorkspaceRetrieveOptions): Promise<WorkspacePty>
+  close(opts?: WorkspaceRetrieveOptions): Promise<WorkspacePty>
+}
+
+export interface WorkspacePtyApi {
+  create(opts?: WorkspacePtyCreateOptions): Promise<WorkspacePtyHandle>
+  retrieve(id: string, opts?: WorkspaceRetrieveOptions): WorkspacePtyHandle
+  list(opts?: WorkspacePtyListOptions): Promise<WorkspacePty[]>
+}
+
+export interface WorkspacePtyCreateOptions extends WorkspaceRetrieveOptions {
+  readonly cwd?: string
+  readonly cols?: number
+  readonly rows?: number
+  readonly idempotencyKey?: string
+}
+
+export interface WorkspacePtyListOptions extends WorkspaceRetrieveOptions {
+  readonly state?: WorkspacePtyState
+  readonly limit?: number
+}
+
+export interface WorkspacePtyOutputApi {
+  list(opts?: WorkspaceStreamListOptions): Promise<WorkspaceStreamChunk[]>
+  stream(opts?: WorkspaceStreamFollowOptions): AsyncIterable<WorkspaceStreamChunk>
+}
+
+export interface WorkspaceStreamChunk {
+  readonly id: string
+  readonly stream: string
+  readonly offsetStart: number
+  readonly offsetEnd: number
+  readonly data: Uint8Array
+  readonly observedAt: string
+  readonly createdAt: string
+}
+
+export interface WorkspaceStreamTerminal {
+  readonly resourceKind: string
+  readonly resourceId: string
+  readonly stream: string
+  readonly state: string
+  readonly cursor: number
+  readonly error: unknown | null
+}
+
+export interface WorkspaceStreamListOptions extends WorkspaceRetrieveOptions {
+  readonly cursor?: number
+  readonly limit?: number
+}
+
+export interface WorkspaceStreamFollowOptions extends WorkspaceRetrieveOptions {
+  readonly fromCursor?: number
+  readonly limit?: number
+  readonly follow?: boolean
+}
+
+export interface WorkspaceStreamWriteOptions extends WorkspaceRetrieveOptions {
+  readonly offset: number
+}
+
+type WorkspaceStreamFollowEvent =
+  | { readonly kind: "chunk"; readonly chunk: WorkspaceStreamChunk }
+  | { readonly kind: "terminal"; readonly terminal: WorkspaceStreamTerminal }
+
+export class WorkspaceStreamTerminalError extends Error {
+  readonly terminal: WorkspaceStreamTerminal
+
+  constructor(terminal: WorkspaceStreamTerminal) {
+    super(`workspace stream terminal: ${terminal.state}`)
+    this.name = "WorkspaceStreamTerminalError"
+    this.terminal = terminal
+  }
+}
+
+export class WorkspaceStreamError extends Error {
+  readonly code: string
+  readonly cursor?: number
+
+  constructor(code: string, message?: string, cursor?: number) {
+    super(message ?? code)
+    this.name = "WorkspaceStreamError"
+    this.code = code
+    if (cursor !== undefined) this.cursor = cursor
+  }
 }
 
 export interface SchedulesApi {
@@ -493,6 +720,8 @@ export interface RunWaitpointsPage {
 export type WaitpointStatus = "pending" | "completed" | "timed_out" | "cancelled" | "failed"
 
 export interface RunWaitpointListOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly cursor?: string
   readonly limit?: number
   readonly signal?: AbortSignal
@@ -573,7 +802,7 @@ export class HelmrClient {
     },
     retrieve: async <TOutput = unknown>(
       idOrHandle: string | TaskSessionHandle<TOutput>,
-      opts: { readonly signal?: AbortSignal } = {},
+      opts: TaskSessionRetrieveOptions = {},
     ): Promise<TaskSessionSnapshot<TOutput>> => {
       return await this.#openSession<TOutput>(sessionId(idOrHandle)).retrieve(opts)
     },
@@ -585,7 +814,7 @@ export class HelmrClient {
     },
     list: async (opts: TaskSessionListOptions = {}): Promise<TaskSessionSnapshot[]> => {
       const response = await this.#json<ListTaskSessionsResponse>(
-        `/api/sessions${taskSessionListQuery(opts)}`,
+        `${taskSessionCollectionPath(opts)}${taskSessionListQuery(opts)}`,
         requestSignal(opts.signal),
       )
       return response.sessions.map(taskSessionFromResponse)
@@ -626,6 +855,9 @@ export class HelmrClient {
     },
     connect: async (idOrHandle: string | WorkspaceHandle, opts: WorkspaceMaterializeOptions = {}): Promise<WorkspaceMaterialization> => {
       return await this.#openWorkspace(workspaceId(idOrHandle)).connect(opts)
+    },
+    stop: async (idOrHandle: string | WorkspaceHandle, opts: WorkspaceStopOptions = {}): Promise<WorkspaceStopResult> => {
+      return await this.#openWorkspace(workspaceId(idOrHandle)).stop(opts)
     },
   }
 
@@ -749,9 +981,10 @@ export class HelmrClient {
   ): Promise<TaskStartResult<TaskOutput<TTask>>> {
     validateRetryPolicy(opts.retry, "retry")
     const body = taskStartBody(payload, opts, maxDurationSeconds)
+    const path = taskStartPath(taskId, opts, "start")
     const startedAt = Date.now()
     for (;;) {
-      const response = await this.#fetch(`/api/tasks/${encodeURIComponent(taskId)}/start`, {
+      const response = await this.#fetch(path, {
         method: "POST",
         body: JSON.stringify(body),
         headers: { "content-type": "application/json" },
@@ -784,9 +1017,10 @@ export class HelmrClient {
       ...taskStartBody(payload, opts, maxDurationSeconds),
       ...(opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }),
     }
+    const path = taskStartPath(taskId, opts, "start-and-wait")
     const startedAt = Date.now()
     for (;;) {
-      const response = await this.#fetch(`/api/tasks/${encodeURIComponent(taskId)}/start-and-wait`, {
+      const response = await this.#fetch(path, {
         method: "POST",
         body: JSON.stringify(body),
         headers: { "content-type": "application/json" },
@@ -810,6 +1044,36 @@ export class HelmrClient {
   #openWorkspace(id: string): WorkspaceHandle {
     return {
       id,
+      exec: async (command, opts = {}) => {
+        return await this.#createWorkspaceExec(id, command, opts)
+      },
+      execs: {
+        retrieve: (execId: string): WorkspaceExecHandle => {
+          return this.#openWorkspaceExec(id, execId)
+        },
+        list: async (opts = {}) => {
+          const response = await this.#json<ListWorkspaceExecsResponse>(
+            `${workspaceResourcePath(id, opts)}/execs${workspacePrimitiveListQuery(opts)}`,
+            requestSignal(opts.signal),
+          )
+          return response.execs.map(workspaceExecFromResponse)
+        },
+      },
+      pty: {
+        create: async (opts = {}) => {
+          return await this.#createWorkspacePty(id, opts)
+        },
+        retrieve: (ptyId: string): WorkspacePtyHandle => {
+          return this.#openWorkspacePty(id, ptyId)
+        },
+        list: async (opts = {}) => {
+          const response = await this.#json<ListWorkspacePtySessionsResponse>(
+            `${workspaceResourcePath(id, opts)}/pty${workspacePrimitiveListQuery(opts)}`,
+            requestSignal(opts.signal),
+          )
+          return response.ptys.map(workspacePtyFromResponse)
+        },
+      },
       retrieve: async (opts = {}) => {
         const response = await this.#json<WorkspaceEnvelopeResponse>(
           workspaceResourcePath(id, opts),
@@ -857,7 +1121,233 @@ export class HelmrClient {
         )
         return workspaceMaterializationFromResponse(response)
       },
+      stop: async (opts = {}) => {
+        const response = await this.#json<WorkspaceStopResponse>(
+          `${workspaceResourcePath(id, opts)}/stop`,
+          {
+            method: "POST",
+            body: JSON.stringify(workspaceStopBody(opts)),
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal),
+          },
+        )
+        return workspaceStopFromResponse(response)
+      },
     }
+  }
+
+  async #createWorkspaceExec(id: string, command: readonly string[], opts: WorkspaceExecCreateOptions): Promise<WorkspaceExecHandle> {
+    const response = await this.#json<WorkspaceExecEnvelopeResponse>(
+      `${workspaceResourcePath(id, opts)}/execs`,
+      {
+        method: "POST",
+        body: JSON.stringify(workspaceExecCreateBody(command, opts)),
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal),
+      },
+    )
+    return this.#openWorkspaceExec(id, response.exec.id)
+  }
+
+  #openWorkspaceExec(workspaceId: string, execId: string): WorkspaceExecHandle {
+    const client = this
+    return {
+      id: execId,
+      workspaceId,
+      retrieve: async (opts = {}) => {
+        const response = await client.#json<WorkspaceExecEnvelopeResponse>(
+          `${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}`,
+          requestSignal(opts.signal),
+        )
+        return workspaceExecFromResponse(response.exec)
+      },
+      stdout: client.#workspaceExecReadableStreamApi(workspaceId, execId, "stdout"),
+      stderr: client.#workspaceExecReadableStreamApi(workspaceId, execId, "stderr"),
+      stdin: {
+        write: async (data, opts) => {
+          const response = await client.#json<WorkspaceExecStreamChunkResponse>(
+            `${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}/stdin`,
+            {
+              method: "POST",
+              body: JSON.stringify(workspaceStreamWriteBody(data, opts)),
+              headers: { "content-type": "application/json" },
+              ...requestSignal(opts.signal),
+            },
+          )
+          return workspaceStreamChunkFromResponse(response)
+        },
+        close: async (opts = {}) => {
+          const response = await client.#json<WorkspaceExecEnvelopeResponse>(
+            `${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}/stdin/close`,
+            {
+              method: "POST",
+              body: "{}",
+              headers: { "content-type": "application/json" },
+              ...requestSignal(opts.signal),
+            },
+          )
+          return workspaceExecFromResponse(response.exec)
+        },
+      },
+      wait: async (opts = {}) => {
+        return await client.#waitWorkspaceExec(workspaceId, execId, opts)
+      },
+    }
+  }
+
+  async #waitWorkspaceExec(workspaceId: string, execId: string, opts: WorkspaceExecWaitOptions): Promise<WorkspaceExec> {
+    const pollIntervalMs = opts.pollIntervalMs ?? 250
+    for (;;) {
+      const response = await this.#json<WorkspaceExecEnvelopeResponse>(
+        `${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}`,
+        requestSignal(opts.signal),
+      )
+      const exec = workspaceExecFromResponse(response.exec)
+      if (workspaceExecTerminal(exec.state)) return exec
+      await delay(pollIntervalMs, opts.signal)
+    }
+  }
+
+  async #createWorkspacePty(id: string, opts: WorkspacePtyCreateOptions): Promise<WorkspacePtyHandle> {
+    const response = await this.#json<WorkspacePtyEnvelopeResponse>(
+      `${workspaceResourcePath(id, opts)}/pty`,
+      {
+        method: "POST",
+        body: JSON.stringify(workspacePtyCreateBody(opts)),
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal),
+      },
+    )
+    return this.#openWorkspacePty(id, response.pty.id)
+  }
+
+  #openWorkspacePty(workspaceId: string, ptyId: string): WorkspacePtyHandle {
+    const client = this
+    return {
+      id: ptyId,
+      workspaceId,
+      retrieve: async (opts = {}) => {
+        const response = await client.#json<WorkspacePtyEnvelopeResponse>(
+          `${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}`,
+          requestSignal(opts.signal),
+        )
+        return workspacePtyFromResponse(response.pty)
+      },
+      output: client.#workspacePtyOutputApi(workspaceId, ptyId),
+      input: async (data, opts) => {
+        const response = await client.#json<WorkspacePtyStreamChunkResponse>(
+          `${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/input`,
+          {
+            method: "POST",
+            body: JSON.stringify(workspaceStreamWriteBody(data, opts)),
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal),
+          },
+        )
+        return workspaceStreamChunkFromResponse(response)
+      },
+      resize: async (cols, rows, opts = {}) => {
+        const response = await client.#json<WorkspacePtyEnvelopeResponse>(
+          `${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/resize`,
+          {
+            method: "POST",
+            body: JSON.stringify({ cols, rows }),
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal),
+          },
+        )
+        return workspacePtyFromResponse(response.pty)
+      },
+      close: async (opts = {}) => {
+        return await client.#requestWorkspacePtyClose(workspaceId, ptyId, opts)
+      },
+    }
+  }
+
+  async #requestWorkspacePtyClose(workspaceId: string, ptyId: string, opts: WorkspaceRetrieveOptions): Promise<WorkspacePty> {
+    const response = await this.#json<WorkspacePtyEnvelopeResponse>(
+      `${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/close`,
+      {
+        method: "POST",
+        body: "{}",
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal),
+      },
+    )
+    return workspacePtyFromResponse(response.pty)
+  }
+
+  #workspaceExecReadableStreamApi(workspaceId: string, execId: string, stream: "stdout" | "stderr"): WorkspaceExecReadableStreamApi {
+    return {
+      list: async (opts = {}) => {
+        const response = await this.#json<ListWorkspaceExecStreamChunksResponse>(
+          `${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}/${stream}${workspaceStreamListQuery(opts)}`,
+          requestSignal(opts.signal),
+        )
+        return response.chunks.map(workspaceStreamChunkFromResponse)
+      },
+      stream: (opts = {}) => this.#streamWorkspaceReadable(`${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}/${stream}`, opts),
+    }
+  }
+
+  #workspacePtyOutputApi(workspaceId: string, ptyId: string): WorkspacePtyOutputApi {
+    return {
+      list: async (opts = {}) => {
+        const response = await this.#json<ListWorkspacePtyStreamChunksResponse>(
+          `${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/output${workspaceStreamListQuery(opts)}`,
+          requestSignal(opts.signal),
+        )
+        return response.chunks.map(workspaceStreamChunkFromResponse)
+      },
+      stream: (opts = {}) => this.#streamWorkspaceReadable(`${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/output`, opts),
+    }
+  }
+
+  async *#streamWorkspaceReadable(path: string, opts: WorkspaceStreamFollowOptions): AsyncIterable<WorkspaceStreamChunk> {
+    let cursor = opts.fromCursor
+    for (;;) {
+      try {
+        let terminal = false
+        for await (const event of this.#streamWorkspaceReadableOnce(path, { cursor, limit: opts.limit, signal: opts.signal })) {
+          if (event.kind === "chunk") {
+            cursor = event.chunk.offsetEnd
+            yield event.chunk
+            continue
+          }
+          if (event.kind === "terminal") {
+            terminal = true
+            if (event.terminal.state === "lost" || event.terminal.state === "failed") {
+              throw new WorkspaceStreamTerminalError(event.terminal)
+            }
+            break
+          }
+        }
+        if (terminal) {
+          return
+        }
+      } catch (error) {
+        throwIfAborted(opts.signal)
+        if (workspaceStreamErrorIsFatal(error)) {
+          throw error
+        }
+      }
+      await delay(RUN_EVENT_RECONNECT_DELAY_MS, opts.signal)
+    }
+  }
+
+  async *#streamWorkspaceReadableOnce(
+    path: string,
+    opts: { readonly cursor?: number | undefined; readonly limit?: number | undefined; readonly signal?: AbortSignal | undefined },
+  ): AsyncIterable<WorkspaceStreamFollowEvent> {
+    const query = new URLSearchParams()
+    query.set("follow", "1")
+    if (opts.cursor !== undefined) query.set("cursor", String(opts.cursor))
+    if (opts.limit !== undefined) query.set("limit", String(opts.limit))
+    const response = await this.#fetch(`${path}?${query}`, {
+      headers: { accept: "text/event-stream" },
+      ...requestSignal(opts.signal),
+    })
+    yield* parseWorkspaceStreamSse(response)
   }
 
   #openSession<TOutput = unknown>(id: string): OpenTaskSessionApi<TOutput> {
@@ -865,14 +1355,14 @@ export class HelmrClient {
       id,
       retrieve: async (opts = {}) => {
         const response = await this.#json<TaskSessionResponse>(
-          `/api/sessions/${encodeURIComponent(id)}`,
+          taskSessionResourcePath(id, opts, ""),
           requestSignal(opts.signal),
         )
         return taskSessionFromResponse<TOutput>(response)
       },
       wait: async (opts = {}) => {
         const response = await this.#json<TaskSessionResponse>(
-          `/api/sessions/${encodeURIComponent(id)}/wait`,
+          taskSessionResourcePath(id, opts, "/wait"),
           {
             method: "POST",
             body: JSON.stringify(taskSessionWaitBody(opts)),
@@ -884,7 +1374,7 @@ export class HelmrClient {
       },
       close: async (opts = {}) => {
         const response = await this.#json<TaskSessionResponse>(
-          `/api/sessions/${encodeURIComponent(id)}/close`,
+          taskSessionResourcePath(id, opts, "/close"),
           {
             method: "POST",
             body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
@@ -896,7 +1386,7 @@ export class HelmrClient {
       },
       cancel: async (opts = {}) => {
         const response = await this.#json<TaskSessionResponse>(
-          `/api/sessions/${encodeURIComponent(id)}/cancel`,
+          taskSessionResourcePath(id, opts, "/cancel"),
           {
             method: "POST",
             body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
@@ -908,7 +1398,7 @@ export class HelmrClient {
       },
       runs: async (opts = {}) => {
         const response = await this.#json<ListTaskSessionRunsResponse>(
-          `/api/sessions/${encodeURIComponent(id)}/runs`,
+          taskSessionResourcePath(id, opts, "/runs"),
           requestSignal(opts.signal),
         )
         return response.runs.map(taskSessionRunFromResponse)
@@ -918,7 +1408,7 @@ export class HelmrClient {
         return {
           send: async <TData = unknown>(data: TData, opts: SessionChannelInputSendOptions = {}) => {
             const response = await this.#json<AppendChannelRecordResponse>(
-              `/api/sessions/${encodeURIComponent(id)}/channels/${encodeURIComponent(channel)}/inputs`,
+              taskSessionResourcePath(id, opts, `/channels/${encodeURIComponent(channel)}/inputs`),
               {
                 method: "POST",
                 body: JSON.stringify(channelInputAppendBody(data, opts)),
@@ -954,7 +1444,7 @@ export class HelmrClient {
     opts: SessionChannelListOptions,
   ): Promise<ChannelRecord<TData>[]> {
     const response = await this.#json<ListChannelRecordsResponse>(
-      `/api/sessions/${encodeURIComponent(sessionID)}/channels/${encodeURIComponent(channel)}/${direction}${sessionChannelQuery(opts)}`,
+      `${taskSessionResourcePath(sessionID, opts, `/channels/${encodeURIComponent(channel)}/${direction}`)}${sessionChannelQuery(opts)}`,
       requestSignal(opts.signal),
     )
     return response.records.map(channelRecordFromResponse<TData>)
@@ -971,7 +1461,7 @@ export class HelmrClient {
       for (;;) {
         try {
           const response = await client.#fetch(
-            `/api/sessions/${encodeURIComponent(sessionID)}/channels/${encodeURIComponent(channel)}/outputs/stream${sessionChannelStreamQuery(opts, cursor)}`,
+            `${taskSessionResourcePath(sessionID, opts, `/channels/${encodeURIComponent(channel)}/outputs/stream`)}${sessionChannelStreamQuery(opts, cursor)}`,
             {
               headers: { accept: "text/event-stream" },
               ...requestSignal(opts.signal),
@@ -988,7 +1478,7 @@ export class HelmrClient {
           }
         }
         try {
-          const session = await client.sessions.retrieve(sessionID, retrieveOptions(opts.signal))
+          const session = await client.sessions.retrieve(sessionID, taskSessionRetrieveOptions(opts, opts.signal))
           if (taskSessionTerminal(session.status)) {
             return
           }
@@ -1010,7 +1500,7 @@ export class HelmrClient {
       opts: RetrieveRunOptions = {},
     ): Promise<RunSnapshot<TOutput>> => {
       const response = await this.#json<RunResponse>(
-        `/api/runs/${encodeURIComponent(runId(idOrHandle))}`,
+        runResourcePath(runId(idOrHandle), opts, ""),
         requestSignal(opts.signal),
       )
       return runResponseToSnapshot<TOutput>(response)
@@ -1022,8 +1512,9 @@ export class HelmrClient {
       const id = runId(idOrHandle)
       const timeoutMs = opts.timeoutMs
       const wait = waitSignal(opts.signal, timeoutMs, () => new TimeoutError(`run ${id} did not finish within ${timeoutMs}ms`))
+      const scopedRetrieveOptions = runRetrieveOptions(opts, wait.signal)
       try {
-        let run = await this.#retrieveRunSnapshotWithRetry<TOutput>(id, wait.signal, RUN_EVENT_RECONNECT_DELAY_MS)
+        let run = await this.#retrieveRunSnapshotWithRetry<TOutput>(id, scopedRetrieveOptions, RUN_EVENT_RECONNECT_DELAY_MS)
         if (isTerminalRunStatus(run.status)) {
           return run
         }
@@ -1032,7 +1523,7 @@ export class HelmrClient {
           throwIfAborted(wait.signal)
           let terminalEventSeen = false
           try {
-            for await (const event of this.#streamEventRecordsOnce(id, { cursor, signal: wait.signal })) {
+            for await (const event of this.#streamEventRecordsOnce(id, runEventOptions(scopedRetrieveOptions, cursor))) {
               cursor = nextRunEventCursor(cursor, event)
               if (runEventRecordIsTerminal(event)) {
                 terminalEventSeen = true
@@ -1048,10 +1539,10 @@ export class HelmrClient {
             }
           }
           if (terminalEventSeen) {
-            return await this.#waitForTerminalSnapshot<TOutput>(id, wait.signal)
+            return await this.#waitForTerminalSnapshot<TOutput>(id, scopedRetrieveOptions)
           }
           try {
-            run = await this.runs.retrieve<TOutput>(id, retrieveOptions(wait.signal))
+            run = await this.runs.retrieve<TOutput>(id, scopedRetrieveOptions)
           } catch (error) {
             throwIfAborted(wait.signal)
             if (runSnapshotErrorIsFatal(error)) {
@@ -1074,7 +1565,7 @@ export class HelmrClient {
       opts: CancelRunOptions = {},
     ): Promise<RunSnapshot<TOutput>> => {
       const response = await this.#json<CancelRunResponse>(
-        `/api/runs/${encodeURIComponent(runId(idOrHandle))}/cancel`,
+        runResourcePath(runId(idOrHandle), opts, "/cancel"),
         {
           method: "POST",
           body: JSON.stringify(cancelRunBody(opts)),
@@ -1089,7 +1580,7 @@ export class HelmrClient {
       if (opts.status !== undefined) query.set("status", opts.status)
       if (opts.limit !== undefined) query.set("limit", String(opts.limit))
       const suffix = query.size === 0 ? "" : `?${query}`
-      const response = await this.#json<ListRunsResponse>(`/api/runs${suffix}`, requestSignal(opts.signal))
+      const response = await this.#json<ListRunsResponse>(`${runCollectionPath(opts)}${suffix}`, requestSignal(opts.signal))
       return response.runs.map((run) => runResponseToSnapshot(run))
     },
     waitpoints: {
@@ -1099,7 +1590,7 @@ export class HelmrClient {
       ): Promise<RunWaitpointsPage> => {
         const id = runId(idOrHandle)
         const response = await this.#json<ListRunWaitpointsResponse>(
-          `/api/runs/${encodeURIComponent(id)}/waitpoints${runWaitpointListQuery(opts)}`,
+          `${runResourcePath(id, opts, "/waitpoints")}${runWaitpointListQuery(opts)}`,
           requestSignal(opts.signal),
         )
         return {
@@ -1118,9 +1609,9 @@ export class HelmrClient {
     logs: {
       retrieve: async <TOutput = unknown>(
         idOrHandle: string | RunHandle<TOutput>,
-        opts: { readonly signal?: AbortSignal } = {},
+        opts: RetrieveRunOptions = {},
       ): Promise<LogSnapshot> => {
-        return await this.#retrieveLogs(runId(idOrHandle), opts.signal)
+        return await this.#retrieveLogs(runId(idOrHandle), opts)
       },
     },
     events: {
@@ -1190,10 +1681,10 @@ export class HelmrClient {
     },
   }
 
-  async #retrieveLogs(id: string, signal?: AbortSignal): Promise<LogSnapshot> {
+  async #retrieveLogs(id: string, opts: RetrieveRunOptions = {}): Promise<LogSnapshot> {
     const response = await this.#json<LogSnapshotResponse>(
-      `/api/runs/${encodeURIComponent(id)}/logs`,
-      requestSignal(signal),
+      runResourcePath(id, opts, "/logs"),
+      requestSignal(opts.signal),
     )
     return {
       stdout: decodeBase64Text(response.stdout_base64),
@@ -1212,7 +1703,7 @@ export class HelmrClient {
       if (opts.pageSize !== undefined) query.set("limit", String(opts.pageSize))
       const suffix = query.size === 0 ? "" : `?${query}`
       const page = await this.#json<RunEventRecordPage>(
-        `/api/runs/${encodeURIComponent(id)}/events${suffix}`,
+        `${runResourcePath(id, opts, "/events")}${suffix}`,
         requestSignal(opts.signal),
       )
       events.push(...page.events)
@@ -1232,7 +1723,7 @@ export class HelmrClient {
       for (;;) {
         let checkSnapshot = false
         try {
-          for await (const record of client.#streamEventRecordsOnce(id, { cursor, signal: opts.signal })) {
+          for await (const record of client.#streamEventRecordsOnce(id, runEventOptions(opts, cursor))) {
             cursor = nextRunEventCursor(cursor, record)
             const terminal = runEventRecordIsTerminal(record)
             const event = runEventRecordToRunEvent(record)
@@ -1255,9 +1746,9 @@ export class HelmrClient {
         }
         if (checkSnapshot) {
           try {
-            const run = await client.runs.retrieve(id, retrieveOptions(opts.signal))
+            const run = await client.runs.retrieve(id, runRetrieveOptions(opts, opts.signal))
             if (isTerminalRunStatus(run.status)) {
-              for await (const record of client.#listEventRecordsAfter(id, cursor, opts.signal)) {
+              for await (const record of client.#listEventRecordsAfter(id, cursor, opts)) {
                 cursor = nextRunEventCursor(cursor, record)
                 const terminal = runEventRecordIsTerminal(record)
                 const event = runEventRecordToRunEvent(record)
@@ -1285,12 +1776,12 @@ export class HelmrClient {
 
   async *#streamEventRecordsOnce(
     id: string,
-    opts: { readonly cursor?: number | undefined; readonly signal?: AbortSignal | undefined },
+    opts: ListRunEventsOptions,
   ): AsyncIterable<RunEventRecord> {
     const query = new URLSearchParams()
     query.set("follow", "1")
     if (opts.cursor !== undefined) query.set("cursor", String(opts.cursor))
-    const response = await this.#fetch(`/api/runs/${encodeURIComponent(id)}/events?${query}`, {
+    const response = await this.#fetch(`${runResourcePath(id, opts, "/events")}?${query}`, {
       headers: { accept: "text/event-stream" },
       ...requestSignal(opts.signal),
     })
@@ -1300,7 +1791,7 @@ export class HelmrClient {
   async *#listEventRecordsAfter(
     id: string,
     cursor: number | undefined,
-    signal: AbortSignal | undefined,
+    opts: ListRunEventsOptions,
   ): AsyncIterable<RunEventRecord> {
     let nextCursor = cursor
     for (;;) {
@@ -1308,8 +1799,8 @@ export class HelmrClient {
       if (nextCursor !== undefined) query.set("cursor", String(nextCursor))
       const suffix = query.size === 0 ? "" : `?${query}`
       const page = await this.#json<RunEventRecordPage>(
-        `/api/runs/${encodeURIComponent(id)}/events${suffix}`,
-        requestSignal(signal),
+        `${runResourcePath(id, opts, "/events")}${suffix}`,
+        requestSignal(opts.signal),
       )
       for (const event of page.events) {
         yield event
@@ -1324,32 +1815,32 @@ export class HelmrClient {
     }
   }
 
-  async #waitForTerminalSnapshot<TOutput>(id: string, signal: AbortSignal | undefined): Promise<RunSnapshot<TOutput>> {
+  async #waitForTerminalSnapshot<TOutput>(id: string, opts: RetrieveRunOptions): Promise<RunSnapshot<TOutput>> {
     let retryDelayMs = RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS
     for (;;) {
-      const run = await this.#retrieveRunSnapshotWithRetry<TOutput>(id, signal, retryDelayMs)
+      const run = await this.#retrieveRunSnapshotWithRetry<TOutput>(id, opts, retryDelayMs)
       if (isTerminalRunStatus(run.status)) {
         return run
       }
-      await delay(retryDelayMs, signal)
+      await delay(retryDelayMs, opts.signal)
       retryDelayMs = Math.min(retryDelayMs * 2, RUN_EVENT_RECONNECT_DELAY_MS)
     }
   }
 
   async #retrieveRunSnapshotWithRetry<TOutput>(
     id: string,
-    signal: AbortSignal | undefined,
+    opts: RetrieveRunOptions,
     retryDelayMs: number,
   ): Promise<RunSnapshot<TOutput>> {
     for (;;) {
       try {
-        return await this.runs.retrieve<TOutput>(id, retrieveOptions(signal))
+        return await this.runs.retrieve<TOutput>(id, opts)
       } catch (error) {
-        throwIfAborted(signal)
+        throwIfAborted(opts.signal)
         if (runSnapshotErrorIsFatal(error)) {
           throw error
         }
-        await delay(retryDelayMs, signal)
+        await delay(retryDelayMs, opts.signal)
       }
     }
   }
@@ -1625,6 +2116,115 @@ interface WorkspaceMaterializationResponse {
   readonly updated_at: string
 }
 
+interface WorkspaceStopResponse {
+  readonly workspace_id: string
+  readonly state: string
+  readonly materialization?: WorkspaceMaterializationResponse | null
+}
+
+interface WorkspaceExecResponse {
+  readonly id: string
+  readonly workspace_id: string
+  readonly materialization_id?: string | null
+  readonly command: readonly string[]
+  readonly cwd: string
+  readonly env_shape?: Record<string, string>
+  readonly filesystem_mode: string
+  readonly state: WorkspaceExecState
+  readonly detached: boolean
+  readonly process_id?: string | null
+  readonly exit_code?: number | null
+  readonly signal?: string | null
+  readonly error?: unknown
+  readonly stdout_cursor: number
+  readonly stderr_cursor: number
+  readonly stdin_cursor: number
+  readonly stdin_closed_at?: string | null
+  readonly created_at: string
+  readonly started_at?: string | null
+  readonly exited_at?: string | null
+  readonly updated_at: string
+}
+
+interface WorkspaceExecEnvelopeResponse {
+  readonly exec: WorkspaceExecResponse
+  readonly is_cached?: boolean
+}
+
+interface ListWorkspaceExecsResponse {
+  readonly execs: readonly WorkspaceExecResponse[]
+}
+
+interface WorkspacePtyResponse {
+  readonly id: string
+  readonly workspace_id: string
+  readonly materialization_id?: string | null
+  readonly cwd: string
+  readonly cols: number
+  readonly rows: number
+  readonly filesystem_mode: string
+  readonly state: WorkspacePtyState
+  readonly process_id?: string | null
+  readonly output_cursor: number
+  readonly input_cursor: number
+  readonly error?: unknown
+  readonly created_at: string
+  readonly started_at?: string | null
+  readonly closed_at?: string | null
+  readonly updated_at: string
+}
+
+interface WorkspacePtyEnvelopeResponse {
+  readonly pty: WorkspacePtyResponse
+}
+
+interface ListWorkspacePtySessionsResponse {
+  readonly ptys: readonly WorkspacePtyResponse[]
+}
+
+interface WorkspaceExecStreamChunkResponse {
+  readonly id: string
+  readonly stream: string
+  readonly offset_start: number
+  readonly offset_end: number
+  readonly data: string
+  readonly observed_at: string
+  readonly created_at: string
+}
+
+interface WorkspacePtyStreamChunkResponse {
+  readonly id: string
+  readonly stream: string
+  readonly offset_start: number
+  readonly offset_end: number
+  readonly data: string
+  readonly observed_at: string
+  readonly created_at: string
+}
+
+interface ListWorkspaceExecStreamChunksResponse {
+  readonly chunks: readonly WorkspaceExecStreamChunkResponse[]
+}
+
+interface ListWorkspacePtyStreamChunksResponse {
+  readonly chunks: readonly WorkspacePtyStreamChunkResponse[]
+}
+
+interface WorkspaceStreamTerminalResponse {
+  readonly resource_kind: string
+  readonly resource_id: string
+  readonly stream: string
+  readonly state: string
+  readonly cursor: number
+  readonly error?: unknown
+}
+
+interface WorkspaceStreamErrorResponse {
+  readonly code: string
+  readonly message?: string
+  readonly cursor?: number
+}
+
 interface ListRunWaitpointsResponse {
   readonly waitpoints: readonly PendingWaitpointResponse[]
   readonly next_cursor?: string | null
@@ -1745,12 +2345,25 @@ function taskStartBody(
     ...taskStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL),
   }
   return {
-    ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
-    ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
     ...(payload === undefined ? {} : { payload }),
     ...(opts.externalId === undefined ? {} : { external_id: opts.externalId }),
     ...(Object.keys(runOptions).length === 0 ? {} : { options: runOptions }),
   }
+}
+
+function taskStartPath(
+  taskId: string,
+  opts: { readonly projectId?: string; readonly environmentId?: string },
+  operation: "start" | "start-and-wait",
+): string {
+  const encodedTaskId = encodeURIComponent(taskId)
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    if (opts.projectId === undefined || opts.environmentId === undefined) {
+      throw new Error("projectId and environmentId must be provided together")
+    }
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/tasks/${encodedTaskId}/${operation}`
+  }
+  return `/api/tasks/${encodedTaskId}/${operation}`
 }
 
 function taskSessionWaitBody(opts: TaskSessionWaitOptions): Record<string, unknown> {
@@ -1769,12 +2382,80 @@ function channelInputAppendBody(data: unknown, opts: SessionChannelInputSendOpti
 
 function taskSessionListQuery(opts: TaskSessionListOptions): string {
   const query = new URLSearchParams()
-  if (opts.projectId !== undefined) query.set("project_id", opts.projectId)
-  if (opts.environmentId !== undefined) query.set("environment_id", opts.environmentId)
   if (opts.status !== undefined) query.set("status", opts.status)
   if (opts.taskId !== undefined) query.set("task_id", opts.taskId)
   if (opts.limit !== undefined) query.set("limit", String(opts.limit))
   return query.size === 0 ? "" : `?${query}`
+}
+
+function taskSessionCollectionPath(opts: { readonly projectId?: string; readonly environmentId?: string }): string {
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    if (opts.projectId === undefined || opts.environmentId === undefined) {
+      throw new Error("projectId and environmentId must be provided together")
+    }
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/sessions`
+  }
+  return "/api/sessions"
+}
+
+function taskSessionResourcePath(
+  id: string,
+  opts: { readonly projectId?: string; readonly environmentId?: string },
+  suffix: string,
+): string {
+  return `${taskSessionCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`
+}
+
+function taskSessionRetrieveOptions(
+  opts: { readonly projectId?: string; readonly environmentId?: string; readonly signal?: AbortSignal },
+  signal: AbortSignal | undefined,
+): TaskSessionRetrieveOptions {
+  return {
+    ...(opts.projectId === undefined ? {} : { projectId: opts.projectId }),
+    ...(opts.environmentId === undefined ? {} : { environmentId: opts.environmentId }),
+    ...(signal === undefined ? {} : { signal }),
+  }
+}
+
+function runCollectionPath(opts: { readonly projectId?: string; readonly environmentId?: string }): string {
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    if (opts.projectId === undefined || opts.environmentId === undefined) {
+      throw new Error("projectId and environmentId must be provided together")
+    }
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/runs`
+  }
+  return "/api/runs"
+}
+
+function runResourcePath(
+  id: string,
+  opts: { readonly projectId?: string; readonly environmentId?: string },
+  suffix: string,
+): string {
+  return `${runCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`
+}
+
+function runRetrieveOptions(
+  opts: { readonly projectId?: string; readonly environmentId?: string },
+  signal: AbortSignal | undefined,
+): RetrieveRunOptions {
+  return {
+    ...(opts.projectId === undefined ? {} : { projectId: opts.projectId }),
+    ...(opts.environmentId === undefined ? {} : { environmentId: opts.environmentId }),
+    ...(signal === undefined ? {} : { signal }),
+  }
+}
+
+function runEventOptions(
+  opts: { readonly projectId?: string; readonly environmentId?: string; readonly signal?: AbortSignal },
+  cursor: number | undefined,
+): ListRunEventsOptions {
+  return {
+    ...(opts.projectId === undefined ? {} : { projectId: opts.projectId }),
+    ...(opts.environmentId === undefined ? {} : { environmentId: opts.environmentId }),
+    ...(opts.signal === undefined ? {} : { signal: opts.signal }),
+    ...(cursor === undefined ? {} : { cursor }),
+  }
 }
 
 function sessionChannelQuery(opts: SessionChannelListOptions): string {
@@ -1880,8 +2561,6 @@ function workspaceResourcePath(id: string, opts: { readonly projectId?: string; 
 
 function workspaceCreateBody(opts: WorkspaceCreateOptions): Record<string, unknown> {
   return {
-    ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
-    ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
     sandbox_id: opts.sandboxId,
     ...(opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId }),
     ...(opts.externalId === undefined ? {} : { external_id: opts.externalId }),
@@ -1900,19 +2579,68 @@ function workspaceUpdateBody(opts: WorkspaceUpdateOptions): Record<string, unkno
 }
 
 function workspaceMaterializeBody(opts: WorkspaceMaterializeOptions): Record<string, unknown> {
+  void opts
+  return {}
+}
+
+function workspaceStopBody(opts: WorkspaceStopOptions): Record<string, unknown> {
   return {
-    ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
-    ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
+    ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
+    ...(opts.idempotencyKeyTTL === undefined ? {} : { idempotency_key_ttl: opts.idempotencyKeyTTL }),
+  }
+}
+
+function workspaceExecCreateBody(command: readonly string[], opts: WorkspaceExecCreateOptions): Record<string, unknown> {
+  if (command.length === 0) {
+    throw new Error("workspace.exec command must not be empty")
+  }
+  return {
+    command: [...command],
+    ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
+    ...(opts.env === undefined ? {} : { env: opts.env }),
+    ...(opts.detached === undefined ? {} : { detached: opts.detached }),
+    ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
+  }
+}
+
+function workspacePtyCreateBody(opts: WorkspacePtyCreateOptions): Record<string, unknown> {
+  return {
+    ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
+    ...(opts.cols === undefined ? {} : { cols: opts.cols }),
+    ...(opts.rows === undefined ? {} : { rows: opts.rows }),
+    ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
+  }
+}
+
+function workspaceStreamWriteBody(data: string | Uint8Array, opts: WorkspaceStreamWriteOptions): Record<string, unknown> {
+  if (opts.offset < 0 || !Number.isSafeInteger(opts.offset)) {
+    throw new Error("workspace stream offset must be a non-negative integer")
+  }
+  return {
+    offset: opts.offset,
+    data: base64Encode(data),
   }
 }
 
 function workspaceListQuery(opts: WorkspaceListOptions): string {
   const query = new URLSearchParams()
-  if (opts.projectId !== undefined) query.set("project_id", opts.projectId)
-  if (opts.environmentId !== undefined) query.set("environment_id", opts.environmentId)
   if (opts.state !== undefined) query.set("state", opts.state)
   if (opts.externalId !== undefined) query.set("external_id", opts.externalId)
   if (opts.tag !== undefined) query.set("tag", opts.tag)
+  if (opts.limit !== undefined) query.set("limit", String(opts.limit))
+  return query.size === 0 ? "" : `?${query}`
+}
+
+function workspacePrimitiveListQuery(opts: WorkspaceExecListOptions | WorkspacePtyListOptions): string {
+  const query = new URLSearchParams()
+  if (opts.state !== undefined) query.set("state", opts.state)
+  if (opts.limit !== undefined) query.set("limit", String(opts.limit))
+  return query.size === 0 ? "" : `?${query}`
+}
+
+function workspaceStreamListQuery(opts: WorkspaceStreamListOptions): string {
+  const query = new URLSearchParams()
+  if (opts.cursor !== undefined) query.set("cursor", String(opts.cursor))
   if (opts.limit !== undefined) query.set("limit", String(opts.limit))
   return query.size === 0 ? "" : `?${query}`
 }
@@ -1961,6 +2689,95 @@ function workspaceMaterializationFromResponse(response: WorkspaceMaterialization
     createdAt: response.created_at,
     updatedAt: response.updated_at,
   }
+}
+
+function workspaceStopFromResponse(response: WorkspaceStopResponse): WorkspaceStopResult {
+  return {
+    workspaceId: response.workspace_id,
+    state: response.state,
+    materialization: response.materialization == null ? null : workspaceMaterializationFromResponse(response.materialization),
+  }
+}
+
+function workspaceExecFromResponse(response: WorkspaceExecResponse): WorkspaceExec {
+  return {
+    id: response.id,
+    workspaceId: response.workspace_id,
+    materializationId: response.materialization_id ?? null,
+    command: response.command,
+    cwd: response.cwd,
+    envShape: response.env_shape ?? {},
+    filesystemMode: workspaceFilesystemModeFromResponse(response.filesystem_mode),
+    state: response.state,
+    detached: response.detached,
+    processId: response.process_id ?? null,
+    exitCode: response.exit_code ?? null,
+    signal: response.signal ?? null,
+    error: response.error ?? {},
+    stdoutCursor: response.stdout_cursor,
+    stderrCursor: response.stderr_cursor,
+    stdinCursor: response.stdin_cursor,
+    stdinClosedAt: response.stdin_closed_at ?? null,
+    createdAt: response.created_at,
+    startedAt: response.started_at ?? null,
+    exitedAt: response.exited_at ?? null,
+    updatedAt: response.updated_at,
+  }
+}
+
+function workspacePtyFromResponse(response: WorkspacePtyResponse): WorkspacePty {
+  return {
+    id: response.id,
+    workspaceId: response.workspace_id,
+    materializationId: response.materialization_id ?? null,
+    cwd: response.cwd,
+    cols: response.cols,
+    rows: response.rows,
+    filesystemMode: workspaceFilesystemModeFromResponse(response.filesystem_mode),
+    state: response.state,
+    processId: response.process_id ?? null,
+    outputCursor: response.output_cursor,
+    inputCursor: response.input_cursor,
+    error: response.error ?? {},
+    createdAt: response.created_at,
+    startedAt: response.started_at ?? null,
+    closedAt: response.closed_at ?? null,
+    updatedAt: response.updated_at,
+  }
+}
+
+function workspaceStreamChunkFromResponse(response: WorkspaceExecStreamChunkResponse | WorkspacePtyStreamChunkResponse): WorkspaceStreamChunk {
+  return {
+    id: response.id,
+    stream: response.stream,
+    offsetStart: response.offset_start,
+    offsetEnd: response.offset_end,
+    data: base64Decode(response.data),
+    observedAt: response.observed_at,
+    createdAt: response.created_at,
+  }
+}
+
+function workspaceStreamTerminalFromResponse(response: WorkspaceStreamTerminalResponse): WorkspaceStreamTerminal {
+  return {
+    resourceKind: response.resource_kind,
+    resourceId: response.resource_id,
+    stream: response.stream,
+    state: response.state,
+    cursor: response.cursor,
+    error: response.error ?? null,
+  }
+}
+
+function workspaceFilesystemModeFromResponse(value: string): "write" {
+  if (value === "write") {
+    return "write"
+  }
+  throw new Error(`unsupported workspace filesystem mode ${JSON.stringify(value)}`)
+}
+
+function workspaceExecTerminal(state: WorkspaceExecState): boolean {
+  return state === "exited" || state === "terminated" || state === "lost" || state === "failed"
 }
 
 function scheduleFromResponse(response: ScheduleResponse): Schedule {
@@ -2055,12 +2872,32 @@ function waitpointTokenPublicAccessToken(target: WaitpointToken | WaitpointToken
   return target.publicAccessToken
 }
 
-function retrieveOptions(signal: AbortSignal | undefined): RetrieveRunOptions {
+function requestSignal(signal: AbortSignal | undefined): RequestInit {
   return signal === undefined ? {} : { signal }
 }
 
-function requestSignal(signal: AbortSignal | undefined): RequestInit {
-  return signal === undefined ? {} : { signal }
+function base64Encode(data: string | Uint8Array): string {
+  const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(bytes).toString("base64")
+  }
+  let binary = ""
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+  return btoa(binary)
+}
+
+function base64Decode(data: string): Uint8Array {
+  if (typeof Buffer !== "undefined") {
+    return new Uint8Array(Buffer.from(data, "base64"))
+  }
+  const binary = atob(data)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return bytes
 }
 
 function waitSignal(
@@ -2219,6 +3056,45 @@ async function* parseSse(response: Response): AsyncIterable<RunEventRecord> {
   }
 }
 
+async function* parseWorkspaceStreamSse(response: Response): AsyncIterable<WorkspaceStreamFollowEvent> {
+  const reader = response.body?.getReader()
+  if (reader === undefined) {
+    return
+  }
+  const decoder = new TextDecoder()
+  let buffer = ""
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) {
+        buffer += decoder.decode()
+        const finalEvent = parseWorkspaceStreamSseFrame(buffer)
+        if (finalEvent !== undefined) {
+          yield finalEvent
+        }
+        return
+      }
+      buffer += decoder.decode(value, { stream: true })
+      let boundary = findSseBoundary(buffer)
+      while (boundary !== -1) {
+        const delimiter = buffer.startsWith("\r\n\r\n", boundary) ? 4 : 2
+        const raw = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + delimiter)
+        const event = parseWorkspaceStreamSseFrame(raw)
+        if (event !== undefined) {
+          yield event
+        }
+        boundary = findSseBoundary(buffer)
+      }
+      if (buffer.length > MAX_SSE_BUFFER_CHARS) {
+        throw new SseFrameTooLargeError()
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 async function* parseChannelRecordSse<TData = unknown>(response: Response): AsyncIterable<ChannelRecord<TData>> {
   const reader = response.body?.getReader()
   if (reader === undefined) {
@@ -2256,6 +3132,35 @@ async function* parseChannelRecordSse<TData = unknown>(response: Response): Asyn
   } finally {
     reader.releaseLock()
   }
+}
+
+function parseWorkspaceStreamSseFrame(raw: string): WorkspaceStreamFollowEvent | undefined {
+  const data = raw
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+  if (data === "") {
+    return undefined
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(data)
+  } catch {
+    throw new SseProtocolError("SSE workspace stream data must be valid JSON", sseFrameCursor(raw))
+  }
+  const event = sseFrameEvent(raw)
+  if (event === "workspace_stream_chunk") {
+    return { kind: "chunk", chunk: workspaceStreamChunkFromResponse(parsed as WorkspaceExecStreamChunkResponse | WorkspacePtyStreamChunkResponse) }
+  }
+  if (event === "workspace_stream_terminal" || event === "workspace_stream_lost") {
+    return { kind: "terminal", terminal: workspaceStreamTerminalFromResponse(parsed as WorkspaceStreamTerminalResponse) }
+  }
+  if (event === "workspace_stream_error") {
+    const record = parsed as WorkspaceStreamErrorResponse
+    throw new WorkspaceStreamError(record.code, record.message, record.cursor)
+  }
+  throw new SseProtocolError(`unsupported workspace stream SSE event ${event}`, sseFrameCursor(raw))
 }
 
 function parseChannelRecordSseFrame<TData = unknown>(raw: string): ChannelRecord<TData> | undefined {
@@ -2330,6 +3235,16 @@ function sseFrameCursor(raw: string): number | undefined {
   return undefined
 }
 
+function sseFrameEvent(raw: string): string {
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.startsWith("event:")) {
+      continue
+    }
+    return line.slice(6).trim()
+  }
+  return "message"
+}
+
 function findSseBoundary(buffer: string): number {
   const lf = buffer.indexOf("\n\n")
   const crlf = buffer.indexOf("\r\n\r\n")
@@ -2371,6 +3286,31 @@ function runEventKindIsTerminal(kind: string | undefined): boolean {
 }
 
 function runEventStreamErrorIsFatal(error: unknown): boolean {
+  if (error instanceof AuthError) {
+    return true
+  }
+  if (error instanceof HelmrApiError) {
+    return helmrApiErrorIsFatal(error)
+  }
+  if (error instanceof SyntaxError) {
+    return true
+  }
+  if (error instanceof SseFrameTooLargeError) {
+    return true
+  }
+  if (error instanceof SseProtocolError) {
+    return true
+  }
+  return !transportErrorIsRetryable(error)
+}
+
+function workspaceStreamErrorIsFatal(error: unknown): boolean {
+  if (error instanceof WorkspaceStreamError) {
+    return true
+  }
+  if (error instanceof WorkspaceStreamTerminalError) {
+    return true
+  }
   if (error instanceof AuthError) {
     return true
   }

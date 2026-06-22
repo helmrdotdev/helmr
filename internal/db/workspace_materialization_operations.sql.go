@@ -23,7 +23,7 @@ WITH exhausted AS (
        AND workspace_materialization_operations.state = 'claimed'
        AND workspace_materialization_operations.claim_expires_at <= now()
        AND workspace_materialization_operations.claim_attempt >= $6
-    RETURNING workspace_materialization_operations.id
+    RETURNING workspace_materialization_operations.id, workspace_materialization_operations.org_id, workspace_materialization_operations.project_id, workspace_materialization_operations.environment_id, workspace_materialization_operations.workspace_id, workspace_materialization_operations.materialization_id, workspace_materialization_operations.operation_kind, workspace_materialization_operations.resource_kind, workspace_materialization_operations.resource_id, workspace_materialization_operations.request_fingerprint, workspace_materialization_operations.operation_expires_at, workspace_materialization_operations.state, workspace_materialization_operations.priority, workspace_materialization_operations.instance_lease_id, workspace_materialization_operations.write_lease_id, workspace_materialization_operations.fencing_token, workspace_materialization_operations.fencing_generation, workspace_materialization_operations.request, workspace_materialization_operations.result, workspace_materialization_operations.error, workspace_materialization_operations.claimed_by_worker_instance_id, workspace_materialization_operations.claim_token, workspace_materialization_operations.claim_attempt, workspace_materialization_operations.claim_expires_at, workspace_materialization_operations.requested_at, workspace_materialization_operations.claimed_at, workspace_materialization_operations.completed_at, workspace_materialization_operations.updated_at
 ),
 expired AS (
     UPDATE workspace_materialization_operations
@@ -35,7 +35,173 @@ expired AS (
        AND workspace_materialization_operations.materialization_id = $5
        AND workspace_materialization_operations.state IN ('queued', 'claimed', 'running')
        AND workspace_materialization_operations.operation_expires_at <= now()
-    RETURNING workspace_materialization_operations.id
+    RETURNING workspace_materialization_operations.id, workspace_materialization_operations.org_id, workspace_materialization_operations.project_id, workspace_materialization_operations.environment_id, workspace_materialization_operations.workspace_id, workspace_materialization_operations.materialization_id, workspace_materialization_operations.operation_kind, workspace_materialization_operations.resource_kind, workspace_materialization_operations.resource_id, workspace_materialization_operations.request_fingerprint, workspace_materialization_operations.operation_expires_at, workspace_materialization_operations.state, workspace_materialization_operations.priority, workspace_materialization_operations.instance_lease_id, workspace_materialization_operations.write_lease_id, workspace_materialization_operations.fencing_token, workspace_materialization_operations.fencing_generation, workspace_materialization_operations.request, workspace_materialization_operations.result, workspace_materialization_operations.error, workspace_materialization_operations.claimed_by_worker_instance_id, workspace_materialization_operations.claim_token, workspace_materialization_operations.claim_attempt, workspace_materialization_operations.claim_expires_at, workspace_materialization_operations.requested_at, workspace_materialization_operations.claimed_at, workspace_materialization_operations.completed_at, workspace_materialization_operations.updated_at
+),
+terminal_start_exec_operations AS (
+    SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM exhausted
+     WHERE operation_kind = 'start_exec'
+       AND resource_kind = 'workspace_exec'::workspace_resource_kind
+       AND resource_id IS NOT NULL
+    UNION ALL
+    SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM expired
+     WHERE operation_kind = 'start_exec'
+       AND resource_kind = 'workspace_exec'::workspace_resource_kind
+       AND resource_id IS NOT NULL
+),
+terminal_create_pty_operations AS (
+    SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM exhausted
+     WHERE operation_kind = 'create_pty'
+       AND resource_kind = 'workspace_pty'::workspace_resource_kind
+       AND resource_id IS NOT NULL
+    UNION ALL
+    SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM expired
+     WHERE operation_kind = 'create_pty'
+       AND resource_kind = 'workspace_pty'::workspace_resource_kind
+       AND resource_id IS NOT NULL
+),
+terminal_pty_control_operations AS (
+    SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM exhausted
+     WHERE operation_kind IN ('resize_pty', 'close_pty')
+       AND resource_kind = 'workspace_pty'::workspace_resource_kind
+       AND resource_id IS NOT NULL
+    UNION ALL
+    SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM expired
+     WHERE operation_kind IN ('resize_pty', 'close_pty')
+       AND resource_kind = 'workspace_pty'::workspace_resource_kind
+       AND resource_id IS NOT NULL
+),
+failed_start_execs AS (
+    UPDATE workspace_execs
+       SET state = 'failed',
+           error = terminal_start_exec_operations.error,
+           exited_at = coalesce(workspace_execs.exited_at, now()),
+           updated_at = now()
+      FROM terminal_start_exec_operations
+     WHERE workspace_execs.org_id = terminal_start_exec_operations.org_id
+       AND workspace_execs.project_id = terminal_start_exec_operations.project_id
+       AND workspace_execs.environment_id = terminal_start_exec_operations.environment_id
+       AND workspace_execs.workspace_id = terminal_start_exec_operations.workspace_id
+       AND workspace_execs.materialization_id = terminal_start_exec_operations.materialization_id
+       AND workspace_execs.id = terminal_start_exec_operations.resource_id
+       AND workspace_execs.state IN ('queued', 'materializing')
+    RETURNING workspace_execs.id, workspace_execs.org_id, workspace_execs.project_id, workspace_execs.environment_id, workspace_execs.workspace_id, workspace_execs.materialization_id, workspace_execs.instance_lease_id, workspace_execs.write_lease_id, workspace_execs.command, workspace_execs.cwd, workspace_execs.env_shape, workspace_execs.filesystem_mode, workspace_execs.state, workspace_execs.detached, workspace_execs.idempotency_key, workspace_execs.request_fingerprint, workspace_execs.process_id, workspace_execs.exit_code, workspace_execs.signal, workspace_execs.error, workspace_execs.stdout_cursor, workspace_execs.stderr_cursor, workspace_execs.stdin_cursor, workspace_execs.stdin_delivered_cursor, workspace_execs.stdin_closed_at, workspace_execs.created_by_subject_type, workspace_execs.created_by_subject_id, workspace_execs.created_at, workspace_execs.started_at, workspace_execs.exited_at, workspace_execs.updated_at
+),
+failed_create_ptys AS (
+    UPDATE workspace_pty_sessions
+       SET state = 'failed',
+           error = terminal_create_pty_operations.error,
+           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+           updated_at = now()
+      FROM terminal_create_pty_operations
+     WHERE workspace_pty_sessions.org_id = terminal_create_pty_operations.org_id
+       AND workspace_pty_sessions.project_id = terminal_create_pty_operations.project_id
+       AND workspace_pty_sessions.environment_id = terminal_create_pty_operations.environment_id
+       AND workspace_pty_sessions.workspace_id = terminal_create_pty_operations.workspace_id
+       AND workspace_pty_sessions.materialization_id = terminal_create_pty_operations.materialization_id
+       AND workspace_pty_sessions.id = terminal_create_pty_operations.resource_id
+       AND workspace_pty_sessions.state = 'creating'
+    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+),
+rolled_back_pty_controls AS (
+    UPDATE workspace_pty_sessions
+       SET state = CASE
+               WHEN terminal_pty_control_operations.operation_kind = 'close_pty'
+                    AND workspace_pty_sessions.resize_cols IS NOT NULL
+                    AND workspace_pty_sessions.resize_rows IS NOT NULL
+                   THEN 'resizing'::workspace_pty_state
+               ELSE 'open'::workspace_pty_state
+           END,
+           resize_cols = CASE
+               WHEN terminal_pty_control_operations.operation_kind = 'close_pty'
+                   THEN workspace_pty_sessions.resize_cols
+               ELSE NULL
+           END,
+           resize_rows = CASE
+               WHEN terminal_pty_control_operations.operation_kind = 'close_pty'
+                   THEN workspace_pty_sessions.resize_rows
+               ELSE NULL
+           END,
+           updated_at = now()
+      FROM terminal_pty_control_operations
+     WHERE workspace_pty_sessions.org_id = terminal_pty_control_operations.org_id
+       AND workspace_pty_sessions.project_id = terminal_pty_control_operations.project_id
+       AND workspace_pty_sessions.environment_id = terminal_pty_control_operations.environment_id
+       AND workspace_pty_sessions.workspace_id = terminal_pty_control_operations.workspace_id
+       AND workspace_pty_sessions.materialization_id = terminal_pty_control_operations.materialization_id
+       AND workspace_pty_sessions.id = terminal_pty_control_operations.resource_id
+       AND (
+           (
+               terminal_pty_control_operations.operation_kind = 'resize_pty'
+               AND workspace_pty_sessions.state = 'resizing'
+               AND workspace_pty_sessions.resize_cols::text = terminal_pty_control_operations.request->>'cols'
+               AND workspace_pty_sessions.resize_rows::text = terminal_pty_control_operations.request->>'rows'
+           )
+           OR (
+               terminal_pty_control_operations.operation_kind = 'close_pty'
+               AND workspace_pty_sessions.state = 'closing'
+           )
+       )
+    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.materialization_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+),
+released_terminal_operation_write_leases AS (
+    UPDATE workspace_leases
+       SET state = 'released',
+           released_at = coalesce(workspace_leases.released_at, now()),
+           updated_at = now()
+      FROM (
+          SELECT write_lease_id,
+                 org_id,
+                 project_id,
+                 environment_id,
+                 workspace_id,
+                 materialization_id
+            FROM failed_start_execs
+           WHERE write_lease_id IS NOT NULL
+          UNION ALL
+          SELECT write_lease_id,
+                 org_id,
+                 project_id,
+                 environment_id,
+                 workspace_id,
+                 materialization_id
+            FROM failed_create_ptys
+           WHERE write_lease_id IS NOT NULL
+      ) AS terminal_operations
+     WHERE workspace_leases.org_id = terminal_operations.org_id
+       AND workspace_leases.project_id = terminal_operations.project_id
+       AND workspace_leases.environment_id = terminal_operations.environment_id
+       AND workspace_leases.workspace_id = terminal_operations.workspace_id
+       AND workspace_leases.materialization_id = terminal_operations.materialization_id
+       AND workspace_leases.id = terminal_operations.write_lease_id
+       AND workspace_leases.lease_kind = 'write'
+       AND workspace_leases.state IN ('active', 'releasing')
+    RETURNING workspace_leases.id
+),
+terminal_operation_stream_wakeups AS (
+    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
+    SELECT failed_start_execs.org_id,
+           failed_start_execs.project_id,
+           failed_start_execs.environment_id,
+           failed_start_execs.workspace_id,
+           'workspace_exec'::workspace_resource_kind,
+           failed_start_execs.id,
+           stream_names.stream,
+           stream_names.cursor_offset,
+           'terminal'::workspace_stream_notification_kind
+      FROM failed_start_execs
+      CROSS JOIN LATERAL (VALUES ('stdout', failed_start_execs.stdout_cursor), ('stderr', failed_start_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
+    UNION ALL
+    SELECT failed_create_ptys.org_id,
+           failed_create_ptys.project_id,
+           failed_create_ptys.environment_id,
+           failed_create_ptys.workspace_id,
+           'workspace_pty'::workspace_resource_kind,
+           failed_create_ptys.id,
+           'output',
+           failed_create_ptys.output_cursor,
+           'terminal'::workspace_stream_notification_kind
+      FROM failed_create_ptys
+    RETURNING id
 ),
 candidate AS (
     SELECT workspace_materialization_operations.id
@@ -56,29 +222,31 @@ candidate AS (
            )
        )
        AND workspace_materialization_operations.claim_attempt < $6
-	       AND workspace_materialization_operations.operation_expires_at > now()
-	       AND workspace_materializations.worker_instance_id = $1
-	       AND workspace_materializations.reservation_token = $7
-	       AND workspace_materializations.state IN ('running', 'paused')
-	       AND (
-	           workspace_materialization_operations.write_lease_id IS NULL
-	           OR EXISTS (
-	               SELECT 1
-	                 FROM workspace_leases
-	                WHERE workspace_leases.org_id = workspace_materialization_operations.org_id
-	                  AND workspace_leases.project_id = workspace_materialization_operations.project_id
-	                  AND workspace_leases.environment_id = workspace_materialization_operations.environment_id
-	                  AND workspace_leases.workspace_id = workspace_materialization_operations.workspace_id
-	                  AND workspace_leases.materialization_id = workspace_materialization_operations.materialization_id
-	                  AND workspace_leases.id = workspace_materialization_operations.write_lease_id
-	                  AND workspace_leases.lease_kind = 'write'
-	                  AND workspace_leases.state = 'active'
-	                  AND workspace_leases.fencing_token = workspace_materialization_operations.fencing_token
-	                  AND workspace_leases.acquired_fencing_generation = workspace_materialization_operations.fencing_generation
-	                  AND workspace_leases.expires_at > now()
-	           )
-	       )
-	     ORDER BY workspace_materialization_operations.priority DESC,
+       AND workspace_materialization_operations.operation_expires_at > now()
+       AND (SELECT count(*) FROM released_terminal_operation_write_leases) >= 0
+       AND (SELECT count(*) FROM terminal_operation_stream_wakeups) >= 0
+       AND workspace_materializations.worker_instance_id = $1
+       AND workspace_materializations.reservation_token = $7
+       AND workspace_materializations.state IN ('running', 'paused')
+       AND (
+           workspace_materialization_operations.write_lease_id IS NULL
+           OR EXISTS (
+               SELECT 1
+                 FROM workspace_leases
+                WHERE workspace_leases.org_id = workspace_materialization_operations.org_id
+                  AND workspace_leases.project_id = workspace_materialization_operations.project_id
+                  AND workspace_leases.environment_id = workspace_materialization_operations.environment_id
+                  AND workspace_leases.workspace_id = workspace_materialization_operations.workspace_id
+                  AND workspace_leases.materialization_id = workspace_materialization_operations.materialization_id
+                  AND workspace_leases.id = workspace_materialization_operations.write_lease_id
+                  AND workspace_leases.lease_kind = 'write'
+                  AND workspace_leases.state = 'active'
+                  AND workspace_leases.fencing_token = workspace_materialization_operations.fencing_token
+                  AND workspace_leases.acquired_fencing_generation = workspace_materialization_operations.fencing_generation
+                  AND workspace_leases.expires_at > now()
+           )
+       )
+     ORDER BY workspace_materialization_operations.priority DESC,
               workspace_materialization_operations.requested_at ASC
      LIMIT 1
      FOR UPDATE SKIP LOCKED
@@ -219,8 +387,8 @@ type CompleteWorkspaceMaterializationOperationRow struct {
 	EnvironmentID             pgtype.UUID                            `json:"environment_id"`
 	WorkspaceID               pgtype.UUID                            `json:"workspace_id"`
 	MaterializationID         pgtype.UUID                            `json:"materialization_id"`
-	OperationKind             string                                 `json:"operation_kind"`
-	ResourceKind              string                                 `json:"resource_kind"`
+	OperationKind             WorkspaceMaterializationOperationKind  `json:"operation_kind"`
+	ResourceKind              WorkspaceResourceKind                  `json:"resource_kind"`
 	ResourceID                pgtype.UUID                            `json:"resource_id"`
 	RequestFingerprint        string                                 `json:"request_fingerprint"`
 	OperationExpiresAt        pgtype.Timestamptz                     `json:"operation_expires_at"`
@@ -351,8 +519,8 @@ type FailWorkspaceMaterializationOperationRow struct {
 	EnvironmentID             pgtype.UUID                            `json:"environment_id"`
 	WorkspaceID               pgtype.UUID                            `json:"workspace_id"`
 	MaterializationID         pgtype.UUID                            `json:"materialization_id"`
-	OperationKind             string                                 `json:"operation_kind"`
-	ResourceKind              string                                 `json:"resource_kind"`
+	OperationKind             WorkspaceMaterializationOperationKind  `json:"operation_kind"`
+	ResourceKind              WorkspaceResourceKind                  `json:"resource_kind"`
 	ResourceID                pgtype.UUID                            `json:"resource_id"`
 	RequestFingerprint        string                                 `json:"request_fingerprint"`
 	OperationExpiresAt        pgtype.Timestamptz                     `json:"operation_expires_at"`
@@ -384,6 +552,78 @@ func (q *Queries) FailWorkspaceMaterializationOperation(ctx context.Context, arg
 		arg.ClaimToken,
 	)
 	var i FailWorkspaceMaterializationOperationRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.MaterializationID,
+		&i.OperationKind,
+		&i.ResourceKind,
+		&i.ResourceID,
+		&i.RequestFingerprint,
+		&i.OperationExpiresAt,
+		&i.State,
+		&i.Priority,
+		&i.InstanceLeaseID,
+		&i.WriteLeaseID,
+		&i.FencingToken,
+		&i.FencingGeneration,
+		&i.Request,
+		&i.Result,
+		&i.Error,
+		&i.ClaimedByWorkerInstanceID,
+		&i.ClaimToken,
+		&i.ClaimAttempt,
+		&i.ClaimExpiresAt,
+		&i.RequestedAt,
+		&i.ClaimedAt,
+		&i.CompletedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getActiveWorkspaceMaterializationOperationByResource = `-- name: GetActiveWorkspaceMaterializationOperationByResource :one
+SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at
+  FROM workspace_materialization_operations
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND workspace_id = $4
+   AND materialization_id = $5
+   AND operation_kind = $6::workspace_materialization_operation_kind
+   AND resource_kind = $7::workspace_resource_kind
+   AND resource_id = $8
+   AND state IN ('queued', 'claimed', 'running')
+ ORDER BY requested_at ASC
+ LIMIT 1
+`
+
+type GetActiveWorkspaceMaterializationOperationByResourceParams struct {
+	OrgID             pgtype.UUID                           `json:"org_id"`
+	ProjectID         pgtype.UUID                           `json:"project_id"`
+	EnvironmentID     pgtype.UUID                           `json:"environment_id"`
+	WorkspaceID       pgtype.UUID                           `json:"workspace_id"`
+	MaterializationID pgtype.UUID                           `json:"materialization_id"`
+	OperationKind     WorkspaceMaterializationOperationKind `json:"operation_kind"`
+	ResourceKind      WorkspaceResourceKind                 `json:"resource_kind"`
+	ResourceID        pgtype.UUID                           `json:"resource_id"`
+}
+
+func (q *Queries) GetActiveWorkspaceMaterializationOperationByResource(ctx context.Context, arg GetActiveWorkspaceMaterializationOperationByResourceParams) (WorkspaceMaterializationOperation, error) {
+	row := q.db.QueryRow(ctx, getActiveWorkspaceMaterializationOperationByResource,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.MaterializationID,
+		arg.OperationKind,
+		arg.ResourceKind,
+		arg.ResourceID,
+	)
+	var i WorkspaceMaterializationOperation
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -530,8 +770,8 @@ SELECT $1,
        active_materialization.environment_id,
        active_materialization.workspace_id,
        active_materialization.id,
-       $2,
-       coalesce($3::text, ''),
+       $2::workspace_materialization_operation_kind,
+       $3::workspace_resource_kind,
        $4,
        $5,
        $6,
@@ -544,30 +784,36 @@ SELECT $1,
   FROM active_materialization
   LEFT JOIN active_write_lease ON true
  WHERE (
-       $9::uuid IS NULL
-       AND coalesce($10::text, '') = ''
+       (
+           $9::uuid IS NULL
+           AND coalesce($10::text, '') = ''
+       )
+       OR active_write_lease.id IS NOT NULL
    )
-    OR active_write_lease.id IS NOT NULL
+   AND (
+       $2::workspace_materialization_operation_kind NOT IN ('start_exec', 'create_pty', 'resize_pty', 'close_pty')
+       OR active_write_lease.id IS NOT NULL
+   )
 RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, operation_kind, resource_kind, resource_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at
 `
 
 type RequestWorkspaceMaterializationOperationParams struct {
-	ID                 pgtype.UUID        `json:"id"`
-	OperationKind      string             `json:"operation_kind"`
-	ResourceKind       string             `json:"resource_kind"`
-	ResourceID         pgtype.UUID        `json:"resource_id"`
-	RequestFingerprint string             `json:"request_fingerprint"`
-	OperationExpiresAt pgtype.Timestamptz `json:"operation_expires_at"`
-	Priority           int32              `json:"priority"`
-	InstanceLeaseID    pgtype.UUID        `json:"instance_lease_id"`
-	WriteLeaseID       pgtype.UUID        `json:"write_lease_id"`
-	FencingToken       string             `json:"fencing_token"`
-	Request            []byte             `json:"request"`
-	OrgID              pgtype.UUID        `json:"org_id"`
-	ProjectID          pgtype.UUID        `json:"project_id"`
-	EnvironmentID      pgtype.UUID        `json:"environment_id"`
-	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
-	MaterializationID  pgtype.UUID        `json:"materialization_id"`
+	ID                 pgtype.UUID                           `json:"id"`
+	OperationKind      WorkspaceMaterializationOperationKind `json:"operation_kind"`
+	ResourceKind       WorkspaceResourceKind                 `json:"resource_kind"`
+	ResourceID         pgtype.UUID                           `json:"resource_id"`
+	RequestFingerprint string                                `json:"request_fingerprint"`
+	OperationExpiresAt pgtype.Timestamptz                    `json:"operation_expires_at"`
+	Priority           int32                                 `json:"priority"`
+	InstanceLeaseID    pgtype.UUID                           `json:"instance_lease_id"`
+	WriteLeaseID       pgtype.UUID                           `json:"write_lease_id"`
+	FencingToken       string                                `json:"fencing_token"`
+	Request            []byte                                `json:"request"`
+	OrgID              pgtype.UUID                           `json:"org_id"`
+	ProjectID          pgtype.UUID                           `json:"project_id"`
+	EnvironmentID      pgtype.UUID                           `json:"environment_id"`
+	WorkspaceID        pgtype.UUID                           `json:"workspace_id"`
+	MaterializationID  pgtype.UUID                           `json:"materialization_id"`
 }
 
 func (q *Queries) RequestWorkspaceMaterializationOperation(ctx context.Context, arg RequestWorkspaceMaterializationOperationParams) (WorkspaceMaterializationOperation, error) {
@@ -701,8 +947,8 @@ type StartWorkspaceMaterializationOperationRow struct {
 	EnvironmentID             pgtype.UUID                            `json:"environment_id"`
 	WorkspaceID               pgtype.UUID                            `json:"workspace_id"`
 	MaterializationID         pgtype.UUID                            `json:"materialization_id"`
-	OperationKind             string                                 `json:"operation_kind"`
-	ResourceKind              string                                 `json:"resource_kind"`
+	OperationKind             WorkspaceMaterializationOperationKind  `json:"operation_kind"`
+	ResourceKind              WorkspaceResourceKind                  `json:"resource_kind"`
 	ResourceID                pgtype.UUID                            `json:"resource_id"`
 	RequestFingerprint        string                                 `json:"request_fingerprint"`
 	OperationExpiresAt        pgtype.Timestamptz                     `json:"operation_expires_at"`

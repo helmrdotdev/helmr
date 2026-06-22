@@ -65,6 +65,7 @@ INSERT INTO workspace_leases (
     materialization_id,
     lease_kind,
     owner_exec_id,
+    owner_pty_session_id,
     base_version_id,
     acquired_version_id,
     acquired_fencing_generation,
@@ -80,6 +81,7 @@ SELECT sqlc.arg(id),
        fenced_materialization.id,
        'write',
        sqlc.arg(owner_exec_id),
+       sqlc.arg(owner_pty_session_id),
        fenced_materialization.base_version_id,
        workspaces.current_version_id,
        fenced_materialization.fencing_generation,
@@ -93,6 +95,15 @@ SELECT sqlc.arg(id),
    AND workspaces.environment_id = fenced_materialization.environment_id
    AND workspaces.id = fenced_materialization.workspace_id
 RETURNING *;
+
+-- name: GetWorkspaceLease :one
+SELECT *
+  FROM workspace_leases
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND id = sqlc.arg(id);
 
 -- name: MarkWorkspaceWriteLeaseDirty :one
 WITH active_writer AS (

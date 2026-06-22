@@ -20,11 +20,23 @@ type ControlClient interface {
 	ClaimWorkspaceMaterialization(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerWorkspaceMaterializationClaimResponse, error)
 	RenewWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationRenewRequest) (api.WorkspaceMaterializationResponse, error)
 	MarkWorkspaceMaterializationRunning(ctx context.Context, request api.WorkerWorkspaceMaterializationRunningRequest) (api.WorkspaceMaterializationResponse, error)
+	CaptureWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationCaptureRequest) (api.WorkerWorkspaceMaterializationCaptureResponse, error)
 	StopWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error)
 	FailWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationFailRequest) (api.WorkspaceMaterializationResponse, error)
 	ClaimWorkspaceMaterializationOperation(ctx context.Context, request api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error)
 	StartWorkspaceMaterializationOperation(ctx context.Context, request api.WorkerWorkspaceOperationStartRequest) (api.WorkspaceOperationResponse, error)
 	CompleteWorkspaceMaterializationOperation(ctx context.Context, request api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error)
+	MarkWorkspaceExecStarted(ctx context.Context, request api.WorkerWorkspaceExecStartedRequest) (api.WorkspaceExecEnvelope, error)
+	AppendWorkspaceExecOutput(ctx context.Context, request api.WorkerWorkspaceExecOutputRequest) (api.ListWorkspaceExecStreamChunksResponse, error)
+	ListWorkspaceExecInput(ctx context.Context, request api.WorkerWorkspaceExecInputRequest) (api.WorkerWorkspaceExecInputResponse, error)
+	AdvanceWorkspaceExecInputDelivered(ctx context.Context, request api.WorkerWorkspaceExecInputDeliveredRequest) (api.WorkspaceExecEnvelope, error)
+	MarkWorkspaceExecExited(ctx context.Context, request api.WorkerWorkspaceExecExitedRequest) (api.WorkspaceExecEnvelope, error)
+	MarkWorkspacePtyOpened(ctx context.Context, request api.WorkerWorkspacePtyOpenedRequest) (api.WorkspacePtyEnvelope, error)
+	AppendWorkspacePtyOutput(ctx context.Context, request api.WorkerWorkspacePtyOutputRequest) (api.ListWorkspacePtyStreamChunksResponse, error)
+	ListWorkspacePtyInput(ctx context.Context, request api.WorkerWorkspacePtyInputRequest) (api.WorkerWorkspacePtyInputResponse, error)
+	AdvanceWorkspacePtyInputDelivered(ctx context.Context, request api.WorkerWorkspacePtyInputDeliveredRequest) (api.WorkspacePtyEnvelope, error)
+	MarkWorkspacePtyResizeApplied(ctx context.Context, request api.WorkerWorkspacePtyResizeAppliedRequest) (api.WorkspacePtyEnvelope, error)
+	MarkWorkspacePtyClosed(ctx context.Context, request api.WorkerWorkspacePtyClosedRequest) (api.WorkspacePtyEnvelope, error)
 	LeaseRun(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerRunLeaseResponse, error)
 	StartRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerStartResponse, error)
 	RenewRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerRenewResponse, error)
@@ -40,15 +52,7 @@ type DeploymentBuilder interface {
 }
 
 type Materializer interface {
-	RunWorkspaceMaterialization(ctx context.Context, materialization api.WorkerWorkspaceMaterialization, client interface {
-		RenewWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationRenewRequest) (api.WorkspaceMaterializationResponse, error)
-		MarkWorkspaceMaterializationRunning(context.Context, api.WorkerWorkspaceMaterializationRunningRequest) (api.WorkspaceMaterializationResponse, error)
-		StopWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error)
-		FailWorkspaceMaterialization(context.Context, api.WorkerWorkspaceMaterializationFailRequest) (api.WorkspaceMaterializationResponse, error)
-		ClaimWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error)
-		StartWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationStartRequest) (api.WorkspaceOperationResponse, error)
-		CompleteWorkspaceMaterializationOperation(context.Context, api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error)
-	}) error
+	RunWorkspaceMaterialization(ctx context.Context, materialization api.WorkerWorkspaceMaterialization, client api.WorkerWorkspaceMaterializerControlClient) error
 }
 
 type runLeaseState struct {
@@ -83,9 +87,7 @@ type Runner struct {
 	renewWait         time.Duration
 	releaseWait       time.Duration
 	log               *slog.Logger
-	materializationMu sync.Mutex
 	materializationWG sync.WaitGroup
-	materializing     bool
 }
 
 type Option func(*Runner)
@@ -186,22 +188,6 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 }
 
-func (r *Runner) tryReserveMaterialization() bool {
-	r.materializationMu.Lock()
-	defer r.materializationMu.Unlock()
-	if r.materializing {
-		return false
-	}
-	r.materializing = true
-	return true
-}
-
-func (r *Runner) releaseMaterializationReservation() {
-	r.materializationMu.Lock()
-	defer r.materializationMu.Unlock()
-	r.materializing = false
-}
-
 func (r *Runner) waitForMaterializations() {
 	r.materializationWG.Wait()
 }
@@ -229,10 +215,9 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 			return true, nil
 		}
 	}
-	if r.materializer != nil && r.tryReserveMaterialization() {
+	if r.materializer != nil {
 		claimed, err := r.client.ClaimWorkspaceMaterialization(ctx, r.capabilities)
 		if err != nil {
-			r.releaseMaterializationReservation()
 			return false, fmt.Errorf("claim workspace materialization: %w", err)
 		}
 		if claimed.Materialization != nil {
@@ -241,14 +226,12 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 			r.materializationWG.Add(1)
 			go func() {
 				defer r.materializationWG.Done()
-				defer r.releaseMaterializationReservation()
 				if err := r.materializer.RunWorkspaceMaterialization(ctx, materialization, r.client); err != nil && ctx.Err() == nil {
 					r.log.Error("workspace materialization failed", "workspace_id", materialization.WorkspaceID, "materialization_id", materialization.ID, "error", err)
 				}
 			}()
 			return true, nil
 		}
-		r.releaseMaterializationReservation()
 	}
 	leased, err := r.client.LeaseRun(ctx, r.capabilities)
 	if err != nil {

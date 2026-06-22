@@ -166,7 +166,7 @@ func (b *Builder) Build(ctx context.Context, request builder.Request) (builder.A
 	}); err != nil {
 		return builder.Artifact{}, err
 	}
-	return builder.Artifact{ImageTarPath: output.imageTar, ConfigPath: output.config, ManifestPath: output.manifest}, nil
+	return builder.Artifact{RootPath: output.root, ImageTarPath: output.imageTar, ConfigPath: output.config, ManifestPath: output.manifest}, nil
 }
 
 func (b *Builder) output(request builder.Request) (buildOutput, error) {
@@ -178,6 +178,7 @@ func (b *Builder) output(request builder.Request) (buildOutput, error) {
 		return buildOutput{}, fmt.Errorf("create build output: %w", err)
 	}
 	return buildOutput{
+		root:     root,
 		imageTar: filepath.Join(root, "image.oci.tar"),
 		config:   filepath.Join(root, "config.json"),
 		manifest: filepath.Join(root, "manifest.json"),
@@ -196,6 +197,7 @@ func (b *Builder) requestCacheNamespace(request builder.Request) string {
 }
 
 type buildOutput struct {
+	root     string
 	imageTar string
 	config   string
 	manifest string

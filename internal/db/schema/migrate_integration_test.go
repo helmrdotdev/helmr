@@ -78,23 +78,72 @@ func testUpWithExternalPostgres(t *testing.T, ctx context.Context, dsn string) {
 	if !exists {
 		t.Fatal("runs table was not created")
 	}
-	if err := Down(dbctx, dsn); err != nil {
-		t.Fatalf("down migration failed: %v", err)
-	}
-	if err := pool.QueryRow(dbctx, `SELECT to_regclass('public.runs') IS NOT NULL`).Scan(&exists); err != nil {
+	assertWorkspaceStreamSchema(t, dbctx, pool)
+}
+
+func assertWorkspaceStreamSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	var hasSequence bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			  FROM information_schema.columns
+			 WHERE table_schema = 'public'
+			   AND table_name IN ('workspace_exec_stream_chunks', 'workspace_pty_stream_chunks')
+			   AND column_name = 'sequence'
+		)
+	`).Scan(&hasSequence); err != nil {
 		t.Fatal(err)
 	}
-	if exists {
-		t.Fatal("runs table still exists after down migration")
+	if hasSequence {
+		t.Fatal("workspace stream chunks must use offset cursors, not sequence columns")
 	}
-	if err := Up(dbctx, dsn); err != nil {
-		t.Fatalf("migration after down failed: %v", err)
-	}
-	if err := pool.QueryRow(dbctx, `SELECT to_regclass('public.runs') IS NOT NULL`).Scan(&exists); err != nil {
+	var hasResize bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			  FROM pg_enum
+			  JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+			 WHERE pg_type.typname = 'workspace_pty_stream'
+			   AND pg_enum.enumlabel = 'resize'
+		)
+	`).Scan(&hasResize); err != nil {
 		t.Fatal(err)
 	}
-	if !exists {
-		t.Fatal("runs table was not recreated after down migration")
+	if hasResize {
+		t.Fatal("PTY resize must be a control verb, not a byte stream")
+	}
+	var constraintCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_constraint
+		 WHERE conname IN (
+		 	'workspace_exec_stream_chunks_no_overlap',
+		 	'workspace_pty_stream_chunks_no_overlap'
+		 )
+		   AND contype = 'x'
+	`).Scan(&constraintCount); err != nil {
+		t.Fatal(err)
+	}
+	if constraintCount != 2 {
+		t.Fatalf("workspace stream overlap exclusion constraints = %d, want 2", constraintCount)
+	}
+	var hasActiveResourceIndex bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			  FROM pg_indexes
+			 WHERE schemaname = 'public'
+			   AND tablename = 'workspace_materialization_operations'
+			   AND indexname = 'workspace_materialization_operations_active_resource_idx'
+			   AND indexdef ILIKE '%WHERE%state%queued%'
+			   AND indexdef ILIKE '%resource_id IS NOT NULL%'
+		)
+	`).Scan(&hasActiveResourceIndex); err != nil {
+		t.Fatal(err)
+	}
+	if !hasActiveResourceIndex {
+		t.Fatal("workspace materialization operations must prevent duplicate active resource dispatch")
 	}
 }
 

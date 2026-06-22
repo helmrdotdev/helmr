@@ -59,3 +59,44 @@ func TestAPIKeyScopeDoesNotMatchOrgScope(t *testing.T) {
 		t.Fatal("environment-scoped api key matched an org-level scope")
 	}
 }
+
+func TestGranularWorkspacePermissionsDoNotEscalate(t *testing.T) {
+	orgID := uuid.New()
+	scope := Scope{
+		OrgID:         orgID,
+		ProjectID:     "00000000-0000-0000-0000-000000000101",
+		EnvironmentID: "00000000-0000-0000-0000-000000000102",
+	}
+	actor := Actor{
+		OrgID:         orgID,
+		Kind:          ActorKindAPIKey,
+		Role:          RoleDeveloper,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		Permissions: []Permission{
+			PermissionFilesRead,
+			PermissionVersionsRead,
+			PermissionExecRead,
+			PermissionPtyRead,
+			PermissionPortsRead,
+		},
+	}
+
+	for _, permission := range []Permission{
+		PermissionWorkspaceLifecycleManage,
+		PermissionFilesWrite,
+		PermissionVersionsCapture,
+		PermissionVersionsRestore,
+		PermissionVersionsDiff,
+		PermissionExecCreate,
+		PermissionExecManage,
+		PermissionPtyCreate,
+		PermissionPtyManage,
+		PermissionPortsExpose,
+		PermissionPortsClose,
+	} {
+		if actor.HasPermission(permission, scope) {
+			t.Fatalf("read-only workspace grants allowed %s", permission)
+		}
+	}
+}

@@ -54,12 +54,17 @@ func init() {
 	}
 }
 
-func adapterCommand(ctx context.Context, runtimePath string, args []string, launchCwd string, env []string, imageRoot string, user *resolvedRuntimeUser, imageMode bool) (*exec.Cmd, error) {
-	if !imageMode {
+type adapterCommandOptions struct {
+	ImageMode bool
+	Pty       bool
+}
+
+func adapterCommand(ctx context.Context, runtimePath string, args []string, launchCwd string, env []string, imageRoot string, user *resolvedRuntimeUser, opts adapterCommandOptions) (*exec.Cmd, error) {
+	if !opts.ImageMode {
 		cmd := exec.CommandContext(ctx, runtimePath, args...)
 		cmd.Dir = launchCwd
 		cmd.Env = env
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: !opts.Pty}
 		return cmd, nil
 	}
 	if user == nil {
@@ -79,7 +84,7 @@ func adapterCommand(ctx context.Context, runtimePath string, args []string, laun
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWPID,
-		Setpgid:    true,
+		Setpgid:    !opts.Pty,
 	}
 	return cmd, nil
 }

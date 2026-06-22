@@ -115,6 +115,14 @@ func TestIgnoreStopSignalErrorDropsForcedSIGKILL(t *testing.T) {
 	}
 }
 
+func TestCleanupGuestSessionResourcesRunsAfterStopError(t *testing.T) {
+	called := false
+	cleanupGuestSessionResources(func() { called = true })
+	if !called {
+		t.Fatal("cleanup did not run")
+	}
+}
+
 type testWrappedErrors []error
 
 func (e testWrappedErrors) Error() string {

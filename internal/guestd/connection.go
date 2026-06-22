@@ -50,6 +50,12 @@ func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logge
 		return false, handleWorkspaceMaterializeConnection(ctx, conn, workspaceRegistry)
 	case transport.StreamTypeWorkspaceOperation:
 		return false, handleWorkspaceOperationConnection(ctx, conn, workspaceRegistry)
+	case transport.StreamTypeWorkspaceEvents:
+		return false, handleWorkspaceEventsConnection(ctx, conn, workspaceRegistry)
+	case transport.StreamTypeWorkspaceInput:
+		return false, handleWorkspaceInputConnection(ctx, conn, workspaceRegistry)
+	case transport.StreamTypeWorkspaceStop:
+		return false, handleWorkspaceStopConnection(ctx, conn, workspaceRegistry)
 	default:
 		return false, fmt.Errorf("unsupported runtime input type %q", start.streamHeader.Type)
 	}

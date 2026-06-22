@@ -101,9 +101,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure event stream: %w", err)
 	}
+	workspaceStreams, err := control.NewWorkspaceStreamNotifier(log, queries, redisClient)
+	if err != nil {
+		return fmt.Errorf("configure workspace stream notifier: %w", err)
+	}
 	go func() {
 		if err := eventStream.RunPublisher(backgroundCtx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("event stream publisher stopped", "error", err)
+			cancelServer()
+		}
+	}()
+	go func() {
+		if err := workspaceStreams.RunPublisher(backgroundCtx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("workspace stream notifier stopped", "error", err)
 			cancelServer()
 		}
 	}()
@@ -146,6 +156,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		DispatchQueue:       dispatchQueue,
 		ScheduleEngine:      scheduleEngine,
 		EventStream:         eventStream,
+		WorkspaceStreams:    workspaceStreams,
 		Mailer:              mailer,
 		AuthProvider:        authProvider,
 		WorkerTokenSecret:   []byte(cfg.WorkerTokenSigningKey),

@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Run Helmr locally, define a task project, and start a remote run.
+description: Run Helmr locally, define a task project, and start work in a durable workspace.
 section: Start
 sidebarLabel: Quickstart
 order: 20
@@ -57,14 +57,17 @@ helmr deploy .
 
 Deployment indexes the configured task files, uploads a content-hashed deployment-source archive, and records the current deployment for the configured project and selected environment.
 
-## Start A Run
+## Start A Task
 
 ```sh
 helmr run hello \
   --payload name=Ada
 ```
 
-Remote runs require a configured control plane and a worker capable of executing runs. Every run starts with an empty writable workspace at the configured workspace mount.
+Remote task starts require a configured control plane and a worker capable of
+executing the task. If no workspace is supplied, Helmr creates a durable
+workspace using the deployed task's sandbox and attaches the new task session to
+it.
 
 ## Inspect The Run
 

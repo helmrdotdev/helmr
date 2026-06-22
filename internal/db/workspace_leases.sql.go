@@ -118,11 +118,11 @@ WITH fenced_materialization AS (
     UPDATE workspace_materializations
        SET fencing_generation = workspace_materializations.fencing_generation + 1,
            updated_at = now()
-     WHERE workspace_materializations.org_id = $6
-       AND workspace_materializations.project_id = $7
-       AND workspace_materializations.environment_id = $8
-       AND workspace_materializations.workspace_id = $9
-       AND workspace_materializations.id = $10
+     WHERE workspace_materializations.org_id = $7
+       AND workspace_materializations.project_id = $8
+       AND workspace_materializations.environment_id = $9
+       AND workspace_materializations.workspace_id = $10
+       AND workspace_materializations.id = $11
        AND workspace_materializations.state IN ('running', 'paused')
     RETURNING id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, worker_instance_id, reservation_token, reservation_expires_at, claim_attempt, dead_lettered_at, priority, requested_cpu_millis, requested_memory_mib, requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots, capacity_reservation_id, guestd_channel_token_hash, guestd_channel_token_expires_at, runtime_id, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, materialized_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
 )
@@ -135,6 +135,7 @@ INSERT INTO workspace_leases (
     materialization_id,
     lease_kind,
     owner_exec_id,
+    owner_pty_session_id,
     base_version_id,
     acquired_version_id,
     acquired_fencing_generation,
@@ -150,12 +151,13 @@ SELECT $1,
        fenced_materialization.id,
        'write',
        $2,
+       $3,
        fenced_materialization.base_version_id,
        workspaces.current_version_id,
        fenced_materialization.fencing_generation,
-       $3,
        $4,
-       $5
+       $5,
+       $6
   FROM fenced_materialization
   JOIN workspaces
     ON workspaces.org_id = fenced_materialization.org_id
@@ -168,6 +170,7 @@ RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_
 type AcquireWorkspaceWriteLeaseParams struct {
 	ID                pgtype.UUID        `json:"id"`
 	OwnerExecID       pgtype.UUID        `json:"owner_exec_id"`
+	OwnerPtySessionID pgtype.UUID        `json:"owner_pty_session_id"`
 	FencingToken      string             `json:"fencing_token"`
 	HeartbeatToken    string             `json:"heartbeat_token"`
 	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
@@ -182,6 +185,7 @@ func (q *Queries) AcquireWorkspaceWriteLease(ctx context.Context, arg AcquireWor
 	row := q.db.QueryRow(ctx, acquireWorkspaceWriteLease,
 		arg.ID,
 		arg.OwnerExecID,
+		arg.OwnerPtySessionID,
 		arg.FencingToken,
 		arg.HeartbeatToken,
 		arg.ExpiresAt,
@@ -190,6 +194,62 @@ func (q *Queries) AcquireWorkspaceWriteLease(ctx context.Context, arg AcquireWor
 		arg.EnvironmentID,
 		arg.WorkspaceID,
 		arg.MaterializationID,
+	)
+	var i WorkspaceLease
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.MaterializationID,
+		&i.LeaseKind,
+		&i.State,
+		&i.OwnerRunID,
+		&i.OwnerExecID,
+		&i.OwnerPtySessionID,
+		&i.OwnerPortID,
+		&i.BaseVersionID,
+		&i.AcquiredVersionID,
+		&i.AcquiredFencingGeneration,
+		&i.FencingToken,
+		&i.HeartbeatToken,
+		&i.AcquiredAt,
+		&i.RenewedAt,
+		&i.ExpiresAt,
+		&i.ReleasedAt,
+		&i.LostAt,
+		&i.UpdatedAt,
+		&i.Error,
+	)
+	return i, err
+}
+
+const getWorkspaceLease = `-- name: GetWorkspaceLease :one
+SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
+  FROM workspace_leases
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND workspace_id = $4
+   AND id = $5
+`
+
+type GetWorkspaceLeaseParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetWorkspaceLease(ctx context.Context, arg GetWorkspaceLeaseParams) (WorkspaceLease, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceLease,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.ID,
 	)
 	var i WorkspaceLease
 	err := row.Scan(

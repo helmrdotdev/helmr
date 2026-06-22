@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
+	"github.com/helmrdotdev/helmr/internal/stablejson"
 	"github.com/helmrdotdev/helmr/internal/task"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -185,10 +186,12 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			}
 			imageFile, err := os.Open(imageArtifact.ImageTarPath)
 			if err != nil {
+				cleanupBuildArtifact(imageArtifact)
 				return failedDeploymentBuild(fmt.Errorf("open sandbox %q image artifact: %w", sandbox.id, err))
 			}
 			object, putErr := e.CAS.Put(ctx, api.SandboxImageArtifactMediaType, imageFile)
 			closeErr := imageFile.Close()
+			cleanupBuildArtifact(imageArtifact)
 			if putErr != nil {
 				return failedDeploymentBuild(fmt.Errorf("store sandbox %q image artifact: %w", sandbox.id, putErr))
 			}
@@ -208,6 +211,10 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			return failedDeploymentBuild(fmt.Errorf("store task %q bundle: %w", taskID, err))
 		}
 		casObjects = append(casObjects, api.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType})
+		concurrencyLimit, err := deploymentTaskConcurrencyLimit(bundle)
+		if err != nil {
+			return failedDeploymentBuild(fmt.Errorf("task %q concurrency limit: %w", taskID, err))
+		}
 		tasks = append(tasks, api.WorkerDeploymentBuildTask{
 			TaskID:                     taskID,
 			SandboxID:                  sandbox.id,
@@ -228,7 +235,7 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			RequestedDiskMiB:           resources.DiskMiB,
 			Network:                    network,
 			QueueName:                  deploymentTaskQueueName(bundle, taskID),
-			ConcurrencyLimit:           deploymentTaskConcurrencyLimit(bundle),
+			ConcurrencyLimit:           concurrencyLimit,
 			TTL:                        deploymentTaskTTL(bundle),
 			MaxDurationSeconds:         maxDurationSeconds,
 			RetryPolicy:                deploymentTaskRetryPolicy(bundle),
@@ -311,17 +318,77 @@ func deploymentTaskSandbox(bundle *bundlev0.Bundle) (deploymentSandboxBuildMetad
 	if workspace == nil || strings.TrimSpace(workspace.GetMountPath()) == "" {
 		return deploymentSandboxBuildMetadata{}, errors.New("workspace mount_path is required")
 	}
-	body, err := proto.MarshalOptions{Deterministic: true}.Marshal(sandbox)
+	fingerprint, err := sandboxContractFingerprint(bundle)
 	if err != nil {
-		return deploymentSandboxBuildMetadata{}, fmt.Errorf("marshal sandbox fingerprint: %w", err)
+		return deploymentSandboxBuildMetadata{}, fmt.Errorf("sandbox fingerprint: %w", err)
 	}
-	sum := sha256.Sum256(body)
 	return deploymentSandboxBuildMetadata{
 		id:                 sandboxID,
-		fingerprint:        "sha256:" + hex.EncodeToString(sum[:]),
+		fingerprint:        fingerprint,
 		workspaceMountPath: strings.TrimSpace(workspace.GetMountPath()),
 		filesystemFormat:   "tar",
 	}, nil
+}
+
+type sandboxContractFingerprintDocument struct {
+	ContractVersion  int                             `json:"contract_version"`
+	FilesystemFormat string                          `json:"filesystem_format"`
+	Network          sandboxContractNetwork          `json:"network"`
+	SandboxID        string                          `json:"sandbox_id"`
+	Workspace        sandboxContractWorkspaceBinding `json:"workspace"`
+}
+
+type sandboxContractWorkspaceBinding struct {
+	MountPath string `json:"mount_path"`
+}
+
+type sandboxContractNetwork struct {
+	Allow    []string `json:"allow"`
+	Deny     []string `json:"deny"`
+	Internet bool     `json:"internet"`
+}
+
+func sandboxContractFingerprint(bundle *bundlev0.Bundle) (string, error) {
+	if bundle == nil || bundle.GetSandbox() == nil {
+		return "", errors.New("sandbox is required")
+	}
+	sandbox := bundle.GetSandbox()
+	if sandbox.GetWorkspace() == nil {
+		return "", errors.New("workspace is required")
+	}
+	network := compute.DefaultNetworkPolicy()
+	if input := sandbox.GetNetwork(); input != nil {
+		network = compute.NetworkPolicy{
+			Internet: input.GetInternet(),
+			Allow:    append([]string(nil), input.GetAllow()...),
+			Deny:     append([]string(nil), input.GetDeny()...),
+		}
+	}
+	sort.Strings(network.Allow)
+	sort.Strings(network.Deny)
+	document := sandboxContractFingerprintDocument{
+		ContractVersion:  1,
+		FilesystemFormat: "tar",
+		Network: sandboxContractNetwork{
+			Allow:    network.Allow,
+			Deny:     network.Deny,
+			Internet: network.Internet,
+		},
+		SandboxID: strings.TrimSpace(sandbox.GetId()),
+		Workspace: sandboxContractWorkspaceBinding{
+			MountPath: strings.TrimSpace(sandbox.GetWorkspace().GetMountPath()),
+		},
+	}
+	body, err := json.Marshal(document)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := stablejson.Encode(body)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(canonical)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func materializeSourceArtifact(ctx context.Context, workDir string, store cas.Store, artifact api.DeploymentSourceArtifact, label string) (builder.Source, func(), error) {
@@ -354,6 +421,14 @@ func materializeSourceArtifact(ctx context.Context, workDir string, store cas.St
 		return builder.Source{}, func() {}, fmt.Errorf("close deployment source artifact: %w", err)
 	}
 	return builder.Source{CheckoutRoot: destination, ProjectRoot: destination, SHA: strings.TrimSpace(artifact.Digest)}, cleanup, nil
+}
+
+func cleanupBuildArtifact(artifact builder.Artifact) {
+	root := filepath.Clean(strings.TrimSpace(artifact.RootPath))
+	if root == "" || root == "." || root == string(filepath.Separator) {
+		return
+	}
+	_ = os.RemoveAll(root)
 }
 
 func decodeCatalog(body []byte) (Catalog, error) {
@@ -449,16 +524,19 @@ func deploymentTaskQueueName(bundle *bundlev0.Bundle, taskID string) string {
 	return queueName
 }
 
-func deploymentTaskConcurrencyLimit(bundle *bundlev0.Bundle) *int32 {
+func deploymentTaskConcurrencyLimit(bundle *bundlev0.Bundle) (*int32, error) {
 	if bundle == nil || bundle.GetTask() == nil || bundle.GetTask().GetQueue() == nil {
-		return nil
+		return nil, nil
 	}
 	value := bundle.GetTask().GetQueue().ConcurrencyLimit
-	if value == nil || *value > uint32(1<<31-1) {
-		return nil
+	if value == nil {
+		return nil, nil
+	}
+	if *value > uint32(1<<31-1) {
+		return nil, fmt.Errorf("concurrency_limit %d exceeds int32", *value)
 	}
 	converted := int32(*value)
-	return &converted
+	return &converted, nil
 }
 
 func deploymentTaskTTL(bundle *bundlev0.Bundle) string {

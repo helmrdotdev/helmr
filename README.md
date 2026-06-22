@@ -2,9 +2,9 @@
 
 Helmr is a self-hosted runtime for coding agents.
 
-It provides the infrastructure around an agent SDK: an isolated writable
-workspace, controlled credentials, logs, run history, and approval points before
-a task writes back. Task code is written in TypeScript and runs inside
+It provides the infrastructure around an agent SDK: durable writable
+workspaces, controlled credentials, logs, run history, and approval points
+before a task writes back. Task code is written in TypeScript and runs inside
 Firecracker-backed Linux guests managed by your own control plane and workers.
 
 ## Status
@@ -17,7 +17,7 @@ for contributors, early adopters, and self-hosted evaluation.
 
 - TypeScript tasks that declare images, sandboxes, resources, secrets, waitpoints,
   and run logic
-- Empty writable workspaces mounted inside isolated Linux guests
+- Durable writable workspaces mounted inside isolated Linux guests
 - Operator waitpoints before reviews, patches, or other side effects
 - Run status, logs, events, payloads, and history in the control plane
 - Task-declared secrets injected only at run time
@@ -144,8 +144,8 @@ export default defineConfig({
 })
 ```
 
-Tasks start in the checked-out workspace directory. Use relative paths for
-workspace files; absolute paths keep normal Linux container semantics.
+Tasks start in the mounted workspace directory. Use relative paths for workspace
+files; absolute paths keep normal Linux container semantics.
 
 See [examples/](examples/) for deployable task projects, including dependency
 caching, CLI tooling, operator waitpoints, task secrets, and GitHub PR review
@@ -153,7 +153,8 @@ flows.
 
 ## Run A Task
 
-Remote runs execute a deployed task with an empty writable workspace:
+Remote runs execute a deployed task in an attached writable workspace. If no
+workspace is supplied, Helmr creates one from the deployed task's sandbox:
 
 ```sh
 helmr deploy PATH/TO/TASK_PROJECT

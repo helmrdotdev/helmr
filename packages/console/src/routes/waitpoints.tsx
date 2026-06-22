@@ -10,9 +10,9 @@ import { ui } from "../ui/styles";
 
 function waitpointsErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.errorKind === "forbidden") {
-    return "You do not have permission to view waiting runs.";
+    return "You do not have permission to view waiting sessions.";
   }
-  return "Could not load waiting runs.";
+  return "Could not load waiting sessions.";
 }
 
 export function Waitpoints() {
@@ -34,9 +34,9 @@ export function Waitpoints() {
     <section class={ui.page}>
       <div class={ui.pageHeader}>
         <div>
-          <h1 class={ui.h1}>Waiting runs</h1>
+          <h1 class={ui.h1}>Waiting sessions</h1>
           <p class={ui.pageSubtitle}>
-            Open waitpoints currently blocking runs in the selected environment.
+            Open waitpoints currently blocking task sessions in the selected environment.
           </p>
         </div>
       </div>
@@ -51,7 +51,7 @@ export function Waitpoints() {
           fallback={
             <div class={ui.emptyState}>
               <strong class="text-console-text">Nothing waiting.</strong>
-              <span>Open waitpoints created by runs will show up here.</span>
+              <span>Open waitpoints created by task sessions will show up here.</span>
             </div>
           }
         >
@@ -73,7 +73,7 @@ export function Waitpoints() {
                       <tr class={ui.clickableTableRow} {...rowNavigation}>
                         <td>
                           <A
-                            href={runHref(run.id, run.project_id, run.environment_id)}
+                            href={runHref(run.id, run.task_session_id, run.project_id, run.environment_id)}
                             class={"cursor-pointer font-medium text-console-text hover:text-console-accent"}
                           >
                             {run.task_id}

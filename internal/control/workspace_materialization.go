@@ -49,7 +49,23 @@ func (s *Server) requestWorkspaceMaterialization(w http.ResponseWriter, r *http.
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
+	if !actorHasAnyPermission(actor, scope,
+		auth.PermissionWorkspaceLifecycleManage,
+		auth.PermissionFilesRead,
+		auth.PermissionFilesWrite,
+		auth.PermissionVersionsRead,
+		auth.PermissionVersionsCapture,
+		auth.PermissionVersionsRestore,
+		auth.PermissionExecRead,
+		auth.PermissionExecCreate,
+		auth.PermissionExecManage,
+		auth.PermissionPtyRead,
+		auth.PermissionPtyCreate,
+		auth.PermissionPtyManage,
+		auth.PermissionPortsRead,
+		auth.PermissionPortsExpose,
+		auth.PermissionPortsClose,
+	) {
 		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
@@ -81,6 +97,223 @@ func (s *Server) requestWorkspaceMaterialization(w http.ResponseWriter, r *http.
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, ensuredWorkspaceMaterializationResponse(row))
+}
+
+func (s *Server) stopWorkspace(w http.ResponseWriter, r *http.Request) {
+	workspaceID, err := uuid.Parse(strings.TrimSpace(chi.URLParam(r, "workspaceID")))
+	if err != nil {
+		writeError(w, badRequest(errors.New("workspace_id must be a UUID")))
+		return
+	}
+	actor := actorFromContext(r.Context())
+	var request api.WorkspaceStopRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid workspace stop request JSON: %w", err)))
+		return
+	}
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, request.ProjectID, request.EnvironmentID)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	if !actorHasAnyPermission(actor, scope,
+		auth.PermissionWorkspaceLifecycleManage,
+		auth.PermissionFilesWrite,
+		auth.PermissionVersionsCapture,
+		auth.PermissionVersionsRestore,
+		auth.PermissionExecManage,
+		auth.PermissionPtyManage,
+		auth.PermissionPortsClose,
+	) {
+		writeError(w, forbidden(errPermissionRequired))
+		return
+	}
+	fingerprint, err := workspaceStopFingerprint()
+	if err != nil {
+		writeError(w, errors.New("fingerprint workspace stop request"))
+		return
+	}
+	if err := s.markStaleWorkspaceMaterializationsLost(r.Context()); err != nil {
+		s.log.Error("mark stale workspace materializations lost failed", "workspace_id", workspaceID.String(), "error", err)
+		writeError(w, errors.New("reap stale workspace materializations"))
+		return
+	}
+	response, err := s.requestWorkspaceStopForRequest(r.Context(), actor, projectID, environmentID, pgvalue.UUID(workspaceID), request, fingerprint)
+	if err != nil {
+		s.writeWorkspaceError(w, "request workspace stop", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func actorHasAnyPermission(actor auth.Actor, scope auth.Scope, permissions ...auth.Permission) bool {
+	for _, permission := range permissions {
+		if actor.HasPermission(permission, scope) {
+			return true
+		}
+	}
+	return false
+}
+
+func workspaceReadPermissions() []auth.Permission {
+	return []auth.Permission{
+		auth.PermissionWorkspaceLifecycleManage,
+		auth.PermissionFilesRead,
+		auth.PermissionFilesWrite,
+		auth.PermissionVersionsRead,
+		auth.PermissionVersionsCapture,
+		auth.PermissionVersionsRestore,
+		auth.PermissionVersionsDiff,
+		auth.PermissionExecCreate,
+		auth.PermissionExecRead,
+		auth.PermissionExecManage,
+		auth.PermissionPtyCreate,
+		auth.PermissionPtyRead,
+		auth.PermissionPtyManage,
+		auth.PermissionPortsExpose,
+		auth.PermissionPortsRead,
+		auth.PermissionPortsClose,
+	}
+}
+
+func (s *Server) requestWorkspaceStopForRequest(ctx context.Context, actor auth.Actor, projectID pgtype.UUID, environmentID pgtype.UUID, workspaceID pgtype.UUID, request api.WorkspaceStopRequest, fingerprint string) (api.WorkspaceStopResponse, error) {
+	if s.tx == nil {
+		return api.WorkspaceStopResponse{}, errors.New("transactional workspace storage is not configured")
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return api.WorkspaceStopResponse{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	store := db.New(tx)
+	idempotencyKey := strings.TrimSpace(request.IdempotencyKey)
+	createdIdempotency := false
+	if idempotencyKey != "" {
+		idempotencyTTL, err := workspaceIdempotencyTTL(request.IdempotencyKeyTTL)
+		if err != nil {
+			return api.WorkspaceStopResponse{}, err
+		}
+		idempotency, err := ensureWorkspaceOperationIdempotency(ctx, store, db.EnsureWorkspaceOperationIdempotencyParams{
+			ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:                pgvalue.UUID(actor.OrgID),
+			ProjectID:            projectID,
+			EnvironmentID:        environmentID,
+			WorkspaceID:          workspaceID,
+			OperationKind:        workspaceStopOperationKind,
+			IdempotencyKey:       idempotencyKey,
+			RequestFingerprint:   fingerprint,
+			ResponseResourceType: "",
+			ResponseResourceID:   pgtype.UUID{},
+			ResponseBody:         []byte(`{}`),
+			ExpiresAt:            pgvalue.Timestamptz(time.Now().Add(idempotencyTTL)),
+		})
+		if err != nil {
+			return api.WorkspaceStopResponse{}, err
+		}
+		response, replayed, err := workspaceStopIdempotencyResponse(idempotency, fingerprint)
+		if err != nil {
+			return api.WorkspaceStopResponse{}, err
+		}
+		if replayed {
+			return response, nil
+		}
+		createdIdempotency = true
+	}
+	row, err := store.RequestWorkspaceMaterializationStop(ctx, db.RequestWorkspaceMaterializationStopParams{
+		OrgID:         pgvalue.UUID(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		WorkspaceID:   workspaceID,
+	})
+	activeMaterialization := true
+	if isNoRows(err) {
+		_, err = store.SetWorkspaceDesiredStopped(ctx, db.SetWorkspaceDesiredStoppedParams{
+			OrgID:         pgvalue.UUID(actor.OrgID),
+			ProjectID:     projectID,
+			EnvironmentID: environmentID,
+			ID:            workspaceID,
+		})
+		if err != nil {
+			return api.WorkspaceStopResponse{}, err
+		}
+		activeMaterialization = false
+	} else if err != nil {
+		return api.WorkspaceStopResponse{}, err
+	}
+	response := workspaceStopResponse(workspaceID, row, activeMaterialization)
+	responseBody, err := json.Marshal(response)
+	if err != nil {
+		return api.WorkspaceStopResponse{}, err
+	}
+	if createdIdempotency {
+		_, err = store.CompleteWorkspaceScopedOperationIdempotency(ctx, db.CompleteWorkspaceScopedOperationIdempotencyParams{
+			OrgID:                pgvalue.UUID(actor.OrgID),
+			ProjectID:            projectID,
+			EnvironmentID:        environmentID,
+			OperationKind:        workspaceStopOperationKind,
+			WorkspaceID:          workspaceID,
+			IdempotencyKey:       idempotencyKey,
+			RequestFingerprint:   fingerprint,
+			ResponseResourceType: "workspace",
+			ResponseResourceID:   workspaceID,
+			ResponseBody:         responseBody,
+		})
+		if err != nil {
+			return api.WorkspaceStopResponse{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return api.WorkspaceStopResponse{}, err
+	}
+	return response, nil
+}
+
+func workspaceStopIdempotencyResponse(idempotency db.EnsureWorkspaceOperationIdempotencyRow, fingerprint string) (api.WorkspaceStopResponse, bool, error) {
+	if idempotency.Inserted {
+		return api.WorkspaceStopResponse{}, false, nil
+	}
+	if idempotency.RequestFingerprint != fingerprint {
+		return api.WorkspaceStopResponse{}, false, errWorkspaceOperationIdempotencyUsed
+	}
+	if !idempotency.ResponseResourceID.Valid {
+		return api.WorkspaceStopResponse{}, false, errWorkspaceOperationPending
+	}
+	var response api.WorkspaceStopResponse
+	if err := json.Unmarshal(idempotency.ResponseBody, &response); err != nil {
+		return api.WorkspaceStopResponse{}, false, fmt.Errorf("decode workspace stop idempotency response: %w", err)
+	}
+	return response, true, nil
+}
+
+func workspaceStopResponse(workspaceID pgtype.UUID, row db.RequestWorkspaceMaterializationStopRow, activeMaterialization bool) api.WorkspaceStopResponse {
+	if !activeMaterialization {
+		return api.WorkspaceStopResponse{
+			WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String(),
+			State:       "no_active_materialization",
+		}
+	}
+	materialization := workspaceMaterializationResponse(workspaceMaterializationFromStopRow(row))
+	return api.WorkspaceStopResponse{
+		WorkspaceID:     pgvalue.MustUUIDValue(row.WorkspaceID).String(),
+		State:           string(row.State),
+		Materialization: &materialization,
+	}
+}
+
+func workspaceMaterializationFromStopRow(row db.RequestWorkspaceMaterializationStopRow) db.WorkspaceMaterialization {
+	return db.WorkspaceMaterialization(row)
+}
+
+func workspaceStopFingerprint() (string, error) {
+	payload, err := json.Marshal(struct {
+		Operation string `json:"operation"`
+	}{
+		Operation: string(workspaceStopOperationKind),
+	})
+	if err != nil {
+		return "", err
+	}
+	return sha256sum.HexBytes(payload), nil
 }
 
 func (s *Server) workspaceMaterializationPrerequisiteError(ctx context.Context, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workspaceID pgtype.UUID) error {
@@ -264,6 +497,120 @@ func (s *Server) workerStopWorkspaceMaterialization(w http.ResponseWriter, r *ht
 	writeJSON(w, http.StatusOK, workspaceMaterializationResponse(row))
 }
 
+func (s *Server) workerCaptureWorkspaceMaterialization(w http.ResponseWriter, r *http.Request) {
+	var request api.WorkerWorkspaceMaterializationCaptureRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid worker workspace materialization capture request JSON: %w", err)))
+		return
+	}
+	params, err := workerMaterializationTransitionParams(r.Context(), request.OrgID, request.MaterializationID, request.ReservationToken)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	projectID, err := uuid.Parse(strings.TrimSpace(request.ProjectID))
+	if err != nil {
+		writeError(w, badRequest(errors.New("project_id must be a UUID")))
+		return
+	}
+	environmentID, err := uuid.Parse(strings.TrimSpace(request.EnvironmentID))
+	if err != nil {
+		writeError(w, badRequest(errors.New("environment_id must be a UUID")))
+		return
+	}
+	workspaceID, err := uuid.Parse(strings.TrimSpace(request.WorkspaceID))
+	if err != nil {
+		writeError(w, badRequest(errors.New("workspace_id must be a UUID")))
+		return
+	}
+	digest := strings.TrimSpace(request.ArtifactDigest)
+	if digest == "" {
+		writeError(w, badRequest(errors.New("artifact_digest is required")))
+		return
+	}
+	if request.ArtifactSizeBytes <= 0 {
+		writeError(w, badRequest(errors.New("artifact_size_bytes must be positive")))
+		return
+	}
+	if strings.TrimSpace(request.ArtifactMediaType) != workspace.ArtifactMediaType {
+		writeError(w, badRequest(errors.New("artifact_media_type is unsupported")))
+		return
+	}
+	if strings.TrimSpace(request.ArtifactEncoding) != workspace.ArtifactEncoding {
+		writeError(w, badRequest(errors.New("artifact_encoding is unsupported")))
+		return
+	}
+	if request.ArtifactEntryCount < 0 {
+		writeError(w, badRequest(errors.New("artifact_entry_count must be non-negative")))
+		return
+	}
+	if s.tx == nil {
+		writeError(w, errors.New("workspace materialization capture requires transactional store"))
+		return
+	}
+	tx, beginErr := s.tx.Begin(r.Context())
+	if beginErr != nil {
+		writeError(w, errors.New("capture workspace materialization"))
+		return
+	}
+	defer tx.Rollback(r.Context())
+	store := db.New(tx)
+	if _, err := store.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
+		Digest:    digest,
+		SizeBytes: request.ArtifactSizeBytes,
+		MediaType: strings.TrimSpace(request.ArtifactMediaType),
+	}); err != nil {
+		writeError(w, errors.New("record workspace capture CAS object"))
+		return
+	}
+	artifact, err := store.CreateArtifact(r.Context(), db.CreateArtifactParams{
+		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                     params.OrgID,
+		ProjectID:                 pgvalue.UUID(projectID),
+		EnvironmentID:             pgvalue.UUID(environmentID),
+		Digest:                    digest,
+		Kind:                      db.ArtifactKindWorkspaceVersion,
+		SizeBytes:                 request.ArtifactSizeBytes,
+		MediaType:                 strings.TrimSpace(request.ArtifactMediaType),
+		CreatedByWorkerInstanceID: params.WorkerInstanceID,
+	})
+	if err != nil {
+		writeError(w, errors.New("record workspace capture artifact"))
+		return
+	}
+	version, err := store.PromoteWorkspaceMaterializationStopCapture(r.Context(), db.PromoteWorkspaceMaterializationStopCaptureParams{
+		OrgID:              params.OrgID,
+		ID:                 params.ID,
+		WorkspaceID:        pgvalue.UUID(workspaceID),
+		WorkerInstanceID:   params.WorkerInstanceID,
+		ReservationToken:   params.ReservationToken,
+		ProjectID:          pgvalue.UUID(projectID),
+		EnvironmentID:      pgvalue.UUID(environmentID),
+		ArtifactID:         artifact.ID,
+		SizeBytes:          request.ArtifactSizeBytes,
+		ArtifactEncoding:   strings.TrimSpace(request.ArtifactEncoding),
+		ContentDigest:      digest,
+		VersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ArtifactEntryCount: request.ArtifactEntryCount,
+		Message:            "system capture before workspace stop",
+	})
+	if isNoRows(err) {
+		writeError(w, conflict(codedError{code: "workspace_materialization_capture_rejected", message: "workspace materialization capture is stale"}))
+		return
+	}
+	if err != nil {
+		writeError(w, errors.New("promote workspace materialization capture"))
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, errors.New("commit workspace materialization capture"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.WorkerWorkspaceMaterializationCaptureResponse{
+		VersionID: pgvalue.MustUUIDValue(version.ID).String(),
+	})
+}
+
 func (s *Server) workerFailWorkspaceMaterialization(w http.ResponseWriter, r *http.Request) {
 	var request api.WorkerWorkspaceMaterializationFailRequest
 	if err := decodeJSON(r, &request); err != nil {
@@ -393,7 +740,26 @@ func (s *Server) workerMarkMaterializationRunningTransition(ctx context.Context,
 	if err != nil {
 		return db.WorkspaceMaterialization{}, err
 	}
-	return s.db.MarkWorkspaceMaterializationRunning(ctx, params)
+	if s.tx == nil {
+		return db.WorkspaceMaterialization{}, errors.New("workspace materialization running transition requires transactional store")
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return db.WorkspaceMaterialization{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	store := db.New(tx)
+	row, err := store.MarkWorkspaceMaterializationRunning(ctx, params)
+	if err != nil {
+		return db.WorkspaceMaterialization{}, err
+	}
+	if err := enqueuePendingWorkspacePrimitiveOperations(ctx, store, row); err != nil {
+		return db.WorkspaceMaterialization{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.WorkspaceMaterialization{}, err
+	}
+	return row, nil
 }
 
 func (s *Server) workerStopMaterializationTransition(ctx context.Context, orgID string, materializationID string, reservationToken string) (db.WorkspaceMaterialization, error) {
@@ -494,6 +860,7 @@ func failedWorkspaceMaterializationResponse(row db.FailWorkspaceMaterializationR
 		State:                row.State,
 		ClaimAttempt:         row.ClaimAttempt,
 		FencingGeneration:    row.FencingGeneration,
+		DirtyGeneration:      row.DirtyGeneration,
 		LastHeartbeatAt:      row.LastHeartbeatAt,
 		CreatedAt:            row.CreatedAt,
 		UpdatedAt:            row.UpdatedAt,
@@ -510,6 +877,7 @@ func workspaceMaterializationResponse(row db.WorkspaceMaterialization) api.Works
 		State:               string(row.State),
 		ClaimAttempt:        row.ClaimAttempt,
 		FencingGeneration:   row.FencingGeneration,
+		DirtyGeneration:     row.DirtyGeneration,
 		CreatedAt:           row.CreatedAt.Time,
 		UpdatedAt:           row.UpdatedAt.Time,
 	}
@@ -541,6 +909,7 @@ func ensuredWorkspaceMaterializationResponse(row db.EnsureWorkspaceMaterializati
 		State:                row.State,
 		ClaimAttempt:         row.ClaimAttempt,
 		FencingGeneration:    row.FencingGeneration,
+		DirtyGeneration:      row.DirtyGeneration,
 		LastHeartbeatAt:      row.LastHeartbeatAt,
 		CreatedAt:            row.CreatedAt,
 		UpdatedAt:            row.UpdatedAt,

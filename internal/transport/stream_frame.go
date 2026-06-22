@@ -20,6 +20,9 @@ const (
 	StreamTypeCheckpointPauseReady StreamType = "checkpoint-pause-ready"
 	StreamTypeWorkspaceMaterialize StreamType = "workspace-materialize"
 	StreamTypeWorkspaceOperation   StreamType = "workspace-operation"
+	StreamTypeWorkspaceEvents      StreamType = "workspace-events"
+	StreamTypeWorkspaceInput       StreamType = "workspace-input"
+	StreamTypeWorkspaceStop        StreamType = "workspace-stop"
 )
 
 type StreamHeader struct {

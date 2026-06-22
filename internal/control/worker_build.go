@@ -2,15 +2,19 @@ package control
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -297,6 +301,20 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				failBuild("encode deployment sandbox resource floor: " + err.Error())
 				return
 			}
+			fingerprint, err := deploymentSandboxContractFingerprint(deploymentSandboxContractFingerprintInput{
+				RootfsDigest:       workerState.RootfsDigest,
+				RuntimeABI:         workerState.RuntimeABI,
+				GuestdABI:          currentGuestdABI,
+				AdapterABI:         currentAdapterABI,
+				WorkspaceMountPath: strings.TrimSpace(task.WorkspaceMountPath),
+				NetworkPolicy:      task.Network,
+				FilesystemFormat:   strings.TrimSpace(task.FilesystemFormat),
+				ContractVersion:    1,
+			})
+			if err != nil {
+				failBuild("fingerprint deployment sandbox contract: " + err.Error())
+				return
+			}
 			row, err := queries.CreateDeploymentSandbox(r.Context(), db.CreateDeploymentSandboxParams{
 				ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:               orgID,
@@ -321,7 +339,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				DefaultGid:          pgtype.Int8{},
 				DefaultWorkdir:      "",
 				ContractVersion:     1,
-				Fingerprint:         strings.TrimSpace(task.SandboxFingerprint),
+				Fingerprint:         fingerprint,
 			})
 			if err != nil {
 				failBuild("record deployment sandbox: " + err.Error())
@@ -412,6 +430,102 @@ func parseDeploymentBuildLeaseIDs(lease api.WorkerDeploymentBuildLease) (pgtype.
 		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease deployment_id must be a UUID")
 	}
 	return pgvalue.UUID(orgID), pgvalue.UUID(projectID), pgvalue.UUID(environmentID), pgvalue.UUID(deploymentID), nil
+}
+
+type deploymentSandboxContractFingerprintInput struct {
+	RootfsDigest       string
+	RuntimeABI         string
+	GuestdABI          string
+	AdapterABI         string
+	WorkspaceMountPath string
+	NetworkPolicy      compute.NetworkPolicy
+	FilesystemFormat   string
+	DefaultUID         pgtype.Int8
+	DefaultGID         pgtype.Int8
+	DefaultWorkdir     string
+	ContractVersion    int32
+}
+
+type deploymentSandboxContractFingerprintDocument struct {
+	AdapterABI         string                         `json:"adapter_abi"`
+	ContractVersion    int32                          `json:"contract_version"`
+	DefaultGID         *int64                         `json:"default_gid"`
+	DefaultUID         *int64                         `json:"default_uid"`
+	DefaultWorkdir     string                         `json:"default_workdir"`
+	FilesystemFormat   string                         `json:"filesystem_format"`
+	GuestdABI          string                         `json:"guestd_abi"`
+	NetworkPolicy      deploymentSandboxNetworkPolicy `json:"network_policy"`
+	RootfsDigest       string                         `json:"rootfs_digest"`
+	RuntimeABI         string                         `json:"runtime_abi"`
+	WorkspaceMountPath string                         `json:"workspace_mount_path"`
+}
+
+type deploymentSandboxNetworkPolicy struct {
+	Allow    []string `json:"allow"`
+	Deny     []string `json:"deny"`
+	Internet bool     `json:"internet"`
+}
+
+func deploymentSandboxContractFingerprint(input deploymentSandboxContractFingerprintInput) (string, error) {
+	network := input.NetworkPolicy
+	network.Allow = append([]string(nil), network.Allow...)
+	network.Deny = append([]string(nil), network.Deny...)
+	sort.Strings(network.Allow)
+	sort.Strings(network.Deny)
+	document := deploymentSandboxContractFingerprintDocument{
+		AdapterABI:       strings.TrimSpace(input.AdapterABI),
+		ContractVersion:  input.ContractVersion,
+		DefaultWorkdir:   strings.TrimSpace(input.DefaultWorkdir),
+		FilesystemFormat: strings.TrimSpace(input.FilesystemFormat),
+		GuestdABI:        strings.TrimSpace(input.GuestdABI),
+		NetworkPolicy: deploymentSandboxNetworkPolicy{
+			Allow:    network.Allow,
+			Deny:     network.Deny,
+			Internet: network.Internet,
+		},
+		RootfsDigest:       strings.TrimSpace(input.RootfsDigest),
+		RuntimeABI:         strings.TrimSpace(input.RuntimeABI),
+		WorkspaceMountPath: strings.TrimSpace(input.WorkspaceMountPath),
+	}
+	if input.DefaultUID.Valid {
+		value := input.DefaultUID.Int64
+		document.DefaultUID = &value
+	}
+	if input.DefaultGID.Valid {
+		value := input.DefaultGID.Int64
+		document.DefaultGID = &value
+	}
+	if document.RootfsDigest == "" {
+		return "", errors.New("rootfs_digest is required")
+	}
+	if document.RuntimeABI == "" {
+		return "", errors.New("runtime_abi is required")
+	}
+	if document.GuestdABI == "" {
+		return "", errors.New("guestd_abi is required")
+	}
+	if document.AdapterABI == "" {
+		return "", errors.New("adapter_abi is required")
+	}
+	if document.WorkspaceMountPath == "" {
+		return "", errors.New("workspace_mount_path is required")
+	}
+	if document.FilesystemFormat == "" {
+		return "", errors.New("filesystem_format is required")
+	}
+	if document.ContractVersion <= 0 {
+		return "", errors.New("contract_version is required")
+	}
+	body, err := json.Marshal(document)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := canonicalJSON(body)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(canonical)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func createDeploymentBuildArtifact(ctx context.Context, queries *db.Queries, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workerInstanceID pgtype.UUID, digest string, kind db.ArtifactKind, objects map[string]api.CASObject) (db.Artifact, error) {

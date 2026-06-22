@@ -13,8 +13,8 @@ afterEach(() => {
 test("redirects unauthorized requests and rejects instead of hanging", async () => {
   const windowMock = {
     location: {
-      pathname: "/runs",
-      search: "?status=waiting",
+      pathname: "/sessions",
+      search: "",
       href: "",
     },
   };
@@ -31,7 +31,7 @@ test("redirects unauthorized requests and rejects instead of hanging", async () 
 
   expect(error).toBeInstanceOf(ApiError);
   expect((error as ApiError).errorKind).toBe("unauthorized");
-  expect(windowMock.location.href).toBe("/login?next=%2Fruns%3Fstatus%3Dwaiting");
+  expect(windowMock.location.href).toBe("/login");
 });
 
 test("sends pinned API version header", async () => {

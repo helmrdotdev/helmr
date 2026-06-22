@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -25,6 +26,58 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestDeploymentSandboxContractFingerprintCanonicalizesNetworkLists(t *testing.T) {
+	first := deploymentSandboxContractFingerprintInput{
+		RootfsDigest:       "sha256:" + strings.Repeat("a", 64),
+		RuntimeABI:         "helmr.runtime.v1",
+		GuestdABI:          currentGuestdABI,
+		AdapterABI:         currentAdapterABI,
+		WorkspaceMountPath: "/workspace",
+		NetworkPolicy:      compute.NetworkPolicy{Internet: true, Allow: []string{"b.example", "a.example"}},
+		FilesystemFormat:   "tar",
+		ContractVersion:    1,
+	}
+	second := first
+	second.NetworkPolicy.Allow = []string{"a.example", "b.example"}
+
+	firstFingerprint, err := deploymentSandboxContractFingerprint(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondFingerprint, err := deploymentSandboxContractFingerprint(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstFingerprint != secondFingerprint {
+		t.Fatalf("network list order changed fingerprint: %s != %s", firstFingerprint, secondFingerprint)
+	}
+}
+
+func TestDeploymentSandboxContractFingerprintChangesForContractFields(t *testing.T) {
+	base := deploymentSandboxContractFingerprintInput{
+		RootfsDigest:       "sha256:" + strings.Repeat("a", 64),
+		RuntimeABI:         "helmr.runtime.v1",
+		GuestdABI:          currentGuestdABI,
+		AdapterABI:         currentAdapterABI,
+		WorkspaceMountPath: "/workspace",
+		NetworkPolicy:      compute.NetworkPolicy{Internet: true},
+		FilesystemFormat:   "tar",
+		ContractVersion:    1,
+	}
+	first, err := deploymentSandboxContractFingerprint(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.RootfsDigest = "sha256:" + strings.Repeat("b", 64)
+	second, err := deploymentSandboxContractFingerprint(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("rootfs digest did not change fingerprint: %s", first)
+	}
+}
 
 func TestCreateDeploymentQueuesDeploymentSourceForBuild(t *testing.T) {
 	store := &fakeStore{}

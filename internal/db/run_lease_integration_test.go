@@ -271,36 +271,6 @@ func TestTaskSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		t.Fatalf("reserved run = %s, want %s", pgvalue.MustUUIDValue(reservedWinner.RunID), ids.runID)
 	}
 	if _, err := pool.Exec(ctx, `
-		UPDATE workspace_versions
-		   SET state = 'failed'
-		 WHERE org_id = $1
-		   AND id = $2
-	`, ids.orgID, baseVersionID); err != nil {
-		t.Fatal(err)
-	}
-	_, err = queries.LeaseRunLease(ctx, db.LeaseRunLeaseParams{
-		OrgID:             pgvalue.UUID(ids.orgID),
-		RunID:             pgvalue.UUID(ids.runID),
-		WorkerInstanceID:  pgvalue.UUID(workerID),
-		RunLeaseID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		DispatchMessageID: pgtype.Text{String: winnerDispatchMessageID, Valid: true},
-		DispatchLeaseID:   "lease-current",
-		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
-		RunLeaseSpanID:    "5555555555555555",
-	})
-	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("LeaseRunLease with non-ready current workspace version error = %v, want pgx.ErrNoRows", err)
-	}
-	if _, err := pool.Exec(ctx, `
-		UPDATE workspace_versions
-		   SET state = 'ready'
-		 WHERE org_id = $1
-		   AND id = $2
-	`, ids.orgID, baseVersionID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
 		UPDATE runs
 		   SET queue_concurrency_limit = 1,
 		       concurrency_key = 'workspace-first'

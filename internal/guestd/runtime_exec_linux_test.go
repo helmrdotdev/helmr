@@ -12,7 +12,7 @@ import (
 )
 
 func TestImageAdapterCommandUsesNamespaceInit(t *testing.T) {
-	cmd, err := adapterCommand(context.Background(), "/usr/bin/node", []string{"/opt/helmr/adapter/main.js"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, true)
+	cmd, err := adapterCommand(context.Background(), "/usr/bin/node", []string{"/opt/helmr/adapter/main.js"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, adapterCommandOptions{ImageMode: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,6 +33,23 @@ func TestImageAdapterCommandUsesNamespaceInit(t *testing.T) {
 	}
 	if cmd.SysProcAttr.Credential != nil {
 		t.Fatalf("parent command credential = %+v", cmd.SysProcAttr.Credential)
+	}
+	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
+	if cmd.SysProcAttr.Cloneflags&want != want {
+		t.Fatalf("clone flags = %#x, want %#x", cmd.SysProcAttr.Cloneflags, want)
+	}
+}
+
+func TestImageAdapterPtyCommandUsesSessionWithoutSetpgid(t *testing.T) {
+	cmd, err := adapterCommand(context.Background(), "/bin/sh", []string{"-l"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, adapterCommandOptions{ImageMode: true, Pty: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.SysProcAttr == nil {
+		t.Fatal("SysProcAttr is nil")
+	}
+	if cmd.SysProcAttr.Setpgid {
+		t.Fatal("PTY command kept Setpgid")
 	}
 	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
 	if cmd.SysProcAttr.Cloneflags&want != want {

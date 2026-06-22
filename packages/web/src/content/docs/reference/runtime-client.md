@@ -1,6 +1,6 @@
 ---
 title: Runtime client
-description: TypeScript client APIs for starting tasks and inspecting sessions and runs.
+description: TypeScript client APIs for starting tasks, opening workspaces, and inspecting sessions and runs.
 section: Reference
 sidebarLabel: Runtime client
 order: 920
@@ -35,6 +35,19 @@ Main surfaces:
 | `client.sessions.open(session).output(channel).list(opts)` | Read durable session output records from a cursor. |
 | `client.sessions.open(session).output(channel).stream(opts)` | Stream durable session output records over SSE. |
 | `client.auth.createPublicToken(opts)` | Create a scoped opaque bearer token for one session input append or output read grant. |
+| `client.workspaces.create(opts)` | Create a durable workspace from a deployed sandbox. |
+| `client.workspaces.open(id)` | Create a lazy handle for a workspace. |
+| `client.workspaces.retrieve(idOrHandle, opts)` | Fetch current workspace state. |
+| `client.workspaces.list(opts)` | List workspaces in the selected project environment. |
+| `client.workspaces.update(idOrHandle, opts)` | Update workspace metadata or tags. |
+| `client.workspaces.delete(idOrHandle, opts)` | Delete a workspace. |
+| `client.workspaces.materialize(idOrHandle, opts)` | Request worker materialization for a workspace. |
+| `client.workspaces.connect(idOrHandle, opts)` | Connect to an existing or newly materialized workspace. |
+| `client.workspaces.stop(idOrHandle, opts)` | Stop the active materialization for a workspace. |
+| `client.workspaces.open(id).exec(command, opts)` | Start a write-capable command in the workspace. |
+| `client.workspaces.open(id).execs.list(opts)` | List execs for a workspace. |
+| `client.workspaces.open(id).pty.create(opts)` | Start an interactive PTY in the workspace. |
+| `client.workspaces.open(id).pty.list(opts)` | List PTYs for a workspace. |
 | `client.runs.retrieve(run)` | Fetch current run snapshot. |
 | `client.runs.wait(run, opts)` | Wait for terminal status using durable run events. |
 | `client.runs.list(opts)` | List run summaries. |
@@ -56,6 +69,11 @@ Main surfaces:
 
 Task start `payload` is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload. Follow-up user messages, webhooks, or operator replies belong in session channel input, not in task start payload.
 
+Task starts create or reuse a task session and attach a workspace. When no
+workspace is supplied, Helmr creates one from the deployed task's sandbox.
+Direct workspace operations are separate: creating an exec or PTY on a
+workspace does not create a task session or run.
+
 Create public access tokens with explicit resource bindings. A session input grant can append only to the bound session channel; a session output grant can read only from the bound session channel. Use separate tokens for read and write grants.
 
 ```ts
@@ -76,6 +94,10 @@ const outputToken = await client.auth.createPublicToken({
 
 Run snapshots can include deployment and provenance metadata: `version`, `deploymentVersion`, `apiVersion`, `sdkVersion`, and `cliVersion`. Use `deploymentVersion` to reason about which deployed code snapshot ran. Use `apiVersion`, `sdkVersion`, and `cliVersion` for support/debugging rather than application logic.
 
-Run snapshots also include `attemptNumber`. It is `null` before the run is leased by a worker, then starts at `1`. Automatic task retries are not part of the current pre-release API contract; the attempt number is reserved as the stable identity for future retry-aware logs and events.
+Run snapshots also include `attemptNumber`. It is `null` before the run is leased by a worker, then starts at `1`. Use it to correlate run logs, events, and worker execution records for the same task execution attempt.
 
-Schedules use cron and generated schedule metadata payloads. `client.schedules.create()` accepts required `deduplicationKey`, `task`, and `cron`, plus optional `externalId`, `timezone`, `active`, and schedule run `options` such as `queue`, `concurrencyKey`, `priority`, `ttl`, and `maxDurationSeconds`. Scheduled starts resolve the current deployment for the task when they fire. `deduplicationKey` is the stable public key that prevents duplicate logical schedules: creating again with the same key updates the existing project-level schedule and selected environment instance. It does not accept arbitrary payload, secret bindings, workspace source, deployment pinning, or user-supplied idempotency controls. Declarative schedules are defined with `schedules.task()` and reconciled by deployment promotion, not by the imperative schedule methods.
+Workspace exec stdout/stderr and PTY output are durable cursor streams.
+`list()` returns stored chunks after a cursor. `stream()` follows the same
+stream over SSE and reconnects from the last received cursor.
+
+Schedules use cron and generated schedule metadata payloads. `client.schedules.create()` accepts required `deduplicationKey`, `task`, and `cron`, plus optional `externalId`, `timezone`, `active`, and schedule run `options` such as `queue`, `concurrencyKey`, `priority`, `ttl`, and `maxDurationSeconds`. Scheduled starts resolve the current deployment for the task when they fire. `deduplicationKey` is the stable public key that prevents duplicate logical schedules: creating again with the same key updates the existing project-level schedule and selected environment instance. Scheduled runs receive Helmr-generated schedule metadata rather than a caller-supplied payload. Declarative schedules are defined with `schedules.task()` and reconciled by deployment promotion, not by the imperative schedule methods.

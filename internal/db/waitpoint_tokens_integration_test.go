@@ -22,11 +22,17 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const testWorkspaceOperationMaxClaimAttempts = 3
+
+func isDBUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
 
 func TestWaitpointTokenCompletionIdempotencyUsesData(t *testing.T) {
 	ctx := context.Background()
@@ -203,6 +209,7 @@ func TestWorkspaceMaterializationStateMachine(t *testing.T) {
 		runCapacity.AvailableExecutionSlots != 1 {
 		t.Fatalf("run dispatch capacity should stay available for attached runs: capacity=%+v claimed=%+v", runCapacity, claimed)
 	}
+	operationExecID, operationLease := seedWorkspaceExecWithActiveWriteLease(t, ctx, pool, ids, running)
 	operation, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
 		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:              pgvalue.UUID(ids.orgID),
@@ -210,8 +217,12 @@ func TestWorkspaceMaterializationStateMachine(t *testing.T) {
 		EnvironmentID:      pgvalue.UUID(ids.environmentID),
 		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
 		MaterializationID:  requested.ID,
-		OperationKind:      "noop",
-		RequestFingerprint: "test-noop-dispatch",
+		OperationKind:      db.WorkspaceMaterializationOperationKindStartExec,
+		ResourceKind:       db.WorkspaceResourceKindWorkspaceExec,
+		ResourceID:         operationExecID,
+		RequestFingerprint: "test-start-exec-dispatch",
+		WriteLeaseID:       operationLease.ID,
+		FencingToken:       operationLease.FencingToken,
 		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		Request:            []byte(`{}`),
 	})
@@ -243,7 +254,7 @@ func TestWorkspaceMaterializationStateMachine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stoppedOperation.State != db.WorkspaceMaterializationOperationStateLost {
+	if stoppedOperation.State != db.WorkspaceMaterializationOperationStateCancelled {
 		t.Fatalf("stopped operation state = %s", stoppedOperation.State)
 	}
 	capacity, err = queries.GetWorkerInstanceQueueCapacity(ctx, pgvalue.UUID(workerID))
@@ -268,6 +279,528 @@ func TestWorkspaceMaterializationStateMachine(t *testing.T) {
 	if currentVersionID != pgvalue.MustUUIDValue(requested.BaseVersionID) {
 		t.Fatalf("current_version_id = %s, want base version %s", currentVersionID, pgvalue.MustUUIDValue(requested.BaseVersionID))
 	}
+}
+
+func TestWorkspaceMaterializationStopCapturePromotesSystemVersion(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	baseVersionID := pgvalue.MustUUIDValue(materialization.BaseVersionID)
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_materializations
+		   SET dirty_generation = 1
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, materialization.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspaces
+		   SET dirty_state = 'dirty'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	requestedStop, err := queries.RequestWorkspaceMaterializationStop(ctx, db.RequestWorkspaceMaterializationStopParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestedStop.State != db.WorkspaceMaterializationStateCapturing || requestedStop.DirtyGeneration != 1 {
+		t.Fatalf("requested stop = %+v, want capturing dirty generation 1", requestedStop)
+	}
+	var desiredState, dirtyState string
+	if err := pool.QueryRow(ctx, `
+		SELECT desired_state::text, dirty_state::text
+		  FROM workspaces
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.workspaceID).Scan(&desiredState, &dirtyState); err != nil {
+		t.Fatal(err)
+	}
+	if desiredState != "stopped" || dirtyState != "capturing" {
+		t.Fatalf("workspace desired_state=%s dirty_state=%s, want stopped/capturing", desiredState, dirtyState)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_materializations
+		   SET dirty_generation = 2
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, materialization.ID); err != nil {
+		t.Fatal(err)
+	}
+	artifactID := seedWorkspaceVersionArtifact(t, ctx, pool, ids)
+	versionID := uuid.Must(uuid.NewV7())
+	version, err := queries.PromoteWorkspaceMaterializationStopCapture(ctx, db.PromoteWorkspaceMaterializationStopCaptureParams{
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ID:                 materialization.ID,
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		WorkerInstanceID:   materialization.WorkerInstanceID,
+		ReservationToken:   materialization.ReservationToken,
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		ArtifactID:         pgvalue.UUID(artifactID),
+		SizeBytes:          10,
+		ArtifactEncoding:   workspace.ArtifactEncoding,
+		ContentDigest:      testDigest("stop-capture-content"),
+		VersionID:          pgvalue.UUID(versionID),
+		ArtifactEntryCount: 1,
+		Message:            "capture before controlled stop",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version.ID != pgvalue.UUID(versionID) || version.Kind != db.WorkspaceVersionKindSystem || version.State != db.WorkspaceVersionStateReady {
+		t.Fatalf("promoted version = %+v", version)
+	}
+	if pgvalue.MustUUIDValue(version.ParentVersionID) != baseVersionID || pgvalue.MustUUIDValue(version.SourceMaterializationID) != pgvalue.MustUUIDValue(materialization.ID) {
+		t.Fatalf("promoted version lineage parent=%v source=%v", version.ParentVersionID, version.SourceMaterializationID)
+	}
+	var promotedDirtyGeneration int64
+	if err := pool.QueryRow(ctx, `
+		SELECT dirty_generation
+		  FROM workspace_materializations
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, materialization.ID).Scan(&promotedDirtyGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if promotedDirtyGeneration != 0 {
+		t.Fatalf("promoted materialization dirty_generation = %d, want 0", promotedDirtyGeneration)
+	}
+	stopped, err := queries.StopWorkspaceMaterialization(ctx, db.StopWorkspaceMaterializationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               materialization.ID,
+		WorkerInstanceID: materialization.WorkerInstanceID,
+		ReservationToken: materialization.ReservationToken,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.State != db.WorkspaceMaterializationStateStopped {
+		t.Fatalf("stopped state = %s", stopped.State)
+	}
+	var currentVersionID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT current_version_id, dirty_state::text
+		  FROM workspaces
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.workspaceID).Scan(&currentVersionID, &dirtyState); err != nil {
+		t.Fatal(err)
+	}
+	if currentVersionID != versionID || dirtyState != "clean" {
+		t.Fatalf("workspace current_version_id=%s dirty_state=%s, want %s/clean", currentVersionID, dirtyState, versionID)
+	}
+}
+
+func TestWorkspaceMaterializationStopCaptureFailureRequiresRecovery(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	currentBefore := currentWorkspaceVersionID(t, ctx, pool, ids)
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_materializations
+		   SET dirty_generation = 1
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, materialization.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspaces
+		   SET dirty_state = 'dirty'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	requestedStop, err := queries.RequestWorkspaceMaterializationStop(ctx, db.RequestWorkspaceMaterializationStopParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestedStop.State != db.WorkspaceMaterializationStateCapturing {
+		t.Fatalf("requested stop state = %s, want capturing", requestedStop.State)
+	}
+	failed, err := queries.FailWorkspaceMaterialization(ctx, db.FailWorkspaceMaterializationParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ID:               materialization.ID,
+		WorkerInstanceID: materialization.WorkerInstanceID,
+		ReservationToken: materialization.ReservationToken,
+		Error:            []byte(`{"code":"workspace_materialization_recovery_required"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.State != db.WorkspaceMaterializationStateFailed {
+		t.Fatalf("failed materialization state = %s", failed.State)
+	}
+	var workspaceState, dirtyState string
+	var currentAfter uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT state::text, dirty_state::text, current_version_id
+		  FROM workspaces
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.workspaceID).Scan(&workspaceState, &dirtyState, &currentAfter); err != nil {
+		t.Fatal(err)
+	}
+	if workspaceState != "recovery_required" || dirtyState != "capture_failed" || currentAfter != currentBefore {
+		t.Fatalf("workspace state=%s dirty_state=%s current=%s, want recovery_required/capture_failed/current %s", workspaceState, dirtyState, currentAfter, currentBefore)
+	}
+	var promotedCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM workspace_versions
+		 WHERE org_id = $1
+		   AND source_materialization_id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(materialization.ID)).Scan(&promotedCount); err != nil {
+		t.Fatal(err)
+	}
+	if promotedCount != 0 {
+		t.Fatalf("capture failure promoted %d workspace versions, want 0", promotedCount)
+	}
+}
+
+func TestWorkspaceStopWithoutActiveMaterializationMarksDesiredStopped(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	if _, err := queries.RequestWorkspaceMaterializationStop(ctx, db.RequestWorkspaceMaterializationStopParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("request stop without materialization err = %v, want no rows", err)
+	}
+	workspaceRow, err := queries.SetWorkspaceDesiredStopped(ctx, db.SetWorkspaceDesiredStoppedParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		ID:            pgvalue.UUID(ids.workspaceID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspaceRow.DesiredState != db.WorkspaceDesiredStateStopped || workspaceRow.State != db.WorkspaceStateActive {
+		t.Fatalf("workspace state=%s desired=%s, want active/stopped", workspaceRow.State, workspaceRow.DesiredState)
+	}
+}
+
+func TestEnsureWorkspaceOperationIdempotencyReplacesExpiredRow(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	firstID := uuid.Must(uuid.NewV7())
+	first, err := queries.EnsureWorkspaceOperationIdempotency(ctx, db.EnsureWorkspaceOperationIdempotencyParams{
+		ID:                   pgvalue.UUID(firstID),
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ProjectID:            pgvalue.UUID(ids.projectID),
+		EnvironmentID:        pgvalue.UUID(ids.environmentID),
+		WorkspaceID:          pgtype.UUID{},
+		OperationKind:        db.WorkspaceOperationIdempotencyKindWorkspaceCreate,
+		IdempotencyKey:       "expired-key",
+		RequestFingerprint:   "expired-fingerprint",
+		ResponseResourceType: "",
+		ResponseResourceID:   pgtype.UUID{},
+		ResponseBody:         []byte(`{}`),
+		ExpiresAt:            pgvalue.Timestamptz(time.Now().Add(-time.Hour)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Inserted {
+		t.Fatalf("first inserted = false")
+	}
+	second, err := queries.EnsureWorkspaceOperationIdempotency(ctx, db.EnsureWorkspaceOperationIdempotencyParams{
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ProjectID:            pgvalue.UUID(ids.projectID),
+		EnvironmentID:        pgvalue.UUID(ids.environmentID),
+		WorkspaceID:          pgtype.UUID{},
+		OperationKind:        db.WorkspaceOperationIdempotencyKindWorkspaceCreate,
+		IdempotencyKey:       "expired-key",
+		RequestFingerprint:   "fresh-fingerprint",
+		ResponseResourceType: "",
+		ResponseResourceID:   pgtype.UUID{},
+		ResponseBody:         []byte(`{}`),
+		ExpiresAt:            pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.Inserted {
+		t.Fatalf("expired reuse inserted = false")
+	}
+	if second.ID != first.ID {
+		t.Fatalf("expired reuse id = %s, want same authority row %s", pgvalue.MustUUIDValue(second.ID), pgvalue.MustUUIDValue(first.ID))
+	}
+	if second.RequestFingerprint != "fresh-fingerprint" || second.ResponseResourceID.Valid {
+		t.Fatalf("expired reuse row = %+v, want fresh pending fingerprint", second)
+	}
+}
+
+func TestWorkspaceStopPreventsLateExecStart(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	execID := seedWorkspaceExec(t, ctx, pool, ids, materialization)
+	lease, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       pgvalue.UUID(execID),
+		OwnerPtySessionID: pgtype.UUID{},
+		FencingToken:      "late-exec-fence",
+		HeartbeatToken:    "late-exec-heartbeat",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.BindWorkspaceExecMaterialization(ctx, db.BindWorkspaceExecMaterializationParams{
+		MaterializationID: materialization.ID,
+		InstanceLeaseID:   pgtype.UUID{},
+		WriteLeaseID:      lease.ID,
+		State:             db.WorkspaceExecStateQueued,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                pgvalue.UUID(execID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stopping, err := queries.RequestWorkspaceMaterializationStop(ctx, db.RequestWorkspaceMaterializationStopParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopping.State != db.WorkspaceMaterializationStateStopping {
+		t.Fatalf("stop state = %s, want stopping for clean materialization", stopping.State)
+	}
+	if _, err := queries.MarkWorkspaceExecStarted(ctx, db.MarkWorkspaceExecStartedParams{
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                pgvalue.UUID(execID),
+		MaterializationID: materialization.ID,
+		ProcessID:         "late-exec-process",
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("late exec start err = %v, want no rows", err)
+	}
+	assertWorkspaceDirtyGeneration(t, ctx, pool, ids, materialization.ID, 0, "clean")
+}
+
+func TestWorkspaceStopPreventsLatePtyOpen(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	pty, err := queries.CreateWorkspacePtySession(ctx, db.CreateWorkspacePtySessionParams{
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Cwd:                  "/workspace",
+		Cols:                 80,
+		Rows:                 24,
+		FilesystemMode:       db.WorkspaceFilesystemModeWrite,
+		State:                db.WorkspacePtyStateCreating,
+		CreatedBySubjectType: "test",
+		CreatedBySubjectID:   "test",
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ProjectID:            pgvalue.UUID(ids.projectID),
+		EnvironmentID:        pgvalue.UUID(ids.environmentID),
+		WorkspaceID:          pgvalue.UUID(ids.workspaceID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       pgtype.UUID{},
+		OwnerPtySessionID: pty.ID,
+		FencingToken:      "late-pty-fence",
+		HeartbeatToken:    "late-pty-heartbeat",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pty, err = queries.BindWorkspacePtyMaterialization(ctx, db.BindWorkspacePtyMaterializationParams{
+		MaterializationID: materialization.ID,
+		InstanceLeaseID:   pgtype.UUID{},
+		WriteLeaseID:      lease.ID,
+		State:             db.WorkspacePtyStateCreating,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                pty.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopping, err := queries.RequestWorkspaceMaterializationStop(ctx, db.RequestWorkspaceMaterializationStopParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopping.State != db.WorkspaceMaterializationStateStopping {
+		t.Fatalf("stop state = %s, want stopping for clean materialization", stopping.State)
+	}
+	if _, err := queries.MarkWorkspacePtyOpen(ctx, db.MarkWorkspacePtyOpenParams{
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                pty.ID,
+		MaterializationID: materialization.ID,
+		ProcessID:         "late-pty-process",
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("late pty open err = %v, want no rows", err)
+	}
+	assertWorkspaceDirtyGeneration(t, ctx, pool, ids, materialization.ID, 0, "clean")
+}
+
+func TestWorkspaceExecStartedMarksWriteLeaseDirtyOnce(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	execID := seedWorkspaceExec(t, ctx, pool, ids, materialization)
+	leaseID := uuid.Must(uuid.NewV7())
+	lease, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(leaseID),
+		OwnerExecID:       pgvalue.UUID(execID),
+		OwnerPtySessionID: pgtype.UUID{},
+		FencingToken:      "exec-dirty-fence",
+		HeartbeatToken:    "exec-dirty-heartbeat",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_execs
+		   SET write_lease_id = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, lease.ID, ids.orgID, execID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i += 1 {
+		if _, err := queries.MarkWorkspaceExecStarted(ctx, db.MarkWorkspaceExecStartedParams{
+			OrgID:             pgvalue.UUID(ids.orgID),
+			ProjectID:         pgvalue.UUID(ids.projectID),
+			EnvironmentID:     pgvalue.UUID(ids.environmentID),
+			WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+			ID:                pgvalue.UUID(execID),
+			MaterializationID: materialization.ID,
+			ProcessID:         "exec-dirty-process",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertWorkspaceDirtyGeneration(t, ctx, pool, ids, materialization.ID, 1, "dirty")
+}
+
+func TestWorkspacePtyOpenedMarksWriteLeaseDirtyOnce(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	ptyID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_pty_sessions (
+			id, org_id, project_id, environment_id, workspace_id,
+			materialization_id, cwd, cols, rows, state
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, '/workspace', 80, 24, 'creating')
+	`, ptyID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, pgvalue.MustUUIDValue(materialization.ID)); err != nil {
+		t.Fatal(err)
+	}
+	leaseID := uuid.Must(uuid.NewV7())
+	lease, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(leaseID),
+		OwnerExecID:       pgtype.UUID{},
+		OwnerPtySessionID: pgvalue.UUID(ptyID),
+		FencingToken:      "pty-dirty-fence",
+		HeartbeatToken:    "pty-dirty-heartbeat",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_pty_sessions
+		   SET write_lease_id = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, lease.ID, ids.orgID, ptyID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i += 1 {
+		if _, err := queries.MarkWorkspacePtyOpen(ctx, db.MarkWorkspacePtyOpenParams{
+			OrgID:             pgvalue.UUID(ids.orgID),
+			ProjectID:         pgvalue.UUID(ids.projectID),
+			EnvironmentID:     pgvalue.UUID(ids.environmentID),
+			WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+			ID:                pgvalue.UUID(ptyID),
+			MaterializationID: materialization.ID,
+			ProcessID:         "pty-dirty-process",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertWorkspaceDirtyGeneration(t, ctx, pool, ids, materialization.ID, 1, "dirty")
 }
 
 func TestEnsureWorkspaceMaterializationRequestedCreatesOneActiveArtifactBackedRequest(t *testing.T) {
@@ -323,6 +856,14 @@ func TestEnsureWorkspaceMaterializationRequestedCreatesOneActiveArtifactBackedRe
 	if second.ID == pgvalue.UUID(secondID) {
 		t.Fatal("second ensure inserted a duplicate active materialization")
 	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspaces
+		   SET desired_state = 'stopped'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.workspaceID); err != nil {
+		t.Fatal(err)
+	}
 	third, err := queries.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
@@ -344,6 +885,7 @@ func TestEnsureWorkspaceMaterializationRequestedCreatesOneActiveArtifactBackedRe
 	if third.Priority != 10 {
 		t.Fatalf("third ensure priority = %d, want 10", third.Priority)
 	}
+	assertWorkspaceDesiredState(t, ctx, pool, ids, "active")
 	var storedPriority int32
 	if err := pool.QueryRow(ctx, `
 		SELECT priority
@@ -395,6 +937,38 @@ func TestEnsureWorkspaceMaterializationRequestedCreatesOneActiveArtifactBackedRe
 	if activeCount != 1 {
 		t.Fatalf("active materializations = %d, want 1", activeCount)
 	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_materializations
+		   SET state = 'stopped'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(first.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspaces
+		   SET desired_state = 'stopped'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	rematerialized, err := queries.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Priority:      0,
+		Request:       []byte(`{"source":"workspace.materialize","after_stop":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rematerialized.Inserted || rematerialized.ID == first.ID {
+		t.Fatalf("rematerialized ensure = id %s inserted=%v, want new inserted materialization", pgvalue.MustUUIDValue(rematerialized.ID), rematerialized.Inserted)
+	}
+	assertWorkspaceDesiredState(t, ctx, pool, ids, "active")
 }
 
 func TestQueuedRunWorkspaceMaterializationDependencyIsExact(t *testing.T) {
@@ -605,6 +1179,14 @@ func TestEnsureWorkspaceMaterializationRequestedRejectsNonRunnableActiveMaterial
 		`, ids.orgID, pgvalue.MustUUIDValue(requested.ID), state); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := pool.Exec(ctx, `
+			UPDATE workspaces
+			   SET desired_state = 'stopped'
+			 WHERE org_id = $1
+			   AND id = $2
+		`, ids.orgID, ids.workspaceID); err != nil {
+			t.Fatal(err)
+		}
 		prerequisites, err := queries.GetWorkspaceMaterializationPrerequisites(ctx, db.GetWorkspaceMaterializationPrerequisitesParams{
 			OrgID:         pgvalue.UUID(ids.orgID),
 			ProjectID:     pgvalue.UUID(ids.projectID),
@@ -631,6 +1213,7 @@ func TestEnsureWorkspaceMaterializationRequestedRejectsNonRunnableActiveMaterial
 		if !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("non-runnable active ensure for %s err = %v, want no rows", state, err)
 		}
+		assertWorkspaceDesiredState(t, ctx, pool, ids, "stopped")
 	}
 	var materializations int
 	if err := pool.QueryRow(ctx, `
@@ -890,6 +1473,7 @@ func TestWorkspaceMaterializationStaleHeartbeatMarksLost(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	operationExecID, operationLease := seedWorkspaceExecWithActiveWriteLease(t, ctx, pool, ids, requested)
 	operation, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
 		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:              pgvalue.UUID(ids.orgID),
@@ -897,8 +1481,12 @@ func TestWorkspaceMaterializationStaleHeartbeatMarksLost(t *testing.T) {
 		EnvironmentID:      pgvalue.UUID(ids.environmentID),
 		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
 		MaterializationID:  requested.ID,
-		OperationKind:      "noop",
-		RequestFingerprint: "test-noop-dispatch",
+		OperationKind:      db.WorkspaceMaterializationOperationKindStartExec,
+		ResourceKind:       db.WorkspaceResourceKindWorkspaceExec,
+		ResourceID:         operationExecID,
+		RequestFingerprint: "test-start-exec-dispatch",
+		WriteLeaseID:       operationLease.ID,
+		FencingToken:       operationLease.FencingToken,
 		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		Request:            []byte(`{}`),
 	})
@@ -927,6 +1515,146 @@ func TestWorkspaceMaterializationStaleHeartbeatMarksLost(t *testing.T) {
 	}
 	if lostOperation.State != db.WorkspaceMaterializationOperationStateLost {
 		t.Fatalf("lost operation state = %s", lostOperation.State)
+	}
+}
+
+func TestWorkspaceMaterializationTerminalTransitionsLoseLivePrimitivesAndReleaseLeases(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		wantExecState db.WorkspaceExecState
+		wantPtyState  db.WorkspacePtyState
+		transition    func(context.Context, *testing.T, *pgxpool.Pool, *db.Queries, waitpointTokenIntegrationIDs, db.WorkspaceMaterialization)
+	}{
+		{
+			name:          "stop",
+			wantExecState: db.WorkspaceExecStateTerminated,
+			wantPtyState:  db.WorkspacePtyStateClosed,
+			transition: func(ctx context.Context, t *testing.T, _ *pgxpool.Pool, queries *db.Queries, ids waitpointTokenIntegrationIDs, materialization db.WorkspaceMaterialization) {
+				t.Helper()
+				if _, err := queries.StopWorkspaceMaterialization(ctx, db.StopWorkspaceMaterializationParams{
+					OrgID:            pgvalue.UUID(ids.orgID),
+					ID:               materialization.ID,
+					WorkerInstanceID: materialization.WorkerInstanceID,
+					ReservationToken: materialization.ReservationToken,
+				}); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name:          "fail",
+			wantExecState: db.WorkspaceExecStateLost,
+			wantPtyState:  db.WorkspacePtyStateLost,
+			transition: func(ctx context.Context, t *testing.T, _ *pgxpool.Pool, queries *db.Queries, ids waitpointTokenIntegrationIDs, materialization db.WorkspaceMaterialization) {
+				t.Helper()
+				if _, err := queries.FailWorkspaceMaterialization(ctx, db.FailWorkspaceMaterializationParams{
+					OrgID:            pgvalue.UUID(ids.orgID),
+					ID:               materialization.ID,
+					WorkerInstanceID: materialization.WorkerInstanceID,
+					ReservationToken: materialization.ReservationToken,
+					Error:            []byte(`{"code":"test_failure"}`),
+				}); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name:          "lost",
+			wantExecState: db.WorkspaceExecStateLost,
+			wantPtyState:  db.WorkspacePtyStateLost,
+			transition: func(ctx context.Context, t *testing.T, pool *pgxpool.Pool, queries *db.Queries, ids waitpointTokenIntegrationIDs, materialization db.WorkspaceMaterialization) {
+				t.Helper()
+				if _, err := pool.Exec(ctx, `
+					UPDATE workspace_materializations
+					   SET last_heartbeat_at = now() - interval '10 minutes'
+					 WHERE org_id = $1
+					   AND id = $2
+				`, ids.orgID, materialization.ID); err != nil {
+					t.Fatal(err)
+				}
+				lost, err := queries.MarkStaleWorkspaceMaterializationsLost(ctx, pgvalue.Timestamptz(time.Now().Add(-time.Minute)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(lost) != 1 || lost[0].ID != materialization.ID {
+					t.Fatalf("lost materializations = %+v", lost)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, initialLeaseState := range []db.WorkspaceLeaseState{db.WorkspaceLeaseStateActive, db.WorkspaceLeaseStateReleasing} {
+				t.Run(string(initialLeaseState), func(t *testing.T) {
+					ctx := context.Background()
+					pool := newIntegrationDB(t, ctx)
+					ids := seedWaitpointTokenIntegration(t, ctx, pool)
+					queries := db.New(pool)
+					materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+					execID, ptyID, portID, leaseID := seedLiveWorkspacePrimitiveRows(t, ctx, pool, ids, materialization)
+					if initialLeaseState != db.WorkspaceLeaseStateActive {
+						if _, err := pool.Exec(ctx, `
+							UPDATE workspace_leases
+							   SET state = $1
+							 WHERE org_id = $2
+							   AND id = $3
+						`, initialLeaseState, ids.orgID, leaseID); err != nil {
+							t.Fatal(err)
+						}
+					}
+
+					tc.transition(ctx, t, pool, queries, ids, materialization)
+
+					var execState db.WorkspaceExecState
+					if err := pool.QueryRow(ctx, `
+						SELECT state
+						  FROM workspace_execs
+						 WHERE org_id = $1
+						   AND id = $2
+					`, ids.orgID, execID).Scan(&execState); err != nil {
+						t.Fatal(err)
+					}
+					if execState != tc.wantExecState {
+						t.Fatalf("exec state = %s, want %s", execState, tc.wantExecState)
+					}
+					var ptyState db.WorkspacePtyState
+					if err := pool.QueryRow(ctx, `
+						SELECT state
+						  FROM workspace_pty_sessions
+						 WHERE org_id = $1
+						   AND id = $2
+					`, ids.orgID, ptyID).Scan(&ptyState); err != nil {
+						t.Fatal(err)
+					}
+					if ptyState != tc.wantPtyState {
+						t.Fatalf("pty state = %s, want %s", ptyState, tc.wantPtyState)
+					}
+					var portState db.WorkspacePortState
+					if err := pool.QueryRow(ctx, `
+						SELECT state
+						  FROM workspace_ports
+						 WHERE org_id = $1
+						   AND id = $2
+					`, ids.orgID, portID).Scan(&portState); err != nil {
+						t.Fatal(err)
+					}
+					if portState != db.WorkspacePortStateClosed {
+						t.Fatalf("port state = %s, want closed", portState)
+					}
+					var leaseState db.WorkspaceLeaseState
+					if err := pool.QueryRow(ctx, `
+						SELECT state
+						  FROM workspace_leases
+						 WHERE org_id = $1
+						   AND id = $2
+					`, ids.orgID, leaseID).Scan(&leaseState); err != nil {
+						t.Fatal(err)
+					}
+					if leaseState != db.WorkspaceLeaseStateReleased {
+						t.Fatalf("lease state = %s, want released", leaseState)
+					}
+				})
+			}
+		})
 	}
 }
 
@@ -1154,6 +1882,7 @@ func TestWorkspaceMaterializationOperationClaimAndComplete(t *testing.T) {
 	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
 	otherWorkerID := seedMaterializationWorker(t, ctx, pool)
 
+	operationExecID, operationLease := seedWorkspaceExecWithActiveWriteLease(t, ctx, pool, ids, materialization)
 	requested, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
 		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:              pgvalue.UUID(ids.orgID),
@@ -1161,8 +1890,12 @@ func TestWorkspaceMaterializationOperationClaimAndComplete(t *testing.T) {
 		EnvironmentID:      pgvalue.UUID(ids.environmentID),
 		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
 		MaterializationID:  materialization.ID,
-		OperationKind:      "noop",
-		RequestFingerprint: "test-noop-dispatch",
+		OperationKind:      db.WorkspaceMaterializationOperationKindStartExec,
+		ResourceKind:       db.WorkspaceResourceKindWorkspaceExec,
+		ResourceID:         operationExecID,
+		RequestFingerprint: "test-start-exec-dispatch",
+		WriteLeaseID:       operationLease.ID,
+		FencingToken:       operationLease.FencingToken,
 		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		Priority:           10,
 		Request:            []byte(`{"check":true}`),
@@ -1173,8 +1906,8 @@ func TestWorkspaceMaterializationOperationClaimAndComplete(t *testing.T) {
 	if requested.State != db.WorkspaceMaterializationOperationStateQueued {
 		t.Fatalf("queued state = %s", requested.State)
 	}
-	if requested.FencingGeneration != materialization.FencingGeneration {
-		t.Fatalf("operation fencing_generation = %d, want materialization generation %d", requested.FencingGeneration, materialization.FencingGeneration)
+	if requested.FencingGeneration != operationLease.AcquiredFencingGeneration {
+		t.Fatalf("operation fencing_generation = %d, want write lease generation %d", requested.FencingGeneration, operationLease.AcquiredFencingGeneration)
 	}
 
 	if _, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
@@ -1298,7 +2031,9 @@ func TestWorkspaceMaterializationOperationRequiresActiveWriteLease(t *testing.T)
 		EnvironmentID:      pgvalue.UUID(ids.environmentID),
 		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
 		MaterializationID:  materialization.ID,
-		OperationKind:      "noop",
+		OperationKind:      db.WorkspaceMaterializationOperationKindStartExec,
+		ResourceKind:       db.WorkspaceResourceKindWorkspaceExec,
+		ResourceID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RequestFingerprint: "test-write-lease-dispatch",
 		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		WriteLeaseID:       pgvalue.UUID(leaseID),
@@ -1342,6 +2077,7 @@ func TestWorkspaceMaterializationOperationExpiredClaimReclaimsForSameMaterializa
 	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
 	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
 
+	operationExecID, operationLease := seedWorkspaceExecWithActiveWriteLease(t, ctx, pool, ids, materialization)
 	requested, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
 		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:              pgvalue.UUID(ids.orgID),
@@ -1349,8 +2085,12 @@ func TestWorkspaceMaterializationOperationExpiredClaimReclaimsForSameMaterializa
 		EnvironmentID:      pgvalue.UUID(ids.environmentID),
 		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
 		MaterializationID:  materialization.ID,
-		OperationKind:      "noop",
-		RequestFingerprint: "test-noop-dispatch",
+		OperationKind:      db.WorkspaceMaterializationOperationKindStartExec,
+		ResourceKind:       db.WorkspaceResourceKindWorkspaceExec,
+		ResourceID:         operationExecID,
+		RequestFingerprint: "test-start-exec-dispatch",
+		WriteLeaseID:       operationLease.ID,
+		FencingToken:       operationLease.FencingToken,
 		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		Request:            []byte(`{}`),
 	})
@@ -1424,6 +2164,7 @@ func TestWorkspaceMaterializationOperationRunningIsTerminallyCleanedUp(t *testin
 	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
 	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
 
+	operationExecID, operationLease := seedWorkspaceExecWithActiveWriteLease(t, ctx, pool, ids, materialization)
 	requested, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
 		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:              pgvalue.UUID(ids.orgID),
@@ -1431,8 +2172,12 @@ func TestWorkspaceMaterializationOperationRunningIsTerminallyCleanedUp(t *testin
 		EnvironmentID:      pgvalue.UUID(ids.environmentID),
 		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
 		MaterializationID:  materialization.ID,
-		OperationKind:      "noop",
-		RequestFingerprint: "test-noop-dispatch",
+		OperationKind:      db.WorkspaceMaterializationOperationKindStartExec,
+		ResourceKind:       db.WorkspaceResourceKindWorkspaceExec,
+		ResourceID:         operationExecID,
+		RequestFingerprint: "test-start-exec-dispatch",
+		WriteLeaseID:       operationLease.ID,
+		FencingToken:       operationLease.FencingToken,
 		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		Request:            []byte(`{}`),
 	})
@@ -1491,6 +2236,7 @@ func TestWorkspaceMaterializationOperationRunningExpires(t *testing.T) {
 	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
 	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
 
+	operationExecID, operationLease := seedWorkspaceExecWithActiveWriteLease(t, ctx, pool, ids, materialization)
 	requested, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
 		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:              pgvalue.UUID(ids.orgID),
@@ -1498,8 +2244,12 @@ func TestWorkspaceMaterializationOperationRunningExpires(t *testing.T) {
 		EnvironmentID:      pgvalue.UUID(ids.environmentID),
 		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
 		MaterializationID:  materialization.ID,
-		OperationKind:      "noop",
-		RequestFingerprint: "test-noop-dispatch",
+		OperationKind:      db.WorkspaceMaterializationOperationKindStartExec,
+		ResourceKind:       db.WorkspaceResourceKindWorkspaceExec,
+		ResourceID:         operationExecID,
+		RequestFingerprint: "test-start-exec-dispatch",
+		WriteLeaseID:       operationLease.ID,
+		FencingToken:       operationLease.FencingToken,
 		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		Request:            []byte(`{}`),
 	})
@@ -1560,6 +2310,1012 @@ func TestWorkspaceMaterializationOperationRunningExpires(t *testing.T) {
 	}
 }
 
+func TestExpiredStartExecOperationFailsPendingExecAndReleasesWriteLease(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
+	execID := pgvalue.UUID(seedWorkspaceExec(t, ctx, pool, ids, materialization))
+	execLease, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       execID,
+		OwnerPtySessionID: pgtype.UUID{},
+		FencingToken:      "expired-exec-fence",
+		HeartbeatToken:    "expired-exec-heartbeat",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execRow, err := queries.BindWorkspaceExecMaterialization(ctx, db.BindWorkspaceExecMaterializationParams{
+		MaterializationID: materialization.ID,
+		InstanceLeaseID:   pgtype.UUID{},
+		WriteLeaseID:      execLease.ID,
+		State:             db.WorkspaceExecStateQueued,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                execID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      db.WorkspaceMaterializationOperationKindStartExec,
+		ResourceKind:       db.WorkspaceResourceKindWorkspaceExec,
+		ResourceID:         execRow.ID,
+		RequestFingerprint: "expired-start-exec",
+		WriteLeaseID:       execLease.ID,
+		FencingToken:       execLease.FencingToken,
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(-time.Second)),
+		Request:            []byte(`{"exec_id":"test"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "expired-start-exec-claim",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		MaxClaimAttempts:  testWorkspaceOperationMaxClaimAttempts,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expired start exec claim err = %v, want no rows", err)
+	}
+	expired, err := queries.GetWorkspaceMaterializationOperation(ctx, db.GetWorkspaceMaterializationOperationParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            operation.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expired.State != db.WorkspaceMaterializationOperationStateExpired {
+		t.Fatalf("operation state = %s, want expired", expired.State)
+	}
+	var execState db.WorkspaceExecState
+	if err := pool.QueryRow(ctx, `
+		SELECT state
+		  FROM workspace_execs
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(execRow.ID)).Scan(&execState); err != nil {
+		t.Fatal(err)
+	}
+	if execState != db.WorkspaceExecStateFailed {
+		t.Fatalf("exec state = %s, want failed", execState)
+	}
+	var leaseState db.WorkspaceLeaseState
+	if err := pool.QueryRow(ctx, `
+		SELECT state
+		  FROM workspace_leases
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(execLease.ID)).Scan(&leaseState); err != nil {
+		t.Fatal(err)
+	}
+	if leaseState != db.WorkspaceLeaseStateReleased {
+		t.Fatalf("lease state = %s, want released", leaseState)
+	}
+}
+
+func TestExhaustedCreatePtyOperationFailsCreatingPtyAndReleasesWriteLease(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
+
+	pty, err := queries.CreateWorkspacePtySession(ctx, db.CreateWorkspacePtySessionParams{
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Cwd:                  "/workspace",
+		Cols:                 80,
+		Rows:                 24,
+		FilesystemMode:       db.WorkspaceFilesystemModeWrite,
+		State:                db.WorkspacePtyStateCreating,
+		CreatedBySubjectType: "test",
+		CreatedBySubjectID:   "test",
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ProjectID:            pgvalue.UUID(ids.projectID),
+		EnvironmentID:        pgvalue.UUID(ids.environmentID),
+		WorkspaceID:          pgvalue.UUID(ids.workspaceID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ptyLease, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       pgtype.UUID{},
+		OwnerPtySessionID: pty.ID,
+		FencingToken:      "exhausted-create-pty-fence",
+		HeartbeatToken:    "exhausted-create-pty-heartbeat",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pty, err = queries.BindWorkspacePtyMaterialization(ctx, db.BindWorkspacePtyMaterializationParams{
+		MaterializationID: materialization.ID,
+		InstanceLeaseID:   pgtype.UUID{},
+		WriteLeaseID:      ptyLease.ID,
+		State:             db.WorkspacePtyStateCreating,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                pty.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      db.WorkspaceMaterializationOperationKindCreatePty,
+		ResourceKind:       db.WorkspaceResourceKindWorkspacePty,
+		ResourceID:         pty.ID,
+		RequestFingerprint: "exhausted-create-pty",
+		WriteLeaseID:       ptyLease.ID,
+		FencingToken:       ptyLease.FencingToken,
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Request:            []byte(`{"pty_id":"test"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "exhausted-create-pty-claim",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(-time.Second)),
+		MaxClaimAttempts:  1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.ID != operation.ID {
+		t.Fatalf("claimed operation = %v, want %v", claimed.ID, operation.ID)
+	}
+	if _, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "exhausted-create-pty-second-claim",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		MaxClaimAttempts:  1,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("exhausted create pty claim err = %v, want no rows", err)
+	}
+	exhausted, err := queries.GetWorkspaceMaterializationOperation(ctx, db.GetWorkspaceMaterializationOperationParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            operation.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exhausted.State != db.WorkspaceMaterializationOperationStateLost {
+		t.Fatalf("operation state = %s, want lost", exhausted.State)
+	}
+	var ptyState db.WorkspacePtyState
+	if err := pool.QueryRow(ctx, `
+		SELECT state
+		  FROM workspace_pty_sessions
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(pty.ID)).Scan(&ptyState); err != nil {
+		t.Fatal(err)
+	}
+	if ptyState != db.WorkspacePtyStateFailed {
+		t.Fatalf("pty state = %s, want failed", ptyState)
+	}
+	var leaseState db.WorkspaceLeaseState
+	if err := pool.QueryRow(ctx, `
+		SELECT state
+		  FROM workspace_leases
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(ptyLease.ID)).Scan(&leaseState); err != nil {
+		t.Fatal(err)
+	}
+	if leaseState != db.WorkspaceLeaseStateReleased {
+		t.Fatalf("lease state = %s, want released", leaseState)
+	}
+}
+
+func TestExpiredResizePtyOperationRollsBackOpenPtyAndKeepsWriteLease(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
+	ptyID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	if _, err := queries.CreateWorkspacePtySession(ctx, db.CreateWorkspacePtySessionParams{
+		ID:                   ptyID,
+		Cwd:                  "/workspace",
+		Cols:                 80,
+		Rows:                 24,
+		FilesystemMode:       db.WorkspaceFilesystemModeWrite,
+		State:                db.WorkspacePtyStateCreating,
+		CreatedBySubjectType: "test",
+		CreatedBySubjectID:   "test",
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ProjectID:            pgvalue.UUID(ids.projectID),
+		EnvironmentID:        pgvalue.UUID(ids.environmentID),
+		WorkspaceID:          pgvalue.UUID(ids.workspaceID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ptyLease, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       pgtype.UUID{},
+		OwnerPtySessionID: ptyID,
+		FencingToken:      "expired-resize-pty-fence",
+		HeartbeatToken:    "expired-resize-pty-heartbeat",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.BindWorkspacePtyMaterialization(ctx, db.BindWorkspacePtyMaterializationParams{
+		MaterializationID: materialization.ID,
+		InstanceLeaseID:   pgtype.UUID{},
+		WriteLeaseID:      ptyLease.ID,
+		State:             db.WorkspacePtyStateOpen,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                ptyID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pty, err := queries.ResizeWorkspacePtySession(ctx, db.ResizeWorkspacePtySessionParams{
+		Cols:          pgtype.Int4{Int32: 120, Valid: true},
+		Rows:          pgtype.Int4{Int32: 40, Valid: true},
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pty.State != db.WorkspacePtyStateResizing || pty.Cols != 80 || pty.Rows != 24 || !pty.ResizeCols.Valid || pty.ResizeCols.Int32 != 120 || !pty.ResizeRows.Valid || pty.ResizeRows.Int32 != 40 {
+		t.Fatalf("resize request pty = %+v", pty)
+	}
+	operation, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      db.WorkspaceMaterializationOperationKindResizePty,
+		ResourceKind:       db.WorkspaceResourceKindWorkspacePty,
+		ResourceID:         pty.ID,
+		RequestFingerprint: "expired-resize-pty",
+		WriteLeaseID:       ptyLease.ID,
+		FencingToken:       ptyLease.FencingToken,
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(-time.Second)),
+		Request:            []byte(`{"pty_id":"test","cols":120,"rows":40}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "expired-resize-pty-claim",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		MaxClaimAttempts:  testWorkspaceOperationMaxClaimAttempts,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expired resize pty claim err = %v, want no rows", err)
+	}
+	expired, err := queries.GetWorkspaceMaterializationOperation(ctx, db.GetWorkspaceMaterializationOperationParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            operation.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expired.State != db.WorkspaceMaterializationOperationStateExpired {
+		t.Fatalf("operation state = %s, want expired", expired.State)
+	}
+	pty, err = queries.GetWorkspacePtySession(ctx, db.GetWorkspacePtySessionParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pty.State != db.WorkspacePtyStateOpen || pty.Cols != 80 || pty.Rows != 24 || pty.ResizeCols.Valid || pty.ResizeRows.Valid {
+		t.Fatalf("rolled back pty = %+v", pty)
+	}
+	lease, err := queries.GetWorkspaceLease(ctx, db.GetWorkspaceLeaseParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyLease.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.State != db.WorkspaceLeaseStateActive {
+		t.Fatalf("lease state = %s, want active", lease.State)
+	}
+}
+
+func TestExhaustedClosePtyOperationRollsBackOpenPtyAndKeepsWriteLease(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
+	ptyID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	if _, err := queries.CreateWorkspacePtySession(ctx, db.CreateWorkspacePtySessionParams{
+		ID:                   ptyID,
+		Cwd:                  "/workspace",
+		Cols:                 80,
+		Rows:                 24,
+		FilesystemMode:       db.WorkspaceFilesystemModeWrite,
+		State:                db.WorkspacePtyStateCreating,
+		CreatedBySubjectType: "test",
+		CreatedBySubjectID:   "test",
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ProjectID:            pgvalue.UUID(ids.projectID),
+		EnvironmentID:        pgvalue.UUID(ids.environmentID),
+		WorkspaceID:          pgvalue.UUID(ids.workspaceID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ptyLease, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       pgtype.UUID{},
+		OwnerPtySessionID: ptyID,
+		FencingToken:      "exhausted-close-pty-fence",
+		HeartbeatToken:    "exhausted-close-pty-heartbeat",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.BindWorkspacePtyMaterialization(ctx, db.BindWorkspacePtyMaterializationParams{
+		MaterializationID: materialization.ID,
+		InstanceLeaseID:   pgtype.UUID{},
+		WriteLeaseID:      ptyLease.ID,
+		State:             db.WorkspacePtyStateOpen,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                ptyID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pty, err := queries.RequestWorkspacePtyClose(ctx, db.RequestWorkspacePtyCloseParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pty.State != db.WorkspacePtyStateClosing {
+		t.Fatalf("close request pty = %+v", pty)
+	}
+	operation, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      db.WorkspaceMaterializationOperationKindClosePty,
+		ResourceKind:       db.WorkspaceResourceKindWorkspacePty,
+		ResourceID:         pty.ID,
+		RequestFingerprint: "exhausted-close-pty",
+		WriteLeaseID:       ptyLease.ID,
+		FencingToken:       ptyLease.FencingToken,
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Request:            []byte(`{"pty_id":"test"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "exhausted-close-pty-claim",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(-time.Second)),
+		MaxClaimAttempts:  1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "exhausted-close-pty-second-claim",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		MaxClaimAttempts:  1,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("exhausted close pty claim err = %v, want no rows", err)
+	}
+	exhausted, err := queries.GetWorkspaceMaterializationOperation(ctx, db.GetWorkspaceMaterializationOperationParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            operation.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exhausted.State != db.WorkspaceMaterializationOperationStateLost {
+		t.Fatalf("operation state = %s, want lost", exhausted.State)
+	}
+	pty, err = queries.GetWorkspacePtySession(ctx, db.GetWorkspacePtySessionParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pty.State != db.WorkspacePtyStateOpen || pty.ResizeCols.Valid || pty.ResizeRows.Valid {
+		t.Fatalf("rolled back pty = %+v", pty)
+	}
+	lease, err := queries.GetWorkspaceLease(ctx, db.GetWorkspaceLeaseParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyLease.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.State != db.WorkspaceLeaseStateActive {
+		t.Fatalf("lease state = %s, want active", lease.State)
+	}
+}
+
+func TestWorkspaceMaterializationOperationsAllowCloseWhileResizeActive(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	ptyID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	if _, err := queries.CreateWorkspacePtySession(ctx, db.CreateWorkspacePtySessionParams{
+		ID:                   ptyID,
+		Cwd:                  "/workspace",
+		Cols:                 80,
+		Rows:                 24,
+		FilesystemMode:       db.WorkspaceFilesystemModeWrite,
+		State:                db.WorkspacePtyStateCreating,
+		CreatedBySubjectType: "test",
+		CreatedBySubjectID:   "test",
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ProjectID:            pgvalue.UUID(ids.projectID),
+		EnvironmentID:        pgvalue.UUID(ids.environmentID),
+		WorkspaceID:          pgvalue.UUID(ids.workspaceID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       pgtype.UUID{},
+		OwnerPtySessionID: ptyID,
+		FencingToken:      "serialize-pty-control-fence",
+		HeartbeatToken:    "serialize-pty-control-heartbeat",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.BindWorkspacePtyMaterialization(ctx, db.BindWorkspacePtyMaterializationParams{
+		MaterializationID: materialization.ID,
+		InstanceLeaseID:   pgtype.UUID{},
+		WriteLeaseID:      lease.ID,
+		State:             db.WorkspacePtyStateOpen,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                ptyID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ResizeWorkspacePtySession(ctx, db.ResizeWorkspacePtySessionParams{
+		Cols:          pgtype.Int4{Int32: 120, Valid: true},
+		Rows:          pgtype.Int4{Int32: 40, Valid: true},
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resizeOperation, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      db.WorkspaceMaterializationOperationKindResizePty,
+		ResourceKind:       db.WorkspaceResourceKindWorkspacePty,
+		ResourceID:         ptyID,
+		RequestFingerprint: "serialize-resize-pty",
+		WriteLeaseID:       lease.ID,
+		FencingToken:       lease.FencingToken,
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Request:            []byte(`{"pty_id":"test","cols":120,"rows":40}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resizeOperation.OperationKind != db.WorkspaceMaterializationOperationKindResizePty {
+		t.Fatalf("resize operation kind = %s", resizeOperation.OperationKind)
+	}
+	closeOperation, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      db.WorkspaceMaterializationOperationKindClosePty,
+		ResourceKind:       db.WorkspaceResourceKindWorkspacePty,
+		ResourceID:         ptyID,
+		RequestFingerprint: "serialize-close-pty",
+		WriteLeaseID:       lease.ID,
+		FencingToken:       lease.FencingToken,
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Request:            []byte(`{"pty_id":"test"}`),
+	})
+	if err != nil {
+		t.Fatalf("close while resize active err = %v", err)
+	}
+	if closeOperation.OperationKind != db.WorkspaceMaterializationOperationKindClosePty {
+		t.Fatalf("close operation kind = %s", closeOperation.OperationKind)
+	}
+	pty, err := queries.RequestWorkspacePtyClose(ctx, db.RequestWorkspacePtyCloseParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pty.State != db.WorkspacePtyStateClosing || !pty.ResizeCols.Valid || pty.ResizeCols.Int32 != 120 || !pty.ResizeRows.Valid || pty.ResizeRows.Int32 != 40 {
+		t.Fatalf("close should preserve pending resize target, got %+v", pty)
+	}
+	pty, err = queries.MarkWorkspacePtyResizeApplied(ctx, db.MarkWorkspacePtyResizeAppliedParams{
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                ptyID,
+		MaterializationID: materialization.ID,
+		Cols:              pgtype.Int4{Int32: 120, Valid: true},
+		Rows:              pgtype.Int4{Int32: 40, Valid: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pty.State != db.WorkspacePtyStateClosing || pty.Cols != 120 || pty.Rows != 40 || pty.ResizeCols.Valid || pty.ResizeRows.Valid {
+		t.Fatalf("resize-applied during close = %+v", pty)
+	}
+	if _, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      db.WorkspaceMaterializationOperationKindClosePty,
+		ResourceKind:       db.WorkspaceResourceKindWorkspacePty,
+		ResourceID:         ptyID,
+		RequestFingerprint: "serialize-close-pty-again",
+		WriteLeaseID:       lease.ID,
+		FencingToken:       lease.FencingToken,
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Request:            []byte(`{"pty_id":"test"}`),
+	}); !isDBUniqueViolation(err) {
+		t.Fatalf("duplicate close pty operation err = %v, want unique violation", err)
+	}
+}
+
+func TestExpiredResizePtyOperationDoesNotRollbackClosingPty(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
+	ptyID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	if _, err := queries.CreateWorkspacePtySession(ctx, db.CreateWorkspacePtySessionParams{
+		ID:                   ptyID,
+		Cwd:                  "/workspace",
+		Cols:                 80,
+		Rows:                 24,
+		FilesystemMode:       db.WorkspaceFilesystemModeWrite,
+		State:                db.WorkspacePtyStateCreating,
+		CreatedBySubjectType: "test",
+		CreatedBySubjectID:   "test",
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ProjectID:            pgvalue.UUID(ids.projectID),
+		EnvironmentID:        pgvalue.UUID(ids.environmentID),
+		WorkspaceID:          pgvalue.UUID(ids.workspaceID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       pgtype.UUID{},
+		OwnerPtySessionID: ptyID,
+		FencingToken:      "expired-resize-does-not-close-fence",
+		HeartbeatToken:    "expired-resize-does-not-close-heartbeat",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.BindWorkspacePtyMaterialization(ctx, db.BindWorkspacePtyMaterializationParams{
+		MaterializationID: materialization.ID,
+		InstanceLeaseID:   pgtype.UUID{},
+		WriteLeaseID:      lease.ID,
+		State:             db.WorkspacePtyStateOpen,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                ptyID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pty, err := queries.ResizeWorkspacePtySession(ctx, db.ResizeWorkspacePtySessionParams{
+		Cols:          pgtype.Int4{Int32: 120, Valid: true},
+		Rows:          pgtype.Int4{Int32: 40, Valid: true},
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      db.WorkspaceMaterializationOperationKindResizePty,
+		ResourceKind:       db.WorkspaceResourceKindWorkspacePty,
+		ResourceID:         pty.ID,
+		RequestFingerprint: "expired-resize-does-not-close",
+		WriteLeaseID:       lease.ID,
+		FencingToken:       lease.FencingToken,
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(-time.Second)),
+		Request:            []byte(`{"pty_id":"test","cols":120,"rows":40}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_pty_sessions
+		   SET state = 'closing',
+		       resize_cols = NULL,
+		       resize_rows = NULL
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, pgvalue.MustUUIDValue(ptyID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		MaterializationID: materialization.ID,
+		ReservationToken:  materialization.ReservationToken,
+		ClaimToken:        "expired-resize-does-not-close-claim",
+		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		MaxClaimAttempts:  testWorkspaceOperationMaxClaimAttempts,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expired resize pty claim err = %v, want no rows", err)
+	}
+	expired, err := queries.GetWorkspaceMaterializationOperation(ctx, db.GetWorkspaceMaterializationOperationParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            operation.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expired.State != db.WorkspaceMaterializationOperationStateExpired {
+		t.Fatalf("operation state = %s, want expired", expired.State)
+	}
+	pty, err = queries.GetWorkspacePtySession(ctx, db.GetWorkspacePtySessionParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pty.State != db.WorkspacePtyStateClosing {
+		t.Fatalf("pty state = %s, want closing", pty.State)
+	}
+}
+
+func TestWorkspaceMaterializationOperationKindsAreConstrained(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+
+	baseSQL := `
+		INSERT INTO workspace_materialization_operations (
+			id, org_id, project_id, environment_id, workspace_id, materialization_id,
+			operation_kind, resource_kind, resource_id, request_fingerprint,
+			operation_expires_at, fencing_generation
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, %s, %s, $7, 'constraint-test', now() + interval '1 minute', 1)
+	`
+	resourceID := uuid.Must(uuid.NewV7())
+	cases := []struct {
+		name         string
+		operationSQL string
+		resourceSQL  string
+	}{
+		{name: "unknown operation kind", operationSQL: "'unknown_kind'", resourceSQL: "'workspace_exec'"},
+		{name: "operation resource mismatch", operationSQL: "'start_exec'", resourceSQL: "'workspace_pty'"},
+		{name: "empty resource kind", operationSQL: "'start_exec'", resourceSQL: "''"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := pool.Exec(ctx,
+				fmt.Sprintf(baseSQL, tc.operationSQL, tc.resourceSQL),
+				uuid.Must(uuid.NewV7()),
+				ids.orgID,
+				ids.projectID,
+				ids.environmentID,
+				ids.workspaceID,
+				pgvalue.MustUUIDValue(materialization.ID),
+				resourceID,
+			)
+			if err == nil {
+				t.Fatalf("insert with %s succeeded, want constraint error", tc.name)
+			}
+		})
+	}
+}
+
+func TestWorkspaceStreamWakeupFailureRetriesTerminalAndDeletesExhaustedChunks(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	resourceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+
+	terminal, err := queries.CreateWorkspaceStreamWakeup(ctx, db.CreateWorkspaceStreamWakeupParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ProjectID:        pgvalue.UUID(ids.projectID),
+		EnvironmentID:    pgvalue.UUID(ids.environmentID),
+		WorkspaceID:      pgvalue.UUID(ids.workspaceID),
+		ResourceKind:     db.WorkspaceResourceKindWorkspaceExec,
+		ResourceID:       resourceID,
+		Stream:           "stdout",
+		CursorOffset:     0,
+		NotificationKind: db.WorkspaceStreamNotificationKindTerminal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE workspace_stream_wakeups SET attempts = 25 WHERE id = $1`, terminal.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.MarkWorkspaceStreamWakeupFailed(ctx, db.MarkWorkspaceStreamWakeupFailedParams{
+		ID:          terminal.ID,
+		MaxAttempts: 25,
+		RetryAfter:  pgtype.Interval{Microseconds: int64(time.Second / time.Microsecond), Valid: true},
+		LastError:   "redis unavailable",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE workspace_stream_wakeups SET locked_until = NULL WHERE id = $1`, terminal.ID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := queries.ClaimWorkspaceStreamWakeups(ctx, db.ClaimWorkspaceStreamWakeupsParams{
+		MaxAttempts:   25,
+		RowLimit:      10,
+		LeaseDuration: pgtype.Interval{Microseconds: int64(time.Second / time.Microsecond), Valid: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != terminal.ID {
+		t.Fatalf("terminal wakeups = %+v, want retryable terminal", rows)
+	}
+
+	chunk, err := queries.CreateWorkspaceStreamWakeup(ctx, db.CreateWorkspaceStreamWakeupParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ProjectID:        pgvalue.UUID(ids.projectID),
+		EnvironmentID:    pgvalue.UUID(ids.environmentID),
+		WorkspaceID:      pgvalue.UUID(ids.workspaceID),
+		ResourceKind:     db.WorkspaceResourceKindWorkspaceExec,
+		ResourceID:       resourceID,
+		Stream:           "stdout",
+		CursorOffset:     0,
+		NotificationKind: db.WorkspaceStreamNotificationKindChunk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE workspace_stream_wakeups SET attempts = 25 WHERE id = $1`, chunk.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.MarkWorkspaceStreamWakeupFailed(ctx, db.MarkWorkspaceStreamWakeupFailedParams{
+		ID:          chunk.ID,
+		MaxAttempts: 25,
+		RetryAfter:  pgtype.Interval{Microseconds: int64(time.Second / time.Microsecond), Valid: true},
+		LastError:   "redis unavailable",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM workspace_stream_wakeups WHERE id = $1`, chunk.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("chunk wakeup count = %d, want deleted", count)
+	}
+}
+
+func TestWorkspacePortsHaveNoPublicAccessTokenColumnBeforePortTokens(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	var count int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name = 'workspace_ports'
+		   AND column_name = 'public_access_token_id'
+	`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("workspace_ports.public_access_token_id column exists before public port token authority is implemented")
+	}
+}
+
+func TestStaleDirtyWorkspaceMaterializationMarksWorkspaceRecoveryRequired(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_materializations
+		   SET dirty_generation = 1,
+		       last_heartbeat_at = now() - interval '10 minutes',
+		       updated_at = now()
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, materialization.ID); err != nil {
+		t.Fatal(err)
+	}
+	lost, err := queries.MarkStaleWorkspaceMaterializationsLost(ctx, pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lost) != 1 || lost[0].ID != materialization.ID {
+		t.Fatalf("lost materializations = %+v, want %v", lost, materialization.ID)
+	}
+	var state db.WorkspaceState
+	var dirtyState db.WorkspaceDirtyState
+	if err := pool.QueryRow(ctx, `
+		SELECT state, dirty_state
+		  FROM workspaces
+		 WHERE org_id = $1
+		   AND project_id = $2
+		   AND environment_id = $3
+		   AND id = $4
+	`, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID).Scan(&state, &dirtyState); err != nil {
+		t.Fatal(err)
+	}
+	if state != db.WorkspaceStateRecoveryRequired || dirtyState != db.WorkspaceDirtyStateDirtyStateLost {
+		t.Fatalf("workspace state = %s dirty_state = %s, want recovery_required/dirty_state_lost", state, dirtyState)
+	}
+}
+
 func TestWorkspaceMaterializationOperationExpiredClaimExhaustsAttempts(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
@@ -1568,6 +3324,7 @@ func TestWorkspaceMaterializationOperationExpiredClaimExhaustsAttempts(t *testin
 	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
 	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
 
+	operationExecID, operationLease := seedWorkspaceExecWithActiveWriteLease(t, ctx, pool, ids, materialization)
 	requested, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
 		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:              pgvalue.UUID(ids.orgID),
@@ -1575,8 +3332,12 @@ func TestWorkspaceMaterializationOperationExpiredClaimExhaustsAttempts(t *testin
 		EnvironmentID:      pgvalue.UUID(ids.environmentID),
 		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
 		MaterializationID:  materialization.ID,
-		OperationKind:      "noop",
-		RequestFingerprint: "test-noop-dispatch",
+		OperationKind:      db.WorkspaceMaterializationOperationKindStartExec,
+		ResourceKind:       db.WorkspaceResourceKindWorkspaceExec,
+		ResourceID:         operationExecID,
+		RequestFingerprint: "test-start-exec-dispatch",
+		WriteLeaseID:       operationLease.ID,
+		FencingToken:       operationLease.FencingToken,
 		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 		Request:            []byte(`{}`),
 	})
@@ -1617,6 +3378,516 @@ func TestWorkspaceMaterializationOperationExpiredClaimExhaustsAttempts(t *testin
 	}
 	if exhausted.State != db.WorkspaceMaterializationOperationStateLost {
 		t.Fatalf("exhausted state = %s", exhausted.State)
+	}
+}
+
+func TestWorkspacePrimitiveOperationsRequireFencedWriteLease(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	execID := pgvalue.UUID(seedWorkspaceExec(t, ctx, pool, ids, materialization))
+
+	if _, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      db.WorkspaceMaterializationOperationKindStartExec,
+		ResourceKind:       db.WorkspaceResourceKindWorkspaceExec,
+		ResourceID:         execID,
+		RequestFingerprint: "start-exec-without-lease",
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Request:            []byte(`{"exec_id":"test"}`),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("StartExec without write lease err = %v, want no rows", err)
+	}
+	execLease, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       execID,
+		OwnerPtySessionID: pgtype.UUID{},
+		FencingToken:      "exec-fence",
+		HeartbeatToken:    "exec-heartbeat",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execRow, err := queries.BindWorkspaceExecMaterialization(ctx, db.BindWorkspaceExecMaterializationParams{
+		MaterializationID: materialization.ID,
+		InstanceLeaseID:   pgtype.UUID{},
+		WriteLeaseID:      execLease.ID,
+		State:             db.WorkspaceExecStateQueued,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                execID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	startExec, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      db.WorkspaceMaterializationOperationKindStartExec,
+		ResourceKind:       db.WorkspaceResourceKindWorkspaceExec,
+		ResourceID:         execID,
+		RequestFingerprint: "start-exec-with-lease",
+		WriteLeaseID:       execLease.ID,
+		FencingToken:       execLease.FencingToken,
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Request:            []byte(`{"exec_id":"test"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if startExec.WriteLeaseID != execLease.ID || startExec.FencingGeneration != execLease.AcquiredFencingGeneration {
+		t.Fatalf("StartExec lease = %+v generation %d, want %+v generation %d", startExec.WriteLeaseID, startExec.FencingGeneration, execLease.ID, execLease.AcquiredFencingGeneration)
+	}
+	if _, err := queries.MarkWorkspaceExecStarted(ctx, db.MarkWorkspaceExecStartedParams{
+		ProcessID:         "wrong-materialization-process",
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                execRow.ID,
+		MaterializationID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("exec started from wrong materialization err = %v, want no rows", err)
+	}
+	if _, err := queries.MarkWorkspaceExecStarted(ctx, db.MarkWorkspaceExecStartedParams{
+		ProcessID:         "exec-process",
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                execRow.ID,
+		MaterializationID: materialization.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.MarkWorkspaceExecExited(ctx, db.MarkWorkspaceExecExitedParams{
+		State:             db.WorkspaceExecStateExited,
+		ExitCode:          pgtype.Int4{Int32: 0, Valid: true},
+		Signal:            "",
+		Error:             []byte(`{}`),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                execRow.ID,
+		MaterializationID: materialization.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	execLeaseAfter, err := queries.GetWorkspaceLease(ctx, db.GetWorkspaceLeaseParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            execLease.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execLeaseAfter.State != db.WorkspaceLeaseStateReleased {
+		t.Fatalf("exec lease state = %s, want released", execLeaseAfter.State)
+	}
+
+	pty, err := queries.CreateWorkspacePtySession(ctx, db.CreateWorkspacePtySessionParams{
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Cwd:                  "/workspace",
+		Cols:                 80,
+		Rows:                 24,
+		FilesystemMode:       db.WorkspaceFilesystemModeWrite,
+		State:                db.WorkspacePtyStateCreating,
+		CreatedBySubjectType: "test",
+		CreatedBySubjectID:   "test",
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ProjectID:            pgvalue.UUID(ids.projectID),
+		EnvironmentID:        pgvalue.UUID(ids.environmentID),
+		WorkspaceID:          pgvalue.UUID(ids.workspaceID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ptyLease, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       pgtype.UUID{},
+		OwnerPtySessionID: pty.ID,
+		FencingToken:      "pty-fence",
+		HeartbeatToken:    "pty-heartbeat",
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pty, err = queries.BindWorkspacePtyMaterialization(ctx, db.BindWorkspacePtyMaterializationParams{
+		MaterializationID: materialization.ID,
+		InstanceLeaseID:   pgtype.UUID{},
+		WriteLeaseID:      ptyLease.ID,
+		State:             db.WorkspacePtyStateCreating,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                pty.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createPty, err := queries.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		WorkspaceID:        pgvalue.UUID(ids.workspaceID),
+		MaterializationID:  materialization.ID,
+		OperationKind:      db.WorkspaceMaterializationOperationKindCreatePty,
+		ResourceKind:       db.WorkspaceResourceKindWorkspacePty,
+		ResourceID:         pty.ID,
+		RequestFingerprint: "create-pty-with-lease",
+		WriteLeaseID:       ptyLease.ID,
+		FencingToken:       ptyLease.FencingToken,
+		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Request:            []byte(`{"pty_id":"test"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createPty.WriteLeaseID != ptyLease.ID || createPty.FencingGeneration != ptyLease.AcquiredFencingGeneration {
+		t.Fatalf("CreatePty lease = %+v generation %d, want %+v generation %d", createPty.WriteLeaseID, createPty.FencingGeneration, ptyLease.ID, ptyLease.AcquiredFencingGeneration)
+	}
+	if _, err := queries.MarkWorkspacePtyOpen(ctx, db.MarkWorkspacePtyOpenParams{
+		ProcessID:         "wrong-materialization-pty",
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                pty.ID,
+		MaterializationID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("pty opened from wrong materialization err = %v, want no rows", err)
+	}
+	if _, err := queries.MarkWorkspacePtyOpen(ctx, db.MarkWorkspacePtyOpenParams{
+		ProcessID:         "pty-process",
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                pty.ID,
+		MaterializationID: materialization.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.MarkWorkspacePtyClosed(ctx, db.MarkWorkspacePtyClosedParams{
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                pty.ID,
+		MaterializationID: materialization.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ptyLeaseAfter, err := queries.GetWorkspaceLease(ctx, db.GetWorkspaceLeaseParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyLease.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ptyLeaseAfter.State != db.WorkspaceLeaseStateReleased {
+		t.Fatalf("pty lease state = %s, want released", ptyLeaseAfter.State)
+	}
+}
+
+func TestWorkspaceInputDeliveredCursorRequiresExactAcceptedChunk(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	execID := pgvalue.UUID(seedWorkspaceExec(t, ctx, pool, ids, materialization))
+	ptyID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	if _, err := queries.CreateWorkspacePtySession(ctx, db.CreateWorkspacePtySessionParams{
+		ID:                   ptyID,
+		Cwd:                  "/workspace",
+		Cols:                 80,
+		Rows:                 24,
+		FilesystemMode:       db.WorkspaceFilesystemModeWrite,
+		State:                db.WorkspacePtyStateCreating,
+		CreatedBySubjectType: "test",
+		CreatedBySubjectID:   "test",
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ProjectID:            pgvalue.UUID(ids.projectID),
+		EnvironmentID:        pgvalue.UUID(ids.environmentID),
+		WorkspaceID:          pgvalue.UUID(ids.workspaceID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.BindWorkspacePtyMaterialization(ctx, db.BindWorkspacePtyMaterializationParams{
+		MaterializationID: materialization.ID,
+		InstanceLeaseID:   pgtype.UUID{},
+		WriteLeaseID:      pgtype.UUID{},
+		State:             db.WorkspacePtyStateOpen,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                ptyID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := queries.InsertWorkspaceExecStreamChunk(ctx, db.InsertWorkspaceExecStreamChunkParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ExecID:        execID,
+		Stream:        db.WorkspaceExecStreamStdin,
+		OffsetStart:   0,
+		OffsetEnd:     5,
+		Data:          []byte("hello"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.AdvanceWorkspaceExecStreamCursor(ctx, db.AdvanceWorkspaceExecStreamCursorParams{
+		Stream:        db.WorkspaceExecStreamStdin,
+		OffsetEnd:     5,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ExecID:        execID,
+		OffsetStart:   0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.AdvanceWorkspaceExecStdinDeliveredCursor(ctx, db.AdvanceWorkspaceExecStdinDeliveredCursorParams{
+		OffsetEnd:     4,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ExecID:        execID,
+		OffsetStart:   0,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("partial exec input delivered err = %v, want no rows", err)
+	}
+	if _, err := queries.AdvanceWorkspaceExecStdinDeliveredCursor(ctx, db.AdvanceWorkspaceExecStdinDeliveredCursorParams{
+		OffsetEnd:     5,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ExecID:        execID,
+		OffsetStart:   0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := queries.InsertWorkspacePtyStreamChunk(ctx, db.InsertWorkspacePtyStreamChunkParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		PtySessionID:  ptyID,
+		Stream:        db.WorkspacePtyStreamInput,
+		OffsetStart:   0,
+		OffsetEnd:     5,
+		Data:          []byte("hello"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.AdvanceWorkspacePtyStreamCursor(ctx, db.AdvanceWorkspacePtyStreamCursorParams{
+		Stream:        db.WorkspacePtyStreamInput,
+		OffsetEnd:     5,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		PtySessionID:  ptyID,
+		OffsetStart:   0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.AdvanceWorkspacePtyInputDeliveredCursor(ctx, db.AdvanceWorkspacePtyInputDeliveredCursorParams{
+		OffsetEnd:     4,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		PtySessionID:  ptyID,
+		OffsetStart:   0,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("partial pty input delivered err = %v, want no rows", err)
+	}
+	if _, err := queries.AdvanceWorkspacePtyInputDeliveredCursor(ctx, db.AdvanceWorkspacePtyInputDeliveredCursorParams{
+		OffsetEnd:     5,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		PtySessionID:  ptyID,
+		OffsetStart:   0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkspacePtyCreatingDoesNotAcceptResizeOrClose(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	ptyID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	if _, err := queries.CreateWorkspacePtySession(ctx, db.CreateWorkspacePtySessionParams{
+		ID:                   ptyID,
+		Cwd:                  "/workspace",
+		Cols:                 80,
+		Rows:                 24,
+		FilesystemMode:       db.WorkspaceFilesystemModeWrite,
+		State:                db.WorkspacePtyStateCreating,
+		CreatedBySubjectType: "test",
+		CreatedBySubjectID:   "test",
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ProjectID:            pgvalue.UUID(ids.projectID),
+		EnvironmentID:        pgvalue.UUID(ids.environmentID),
+		WorkspaceID:          pgvalue.UUID(ids.workspaceID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.BindWorkspacePtyMaterialization(ctx, db.BindWorkspacePtyMaterializationParams{
+		MaterializationID: materialization.ID,
+		InstanceLeaseID:   pgtype.UUID{},
+		WriteLeaseID:      pgtype.UUID{},
+		State:             db.WorkspacePtyStateCreating,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                ptyID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ResizeWorkspacePtySession(ctx, db.ResizeWorkspacePtySessionParams{
+		Cols:          pgtype.Int4{Int32: 120, Valid: true},
+		Rows:          pgtype.Int4{Int32: 40, Valid: true},
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyID,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("resize creating pty err = %v, want no rows", err)
+	}
+	if _, err := queries.RequestWorkspacePtyClose(ctx, db.RequestWorkspacePtyCloseParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyID,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("close creating pty err = %v, want no rows", err)
+	}
+}
+
+func TestWorkspacePtyCloseIsRetryableWhileClosing(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	ptyID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	if _, err := queries.CreateWorkspacePtySession(ctx, db.CreateWorkspacePtySessionParams{
+		ID:                   ptyID,
+		Cwd:                  "/workspace",
+		Cols:                 80,
+		Rows:                 24,
+		FilesystemMode:       db.WorkspaceFilesystemModeWrite,
+		State:                db.WorkspacePtyStateCreating,
+		CreatedBySubjectType: "test",
+		CreatedBySubjectID:   "test",
+		OrgID:                pgvalue.UUID(ids.orgID),
+		ProjectID:            pgvalue.UUID(ids.projectID),
+		EnvironmentID:        pgvalue.UUID(ids.environmentID),
+		WorkspaceID:          pgvalue.UUID(ids.workspaceID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.BindWorkspacePtyMaterialization(ctx, db.BindWorkspacePtyMaterializationParams{
+		MaterializationID: materialization.ID,
+		InstanceLeaseID:   pgtype.UUID{},
+		WriteLeaseID:      pgtype.UUID{},
+		State:             db.WorkspacePtyStateOpen,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		ID:                ptyID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := queries.RequestWorkspacePtyClose(ctx, db.RequestWorkspacePtyCloseParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.State != db.WorkspacePtyStateClosing {
+		t.Fatalf("first close state = %s, want closing", first.State)
+	}
+	if _, err := queries.ResizeWorkspacePtySession(ctx, db.ResizeWorkspacePtySessionParams{
+		Cols:          pgtype.Int4{Int32: 120, Valid: true},
+		Rows:          pgtype.Int4{Int32: 40, Valid: true},
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyID,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("resize closing pty err = %v, want no rows", err)
+	}
+	second, err := queries.RequestWorkspacePtyClose(ctx, db.RequestWorkspacePtyCloseParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            ptyID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.State != db.WorkspacePtyStateClosing {
+		t.Fatalf("retry close state = %s, want closing", second.State)
 	}
 }
 
@@ -4169,6 +6440,92 @@ func seedWorkspaceExec(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id
 	return execID
 }
 
+func seedWorkspaceExecWithActiveWriteLease(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs, materialization db.WorkspaceMaterialization) (pgtype.UUID, db.WorkspaceLease) {
+	t.Helper()
+	execID := pgvalue.UUID(seedWorkspaceExec(t, ctx, pool, ids, materialization))
+	queries := db.New(pool)
+	lease, err := queries.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OwnerExecID:       execID,
+		OwnerPtySessionID: pgtype.UUID{},
+		FencingToken:      "exec-fence-" + shortUUID(pgvalue.MustUUIDValue(execID)),
+		HeartbeatToken:    "exec-heartbeat-" + shortUUID(pgvalue.MustUUIDValue(execID)),
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ProjectID:         pgvalue.UUID(ids.projectID),
+		EnvironmentID:     pgvalue.UUID(ids.environmentID),
+		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
+		MaterializationID: materialization.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_execs
+		   SET write_lease_id = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, pgvalue.MustUUIDValue(lease.ID), ids.orgID, pgvalue.MustUUIDValue(execID)); err != nil {
+		t.Fatal(err)
+	}
+	return execID, lease
+}
+
+func seedLiveWorkspacePrimitiveRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs, materialization db.WorkspaceMaterialization) (uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) {
+	t.Helper()
+	execID := uuid.Must(uuid.NewV7())
+	ptyID := uuid.Must(uuid.NewV7())
+	portID := uuid.Must(uuid.NewV7())
+	leaseID := uuid.Must(uuid.NewV7())
+	baseVersionID := currentWorkspaceVersionID(t, ctx, pool, ids)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_execs (
+			id, org_id, project_id, environment_id, workspace_id,
+			materialization_id, command, state, process_id
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, '{"cmd":["sleep","60"]}'::jsonb, 'running', 'exec-process')
+	`, execID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, pgvalue.MustUUIDValue(materialization.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_pty_sessions (
+			id, org_id, project_id, environment_id, workspace_id,
+			materialization_id, cwd, cols, rows, state, process_id
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, '/workspace', 80, 24, 'open', 'pty-process')
+	`, ptyID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, pgvalue.MustUUIDValue(materialization.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_ports (
+			id, org_id, project_id, environment_id, workspace_id, materialization_id,
+			owner_exec_id, port, state, url
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 3000, 'open', 'https://example.test')
+	`, portID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, pgvalue.MustUUIDValue(materialization.ID), execID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_leases (
+			id, org_id, project_id, environment_id, workspace_id, materialization_id,
+			lease_kind, state, owner_exec_id, base_version_id, acquired_version_id,
+			acquired_fencing_generation, fencing_token, heartbeat_token, expires_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, 'write', 'active', $7, $8, $8, 1, $9, $10, now() + interval '1 hour')
+	`, leaseID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, pgvalue.MustUUIDValue(materialization.ID), execID, baseVersionID, "fence-"+shortUUID(leaseID), "heartbeat-"+shortUUID(leaseID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_execs
+		   SET write_lease_id = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, leaseID, ids.orgID, execID); err != nil {
+		t.Fatal(err)
+	}
+	return execID, ptyID, portID, leaseID
+}
+
 func currentWorkspaceVersionID(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs) uuid.UUID {
 	t.Helper()
 	var versionID uuid.UUID
@@ -4448,6 +6805,50 @@ func seedWorkspaceVersionArtifact(t *testing.T, ctx context.Context, pool *pgxpo
 		t.Fatal(err)
 	}
 	return artifactID
+}
+
+func assertWorkspaceDirtyGeneration(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs, materializationID pgtype.UUID, want int64, wantDirtyState string) {
+	t.Helper()
+	var dirtyGeneration int64
+	if err := pool.QueryRow(ctx, `
+		SELECT dirty_generation
+		  FROM workspace_materializations
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, materializationID).Scan(&dirtyGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if dirtyGeneration != want {
+		t.Fatalf("dirty_generation = %d, want %d", dirtyGeneration, want)
+	}
+	var dirtyState string
+	if err := pool.QueryRow(ctx, `
+		SELECT dirty_state::text
+		  FROM workspaces
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.workspaceID).Scan(&dirtyState); err != nil {
+		t.Fatal(err)
+	}
+	if dirtyState != wantDirtyState {
+		t.Fatalf("workspace dirty_state = %s, want %s", dirtyState, wantDirtyState)
+	}
+}
+
+func assertWorkspaceDesiredState(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs, want string) {
+	t.Helper()
+	var got string
+	if err := pool.QueryRow(ctx, `
+		SELECT desired_state::text
+		  FROM workspaces
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.workspaceID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("workspace desired_state = %s, want %s", got, want)
+	}
 }
 
 func seedSandboxImageArtifact(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs) (uuid.UUID, string) {

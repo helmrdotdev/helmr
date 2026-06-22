@@ -58,6 +58,28 @@ Common user/API-key routes:
 | `GET` | `/api/waitpoints/tokens/{id}` |
 | `POST` | `/api/waitpoints/tokens/{id}/complete` |
 | `POST` | `/api/waitpoints/tokens/{id}/callback/{secret}` |
+| `POST` | `/api/workspaces` |
+| `GET` | `/api/workspaces` |
+| `GET` | `/api/workspaces/{workspace_id}` |
+| `PATCH` | `/api/workspaces/{workspace_id}` |
+| `DELETE` | `/api/workspaces/{workspace_id}` |
+| `POST` | `/api/workspaces/{workspace_id}/materialize` |
+| `POST` | `/api/workspaces/{workspace_id}/connect` |
+| `POST` | `/api/workspaces/{workspace_id}/stop` |
+| `POST` | `/api/workspaces/{workspace_id}/execs` |
+| `GET` | `/api/workspaces/{workspace_id}/execs` |
+| `GET` | `/api/workspaces/{workspace_id}/execs/{exec_id}` |
+| `POST` | `/api/workspaces/{workspace_id}/execs/{exec_id}/stdin` |
+| `POST` | `/api/workspaces/{workspace_id}/execs/{exec_id}/stdin/close` |
+| `GET` | `/api/workspaces/{workspace_id}/execs/{exec_id}/stdout` |
+| `GET` | `/api/workspaces/{workspace_id}/execs/{exec_id}/stderr` |
+| `POST` | `/api/workspaces/{workspace_id}/pty` |
+| `GET` | `/api/workspaces/{workspace_id}/pty` |
+| `GET` | `/api/workspaces/{workspace_id}/pty/{pty_id}` |
+| `POST` | `/api/workspaces/{workspace_id}/pty/{pty_id}/input` |
+| `GET` | `/api/workspaces/{workspace_id}/pty/{pty_id}/output` |
+| `POST` | `/api/workspaces/{workspace_id}/pty/{pty_id}/resize` |
+| `POST` | `/api/workspaces/{workspace_id}/pty/{pty_id}/close` |
 | `POST` | `/api/schedules` |
 | `GET` | `/api/schedules` |
 | `GET` | `/api/schedules/{id}` |
@@ -81,6 +103,14 @@ Worker routes include registration, activation, drain/status, execution lease/st
 `GET /api/runs/{id}/events` returns JSON pages by default and streams SSE when `follow=1` or `Accept: text/event-stream` is present. The SSE `id` is the run event cursor.
 
 `GET /api/runs/{id}/logs` returns the latest stdout/stderr snapshot by default. The response `cursor` is a run-wide log cursor. When `follow=1` or `Accept: text/event-stream` is present, the same route streams `run_log` SSE records after the supplied cursor. Pass the cursor as `Last-Event-ID` or `?cursor=N` to continue after chunks already received.
+
+Workspace routes manage durable workspace records and live materializations.
+`POST /api/workspaces/{workspace_id}/execs` starts a write-capable command in
+the workspace. `POST /api/workspaces/{workspace_id}/pty` starts an interactive
+PTY. Exec stdout/stderr and PTY output routes return stored chunks by default
+and stream SSE when `follow=1` or `Accept: text/event-stream` is present. Pass
+the cursor as `Last-Event-ID` or `?cursor=N` to continue after chunks already
+received.
 
 `POST /api/schedules` creates or replaces an imperative schedule for the selected project environment. The request body uses required `deduplication_key`, `task`, and `cron`, plus optional `external_id`, `timezone`, `active`, and schedule run `options`. `deduplication_key` is the stable public key for the project-level logical schedule and selected environment instance. Schedule requests do not accept arbitrary payload, secret bindings, or user-supplied idempotency options; scheduled runs receive Helmr-generated schedule metadata. `PUT /api/schedules/{id}` replaces the imperative schedule definition and selected environment instance settings and does not accept `deduplication_key`. Declarative schedules are synchronized from deployments and return `400 Bad Request` for imperative edit, activate, deactivate, or delete routes.
 

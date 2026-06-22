@@ -1,7 +1,6 @@
 package control
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/stablejson"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -57,13 +57,7 @@ func canonicalIdempotencyKey(key string) string {
 }
 
 func canonicalJSON(raw json.RawMessage) (json.RawMessage, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return nil, err
-	}
-	canonical, err := json.Marshal(value)
+	canonical, err := stablejson.Encode(raw)
 	if err != nil {
 		return nil, err
 	}

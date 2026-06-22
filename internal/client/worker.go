@@ -59,6 +59,14 @@ func (c *Client) MarkWorkspaceMaterializationRunning(ctx context.Context, reques
 	return response, nil
 }
 
+func (c *Client) CaptureWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationCaptureRequest) (api.WorkerWorkspaceMaterializationCaptureResponse, error) {
+	var response api.WorkerWorkspaceMaterializationCaptureResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/materializations/capture", request, &response); err != nil {
+		return api.WorkerWorkspaceMaterializationCaptureResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) StopWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error) {
 	var response api.WorkspaceMaterializationResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/materializations/stop", request, &response); err != nil {
@@ -95,6 +103,94 @@ func (c *Client) CompleteWorkspaceMaterializationOperation(ctx context.Context, 
 	var response api.WorkspaceOperationResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/materializations/operations/complete", request, &response); err != nil {
 		return api.WorkspaceOperationResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) MarkWorkspaceExecStarted(ctx context.Context, request api.WorkerWorkspaceExecStartedRequest) (api.WorkspaceExecEnvelope, error) {
+	var response api.WorkspaceExecEnvelope
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/started", request, &response); err != nil {
+		return api.WorkspaceExecEnvelope{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) AppendWorkspaceExecOutput(ctx context.Context, request api.WorkerWorkspaceExecOutputRequest) (api.ListWorkspaceExecStreamChunksResponse, error) {
+	var response api.ListWorkspaceExecStreamChunksResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/output", request, &response); err != nil {
+		return api.ListWorkspaceExecStreamChunksResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ListWorkspaceExecInput(ctx context.Context, request api.WorkerWorkspaceExecInputRequest) (api.WorkerWorkspaceExecInputResponse, error) {
+	var response api.WorkerWorkspaceExecInputResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/input", request, &response); err != nil {
+		return api.WorkerWorkspaceExecInputResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) AdvanceWorkspaceExecInputDelivered(ctx context.Context, request api.WorkerWorkspaceExecInputDeliveredRequest) (api.WorkspaceExecEnvelope, error) {
+	var response api.WorkspaceExecEnvelope
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/input-delivered", request, &response); err != nil {
+		return api.WorkspaceExecEnvelope{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) MarkWorkspaceExecExited(ctx context.Context, request api.WorkerWorkspaceExecExitedRequest) (api.WorkspaceExecEnvelope, error) {
+	var response api.WorkspaceExecEnvelope
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/exited", request, &response); err != nil {
+		return api.WorkspaceExecEnvelope{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) MarkWorkspacePtyOpened(ctx context.Context, request api.WorkerWorkspacePtyOpenedRequest) (api.WorkspacePtyEnvelope, error) {
+	var response api.WorkspacePtyEnvelope
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/ptys/opened", request, &response); err != nil {
+		return api.WorkspacePtyEnvelope{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) AppendWorkspacePtyOutput(ctx context.Context, request api.WorkerWorkspacePtyOutputRequest) (api.ListWorkspacePtyStreamChunksResponse, error) {
+	var response api.ListWorkspacePtyStreamChunksResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/ptys/output", request, &response); err != nil {
+		return api.ListWorkspacePtyStreamChunksResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ListWorkspacePtyInput(ctx context.Context, request api.WorkerWorkspacePtyInputRequest) (api.WorkerWorkspacePtyInputResponse, error) {
+	var response api.WorkerWorkspacePtyInputResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/ptys/input", request, &response); err != nil {
+		return api.WorkerWorkspacePtyInputResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) AdvanceWorkspacePtyInputDelivered(ctx context.Context, request api.WorkerWorkspacePtyInputDeliveredRequest) (api.WorkspacePtyEnvelope, error) {
+	var response api.WorkspacePtyEnvelope
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/ptys/input-delivered", request, &response); err != nil {
+		return api.WorkspacePtyEnvelope{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) MarkWorkspacePtyResizeApplied(ctx context.Context, request api.WorkerWorkspacePtyResizeAppliedRequest) (api.WorkspacePtyEnvelope, error) {
+	var response api.WorkspacePtyEnvelope
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/ptys/resize-applied", request, &response); err != nil {
+		return api.WorkspacePtyEnvelope{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) MarkWorkspacePtyClosed(ctx context.Context, request api.WorkerWorkspacePtyClosedRequest) (api.WorkspacePtyEnvelope, error) {
+	var response api.WorkspacePtyEnvelope
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/ptys/closed", request, &response); err != nil {
+		return api.WorkspacePtyEnvelope{}, err
 	}
 	return response, nil
 }

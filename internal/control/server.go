@@ -58,6 +58,7 @@ type Server struct {
 	dispatchQueue       dispatch.Queue
 	scheduleEngine      ScheduleRegistrar
 	eventStream         *EventStream
+	workspaceStreams    *WorkspaceStreamNotifier
 	workerLeaseScanSeed atomic.Uint64
 	workerTokenSecret   []byte
 	workerTokenTTL      time.Duration
@@ -114,15 +115,16 @@ type ServerConfig struct {
 	TX          TxBeginner
 	ReadinessDB db.DBTX
 
-	Auth           auth.Authenticator
-	CAS            cas.Store
-	Secrets        SecretManager
-	RunEnqueuer    RunEnqueuer
-	DispatchQueue  dispatch.Queue
-	ScheduleEngine ScheduleRegistrar
-	EventStream    *EventStream
-	Mailer         email.Sender
-	AuthProvider   AuthProvider
+	Auth             auth.Authenticator
+	CAS              cas.Store
+	Secrets          SecretManager
+	RunEnqueuer      RunEnqueuer
+	DispatchQueue    dispatch.Queue
+	ScheduleEngine   ScheduleRegistrar
+	EventStream      *EventStream
+	WorkspaceStreams *WorkspaceStreamNotifier
+	Mailer           email.Sender
+	AuthProvider     AuthProvider
 
 	WorkerTokenSecret   []byte
 	WorkerTokenTTL      time.Duration
@@ -178,6 +180,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		dispatchQueue:       cfg.DispatchQueue,
 		scheduleEngine:      cfg.ScheduleEngine,
 		eventStream:         cfg.EventStream,
+		workspaceStreams:    cfg.WorkspaceStreams,
 		workerTokenSecret:   cfg.WorkerTokenSecret,
 		workerTokenTTL:      workerTokenTTL,
 		workerRegisterToken: strings.TrimSpace(cfg.WorkerRegisterToken),
@@ -357,6 +360,21 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Delete("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.deleteWorkspace)
 		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/materialize", s.requestWorkspaceMaterialization)
 		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/connect", s.connectWorkspace)
+		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/stop", s.stopWorkspace)
+		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs", s.createWorkspaceExec)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs", s.listWorkspaceExecs)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}", s.getWorkspaceExec)
+		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}/stdin", s.writeWorkspaceExecStdin)
+		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}/stdin/close", s.closeWorkspaceExecStdin)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}/stdout", s.listWorkspaceExecStdout)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}/stderr", s.listWorkspaceExecStderr)
+		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty", s.createWorkspacePty)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty", s.listWorkspacePtys)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}", s.getWorkspacePty)
+		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/input", s.writeWorkspacePtyInput)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/output", s.listWorkspacePtyOutput)
+		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/resize", s.resizeWorkspacePty)
+		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/close", s.closeWorkspacePty)
 		s.mountTaskSessionRoutes(r, "/projects/{projectID}/environments/{environmentID}")
 		r.Post("/projects/{projectID}/environments/{environmentID}/waitpoints/tokens", s.createWaitpointToken)
 		r.Get("/projects/{projectID}/environments/{environmentID}/waitpoints/tokens", s.listWaitpointTokens)
@@ -422,6 +440,21 @@ func (s *Server) mountRunRoutes(r chi.Router) {
 		r.Get("/waitpoints/tokens/{tokenID}", s.getWaitpointToken)
 		r.Post("/workspaces/{workspaceID}/materialize", s.requestWorkspaceMaterialization)
 		r.Post("/workspaces/{workspaceID}/connect", s.connectWorkspace)
+		r.Post("/workspaces/{workspaceID}/stop", s.stopWorkspace)
+		r.Post("/workspaces/{workspaceID}/execs", s.createWorkspaceExec)
+		r.Get("/workspaces/{workspaceID}/execs", s.listWorkspaceExecs)
+		r.Get("/workspaces/{workspaceID}/execs/{execID}", s.getWorkspaceExec)
+		r.Post("/workspaces/{workspaceID}/execs/{execID}/stdin", s.writeWorkspaceExecStdin)
+		r.Post("/workspaces/{workspaceID}/execs/{execID}/stdin/close", s.closeWorkspaceExecStdin)
+		r.Get("/workspaces/{workspaceID}/execs/{execID}/stdout", s.listWorkspaceExecStdout)
+		r.Get("/workspaces/{workspaceID}/execs/{execID}/stderr", s.listWorkspaceExecStderr)
+		r.Post("/workspaces/{workspaceID}/pty", s.createWorkspacePty)
+		r.Get("/workspaces/{workspaceID}/pty", s.listWorkspacePtys)
+		r.Get("/workspaces/{workspaceID}/pty/{ptyID}", s.getWorkspacePty)
+		r.Post("/workspaces/{workspaceID}/pty/{ptyID}/input", s.writeWorkspacePtyInput)
+		r.Get("/workspaces/{workspaceID}/pty/{ptyID}/output", s.listWorkspacePtyOutput)
+		r.Post("/workspaces/{workspaceID}/pty/{ptyID}/resize", s.resizeWorkspacePty)
+		r.Post("/workspaces/{workspaceID}/pty/{ptyID}/close", s.closeWorkspacePty)
 		r.Post("/public-access-tokens", s.createPublicAccessToken)
 	})
 }
@@ -489,11 +522,23 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Post("/workspaces/materializations/claim", s.workerClaimWorkspaceMaterialization)
 			r.Post("/workspaces/materializations/renew", s.workerRenewWorkspaceMaterialization)
 			r.Post("/workspaces/materializations/running", s.workerMarkWorkspaceMaterializationRunning)
+			r.Post("/workspaces/materializations/capture", s.workerCaptureWorkspaceMaterialization)
 			r.Post("/workspaces/materializations/fail", s.workerFailWorkspaceMaterialization)
 			r.Post("/workspaces/materializations/stop", s.workerStopWorkspaceMaterialization)
 			r.Post("/workspaces/materializations/operations/claim", s.workerClaimWorkspaceMaterializationOperation)
 			r.Post("/workspaces/materializations/operations/start", s.workerStartWorkspaceMaterializationOperation)
 			r.Post("/workspaces/materializations/operations/complete", s.workerCompleteWorkspaceMaterializationOperation)
+			r.Post("/workspaces/execs/started", s.workerMarkWorkspaceExecStarted)
+			r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/workspaces/execs/output", s.workerAppendWorkspaceExecOutput)
+			r.Post("/workspaces/execs/input", s.workerListWorkspaceExecInput)
+			r.Post("/workspaces/execs/input-delivered", s.workerAdvanceWorkspaceExecInputDelivered)
+			r.Post("/workspaces/execs/exited", s.workerMarkWorkspaceExecExited)
+			r.Post("/workspaces/ptys/opened", s.workerMarkWorkspacePtyOpened)
+			r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/workspaces/ptys/output", s.workerAppendWorkspacePtyOutput)
+			r.Post("/workspaces/ptys/input", s.workerListWorkspacePtyInput)
+			r.Post("/workspaces/ptys/input-delivered", s.workerAdvanceWorkspacePtyInputDelivered)
+			r.Post("/workspaces/ptys/resize-applied", s.workerMarkWorkspacePtyResizeApplied)
+			r.Post("/workspaces/ptys/closed", s.workerMarkWorkspacePtyClosed)
 		})
 	})
 }

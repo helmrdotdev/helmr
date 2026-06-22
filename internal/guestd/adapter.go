@@ -461,7 +461,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 		defer cleanupControlSocket()
 		cmdEnv = setEnvValue(cmdEnv, "HELMR_CONTROL_SOCKET", controlSocketPath)
 	}
-	cmd, err := adapterCommand(ctx, adapterRuntimePath, cmdArgs, launchCwd, cmdEnv, imageRoot, runtimeUser, imageMode)
+	cmd, err := adapterCommand(ctx, adapterRuntimePath, cmdArgs, launchCwd, cmdEnv, imageRoot, runtimeUser, adapterCommandOptions{ImageMode: imageMode})
 	if err != nil {
 		return writeRunSetupFailure(conn, err)
 	}
@@ -826,6 +826,7 @@ func writeRunSetupFailure(conn io.ReadWriter, err error) error {
 
 type adapterRunStream struct {
 	mu                 sync.Mutex
+	writeMu            sync.Mutex
 	resumeAckReady     *sync.Cond
 	conn               io.ReadWriter
 	resumeAckPending   bool
@@ -840,22 +841,39 @@ func newAdapterRunStream(conn io.ReadWriter) *adapterRunStream {
 }
 
 func (s *adapterRunStream) writeEvent(event *runv0.RunEvent) error {
+	conn, err := s.connAfterResumeAckGate()
+	if err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return transport.WriteProtoFrame(conn, event)
+}
+
+func (s *adapterRunStream) connAfterResumeAckGate() (io.ReadWriter, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.waitResumeAckGateLocked(); err != nil {
-		return err
+		return nil, err
 	}
-	return transport.WriteProtoFrame(s.conn, event)
+	return s.conn, nil
 }
 
 func (s *adapterRunStream) writeCheckpointPauseReady(waitpointID string, checkpointID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return transport.WriteStreamFrameHeader(s.conn, transport.StreamHeader{
+	conn := s.currentConn()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return transport.WriteStreamFrameHeader(conn, transport.StreamHeader{
 		Type:         transport.StreamTypeCheckpointPauseReady,
 		WaitpointID:  waitpointID,
 		CheckpointID: checkpointID,
 	}, 0)
+}
+
+func (s *adapterRunStream) currentConn() io.ReadWriter {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conn
 }
 
 func (s *adapterRunStream) writeCheckpointDiagnostic(message string) error {
@@ -874,12 +892,13 @@ func (s *adapterRunStream) writeWorkspaceArtifact(runID string, workspaceRoot st
 	}
 	defer cleanup()
 	entryCount := artifact.EntryCount
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.waitResumeAckGateLocked(); err != nil {
+	conn, err := s.connAfterResumeAckGate()
+	if err != nil {
 		return err
 	}
-	return transport.WriteFileFrameWithMetadata(s.conn, transport.StreamHeader{
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return transport.WriteFileFrameWithMetadata(conn, transport.StreamHeader{
 		Type:       transport.StreamTypeWorkspaceArtifact,
 		RunID:      runID,
 		EntryCount: &entryCount,
@@ -922,11 +941,15 @@ func (s *adapterRunStream) attachAndResume(conn io.ReadWriter, stdin io.Writer, 
 }
 
 func (s *adapterRunStream) writeResumeAck(waitpointID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := transport.WriteProtoFrame(s.conn, &runv0.ResumeAck{WaitpointId: waitpointID}); err != nil {
+	conn := s.currentConn()
+	s.writeMu.Lock()
+	err := transport.WriteProtoFrame(conn, &runv0.ResumeAck{WaitpointId: waitpointID})
+	s.writeMu.Unlock()
+	if err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.resumeAckPending = false
 	s.resumeAckWaitpoint = ""
 	s.resumeAckDeadline = time.Time{}

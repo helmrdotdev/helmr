@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 
-import { HelmrClient, waitpointTokenClientMethod } from "./client"
+import { HelmrClient, WorkspaceStreamError, WorkspaceStreamTerminalError, waitpointTokenClientMethod } from "./client"
 import { runStateBooleans } from "./run"
 import { PayloadSchemaValidationError, idempotencyKeys, image, sandbox, source, task, type PayloadSchema } from "../index"
 import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER, HELMR_SDK_VERSION, HELMR_SDK_VERSION_HEADER } from "../version"
@@ -220,7 +220,7 @@ test("workspaces.open is lazy and does not call materialize or connect", () => {
   expect(calls).toBe(0)
 })
 
-test("workspaces create list update materialize and connect use workspace routes", async () => {
+test("workspaces create list update materialize connect and stop use workspace routes", async () => {
   const requests: Array<{ url: string; method: string; body: unknown }> = []
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
@@ -229,6 +229,9 @@ test("workspaces create list update materialize and connect use workspace routes
     requests.push({ url, method, body })
     if (url.endsWith("/materialize") || url.endsWith("/connect")) {
       return Response.json(workspaceMaterializationFixture())
+    }
+    if (url.endsWith("/stop")) {
+      return Response.json({ workspace_id: "workspace-1", state: "stopping", materialization: workspaceMaterializationFixture({ state: "stopping" }) })
     }
     if (method === "GET" && url.includes("/workspaces?")) {
       return Response.json({ workspaces: [workspaceFixture({ tags: ["prod"] })] })
@@ -252,29 +255,250 @@ test("workspaces create list update materialize and connect use workspace routes
   const updated = await client.workspaces.update("workspace-1", { metadata: { owner: "platform" }, tags: ["prod"] })
   const materialized = await client.workspaces.materialize("workspace-1")
   const connected = await client.workspaces.open("workspace-1").connect()
+  const stopped = await client.workspaces.open("workspace-1").stop({ idempotencyKey: "stop-key" })
 
   expect(created.metadata).toEqual({ owner: "platform" })
   expect(listed[0]?.tags).toEqual(["prod"])
   expect(updated.id).toBe("workspace-1")
   expect(materialized.workspaceId).toBe("workspace-1")
   expect(connected.workspaceId).toBe("workspace-1")
+  expect(stopped.materialization?.state).toBe("stopping")
   expect(requests.map((request) => [request.method, request.url, request.body])).toEqual([
     ["POST", "https://api.example.test/api/projects/project-1/environments/env-1/workspaces", {
       deployment_id: "deployment-1",
-      environment_id: "env-1",
       external_id: "case-1",
       idempotency_key: "workspace-key",
       idempotency_key_ttl: "24h",
       metadata: { owner: "platform" },
-      project_id: "project-1",
       sandbox_id: "sandbox-1",
       tags: ["prod"],
     }],
-    ["GET", "https://api.example.test/api/projects/project-1/environments/env-1/workspaces?project_id=project-1&environment_id=env-1&state=active&tag=prod", undefined],
+    ["GET", "https://api.example.test/api/projects/project-1/environments/env-1/workspaces?state=active&tag=prod", undefined],
     ["PATCH", "https://api.example.test/api/workspaces/workspace-1", { metadata: { owner: "platform" }, tags: ["prod"] }],
     ["POST", "https://api.example.test/api/workspaces/workspace-1/materialize", {}],
     ["POST", "https://api.example.test/api/workspaces/workspace-1/connect", {}],
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/stop", { idempotency_key: "stop-key" }],
   ])
+})
+
+test("workspace exec handle uses direct workspace exec routes", async () => {
+  const requests: Array<{ url: string; method: string; body: unknown }> = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    const method = init?.method ?? "GET"
+    const body = init?.body === undefined ? undefined : JSON.parse(String(init.body))
+    requests.push({ url, method, body })
+    if (url.endsWith("/stdout?cursor=0&limit=10")) {
+      return Response.json({ chunks: [workspaceStreamChunkFixture({ data: Buffer.from("ok\n").toString("base64") })] })
+    }
+    if (url.endsWith("/stdin")) {
+      return Response.json(workspaceStreamChunkFixture({ stream: "stdin", data: body.data }))
+    }
+    if (url.endsWith("/stdin/close")) {
+      return Response.json({ exec: workspaceExecFixture({ stdin_closed_at: "2026-04-20T00:01:00Z" }) })
+    }
+    if (url.endsWith("/execs") || url.includes("/execs?")) {
+      return method === "GET"
+        ? Response.json({ execs: [workspaceExecFixture({ state: "running" })] })
+        : Response.json({ exec: workspaceExecFixture({ state: "queued" }) }, { status: 201 })
+    }
+    return Response.json({ exec: workspaceExecFixture({ state: "running" }) })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const handle = await client.workspaces.open("workspace-1").exec(["bash", "-lc", "echo ok"], {
+    cwd: "/workspace",
+    env: { NODE_ENV: "test" },
+    detached: true,
+    idempotencyKey: "exec-key",
+  })
+  const listed = await client.workspaces.open("workspace-1").execs.list({ state: "running", limit: 5 })
+  const stdout = await handle.stdout.list({ cursor: 0, limit: 10 })
+  const stdin = await handle.stdin.write("input\n", { offset: 0 })
+  await handle.stdin.close()
+
+  expect(handle.id).toBe("exec-1")
+  expect(listed[0]?.state).toBe("running")
+  expect(new TextDecoder().decode(stdout[0]?.data)).toBe("ok\n")
+  expect(new TextDecoder().decode(stdin.data)).toBe("input\n")
+  expect(requests.map((request) => [request.method, request.url, request.body])).toEqual([
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/execs", {
+      command: ["bash", "-lc", "echo ok"],
+      cwd: "/workspace",
+      detached: true,
+      env: { NODE_ENV: "test" },
+      idempotency_key: "exec-key",
+    }],
+    ["GET", "https://api.example.test/api/workspaces/workspace-1/execs?state=running&limit=5", undefined],
+    ["GET", "https://api.example.test/api/workspaces/workspace-1/execs/exec-1/stdout?cursor=0&limit=10", undefined],
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/execs/exec-1/stdin", {
+      data: Buffer.from("input\n").toString("base64"),
+      offset: 0,
+    }],
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/execs/exec-1/stdin/close", {}],
+  ])
+})
+
+test("workspace pty handle uses direct workspace pty routes", async () => {
+  const requests: Array<{ url: string; method: string; body: unknown }> = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    const method = init?.method ?? "GET"
+    const body = init?.body === undefined ? undefined : JSON.parse(String(init.body))
+    requests.push({ url, method, body })
+    if (url.endsWith("/output?cursor=2")) {
+      return Response.json({ chunks: [workspaceStreamChunkFixture({ stream: "output", offset_start: 2, offset_end: 4, data: Buffer.from("$ ").toString("base64") })] })
+    }
+    if (url.endsWith("/input")) {
+      return Response.json(workspaceStreamChunkFixture({ stream: "input", data: body.data }))
+    }
+    if (url.endsWith("/resize")) {
+      return Response.json({ pty: workspacePtyFixture({ cols: 100, rows: 40, state: "resizing" }) })
+    }
+    if (url.endsWith("/close")) {
+      return Response.json({ pty: workspacePtyFixture({ state: "closing" }) })
+    }
+    if (url.endsWith("/pty") || url.includes("/pty?")) {
+      return method === "GET"
+        ? Response.json({ ptys: [workspacePtyFixture({ state: "open" })] })
+        : Response.json({ pty: workspacePtyFixture({ state: "creating" }) }, { status: 201 })
+    }
+    return Response.json({ pty: workspacePtyFixture({ state: "open" }) })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const handle = await client.workspaces.open("workspace-1").pty.create({ cwd: "/workspace", cols: 80, rows: 24, idempotencyKey: "pty-key" })
+  const listed = await client.workspaces.open("workspace-1").pty.list({ state: "open" })
+  const output = await handle.output.list({ cursor: 2 })
+  const input = await handle.input("ls\n", { offset: 0 })
+  await handle.resize(100, 40)
+  await handle.close()
+
+  expect(handle.id).toBe("pty-1")
+  expect(listed[0]?.state).toBe("open")
+  expect(new TextDecoder().decode(output[0]?.data)).toBe("$ ")
+  expect(new TextDecoder().decode(input.data)).toBe("ls\n")
+  expect(requests.map((request) => [request.method, request.url, request.body])).toEqual([
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/pty", { cols: 80, cwd: "/workspace", idempotency_key: "pty-key", rows: 24 }],
+    ["GET", "https://api.example.test/api/workspaces/workspace-1/pty?state=open", undefined],
+    ["GET", "https://api.example.test/api/workspaces/workspace-1/pty/pty-1/output?cursor=2", undefined],
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/pty/pty-1/input", {
+      data: Buffer.from("ls\n").toString("base64"),
+      offset: 0,
+    }],
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/pty/pty-1/resize", { cols: 100, rows: 40 }],
+    ["POST", "https://api.example.test/api/workspaces/workspace-1/pty/pty-1/close", {}],
+  ])
+})
+
+test("workspace exec stdout stream follows SSE chunks and closes on terminal", async () => {
+  const requested: Array<{ url: string; accept: string | null }> = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requested.push({ url: String(input), accept: new Headers(init?.headers).get("accept") })
+    return workspaceStreamSseResponse([
+      ["workspace_stream_chunk", "5", workspaceStreamChunkFixture({ offset_start: 0, offset_end: 5, data: Buffer.from("hello").toString("base64") })],
+      ["workspace_stream_terminal", "5", {
+        resource_kind: "workspace_exec",
+        resource_id: "exec-1",
+        stream: "stdout",
+        state: "exited",
+        cursor: 5,
+      }],
+    ])
+  }) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const chunks = []
+  for await (const chunk of client.workspaces.open("workspace-1").execs.retrieve("exec-1").stdout.stream({ fromCursor: 0, follow: true })) {
+    chunks.push(new TextDecoder().decode(chunk.data))
+  }
+
+  expect(chunks).toEqual(["hello"])
+  expect(requested).toEqual([{ url: "https://api.example.test/api/workspaces/workspace-1/execs/exec-1/stdout?follow=1&cursor=0", accept: "text/event-stream" }])
+})
+
+test("workspace stream reconnects with last DB offset cursor", async () => {
+  let call = 0
+  const requested: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    call += 1
+    requested.push(String(input))
+    if (call === 1) {
+      return workspaceStreamSseResponse([
+        ["workspace_stream_chunk", "4", workspaceStreamChunkFixture({ offset_start: 0, offset_end: 4, data: Buffer.from("ping").toString("base64") })],
+      ])
+    }
+    return workspaceStreamSseResponse([
+      ["workspace_stream_chunk", "8", workspaceStreamChunkFixture({ offset_start: 4, offset_end: 8, data: Buffer.from("pong").toString("base64") })],
+      ["workspace_stream_terminal", "8", {
+        resource_kind: "workspace_exec",
+        resource_id: "exec-1",
+        stream: "stderr",
+        state: "exited",
+        cursor: 8,
+      }],
+    ])
+  }) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const chunks = []
+  for await (const chunk of client.workspaces.open("workspace-1").execs.retrieve("exec-1").stderr.stream({ fromCursor: 0, follow: true })) {
+    chunks.push(new TextDecoder().decode(chunk.data))
+  }
+
+  expect(chunks).toEqual(["ping", "pong"])
+  expect(requested).toEqual([
+    "https://api.example.test/api/workspaces/workspace-1/execs/exec-1/stderr?follow=1&cursor=0",
+    "https://api.example.test/api/workspaces/workspace-1/execs/exec-1/stderr?follow=1&cursor=4",
+  ])
+})
+
+test("workspace pty output stream surfaces lost terminal as typed error", async () => {
+  globalThis.fetch = (async () =>
+    workspaceStreamSseResponse([
+      ["workspace_stream_lost", "0", {
+        resource_kind: "workspace_pty",
+        resource_id: "pty-1",
+        stream: "output",
+        state: "lost",
+        cursor: 0,
+        error: { code: "workspace_materialization_lost" },
+      }],
+    ])) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  let terminal: WorkspaceStreamTerminalError | undefined
+  try {
+    for await (const _chunk of client.workspaces.open("workspace-1").pty.retrieve("pty-1").output.stream({ fromCursor: 0, follow: true })) {
+      // lost terminal should fail before yielding chunks
+    }
+  } catch (error) {
+    if (error instanceof WorkspaceStreamTerminalError) {
+      terminal = error
+    } else {
+      throw error
+    }
+  }
+  expect(terminal).toBeInstanceOf(WorkspaceStreamTerminalError)
+  expect(terminal?.terminal.error).toEqual({ code: "workspace_materialization_lost" })
+})
+
+test("workspace stream surfaces cursor expiry as typed error", async () => {
+  globalThis.fetch = (async () =>
+    workspaceStreamSseResponse([
+      ["workspace_stream_error", "0", {
+        code: "workspace_stream_cursor_expired",
+        message: "workspace stream cursor expired; earliest available cursor is 10",
+        cursor: 0,
+      }],
+    ])) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await expect((async () => {
+    for await (const _chunk of client.workspaces.open("workspace-1").execs.retrieve("exec-1").stdout.stream({ fromCursor: 0, follow: true })) {
+      // cursor expiry should fail before yielding chunks
+    }
+  })()).rejects.toBeInstanceOf(WorkspaceStreamError)
 })
 
 test("http transport is explicit and warns, including localhost", async () => {
@@ -343,10 +567,8 @@ test("tasks.start returns session and run handles from the task start response",
     expiresAt: "2026-04-21T00:00:00Z",
   })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/tasks/inspect/start")
+  expect(requestedUrl).toBe("https://api.example.test/api/projects/project-1/environments/env-1/tasks/inspect/start")
   expect(body).toEqual({
-    project_id: "project-1",
-    environment_id: "env-1",
     payload: { issue: 123 },
     external_id: "case-123",
     options: {
@@ -377,12 +599,24 @@ test("tasks.startAndWait posts one start-and-wait request and returns the sessio
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const session = await client.tasks.startAndWait("inspect", { timeoutSeconds: 30 })
+  const session = await client.tasks.startAndWait("inspect", {
+    projectId: "project-1",
+    environmentId: "env-1",
+    timeoutSeconds: 30,
+  })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/tasks/inspect/start-and-wait")
+  expect(requestedUrl).toBe("https://api.example.test/api/projects/project-1/environments/env-1/tasks/inspect/start-and-wait")
   expect(body).toEqual({ timeout_seconds: 30 })
   expect(session.status).toBe("completed")
   expect(session.result).toEqual({ ok: true })
+})
+
+test("tasks.start requires complete project environment scope", async () => {
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+
+  await expect(client.tasks.start("inspect", { projectId: "project-1" })).rejects.toThrow(
+    "projectId and environmentId must be provided together",
+  )
 })
 
 test("tasks.startAndWait retries a pending idempotent start before returning the session", async () => {
@@ -474,6 +708,32 @@ test("sessions facade retrieves state and reads/writes session channels", async 
   expect(bodies).toEqual([
     { timeout_seconds: 10 },
     { data: { approved: true }, correlation_id: "thread-1" },
+  ])
+})
+
+test("sessions facade uses project environment scoped routes when scope is provided", async () => {
+  const requestedUrls: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (url.endsWith("/session-1/channels/agent.report/outputs")) {
+      return Response.json({ records: [] })
+    }
+    return Response.json(taskSessionFixture({ id: "session-1", status: "completed", result: { ok: true } }))
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const session = client.sessions.open("session-1")
+  const scope = { projectId: "project-1", environmentId: "env-1" }
+
+  await session.retrieve(scope)
+  await session.wait(scope)
+  await session.output("agent.report").list(scope)
+
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1",
+    "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1/wait",
+    "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1/channels/agent.report/outputs",
   ])
 })
 
@@ -909,6 +1169,68 @@ test("runs.cancel posts graceful cancel intent", async () => {
     idempotency_key: "cancel-run-1",
   })
   expect(run.status).toBe("cancelled")
+})
+
+test("runs facade uses project environment scoped routes when scope is provided", async () => {
+  const requestedUrls: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (url.endsWith("/runs")) {
+      return Response.json({ runs: [] })
+    }
+    if (url.endsWith("/cancel")) {
+      return Response.json({
+        run: {
+          id: "run-1",
+          task_id: "inspect",
+          status: "cancelled",
+        },
+        operation: {
+          id: "operation-1",
+          run_id: "run-1",
+          kind: "cancel",
+          status: "applied",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      })
+    }
+    if (url.endsWith("/logs")) {
+      return Response.json({
+        stdout_base64: "b2s=",
+        stderr_base64: "",
+        cursor: "1:0",
+        truncated: false,
+      })
+    }
+    if (url.endsWith("/events")) {
+      return Response.json({ cursor: 0, next_cursor: null, events: [] })
+    }
+    return Response.json({
+      id: "run-1",
+      task_id: "inspect",
+      status: "succeeded",
+      exit_code: 0,
+      pending_waitpoint: null,
+    })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const scope = { projectId: "project-1", environmentId: "env-1" }
+
+  await client.runs.list(scope)
+  await client.runs.retrieve("run-1", scope)
+  await client.runs.cancel("run-1", scope)
+  await client.runs.logs.retrieve("run-1", scope)
+  await client.runs.events.list("run-1", scope)
+
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/projects/project-1/environments/env-1/runs",
+    "https://api.example.test/api/projects/project-1/environments/env-1/runs/run-1",
+    "https://api.example.test/api/projects/project-1/environments/env-1/runs/run-1/cancel",
+    "https://api.example.test/api/projects/project-1/environments/env-1/runs/run-1/logs",
+    "https://api.example.test/api/projects/project-1/environments/env-1/runs/run-1/events",
+  ])
 })
 
 test("task.start validates payload before posting the start request", async () => {
@@ -2343,6 +2665,130 @@ function workspaceMaterializationFixture(overrides: Partial<{
     updated_at: "2026-04-20T00:00:00Z",
     ...overrides,
   }
+}
+
+function workspaceExecFixture(overrides: Partial<{
+  readonly id: string
+  readonly workspace_id: string
+  readonly materialization_id: string | null
+  readonly command: readonly string[]
+  readonly cwd: string
+  readonly env_shape: Record<string, string>
+  readonly filesystem_mode: string
+  readonly state: string
+  readonly detached: boolean
+  readonly process_id: string | null
+  readonly exit_code: number | null
+  readonly signal: string | null
+  readonly error: unknown
+  readonly stdout_cursor: number
+  readonly stderr_cursor: number
+  readonly stdin_cursor: number
+  readonly stdin_closed_at: string | null
+  readonly created_at: string
+  readonly started_at: string | null
+  readonly exited_at: string | null
+  readonly updated_at: string
+}> = {}) {
+  return {
+    id: "exec-1",
+    workspace_id: "workspace-1",
+    materialization_id: "materialization-1",
+    command: ["bash", "-lc", "echo ok"],
+    cwd: "/workspace",
+    env_shape: {},
+    filesystem_mode: "write",
+    state: "queued",
+    detached: false,
+    process_id: null,
+    exit_code: null,
+    signal: null,
+    error: {},
+    stdout_cursor: 0,
+    stderr_cursor: 0,
+    stdin_cursor: 0,
+    stdin_closed_at: null,
+    created_at: "2026-04-20T00:00:00Z",
+    started_at: null,
+    exited_at: null,
+    updated_at: "2026-04-20T00:00:00Z",
+    ...overrides,
+  }
+}
+
+function workspacePtyFixture(overrides: Partial<{
+  readonly id: string
+  readonly workspace_id: string
+  readonly materialization_id: string | null
+  readonly cwd: string
+  readonly cols: number
+  readonly rows: number
+  readonly filesystem_mode: string
+  readonly state: string
+  readonly process_id: string | null
+  readonly output_cursor: number
+  readonly input_cursor: number
+  readonly error: unknown
+  readonly created_at: string
+  readonly started_at: string | null
+  readonly closed_at: string | null
+  readonly updated_at: string
+}> = {}) {
+  return {
+    id: "pty-1",
+    workspace_id: "workspace-1",
+    materialization_id: "materialization-1",
+    cwd: "/workspace",
+    cols: 80,
+    rows: 24,
+    filesystem_mode: "write",
+    state: "creating",
+    process_id: null,
+    output_cursor: 0,
+    input_cursor: 0,
+    error: {},
+    created_at: "2026-04-20T00:00:00Z",
+    started_at: null,
+    closed_at: null,
+    updated_at: "2026-04-20T00:00:00Z",
+    ...overrides,
+  }
+}
+
+function workspaceStreamChunkFixture(overrides: Partial<{
+  readonly id: string
+  readonly stream: string
+  readonly offset_start: number
+  readonly offset_end: number
+  readonly data: string
+  readonly observed_at: string
+  readonly created_at: string
+}> = {}) {
+  return {
+    id: "chunk-1",
+    stream: "stdout",
+    offset_start: 0,
+    offset_end: 3,
+    data: Buffer.from("abc").toString("base64"),
+    observed_at: "2026-04-20T00:00:00Z",
+    created_at: "2026-04-20T00:00:00Z",
+    ...overrides,
+  }
+}
+
+function workspaceStreamSseResponse(frames: readonly (readonly [string, string, unknown])[]): Response {
+  const encoder = new TextEncoder()
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        for (const [event, id, data] of frames) {
+          controller.enqueue(encoder.encode(`id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
+        }
+        controller.close()
+      },
+    }),
+    { status: 200, headers: { "content-type": "text/event-stream" } },
+  )
 }
 
 function channelRecordFixture(overrides: Partial<{

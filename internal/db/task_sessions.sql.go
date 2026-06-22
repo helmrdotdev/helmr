@@ -434,7 +434,7 @@ INSERT INTO workspaces (
     coalesce($10::text[], '{}'::text[]),
     coalesce($11::jsonb, '{}'::jsonb)
 )
-RETURNING id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, state, desired_state, dirty_state, last_materialization_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+RETURNING id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_materialization_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
 `
 
 type CreateWorkspaceParams struct {
@@ -476,6 +476,7 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		&i.SandboxFingerprint,
 		&i.ExternalID,
 		&i.CurrentVersionID,
+		&i.CurrentVersionRequiredState,
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,

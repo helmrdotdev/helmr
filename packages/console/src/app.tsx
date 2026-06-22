@@ -8,13 +8,14 @@ import { SettingsLayout } from "./components/SettingsLayout";
 import { getMe, logout } from "./lib/auth";
 import { ScopeProvider, useScope } from "./lib/scope";
 import { cx, ui } from "./ui/styles";
+import { Dashboard } from "./routes/dashboard";
 import { Invite } from "./routes/invite";
 import { Login } from "./routes/login";
 import { AuthGitHubCallback } from "./routes/auth-github-callback";
 import { AuthMagicLinkCallback } from "./routes/auth-magic-link-callback";
-import { Runs } from "./routes/runs";
 import { RunDetail } from "./routes/run-detail";
 import { SessionDetail } from "./routes/session-detail";
+import { Sessions } from "./routes/sessions";
 import { Schedules } from "./routes/schedules";
 import { Tasks } from "./routes/tasks";
 import { Waitpoints } from "./routes/waitpoints";
@@ -27,10 +28,6 @@ import { ProjectNew } from "./routes/project-new";
 import { OrganizationNew } from "./routes/organization-new";
 import { AccessRequired } from "./routes/access-required";
 import { Device } from "./routes/device";
-
-function Home() {
-  return <Navigate href="/tasks" />;
-}
 
 function TabLink(props: {
   href: string;
@@ -165,8 +162,9 @@ function AppShell(props: { children?: JSX.Element }) {
         <ScopeSwitcher />
         <span class={"h-5 w-px shrink-0 bg-console-border"} aria-hidden="true" />
         <nav class={"flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1 scrollbar-none [&::-webkit-scrollbar]:hidden"} aria-label="Sections">
+          <TabLink href="/">Dashboard</TabLink>
           <TabLink href="/tasks">Tasks</TabLink>
-          <TabLink href="/runs" matchPrefix>Runs</TabLink>
+          <TabLink href="/sessions" matchPrefix>Sessions</TabLink>
           <TabLink href="/schedules">Schedules</TabLink>
           <TabLink href="/waitpoints">Waitpoints</TabLink>
           <TabLink href="/settings/projects" activePrefix="/settings">Settings</TabLink>
@@ -208,7 +206,7 @@ const wrapSettings = (Inner: () => JSX.Element) => () => (
 export function App() {
   return (
     <Router>
-      <Route path="/" component={() => <RequireAuth><Home /></RequireAuth>} />
+      <Route path="/" component={wrap(Dashboard)} />
       <Route path="/login" component={Login} />
       <Route path="/invite" component={Invite} />
       <Route path="/auth/device" component={() => <RequireAuth><Device /></RequireAuth>} />
@@ -217,8 +215,8 @@ export function App() {
       <Route path="/access-required" component={() => <RequireAuth allowOnboarding><AccessRequired /></RequireAuth>} />
       <Route path="/organizations/new" component={() => <RequireAuth allowOnboarding><OrganizationNew /></RequireAuth>} />
 
-      <Route path="/runs" component={wrap(Runs)} />
-      <Route path="/runs/:id" component={wrap(RunDetail)} />
+      <Route path="/sessions" component={wrap(Sessions)} />
+      <Route path="/sessions/:session_id/runs/:run_id" component={wrap(RunDetail)} />
       <Route path="/sessions/:id" component={wrap(SessionDetail)} />
       <Route path="/schedules" component={wrap(Schedules)} />
       <Route path="/tasks" component={wrap(Tasks)} />

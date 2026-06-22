@@ -42,4 +42,7 @@ Image builders support:
 
 TypeScript task images must provide Node.js 22.18 or newer as `node` on `PATH`. Helmr injects the adapter protocol, but task code runs with the language runtime and dependencies installed in your image. Install the package manager, OS tools, and application dependencies your task needs as explicit image build steps.
 
-Tasks start in the checked-out workspace. Use relative paths for workspace files unless you intentionally need an image path such as `/opt/app/package.json`.
+Tasks and direct workspace operations start in the mounted workspace directory
+unless a different working directory is supplied. Use relative paths for
+workspace files unless you intentionally need an image path such as
+`/opt/app/package.json`.

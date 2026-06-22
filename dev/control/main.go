@@ -60,6 +60,12 @@ func main() {
 		log.Error("migrate database", "error", err)
 		os.Exit(1)
 	}
+	if cfg.seedData {
+		if err := seedDevData(ctx, pool); err != nil {
+			log.Error("seed dev data", "error", err)
+			os.Exit(1)
+		}
+	}
 	casStore, err := cas.NewFile(cfg.casDir)
 	if err != nil {
 		log.Error("configure dev CAS", "error", err)
@@ -89,9 +95,19 @@ func main() {
 		log.Error("configure event stream", "error", err)
 		os.Exit(1)
 	}
+	workspaceStreams, err := control.NewWorkspaceStreamNotifier(log, queries, redisClient)
+	if err != nil {
+		log.Error("configure workspace stream notifier", "error", err)
+		os.Exit(1)
+	}
 	go func() {
 		if err := eventStream.RunPublisher(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("event stream publisher stopped", "error", err)
+		}
+	}()
+	go func() {
+		if err := workspaceStreams.RunPublisher(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("workspace stream notifier stopped", "error", err)
 		}
 	}()
 	keyring, err := secret.KeyringFromBase64(cfg.secretEncryptionKey, cfg.secretEncryptionKeyOld)
@@ -135,6 +151,7 @@ func main() {
 		AuthSecret:          []byte(cfg.authSecret),
 		PublicURL:           publicURL,
 		EventStream:         eventStream,
+		WorkspaceStreams:    workspaceStreams,
 	})
 	if err != nil {
 		log.Error("configure control server", "error", err)
@@ -182,6 +199,7 @@ type devConfig struct {
 	secretEncryptionKey    string
 	secretEncryptionKeyOld string
 	resetDatabase          bool
+	seedData               bool
 }
 
 func loadConfig() (devConfig, error) {
@@ -199,6 +217,7 @@ func loadConfig() (devConfig, error) {
 		secretEncryptionKey:    env("HELMR_SECRET_ENCRYPTION_KEY", defaultSecretEncryptionKey),
 		secretEncryptionKeyOld: strings.TrimSpace(os.Getenv("HELMR_SECRET_ENCRYPTION_KEY_OLD")),
 		resetDatabase:          envBool("HELMR_DEV_RESET_DATABASE"),
+		seedData:               envBoolDefault("HELMR_DEV_SEED_DATA", true),
 	}
 	if cfg.databaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
@@ -221,6 +240,14 @@ func env(name string, fallback string) string {
 
 func envBool(name string) bool {
 	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	return value == "1" || value == "true" || value == "yes"
+}
+
+func envBoolDefault(name string, fallback bool) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	if value == "" {
+		return fallback
+	}
 	return value == "1" || value == "true" || value == "yes"
 }
 
@@ -326,7 +353,7 @@ ON CONFLICT (id) DO UPDATE
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int((30 * 24 * time.Hour).Seconds()),
 	})
-	http.Redirect(w, r, "/runs", http.StatusFound)
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func mustUUID(value string) uuid.UUID {

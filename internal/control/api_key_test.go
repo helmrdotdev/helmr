@@ -185,6 +185,91 @@ func TestIssueAPIKeySupportsTasksDeploy(t *testing.T) {
 	}
 }
 
+func TestIssueAPIKeySupportsWorkspaceScopes(t *testing.T) {
+	store := &apiKeyStore{role: db.OrgMemberRoleOwner}
+	server := testAPIKeyServer(store)
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", strings.NewReader(`{"name":"workspace","expires_in_days":30,"permissions":[{"scopes":["workspace-lifecycle:manage","workspace-files:read","workspace-files:write","workspace-versions:read","workspace-versions:capture","workspace-versions:restore","workspace-versions:diff","workspace-exec:create","workspace-exec:read","workspace-exec:manage","workspace-pty:create","workspace-pty:read","workspace-pty:manage","workspace-ports:expose","workspace-ports:read","workspace-ports:close"]}]}`))
+	addSessionCookie(req)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var issued api.APIKeyIssued
+	if err := json.Unmarshal(rec.Body.Bytes(), &issued); err != nil {
+		t.Fatal(err)
+	}
+	wantScopes := []api.APIKeyScope{
+		api.APIKeyScopeWorkspaceLifecycleManage,
+		api.APIKeyScopeWorkspaceFilesRead,
+		api.APIKeyScopeWorkspaceFilesWrite,
+		api.APIKeyScopeWorkspaceVersionsRead,
+		api.APIKeyScopeWorkspaceVersionsCapture,
+		api.APIKeyScopeWorkspaceVersionsRestore,
+		api.APIKeyScopeWorkspaceVersionsDiff,
+		api.APIKeyScopeWorkspaceExecCreate,
+		api.APIKeyScopeWorkspaceExecRead,
+		api.APIKeyScopeWorkspaceExecManage,
+		api.APIKeyScopeWorkspacePtyCreate,
+		api.APIKeyScopeWorkspacePtyRead,
+		api.APIKeyScopeWorkspacePtyManage,
+		api.APIKeyScopeWorkspacePortsExpose,
+		api.APIKeyScopeWorkspacePortsRead,
+		api.APIKeyScopeWorkspacePortsClose,
+	}
+	if len(issued.Permissions) != 1 || !slices.Equal(issued.Permissions[0].Scopes, wantScopes) {
+		t.Fatalf("permissions = %+v, want %+v", issued.Permissions, wantScopes)
+	}
+	wantPermissions := []string{
+		string(auth.PermissionWorkspaceLifecycleManage),
+		string(auth.PermissionFilesRead),
+		string(auth.PermissionFilesWrite),
+		string(auth.PermissionVersionsRead),
+		string(auth.PermissionVersionsCapture),
+		string(auth.PermissionVersionsRestore),
+		string(auth.PermissionVersionsDiff),
+		string(auth.PermissionExecCreate),
+		string(auth.PermissionExecRead),
+		string(auth.PermissionExecManage),
+		string(auth.PermissionPtyCreate),
+		string(auth.PermissionPtyRead),
+		string(auth.PermissionPtyManage),
+		string(auth.PermissionPortsExpose),
+		string(auth.PermissionPortsRead),
+		string(auth.PermissionPortsClose),
+	}
+	gotPermissions := make([]string, 0, len(store.grants))
+	for _, grant := range store.grants {
+		gotPermissions = append(gotPermissions, grant.Permission)
+	}
+	if !slices.Equal(gotPermissions, wantPermissions) {
+		t.Fatalf("grants = %+v, want %+v", gotPermissions, wantPermissions)
+	}
+}
+
+func TestIssueAPIKeyRejectsLegacyBroadWorkspaceScopes(t *testing.T) {
+	for _, scope := range []string{"workspaces:read", "workspaces:write", "workspaces:manage"} {
+		t.Run(scope, func(t *testing.T) {
+			store := &apiKeyStore{role: db.OrgMemberRoleOwner}
+			server := testAPIKeyServer(store)
+			req := httptest.NewRequest(http.MethodPost, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", strings.NewReader(`{"name":"workspace","expires_in_days":30,"permissions":[{"scopes":["`+scope+`"]}]}`))
+			addSessionCookie(req)
+			rec := httptest.NewRecorder()
+
+			server.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+			if len(store.grants) != 0 {
+				t.Fatalf("legacy scope created grants = %+v", store.grants)
+			}
+		})
+	}
+}
+
 func TestIssueAPIKeySupportsChannelScopes(t *testing.T) {
 	store := &apiKeyStore{role: db.OrgMemberRoleOwner}
 	server := testAPIKeyServer(store)

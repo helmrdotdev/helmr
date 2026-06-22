@@ -23,13 +23,13 @@ export function AuthGitHubCallback() {
     history.replaceState({}, "", "/auth/github/callback");
 
     try {
-      const { redirect_after } = await finishGitHubAuth({
+      await finishGitHubAuth({
         code,
         state,
         ...(oauthError !== undefined ? { error: oauthError } : {}),
         ...(errorDescription !== undefined ? { error_description: errorDescription } : {}),
       });
-      navigate(redirect_after, { replace: true });
+      navigate("/", { replace: true });
     } catch (e) {
       const kind = e instanceof ApiError ? e.errorKind : null;
       setError(errorMessage(kind, e instanceof Error ? e.message : "Sign in failed."));
