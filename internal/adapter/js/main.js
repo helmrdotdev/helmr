@@ -6638,7 +6638,7 @@ var runs = new Proxy({}, {
     return Reflect.get(getDefaultClient().runs, property, receiver);
   }
 });
-var channels = Object.freeze({
+var channel = Object.freeze({
   input(id, opts) {
     return Object.freeze({ id: validateChannelName(id), schema: opts.schema });
   },
@@ -7775,7 +7775,7 @@ async function runCommand(args, io) {
       createWaitpointToken: (opts) => createWaitpointToken(responses, control, opts),
       waitpoint: (opts) => waitInput(responses, control, mintCorrelationId, waitGate, opts),
       waitAll: (operands) => waitAll(responses, control, mintCorrelationId, waitGate, operands),
-      channelOutputAppend: (channel, payload2, opts) => writeChannelOutput(control, channel, payload2, opts),
+      channelOutputAppend: (channel2, payload2, opts) => writeChannelOutput(control, channel2, payload2, opts),
       waitFor: (input) => waitFor(responses, control, mintCorrelationId, waitGate, input),
       waitUntil: (input) => waitUntil(responses, control, mintCorrelationId, waitGate, input),
       metadataSet: (key, value) => writeMetadataSet(control, key, value),
@@ -8012,34 +8012,34 @@ function createTaskSessionContext(id, responses, control, mintCorrelationId, wai
   return Object.freeze({
     id,
     input(target) {
-      const channel = channelTargetName(target);
+      const channel2 = channelTargetName(target);
       const schema = typeof target === "string" ? undefined : target.schema;
       return Object.freeze({
-        id: channel,
+        id: channel2,
         wait: (waitOpts = {}) => {
           const operand = {
             type: "channel",
-            channel,
+            channel: channel2,
             ...schema === undefined ? {} : { schema },
             options: waitOpts
           };
-          return waitpointHandle2(operand, () => waitChannelInput(responses, control, mintCorrelationId, waitGate, channel, schema, waitOpts));
+          return waitpointHandle2(operand, () => waitChannelInput(responses, control, mintCorrelationId, waitGate, channel2, schema, waitOpts));
         }
       });
     },
     output(target) {
-      const channel = channelTargetName(target);
+      const channel2 = channelTargetName(target);
       const schema = typeof target === "string" ? undefined : target.schema;
       return Object.freeze({
-        id: channel,
+        id: channel2,
         append: async (payload, appendOpts) => {
-          const parsed = schema === undefined ? payload : await parsePayloadWithSchema(schema, payload, `channel ${JSON.stringify(channel)} payload`);
-          return writeChannelOutput(control, channel, parsed, appendOpts);
+          const parsed = schema === undefined ? payload : await parsePayloadWithSchema(schema, payload, `channel ${JSON.stringify(channel2)} payload`);
+          return writeChannelOutput(control, channel2, parsed, appendOpts);
         },
         pipe: async (source, appendOpts) => {
           for await (const item of source) {
-            const parsed = schema === undefined ? item : await parsePayloadWithSchema(schema, item, `channel ${JSON.stringify(channel)} payload`);
-            await writeChannelOutput(control, channel, parsed, appendOpts);
+            const parsed = schema === undefined ? item : await parsePayloadWithSchema(schema, item, `channel ${JSON.stringify(channel2)} payload`);
+            await writeChannelOutput(control, channel2, parsed, appendOpts);
           }
         }
       });
@@ -8209,10 +8209,10 @@ async function waitInput(responses, control, mintCorrelationId, waitGate, opts) 
   maybeWriteResumeConsumed(control, decision);
   return new WaitpointResultImpl(true, payload);
 }
-async function waitChannelInput(responses, control, mintCorrelationId, waitGate, channel, schema, opts = {}) {
+async function waitChannelInput(responses, control, mintCorrelationId, waitGate, channel2, schema, opts = {}) {
   const correlationId = normalizeOptionalCorrelationId(opts.correlationId);
   const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("channel", {
-    channel,
+    channel: channel2,
     ...correlationId === undefined ? {} : { correlation_id: correlationId }
   }, {
     ...opts.timeout === undefined ? {} : { timeout: waitDurationSeconds(opts.timeout) },
@@ -8222,13 +8222,13 @@ async function waitChannelInput(responses, control, mintCorrelationId, waitGate,
   if (decision.kind === "timed_out") {
     const seconds = opts.timeout === undefined ? undefined : waitDurationSeconds(opts.timeout);
     maybeWriteResumeConsumed(control, decision);
-    return new WaitpointResultImpl(false, undefined, new WaitTimeoutError(`channel ${JSON.stringify(channel)} wait timed out${formatTimeoutSuffix(seconds)}`, seconds));
+    return new WaitpointResultImpl(false, undefined, new WaitTimeoutError(`channel ${JSON.stringify(channel2)} wait timed out${formatTimeoutSuffix(seconds)}`, seconds));
   }
   if (decision.kind !== "completed") {
     throw new Error(`unexpected channel wait resume decision kind ${JSON.stringify(decision.kind)}`);
   }
-  const envelope = channelWaitpointEnvelope(parseResumeData(decision.dataJson), channel);
-  const data = schema === undefined ? envelope.data : await parsePayloadWithSchema(schema, envelope.data, `channel ${JSON.stringify(channel)} data`);
+  const envelope = channelWaitpointEnvelope(parseResumeData(decision.dataJson), channel2);
+  const data = schema === undefined ? envelope.data : await parsePayloadWithSchema(schema, envelope.data, `channel ${JSON.stringify(channel2)} data`);
   maybeWriteResumeConsumed(control, decision);
   return completedWaitpointResult(data);
 }
@@ -8616,8 +8616,8 @@ function parseResumeData(json) {
   }
 }
 async function writeChannelOutput(control, channelInput, payload, opts = {}) {
-  const channel = validateChannelName(channelInput);
-  validateUtf8ByteLength("channel", channel, CHANNEL_NAME_MAX_BYTES);
+  const channel2 = validateChannelName(channelInput);
+  validateUtf8ByteLength("channel", channel2, CHANNEL_NAME_MAX_BYTES);
   const contentType = opts.contentType?.trim();
   if (contentType !== undefined && contentType === "") {
     throw new Error("channel output contentType must be non-empty");
@@ -8632,7 +8632,7 @@ async function writeChannelOutput(control, channelInput, payload, opts = {}) {
     event: {
       case: "channelOutputAppended",
       value: {
-        channel,
+        channel: channel2,
         payloadJson,
         ...contentType === undefined ? {} : { contentType },
         ...objectRefJson === undefined ? {} : { objectRefJson }

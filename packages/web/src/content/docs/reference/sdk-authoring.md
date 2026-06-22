@@ -11,7 +11,7 @@ order: 910
 Import task-authoring APIs from `@helmr/sdk`:
 
 ```ts
-import { channels, defineConfig, image, logger, metadata, sandbox, schedules, source, task, wait } from "@helmr/sdk"
+import { channel, defineConfig, image, logger, metadata, sandbox, schedules, source, task, wait } from "@helmr/sdk"
 ```
 
 `defineConfig({ project, dirs, ignorePatterns? })` declares the deploy target project and task directories. `project` must be a non-empty string, and `dirs` must be a non-empty string array. `ignorePatterns` overrides deploy archive defaults.
@@ -56,4 +56,4 @@ Image builders support `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, and 
 
 Sandbox builders support `image`, `workspace`, and `resources`. The default workspace mount is `/workspace`.
 
-At runtime, `ctx` is intentionally small: `ctx.signal`, `ctx.run`, `ctx.task`, `ctx.workspace`, and `ctx.session`. Use `ctx.session.output(channels.output(...)).append(...)` for durable session output, `ctx.session.input(channels.input(...)).wait()` for durable session input, and module-level operations for other side effects: `wait.createToken(...)`, `wait.forToken(...)`, `wait.completeToken(...)`, `metadata.set(...)`, `wait.for(...)`, `wait.until(...)`, and `logger.info(...)`.
+At runtime, `ctx` is intentionally small: `ctx.signal`, `ctx.run`, `ctx.task`, `ctx.workspace`, and `ctx.session`. Use `ctx.session.output(channel.output(...)).append(...)` for durable session output, `ctx.session.input(channel.input(...)).wait()` for durable session input, and module-level operations for other side effects: `wait.createToken(...)`, `wait.forToken(...)`, `wait.completeToken(...)`, `metadata.set(...)`, `wait.for(...)`, `wait.until(...)`, and `logger.info(...)`.

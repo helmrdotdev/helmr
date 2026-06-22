@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 
 import { enterRunRuntime, getRunRuntime, parsePayloadWithSchema, parseTaskPayload, type RunRuntime } from "./internal"
-import { PayloadSchemaValidationError, channels, image, queue, sandbox, schedules, task, type PayloadSchema } from "./index"
+import { PayloadSchemaValidationError, channel, image, queue, sandbox, schedules, task, type PayloadSchema } from "./index"
 import { resetDefaultClientForTest } from "./start"
 
 const originalFetch = globalThis.fetch
@@ -128,7 +128,7 @@ test("task parses payload through payload schema before run", async () => {
   await expect(parseTaskPayload(schemaTask, { issue: "41" })).resolves.toEqual({ issue: 41 })
 })
 
-test("session output channels parse payload before appending", async () => {
+test("session output channel parses payload before appending", async () => {
   const appended: unknown[] = []
   const exit = enterRunRuntime(fakeRunRuntime({
     channelOutputAppend: async (_channel, payload) => {
@@ -136,7 +136,7 @@ test("session output channels parse payload before appending", async () => {
     },
   }))
   try {
-    const issueChannel = testSessionContext().output(channels.output("issues", { schema: issueStringToNumberSchema() }))
+    const issueChannel = testSessionContext().output(channel.output("issues", { schema: issueStringToNumberSchema() }))
     await issueChannel.append({ issue: "41" })
     await issueChannel.pipe([{ issue: "42" }])
 
@@ -149,9 +149,9 @@ test("session output channels parse payload before appending", async () => {
 
 test("channel waits reject names that cannot round-trip through the REST path", () => {
   for (const id of ["release/approval", "release approval", "release%2Fapproval", ".approval", "_approval", "-approval", "å"]) {
-    expect(() => channels.input(id, { schema: issueStringToNumberSchema() })).toThrow("channel name must match")
+    expect(() => channel.input(id, { schema: issueStringToNumberSchema() })).toThrow("channel name must match")
   }
-  expect(channels.input("release.approval", { schema: issueStringToNumberSchema() }).id).toBe("release.approval")
+  expect(channel.input("release.approval", { schema: issueStringToNumberSchema() }).id).toBe("release.approval")
 })
 
 test("task payload schema failures are reported with issue paths", async () => {

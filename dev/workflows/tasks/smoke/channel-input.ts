@@ -1,4 +1,4 @@
-import { cache, channels, image, logger, sandbox, source, task } from "@helmr/sdk"
+import { cache, channel, image, logger, sandbox, source, task } from "@helmr/sdk"
 import { appendFile, readFile, writeFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -30,7 +30,7 @@ const payload = z.object({
 
 type Payload = z.infer<typeof payload>
 
-const input = channels.input("input-smoke", {
+const input = channel.input("input-smoke", {
   schema: z.object({
     step: z.enum(["approve", "message"]),
     approved: z.boolean().optional(),
