@@ -11,8 +11,7 @@ async function handleResponse<T>(
   { redirectOnUnauthorized }: { redirectOnUnauthorized: boolean },
 ): Promise<T> {
   if (response.status === 401 && redirectOnUnauthorized && !ON_LOGIN_PATH()) {
-    const next = encodeURIComponent(window.location.pathname + window.location.search);
-    window.location.href = `/login?next=${next}`;
+    window.location.href = "/login";
     throw new ApiError("unauthorized", "Authentication is required.", response.status);
   }
   if (!response.ok) {

@@ -68,7 +68,7 @@ function SessionResult(props: { session: TaskSession }) {
   );
 }
 
-function SessionRuns(props: { runs: TaskSessionRun[]; projectID: string; environmentID: string }) {
+function SessionRuns(props: { sessionID: string; runs: TaskSessionRun[]; projectID: string; environmentID: string }) {
   return (
     <section class={"border border-console-border bg-console-surface p-4"}>
       <div class={"mb-3 flex items-center justify-between gap-3"}>
@@ -97,7 +97,7 @@ function SessionRuns(props: { runs: TaskSessionRun[]; projectID: string; environ
                   <tr>
                     <td><code>{run.turn_index}</code></td>
                     <td>
-                      <A class={"font-mono text-[11.5px] text-console-accent hover:text-console-accent-hover"} href={runHref(run.run_id, props.projectID, props.environmentID)}>
+                      <A class={"font-mono text-[11.5px] text-console-accent hover:text-console-accent-hover"} href={runHref(run.run_id, props.sessionID, props.projectID, props.environmentID)}>
                         {shortID(run.run_id)}
                       </A>
                     </td>
@@ -248,7 +248,7 @@ export function SessionDetail() {
   const currentRunHref = createMemo(() => {
     const id = session.data?.current_run_id;
     if (!id || !projectID() || !environmentID()) return null;
-    return runHref(id, projectID(), environmentID());
+    return runHref(id, sessionID(), projectID(), environmentID());
   });
 
   async function runSessionAction(kind: "close" | "cancel") {
@@ -280,7 +280,7 @@ export function SessionDetail() {
     <section class={ui.page}>
       <div class={ui.pageHeader}>
         <div>
-          <A href="/tasks" class={ui.backLink}>Tasks</A>
+          <A href="/sessions" class={ui.backLink}>Sessions</A>
           <div class={ui.pageTitle}>
             <h1 class={ui.h1}>{session.data?.task_id ?? "Session"}</h1>
             <Show when={session.data}>{(current) => <TaskSessionStatusBadge status={current().status} />}</Show>
@@ -327,7 +327,7 @@ export function SessionDetail() {
                   <Show when={runs.isError}>
                     <p class={ui.error} role="alert">{sessionErrorMessage(runs.error)}</p>
                   </Show>
-                  <SessionRuns runs={runs.data?.runs ?? []} projectID={projectID()} environmentID={environmentID()} />
+                  <SessionRuns sessionID={current().id} runs={runs.data?.runs ?? []} projectID={projectID()} environmentID={environmentID()} />
                   <Show when={timeline.isError}>
                     <p class={ui.error} role="alert">{sessionErrorMessage(timeline.error)}</p>
                   </Show>

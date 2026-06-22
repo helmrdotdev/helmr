@@ -25,8 +25,8 @@ export function AuthMagicLinkCallback() {
     }
 
     try {
-      const { redirect_after } = await finishMagicLink(token);
-      navigate(redirect_after, { replace: true });
+      await finishMagicLink(token);
+      navigate("/", { replace: true });
     } catch (e) {
       const kind = e instanceof ApiError ? e.errorKind : null;
       setError(errorMessage(kind, e instanceof Error ? e.message : "Sign in failed."));

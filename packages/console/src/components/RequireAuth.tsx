@@ -7,8 +7,7 @@ import { AuthLoading } from "../ui/AuthScreen";
 function LoginRedirect() {
   const navigate = useNavigate();
   onMount(() => {
-    const next = encodeURIComponent(window.location.pathname + window.location.search);
-    navigate(`/login?next=${next}`, { replace: true });
+    navigate("/login", { replace: true });
   });
   return null;
 }
