@@ -28,18 +28,6 @@ func parseWorkspacePrimitiveLimit(r *http.Request, defaultLimit int32, maxLimit 
 	return int32(value), nil
 }
 
-func parseWorkspaceStreamCursor(r *http.Request) (int64, error) {
-	raw := strings.TrimSpace(r.URL.Query().Get("cursor"))
-	if raw == "" {
-		return 0, nil
-	}
-	cursor, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || cursor < 0 {
-		return 0, errors.New("cursor must be a non-negative integer")
-	}
-	return cursor, nil
-}
-
 func actorSubjectID(actor auth.Actor) string {
 	switch actor.Kind {
 	case auth.ActorKindAPIKey:

@@ -515,7 +515,7 @@ func TestEnsureWorkspaceOperationIdempotencyReplacesExpiredRow(t *testing.T) {
 		ProjectID:            pgvalue.UUID(ids.projectID),
 		EnvironmentID:        pgvalue.UUID(ids.environmentID),
 		WorkspaceID:          pgtype.UUID{},
-		OperationKind:        "workspace.create",
+		OperationKind:        db.WorkspaceOperationIdempotencyKindWorkspaceCreate,
 		IdempotencyKey:       "expired-key",
 		RequestFingerprint:   "expired-fingerprint",
 		ResponseResourceType: "",
@@ -535,7 +535,7 @@ func TestEnsureWorkspaceOperationIdempotencyReplacesExpiredRow(t *testing.T) {
 		ProjectID:            pgvalue.UUID(ids.projectID),
 		EnvironmentID:        pgvalue.UUID(ids.environmentID),
 		WorkspaceID:          pgtype.UUID{},
-		OperationKind:        "workspace.create",
+		OperationKind:        db.WorkspaceOperationIdempotencyKindWorkspaceCreate,
 		IdempotencyKey:       "expired-key",
 		RequestFingerprint:   "fresh-fingerprint",
 		ResponseResourceType: "",
@@ -616,7 +616,7 @@ func TestWorkspaceStopPreventsLateExecStart(t *testing.T) {
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("late exec start err = %v, want no rows", err)
 	}
-	assertWorkspaceDirtyGeneration(t, ctx, pool, ids, materialization.ID, 0)
+	assertWorkspaceDirtyGeneration(t, ctx, pool, ids, materialization.ID, 0, "clean")
 }
 
 func TestWorkspaceStopPreventsLatePtyOpen(t *testing.T) {
@@ -695,7 +695,7 @@ func TestWorkspaceStopPreventsLatePtyOpen(t *testing.T) {
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("late pty open err = %v, want no rows", err)
 	}
-	assertWorkspaceDirtyGeneration(t, ctx, pool, ids, materialization.ID, 0)
+	assertWorkspaceDirtyGeneration(t, ctx, pool, ids, materialization.ID, 0, "clean")
 }
 
 func TestWorkspaceExecStartedMarksWriteLeaseDirtyOnce(t *testing.T) {
@@ -743,7 +743,7 @@ func TestWorkspaceExecStartedMarksWriteLeaseDirtyOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	assertWorkspaceDirtyGeneration(t, ctx, pool, ids, materialization.ID, 1)
+	assertWorkspaceDirtyGeneration(t, ctx, pool, ids, materialization.ID, 1, "dirty")
 }
 
 func TestWorkspacePtyOpenedMarksWriteLeaseDirtyOnce(t *testing.T) {
@@ -800,7 +800,7 @@ func TestWorkspacePtyOpenedMarksWriteLeaseDirtyOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	assertWorkspaceDirtyGeneration(t, ctx, pool, ids, materialization.ID, 1)
+	assertWorkspaceDirtyGeneration(t, ctx, pool, ids, materialization.ID, 1, "dirty")
 }
 
 func TestEnsureWorkspaceMaterializationRequestedCreatesOneActiveArtifactBackedRequest(t *testing.T) {
@@ -1906,8 +1906,8 @@ func TestWorkspaceMaterializationOperationClaimAndComplete(t *testing.T) {
 	if requested.State != db.WorkspaceMaterializationOperationStateQueued {
 		t.Fatalf("queued state = %s", requested.State)
 	}
-	if requested.FencingGeneration != materialization.FencingGeneration {
-		t.Fatalf("operation fencing_generation = %d, want materialization generation %d", requested.FencingGeneration, materialization.FencingGeneration)
+	if requested.FencingGeneration != operationLease.AcquiredFencingGeneration {
+		t.Fatalf("operation fencing_generation = %d, want write lease generation %d", requested.FencingGeneration, operationLease.AcquiredFencingGeneration)
 	}
 
 	if _, err := queries.ClaimWorkspaceMaterializationOperation(ctx, db.ClaimWorkspaceMaterializationOperationParams{
@@ -2422,8 +2422,8 @@ func TestExhaustedCreatePtyOperationFailsCreatingPtyAndReleasesWriteLease(t *tes
 	pool := newIntegrationDB(t, ctx)
 	ids := seedWaitpointTokenIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID := seedMaterializationWorker(t, ctx, pool)
 	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
 
 	pty, err := queries.CreateWorkspacePtySession(ctx, db.CreateWorkspacePtySessionParams{
 		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -2700,8 +2700,8 @@ func TestExhaustedClosePtyOperationRollsBackOpenPtyAndKeepsWriteLease(t *testing
 	pool := newIntegrationDB(t, ctx)
 	ids := seedWaitpointTokenIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID := seedMaterializationWorker(t, ctx, pool)
 	materialization := seedRunningWorkspaceMaterialization(t, ctx, pool, queries, ids)
+	workerID := pgvalue.MustUUIDValue(materialization.WorkerInstanceID)
 	ptyID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.CreateWorkspacePtySession(ctx, db.CreateWorkspacePtySessionParams{
 		ID:                   ptyID,
@@ -6807,7 +6807,7 @@ func seedWorkspaceVersionArtifact(t *testing.T, ctx context.Context, pool *pgxpo
 	return artifactID
 }
 
-func assertWorkspaceDirtyGeneration(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs, materializationID pgtype.UUID, want int64) {
+func assertWorkspaceDirtyGeneration(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs, materializationID pgtype.UUID, want int64, wantDirtyState string) {
 	t.Helper()
 	var dirtyGeneration int64
 	if err := pool.QueryRow(ctx, `
@@ -6830,8 +6830,8 @@ func assertWorkspaceDirtyGeneration(t *testing.T, ctx context.Context, pool *pgx
 	`, ids.orgID, ids.workspaceID).Scan(&dirtyState); err != nil {
 		t.Fatal(err)
 	}
-	if dirtyState != "dirty" {
-		t.Fatalf("workspace dirty_state = %s, want dirty", dirtyState)
+	if dirtyState != wantDirtyState {
+		t.Fatalf("workspace dirty_state = %s, want %s", dirtyState, wantDirtyState)
 	}
 }
 

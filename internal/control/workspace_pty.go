@@ -414,7 +414,7 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 		if err != nil {
 			return db.WorkspacePtySession{}, false, err
 		}
-		if _, err := requestWorkspacePrimitiveOperation(ctx, store, materializationFromEnsureRow(materialization), workspaceOperationKindCreatePty, workspaceOperationResourcePty, row.ID, request, lease, 0); err != nil {
+		if err := requestWorkspacePrimitiveOperation(ctx, store, materializationFromEnsureRow(materialization), workspaceOperationKindCreatePty, workspaceOperationResourcePty, row.ID, request, lease); err != nil {
 			return db.WorkspacePtySession{}, false, err
 		}
 	}
@@ -608,65 +608,11 @@ func workspacePtyResponse(row db.WorkspacePtySession) api.WorkspacePtyResponse {
 }
 
 func workspacePtyFromClosedRow(row db.MarkWorkspacePtyClosedRow) db.WorkspacePtySession {
-	return db.WorkspacePtySession{
-		ID:                   row.ID,
-		OrgID:                row.OrgID,
-		ProjectID:            row.ProjectID,
-		EnvironmentID:        row.EnvironmentID,
-		WorkspaceID:          row.WorkspaceID,
-		MaterializationID:    row.MaterializationID,
-		InstanceLeaseID:      row.InstanceLeaseID,
-		WriteLeaseID:         row.WriteLeaseID,
-		Cwd:                  row.Cwd,
-		Cols:                 row.Cols,
-		Rows:                 row.Rows,
-		ResizeCols:           row.ResizeCols,
-		ResizeRows:           row.ResizeRows,
-		FilesystemMode:       row.FilesystemMode,
-		State:                row.State,
-		ProcessID:            row.ProcessID,
-		OutputCursor:         row.OutputCursor,
-		InputCursor:          row.InputCursor,
-		InputDeliveredCursor: row.InputDeliveredCursor,
-		CreatedBySubjectType: row.CreatedBySubjectType,
-		CreatedBySubjectID:   row.CreatedBySubjectID,
-		CreatedAt:            row.CreatedAt,
-		StartedAt:            row.StartedAt,
-		ClosedAt:             row.ClosedAt,
-		UpdatedAt:            row.UpdatedAt,
-		Error:                row.Error,
-	}
+	return db.WorkspacePtySession(row)
 }
 
 func workspacePtyFromFailedRow(row db.MarkWorkspacePtyFailedRow) db.WorkspacePtySession {
-	return db.WorkspacePtySession{
-		ID:                   row.ID,
-		OrgID:                row.OrgID,
-		ProjectID:            row.ProjectID,
-		EnvironmentID:        row.EnvironmentID,
-		WorkspaceID:          row.WorkspaceID,
-		MaterializationID:    row.MaterializationID,
-		InstanceLeaseID:      row.InstanceLeaseID,
-		WriteLeaseID:         row.WriteLeaseID,
-		Cwd:                  row.Cwd,
-		Cols:                 row.Cols,
-		Rows:                 row.Rows,
-		ResizeCols:           row.ResizeCols,
-		ResizeRows:           row.ResizeRows,
-		FilesystemMode:       row.FilesystemMode,
-		State:                row.State,
-		ProcessID:            row.ProcessID,
-		OutputCursor:         row.OutputCursor,
-		InputCursor:          row.InputCursor,
-		InputDeliveredCursor: row.InputDeliveredCursor,
-		CreatedBySubjectType: row.CreatedBySubjectType,
-		CreatedBySubjectID:   row.CreatedBySubjectID,
-		CreatedAt:            row.CreatedAt,
-		StartedAt:            row.StartedAt,
-		ClosedAt:             row.ClosedAt,
-		UpdatedAt:            row.UpdatedAt,
-		Error:                row.Error,
-	}
+	return db.WorkspacePtySession(row)
 }
 
 func workspacePtyStreamChunkResponse(row db.WorkspacePtyStreamChunk) api.WorkspacePtyStreamChunkResponse {

@@ -388,7 +388,7 @@ func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.A
 		if err != nil {
 			return db.WorkspaceExec{}, false, err
 		}
-		if _, err := requestWorkspacePrimitiveOperation(ctx, store, materializationFromEnsureRow(materialization), workspaceOperationKindStartExec, workspaceOperationResourceExec, row.ID, request, lease, 0); err != nil {
+		if err := requestWorkspacePrimitiveOperation(ctx, store, materializationFromEnsureRow(materialization), workspaceOperationKindStartExec, workspaceOperationResourceExec, row.ID, request, lease); err != nil {
 			return db.WorkspaceExec{}, false, err
 		}
 	}
@@ -587,39 +587,7 @@ func workspaceExecResponse(row db.WorkspaceExec) api.WorkspaceExecResponse {
 }
 
 func workspaceExecFromExitedRow(row db.MarkWorkspaceExecExitedRow) db.WorkspaceExec {
-	return db.WorkspaceExec{
-		ID:                   row.ID,
-		OrgID:                row.OrgID,
-		ProjectID:            row.ProjectID,
-		EnvironmentID:        row.EnvironmentID,
-		WorkspaceID:          row.WorkspaceID,
-		MaterializationID:    row.MaterializationID,
-		InstanceLeaseID:      row.InstanceLeaseID,
-		WriteLeaseID:         row.WriteLeaseID,
-		Command:              row.Command,
-		Cwd:                  row.Cwd,
-		EnvShape:             row.EnvShape,
-		FilesystemMode:       row.FilesystemMode,
-		State:                row.State,
-		Detached:             row.Detached,
-		IdempotencyKey:       row.IdempotencyKey,
-		RequestFingerprint:   row.RequestFingerprint,
-		ProcessID:            row.ProcessID,
-		ExitCode:             row.ExitCode,
-		Signal:               row.Signal,
-		Error:                row.Error,
-		StdoutCursor:         row.StdoutCursor,
-		StderrCursor:         row.StderrCursor,
-		StdinCursor:          row.StdinCursor,
-		StdinDeliveredCursor: row.StdinDeliveredCursor,
-		StdinClosedAt:        row.StdinClosedAt,
-		CreatedBySubjectType: row.CreatedBySubjectType,
-		CreatedBySubjectID:   row.CreatedBySubjectID,
-		CreatedAt:            row.CreatedAt,
-		StartedAt:            row.StartedAt,
-		ExitedAt:             row.ExitedAt,
-		UpdatedAt:            row.UpdatedAt,
-	}
+	return db.WorkspaceExec(row)
 }
 
 func workspaceExecStreamChunkResponse(row db.WorkspaceExecStreamChunk) api.WorkspaceExecStreamChunkResponse {

@@ -3,7 +3,6 @@ package control
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -535,11 +534,4 @@ func normalizeWorkerWorkspaceExecTerminalState(raw string) (db.WorkspaceExecStat
 	default:
 		return "", errors.New("exec terminal state must be exited or failed")
 	}
-}
-
-func normalizedWorkerError(raw json.RawMessage) []byte {
-	if len(raw) == 0 {
-		return []byte(`{}`)
-	}
-	return raw
 }

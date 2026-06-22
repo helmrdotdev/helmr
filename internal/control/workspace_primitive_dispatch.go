@@ -67,7 +67,7 @@ func enqueuePendingWorkspacePrimitiveOperations(ctx context.Context, store db.Qu
 		if err != nil {
 			return err
 		}
-		if _, err := requestWorkspacePrimitiveOperation(ctx, store, materialization, workspaceOperationKindStartExec, workspaceOperationResourceExec, exec.ID, request, lease, 0); err != nil {
+		if err := requestWorkspacePrimitiveOperation(ctx, store, materialization, workspaceOperationKindStartExec, workspaceOperationResourceExec, exec.ID, request, lease); err != nil {
 			return err
 		}
 	}
@@ -91,7 +91,7 @@ func enqueuePendingWorkspacePrimitiveOperations(ctx context.Context, store db.Qu
 		if err != nil {
 			return err
 		}
-		if _, err := requestWorkspacePrimitiveOperation(ctx, store, materialization, workspaceOperationKindCreatePty, workspaceOperationResourcePty, pty.ID, request, lease, 0); err != nil {
+		if err := requestWorkspacePrimitiveOperation(ctx, store, materialization, workspaceOperationKindCreatePty, workspaceOperationResourcePty, pty.ID, request, lease); err != nil {
 			return err
 		}
 	}
@@ -160,19 +160,19 @@ func materializationFromEnsureRow(row db.EnsureWorkspaceMaterializationRequested
 	}
 }
 
-func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, materialization db.WorkspaceMaterialization, operationKind db.WorkspaceMaterializationOperationKind, resourceKind db.WorkspaceResourceKind, resourceID pgtype.UUID, request []byte, lease workspacePrimitiveOperationLease, priority int32) (db.WorkspaceMaterializationOperation, error) {
+func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, materialization db.WorkspaceMaterialization, operationKind db.WorkspaceMaterializationOperationKind, resourceKind db.WorkspaceResourceKind, resourceID pgtype.UUID, request []byte, lease workspacePrimitiveOperationLease) error {
 	fingerprint, err := workspace.OperationFingerprint(operationKind, request)
 	if err != nil {
-		return db.WorkspaceMaterializationOperation{}, err
+		return err
 	}
-	row, err := store.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+	_, err = store.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
 		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OperationKind:      operationKind,
 		ResourceKind:       resourceKind,
 		ResourceID:         resourceID,
 		RequestFingerprint: fingerprint,
 		OperationExpiresAt: pgvalue.Timestamptz(time.Now().Add(workspacePrimitiveOperationTTL)),
-		Priority:           priority,
+		Priority:           0,
 		InstanceLeaseID:    pgtype.UUID{},
 		WriteLeaseID:       lease.writeLeaseID,
 		FencingToken:       lease.fencingToken,
@@ -184,10 +184,10 @@ func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, m
 		MaterializationID:  materialization.ID,
 	})
 	if err == nil {
-		return row, nil
+		return nil
 	}
 	if !isUniqueViolation(err) {
-		return db.WorkspaceMaterializationOperation{}, err
+		return err
 	}
 	existing, getErr := store.GetActiveWorkspaceMaterializationOperationByResource(ctx, db.GetActiveWorkspaceMaterializationOperationByResourceParams{
 		OrgID:             materialization.OrgID,
@@ -200,12 +200,12 @@ func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, m
 		ResourceID:        resourceID,
 	})
 	if getErr != nil {
-		return db.WorkspaceMaterializationOperation{}, getErr
+		return getErr
 	}
 	if existing.RequestFingerprint != fingerprint {
-		return db.WorkspaceMaterializationOperation{}, conflict(errors.New("active workspace primitive dispatch fingerprint mismatch"))
+		return conflict(errors.New("active workspace primitive dispatch fingerprint mismatch"))
 	}
-	return existing, nil
+	return nil
 }
 
 func ensureWorkspacePrimitiveWriterAvailable(ctx context.Context, store db.Querier, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workspaceID pgtype.UUID) error {
@@ -371,22 +371,7 @@ func requestWorkspacePrimitiveControlOperation(ctx context.Context, store db.Que
 	if err != nil {
 		return err
 	}
-	_, err = requestWorkspacePrimitiveOperation(ctx, store, materialization, operationKind, target.resourceKind, target.resourceID, request, lease, 0)
-	return err
-}
-
-func requestWorkspaceExecControlOperation(ctx context.Context, store db.Querier, row db.WorkspaceExec, operationKind db.WorkspaceMaterializationOperationKind, request []byte) error {
-	target := workspacePrimitiveControlTarget{
-		name:              "workspace exec",
-		scope:             workspacePrimitiveScopeForExec(row),
-		materializationID: row.MaterializationID,
-		resourceKind:      workspaceOperationResourceExec,
-		resourceID:        row.ID,
-	}
-	return requestWorkspacePrimitiveControlOperation(ctx, store, target, operationKind, request, func(ctx context.Context, store db.Querier, materialization db.WorkspaceMaterialization) (workspacePrimitiveOperationLease, error) {
-		_, lease, err := ensureWorkspaceExecWriteLease(ctx, store, materialization, row)
-		return lease, err
-	})
+	return requestWorkspacePrimitiveOperation(ctx, store, materialization, operationKind, target.resourceKind, target.resourceID, request, lease)
 }
 
 func requestWorkspacePtyControlOperation(ctx context.Context, store db.Querier, row db.WorkspacePtySession, operationKind db.WorkspaceMaterializationOperationKind, request []byte) error {
