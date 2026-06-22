@@ -4424,6 +4424,27 @@ var TASK_START_PENDING_DEFAULT_RETRY_MS = 250;
 var startTaskClientMethod = Symbol.for("helmr.sdk.client.startTask");
 var waitpointTokenClientMethod = Symbol.for("helmr.sdk.client.waitpointToken");
 
+class WorkspaceStreamTerminalError extends Error {
+  terminal;
+  constructor(terminal) {
+    super(`workspace stream terminal: ${terminal.state}`);
+    this.name = "WorkspaceStreamTerminalError";
+    this.terminal = terminal;
+  }
+}
+
+class WorkspaceStreamError extends Error {
+  code;
+  cursor;
+  constructor(code, message, cursor) {
+    super(message ?? code);
+    this.name = "WorkspaceStreamError";
+    this.code = code;
+    if (cursor !== undefined)
+      this.cursor = cursor;
+  }
+}
+
 class HelmrClient {
   #baseUrl;
   #apiKey;
@@ -4487,7 +4508,7 @@ class HelmrClient {
       return await this.#openSession(sessionId(idOrHandle)).wait(opts);
     },
     list: async (opts = {}) => {
-      const response = await this.#json(`/api/sessions${taskSessionListQuery(opts)}`, requestSignal(opts.signal));
+      const response = await this.#json(`${taskSessionCollectionPath(opts)}${taskSessionListQuery(opts)}`, requestSignal(opts.signal));
       return response.sessions.map(taskSessionFromResponse);
     }
   };
@@ -4522,6 +4543,9 @@ class HelmrClient {
     },
     connect: async (idOrHandle, opts = {}) => {
       return await this.#openWorkspace(workspaceId(idOrHandle)).connect(opts);
+    },
+    stop: async (idOrHandle, opts = {}) => {
+      return await this.#openWorkspace(workspaceId(idOrHandle)).stop(opts);
     }
   };
   waitpoints = {
@@ -4613,9 +4637,10 @@ class HelmrClient {
   async#startTask(taskId, payload, opts, maxDurationSeconds) {
     validateRetryPolicy(opts.retry, "retry");
     const body = taskStartBody(payload, opts, maxDurationSeconds);
+    const path = taskStartPath(taskId, opts, "start");
     const startedAt = Date.now();
     for (;; ) {
-      const response = await this.#fetch(`/api/tasks/${encodeURIComponent(taskId)}/start`, {
+      const response = await this.#fetch(path, {
         method: "POST",
         body: JSON.stringify(body),
         headers: { "content-type": "application/json" },
@@ -4642,9 +4667,10 @@ class HelmrClient {
       ...taskStartBody(payload, opts, maxDurationSeconds),
       ...opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }
     };
+    const path = taskStartPath(taskId, opts, "start-and-wait");
     const startedAt = Date.now();
     for (;; ) {
-      const response = await this.#fetch(`/api/tasks/${encodeURIComponent(taskId)}/start-and-wait`, {
+      const response = await this.#fetch(path, {
         method: "POST",
         body: JSON.stringify(body),
         headers: { "content-type": "application/json" },
@@ -4667,6 +4693,30 @@ class HelmrClient {
   #openWorkspace(id) {
     return {
       id,
+      exec: async (command, opts = {}) => {
+        return await this.#createWorkspaceExec(id, command, opts);
+      },
+      execs: {
+        retrieve: (execId) => {
+          return this.#openWorkspaceExec(id, execId);
+        },
+        list: async (opts = {}) => {
+          const response = await this.#json(`${workspaceResourcePath(id, opts)}/execs${workspacePrimitiveListQuery(opts)}`, requestSignal(opts.signal));
+          return response.execs.map(workspaceExecFromResponse);
+        }
+      },
+      pty: {
+        create: async (opts = {}) => {
+          return await this.#createWorkspacePty(id, opts);
+        },
+        retrieve: (ptyId) => {
+          return this.#openWorkspacePty(id, ptyId);
+        },
+        list: async (opts = {}) => {
+          const response = await this.#json(`${workspaceResourcePath(id, opts)}/pty${workspacePrimitiveListQuery(opts)}`, requestSignal(opts.signal));
+          return response.ptys.map(workspacePtyFromResponse);
+        }
+      },
       retrieve: async (opts = {}) => {
         const response = await this.#json(workspaceResourcePath(id, opts), requestSignal(opts.signal));
         return workspaceFromResponse(response.workspace);
@@ -4704,18 +4754,195 @@ class HelmrClient {
           ...requestSignal(opts.signal)
         });
         return workspaceMaterializationFromResponse(response);
+      },
+      stop: async (opts = {}) => {
+        const response = await this.#json(`${workspaceResourcePath(id, opts)}/stop`, {
+          method: "POST",
+          body: JSON.stringify(workspaceStopBody(opts)),
+          headers: { "content-type": "application/json" },
+          ...requestSignal(opts.signal)
+        });
+        return workspaceStopFromResponse(response);
       }
     };
+  }
+  async#createWorkspaceExec(id, command, opts) {
+    const response = await this.#json(`${workspaceResourcePath(id, opts)}/execs`, {
+      method: "POST",
+      body: JSON.stringify(workspaceExecCreateBody(command, opts)),
+      headers: { "content-type": "application/json" },
+      ...requestSignal(opts.signal)
+    });
+    return this.#openWorkspaceExec(id, response.exec.id);
+  }
+  #openWorkspaceExec(workspaceId, execId) {
+    const client = this;
+    return {
+      id: execId,
+      workspaceId,
+      retrieve: async (opts = {}) => {
+        const response = await client.#json(`${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}`, requestSignal(opts.signal));
+        return workspaceExecFromResponse(response.exec);
+      },
+      stdout: client.#workspaceExecReadableStreamApi(workspaceId, execId, "stdout"),
+      stderr: client.#workspaceExecReadableStreamApi(workspaceId, execId, "stderr"),
+      stdin: {
+        write: async (data, opts) => {
+          const response = await client.#json(`${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}/stdin`, {
+            method: "POST",
+            body: JSON.stringify(workspaceStreamWriteBody(data, opts)),
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal)
+          });
+          return workspaceStreamChunkFromResponse(response);
+        },
+        close: async (opts = {}) => {
+          const response = await client.#json(`${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}/stdin/close`, {
+            method: "POST",
+            body: "{}",
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal)
+          });
+          return workspaceExecFromResponse(response.exec);
+        }
+      },
+      wait: async (opts = {}) => {
+        return await client.#waitWorkspaceExec(workspaceId, execId, opts);
+      }
+    };
+  }
+  async#waitWorkspaceExec(workspaceId, execId, opts) {
+    const pollIntervalMs = opts.pollIntervalMs ?? 250;
+    for (;; ) {
+      const response = await this.#json(`${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}`, requestSignal(opts.signal));
+      const exec = workspaceExecFromResponse(response.exec);
+      if (workspaceExecTerminal(exec.state))
+        return exec;
+      await delay(pollIntervalMs, opts.signal);
+    }
+  }
+  async#createWorkspacePty(id, opts) {
+    const response = await this.#json(`${workspaceResourcePath(id, opts)}/pty`, {
+      method: "POST",
+      body: JSON.stringify(workspacePtyCreateBody(opts)),
+      headers: { "content-type": "application/json" },
+      ...requestSignal(opts.signal)
+    });
+    return this.#openWorkspacePty(id, response.pty.id);
+  }
+  #openWorkspacePty(workspaceId, ptyId) {
+    const client = this;
+    return {
+      id: ptyId,
+      workspaceId,
+      retrieve: async (opts = {}) => {
+        const response = await client.#json(`${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}`, requestSignal(opts.signal));
+        return workspacePtyFromResponse(response.pty);
+      },
+      output: client.#workspacePtyOutputApi(workspaceId, ptyId),
+      input: async (data, opts) => {
+        const response = await client.#json(`${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/input`, {
+          method: "POST",
+          body: JSON.stringify(workspaceStreamWriteBody(data, opts)),
+          headers: { "content-type": "application/json" },
+          ...requestSignal(opts.signal)
+        });
+        return workspaceStreamChunkFromResponse(response);
+      },
+      resize: async (cols, rows, opts = {}) => {
+        const response = await client.#json(`${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/resize`, {
+          method: "POST",
+          body: JSON.stringify({ cols, rows }),
+          headers: { "content-type": "application/json" },
+          ...requestSignal(opts.signal)
+        });
+        return workspacePtyFromResponse(response.pty);
+      },
+      close: async (opts = {}) => {
+        return await client.#requestWorkspacePtyClose(workspaceId, ptyId, opts);
+      }
+    };
+  }
+  async#requestWorkspacePtyClose(workspaceId, ptyId, opts) {
+    const response = await this.#json(`${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/close`, {
+      method: "POST",
+      body: "{}",
+      headers: { "content-type": "application/json" },
+      ...requestSignal(opts.signal)
+    });
+    return workspacePtyFromResponse(response.pty);
+  }
+  #workspaceExecReadableStreamApi(workspaceId, execId, stream) {
+    return {
+      list: async (opts = {}) => {
+        const response = await this.#json(`${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}/${stream}${workspaceStreamListQuery(opts)}`, requestSignal(opts.signal));
+        return response.chunks.map(workspaceStreamChunkFromResponse);
+      },
+      stream: (opts = {}) => this.#streamWorkspaceReadable(`${workspaceResourcePath(workspaceId, opts)}/execs/${encodeURIComponent(execId)}/${stream}`, opts)
+    };
+  }
+  #workspacePtyOutputApi(workspaceId, ptyId) {
+    return {
+      list: async (opts = {}) => {
+        const response = await this.#json(`${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/output${workspaceStreamListQuery(opts)}`, requestSignal(opts.signal));
+        return response.chunks.map(workspaceStreamChunkFromResponse);
+      },
+      stream: (opts = {}) => this.#streamWorkspaceReadable(`${workspaceResourcePath(workspaceId, opts)}/pty/${encodeURIComponent(ptyId)}/output`, opts)
+    };
+  }
+  async* #streamWorkspaceReadable(path, opts) {
+    let cursor = opts.fromCursor;
+    for (;; ) {
+      try {
+        let terminal = false;
+        for await (const event of this.#streamWorkspaceReadableOnce(path, { cursor, limit: opts.limit, signal: opts.signal })) {
+          if (event.kind === "chunk") {
+            cursor = event.chunk.offsetEnd;
+            yield event.chunk;
+            continue;
+          }
+          if (event.kind === "terminal") {
+            terminal = true;
+            if (event.terminal.state === "lost" || event.terminal.state === "failed") {
+              throw new WorkspaceStreamTerminalError(event.terminal);
+            }
+            break;
+          }
+        }
+        if (terminal) {
+          return;
+        }
+      } catch (error) {
+        throwIfAborted(opts.signal);
+        if (workspaceStreamErrorIsFatal(error)) {
+          throw error;
+        }
+      }
+      await delay(RUN_EVENT_RECONNECT_DELAY_MS, opts.signal);
+    }
+  }
+  async* #streamWorkspaceReadableOnce(path, opts) {
+    const query = new URLSearchParams;
+    query.set("follow", "1");
+    if (opts.cursor !== undefined)
+      query.set("cursor", String(opts.cursor));
+    if (opts.limit !== undefined)
+      query.set("limit", String(opts.limit));
+    const response = await this.#fetch(`${path}?${query}`, {
+      headers: { accept: "text/event-stream" },
+      ...requestSignal(opts.signal)
+    });
+    yield* parseWorkspaceStreamSse(response);
   }
   #openSession(id) {
     return {
       id,
       retrieve: async (opts = {}) => {
-        const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}`, requestSignal(opts.signal));
+        const response = await this.#json(taskSessionResourcePath(id, opts, ""), requestSignal(opts.signal));
         return taskSessionFromResponse(response);
       },
       wait: async (opts = {}) => {
-        const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}/wait`, {
+        const response = await this.#json(taskSessionResourcePath(id, opts, "/wait"), {
           method: "POST",
           body: JSON.stringify(taskSessionWaitBody(opts)),
           headers: { "content-type": "application/json" },
@@ -4724,7 +4951,7 @@ class HelmrClient {
         return taskSessionFromResponse(response);
       },
       close: async (opts = {}) => {
-        const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}/close`, {
+        const response = await this.#json(taskSessionResourcePath(id, opts, "/close"), {
           method: "POST",
           body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
           headers: { "content-type": "application/json" },
@@ -4733,7 +4960,7 @@ class HelmrClient {
         return taskSessionFromResponse(response);
       },
       cancel: async (opts = {}) => {
-        const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}/cancel`, {
+        const response = await this.#json(taskSessionResourcePath(id, opts, "/cancel"), {
           method: "POST",
           body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
           headers: { "content-type": "application/json" },
@@ -4742,14 +4969,14 @@ class HelmrClient {
         return taskSessionFromResponse(response);
       },
       runs: async (opts = {}) => {
-        const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}/runs`, requestSignal(opts.signal));
+        const response = await this.#json(taskSessionResourcePath(id, opts, "/runs"), requestSignal(opts.signal));
         return response.runs.map(taskSessionRunFromResponse);
       },
       input: (channelInput) => {
         const channel = validateChannelName(channelInput);
         return {
           send: async (data, opts = {}) => {
-            const response = await this.#json(`/api/sessions/${encodeURIComponent(id)}/channels/${encodeURIComponent(channel)}/inputs`, {
+            const response = await this.#json(taskSessionResourcePath(id, opts, `/channels/${encodeURIComponent(channel)}/inputs`), {
               method: "POST",
               body: JSON.stringify(channelInputAppendBody(data, opts)),
               headers: { "content-type": "application/json" },
@@ -4776,7 +5003,7 @@ class HelmrClient {
     };
   }
   async#listSessionChannelRecords(sessionID, channel, direction, opts) {
-    const response = await this.#json(`/api/sessions/${encodeURIComponent(sessionID)}/channels/${encodeURIComponent(channel)}/${direction}${sessionChannelQuery(opts)}`, requestSignal(opts.signal));
+    const response = await this.#json(`${taskSessionResourcePath(sessionID, opts, `/channels/${encodeURIComponent(channel)}/${direction}`)}${sessionChannelQuery(opts)}`, requestSignal(opts.signal));
     return response.records.map(channelRecordFromResponse);
   }
   async#streamSessionChannelOutputs(sessionID, channel, opts) {
@@ -4785,7 +5012,7 @@ class HelmrClient {
       let cursor = opts.cursor;
       for (;; ) {
         try {
-          const response = await client.#fetch(`/api/sessions/${encodeURIComponent(sessionID)}/channels/${encodeURIComponent(channel)}/outputs/stream${sessionChannelStreamQuery(opts, cursor)}`, {
+          const response = await client.#fetch(`${taskSessionResourcePath(sessionID, opts, `/channels/${encodeURIComponent(channel)}/outputs/stream`)}${sessionChannelStreamQuery(opts, cursor)}`, {
             headers: { accept: "text/event-stream" },
             ...requestSignal(opts.signal)
           });
@@ -4800,7 +5027,7 @@ class HelmrClient {
           }
         }
         try {
-          const session = await client.sessions.retrieve(sessionID, retrieveOptions(opts.signal));
+          const session = await client.sessions.retrieve(sessionID, taskSessionRetrieveOptions(opts, opts.signal));
           if (taskSessionTerminal(session.status)) {
             return;
           }
@@ -4817,15 +5044,16 @@ class HelmrClient {
   }
   runs = {
     retrieve: async (idOrHandle, opts = {}) => {
-      const response = await this.#json(`/api/runs/${encodeURIComponent(runId(idOrHandle))}`, requestSignal(opts.signal));
+      const response = await this.#json(runResourcePath(runId(idOrHandle), opts, ""), requestSignal(opts.signal));
       return runResponseToSnapshot(response);
     },
     wait: async (idOrHandle, opts = {}) => {
       const id = runId(idOrHandle);
       const timeoutMs = opts.timeoutMs;
       const wait = waitSignal(opts.signal, timeoutMs, () => new TimeoutError(`run ${id} did not finish within ${timeoutMs}ms`));
+      const scopedRetrieveOptions = runRetrieveOptions(opts, wait.signal);
       try {
-        let run = await this.#retrieveRunSnapshotWithRetry(id, wait.signal, RUN_EVENT_RECONNECT_DELAY_MS);
+        let run = await this.#retrieveRunSnapshotWithRetry(id, scopedRetrieveOptions, RUN_EVENT_RECONNECT_DELAY_MS);
         if (isTerminalRunStatus(run.status)) {
           return run;
         }
@@ -4834,7 +5062,7 @@ class HelmrClient {
           throwIfAborted(wait.signal);
           let terminalEventSeen = false;
           try {
-            for await (const event of this.#streamEventRecordsOnce(id, { cursor, signal: wait.signal })) {
+            for await (const event of this.#streamEventRecordsOnce(id, runEventOptions(scopedRetrieveOptions, cursor))) {
               cursor = nextRunEventCursor(cursor, event);
               if (runEventRecordIsTerminal(event)) {
                 terminalEventSeen = true;
@@ -4850,10 +5078,10 @@ class HelmrClient {
             }
           }
           if (terminalEventSeen) {
-            return await this.#waitForTerminalSnapshot(id, wait.signal);
+            return await this.#waitForTerminalSnapshot(id, scopedRetrieveOptions);
           }
           try {
-            run = await this.runs.retrieve(id, retrieveOptions(wait.signal));
+            run = await this.runs.retrieve(id, scopedRetrieveOptions);
           } catch (error) {
             throwIfAborted(wait.signal);
             if (runSnapshotErrorIsFatal(error)) {
@@ -4872,7 +5100,7 @@ class HelmrClient {
       }
     },
     cancel: async (idOrHandle, opts = {}) => {
-      const response = await this.#json(`/api/runs/${encodeURIComponent(runId(idOrHandle))}/cancel`, {
+      const response = await this.#json(runResourcePath(runId(idOrHandle), opts, "/cancel"), {
         method: "POST",
         body: JSON.stringify(cancelRunBody(opts)),
         headers: { "content-type": "application/json" },
@@ -4887,13 +5115,13 @@ class HelmrClient {
       if (opts.limit !== undefined)
         query.set("limit", String(opts.limit));
       const suffix = query.size === 0 ? "" : `?${query}`;
-      const response = await this.#json(`/api/runs${suffix}`, requestSignal(opts.signal));
+      const response = await this.#json(`${runCollectionPath(opts)}${suffix}`, requestSignal(opts.signal));
       return response.runs.map((run) => runResponseToSnapshot(run));
     },
     waitpoints: {
       listPage: async (idOrHandle, opts = {}) => {
         const id = runId(idOrHandle);
-        const response = await this.#json(`/api/runs/${encodeURIComponent(id)}/waitpoints${runWaitpointListQuery(opts)}`, requestSignal(opts.signal));
+        const response = await this.#json(`${runResourcePath(id, opts, "/waitpoints")}${runWaitpointListQuery(opts)}`, requestSignal(opts.signal));
         return {
           waitpoints: response.waitpoints.map((request) => pendingWaitpointFromResponse(id, request)).filter((request) => request !== null),
           nextCursor: response.next_cursor ?? null
@@ -4905,7 +5133,7 @@ class HelmrClient {
     },
     logs: {
       retrieve: async (idOrHandle, opts = {}) => {
-        return await this.#retrieveLogs(runId(idOrHandle), opts.signal);
+        return await this.#retrieveLogs(runId(idOrHandle), opts);
       }
     },
     events: {
@@ -4961,8 +5189,8 @@ class HelmrClient {
       });
     }
   };
-  async#retrieveLogs(id, signal) {
-    const response = await this.#json(`/api/runs/${encodeURIComponent(id)}/logs`, requestSignal(signal));
+  async#retrieveLogs(id, opts = {}) {
+    const response = await this.#json(runResourcePath(id, opts, "/logs"), requestSignal(opts.signal));
     return {
       stdout: decodeBase64Text(response.stdout_base64),
       stderr: decodeBase64Text(response.stderr_base64),
@@ -4980,7 +5208,7 @@ class HelmrClient {
       if (opts.pageSize !== undefined)
         query.set("limit", String(opts.pageSize));
       const suffix = query.size === 0 ? "" : `?${query}`;
-      const page = await this.#json(`/api/runs/${encodeURIComponent(id)}/events${suffix}`, requestSignal(opts.signal));
+      const page = await this.#json(`${runResourcePath(id, opts, "/events")}${suffix}`, requestSignal(opts.signal));
       events.push(...page.events);
       if (page.next_cursor === undefined || page.next_cursor === null) {
         break;
@@ -4995,7 +5223,7 @@ class HelmrClient {
       for (;; ) {
         let checkSnapshot = false;
         try {
-          for await (const record of client.#streamEventRecordsOnce(id, { cursor, signal: opts.signal })) {
+          for await (const record of client.#streamEventRecordsOnce(id, runEventOptions(opts, cursor))) {
             cursor = nextRunEventCursor(cursor, record);
             const terminal = runEventRecordIsTerminal(record);
             const event = runEventRecordToRunEvent(record);
@@ -5018,9 +5246,9 @@ class HelmrClient {
         }
         if (checkSnapshot) {
           try {
-            const run = await client.runs.retrieve(id, retrieveOptions(opts.signal));
+            const run = await client.runs.retrieve(id, runRetrieveOptions(opts, opts.signal));
             if (isTerminalRunStatus(run.status)) {
-              for await (const record of client.#listEventRecordsAfter(id, cursor, opts.signal)) {
+              for await (const record of client.#listEventRecordsAfter(id, cursor, opts)) {
                 cursor = nextRunEventCursor(cursor, record);
                 const terminal = runEventRecordIsTerminal(record);
                 const event = runEventRecordToRunEvent(record);
@@ -5050,20 +5278,20 @@ class HelmrClient {
     query.set("follow", "1");
     if (opts.cursor !== undefined)
       query.set("cursor", String(opts.cursor));
-    const response = await this.#fetch(`/api/runs/${encodeURIComponent(id)}/events?${query}`, {
+    const response = await this.#fetch(`${runResourcePath(id, opts, "/events")}?${query}`, {
       headers: { accept: "text/event-stream" },
       ...requestSignal(opts.signal)
     });
     yield* parseSse(response);
   }
-  async* #listEventRecordsAfter(id, cursor, signal) {
+  async* #listEventRecordsAfter(id, cursor, opts) {
     let nextCursor = cursor;
     for (;; ) {
       const query = new URLSearchParams;
       if (nextCursor !== undefined)
         query.set("cursor", String(nextCursor));
       const suffix = query.size === 0 ? "" : `?${query}`;
-      const page = await this.#json(`/api/runs/${encodeURIComponent(id)}/events${suffix}`, requestSignal(signal));
+      const page = await this.#json(`${runResourcePath(id, opts, "/events")}${suffix}`, requestSignal(opts.signal));
       for (const event of page.events) {
         yield event;
       }
@@ -5076,27 +5304,27 @@ class HelmrClient {
       nextCursor = page.next_cursor;
     }
   }
-  async#waitForTerminalSnapshot(id, signal) {
+  async#waitForTerminalSnapshot(id, opts) {
     let retryDelayMs = RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS;
     for (;; ) {
-      const run = await this.#retrieveRunSnapshotWithRetry(id, signal, retryDelayMs);
+      const run = await this.#retrieveRunSnapshotWithRetry(id, opts, retryDelayMs);
       if (isTerminalRunStatus(run.status)) {
         return run;
       }
-      await delay(retryDelayMs, signal);
+      await delay(retryDelayMs, opts.signal);
       retryDelayMs = Math.min(retryDelayMs * 2, RUN_EVENT_RECONNECT_DELAY_MS);
     }
   }
-  async#retrieveRunSnapshotWithRetry(id, signal, retryDelayMs) {
+  async#retrieveRunSnapshotWithRetry(id, opts, retryDelayMs) {
     for (;; ) {
       try {
-        return await this.runs.retrieve(id, retrieveOptions(signal));
+        return await this.runs.retrieve(id, opts);
       } catch (error) {
-        throwIfAborted(signal);
+        throwIfAborted(opts.signal);
         if (runSnapshotErrorIsFatal(error)) {
           throw error;
         }
-        await delay(retryDelayMs, signal);
+        await delay(retryDelayMs, opts.signal);
       }
     }
   }
@@ -5254,12 +5482,20 @@ function taskStartBody(payload, opts, maxDurationSeconds) {
     ...taskStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL)
   };
   return {
-    ...opts.projectId === undefined ? {} : { project_id: opts.projectId },
-    ...opts.environmentId === undefined ? {} : { environment_id: opts.environmentId },
     ...payload === undefined ? {} : { payload },
     ...opts.externalId === undefined ? {} : { external_id: opts.externalId },
     ...Object.keys(runOptions).length === 0 ? {} : { options: runOptions }
   };
+}
+function taskStartPath(taskId, opts, operation) {
+  const encodedTaskId = encodeURIComponent(taskId);
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    if (opts.projectId === undefined || opts.environmentId === undefined) {
+      throw new Error("projectId and environmentId must be provided together");
+    }
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/tasks/${encodedTaskId}/${operation}`;
+  }
+  return `/api/tasks/${encodedTaskId}/${operation}`;
 }
 function taskSessionWaitBody(opts) {
   return {
@@ -5275,10 +5511,6 @@ function channelInputAppendBody(data, opts) {
 }
 function taskSessionListQuery(opts) {
   const query = new URLSearchParams;
-  if (opts.projectId !== undefined)
-    query.set("project_id", opts.projectId);
-  if (opts.environmentId !== undefined)
-    query.set("environment_id", opts.environmentId);
   if (opts.status !== undefined)
     query.set("status", opts.status);
   if (opts.taskId !== undefined)
@@ -5286,6 +5518,52 @@ function taskSessionListQuery(opts) {
   if (opts.limit !== undefined)
     query.set("limit", String(opts.limit));
   return query.size === 0 ? "" : `?${query}`;
+}
+function taskSessionCollectionPath(opts) {
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    if (opts.projectId === undefined || opts.environmentId === undefined) {
+      throw new Error("projectId and environmentId must be provided together");
+    }
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/sessions`;
+  }
+  return "/api/sessions";
+}
+function taskSessionResourcePath(id, opts, suffix) {
+  return `${taskSessionCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`;
+}
+function taskSessionRetrieveOptions(opts, signal) {
+  return {
+    ...opts.projectId === undefined ? {} : { projectId: opts.projectId },
+    ...opts.environmentId === undefined ? {} : { environmentId: opts.environmentId },
+    ...signal === undefined ? {} : { signal }
+  };
+}
+function runCollectionPath(opts) {
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    if (opts.projectId === undefined || opts.environmentId === undefined) {
+      throw new Error("projectId and environmentId must be provided together");
+    }
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/runs`;
+  }
+  return "/api/runs";
+}
+function runResourcePath(id, opts, suffix) {
+  return `${runCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`;
+}
+function runRetrieveOptions(opts, signal) {
+  return {
+    ...opts.projectId === undefined ? {} : { projectId: opts.projectId },
+    ...opts.environmentId === undefined ? {} : { environmentId: opts.environmentId },
+    ...signal === undefined ? {} : { signal }
+  };
+}
+function runEventOptions(opts, cursor) {
+  return {
+    ...opts.projectId === undefined ? {} : { projectId: opts.projectId },
+    ...opts.environmentId === undefined ? {} : { environmentId: opts.environmentId },
+    ...opts.signal === undefined ? {} : { signal: opts.signal },
+    ...cursor === undefined ? {} : { cursor }
+  };
 }
 function sessionChannelQuery(opts) {
   const query = new URLSearchParams;
@@ -5385,8 +5663,6 @@ function workspaceResourcePath(id, opts) {
 }
 function workspaceCreateBody(opts) {
   return {
-    ...opts.projectId === undefined ? {} : { project_id: opts.projectId },
-    ...opts.environmentId === undefined ? {} : { environment_id: opts.environmentId },
     sandbox_id: opts.sandboxId,
     ...opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId },
     ...opts.externalId === undefined ? {} : { external_id: opts.externalId },
@@ -5403,23 +5679,67 @@ function workspaceUpdateBody(opts) {
   };
 }
 function workspaceMaterializeBody(opts) {
+  return {};
+}
+function workspaceStopBody(opts) {
   return {
-    ...opts.projectId === undefined ? {} : { project_id: opts.projectId },
-    ...opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }
+    ...opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey },
+    ...opts.idempotencyKeyTTL === undefined ? {} : { idempotency_key_ttl: opts.idempotencyKeyTTL }
+  };
+}
+function workspaceExecCreateBody(command, opts) {
+  if (command.length === 0) {
+    throw new Error("workspace.exec command must not be empty");
+  }
+  return {
+    command: [...command],
+    ...opts.cwd === undefined ? {} : { cwd: opts.cwd },
+    ...opts.env === undefined ? {} : { env: opts.env },
+    ...opts.detached === undefined ? {} : { detached: opts.detached },
+    ...opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }
+  };
+}
+function workspacePtyCreateBody(opts) {
+  return {
+    ...opts.cwd === undefined ? {} : { cwd: opts.cwd },
+    ...opts.cols === undefined ? {} : { cols: opts.cols },
+    ...opts.rows === undefined ? {} : { rows: opts.rows },
+    ...opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }
+  };
+}
+function workspaceStreamWriteBody(data, opts) {
+  if (opts.offset < 0 || !Number.isSafeInteger(opts.offset)) {
+    throw new Error("workspace stream offset must be a non-negative integer");
+  }
+  return {
+    offset: opts.offset,
+    data: base64Encode2(data)
   };
 }
 function workspaceListQuery(opts) {
   const query = new URLSearchParams;
-  if (opts.projectId !== undefined)
-    query.set("project_id", opts.projectId);
-  if (opts.environmentId !== undefined)
-    query.set("environment_id", opts.environmentId);
   if (opts.state !== undefined)
     query.set("state", opts.state);
   if (opts.externalId !== undefined)
     query.set("external_id", opts.externalId);
   if (opts.tag !== undefined)
     query.set("tag", opts.tag);
+  if (opts.limit !== undefined)
+    query.set("limit", String(opts.limit));
+  return query.size === 0 ? "" : `?${query}`;
+}
+function workspacePrimitiveListQuery(opts) {
+  const query = new URLSearchParams;
+  if (opts.state !== undefined)
+    query.set("state", opts.state);
+  if (opts.limit !== undefined)
+    query.set("limit", String(opts.limit));
+  return query.size === 0 ? "" : `?${query}`;
+}
+function workspaceStreamListQuery(opts) {
+  const query = new URLSearchParams;
+  if (opts.cursor !== undefined)
+    query.set("cursor", String(opts.cursor));
   if (opts.limit !== undefined)
     query.set("limit", String(opts.limit));
   return query.size === 0 ? "" : `?${query}`;
@@ -5467,6 +5787,88 @@ function workspaceMaterializationFromResponse(response) {
     createdAt: response.created_at,
     updatedAt: response.updated_at
   };
+}
+function workspaceStopFromResponse(response) {
+  return {
+    workspaceId: response.workspace_id,
+    state: response.state,
+    materialization: response.materialization == null ? null : workspaceMaterializationFromResponse(response.materialization)
+  };
+}
+function workspaceExecFromResponse(response) {
+  return {
+    id: response.id,
+    workspaceId: response.workspace_id,
+    materializationId: response.materialization_id ?? null,
+    command: response.command,
+    cwd: response.cwd,
+    envShape: response.env_shape ?? {},
+    filesystemMode: workspaceFilesystemModeFromResponse(response.filesystem_mode),
+    state: response.state,
+    detached: response.detached,
+    processId: response.process_id ?? null,
+    exitCode: response.exit_code ?? null,
+    signal: response.signal ?? null,
+    error: response.error ?? {},
+    stdoutCursor: response.stdout_cursor,
+    stderrCursor: response.stderr_cursor,
+    stdinCursor: response.stdin_cursor,
+    stdinClosedAt: response.stdin_closed_at ?? null,
+    createdAt: response.created_at,
+    startedAt: response.started_at ?? null,
+    exitedAt: response.exited_at ?? null,
+    updatedAt: response.updated_at
+  };
+}
+function workspacePtyFromResponse(response) {
+  return {
+    id: response.id,
+    workspaceId: response.workspace_id,
+    materializationId: response.materialization_id ?? null,
+    cwd: response.cwd,
+    cols: response.cols,
+    rows: response.rows,
+    filesystemMode: workspaceFilesystemModeFromResponse(response.filesystem_mode),
+    state: response.state,
+    processId: response.process_id ?? null,
+    outputCursor: response.output_cursor,
+    inputCursor: response.input_cursor,
+    error: response.error ?? {},
+    createdAt: response.created_at,
+    startedAt: response.started_at ?? null,
+    closedAt: response.closed_at ?? null,
+    updatedAt: response.updated_at
+  };
+}
+function workspaceStreamChunkFromResponse(response) {
+  return {
+    id: response.id,
+    stream: response.stream,
+    offsetStart: response.offset_start,
+    offsetEnd: response.offset_end,
+    data: base64Decode2(response.data),
+    observedAt: response.observed_at,
+    createdAt: response.created_at
+  };
+}
+function workspaceStreamTerminalFromResponse(response) {
+  return {
+    resourceKind: response.resource_kind,
+    resourceId: response.resource_id,
+    stream: response.stream,
+    state: response.state,
+    cursor: response.cursor,
+    error: response.error ?? null
+  };
+}
+function workspaceFilesystemModeFromResponse(value) {
+  if (value === "write") {
+    return "write";
+  }
+  throw new Error(`unsupported workspace filesystem mode ${JSON.stringify(value)}`);
+}
+function workspaceExecTerminal(state) {
+  return state === "exited" || state === "terminated" || state === "lost" || state === "failed";
 }
 function scheduleFromResponse(response) {
   return {
@@ -5548,11 +5950,30 @@ function waitpointTokenPublicAccessToken(target) {
   }
   return target.publicAccessToken;
 }
-function retrieveOptions(signal) {
-  return signal === undefined ? {} : { signal };
-}
 function requestSignal(signal) {
   return signal === undefined ? {} : { signal };
+}
+function base64Encode2(data) {
+  const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(bytes).toString("base64");
+  }
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+function base64Decode2(data) {
+  if (typeof Buffer !== "undefined") {
+    return new Uint8Array(Buffer.from(data, "base64"));
+  }
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0;index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 function waitSignal(signal, timeoutMs, timeoutError) {
   if (timeoutMs === undefined) {
@@ -5699,6 +6120,46 @@ async function* parseSse(response) {
     reader.releaseLock();
   }
 }
+async function* parseWorkspaceStreamSse(response) {
+  const reader = response.body?.getReader();
+  if (reader === undefined) {
+    return;
+  }
+  const decoder = new TextDecoder;
+  let buffer = "";
+  try {
+    for (;; ) {
+      const { value, done } = await reader.read();
+      if (done) {
+        buffer += decoder.decode();
+        const finalEvent = parseWorkspaceStreamSseFrame(buffer);
+        if (finalEvent !== undefined) {
+          yield finalEvent;
+        }
+        return;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      let boundary = findSseBoundary(buffer);
+      while (boundary !== -1) {
+        const delimiter = buffer.startsWith(`\r
+\r
+`, boundary) ? 4 : 2;
+        const raw = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + delimiter);
+        const event = parseWorkspaceStreamSseFrame(raw);
+        if (event !== undefined) {
+          yield event;
+        }
+        boundary = findSseBoundary(buffer);
+      }
+      if (buffer.length > MAX_SSE_BUFFER_CHARS) {
+        throw new SseFrameTooLargeError;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
 async function* parseChannelRecordSse(response) {
   const reader = response.body?.getReader();
   if (reader === undefined) {
@@ -5738,6 +6199,31 @@ async function* parseChannelRecordSse(response) {
   } finally {
     reader.releaseLock();
   }
+}
+function parseWorkspaceStreamSseFrame(raw) {
+  const data = raw.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join(`
+`);
+  if (data === "") {
+    return;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    throw new SseProtocolError("SSE workspace stream data must be valid JSON", sseFrameCursor(raw));
+  }
+  const event = sseFrameEvent(raw);
+  if (event === "workspace_stream_chunk") {
+    return { kind: "chunk", chunk: workspaceStreamChunkFromResponse(parsed) };
+  }
+  if (event === "workspace_stream_terminal" || event === "workspace_stream_lost") {
+    return { kind: "terminal", terminal: workspaceStreamTerminalFromResponse(parsed) };
+  }
+  if (event === "workspace_stream_error") {
+    const record = parsed;
+    throw new WorkspaceStreamError(record.code, record.message, record.cursor);
+  }
+  throw new SseProtocolError(`unsupported workspace stream SSE event ${event}`, sseFrameCursor(raw));
 }
 function parseChannelRecordSseFrame(raw) {
   const data = raw.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join(`
@@ -5802,6 +6288,15 @@ function sseFrameCursor(raw) {
   }
   return;
 }
+function sseFrameEvent(raw) {
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.startsWith("event:")) {
+      continue;
+    }
+    return line.slice(6).trim();
+  }
+  return "message";
+}
 function findSseBoundary(buffer) {
   const lf = buffer.indexOf(`
 
@@ -5842,6 +6337,30 @@ function runEventKindIsTerminal(kind) {
   return kind === "run.completed" || kind === "run.failed" || kind === "run.cancelled" || kind === "run.expired";
 }
 function runEventStreamErrorIsFatal(error) {
+  if (error instanceof AuthError) {
+    return true;
+  }
+  if (error instanceof HelmrApiError) {
+    return helmrApiErrorIsFatal(error);
+  }
+  if (error instanceof SyntaxError) {
+    return true;
+  }
+  if (error instanceof SseFrameTooLargeError) {
+    return true;
+  }
+  if (error instanceof SseProtocolError) {
+    return true;
+  }
+  return !transportErrorIsRetryable(error);
+}
+function workspaceStreamErrorIsFatal(error) {
+  if (error instanceof WorkspaceStreamError) {
+    return true;
+  }
+  if (error instanceof WorkspaceStreamTerminalError) {
+    return true;
+  }
   if (error instanceof AuthError) {
     return true;
   }
