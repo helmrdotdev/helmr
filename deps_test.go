@@ -38,7 +38,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"compute":            {"sha256sum"},
 		"config":             {"auth"},
 		"console":            {},
-		"control":            {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "pgvalue", "publicaccess", "schedule", "secret", "sha256sum", "stablejson", "tracing", "waitpoint", "workspace", "workspace/protocol"},
+		"control":            {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "pgvalue", "publicaccess", "schedule", "secret", "sha256sum", "stablejson", "tracing", "waitpoint", "workspace"},
 		"db":                 {},
 		"db/dbtest":          {},
 		"db/schema":          {},
@@ -67,7 +67,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"sqs":                {},
 		"waitpoint":          {"auth"},
 		"worker":             {"api", "client", "compute"},
-		"workspace":          {"archive", "safepath"},
+		"workspace":          {"archive", "db", "pgvalue", "safepath", "workspace/protocol"},
 		"workspace/protocol": {"stablejson"},
 	}
 	normalizeGraph(expected)

@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 func workspaceStreamFollowRequested(r *http.Request) bool {
@@ -78,7 +79,7 @@ func (s *Server) followWorkspaceExecStream(w http.ResponseWriter, r *http.Reques
 			WorkspaceID:   exec.WorkspaceID,
 			ID:            exec.ID,
 		})
-		if err == nil && workspaceExecStateTerminal(current.State) {
+		if err == nil && workspace.ExecStateTerminal(current.State) {
 			if err := s.drainWorkspaceExecTerminal(ctx, w, flusher, encoder, current, stream, cursor, limit); err != nil {
 				s.log.Debug("write workspace exec terminal stream failed", "exec_id", pgvalue.MustUUIDValue(exec.ID).String(), "stream", string(stream), "error", err)
 			}
@@ -201,7 +202,7 @@ func (s *Server) followWorkspacePtyOutput(w http.ResponseWriter, r *http.Request
 			WorkspaceID:   pty.WorkspaceID,
 			ID:            pty.ID,
 		})
-		if err == nil && workspacePtyStateTerminal(current.State) {
+		if err == nil && workspace.PtyStateTerminal(current.State) {
 			if err := s.drainWorkspacePtyTerminal(ctx, w, flusher, encoder, current, cursor, limit); err != nil {
 				s.log.Debug("write workspace pty terminal stream failed", "pty_id", pgvalue.MustUUIDValue(pty.ID).String(), "error", err)
 			}

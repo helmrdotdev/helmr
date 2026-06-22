@@ -2,14 +2,13 @@ package control
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -64,7 +63,7 @@ func enqueuePendingWorkspacePrimitiveOperations(ctx context.Context, store db.Qu
 		if err != nil {
 			return err
 		}
-		request, err := workspaceExecStartOperationRequest(exec)
+		request, err := workspace.ExecStartOperationRequest(exec)
 		if err != nil {
 			return err
 		}
@@ -88,7 +87,7 @@ func enqueuePendingWorkspacePrimitiveOperations(ctx context.Context, store db.Qu
 		if err != nil {
 			return err
 		}
-		request, err := workspacePtyCreateOperationRequest(pty)
+		request, err := workspace.PtyCreateOperationRequest(pty)
 		if err != nil {
 			return err
 		}
@@ -162,7 +161,7 @@ func materializationFromEnsureRow(row db.EnsureWorkspaceMaterializationRequested
 }
 
 func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, materialization db.WorkspaceMaterialization, operationKind db.WorkspaceMaterializationOperationKind, resourceKind db.WorkspaceResourceKind, resourceID pgtype.UUID, request []byte, lease workspacePrimitiveOperationLease, priority int32) (db.WorkspaceMaterializationOperation, error) {
-	fingerprint, err := workspacePrimitiveOperationFingerprint(operationKind, request)
+	fingerprint, err := workspace.OperationFingerprint(operationKind, request)
 	if err != nil {
 		return db.WorkspaceMaterializationOperation{}, err
 	}
@@ -402,69 +401,4 @@ func requestWorkspacePtyControlOperation(ctx context.Context, store db.Querier, 
 		_, lease, err := ensureWorkspacePtyWriteLease(ctx, store, materialization, row)
 		return lease, err
 	})
-}
-
-func workspaceExecStartOperationRequest(row db.WorkspaceExec) ([]byte, error) {
-	return json.Marshal(struct {
-		ExecID         string          `json:"exec_id"`
-		Command        json.RawMessage `json:"command"`
-		Cwd            string          `json:"cwd"`
-		EnvShape       json.RawMessage `json:"env_shape"`
-		FilesystemMode string          `json:"filesystem_mode"`
-		Detached       bool            `json:"detached"`
-	}{
-		ExecID:         pgvalue.MustUUIDValue(row.ID).String(),
-		Command:        json.RawMessage(row.Command),
-		Cwd:            row.Cwd,
-		EnvShape:       json.RawMessage(row.EnvShape),
-		FilesystemMode: string(row.FilesystemMode),
-		Detached:       row.Detached,
-	})
-}
-
-func workspacePtyCreateOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
-	return json.Marshal(struct {
-		PtyID          string `json:"pty_id"`
-		Cwd            string `json:"cwd"`
-		Cols           int32  `json:"cols"`
-		Rows           int32  `json:"rows"`
-		FilesystemMode string `json:"filesystem_mode"`
-	}{
-		PtyID:          pgvalue.MustUUIDValue(row.ID).String(),
-		Cwd:            row.Cwd,
-		Cols:           row.Cols,
-		Rows:           row.Rows,
-		FilesystemMode: string(row.FilesystemMode),
-	})
-}
-
-func workspacePtyResizeOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
-	if !row.ResizeCols.Valid || !row.ResizeRows.Valid {
-		return nil, errors.New("workspace pty resize target is required")
-	}
-	return json.Marshal(struct {
-		PtyID string `json:"pty_id"`
-		Cols  int32  `json:"cols"`
-		Rows  int32  `json:"rows"`
-	}{
-		PtyID: pgvalue.MustUUIDValue(row.ID).String(),
-		Cols:  row.ResizeCols.Int32,
-		Rows:  row.ResizeRows.Int32,
-	})
-}
-
-func workspacePtyCloseOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
-	return json.Marshal(struct {
-		PtyID string `json:"pty_id"`
-	}{
-		PtyID: pgvalue.MustUUIDValue(row.ID).String(),
-	})
-}
-
-func workspacePrimitiveOperationFingerprint(operationKind db.WorkspaceMaterializationOperationKind, request []byte) (string, error) {
-	guestVerb, err := workspaceOperationGuestVerb(operationKind)
-	if err != nil {
-		return "", err
-	}
-	return protocol.RequestFingerprint(guestVerb, request)
 }

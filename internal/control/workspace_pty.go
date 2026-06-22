@@ -16,7 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -33,7 +33,7 @@ var (
 )
 
 func (s *Server) createWorkspacePty(w http.ResponseWriter, r *http.Request) {
-	workspace, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionPtyCreate)
+	ws, ok := s.loadWorkspaceForRequest(w, r, auth.PermissionPtyCreate)
 	if !ok {
 		return
 	}
@@ -43,23 +43,23 @@ func (s *Server) createWorkspacePty(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid workspace pty request JSON: %w", err)))
 		return
 	}
-	cwd, err := normalizeWorkspaceExecCwd(request.Cwd)
+	cwd, err := workspace.NormalizeExecCwd(request.Cwd)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	cols, rows, err := normalizeWorkspacePtySize(request.Cols, request.Rows)
+	cols, rows, err := workspace.NormalizePtySize(request.Cols, request.Rows)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	filesystemMode := db.WorkspaceFilesystemModeWrite
-	fingerprint, err := workspacePtyCreateFingerprint(cwd, cols, rows, filesystemMode)
+	fingerprint, err := workspace.PtyCreateFingerprint(cwd, cols, rows, filesystemMode)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	row, cached, err := s.createWorkspacePtyForRequest(r.Context(), actor, workspace, cwd, cols, rows, filesystemMode, strings.TrimSpace(request.IdempotencyKey), fingerprint)
+	row, cached, err := s.createWorkspacePtyForRequest(r.Context(), actor, ws, cwd, cols, rows, filesystemMode, strings.TrimSpace(request.IdempotencyKey), fingerprint)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "create workspace pty", err)
 		return
@@ -209,7 +209,7 @@ func (s *Server) resizeWorkspacePty(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid workspace pty resize request JSON: %w", err)))
 		return
 	}
-	cols, rows, err := normalizeWorkspacePtySize(request.Cols, request.Rows)
+	cols, rows, err := workspace.NormalizePtySize(request.Cols, request.Rows)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -264,7 +264,7 @@ func (s *Server) requestWorkspacePtyResize(ctx context.Context, pty db.Workspace
 	if err != nil {
 		return db.WorkspacePtySession{}, err
 	}
-	request, err := workspacePtyResizeOperationRequest(row)
+	request, err := workspace.PtyResizeOperationRequest(row)
 	if err != nil {
 		return db.WorkspacePtySession{}, err
 	}
@@ -300,7 +300,7 @@ func (s *Server) requestWorkspacePtyCloseOperation(ctx context.Context, pty db.W
 	if err != nil {
 		return db.WorkspacePtySession{}, err
 	}
-	request, err := workspacePtyCloseOperationRequest(row)
+	request, err := workspace.PtyCloseOperationRequest(row)
 	if err != nil {
 		return db.WorkspacePtySession{}, err
 	}
@@ -313,7 +313,7 @@ func (s *Server) requestWorkspacePtyCloseOperation(ctx context.Context, pty db.W
 	return row, nil
 }
 
-func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Actor, workspace db.Workspace, cwd string, cols int32, rows int32, filesystemMode db.WorkspaceFilesystemMode, idempotencyKey string, fingerprint string) (db.WorkspacePtySession, bool, error) {
+func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Actor, ws db.Workspace, cwd string, cols int32, rows int32, filesystemMode db.WorkspaceFilesystemMode, idempotencyKey string, fingerprint string) (db.WorkspacePtySession, bool, error) {
 	if s.tx == nil {
 		return db.WorkspacePtySession{}, false, errors.New("transactional workspace storage is not configured")
 	}
@@ -327,9 +327,9 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 		idempotency, err := ensureWorkspaceOperationIdempotency(ctx, store, db.EnsureWorkspaceOperationIdempotencyParams{
 			ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                pgvalue.UUID(actor.OrgID),
-			ProjectID:            workspace.ProjectID,
-			EnvironmentID:        workspace.EnvironmentID,
-			WorkspaceID:          workspace.ID,
+			ProjectID:            ws.ProjectID,
+			EnvironmentID:        ws.EnvironmentID,
+			WorkspaceID:          ws.ID,
 			OperationKind:        workspacePtyCreateOperationKind,
 			IdempotencyKey:       idempotencyKey,
 			RequestFingerprint:   fingerprint,
@@ -350,15 +350,15 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 			}
 			row, getPtyErr := s.db.GetWorkspacePtySession(ctx, db.GetWorkspacePtySessionParams{
 				OrgID:         pgvalue.UUID(actor.OrgID),
-				ProjectID:     workspace.ProjectID,
-				EnvironmentID: workspace.EnvironmentID,
-				WorkspaceID:   workspace.ID,
+				ProjectID:     ws.ProjectID,
+				EnvironmentID: ws.EnvironmentID,
+				WorkspaceID:   ws.ID,
 				ID:            idempotency.ResponseResourceID,
 			})
 			return row, true, getPtyErr
 		}
 	}
-	if err := ensureWorkspacePrimitiveWriterAvailable(ctx, store, pgvalue.UUID(actor.OrgID), workspace.ProjectID, workspace.EnvironmentID, workspace.ID); err != nil {
+	if err := ensureWorkspacePrimitiveWriterAvailable(ctx, store, pgvalue.UUID(actor.OrgID), ws.ProjectID, ws.EnvironmentID, ws.ID); err != nil {
 		return db.WorkspacePtySession{}, false, err
 	}
 	row, err := store.CreateWorkspacePtySession(ctx, db.CreateWorkspacePtySessionParams{
@@ -371,9 +371,9 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 		CreatedBySubjectType: string(actor.Kind),
 		CreatedBySubjectID:   actorSubjectID(actor),
 		OrgID:                pgvalue.UUID(actor.OrgID),
-		ProjectID:            workspace.ProjectID,
-		EnvironmentID:        workspace.EnvironmentID,
-		WorkspaceID:          workspace.ID,
+		ProjectID:            ws.ProjectID,
+		EnvironmentID:        ws.EnvironmentID,
+		WorkspaceID:          ws.ID,
 	})
 	if err != nil {
 		return db.WorkspacePtySession{}, false, err
@@ -381,9 +381,9 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 	materialization, err := store.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     workspace.ProjectID,
-		EnvironmentID: workspace.EnvironmentID,
-		WorkspaceID:   workspace.ID,
+		ProjectID:     ws.ProjectID,
+		EnvironmentID: ws.EnvironmentID,
+		WorkspaceID:   ws.ID,
 		Priority:      0,
 		Request:       []byte(`{"reason":"workspace_pty"}`),
 	})
@@ -396,9 +396,9 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 		WriteLeaseID:      pgtype.UUID{},
 		State:             db.WorkspacePtyStateCreating,
 		OrgID:             pgvalue.UUID(actor.OrgID),
-		ProjectID:         workspace.ProjectID,
-		EnvironmentID:     workspace.EnvironmentID,
-		WorkspaceID:       workspace.ID,
+		ProjectID:         ws.ProjectID,
+		EnvironmentID:     ws.EnvironmentID,
+		WorkspaceID:       ws.ID,
 		ID:                row.ID,
 	})
 	if err != nil {
@@ -410,7 +410,7 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 		if err != nil {
 			return db.WorkspacePtySession{}, false, err
 		}
-		request, err := workspacePtyCreateOperationRequest(row)
+		request, err := workspace.PtyCreateOperationRequest(row)
 		if err != nil {
 			return db.WorkspacePtySession{}, false, err
 		}
@@ -421,10 +421,10 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 	if idempotencyKey != "" {
 		_, err = store.CompleteWorkspaceScopedOperationIdempotency(ctx, db.CompleteWorkspaceScopedOperationIdempotencyParams{
 			OrgID:                pgvalue.UUID(actor.OrgID),
-			ProjectID:            workspace.ProjectID,
-			EnvironmentID:        workspace.EnvironmentID,
+			ProjectID:            ws.ProjectID,
+			EnvironmentID:        ws.EnvironmentID,
 			OperationKind:        workspacePtyCreateOperationKind,
-			WorkspaceID:          workspace.ID,
+			WorkspaceID:          ws.ID,
 			IdempotencyKey:       idempotencyKey,
 			RequestFingerprint:   fingerprint,
 			ResponseResourceType: "workspace_pty",
@@ -470,13 +470,13 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 	if err != nil {
 		return db.WorkspacePtyStreamChunk{}, err
 	}
-	if workspacePtyStateTerminal(locked.State) {
+	if workspace.PtyStateTerminal(locked.State) {
 		return db.WorkspacePtyStreamChunk{}, conflict(errWorkspacePtyTerminal)
 	}
 	if stream == db.WorkspacePtyStreamInput && locked.State != db.WorkspacePtyStateOpen && locked.State != db.WorkspacePtyStateResizing {
 		return db.WorkspacePtyStreamChunk{}, conflict(errWorkspacePtyNotOpen)
 	}
-	want := workspacePtyStreamCursor(locked, stream)
+	want := workspace.PtyStreamCursor(locked, stream)
 	if offset != want {
 		existing, getErr := store.GetWorkspacePtyStreamChunkAtOffset(ctx, db.GetWorkspacePtyStreamChunkAtOffsetParams{
 			OrgID:         pty.OrgID,
@@ -499,8 +499,8 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 			Stream:        stream,
 			OffsetStart:   offset,
 		})
-		if receiptErr == nil && receipt.OffsetEnd == offset+int64(len(data)) && receipt.DataSize == int32(len(data)) && bytes.Equal(receipt.DataSha256, workspaceStreamDataSHA256(data)) {
-			return workspacePtyChunkFromReceipt(receipt, data), nil
+		if receiptErr == nil && receipt.OffsetEnd == offset+int64(len(data)) && receipt.DataSize == int32(len(data)) && bytes.Equal(receipt.DataSha256, workspace.StreamDataSHA256(data)) {
+			return workspace.PtyChunkFromReceipt(receipt, data), nil
 		}
 		return db.WorkspacePtyStreamChunk{}, conflict(errWorkspaceStreamOffsetConflict)
 	}
@@ -538,36 +538,6 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 		return db.WorkspacePtyStreamChunk{}, err
 	}
 	return chunk, nil
-}
-
-func workspacePtyChunkFromReceipt(receipt db.WorkspacePtyStreamChunkReceipt, data []byte) db.WorkspacePtyStreamChunk {
-	return db.WorkspacePtyStreamChunk{
-		ID:            receipt.ID,
-		OrgID:         receipt.OrgID,
-		ProjectID:     receipt.ProjectID,
-		EnvironmentID: receipt.EnvironmentID,
-		WorkspaceID:   receipt.WorkspaceID,
-		PtySessionID:  receipt.PtySessionID,
-		Stream:        receipt.Stream,
-		OffsetStart:   receipt.OffsetStart,
-		OffsetEnd:     receipt.OffsetEnd,
-		Data:          data,
-		ObservedAt:    receipt.ObservedAt,
-		CreatedAt:     receipt.CreatedAt,
-	}
-}
-
-func workspacePtyCreateFingerprint(cwd string, cols int32, rows int32, filesystemMode db.WorkspaceFilesystemMode) (string, error) {
-	payload, err := json.Marshal(struct {
-		Cwd  string `json:"cwd"`
-		Cols int32  `json:"cols"`
-		Rows int32  `json:"rows"`
-		Mode string `json:"filesystem_mode"`
-	}{Cwd: cwd, Cols: cols, Rows: rows, Mode: string(filesystemMode)})
-	if err != nil {
-		return "", fmt.Errorf("encode workspace pty fingerprint payload: %w", err)
-	}
-	return protocol.RequestFingerprint(string(workspacePtyCreateOperationKind), payload)
 }
 
 func (s *Server) ensureWorkspacePtyCursorAvailable(ctx context.Context, pty db.WorkspacePtySession, stream db.WorkspacePtyStream, cursor int64) error {
@@ -708,38 +678,5 @@ func workspacePtyStreamChunkResponse(row db.WorkspacePtyStreamChunk) api.Workspa
 		Data:        row.Data,
 		ObservedAt:  pgvalue.Time(row.ObservedAt),
 		CreatedAt:   pgvalue.Time(row.CreatedAt),
-	}
-}
-
-func normalizeWorkspacePtySize(cols int32, rows int32) (int32, int32, error) {
-	if cols <= 0 {
-		cols = 80
-	}
-	if rows <= 0 {
-		rows = 24
-	}
-	if cols > 500 || rows > 500 {
-		return 0, 0, errors.New("pty size must be at most 500x500")
-	}
-	return cols, rows, nil
-}
-
-func workspacePtyStateTerminal(state db.WorkspacePtyState) bool {
-	switch state {
-	case db.WorkspacePtyStateClosed, db.WorkspacePtyStateLost, db.WorkspacePtyStateFailed:
-		return true
-	default:
-		return false
-	}
-}
-
-func workspacePtyStreamCursor(row db.LockWorkspacePtyForStreamAppendRow, stream db.WorkspacePtyStream) int64 {
-	switch stream {
-	case db.WorkspacePtyStreamInput:
-		return row.InputCursor
-	case db.WorkspacePtyStreamOutput:
-		return row.OutputCursor
-	default:
-		return -1
 	}
 }

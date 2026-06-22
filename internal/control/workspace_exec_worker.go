@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -50,7 +51,7 @@ func (s *Server) workerMarkWorkspaceExecStarted(w http.ResponseWriter, r *http.R
 				WorkspaceID:   materialization.WorkspaceID,
 				ID:            execID,
 			})
-			if getErr == nil && workerPrimitiveMaterializationMatches(existing.MaterializationID, materialization.ID) && workspaceExecStateTerminal(existing.State) {
+			if getErr == nil && workerPrimitiveMaterializationMatches(existing.MaterializationID, materialization.ID) && workspace.ExecStateTerminal(existing.State) {
 				writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(existing)})
 				return
 			}
@@ -201,7 +202,7 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 		writeError(w, conflict(errWorkspaceStreamOffsetConflict))
 		return
 	}
-	deliveredDigest := workspaceStreamDataSHA256(deliveredChunk.Data)
+	deliveredDigest := workspace.StreamDataSHA256(deliveredChunk.Data)
 	if _, err := store.InsertWorkspaceExecStreamChunkReceipt(r.Context(), db.InsertWorkspaceExecStreamChunkReceiptParams{
 		OrgID:         materialization.OrgID,
 		ProjectID:     materialization.ProjectID,
@@ -431,7 +432,7 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 	if err != nil {
 		return db.WorkspaceExecStreamChunk{}, err
 	}
-	tail := workspaceExecStreamCursor(locked, stream)
+	tail := workspace.ExecStreamCursor(locked, stream)
 	offset := *requestedOffset
 	if offset != tail {
 		existing, getErr := store.GetWorkspaceExecStreamChunkAtOffset(ctx, db.GetWorkspaceExecStreamChunkAtOffsetParams{
@@ -492,7 +493,7 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 	if err != nil {
 		return db.WorkspaceExecStreamChunk{}, err
 	}
-	retainAfter := workspaceExecStreamCursorFromRow(row, stream) - workspaceStreamRetainedMaxBytes
+	retainAfter := workspace.ExecStreamCursorFromRow(row, stream) - workspaceStreamRetainedMaxBytes
 	if retainAfter > 0 {
 		if err := store.DeleteWorkspaceExecStreamChunksBefore(ctx, db.DeleteWorkspaceExecStreamChunksBeforeParams{
 			OrgID:             exec.OrgID,
@@ -533,17 +534,6 @@ func normalizeWorkerWorkspaceExecTerminalState(raw string) (db.WorkspaceExecStat
 		return db.WorkspaceExecStateFailed, nil
 	default:
 		return "", errors.New("exec terminal state must be exited or failed")
-	}
-}
-
-func workspaceExecStreamCursorFromRow(row db.WorkspaceExec, stream db.WorkspaceExecStream) int64 {
-	switch stream {
-	case db.WorkspaceExecStreamStdout:
-		return row.StdoutCursor
-	case db.WorkspaceExecStreamStderr:
-		return row.StderrCursor
-	default:
-		return 0
 	}
 }
 

@@ -9,13 +9,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestWorkspacePrimitiveOperationFingerprintMatchesGuestdContract(t *testing.T) {
 	request := []byte(`{"exec_id":"exec-1","command":["echo","ok"]}`)
-	got, err := workspacePrimitiveOperationFingerprint(workspaceOperationKindStartExec, request)
+	got, err := workspace.OperationFingerprint(workspaceOperationKindStartExec, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +30,7 @@ func TestWorkspacePrimitiveOperationFingerprintMatchesGuestdContract(t *testing.
 }
 
 func TestWorkspacePrimitiveOperationFingerprintIgnoresJSONRepresentation(t *testing.T) {
-	created, err := workspacePrimitiveOperationFingerprint(workspaceOperationKindStartExec, []byte(`{"exec_id":"exec-1","command":["echo","ok"],"detached":false}`))
+	created, err := workspace.OperationFingerprint(workspaceOperationKindStartExec, []byte(`{"exec_id":"exec-1","command":["echo","ok"],"detached":false}`))
 	if err != nil {
 		t.Fatal(err)
 	}

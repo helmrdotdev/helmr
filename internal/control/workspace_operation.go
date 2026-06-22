@@ -13,7 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -241,7 +241,7 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 	switch operation.OperationKind {
 	case workspaceOperationKindStartExec:
 		if operation.ResourceKind != workspaceOperationResourceExec {
-			return fmt.Errorf("StartExec operation resource_kind = %q, want %q", workspaceOperationResourceKindString(operation.ResourceKind), workspaceOperationResourceExec)
+			return fmt.Errorf("StartExec operation resource_kind = %q, want %q", workspace.ResourceKindString(operation.ResourceKind), workspaceOperationResourceExec)
 		}
 		_, err := store.MarkWorkspaceExecExited(ctx, db.MarkWorkspaceExecExitedParams{
 			State:             db.WorkspaceExecStateFailed,
@@ -261,7 +261,7 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 		return err
 	case workspaceOperationKindCreatePty:
 		if operation.ResourceKind != workspaceOperationResourcePty {
-			return fmt.Errorf("CreatePty operation resource_kind = %q, want %q", workspaceOperationResourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
+			return fmt.Errorf("CreatePty operation resource_kind = %q, want %q", workspace.ResourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
 		}
 		_, err := store.MarkWorkspacePtyFailed(ctx, db.MarkWorkspacePtyFailedParams{
 			Error:             failure,
@@ -278,11 +278,11 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 		return err
 	case workspaceOperationKindResizePty, workspaceOperationKindClosePty:
 		if operation.ResourceKind != workspaceOperationResourcePty {
-			operationKind, err := workspaceOperationGuestVerb(operation.OperationKind)
+			operationKind, err := workspace.OperationGuestVerb(operation.OperationKind)
 			if err != nil {
 				return err
 			}
-			return fmt.Errorf("%s operation resource_kind = %q, want %q", operationKind, workspaceOperationResourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
+			return fmt.Errorf("%s operation resource_kind = %q, want %q", operationKind, workspace.ResourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
 		}
 		cols, rows, err := workspacePtyControlRollbackTarget(operation)
 		if err != nil {
@@ -385,7 +385,7 @@ func workerWorkspaceOperationResponse(row db.WorkspaceMaterializationOperation) 
 		WorkspaceOperationResponse: workspaceOperationResponse(row),
 		ClaimToken:                 row.ClaimToken,
 	}
-	operationKind, err := workspaceOperationGuestVerb(row.OperationKind)
+	operationKind, err := workspace.OperationGuestVerb(row.OperationKind)
 	if err != nil {
 		return api.WorkerWorkspaceOperation{}, err
 	}
@@ -397,14 +397,6 @@ func workerWorkspaceOperationResponse(row db.WorkspaceMaterializationOperation) 
 	return response, nil
 }
 
-func workspaceOperationGuestVerb(operationKind db.WorkspaceMaterializationOperationKind) (string, error) {
-	return protocol.GuestVerb(string(operationKind))
-}
-
-func workspaceOperationResourceKindString(kind db.WorkspaceResourceKind) string {
-	return string(kind)
-}
-
 func workspaceOperationResponse(row db.WorkspaceMaterializationOperation) api.WorkspaceOperationResponse {
 	response := api.WorkspaceOperationResponse{
 		ID:                 pgvalue.MustUUIDValue(row.ID).String(),
@@ -414,7 +406,7 @@ func workspaceOperationResponse(row db.WorkspaceMaterializationOperation) api.Wo
 		WorkspaceID:        pgvalue.MustUUIDValue(row.WorkspaceID).String(),
 		MaterializationID:  pgvalue.MustUUIDValue(row.MaterializationID).String(),
 		OperationKind:      string(row.OperationKind),
-		ResourceKind:       workspaceOperationResourceKindString(row.ResourceKind),
+		ResourceKind:       workspace.ResourceKindString(row.ResourceKind),
 		RequestFingerprint: row.RequestFingerprint,
 		OperationExpiresAt: row.OperationExpiresAt.Time,
 		State:              string(row.State),
