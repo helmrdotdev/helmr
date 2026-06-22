@@ -1,6 +1,6 @@
 ---
 title: Run tasks
-description: Start a deployed task with payloads and secrets.
+description: Start a deployed task with payloads, secrets, and an attached workspace.
 section: Guides
 sidebarLabel: Run tasks
 order: 320
@@ -8,7 +8,8 @@ order: 320
 
 # Run tasks
 
-Remote runs execute a deployed task with an empty writable workspace.
+Remote task starts execute a deployed task in an attached workspace. If no
+workspace is supplied, Helmr creates one from the task's deployed sandbox.
 
 ```sh
 helmr run hello
@@ -35,7 +36,8 @@ helmr run cli-tooling \
   --payload pattern="export const"
 ```
 
-Tasks that need secrets receive them through declarations in the task source. Runs only provide payload:
+Tasks that need secrets receive them through declarations in the task source.
+Task starts provide payload and workspace attachment, not secret values:
 
 ```sh
 helmr run use-secret

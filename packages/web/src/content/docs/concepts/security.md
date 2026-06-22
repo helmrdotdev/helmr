@@ -12,7 +12,11 @@ Helmr is designed around explicit runtime boundaries: your control plane, your w
 
 ## Isolation
 
-Workers execute task code in Firecracker-backed Linux guests. A run receives an empty writable workspace, deployment task source, task-declared secrets, and a bounded duration. Worker capabilities include runtime architecture, kernel and rootfs digests, CNI profile, vCPU, memory, and execution slots.
+Workers execute task code and direct workspace operations in
+Firecracker-backed Linux guests. A run receives an attached writable workspace,
+deployment task source, task-declared secrets, and a bounded duration. Worker
+capabilities include runtime architecture, kernel and rootfs digests, CNI
+profile, vCPU, memory, and execution slots.
 
 ## Credentials
 
@@ -26,7 +30,11 @@ Run payload is audit data. Helmr persists it in plaintext in the database, run e
 
 ## Workspaces
 
-Runs receive an empty writable workspace. If a task needs a repository or external data, pass the reference in payload and a scoped credential as a task secret so the task can fetch it inside the guest.
+Workspaces are durable project-environment objects. A task run attaches to a
+workspace; if none is supplied, Helmr creates one from the task's deployed
+sandbox. If a task needs a repository or external data, pass the reference in
+payload and a scoped credential as a task secret so the task can fetch it inside
+the guest.
 
 ## Checkpoint Encryption
 

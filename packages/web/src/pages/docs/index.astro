@@ -60,7 +60,7 @@ const entryPoints = [
   {
     section: "Start",
     title: "Start with Helmr",
-    description: "Install the CLI, connect to a control plane, and run a small task in an isolated workspace.",
+    description: "Install the CLI, connect to a control plane, and run a small task in a durable workspace.",
     href: "/docs/start/overview",
     icon: pixelsFromRows(entryIcons.bolt),
     tone: "yellow",
@@ -72,12 +72,13 @@ const entryPoints = [
   {
     section: "Concepts",
     title: "Understand the runtime",
-    description: "See how task projects, sandboxes, workspaces, runs, waitpoints, and secrets fit together.",
+    description: "See how task projects, sandboxes, workspaces, task sessions, runs, waitpoints, and secrets fit together.",
     href: "/docs/concepts/product-model",
     icon: pixelsFromRows(entryIcons.layers),
     tone: "blue",
     links: [
-      { label: "Tasks", href: "/docs/concepts/tasks" },
+      { label: "Workspaces", href: "/docs/concepts/workspaces" },
+      { label: "Task sessions", href: "/docs/concepts/task-sessions" },
       { label: "Runs", href: "/docs/concepts/runs" },
     ],
   },
@@ -111,7 +112,7 @@ const entryPoints = [
 <DocsLayout title="Helmr Docs" description="Documentation for installing, operating, and extending Helmr." docs={docs}>
   <h1>Docs</h1>
   <p>
-    Set up Helmr, define TypeScript tasks, run them in isolated workspaces, and operate the self-hosted runtime in your AWS account.
+    Set up Helmr, define TypeScript tasks, attach them to durable workspaces, and operate the self-hosted runtime in your AWS account.
   </p>
   <div class="docs-index-grid">
     {entryPoints.map((entry) => (

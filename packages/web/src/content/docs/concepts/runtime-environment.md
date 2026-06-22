@@ -20,7 +20,7 @@ Task authors define:
 | --- | --- |
 | Image contents | `image(...).from(...).run(...).copy(...)` |
 | Runtime dependencies | Package manager and install steps in the image build |
-| Workspace path | `sandbox(...).workspace("/path")` |
+| Workspace mount path | `sandbox(...).workspace("/path")` |
 | CPU and memory | `sandbox(...).resources(...)` |
 | Secrets | Task `secrets` declarations and run-time bindings |
 | Task behavior | The exported `task(...).run` function |
@@ -34,14 +34,14 @@ tools, package manager, and dependencies installed in your image.
 Helmr manages:
 
 - Firecracker VM lifecycle, guest boot, and guest agent startup.
-- An empty writable workspace.
+- A writable workspace mounted at the sandbox workspace path.
 - Deployment task source used to load the task module.
 - Secret materialization as environment variables, files, or directories.
 - Runtime filesystems such as `/proc`, `/dev`, `/dev/pts`, `/dev/shm`, `/tmp`,
   and `/run`.
 - Basic network readiness, DNS resolver files, and hostname setup.
 - Logs, events, session channels, metadata updates, waitpoints, time waits, and run status.
-- Checkpoint and restore compatibility checks.
+- Checkpoint compatibility checks.
 
 These details are product-managed. Task code should rely on the resulting Linux
 behavior, not on Helmr's internal paths, guest init scripts, Firecracker devices,
@@ -49,7 +49,8 @@ vsock ports, or host networking implementation.
 
 ## Filesystem Behavior
 
-Tasks start in the checked-out workspace directory. Use relative paths for
+Tasks and direct workspace operations start in the mounted workspace directory
+unless a different working directory is supplied. Use relative paths for
 workspace files. Absolute paths behave like normal Linux paths inside the
 sandbox image.
 
@@ -65,7 +66,7 @@ The runtime provides:
 - `/dev/pts` and `/dev/ptmx` for tools that need pseudo-terminals.
 - `/dev/shm` for shared memory.
 - `/tmp` for temporary files.
-- The configured workspace mount path.
+- The configured workspace mount path, usually `/workspace`.
 
 Avoid using reserved runtime paths such as `/dev`, `/proc`, `/sys`, `/run`,
 `/tmp`, and `/opt/helmr` as custom workspace or application roots.

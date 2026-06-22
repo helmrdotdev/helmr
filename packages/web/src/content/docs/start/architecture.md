@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: The runtime components and execution flow behind a Helmr run.
+description: The runtime components behind Helmr workspaces, task sessions, and runs.
 section: Start
 sidebarLabel: Architecture
 order: 30
@@ -12,12 +12,12 @@ Helmr is split between authoring tools, a control plane, and workers.
 
 | Component | Role |
 | --- | --- |
-| TypeScript SDK | Declares task projects, tasks, schedules, images, sandboxes, secrets, resources, workspaces, session channels, metadata, waits, waitpoint tokens, and logs. |
-| CLI | Logs in, deploys task source, starts runs, manages secrets, reads logs and events, and resolves waitpoints. |
-| Control plane | Stores projects, environments, deployments, schedules, sessions, runs, events, logs, channel records, metadata, secrets, API keys, workers, and waitpoints. |
+| TypeScript SDK | Declares task projects, tasks, schedules, images, sandboxes, secrets, resources, session channels, metadata, waits, waitpoint tokens, and logs. The runtime client starts task sessions and opens workspaces. |
+| CLI | Logs in, deploys task source, starts tasks, manages secrets, reads logs and events, and resolves waitpoints. |
+| Control plane | Stores projects, environments, deployments, schedules, task sessions, runs, workspaces, materializations, execs, PTYs, events, logs, channel records, metadata, secrets, API keys, workers, and waitpoints. |
 | Dispatcher | Reconciles queued runs, repairs schedule next-fire entries into Redis, starts scheduled task sessions, and sweeps expired executions. |
-| Worker | Leases queued runs, prepares task source and the workspace volume, starts the guest, streams logs, and releases results. |
-| Guest runtime | Loads the deployment task module inside the guest and bridges task output, logs, session channel output, metadata updates, waits, and waitpoints. |
+| Worker | Leases queued runs, materializes workspaces, starts isolated guests, runs task code, serves direct workspace exec and PTY requests, streams logs, and releases results. |
+| Guest runtime | Loads the deployment task module inside the guest and bridges task output, logs, session channel output, metadata updates, waits, waitpoints, exec streams, and PTY streams. |
 
 Workers register into a worker group. The initial control plane creates a `default` worker group and routes deployments, build leases, and run session leases through that group.
 
@@ -30,21 +30,39 @@ that model.
 
 Managed cloud can create many organizations. Self-hosted deployments run the
 same architecture with initial setup gated to one organization. The difference is
-at the organization creation boundary, not in the runtime or worker session
-model.
+at the organization creation boundary, not in the workspace, runtime, or worker
+execution model.
 
 ## Run Flow
 
 1. A task project is deployed from a directory containing `helmr.config.ts`.
 2. The control plane stores the deployment-source artifact and marks the deployment active for a project environment.
-3. A task start or scheduled fire creates a task session and a current run from the stored task, run options, and generated schedule metadata payload.
-4. A worker in the matching worker group leases the run and receives the resolved task source, workspace mount metadata, secrets, and duration limit.
-5. The worker starts an isolated Linux guest, materializes the workspace volume, injects secrets, and runs the TypeScript task.
-6. Logs, events, output, channel records, metadata updates, failures, and waitpoints stream back to the control plane.
-7. Terminal runs finish as `succeeded`, `failed`, or `cancelled`.
+3. A task start or scheduled fire creates or reuses a task session, creates a run attempt, and attaches a workspace.
+4. If no workspace is supplied, Helmr creates one from the deployed task's sandbox. If a workspace is supplied, Helmr validates that it matches the task's sandbox.
+5. A worker in the matching worker group leases the run and receives the resolved task source, workspace mount metadata, secrets, and duration limit.
+6. The worker starts an isolated Linux guest, materializes the workspace, injects task-declared secrets, and runs the TypeScript task.
+7. Logs, events, output, channel records, metadata updates, failures, and waitpoints stream back to the control plane.
+8. Terminal runs finish as `succeeded`, `failed`, or `cancelled`. The attached workspace can outlive the run.
+
+## Workspace Flow
+
+Workspace APIs operate on the durable workspace directly. Opening, retrieving,
+updating, materializing, connecting, stopping, deleting, creating execs, creating
+PTYs, and reading workspace streams do not create task sessions.
+
+Direct execs and PTYs use the workspace sandbox and filesystem state. They are
+useful for operator inspection, setup commands, and interactive work that should
+not be modeled as a task run.
 
 ## Isolation Boundary
 
-Workers execute task code inside Firecracker-backed Linux guests. The workspace is mounted in the sandbox, task-declared secrets are injected at run time, and checkpoint artifacts are encrypted before leaving the worker staging directory.
+Workers execute task code and direct workspace operations inside
+Firecracker-backed Linux guests. The workspace is mounted in the sandbox,
+task-declared secrets are injected only for task runs, and checkpoint artifacts
+are encrypted before leaving the worker staging directory.
 
-The task image supplies user tools and dependencies. Helmr supplies the runtime substrate around that image, including guest boot, runtime filesystems, DNS setup, hostname setup, logs, session channels, waitpoints, and timeout enforcement. See [Runtime environment](/docs/concepts/runtime-environment/) for the task-visible contract.
+The task image supplies user tools and dependencies. Helmr supplies the runtime
+substrate around that image, including guest boot, runtime filesystems, DNS
+setup, hostname setup, logs, session channels, workspace streams, waitpoints,
+and timeout enforcement. See [Runtime environment](/docs/concepts/runtime-environment/)
+for the task-visible contract.
