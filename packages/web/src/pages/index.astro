@@ -3,7 +3,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { pixelsFromRows } from "../lib/pixels";
 import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
-const runtimeCode = `import { cache, image, sandbox, source, task, wait } from "@helmr/sdk"
+const runtimeCode = `import { cache, channel, image, sandbox, source, task } from "@helmr/sdk"
 import { Codex } from "@openai/codex-sdk"
 import { z } from "zod"
 
@@ -30,15 +30,19 @@ export const reviewPr = task({
     const thread = codex.startThread({ workingDirectory: process.cwd() })
     const turn = await thread.run("Review this PR and propose a patch.")
 
+    const approval = channel.input("approval", {
+      schema: z.object({ approved: z.boolean() })
+    })
+    await sendSlackApproval({
+      sessionId: ctx.session.id,
+      channel: approval.id
+    })
     // The microVM freezes here — filesystem, memory, process.
-    const token = await wait.createToken({
+    const decision = await ctx.session.input(approval).wait({
       timeout: "30m",
       tags: ["approval", "github-review"],
-      metadata: { subject: "Post this review to GitHub?" }
-    })
-    await sendSlackApproval(token)
-    const decision = await wait.forToken(token, {
-      schema: z.object({ approved: z.boolean() })
+      metadata: { subject: "Post this review to GitHub?" },
+      correlationId: \`pr:\${event.prNumber}\`
     }).unwrap()
     if (decision.approved) await postReview(event.prNumber, turn.finalResponse)
   }
@@ -90,7 +94,7 @@ const codeRegions = [
   { label: "image", from: 5, to: 12, tone: "blue", strong: "#5079e4" },
   { label: "sandbox", from: 14, to: 16, tone: "green", strong: "#3c8a59" },
   { label: "task", from: 18, to: 26, tone: "pink", strong: "#da5992" },
-  { label: "waitpoint", from: 29, to: 38, tone: "yellow", strong: "#dfa400" },
+  { label: "input", from: 28, to: 41, tone: "yellow", strong: "#dfa400" },
 ] as const;
 
 const codeLines = runtimeCode.split("\n").map((line, index) => ({
@@ -221,20 +225,19 @@ const codeTags = codeRegions.map((region) => ({
 
 const features = [
   {
-    label: "wait.forToken",
+    label: "session.input",
     icon: "pause",
     tone: "yellow",
-    title: "Pause for a human",
+    title: "Pause for session input",
     caption:
-      "The microVM freezes whole and costs nothing while it waits. Approval resumes it mid-instruction.",
-    code: `const token = await wait.createToken({
-  timeout: "30m",
-  tags: ["approval", "github-review"]
+      "The microVM freezes whole while it waits. A webhook, UI, or operator appends input and resumes it mid-instruction.",
+    code: `const approval = channel.input("approval", {
+  schema: z.object({ approved: z.boolean() })
 })
 
-await sendSlackApproval(token)
-const decision = await wait.forToken(token, {
-  schema: z.object({ approved: z.boolean() })
+const decision = await ctx.session.input(approval).wait({
+  timeout: "30m",
+  tags: ["approval", "github-review"]
 }).unwrap()`,
     lang: "ts",
   },
@@ -262,21 +265,24 @@ const decision = await wait.forToken(token, {
     tone: "pink",
     title: "Start from anywhere",
     caption: "Your product, a webhook, CI, or another task — deduplicated with idempotency keys.",
-    code: `const handle = await reviewPr.start(
+    code: `const started = await reviewPr.start(
   { prNumber: 482 },
   { idempotencyKey: pr.head.sha }
 )`,
     lang: "ts",
   },
   {
-    label: "sessions",
+    label: "workspace.exec",
     icon: "resume",
     tone: "green",
-    title: "Continue durable work",
-    caption: "Use task sessions for stateful workflows. Inputs, outputs, logs, and events stay attached.",
-    code: `$ helmr run review-pr --payload pr=482
-$ helmr logs run_8f3a --follow`,
-    lang: "sh",
+    title: "Reuse the workspace",
+    caption: "The session records the workflow. The workspace stays available for follow-up execs and terminals.",
+    code: `const workspace = client.workspaces.open(started.session.workspaceId)
+const exec = await workspace.exec(["bash", "-lc", "bun test"], {
+  cwd: "/workspace"
+})
+await exec.wait()`,
+    lang: "ts",
   },
 ] as const;
 
@@ -303,7 +309,7 @@ const renderedFeatures = features.map((feature) => ({
           </h1>
           <p class="hero-lede">
             Define tasks in plain TypeScript. Each run gets its own microVM,
-            checkpointed whole at approval points, then resumes with every input and output attached.
+            pauses whole for session input, then resumes with every input and output attached.
           </p>
           <div class="hero-actions">
             <a class="btn btn-dark" href="/docs/start/quickstart">Start building</a>
@@ -349,8 +355,8 @@ const renderedFeatures = features.map((feature) => ({
             <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr run review-pr --payload prNumber=482</span></p>
             <p class="t-line">run_8f3a</p>
             <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr ps</span></p>
-            <p class="t-line t-dim">RUN ID    TASK       STATUS   INPUT REQUEST</p>
-            <p class="t-line">run_8f3a  review-pr  <span class="t-wait">waiting</span>  <span class="t-accent">approval:ir_c91d</span></p>
+            <p class="t-line t-dim">RUN ID    TASK       STATUS   INPUT CHANNEL</p>
+            <p class="t-line">run_8f3a  review-pr  <span class="t-wait">waiting</span>  <span class="t-accent">approval</span></p>
             <p class="t-line t-gap" data-cursor><span class="t-prompt">$</span> <span class="t-cursor"></span></p>
           </div>
           <div class="term-foot" data-term-foot>
@@ -360,13 +366,13 @@ const renderedFeatures = features.map((feature) => ({
                   <rect x={pixel.x} y={pixel.y} width="1" height="1" />
                 ))}
               </svg>
-              run_8f3a waiting on ir_c91d
+              run_8f3a waiting on approval input
             </span>
             <button
               class="term-approve"
               type="button"
               data-approve
-              aria-label="Approve the waitpoint and resume the run"
+              aria-label="Append approval input and resume the run"
             >approve &amp; resume</button>
           </div>
         </div>
@@ -378,11 +384,11 @@ const renderedFeatures = features.map((feature) => ({
       <div class="section-head">
         <h2 class="headline section-title">
           One TypeScript file.
-          <span class="faint">Image, sandbox, task, secrets, approval gate.</span>
+          <span class="faint">Image, sandbox, task, secrets, session input.</span>
         </h2>
         <p class="section-note">
-          Codex here &mdash; or Claude Code, the AI SDK, any agent SDK that runs
-          on Node. The boundary stays the same.
+          Codex here &mdash; or Claude Code, the AI SDK, any agent SDK that runs on
+          Node. Follow-up input stays attached to the session, not the start payload.
         </p>
       </div>
       <div class="code-frame panel panel-screen">
@@ -407,7 +413,7 @@ const renderedFeatures = features.map((feature) => ({
     <section id="primitives" class="features" aria-label="What it looks like in code">
       <div class="section-head">
         <h2 class="headline section-title">
-          Pause. Schedule. Start. Resume.
+          Pause. Schedule. Start. Reuse.
           <span class="faint">Each one is a few lines.</span>
         </h2>
       </div>
@@ -648,7 +654,7 @@ const renderedFeatures = features.map((feature) => ({
     overflow-x: clip;
   }
 
-  /* CSS anchor positioning ties the waitpoint wire to the terminal and code row. */
+  /* CSS anchor positioning ties the input wire to the terminal and code row. */
   .circuit { display: none; }
 
   @supports (anchor-name: --wp) {
@@ -955,7 +961,7 @@ const renderedFeatures = features.map((feature) => ({
   }
 
   /* The row is always laid out so the panel never changes height;
-     only its content fades in once the boot sequence reaches the waitpoint. */
+     only its content fades in once the boot sequence reaches the input wait. */
   .term-foot > * {
     visibility: hidden;
     opacity: 0;
@@ -1091,7 +1097,7 @@ const renderedFeatures = features.map((feature) => ({
   .cl[data-region="image"] .ln { box-shadow: inset -3px 0 0 #5079e4; }
   .cl[data-region="sandbox"] .ln { box-shadow: inset -3px 0 0 #3c8a59; }
   .cl[data-region="task"] .ln { box-shadow: inset -3px 0 0 #da5992; }
-  .cl[data-region="waitpoint"] .ln { box-shadow: inset -3px 0 0 #dfa400; }
+  .cl[data-region="input"] .ln { box-shadow: inset -3px 0 0 #dfa400; }
 
   .code-frame:has(.code-tag-image:hover) .cl[data-region="image"],
   .code-frame:has(.cl[data-region="image"]:hover) .cl[data-region="image"] {
@@ -1108,8 +1114,8 @@ const renderedFeatures = features.map((feature) => ({
     background: rgba(218, 89, 146, 0.1);
   }
 
-  .code-frame:has(.code-tag-waitpoint:hover) .cl[data-region="waitpoint"],
-  .code-frame:has(.cl[data-region="waitpoint"]:hover) .cl[data-region="waitpoint"] {
+  .code-frame:has(.code-tag-input:hover) .cl[data-region="input"],
+  .code-frame:has(.cl[data-region="input"]:hover) .cl[data-region="input"] {
     background: rgba(255, 199, 0, 0.16);
   }
 
@@ -1119,8 +1125,8 @@ const renderedFeatures = features.map((feature) => ({
   .code-frame:has(.cl[data-region="sandbox"]:hover) .code-tag-sandbox,
   .code-frame:has(.code-tag-task:hover) .code-tag-task,
   .code-frame:has(.cl[data-region="task"]:hover) .code-tag-task,
-  .code-frame:has(.code-tag-waitpoint:hover) .code-tag-waitpoint,
-  .code-frame:has(.cl[data-region="waitpoint"]:hover) .code-tag-waitpoint {
+  .code-frame:has(.code-tag-input:hover) .code-tag-input,
+  .code-frame:has(.cl[data-region="input"]:hover) .code-tag-input {
     border-color: var(--tag-strong);
   }
 
