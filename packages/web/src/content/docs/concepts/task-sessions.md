@@ -47,5 +47,13 @@ Session channels are named durable input and output lanes. They are useful for
 follow-up messages, webhook replies, operator responses, and structured task
 output that belongs to the task invocation.
 
+Channels are not project-level resources. A channel name only has meaning
+inside its task session.
+
+Use input channels when something outside the task should continue the workflow,
+such as a product UI, webhook handler, or approval bridge. Use output channels
+when the task should publish structured records that another service can read or
+stream without parsing logs.
+
 Channel input and output are session-scoped. Direct workspace exec and PTY
 streams are workspace-scoped and use their own APIs.

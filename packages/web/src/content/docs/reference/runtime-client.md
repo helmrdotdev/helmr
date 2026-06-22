@@ -67,12 +67,16 @@ Main surfaces:
 | `client.schedules.deactivate(id, opts)` | Deactivate an imperative schedule. |
 | `client.schedules.delete(id, opts)` | Delete an imperative schedule. |
 
-Task start `payload` is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload. Follow-up user messages, webhooks, or operator replies belong in session channel input, not in task start payload.
+Task start `payload` is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload. Follow-up user messages, webhooks, or operator replies belong in session input channels, not in task start payload.
 
 Task starts create or reuse a task session and attach a workspace. When no
 workspace is supplied, Helmr creates one from the deployed task's sandbox.
 Direct workspace operations are separate: creating an exec or PTY on a
 workspace does not create a task session or run.
+
+Session channels are named lanes on a task session. Input channels accept
+follow-up records. Output channels expose task-published records through list
+and stream APIs.
 
 Create public access tokens with explicit resource bindings. A session input grant can append only to the bound session channel; a session output grant can read only from the bound session channel. Use separate tokens for read and write grants.
 
