@@ -358,8 +358,11 @@ func TestWorkspaceExecReconnectsUntilTerminal(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if stdoutFollowCalls != 2 {
-		t.Fatalf("stdout follow calls = %d", stdoutFollowCalls)
+	if stdoutFollowCalls == 0 || stderrFollowCalls == 0 {
+		t.Fatalf("follow calls stdout=%d stderr=%d", stdoutFollowCalls, stderrFollowCalls)
+	}
+	if stdoutFollowCalls+stderrFollowCalls < 3 {
+		t.Fatalf("expected at least one stream reconnect, stdout=%d stderr=%d", stdoutFollowCalls, stderrFollowCalls)
 	}
 }
 

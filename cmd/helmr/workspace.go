@@ -857,10 +857,8 @@ func followWorkspaceExecOutput(ctx context.Context, cmd *cobra.Command, control 
 	stderr := stderrCursor
 	mu.Unlock()
 	if stopOnTerminal && terminal {
-		if next, err := printWorkspaceExecStream(cmd, control, workspaceID, execID, "stdout", stdout, scope, cmd.OutOrStdout()); err != nil {
+		if _, err := printWorkspaceExecStream(cmd, control, workspaceID, execID, "stdout", stdout, scope, cmd.OutOrStdout()); err != nil {
 			return err
-		} else {
-			stdout = next
 		}
 		if _, err := printWorkspaceExecStream(cmd, control, workspaceID, execID, "stderr", stderr, scope, cmd.ErrOrStderr()); err != nil {
 			return err

@@ -121,10 +121,7 @@ func taskStartCommand() *cobra.Command {
 			if timeoutSeconds > 0 {
 				deadline = time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
 			}
-			sessionScope := client.TaskSessionScopeOptions{
-				ProjectID:     scope.ProjectID,
-				EnvironmentID: scope.EnvironmentID,
-			}
+			sessionScope := client.TaskSessionScopeOptions(scope)
 			if jsonOutput {
 				if wait {
 					session, err := waitTaskSessionUntilTerminal(cmd.Context(), control, started.Session.ID, deadline, timeoutSeconds, sessionScope)
