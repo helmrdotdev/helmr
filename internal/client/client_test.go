@@ -450,7 +450,7 @@ func TestListRunsOptionsAndGetRunLogs(t *testing.T) {
 		paths = append(paths, r.URL.RequestURI())
 		switch r.URL.Path {
 		case "/api/runs":
-			if r.URL.Query().Get("status") != "all" || r.URL.Query().Get("limit") != "25" {
+			if r.URL.Query().Get("status") != "all" || r.URL.Query().Get("limit") != "25" || r.URL.Query().Get("session_id") != "session-1" {
 				t.Fatalf("query = %s", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(api.ListRunsResponse{Runs: []api.RunResponse{{
@@ -476,7 +476,7 @@ func TestListRunsOptionsAndGetRunLogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs, err := client.ListRuns(context.Background(), ListRunsOptions{Status: "all", Limit: 25})
+	runs, err := client.ListRuns(context.Background(), ListRunsOptions{Status: "all", Limit: 25, SessionID: "session-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,7 +490,7 @@ func TestListRunsOptionsAndGetRunLogs(t *testing.T) {
 	if logs.StdoutBase64 != base64.StdEncoding.EncodeToString([]byte("hello\n")) || logs.StderrBase64 != base64.StdEncoding.EncodeToString([]byte("warn\n")) {
 		t.Fatalf("logs = %+v", logs)
 	}
-	if got := strings.Join(paths, ","); got != "/api/runs?limit=25&status=all,/api/runs/run-1/logs" {
+	if got := strings.Join(paths, ","); got != "/api/runs?limit=25&session_id=session-1&status=all,/api/runs/run-1/logs" {
 		t.Fatalf("paths = %s", got)
 	}
 }

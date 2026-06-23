@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,13 +60,227 @@ type deploymentStatusStore interface {
 	GetDeploymentForOrg(context.Context, db.GetDeploymentForOrgParams) (db.Deployment, error)
 	GetDeploymentByVersion(context.Context, db.GetDeploymentByVersionParams) (db.Deployment, error)
 	ListArtifactsByIDs(context.Context, db.ListArtifactsByIDsParams) ([]db.Artifact, error)
+	ListScopedDeployments(context.Context, db.ListScopedDeploymentsParams) ([]db.Deployment, error)
 	ListDeploymentsByVersionForOrg(context.Context, db.ListDeploymentsByVersionForOrgParams) ([]db.Deployment, error)
 	ListDeploymentTasks(context.Context, db.ListDeploymentTasksParams) ([]db.DeploymentTask, error)
 	PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
 }
 
+type currentDeploymentReadStore interface {
+	ListArtifactsByIDs(context.Context, db.ListArtifactsByIDsParams) ([]db.Artifact, error)
+	ListCurrentDeploymentTasks(context.Context, db.ListCurrentDeploymentTasksParams) ([]db.DeploymentTask, error)
+	GetCurrentDeploymentTask(context.Context, db.GetCurrentDeploymentTaskParams) (db.GetCurrentDeploymentTaskRow, error)
+	ListCurrentDeploymentSandboxes(context.Context, db.ListCurrentDeploymentSandboxesParams) ([]db.DeploymentSandbox, error)
+	GetCurrentDeploymentSandbox(context.Context, db.GetCurrentDeploymentSandboxParams) (db.DeploymentSandbox, error)
+}
+
 type casObjectLookupStore interface {
 	GetCasObject(context.Context, string) (db.CasObject, error)
+}
+
+func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, unavailable(errors.New("deployment storage is not configured")))
+		return
+	}
+	store, ok := s.db.(deploymentStatusStore)
+	if !ok {
+		writeError(w, unavailable(errors.New("deployment storage is not configured")))
+		return
+	}
+	actor := actorFromContext(r.Context())
+	scope, err := s.requestedRunListScope(r, actor)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) && !actor.HasPermission(auth.PermissionRunsRead, scope) {
+		writeError(w, forbidden(errors.New("permission is required")))
+		return
+	}
+	projectID, environmentID, err := runScopeIDs(scope)
+	if err != nil {
+		writeError(w, errors.New("list deployments"))
+		return
+	}
+	limit := int32(50)
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 32)
+		if err != nil || parsed <= 0 || parsed > 200 {
+			writeError(w, badRequest(errors.New("limit must be an integer between 1 and 200")))
+			return
+		}
+		limit = int32(parsed)
+	}
+	rows, err := store.ListScopedDeployments(r.Context(), db.ListScopedDeploymentsParams{
+		OrgID:         pgvalue.UUID(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		RowLimit:      limit,
+	})
+	if err != nil {
+		s.log.Error("list deployments failed", "error", err)
+		writeError(w, errors.New("list deployments"))
+		return
+	}
+	response := make([]api.DeploymentResponse, 0, len(rows))
+	for _, row := range rows {
+		item, err := deploymentResponseWithArtifacts(r.Context(), store, row)
+		if err != nil {
+			s.log.Error("get deployment artifacts failed", "deployment_id", pgvalue.MustUUIDValue(row.ID).String(), "error", err)
+			writeError(w, errors.New("list deployments"))
+			return
+		}
+		item.Tasks = []api.DeploymentTaskResponse{}
+		response = append(response, item)
+	}
+	writeJSON(w, http.StatusOK, api.ListDeploymentsResponse{Deployments: response})
+}
+
+func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
+	store, scope, projectID, environmentID, ok := s.loadCurrentDeploymentReadScope(w, r)
+	if !ok {
+		return
+	}
+	actor := actorFromContext(r.Context())
+	if !actor.HasPermission(auth.PermissionRunsRead, scope) && !actor.HasPermission(auth.PermissionTasksDeploy, scope) {
+		writeError(w, forbidden(errors.New("permission is required")))
+		return
+	}
+	rows, err := store.ListCurrentDeploymentTasks(r.Context(), db.ListCurrentDeploymentTasksParams{
+		OrgID:         pgvalue.UUID(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+	})
+	if err != nil {
+		s.log.Error("list tasks failed", "error", err)
+		writeError(w, errors.New("list tasks"))
+		return
+	}
+	tasks, err := deploymentTaskResponses(r.Context(), store, rows)
+	if err != nil {
+		s.log.Error("get task artifacts failed", "error", err)
+		writeError(w, errors.New("list tasks"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.ListTasksResponse{Tasks: tasks})
+}
+
+func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
+	store, scope, projectID, environmentID, ok := s.loadCurrentDeploymentReadScope(w, r)
+	if !ok {
+		return
+	}
+	actor := actorFromContext(r.Context())
+	if !actor.HasPermission(auth.PermissionRunsRead, scope) && !actor.HasPermission(auth.PermissionTasksDeploy, scope) {
+		writeError(w, forbidden(errors.New("permission is required")))
+		return
+	}
+	taskID := strings.TrimSpace(chi.URLParam(r, "taskID"))
+	if err := api.ValidateTaskID(taskID); err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	row, err := store.GetCurrentDeploymentTask(r.Context(), db.GetCurrentDeploymentTaskParams{
+		OrgID:         pgvalue.UUID(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		TaskID:        taskID,
+	})
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("task not found")))
+		return
+	}
+	if err != nil {
+		s.log.Error("get task failed", "task_id", taskID, "error", err)
+		writeError(w, errors.New("get task"))
+		return
+	}
+	writeJSON(w, http.StatusOK, currentDeploymentTaskResponse(row))
+}
+
+func (s *Server) listSandboxes(w http.ResponseWriter, r *http.Request) {
+	store, scope, projectID, environmentID, ok := s.loadCurrentDeploymentReadScope(w, r)
+	if !ok {
+		return
+	}
+	actor := actorFromContext(r.Context())
+	if !actor.HasPermission(auth.PermissionRunsRead, scope) && !actor.HasPermission(auth.PermissionTasksDeploy, scope) && !actorHasAnyPermission(actor, scope, workspaceReadPermissions()...) {
+		writeError(w, forbidden(errors.New("permission is required")))
+		return
+	}
+	rows, err := store.ListCurrentDeploymentSandboxes(r.Context(), db.ListCurrentDeploymentSandboxesParams{
+		OrgID:         pgvalue.UUID(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+	})
+	if err != nil {
+		s.log.Error("list sandboxes failed", "error", err)
+		writeError(w, errors.New("list sandboxes"))
+		return
+	}
+	response := make([]api.SandboxResponse, 0, len(rows))
+	for _, row := range rows {
+		response = append(response, sandboxResponse(row))
+	}
+	writeJSON(w, http.StatusOK, api.ListSandboxesResponse{Sandboxes: response})
+}
+
+func (s *Server) getSandbox(w http.ResponseWriter, r *http.Request) {
+	store, scope, projectID, environmentID, ok := s.loadCurrentDeploymentReadScope(w, r)
+	if !ok {
+		return
+	}
+	actor := actorFromContext(r.Context())
+	if !actor.HasPermission(auth.PermissionRunsRead, scope) && !actor.HasPermission(auth.PermissionTasksDeploy, scope) && !actorHasAnyPermission(actor, scope, workspaceReadPermissions()...) {
+		writeError(w, forbidden(errors.New("permission is required")))
+		return
+	}
+	sandboxID := strings.TrimSpace(chi.URLParam(r, "sandboxID"))
+	if sandboxID == "" {
+		writeError(w, badRequest(errors.New("sandbox_id is required")))
+		return
+	}
+	row, err := store.GetCurrentDeploymentSandbox(r.Context(), db.GetCurrentDeploymentSandboxParams{
+		OrgID:         pgvalue.UUID(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		SandboxID:     sandboxID,
+	})
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("sandbox not found")))
+		return
+	}
+	if err != nil {
+		s.log.Error("get sandbox failed", "sandbox_id", sandboxID, "error", err)
+		writeError(w, errors.New("get sandbox"))
+		return
+	}
+	writeJSON(w, http.StatusOK, sandboxResponse(row))
+}
+
+func (s *Server) loadCurrentDeploymentReadScope(w http.ResponseWriter, r *http.Request) (currentDeploymentReadStore, auth.Scope, pgtype.UUID, pgtype.UUID, bool) {
+	if s.db == nil {
+		writeError(w, unavailable(errors.New("deployment storage is not configured")))
+		return nil, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, false
+	}
+	store, ok := s.db.(currentDeploymentReadStore)
+	if !ok {
+		writeError(w, unavailable(errors.New("deployment storage is not configured")))
+		return nil, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, false
+	}
+	actor := actorFromContext(r.Context())
+	scope, err := s.requestedRunListScope(r, actor)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return nil, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, false
+	}
+	projectID, environmentID, err := runScopeIDs(scope)
+	if err != nil {
+		writeError(w, errors.New("resolve current deployment read scope"))
+		return nil, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, false
+	}
+	return store, scope, projectID, environmentID, true
 }
 
 func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
@@ -1082,6 +1297,57 @@ func deploymentTaskResponse(task db.DeploymentTask, artifact db.Artifact) api.De
 		TTL:               task.Ttl,
 		CreatedAt:         pgvalue.Time(task.CreatedAt),
 	}
+}
+
+func currentDeploymentTaskResponse(task db.GetCurrentDeploymentTaskRow) api.DeploymentTaskResponse {
+	return api.DeploymentTaskResponse{
+		ID:                  pgvalue.MustUUIDValue(task.ID).String(),
+		TaskID:              task.TaskID,
+		FilePath:            task.FilePath,
+		ExportName:          task.ExportName,
+		HandlerEntrypoint:   task.HandlerEntrypoint,
+		BundleDigest:        task.BundleDigest,
+		BundleFormatVersion: task.BundleFormatVersion,
+		QueueName:           task.QueueName,
+		ConcurrencyLimit:    pgvalue.Int4Response(task.QueueConcurrencyLimit),
+		TTL:                 task.Ttl,
+		CreatedAt:           pgvalue.Time(task.CreatedAt),
+	}
+}
+
+func sandboxResponse(row db.DeploymentSandbox) api.SandboxResponse {
+	return api.SandboxResponse{
+		ID:                  pgvalue.MustUUIDValue(row.ID).String(),
+		DeploymentID:        pgvalue.MustUUIDValue(row.DeploymentID).String(),
+		SandboxID:           row.SandboxID,
+		Fingerprint:         row.Fingerprint,
+		ImageArtifactID:     pgvalue.MustUUIDValue(row.ImageArtifactID).String(),
+		ImageArtifactFormat: row.ImageArtifactFormat,
+		RootfsDigest:        row.RootfsDigest,
+		ImageDigest:         row.ImageDigest,
+		ImageFormat:         row.ImageFormat,
+		WorkspaceMountPath:  row.WorkspaceMountPath,
+		ResourceFloor:       json.RawMessage(row.ResourceFloor),
+		DiskFloorMib:        int32(row.DiskFloorMib),
+		NetworkPolicy:       json.RawMessage(row.NetworkPolicy),
+		RuntimeABI:          row.RuntimeABI,
+		GuestdABI:           row.GuestdAbi,
+		AdapterABI:          row.AdapterAbi,
+		FilesystemFormat:    row.FilesystemFormat,
+		DefaultUID:          int8Response(row.DefaultUid),
+		DefaultGID:          int8Response(row.DefaultGid),
+		DefaultWorkdir:      row.DefaultWorkdir,
+		ContractVersion:     row.ContractVersion,
+		CreatedAt:           pgvalue.Time(row.CreatedAt),
+	}
+}
+
+func int8Response(value pgtype.Int8) *int32 {
+	if !value.Valid {
+		return nil
+	}
+	out := int32(value.Int64)
+	return &out
 }
 
 func scopedArtifactsByID(ctx context.Context, store artifactLister, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, artifactIDs []pgtype.UUID) (map[pgtype.UUID]db.Artifact, error) {

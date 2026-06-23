@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -11,6 +12,10 @@ import (
 func main() {
 	if err := newRootCommand().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		var exitErr exitCodeError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.code)
+		}
 		os.Exit(1)
 	}
 }
@@ -28,18 +33,17 @@ func newRootCommand() *cobra.Command {
 		initCommand(),
 		loginCommand(),
 		logoutCommand(),
+		whoamiCommand(),
 		deployCommand(),
-		promoteCommand(),
+		deploymentCommand(),
+		sandboxCommand(),
+		taskCommand(),
 		runCommand(),
-		cancelCommand(),
+		sessionCommand(),
+		workspaceCommand(),
 		projectCommand(),
 		envCommand(),
 		secretCommand(),
-		psCommand(),
-		showCommand(),
-		logsCommand(),
-		eventsCommand(),
-		waitCommand(),
 		waitpointCommand(),
 	)
 	return root

@@ -302,6 +302,15 @@ SELECT *
    AND version = sqlc.arg(version)
  ORDER BY created_at ASC;
 
+-- name: ListScopedDeployments :many
+SELECT *
+  FROM deployments
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+ ORDER BY created_at DESC, id DESC
+ LIMIT sqlc.arg(row_limit);
+
 -- name: CreateDeploymentSandbox :one
 INSERT INTO deployment_sandboxes (
     id,
@@ -452,6 +461,58 @@ SELECT *
    AND environment_id = sqlc.arg(environment_id)
    AND deployment_id = sqlc.arg(deployment_id)
  ORDER BY task_id ASC;
+
+-- name: ListCurrentDeploymentTasks :many
+SELECT deployment_tasks.*
+  FROM deployment_tasks
+  JOIN environments ON environments.org_id = deployment_tasks.org_id
+                   AND environments.project_id = deployment_tasks.project_id
+                   AND environments.id = deployment_tasks.environment_id
+                   AND environments.current_deployment_id = deployment_tasks.deployment_id
+  JOIN deployments ON deployments.org_id = deployment_tasks.org_id
+                  AND deployments.project_id = deployment_tasks.project_id
+                  AND deployments.environment_id = deployment_tasks.environment_id
+                  AND deployments.id = deployment_tasks.deployment_id
+                  AND deployments.status = 'deployed'
+ WHERE deployment_tasks.org_id = sqlc.arg(org_id)
+   AND deployment_tasks.project_id = sqlc.arg(project_id)
+   AND deployment_tasks.environment_id = sqlc.arg(environment_id)
+ ORDER BY deployment_tasks.task_id ASC;
+
+-- name: ListCurrentDeploymentSandboxes :many
+SELECT deployment_sandboxes.*
+  FROM deployment_sandboxes
+  JOIN environments ON environments.org_id = deployment_sandboxes.org_id
+                   AND environments.project_id = deployment_sandboxes.project_id
+                   AND environments.id = deployment_sandboxes.environment_id
+                   AND environments.current_deployment_id = deployment_sandboxes.deployment_id
+  JOIN deployments ON deployments.org_id = deployment_sandboxes.org_id
+                  AND deployments.project_id = deployment_sandboxes.project_id
+                  AND deployments.environment_id = deployment_sandboxes.environment_id
+                  AND deployments.id = deployment_sandboxes.deployment_id
+                  AND deployments.status = 'deployed'
+ WHERE deployment_sandboxes.org_id = sqlc.arg(org_id)
+   AND deployment_sandboxes.project_id = sqlc.arg(project_id)
+   AND deployment_sandboxes.environment_id = sqlc.arg(environment_id)
+ ORDER BY deployment_sandboxes.sandbox_id ASC;
+
+-- name: GetCurrentDeploymentSandbox :one
+SELECT deployment_sandboxes.*
+  FROM deployment_sandboxes
+  JOIN environments ON environments.org_id = deployment_sandboxes.org_id
+                   AND environments.project_id = deployment_sandboxes.project_id
+                   AND environments.id = deployment_sandboxes.environment_id
+                   AND environments.current_deployment_id = deployment_sandboxes.deployment_id
+  JOIN deployments ON deployments.org_id = deployment_sandboxes.org_id
+                  AND deployments.project_id = deployment_sandboxes.project_id
+                  AND deployments.environment_id = deployment_sandboxes.environment_id
+                  AND deployments.id = deployment_sandboxes.deployment_id
+                  AND deployments.status = 'deployed'
+ WHERE deployment_sandboxes.org_id = sqlc.arg(org_id)
+   AND deployment_sandboxes.project_id = sqlc.arg(project_id)
+   AND deployment_sandboxes.environment_id = sqlc.arg(environment_id)
+   AND deployment_sandboxes.sandbox_id = sqlc.arg(sandbox_id)
+ LIMIT 1;
 
 -- name: GetCurrentDeploymentTask :one
 SELECT deployment_tasks.*,

@@ -48,7 +48,7 @@ func TestWaitCommandFollowsEventsUntilTerminal(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"wait", "run-1", "--timeout", "1s"})
+	cmd.SetArgs([]string{"run", "wait", "run-1", "--timeout", "1s"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestRunEventsFollowStopsAfterTerminalEvent(t *testing.T) {
 	cmd.SetContext(ctx)
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"events", "run-1", "--follow"})
+	cmd.SetArgs([]string{"run", "events", "run-1", "--follow"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestWaitCommandChecksStatusAfterStreamDisconnect(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"wait", "run-1", "--timeout", "1s"})
+	cmd.SetArgs([]string{"run", "wait", "run-1", "--timeout", "1s"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestWaitCommandReconnectsAfterTransientEventStreamError(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"wait", "run-1", "--timeout", "1s"})
+	cmd.SetArgs([]string{"run", "wait", "run-1", "--timeout", "1s"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestEventsCommandFollowsRunEvents(t *testing.T) {
 	cmd.SetContext(ctx)
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"events", "run-1", "--follow"})
+	cmd.SetArgs([]string{"run", "events", "run-1", "--follow"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestLogsCommandFollowsRunLogs(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetArgs([]string{"logs", "run-1", "--follow"})
+	cmd.SetArgs([]string{"run", "logs", "run-1", "--follow"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestLogsCommandPrintsStreams(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&stderr)
-	cmd.SetArgs([]string{"logs", "run-1"})
+	cmd.SetArgs([]string{"run", "logs", "run-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestEventsCommandPrintsJSONLines(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"events", "run-1", "--cursor", "4", "--limit", "2"})
+	cmd.SetArgs([]string{"run", "events", "run-1", "--cursor", "4", "--limit", "2"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}

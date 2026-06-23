@@ -31,6 +31,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		UserID:          actor.UserID.String(),
 		DisplayName:     state.DisplayName,
 		ProfileImageURL: state.ProfileImageUrl.String,
+		PublicURL:       s.publicURL.String(),
 		Permissions:     []string{},
 		ProjectRequired: state.OrgID.Valid && !state.HasProjects,
 	}

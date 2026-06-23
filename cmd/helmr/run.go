@@ -26,7 +26,7 @@ var (
 	runTerminalSnapshotConvergeLimit = 5 * time.Second
 )
 
-func runCommand() *cobra.Command {
+func taskStartCommand() *cobra.Command {
 	var payloadFile string
 	var payloadJSON string
 	var payloadPairs []string
@@ -44,9 +44,13 @@ func runCommand() *cobra.Command {
 	var retryJSON string
 	var idempotencyKey string
 	var idempotencyKeyTTL string
+	var workspaceID string
+	var wait bool
+	var follow bool
+	var timeout string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "run TASK",
+		Use:   "start TASK",
 		Short: "Start a task session.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -64,6 +68,16 @@ func runCommand() *cobra.Command {
 			retry, err := parseOptionalJSON(retryFile, retryJSON, "--retry")
 			if err != nil {
 				return err
+			}
+			if jsonOutput && follow {
+				return errors.New("--json cannot be combined with --follow")
+			}
+			timeoutSeconds, err := waitTimeoutSeconds(timeout, "--timeout")
+			if err != nil {
+				return err
+			}
+			if timeoutSeconds > 0 && !wait && !follow {
+				return errors.New("--timeout requires --wait or --follow")
 			}
 			control, err := controlClient(cmd)
 			if err != nil {
@@ -89,6 +103,7 @@ func runCommand() *cobra.Command {
 				Tags:               cleanTags(tags),
 				IdempotencyKey:     strings.TrimSpace(idempotencyKey),
 				IdempotencyKeyTTL:  strings.TrimSpace(idempotencyKeyTTL),
+				WorkspaceID:        strings.TrimSpace(workspaceID),
 			}
 			if queueName = strings.TrimSpace(queueName); queueName != "" {
 				options.Queue = &api.RunQueueOption{Name: queueName}
@@ -102,10 +117,56 @@ func runCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			var deadline time.Time
+			if timeoutSeconds > 0 {
+				deadline = time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
+			}
+			sessionScope := client.TaskSessionScopeOptions{
+				ProjectID:     scope.ProjectID,
+				EnvironmentID: scope.EnvironmentID,
+			}
 			if jsonOutput {
+				if wait {
+					session, err := waitTaskSessionUntilTerminal(cmd.Context(), control, started.Session.ID, deadline, timeoutSeconds, sessionScope)
+					if err != nil {
+						return err
+					}
+					return format.JSON(cmd.OutOrStdout(), session)
+				}
 				return format.JSON(cmd.OutOrStdout(), started)
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), started.Session.ID)
+			writeTaskStartHandle(cmd, control, started)
+			if follow {
+				if started.Run.ID == "" {
+					return errors.New("task start response did not include a run id to follow")
+				}
+				followCtx := cmd.Context()
+				if timeoutSeconds > 0 {
+					var cancel func()
+					followCtx, cancel = context.WithDeadline(followCtx, deadline)
+					defer cancel()
+				}
+				if err := followRunLogs(followCtx, cmd, control, started.Run.ID, 0, client.RunScopeOptions{
+					ProjectID:     scope.ProjectID,
+					EnvironmentID: scope.EnvironmentID,
+				}); err != nil {
+					if errors.Is(err, context.DeadlineExceeded) {
+						session, snapshotErr := control.GetTaskSession(cmd.Context(), started.Session.ID, sessionScope)
+						if snapshotErr == nil {
+							fmt.Fprintf(cmd.OutOrStdout(), "session_status: %s\n", session.Status)
+						}
+					}
+					return err
+				}
+				wait = true
+			}
+			if wait {
+				session, err := waitTaskSessionUntilTerminal(cmd.Context(), control, started.Session.ID, deadline, timeoutSeconds, sessionScope)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "session_status: %s\n", session.Status)
+			}
 			return nil
 		},
 	}
@@ -126,13 +187,156 @@ func runCommand() *cobra.Command {
 	cmd.Flags().StringVar(&retryJSON, "retry-json", "", "Inline retry policy JSON literal.")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
 	cmd.Flags().StringVar(&idempotencyKeyTTL, "idempotency-key-ttl", "", "Duration to retain the idempotency key, for example 30d or 24h.")
+	cmd.Flags().StringVar(&workspaceID, "workspace", "", "Existing workspace ID to attach this task session to.")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for the task session to finish.")
+	cmd.Flags().BoolVar(&follow, "follow", false, "Stream the initial run logs while waiting.")
+	cmd.Flags().StringVar(&timeout, "timeout", "", "Maximum wait duration, for example 10m or 1h.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	cmd.MarkFlagsMutuallyExclusive("metadata-file", "metadata-json")
 	cmd.MarkFlagsMutuallyExclusive("retry-file", "retry-json")
 	return cmd
 }
 
-func cancelCommand() *cobra.Command {
+func taskCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "task",
+		Short: "Work with deployed tasks.",
+	}
+	cmd.AddCommand(taskListCommand(), taskGetCommand(), taskStartCommand())
+	return cmd
+}
+
+func writeTaskStartHandle(cmd *cobra.Command, control *client.Client, started api.TaskStartResponse) {
+	fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", started.Session.ID)
+	if started.Run.ID != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", started.Run.ID)
+	}
+	if started.Session.WorkspaceID != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "workspace_id: %s\n", started.Session.WorkspaceID)
+	}
+	if url := consoleURL(cmd, control, "/sessions/"+started.Session.ID); url != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "console_url: %s\n", url)
+	}
+}
+
+func remainingTaskWaitSeconds(deadline time.Time, configured int32) (int32, bool) {
+	if configured <= 0 || deadline.IsZero() {
+		return configured, false
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return 0, true
+	}
+	return int32((remaining + time.Second - 1) / time.Second), false
+}
+
+func waitTaskSessionUntilTerminal(ctx context.Context, control *client.Client, sessionID string, deadline time.Time, timeoutSeconds int32, scope client.TaskSessionScopeOptions) (api.TaskSessionResponse, error) {
+	for {
+		waitSeconds, expired := remainingTaskWaitSeconds(deadline, timeoutSeconds)
+		if expired {
+			session, err := control.GetTaskSession(ctx, sessionID, scope)
+			if err != nil {
+				return api.TaskSessionResponse{}, err
+			}
+			session.TimedOut = true
+			return session, context.DeadlineExceeded
+		}
+		waitCtx := ctx
+		var cancel func()
+		if timeoutSeconds > 0 && !deadline.IsZero() {
+			waitCtx, cancel = context.WithDeadline(ctx, deadline)
+		}
+		session, err := control.WaitTaskSession(waitCtx, sessionID, api.TaskWaitRequest{TimeoutSeconds: waitSeconds}, scope)
+		if cancel != nil {
+			cancel()
+		}
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) && timeoutSeconds > 0 {
+				session, snapshotErr := control.GetTaskSession(ctx, sessionID, scope)
+				if snapshotErr == nil {
+					session.TimedOut = true
+					return session, err
+				}
+			}
+			return api.TaskSessionResponse{}, err
+		}
+		if !session.TimedOut || taskSessionStatusTerminal(session.Status) {
+			return session, nil
+		}
+	}
+}
+
+func taskListCommand() *cobra.Command {
+	var projectID string
+	var environmentID string
+	var jsonOutput bool
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List tasks in the current deployment.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			control, err := controlClient(cmd)
+			if err != nil {
+				return err
+			}
+			scope, err := environmentScopeForClient(control, projectID, environmentID)
+			if err != nil {
+				return err
+			}
+			response, err := control.ListTasks(cmd.Context(), scope)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return format.JSON(cmd.OutOrStdout(), response)
+			}
+			for _, task := range response.Tasks {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", task.TaskID, task.FilePath, task.ExportName)
+			}
+			return nil
+		},
+	}
+	addScopeFlags(cmd, &projectID, &environmentID)
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	return cmd
+}
+
+func taskGetCommand() *cobra.Command {
+	var projectID string
+	var environmentID string
+	var jsonOutput bool
+	cmd := &cobra.Command{
+		Use:   "get TASK",
+		Short: "Show task details.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			control, err := controlClient(cmd)
+			if err != nil {
+				return err
+			}
+			scope, err := environmentScopeForClient(control, projectID, environmentID)
+			if err != nil {
+				return err
+			}
+			task, err := control.GetTask(cmd.Context(), args[0], scope)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return format.JSON(cmd.OutOrStdout(), task)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Task:       %s\n", task.TaskID)
+			fmt.Fprintf(cmd.OutOrStdout(), "File:       %s\n", task.FilePath)
+			fmt.Fprintf(cmd.OutOrStdout(), "Export:     %s\n", task.ExportName)
+			fmt.Fprintf(cmd.OutOrStdout(), "Bundle:     %s\n", task.BundleDigest)
+			return nil
+		},
+	}
+	addScopeFlags(cmd, &projectID, &environmentID)
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	return cmd
+}
+
+func runCancelCommand() *cobra.Command {
 	var reason string
 	var force bool
 	var idempotencyKey string
@@ -172,12 +376,14 @@ func cancelCommand() *cobra.Command {
 	return cmd
 }
 
-func psCommand() *cobra.Command {
+func runListCommand() *cobra.Command {
 	var jsonOutput bool
+	var jsonLines bool
 	var projectID string
 	var environmentID string
+	var sessionID string
 	cmd := &cobra.Command{
-		Use:   "ps",
+		Use:   "list",
 		Short: "List runs.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			control, err := controlClient(cmd)
@@ -186,6 +392,7 @@ func psCommand() *cobra.Command {
 			}
 			response, err := control.ListRuns(cmd.Context(), client.ListRunsOptions{
 				Status:        "all",
+				SessionID:     strings.TrimSpace(sessionID),
 				ProjectID:     strings.TrimSpace(projectID),
 				EnvironmentID: strings.TrimSpace(environmentID),
 			})
@@ -193,22 +400,26 @@ func psCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
+				return format.JSON(cmd.OutOrStdout(), response)
+			}
+			if jsonLines {
 				return format.JSONLines(cmd.OutOrStdout(), response.Runs)
 			}
 			ui.RunTable(cmd.OutOrStdout(), response.Runs)
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON run per line.")
-	cmd.Flags().StringVarP(&projectID, "project", "p", "", "Project slug or ID to list.")
-	cmd.Flags().StringVarP(&environmentID, "env", "e", "", "Environment slug or ID to list.")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	cmd.Flags().BoolVar(&jsonLines, "jsonl", false, "Emit one JSON run per line.")
+	addScopeFlags(cmd, &projectID, &environmentID)
+	cmd.Flags().StringVar(&sessionID, "session", "", "Filter by task session ID.")
 	return cmd
 }
 
-func showCommand() *cobra.Command {
+func runGetCommand() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "show RUN",
+		Use:   "get RUN",
 		Short: "Show run details.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -235,7 +446,16 @@ func showCommand() *cobra.Command {
 	return cmd
 }
 
-func logsCommand() *cobra.Command {
+func runCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "run",
+		Short: "Work with run attempts.",
+	}
+	cmd.AddCommand(runListCommand(), runGetCommand(), runLogsCommand(), runEventsCommand(), runWaitCommand(), runCancelCommand())
+	return cmd
+}
+
+func runLogsCommand() *cobra.Command {
 	var follow bool
 	cmd := &cobra.Command{
 		Use:   "logs RUN",
@@ -262,7 +482,7 @@ func logsCommand() *cobra.Command {
 				if err != nil && strings.TrimSpace(logs.Cursor) != "" {
 					return fmt.Errorf("parse log cursor: %w", err)
 				}
-				return followRunLogs(cmd, control, args[0], cursor, scope)
+				return followRunLogs(cmd.Context(), cmd, control, args[0], cursor, scope)
 			}
 			return nil
 		},
@@ -289,7 +509,7 @@ func writeRunLogSnapshot(cmd *cobra.Command, logs api.LogSnapshotResponse) error
 	return nil
 }
 
-func eventsCommand() *cobra.Command {
+func runEventsCommand() *cobra.Command {
 	var cursor int64
 	var limit int32
 	var follow bool
@@ -322,7 +542,7 @@ func eventsCommand() *cobra.Command {
 	return cmd
 }
 
-func waitCommand() *cobra.Command {
+func runWaitCommand() *cobra.Command {
 	var timeout string
 	var jsonOutput bool
 	cmd := &cobra.Command{
@@ -379,6 +599,33 @@ func runScopeForClient(control *client.Client, projectID string, environmentID s
 		return client.RunScopeOptions{}, errors.New("--project and --env are required with helmr login")
 	}
 	return scope, nil
+}
+
+func environmentScopeForClient(control *client.Client, projectID string, environmentID string) (client.EnvironmentScopeOptions, error) {
+	scope := client.EnvironmentScopeOptions{
+		ProjectID:     strings.TrimSpace(projectID),
+		EnvironmentID: strings.TrimSpace(environmentID),
+	}
+	if !control.UsesSessionScopedRoutes() {
+		if scope.ProjectID != "" || scope.EnvironmentID != "" {
+			return client.EnvironmentScopeOptions{}, errors.New("--project and --env require helmr login; API keys are already environment scoped")
+		}
+		return client.EnvironmentScopeOptions{}, nil
+	}
+	if scope.ProjectID == "" || scope.EnvironmentID == "" {
+		return client.EnvironmentScopeOptions{}, errors.New("--project and --env are required with helmr login")
+	}
+	return scope, nil
+}
+
+func workspaceScopeForClient(control *client.Client, projectID string, environmentID string) (client.WorkspaceScopeOptions, error) {
+	environmentScope, err := environmentScopeForClient(control, projectID, environmentID)
+	return client.WorkspaceScopeOptions(environmentScope), err
+}
+
+func taskSessionScopeForClient(control *client.Client, projectID string, environmentID string) (client.TaskSessionScopeOptions, error) {
+	environmentScope, err := environmentScopeForClient(control, projectID, environmentID)
+	return client.TaskSessionScopeOptions(environmentScope), err
 }
 
 func resolveRunScope(ctx context.Context, control *client.Client, runID string) (client.RunScopeOptions, error) {
@@ -527,7 +774,7 @@ func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, c
 	}
 }
 
-func followRunLogs(cmd *cobra.Command, control *client.Client, runID string, cursor int64, scope client.RunScopeOptions) error {
+func followRunLogs(ctx context.Context, cmd *cobra.Command, control *client.Client, runID string, cursor int64, scope client.RunScopeOptions) error {
 	handleChunk := func(chunk api.RunLogChunk) error {
 		parsedCursor, parseErr := strconv.ParseInt(chunk.ID, 10, 64)
 		if parseErr != nil {
@@ -554,16 +801,16 @@ func followRunLogs(cmd *cobra.Command, control *client.Client, runID string, cur
 		return nil
 	}
 	for {
-		err := control.FollowRunLogs(cmd.Context(), runID, cursor, handleChunk, scope)
-		if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {
+		err := control.FollowRunLogs(ctx, runID, cursor, handleChunk, scope)
+		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
 			return nil
 		}
 		if err != nil && runEventStreamErrorIsFatal(err) {
 			return err
 		}
-		run, snapshotErr := control.GetRun(cmd.Context(), runID, scope)
+		run, snapshotErr := control.GetRun(ctx, runID, scope)
 		if snapshotErr == nil && api.RunStatusIsTerminal(run.Status) {
-			drainErr := control.FollowRunLogs(cmd.Context(), runID, cursor, handleChunk, scope)
+			drainErr := control.FollowRunLogs(ctx, runID, cursor, handleChunk, scope)
 			if drainErr != nil && runEventStreamErrorIsFatal(drainErr) {
 				return drainErr
 			}
@@ -574,12 +821,12 @@ func followRunLogs(cmd *cobra.Command, control *client.Client, runID string, cur
 		}
 		timer := time.NewTimer(runEventReconnectDelay)
 		select {
-		case <-cmd.Context().Done():
+		case <-ctx.Done():
 			timer.Stop()
-			if errors.Is(cmd.Context().Err(), context.Canceled) {
+			if errors.Is(ctx.Err(), context.Canceled) {
 				return nil
 			}
-			return cmd.Context().Err()
+			return ctx.Err()
 		case <-timer.C:
 		}
 	}

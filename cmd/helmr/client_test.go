@@ -33,7 +33,7 @@ func TestAPIURLFlagOverridesEnvironmentURL(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"--api-url", server.URL, "logs", "run-1"})
+	cmd.SetArgs([]string{"--api-url", server.URL, "run", "logs", "run-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}

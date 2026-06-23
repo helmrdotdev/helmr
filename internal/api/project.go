@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -118,6 +119,10 @@ type GetCurrentDeploymentResponse struct {
 	Deployment *DeploymentResponse `json:"deployment"`
 }
 
+type ListDeploymentsResponse struct {
+	Deployments []DeploymentResponse `json:"deployments"`
+}
+
 const DeploymentSourceArtifactMediaType = "application/vnd.helmr.deployment-source.v0.tar"
 const TaskBundleArtifactMediaType = "application/vnd.helmr.task-bundle.v0+proto"
 const DeploymentManifestArtifactMediaType = "application/vnd.helmr.deployment-manifest.v0+json"
@@ -142,4 +147,37 @@ type DeploymentTaskResponse struct {
 	ConcurrencyLimit    *int32    `json:"concurrency_limit,omitempty"`
 	TTL                 string    `json:"ttl,omitempty"`
 	CreatedAt           time.Time `json:"created_at"`
+}
+
+type ListTasksResponse struct {
+	Tasks []DeploymentTaskResponse `json:"tasks"`
+}
+
+type SandboxResponse struct {
+	ID                  string          `json:"id"`
+	DeploymentID        string          `json:"deployment_id"`
+	SandboxID           string          `json:"sandbox_id"`
+	Fingerprint         string          `json:"fingerprint"`
+	ImageArtifactID     string          `json:"image_artifact_id"`
+	ImageArtifactFormat string          `json:"image_artifact_format"`
+	RootfsDigest        string          `json:"rootfs_digest"`
+	ImageDigest         string          `json:"image_digest"`
+	ImageFormat         string          `json:"image_format"`
+	WorkspaceMountPath  string          `json:"workspace_mount_path"`
+	ResourceFloor       json.RawMessage `json:"resource_floor,omitempty"`
+	DiskFloorMib        int32           `json:"disk_floor_mib"`
+	NetworkPolicy       json.RawMessage `json:"network_policy,omitempty"`
+	RuntimeABI          string          `json:"runtime_abi"`
+	GuestdABI           string          `json:"guestd_abi"`
+	AdapterABI          string          `json:"adapter_abi"`
+	FilesystemFormat    string          `json:"filesystem_format"`
+	DefaultUID          *int32          `json:"default_uid,omitempty"`
+	DefaultGID          *int32          `json:"default_gid,omitempty"`
+	DefaultWorkdir      string          `json:"default_workdir"`
+	ContractVersion     int32           `json:"contract_version"`
+	CreatedAt           time.Time       `json:"created_at"`
+}
+
+type ListSandboxesResponse struct {
+	Sandboxes []SandboxResponse `json:"sandboxes"`
 }
