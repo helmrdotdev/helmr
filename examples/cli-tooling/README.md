@@ -7,6 +7,6 @@ task's workspace cwd before writing a workspace report.
 ```bash
 helmr deploy PATH/TO/cli-tooling
 
-helmr run cli-tooling \
+helmr task start cli-tooling \
   --payload pattern='export const'
 ```

@@ -159,7 +159,7 @@ workspace is supplied, Helmr creates one from the deployed task's sandbox:
 ```sh
 helmr deploy PATH/TO/TASK_PROJECT
 
-helmr run review-pr \
+helmr task start review-pr \
   --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":123}'
 ```
 
@@ -178,7 +178,7 @@ inside the guest, such as an environment variable:
 
 ```sh
 printf '%s' "$OPENAI_API_KEY" | helmr secret set OPENAI_API_KEY
-helmr run my-task
+helmr task start my-task
 ```
 
 Runs never receive secret values or binding maps. The deployed task definition is

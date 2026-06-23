@@ -35,7 +35,7 @@ The web UI lists secret names and timestamps, but it does not display saved valu
 ## Run With Secrets
 
 ```sh
-helmr run use-secret
+helmr task start use-secret
 ```
 
 Runs do not accept secret values or binding maps. Secret values are injected only at run time from the deployed task's declared secret names and should never be sent through payload.

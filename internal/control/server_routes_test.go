@@ -42,6 +42,7 @@ DELETE /api/schedules/{id}
 DELETE /api/secrets/{name}
 DELETE /api/workspaces/{workspaceID}
 GET /api/auth/device/status
+GET /api/deployments
 GET /api/deployments/current
 GET /api/deployments/{deploymentID}
 GET /api/deployments/{deploymentID}/events
@@ -52,6 +53,7 @@ GET /api/projects
 GET /api/projects/{projectID}
 GET /api/projects/{projectID}/environments/{environmentID}
 GET /api/projects/{projectID}/environments/{environmentID}/api-keys
+GET /api/projects/{projectID}/environments/{environmentID}/deployments
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/current
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/events
@@ -61,6 +63,8 @@ GET /api/projects/{projectID}/environments/{environmentID}/runs/{id}
 GET /api/projects/{projectID}/environments/{environmentID}/runs/{id}/events
 GET /api/projects/{projectID}/environments/{environmentID}/runs/{id}/logs
 GET /api/projects/{projectID}/environments/{environmentID}/runs/{id}/waitpoints
+GET /api/projects/{projectID}/environments/{environmentID}/sandboxes
+GET /api/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}
 GET /api/projects/{projectID}/environments/{environmentID}/schedules
 GET /api/projects/{projectID}/environments/{environmentID}/schedules/{id}
 GET /api/projects/{projectID}/environments/{environmentID}/secrets
@@ -72,6 +76,8 @@ GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/
 GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/channels/{channel}/outputs
 GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/channels/{channel}/outputs/stream
 GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/runs
+GET /api/projects/{projectID}/environments/{environmentID}/tasks
+GET /api/projects/{projectID}/environments/{environmentID}/tasks/{taskID}
 GET /api/projects/{projectID}/environments/{environmentID}/waitpoints/tokens
 GET /api/projects/{projectID}/environments/{environmentID}/waitpoints/tokens/{tokenID}
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces
@@ -89,6 +95,8 @@ GET /api/runs/{id}
 GET /api/runs/{id}/events
 GET /api/runs/{id}/logs
 GET /api/runs/{id}/waitpoints
+GET /api/sandboxes
+GET /api/sandboxes/{sandboxID}
 GET /api/schedules
 GET /api/schedules/{id}
 GET /api/secrets
@@ -100,6 +108,8 @@ GET /api/sessions/{sessionID}/channels/{channel}/inputs
 GET /api/sessions/{sessionID}/channels/{channel}/outputs
 GET /api/sessions/{sessionID}/channels/{channel}/outputs/stream
 GET /api/sessions/{sessionID}/runs
+GET /api/tasks
+GET /api/tasks/{taskID}
 GET /api/waitpoints/tokens
 GET /api/waitpoints/tokens/{tokenID}
 GET /api/worker/status

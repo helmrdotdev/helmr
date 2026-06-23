@@ -60,10 +60,10 @@ events, and worker execution records.
 ## Inspecting Runs
 
 ```sh
-helmr ps
-helmr show RUN_ID
-helmr logs RUN_ID
-helmr events RUN_ID
+helmr run list
+helmr run get RUN_ID
+helmr run logs RUN_ID
+helmr run events RUN_ID
 ```
 
 The SDK client can retrieve, list, wait for, and stream run events. Run logs are

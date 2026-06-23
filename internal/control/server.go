@@ -342,10 +342,13 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}", s.getProject)
 		r.Get("/projects/{projectID}/environments/{environmentID}", s.getEnvironment)
 		r.Post("/projects/{projectID}/environments/{environmentID}/deployments", s.createDeployment)
+		r.Get("/projects/{projectID}/environments/{environmentID}/deployments", s.listDeployments)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/current", s.getCurrentDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}", s.getDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/events", s.getDeploymentEvents)
 		r.Post("/projects/{projectID}/environments/{environmentID}/deployments/{deployment}/promote", s.promoteDeployment)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sandboxes", s.listSandboxes)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}", s.getSandbox)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs", s.listRuns)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/counts", s.countRuns)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}", s.getRun)
@@ -404,6 +407,7 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)
+		r.Get("/deployments", s.listDeployments)
 		r.Get("/deployments/current", s.getCurrentDeployment)
 		r.Get("/deployments/{deploymentID}", s.getDeployment)
 		r.Get("/deployments/{deploymentID}/events", s.getDeploymentEvents)
@@ -455,11 +459,15 @@ func (s *Server) mountRunRoutes(r chi.Router) {
 		r.Get("/workspaces/{workspaceID}/pty/{ptyID}/output", s.listWorkspacePtyOutput)
 		r.Post("/workspaces/{workspaceID}/pty/{ptyID}/resize", s.resizeWorkspacePty)
 		r.Post("/workspaces/{workspaceID}/pty/{ptyID}/close", s.closeWorkspacePty)
+		r.Get("/sandboxes", s.listSandboxes)
+		r.Get("/sandboxes/{sandboxID}", s.getSandbox)
 		r.Post("/public-access-tokens", s.createPublicAccessToken)
 	})
 }
 
 func (s *Server) mountTaskSessionRoutes(r chi.Router, prefix string) {
+	r.Get(prefix+"/tasks", s.listTasks)
+	r.Get(prefix+"/tasks/{taskID}", s.getTask)
 	r.Post(prefix+"/tasks/{taskID}/start", s.startTask)
 	r.Post(prefix+"/tasks/{taskID}/start-and-wait", s.startTaskAndWait)
 	r.Get(prefix+"/sessions", s.listTaskSessions)

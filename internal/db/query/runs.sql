@@ -550,6 +550,10 @@ WHERE org_id = sqlc.arg(org_id)
     OR (sqlc.arg(status_filter)::text = 'running' AND status = 'running')
     OR status::text = sqlc.arg(status_filter)::text
   )
+  AND (
+    sqlc.narg(task_session_id)::uuid IS NULL
+    OR task_session_id = sqlc.narg(task_session_id)::uuid
+  )
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(row_limit);
 

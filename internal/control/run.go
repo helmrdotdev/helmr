@@ -364,7 +364,7 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	if isScopeRequestError(err) {
+	if isScopeRequestError(err) || isListRunsRequestError(err) {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -417,11 +417,16 @@ func (s *Server) listRunSummaries(r *http.Request, actor auth.Actor, statusFilte
 	if err != nil {
 		return nil, err
 	}
+	taskSessionID, err := optionalRunSessionIDFilter(r)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.ListScopedRunSummaries(r.Context(), db.ListScopedRunSummariesParams{
 		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		StatusFilter:  statusFilter,
+		TaskSessionID: taskSessionID,
 		RowLimit:      limit,
 	})
 	if err != nil {
@@ -457,7 +462,27 @@ func (s *Server) countRunStatuses(r *http.Request, actor auth.Actor) (api.RunCou
 	return scopedRunCountsResponse(counts), nil
 }
 
+func optionalRunSessionIDFilter(r *http.Request) (pgtype.UUID, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	if raw == "" {
+		return pgtype.UUID{}, nil
+	}
+	parsed, err := uuid.Parse(raw)
+	if err != nil {
+		return pgtype.UUID{}, errInvalidRunSessionID
+	}
+	return pgvalue.UUID(parsed), nil
+}
+
 var errPermissionRequired = errors.New("permission is required")
+var errInvalidRunSessionID = errors.New("session_id must be a UUID")
+
+func isListRunsRequestError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, errInvalidRunSessionID)
+}
 
 func listRunsQuery(r *http.Request) (string, int32, error) {
 	status := strings.TrimSpace(r.URL.Query().Get("status"))

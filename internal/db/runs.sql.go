@@ -1371,8 +1371,12 @@ WHERE org_id = $1
     OR ($4::text = 'running' AND status = 'running')
     OR status::text = $4::text
   )
+  AND (
+    $5::uuid IS NULL
+    OR task_session_id = $5::uuid
+  )
 ORDER BY created_at DESC, id DESC
-LIMIT $5
+LIMIT $6
 `
 
 type ListScopedRunSummariesParams struct {
@@ -1380,6 +1384,7 @@ type ListScopedRunSummariesParams struct {
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	StatusFilter  string      `json:"status_filter"`
+	TaskSessionID pgtype.UUID `json:"task_session_id"`
 	RowLimit      int32       `json:"row_limit"`
 }
 
@@ -1415,6 +1420,7 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.StatusFilter,
+		arg.TaskSessionID,
 		arg.RowLimit,
 	)
 	if err != nil {

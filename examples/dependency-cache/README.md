@@ -9,5 +9,5 @@ rebuilding dependency layers.
 ```bash
 helmr deploy PATH/TO/dependency-cache
 
-helmr run dependency-cache
+helmr task start dependency-cache
 ```

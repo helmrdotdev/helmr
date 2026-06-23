@@ -364,7 +364,7 @@ func TestDeploymentRouteAuthorizesBeforeReadingDeploymentSource(t *testing.T) {
 	}
 }
 
-func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
+func TestGetCurrentDeploymentReturnsDeploymentSnapshot(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	store := &fakeStore{
 		deployment: db.Deployment{

@@ -616,6 +616,7 @@ func (c *Client) CancelRun(ctx context.Context, id string, input api.CancelRunRe
 type ListRunsOptions struct {
 	Status        string
 	Limit         int32
+	SessionID     string
 	ProjectID     string
 	EnvironmentID string
 }
@@ -655,6 +656,9 @@ func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.Lis
 		}
 		if opts[0].Limit > 0 {
 			values.Set("limit", strconv.FormatInt(int64(opts[0].Limit), 10))
+		}
+		if strings.TrimSpace(opts[0].SessionID) != "" {
+			values.Set("session_id", strings.TrimSpace(opts[0].SessionID))
 		}
 		if encoded := values.Encode(); encoded != "" {
 			path += "?" + encoded

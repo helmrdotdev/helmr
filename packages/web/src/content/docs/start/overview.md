@@ -22,8 +22,8 @@ execution, secret injection, logs, events, and operator approval points.
   session channels, metadata, waits, waitpoint tokens, and logs.
 - A runtime client for starting tasks, opening workspaces, creating execs, and
   opening PTY sessions.
-- A CLI for login, deployments, runs, logs, events, waitpoint responses, and
-  remote secrets.
+- A CLI for login, deployments, task starts, session I/O, run inspection,
+  workspace exec and PTY, waitpoint responses, and remote secrets.
 - A control plane that stores projects, environments, deployments, workspaces,
   sessions, runs, waitpoints, channel records, metadata, logs, events, secrets,
   and API keys.

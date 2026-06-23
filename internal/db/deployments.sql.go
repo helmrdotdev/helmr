@@ -661,6 +661,70 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 	return i, err
 }
 
+const getCurrentDeploymentSandbox = `-- name: GetCurrentDeploymentSandbox :one
+SELECT deployment_sandboxes.id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
+  FROM deployment_sandboxes
+  JOIN environments ON environments.org_id = deployment_sandboxes.org_id
+                   AND environments.project_id = deployment_sandboxes.project_id
+                   AND environments.id = deployment_sandboxes.environment_id
+                   AND environments.current_deployment_id = deployment_sandboxes.deployment_id
+  JOIN deployments ON deployments.org_id = deployment_sandboxes.org_id
+                  AND deployments.project_id = deployment_sandboxes.project_id
+                  AND deployments.environment_id = deployment_sandboxes.environment_id
+                  AND deployments.id = deployment_sandboxes.deployment_id
+                  AND deployments.status = 'deployed'
+ WHERE deployment_sandboxes.org_id = $1
+   AND deployment_sandboxes.project_id = $2
+   AND deployment_sandboxes.environment_id = $3
+   AND deployment_sandboxes.sandbox_id = $4
+ LIMIT 1
+`
+
+type GetCurrentDeploymentSandboxParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SandboxID     string      `json:"sandbox_id"`
+}
+
+func (q *Queries) GetCurrentDeploymentSandbox(ctx context.Context, arg GetCurrentDeploymentSandboxParams) (DeploymentSandbox, error) {
+	row := q.db.QueryRow(ctx, getCurrentDeploymentSandbox,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.SandboxID,
+	)
+	var i DeploymentSandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.SandboxID,
+		&i.ImageArtifactID,
+		&i.ImageArtifactFormat,
+		&i.RootfsDigest,
+		&i.ImageDigest,
+		&i.ImageFormat,
+		&i.WorkspaceMountPath,
+		&i.ResourceFloor,
+		&i.DiskFloorMib,
+		&i.NetworkPolicy,
+		&i.RuntimeABI,
+		&i.GuestdAbi,
+		&i.AdapterAbi,
+		&i.FilesystemFormat,
+		&i.DefaultUid,
+		&i.DefaultGid,
+		&i.DefaultWorkdir,
+		&i.ContractVersion,
+		&i.Fingerprint,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getCurrentDeploymentTask = `-- name: GetCurrentDeploymentTask :one
 SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.retry_policy, deployment_tasks.created_at,
        deployment_sandboxes.sandbox_id,
@@ -1460,6 +1524,146 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 	return i, err
 }
 
+const listCurrentDeploymentSandboxes = `-- name: ListCurrentDeploymentSandboxes :many
+SELECT deployment_sandboxes.id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
+  FROM deployment_sandboxes
+  JOIN environments ON environments.org_id = deployment_sandboxes.org_id
+                   AND environments.project_id = deployment_sandboxes.project_id
+                   AND environments.id = deployment_sandboxes.environment_id
+                   AND environments.current_deployment_id = deployment_sandboxes.deployment_id
+  JOIN deployments ON deployments.org_id = deployment_sandboxes.org_id
+                  AND deployments.project_id = deployment_sandboxes.project_id
+                  AND deployments.environment_id = deployment_sandboxes.environment_id
+                  AND deployments.id = deployment_sandboxes.deployment_id
+                  AND deployments.status = 'deployed'
+ WHERE deployment_sandboxes.org_id = $1
+   AND deployment_sandboxes.project_id = $2
+   AND deployment_sandboxes.environment_id = $3
+ ORDER BY deployment_sandboxes.sandbox_id ASC
+`
+
+type ListCurrentDeploymentSandboxesParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+}
+
+func (q *Queries) ListCurrentDeploymentSandboxes(ctx context.Context, arg ListCurrentDeploymentSandboxesParams) ([]DeploymentSandbox, error) {
+	rows, err := q.db.Query(ctx, listCurrentDeploymentSandboxes, arg.OrgID, arg.ProjectID, arg.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DeploymentSandbox
+	for rows.Next() {
+		var i DeploymentSandbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.DeploymentID,
+			&i.SandboxID,
+			&i.ImageArtifactID,
+			&i.ImageArtifactFormat,
+			&i.RootfsDigest,
+			&i.ImageDigest,
+			&i.ImageFormat,
+			&i.WorkspaceMountPath,
+			&i.ResourceFloor,
+			&i.DiskFloorMib,
+			&i.NetworkPolicy,
+			&i.RuntimeABI,
+			&i.GuestdAbi,
+			&i.AdapterAbi,
+			&i.FilesystemFormat,
+			&i.DefaultUid,
+			&i.DefaultGid,
+			&i.DefaultWorkdir,
+			&i.ContractVersion,
+			&i.Fingerprint,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCurrentDeploymentTasks = `-- name: ListCurrentDeploymentTasks :many
+SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.retry_policy, deployment_tasks.created_at
+  FROM deployment_tasks
+  JOIN environments ON environments.org_id = deployment_tasks.org_id
+                   AND environments.project_id = deployment_tasks.project_id
+                   AND environments.id = deployment_tasks.environment_id
+                   AND environments.current_deployment_id = deployment_tasks.deployment_id
+  JOIN deployments ON deployments.org_id = deployment_tasks.org_id
+                  AND deployments.project_id = deployment_tasks.project_id
+                  AND deployments.environment_id = deployment_tasks.environment_id
+                  AND deployments.id = deployment_tasks.deployment_id
+                  AND deployments.status = 'deployed'
+ WHERE deployment_tasks.org_id = $1
+   AND deployment_tasks.project_id = $2
+   AND deployment_tasks.environment_id = $3
+ ORDER BY deployment_tasks.task_id ASC
+`
+
+type ListCurrentDeploymentTasksParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+}
+
+func (q *Queries) ListCurrentDeploymentTasks(ctx context.Context, arg ListCurrentDeploymentTasksParams) ([]DeploymentTask, error) {
+	rows, err := q.db.Query(ctx, listCurrentDeploymentTasks, arg.OrgID, arg.ProjectID, arg.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DeploymentTask
+	for rows.Next() {
+		var i DeploymentTask
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.DeploymentID,
+			&i.DeploymentSandboxID,
+			&i.TaskID,
+			&i.FilePath,
+			&i.ExportName,
+			&i.HandlerEntrypoint,
+			&i.BundleArtifactID,
+			&i.BundleFormatVersion,
+			&i.RequestedMilliCpu,
+			&i.RequestedMemoryMib,
+			&i.RequestedDiskMib,
+			&i.SecretDeclarations,
+			&i.ResourceRequirements,
+			&i.NetworkPolicy,
+			&i.ScheduleDeclarations,
+			&i.QueueName,
+			&i.QueueConcurrencyLimit,
+			&i.Ttl,
+			&i.MaxDurationSeconds,
+			&i.RetryPolicy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeploymentTasks = `-- name: ListDeploymentTasks :many
 SELECT id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, secret_declarations, resource_requirements, network_policy, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_duration_seconds, retry_policy, created_at
   FROM deployment_tasks
@@ -1543,6 +1747,76 @@ type ListDeploymentsByVersionForOrgParams struct {
 
 func (q *Queries) ListDeploymentsByVersionForOrg(ctx context.Context, arg ListDeploymentsByVersionForOrgParams) ([]Deployment, error) {
 	rows, err := q.db.Query(ctx, listDeploymentsByVersionForOrg, arg.OrgID, arg.Version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Deployment
+	for rows.Next() {
+		var i Deployment
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.WorkerGroupID,
+			&i.Version,
+			&i.ContentHash,
+			&i.ApiVersion,
+			&i.SdkVersion,
+			&i.CliVersion,
+			&i.BundleFormatVersion,
+			&i.WorkerProtocolVersion,
+			&i.DeploymentSourceArtifactID,
+			&i.BuildManifestArtifactID,
+			&i.DeploymentManifestArtifactID,
+			&i.Status,
+			&i.Failure,
+			&i.BuildLeaseID,
+			&i.BuildWorkerInstanceID,
+			&i.BuildLeaseExpiresAt,
+			&i.BuildAttempt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.BuildingAt,
+			&i.BuiltAt,
+			&i.DeployedAt,
+			&i.FailedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listScopedDeployments = `-- name: ListScopedDeployments :many
+SELECT id, org_id, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+  FROM deployments
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+ ORDER BY created_at DESC, id DESC
+ LIMIT $4
+`
+
+type ListScopedDeploymentsParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RowLimit      int32       `json:"row_limit"`
+}
+
+func (q *Queries) ListScopedDeployments(ctx context.Context, arg ListScopedDeploymentsParams) ([]Deployment, error) {
+	rows, err := q.db.Query(ctx, listScopedDeployments,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cli/session"
 	"github.com/helmrdotdev/helmr/internal/version"
+	"github.com/spf13/cobra"
 	"github.com/zalando/go-keyring"
 )
 
@@ -220,4 +221,65 @@ func TestReplayCommandIsNotRegistered(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `unknown command "replay"`) {
 		t.Fatalf("err = %v", err)
 	}
+}
+
+func TestGreenfieldCommandSurface(t *testing.T) {
+	root := newRootCommand()
+	for _, path := range [][]string{
+		{"workspace"},
+		{"task"},
+		{"session"},
+		{"run"},
+		{"waitpoint"},
+		{"deployment"},
+		{"sandbox"},
+	} {
+		if commandByPath(root, path...) == nil {
+			t.Fatalf("command %q is not registered", strings.Join(path, " "))
+		}
+	}
+	for _, path := range [][]string{
+		{"workspaces"},
+		{"tasks"},
+		{"sessions"},
+		{"runs"},
+		{"ps"},
+		{"show"},
+		{"logs"},
+		{"events"},
+		{"wait"},
+		{"cancel"},
+		{"promote"},
+		{"session", "run"},
+		{"session", "runs"},
+		{"session", "logs"},
+		{"session", "events"},
+		{"workspace", "file"},
+		{"workspace", "cp"},
+		{"workspace", "port"},
+		{"workspace", "version"},
+		{"workspace", "fork"},
+	} {
+		if commandByPath(root, path...) != nil {
+			t.Fatalf("command %q must not be registered", strings.Join(path, " "))
+		}
+	}
+}
+
+func commandByPath(root *cobra.Command, path ...string) *cobra.Command {
+	current := root
+	for _, name := range path {
+		found := false
+		for _, child := range current.Commands() {
+			if child.Name() == name {
+				current = child
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
+	}
+	return current
 }
