@@ -19,23 +19,41 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr task list [--json]` | List deployed task definitions. |
 | `helmr task get TASK [--json]` | Show a deployed task definition. |
 | `helmr task start TASK [-p PROJECT] [-e ENV] [--json]` | Start a task session for a deployed task. |
-| `helmr session list|get|wait|cancel` | Inspect and control task sessions. |
+| `helmr session list` | List task sessions. |
+| `helmr session get SESSION` | Show task session details. |
+| `helmr session wait SESSION` | Wait for a task session to finish. |
+| `helmr session cancel SESSION` | Cancel a task session. |
 | `helmr session input send SESSION CHANNEL --data-json JSON` | Append a session input record. |
-| `helmr session output list|follow SESSION CHANNEL` | Read session channel output. |
+| `helmr session output list SESSION CHANNEL` | List retained session channel output. |
+| `helmr session output follow SESSION CHANNEL` | Follow session channel output. |
 | `helmr run list [--session SESSION] [--json]` | List run attempts. |
 | `helmr run get RUN [--json]` | Show run details. |
 | `helmr run logs RUN [--follow]` | Print latest stdout/stderr snapshots and optionally stream new log chunks. |
 | `helmr run events RUN [--cursor N] [--limit N] [--follow]` | Print run events as JSON lines. |
 | `helmr run wait RUN [--timeout DURATION] [--json]` | Wait for a run to finish using the run event stream. |
 | `helmr run cancel RUN [--idempotency-key KEY]` | Cancel a run attempt. |
-| `helmr workspace create|list|get|update|delete|open` | Manage durable workspaces. |
-| `helmr workspace materialize|connect|stop WORKSPACE` | Control a live workspace materialization. |
+| `helmr workspace create` | Create a durable workspace. |
+| `helmr workspace list` | List durable workspaces. |
+| `helmr workspace get WORKSPACE` | Show workspace details. |
+| `helmr workspace update WORKSPACE` | Update workspace metadata. |
+| `helmr workspace delete WORKSPACE` | Delete a workspace. |
+| `helmr workspace open WORKSPACE` | Print the workspace console URL. |
+| `helmr workspace materialize WORKSPACE` | Ensure a live workspace materialization exists. |
+| `helmr workspace connect WORKSPACE` | Connect to a live workspace materialization. |
+| `helmr workspace stop WORKSPACE` | Stop the live materialization while keeping the durable workspace. |
 | `helmr workspace exec WORKSPACE -- COMMAND [ARGS...]` | Run a command in a workspace. |
-| `helmr workspace exec list|get|logs|wait` | Inspect durable workspace exec records and streams. |
+| `helmr workspace exec list WORKSPACE` | List workspace exec records. |
+| `helmr workspace exec get WORKSPACE EXEC` | Show workspace exec details. |
+| `helmr workspace exec logs WORKSPACE EXEC` | Read workspace exec stdout/stderr. |
+| `helmr workspace exec wait WORKSPACE EXEC` | Wait for a workspace exec to finish. |
 | `helmr workspace shell WORKSPACE` | Open an interactive shell in a workspace. |
-| `helmr workspace pty create|connect|close` | Manage workspace PTY sessions. |
-| `helmr deployment list|get` | Inspect deployments. |
-| `helmr sandbox list|get` | Inspect deployed sandbox definitions. |
+| `helmr workspace pty create WORKSPACE` | Create a workspace PTY session. |
+| `helmr workspace pty connect WORKSPACE PTY` | Connect to a workspace PTY session. |
+| `helmr workspace pty close WORKSPACE PTY` | Close a workspace PTY session. |
+| `helmr deployment list` | List deployments. |
+| `helmr deployment get DEPLOYMENT` | Show deployment details. |
+| `helmr sandbox list` | List deployed sandbox definitions. |
+| `helmr sandbox get SANDBOX` | Show deployed sandbox details. |
 | `helmr secret list [--json]` | List remote secret metadata. |
 | `helmr secret get NAME [--json]` | Show remote secret metadata. Secret values are never returned. |
 | `helmr secret set NAME [VALUE] [--json]` | Create or update a remote secret; reads stdin if value is omitted. |
