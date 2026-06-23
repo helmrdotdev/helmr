@@ -8,7 +8,7 @@ configuration, channel routing, and actor identity.
 
 ```sh
 helmr deploy examples/slack-approval
-helmr run slack-approval \
+helmr task start slack-approval \
   --payload-json '{
     "release": "helmr-web-2026-06-14",
     "summary": "Promote the validated staging build to production.",

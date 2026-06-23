@@ -6,5 +6,5 @@ before continuing.
 ```bash
 helmr deploy PATH/TO/human-in-the-loop
 
-helmr run human-in-the-loop
+helmr task start human-in-the-loop
 ```

@@ -60,7 +60,7 @@ Deployment indexes the configured task files, uploads a content-hashed deploymen
 ## Start A Task
 
 ```sh
-helmr run hello \
+helmr task start hello \
   --payload name=Ada
 ```
 
@@ -72,10 +72,10 @@ it.
 ## Inspect The Run
 
 ```sh
-helmr ps
-helmr show RUN_ID
-helmr logs RUN_ID
-helmr events RUN_ID
+helmr run list
+helmr run get RUN_ID
+helmr run logs RUN_ID
+helmr run events RUN_ID
 ```
 
 If a run is waiting on a waitpoint, inspect it with `helmr waitpoint list`. For a token-backed waitpoint, complete the token from an authenticated app or bridge with `helmr waitpoint token complete TOKEN_ID --data JSON`, or call `/api/waitpoints/tokens/{tokenId}/complete` with the token's `publicAccessToken` bearer.

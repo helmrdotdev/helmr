@@ -22,12 +22,12 @@ Deploy the task project from a local checkout:
 helmr deploy .
 ```
 
-Start a small task run and watch it reach a terminal state:
+Start a small task session and watch the run attempt reach a terminal state:
 
 ```sh
-RUN_ID=$(helmr run TASK_ID)
-helmr ps
-helmr logs "$RUN_ID"
+helmr task start TASK_ID --wait --follow
+helmr run list
+helmr run logs RUN_ID
 ```
 
 A complete smoke test proves that:
