@@ -1,9 +1,8 @@
 import {
   ConcurrentWaitError,
-  getRuntimeWaitOperand,
   getRunRuntime,
-  runtimeWaitOperand,
-  validateChannelName,
+  validateStreamName,
+  WaitCancelledError,
   WaitTimeoutError,
   ImageBuilderImpl,
   SourceDirRefImpl,
@@ -14,9 +13,9 @@ import {
   type CacheMountBinding,
   type ImageBuilder,
   type ImageRunOptions,
-  type WaitpointHandle,
+  type WaitHandle,
   type WaitDelayHandle,
-  type WaitpointResult,
+  type WaitResult,
   type NoPayload,
   type Placement,
   type SandboxBuilder,
@@ -27,39 +26,42 @@ import {
   type SourceDirRef,
   type SourceDirectoryOptions,
   type SourceFileRef,
-  type ChannelOutputAppendOptions,
-  type ChannelOutputDefinition,
-  type ChannelInputDefinition,
-  type ChannelInputWaitOptions,
-  type ChannelInputHandle,
-  type ChannelOutputHandle,
+  type StreamAppendOptions,
+  type StreamListOptions,
+  type StreamReadOptions,
+  type StreamRecord,
+  type StreamWriter,
+  type OutputStreamDefinition,
+  type InputStreamDefinition,
+  type InputStreamPeekOptions,
+  type InputStreamSendOptions,
+  type InputStreamWaitOptions,
+  type InputStreamHandle,
+  type OutputStreamHandle,
   type TaskContext,
   type TaskSessionContext,
   type TaskWorkspace,
   type TaskOutput,
   type TaskPayload,
   type TaskStartPayload,
-  type RuntimeWaitpointTokenCreateOptions,
-  type RuntimeWaitOperand,
-  type WaitDurationInput,
-  type WaitUntilInput,
+  type RuntimeTokenCreateOptions,
+  type RuntimeTokenWaitOptions,
+  type TokenWaitOptions,
+  type DurationInput,
+  type UntilInput,
   type WaitJson,
 } from "./internal"
 import { PayloadSchemaValidationError } from "./schema/payload"
 import { idempotencyKeys } from "./idempotency"
 export type { IdempotencyKey, IdempotencyKeyCreateOptions, IdempotencyKeyInput, IdempotencyKeyScope } from "./idempotency"
-import type { PayloadSchema, StandardSchemaV1 } from "./schema/payload"
+import { parsePayloadWithSchema, type PayloadSchema, type StandardSchemaV1 } from "./schema/payload"
 import {
   HelmrClient,
-  type WaitpointToken,
-  type WaitpointTokenCompleteOptions,
-  type WaitpointTokenCreateOptions,
-  type WaitpointTokenListOptions,
-  type WaitpointTokenRef,
-  type WaitpointTokenRetrieveOptions,
+  type Token as ClientToken,
+  type TokenCreateOptions,
+  type TokenRef,
 } from "./runtime/client"
 export type {
-  ChannelRecord,
   ListSchedulesOptions,
   OpenTaskSessionApi,
   PublicAccessToken,
@@ -70,12 +72,13 @@ export type {
   ScheduleCreateOptions,
   ScheduleUpdateOptions,
   SchedulesApi,
-  SessionChannelInputApi,
-  SessionChannelInputSendOptions,
-  SessionChannelInputSendResult,
-  SessionChannelListOptions,
-  SessionChannelOutputApi,
-  SessionChannelOutputStreamOptions,
+  SessionInputSendOptions,
+  SessionInputSendResult,
+  SessionInputStreamApi,
+  SessionOutputAppendOptions,
+  SessionOutputStreamApi,
+  SessionStreamListOptions,
+  SessionStreamReadOptions,
   TaskSessionCancelOptions,
   TaskSessionCloseOptions,
   TaskSessionHandle,
@@ -87,12 +90,12 @@ export type {
   TaskStartAndWaitOptions,
   TaskStartOptions,
   TaskStartResult,
-  WaitpointToken,
-  WaitpointTokenRef,
-  WaitpointTokenCompleteOptions,
-  WaitpointTokenCreateOptions,
-  WaitpointTokenListOptions,
-  WaitpointTokenRetrieveOptions,
+  TokenRef,
+  TokenCompleteOptions,
+  TokenCreateOptions,
+  TokenListOptions,
+  TokenRetrieveOptions,
+  TokensApi,
   Workspace,
   WorkspaceCreateOptions,
   WorkspaceDesiredState,
@@ -129,7 +132,6 @@ export type {
   WorkspacesApi,
   WorkspaceState,
   WorkspaceUpdateOptions,
-  RunWaitpointsApi,
 } from "./runtime/client"
 import { sandbox } from "./sandbox"
 import { defineConfig, type HelmrConfig, type HelmrConfigInput } from "./config"
@@ -144,14 +146,20 @@ import { getDefaultClient, tasks } from "./start"
 
 type SchemaInput<TSchema> = TSchema extends PayloadSchema<infer TInput, any> ? TInput : never
 type SchemaOutput<TSchema> = TSchema extends PayloadSchema<any, infer TOutput> ? TOutput : never
+
+export interface Token extends ClientToken {
+  wait<TSchema extends PayloadSchema<any, any>>(
+    opts: TokenWaitOptions<TSchema> & { readonly schema: TSchema },
+  ): WaitHandle<SchemaOutput<TSchema>>
+  wait(opts?: TokenWaitOptions): WaitHandle<unknown>
+}
+
 export { AuthError, RunNotFoundError, TimeoutError, UnsupportedTransportError } from "./runtime/errors"
-export { ConcurrentWaitError, WaitTimeoutError, PayloadSchemaValidationError }
+export { ConcurrentWaitError, WaitCancelledError, WaitTimeoutError, PayloadSchemaValidationError }
 export {
   type LogSnapshot,
   type ListRunEventsOptions,
   type ListRunsOptions,
-  type WaitpointRef,
-  type PendingWaitpoint,
   type RetrieveRunOptions,
   type RunEvent,
   type RunEventRecord,
@@ -161,7 +169,6 @@ export {
   type RunSnapshot,
   type RunStatus,
   type RunSummary,
-  type RunWaitpointOptions,
   type SubscribeRunEventsOptions,
 } from "./runtime/run"
 export { defineConfig, idempotencyKeys, queue, sandbox, task, tasks }
@@ -177,19 +184,25 @@ export type {
   TaskOutput,
   TaskPayload,
   TaskStartPayload,
-  WaitpointHandle,
+  WaitHandle,
   WaitDelayHandle,
-  WaitpointResult,
-  ChannelOutputAppendOptions,
-  ChannelOutputDefinition,
-  ChannelInputDefinition,
-  ChannelInputWaitOptions,
-  ChannelInputHandle,
-  ChannelOutputHandle,
-  WaitDurationInput,
-  WaitUntilInput,
+  WaitResult,
+  StreamAppendOptions,
+  StreamListOptions,
+  StreamReadOptions,
+  StreamRecord,
+  StreamWriter,
+  OutputStreamDefinition,
+  InputStreamDefinition,
+  InputStreamPeekOptions,
+  InputStreamSendOptions,
+  InputStreamWaitOptions,
+  InputStreamHandle,
+  OutputStreamHandle,
+  TokenWaitOptions,
+  DurationInput,
+  UntilInput,
   WaitJson,
-  RuntimeWaitOperand,
   PayloadSchema,
   StandardSchemaV1,
   NoPayload,
@@ -216,18 +229,27 @@ export const runs = new Proxy({} as HelmrClient["runs"], {
   },
 })
 
-export const channel = Object.freeze({
-  input<TSchema extends PayloadSchema<any, any>>(
-    id: string,
-    opts: { readonly schema: TSchema },
-  ): ChannelInputDefinition<SchemaOutput<TSchema>, SchemaInput<TSchema>> {
-    return Object.freeze({ id: validateChannelName(id), schema: opts.schema })
+export const streams = Object.freeze({
+  input: createInputStream,
+  output: createOutputStream,
+})
+
+export const tokens = Object.freeze({
+  async create(opts: TokenCreateOptions & { readonly timeout?: DurationInput } = {}): Promise<Token> {
+    const token = runRuntimeIsActive()
+      ? await getRunRuntime().createToken(normalizeRuntimeTokenCreateOptions(opts))
+      : await getDefaultClient().tokens.create(normalizeTokenCreateOptions(opts))
+    return tokenHandle(token)
   },
-  output<TSchema extends PayloadSchema<any, any>>(
-    id: string,
-    opts: { readonly schema: TSchema },
-  ): ChannelOutputDefinition<SchemaOutput<TSchema>, SchemaInput<TSchema>> {
-    return Object.freeze({ id: validateChannelName(id), schema: opts.schema })
+  wait: tokenWaitHandle,
+})
+
+export const timers = Object.freeze({
+  waitFor(input: DurationInput): WaitDelayHandle {
+    return timerHandle(() => getRunRuntime().waitFor(input))
+  },
+  waitUntil(input: UntilInput): WaitDelayHandle {
+    return timerHandle(() => getRunRuntime().waitUntil(input))
   },
 })
 
@@ -240,84 +262,6 @@ export const metadata = Object.freeze({
   },
   increment(key: string, amount = 1) {
     return getRunRuntime().metadataIncrement(key, amount)
-  },
-})
-
-export const wait = Object.freeze({
-  async createToken(opts: WaitpointTokenCreateOptions & { readonly timeout?: WaitDurationInput } = {}): Promise<WaitpointToken> {
-    if (runRuntimeIsActive()) {
-      return await getRunRuntime().createWaitpointToken(normalizeRuntimeWaitpointTokenCreateOptions(opts))
-    }
-    return await getDefaultClient().waitpoints.tokens.create(normalizeWaitpointTokenCreateOptions(opts))
-  },
-  retrieveToken(id: string, opts?: WaitpointTokenRetrieveOptions) {
-    return getDefaultClient().waitpoints.tokens.retrieve(id, opts)
-  },
-  async listTokens(opts?: WaitpointTokenListOptions) {
-    return await getDefaultClient().waitpoints.tokens.list(opts)
-  },
-  listTokensPage(opts?: WaitpointTokenListOptions) {
-    return getDefaultClient().waitpoints.tokens.listPage(opts)
-  },
-  for(input: WaitDurationInput): WaitDelayHandle {
-    return waitDelayHandle(
-      { type: "for", input },
-      () => getRunRuntime().waitFor(input),
-    )
-  },
-  until(input: WaitUntilInput): WaitDelayHandle {
-    return waitDelayHandle(
-      { type: "until", input },
-      () => getRunRuntime().waitUntil(input),
-    )
-  },
-  forToken<TSchema extends PayloadSchema<any, any>>(
-    token: WaitpointToken | WaitpointTokenRef | string,
-    opts?: {
-      readonly schema?: TSchema
-      readonly timeout?: WaitDurationInput
-      readonly tags?: string | readonly string[]
-      readonly metadata?: { readonly [key: string]: WaitJson }
-    },
-  ): WaitpointHandle<TSchema extends PayloadSchema<any, infer TOutput> ? TOutput : unknown> {
-    const tokenId = typeof token === "string" ? token : token.id
-    const tokenTimeoutAt = typeof token === "string" ? undefined : "timeoutAt" in token ? token.timeoutAt : undefined
-    const timeout = opts?.timeout ?? waitpointTokenTimeoutInput(tokenTimeoutAt)
-    const schema = opts?.schema
-    const options = {
-      params: {
-        token_id: tokenId,
-      },
-      ...(timeout === undefined ? {} : { timeout }),
-      ...(opts?.metadata === undefined ? {} : { metadata: opts.metadata }),
-      ...(opts?.tags === undefined ? {} : { tags: opts.tags }),
-      ...(schema === undefined ? {} : { schema }),
-    }
-    const operand = { type: "waitpoint", options } satisfies RuntimeWaitOperand
-    return waitpointHandle(
-      operand,
-      () => getRunRuntime().waitpoint(options),
-    ) as WaitpointHandle<TSchema extends PayloadSchema<any, infer TOutput> ? TOutput : unknown>
-  },
-  async all(operands: readonly unknown[]): Promise<readonly unknown[]> {
-    const normalized = operands.map((operand, index) => {
-      const waitOperand = getRuntimeWaitOperand(operand)
-      if (waitOperand === undefined) {
-        throw new Error(`wait.all operand at index ${index} is not a Helmr wait handle`)
-      }
-      return waitOperand
-    })
-    if (normalized.length === 0) {
-      throw new Error("wait.all requires at least one operand")
-    }
-    return await getRunRuntime().waitAll(normalized)
-  },
-  completeToken(
-    token: WaitpointToken | WaitpointTokenRef | string,
-    data: unknown,
-    opts?: WaitpointTokenCompleteOptions,
-  ) {
-    return getDefaultClient().waitpoints.tokens.complete(token, data, opts)
   },
 })
 
@@ -365,38 +309,186 @@ export type {
   TaskContext,
   TaskSessionContext,
   TaskWorkspace,
-  RuntimeWaitpointTokenCreateOptions,
+  RuntimeTokenCreateOptions,
 }
 
-function waitpointHandle<TPayload>(
-  operand: RuntimeWaitOperand,
-  factory: () => Promise<WaitpointResult<TPayload>>,
-): WaitpointHandle<TPayload> {
-  let promise: Promise<WaitpointResult<TPayload>> | undefined
+function createInputStream<TSchema extends PayloadSchema<any, any>>(
+  id: string,
+  opts: { readonly schema: TSchema },
+): InputStreamHandle<SchemaOutput<TSchema>, SchemaInput<TSchema>> & InputStreamDefinition<SchemaOutput<TSchema>, SchemaInput<TSchema>>
+function createInputStream(id: string): InputStreamHandle<unknown, unknown>
+function createInputStream(
+  id: string,
+  opts?: { readonly schema?: PayloadSchema<any, any> },
+): InputStreamHandle<unknown, unknown> & Partial<InputStreamDefinition<unknown, unknown>> {
+  return inputStreamHandle(validateStreamName(id), opts?.schema)
+}
+
+function createOutputStream<TSchema extends PayloadSchema<any, any>>(
+  id: string,
+  opts: { readonly schema: TSchema },
+): OutputStreamHandle<SchemaOutput<TSchema>, SchemaInput<TSchema>> & OutputStreamDefinition<SchemaOutput<TSchema>, SchemaInput<TSchema>>
+function createOutputStream(id: string): OutputStreamHandle<unknown, unknown>
+function createOutputStream(
+  id: string,
+  opts?: { readonly schema?: PayloadSchema<any, any> },
+): OutputStreamHandle<unknown, unknown> & Partial<OutputStreamDefinition<unknown, unknown>> {
+  return outputStreamHandle(validateStreamName(id), opts?.schema)
+}
+
+function inputStreamHandle(
+  id: string,
+  schema: PayloadSchema<any, any> | undefined,
+): InputStreamHandle<unknown, unknown> & Partial<InputStreamDefinition<unknown, unknown>> {
+  const wait = (opts: InputStreamWaitOptions = {}) => {
+    return waitHandle(() => getRunRuntime().inputStreamWait(id, schema, opts))
+  }
+  return Object.freeze({
+    id,
+    direction: "input",
+    ...(schema === undefined ? {} : { schema }),
+    wait,
+    once: (opts: InputStreamWaitOptions = {}) => {
+      return activeWaitHandle(() => getRunRuntime().inputStreamOnce(id, schema, opts))
+    },
+    on: async (handler: (payload: unknown) => void | Promise<void>, opts: InputStreamWaitOptions = {}) => {
+      let afterSequence = opts.afterSequence
+      let awaitingInitialRecord = true
+      for (;;) {
+        const peekOpts = awaitingInitialRecord
+          ? { ...opts, afterSequence, block: true }
+          : { ...opts, timeout: undefined, afterSequence, block: true }
+        const record = await getRunRuntime().inputStreamPeek(id, schema, peekOpts as InputStreamPeekOptions & { readonly block: true })
+        if (record === null) {
+          if (awaitingInitialRecord && opts.timeout !== undefined) {
+            throw new WaitTimeoutError(`input stream ${JSON.stringify(id)} subscription timed out`)
+          }
+          continue
+        }
+        awaitingInitialRecord = false
+        afterSequence = record.sequence
+        await handler(record.data)
+      }
+    },
+    peek: async (opts?: InputStreamPeekOptions) => {
+      return await getRunRuntime().inputStreamPeek(id, schema, opts)
+    },
+  })
+}
+
+function outputStreamHandle(
+  id: string,
+  schema: PayloadSchema<any, any> | undefined,
+): OutputStreamHandle<unknown, unknown> & Partial<OutputStreamDefinition<unknown, unknown>> {
+  return Object.freeze({
+    id,
+    direction: "output",
+    ...(schema === undefined ? {} : { schema }),
+    append: async (payload: unknown, opts?: StreamAppendOptions) => {
+      const parsed = schema === undefined
+        ? payload
+        : await parsePayloadWithSchema(schema, payload, `stream ${JSON.stringify(id)} payload`)
+      return await getRunRuntime().outputStreamAppend(id, parsed, opts)
+    },
+    pipe: async (source: AsyncIterable<unknown> | Iterable<unknown>, opts?: StreamAppendOptions) => {
+      for await (const item of source) {
+        const parsed = schema === undefined
+          ? item
+          : await parsePayloadWithSchema(schema, item, `stream ${JSON.stringify(id)} payload`)
+        await getRunRuntime().outputStreamAppend(id, parsed, opts)
+      }
+    },
+    writer: (opts?: StreamAppendOptions): StreamWriter<unknown> => ({
+      write: async (payload: unknown) => {
+        const parsed = schema === undefined
+          ? payload
+          : await parsePayloadWithSchema(schema, payload, `stream ${JSON.stringify(id)} payload`)
+        await getRunRuntime().outputStreamAppend(id, parsed, opts)
+      },
+      close: async () => {},
+    }),
+    read: async (opts?: StreamReadOptions) => {
+      return await getRunRuntime().outputStreamRead(id, schema, opts)
+    },
+    list: async (opts?: StreamListOptions) => {
+      return await getRunRuntime().outputStreamList(id, schema, opts)
+    },
+  })
+}
+
+function tokenHandle(token: ClientToken): Token {
+  return Object.freeze({
+    ...token,
+    wait: (opts?: TokenWaitOptions) => tokenWaitHandle(token, opts),
+  })
+}
+
+function tokenWaitHandle<TSchema extends PayloadSchema<any, any>>(
+  token: Token | TokenRef | string,
+  opts: TokenWaitOptions<TSchema> & { readonly schema: TSchema },
+): WaitHandle<SchemaOutput<TSchema>>
+function tokenWaitHandle(token: Token | TokenRef | string, opts?: TokenWaitOptions): WaitHandle<unknown>
+function tokenWaitHandle(token: Token | TokenRef | string, opts: TokenWaitOptions = {}): WaitHandle<unknown> {
+  const tokenId = typeof token === "string" ? token : token.id
+  const tokenTimeoutAt = typeof token === "string" ? undefined : "timeoutAt" in token ? token.timeoutAt : undefined
+  const timeout = opts.timeout ?? tokenTimeoutInput(tokenTimeoutAt)
+  const schema = opts.schema
+  const options: RuntimeTokenWaitOptions = {
+    tokenId,
+    ...(timeout === undefined ? {} : { timeout }),
+    ...(opts.idleTimeout === undefined ? {} : { idleTimeout: opts.idleTimeout }),
+    ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
+    ...(opts.tags === undefined ? {} : { tags: opts.tags }),
+    ...(schema === undefined ? {} : { schema }),
+  }
+  return waitHandle(() => getRunRuntime().waitToken(options))
+}
+
+function waitHandle<TPayload>(
+  factory: () => Promise<WaitResult<TPayload>>,
+): WaitHandle<TPayload> {
+  let promise: Promise<WaitResult<TPayload>> | undefined
   const getPromise = () => {
     promise ??= factory()
     return promise
   }
-  const handle: WaitpointHandle<TPayload> = {
-    then<TResult1 = WaitpointResult<TPayload>, TResult2 = never>(
-      onfulfilled?: ((value: WaitpointResult<TPayload>) => TResult1 | PromiseLike<TResult1>) | null,
+  return {
+    then<TResult1 = WaitResult<TPayload>, TResult2 = never>(
+      onfulfilled?: ((value: WaitResult<TPayload>) => TResult1 | PromiseLike<TResult1>) | null,
       onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
     ): PromiseLike<TResult1 | TResult2> {
       return getPromise().then(onfulfilled, onrejected)
     },
     unwrap: async () => (await getPromise()).unwrap(),
   }
-  Object.defineProperty(handle, runtimeWaitOperand, { value: operand })
-  return handle
 }
 
-function waitDelayHandle(operand: RuntimeWaitOperand, factory: () => Promise<void>): WaitDelayHandle {
+function activeWaitHandle<TPayload>(
+  factory: () => Promise<WaitResult<TPayload>>,
+): WaitHandle<TPayload> {
+  let promise: Promise<WaitResult<TPayload>> | undefined
+  const getPromise = () => {
+    promise ??= factory()
+    return promise
+  }
+  return {
+    then<TResult1 = WaitResult<TPayload>, TResult2 = never>(
+      onfulfilled?: ((value: WaitResult<TPayload>) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+    ): PromiseLike<TResult1 | TResult2> {
+      return getPromise().then(onfulfilled, onrejected)
+    },
+    unwrap: async () => (await getPromise()).unwrap(),
+  }
+}
+
+function timerHandle(factory: () => Promise<void>): WaitDelayHandle {
   let promise: Promise<void> | undefined
   const getPromise = () => {
     promise ??= factory()
     return promise
   }
-  const handle: WaitDelayHandle = {
+  return {
     then<TResult1 = void, TResult2 = never>(
       onfulfilled?: ((value: void) => TResult1 | PromiseLike<TResult1>) | null,
       onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
@@ -405,8 +497,6 @@ function waitDelayHandle(operand: RuntimeWaitOperand, factory: () => Promise<voi
     },
     unwrap: () => getPromise(),
   }
-  Object.defineProperty(handle, runtimeWaitOperand, { value: operand })
-  return handle
 }
 
 function runRuntimeIsActive(): boolean {
@@ -418,71 +508,32 @@ function runRuntimeIsActive(): boolean {
   }
 }
 
-function normalizeWaitpointTokenCreateOptions(
-  opts: WaitpointTokenCreateOptions & { readonly timeout?: WaitDurationInput },
-): WaitpointTokenCreateOptions {
-  const { timeout, ...clientOpts } = opts
-  if (timeout === undefined) {
-    return clientOpts
-  }
-  if (clientOpts.timeoutAt !== undefined || clientOpts.timeoutInSeconds !== undefined) {
-    throw new Error("wait.createToken timeout cannot be combined with timeoutAt or timeoutInSeconds")
-  }
-  const { timeoutAt: _timeoutAt, timeoutInSeconds: _timeoutInSeconds, ...baseOpts } = clientOpts
-  return {
-    ...baseOpts,
-    timeoutInSeconds: Math.ceil(waitDurationMilliseconds(timeout) / 1000),
-  }
+function normalizeTokenCreateOptions(
+  opts: TokenCreateOptions & { readonly timeout?: DurationInput },
+): TokenCreateOptions {
+  return opts
 }
 
-function normalizeRuntimeWaitpointTokenCreateOptions(
-  opts: WaitpointTokenCreateOptions & { readonly timeout?: WaitDurationInput },
-): RuntimeWaitpointTokenCreateOptions {
+function normalizeRuntimeTokenCreateOptions(
+  opts: TokenCreateOptions & { readonly timeout?: DurationInput },
+): RuntimeTokenCreateOptions {
   if (opts.projectId !== undefined || opts.environmentId !== undefined) {
-    throw new Error("wait.createToken cannot override projectId or environmentId inside a running task")
+    throw new Error("tokens.create cannot override projectId or environmentId inside a running task")
   }
   if (opts.signal !== undefined) {
-    throw new Error("wait.createToken signal is not supported inside a running task")
+    throw new Error("tokens.create signal is not supported inside a running task")
   }
-  return normalizeWaitpointTokenCreateOptions(opts)
+  return normalizeTokenCreateOptions(opts)
 }
 
-function waitpointTokenTimeoutInput(timeoutAt: string | Date | null | undefined): WaitDurationInput | undefined {
+function tokenTimeoutInput(timeoutAt: string | Date | null | undefined): DurationInput | undefined {
   if (timeoutAt === null || timeoutAt === undefined) {
     return undefined
   }
   const at = timeoutAt instanceof Date ? timeoutAt : new Date(timeoutAt)
   const milliseconds = at.getTime() - Date.now()
   if (!Number.isFinite(milliseconds)) {
-    throw new Error("wait.forToken token timeoutAt must be a valid date")
+    throw new Error("token timeoutAt must be a valid date")
   }
   return { milliseconds: Math.max(1, milliseconds) }
-}
-
-function waitDurationMilliseconds(input: WaitDurationInput): number {
-  if (typeof input === "number") return positiveMilliseconds(input * 1000)
-  if (typeof input === "string") return parseDurationMilliseconds(input)
-  if (input.milliseconds !== undefined) return positiveMilliseconds(input.milliseconds)
-  if (input.seconds !== undefined) return positiveMilliseconds(input.seconds * 1000)
-  if (input.minutes !== undefined) return positiveMilliseconds(input.minutes * 60_000)
-  if (input.hours !== undefined) return positiveMilliseconds(input.hours * 3_600_000)
-  if (input.duration !== undefined) return parseDurationMilliseconds(input.duration)
-  throw new Error("duration requires milliseconds, seconds, minutes, hours, or duration")
-}
-
-function parseDurationMilliseconds(value: string): number {
-  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/.exec(value.trim())
-  if (match === null) {
-    throw new Error("duration must use ms, s, m, or h units")
-  }
-  const amount = Number(match[1])
-  const unit = match[2]
-  return positiveMilliseconds(amount * (unit === "ms" ? 1 : unit === "s" ? 1000 : unit === "m" ? 60_000 : 3_600_000))
-}
-
-function positiveMilliseconds(value: number): number {
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`duration must be positive: ${value}`)
-  }
-  return Math.ceil(value)
 }

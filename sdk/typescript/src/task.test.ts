@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 
-import { enterRunRuntime, getRunRuntime, parsePayloadWithSchema, parseTaskPayload, type RunRuntime } from "./internal"
-import { PayloadSchemaValidationError, channel, image, queue, sandbox, schedules, task, type PayloadSchema } from "./index"
+import { enterRunRuntime, parseTaskPayload, type RunRuntime } from "./internal"
+import { PayloadSchemaValidationError, WaitTimeoutError, image, queue, sandbox, schedules, streams, task, type PayloadSchema } from "./index"
 import { resetDefaultClientForTest } from "./start"
 
 const originalFetch = globalThis.fetch
@@ -38,7 +38,7 @@ test("task accepts task id boundaries", () => {
   expect(task({ id: "a", sandbox: sb, run: async () => null }).id).toBe("a")
   const max = "a".repeat(128)
   expect(task({ id: max, sandbox: sb, run: async () => null }).id).toBe(max)
-  expect(task({ id: "waitpoints.grant", sandbox: sb, run: async () => null }).id).toBe("waitpoints.grant")
+  expect(task({ id: "tokens.grant", sandbox: sb, run: async () => null }).id).toBe("tokens.grant")
 })
 
 test("task rejects zero queue concurrency limit", () => {
@@ -101,6 +101,40 @@ test("task validates retry policies", () => {
   ).toThrow("retry.retryOn is not supported")
 })
 
+test("task validates stream catalog definitions", () => {
+  const schema: PayloadSchema<unknown, unknown> = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: (value) => ({ value }),
+    },
+  }
+  const input = streams.input("approval", { schema })
+  const output = streams.output("events", { schema })
+  expect(task({
+    id: "stream-catalog-valid",
+    sandbox: sb,
+    streams: [input, output],
+    run: async () => null,
+  }).streams).toEqual([input, output])
+  expect(() =>
+    task({
+      id: "stream-catalog-invalid-direction",
+      sandbox: sb,
+      streams: [{ id: "approval", direction: "sideways", schema } as never],
+      run: async () => null,
+    }),
+  ).toThrow('streams.0.direction must be "input" or "output"')
+  expect(() =>
+    task({
+      id: "stream-catalog-missing-schema",
+      sandbox: sb,
+      streams: [{ id: "approval", direction: "input" } as never],
+      run: async () => null,
+    }),
+  ).toThrow("streams.0.schema is required")
+})
+
 test("task parses payload through payload schema before run", async () => {
   const payload: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
     "~standard": {
@@ -128,30 +162,104 @@ test("task parses payload through payload schema before run", async () => {
   await expect(parseTaskPayload(schemaTask, { issue: "41" })).resolves.toEqual({ issue: 41 })
 })
 
-test("session output channel parses payload before appending", async () => {
+test("output stream parses payload before appending", async () => {
   const appended: unknown[] = []
   const exit = enterRunRuntime(fakeRunRuntime({
-    channelOutputAppend: async (_channel, payload) => {
+    outputStreamAppend: async (_stream, payload) => {
       appended.push(payload)
     },
   }))
   try {
-    const issueChannel = testSessionContext().output(channel.output("issues", { schema: issueStringToNumberSchema() }))
-    await issueChannel.append({ issue: "41" })
-    await issueChannel.pipe([{ issue: "42" }])
+    const issueStream = streams.output("issues", { schema: issueStringToNumberSchema() })
+    await issueStream.append({ issue: "41" })
+    await issueStream.pipe([{ issue: "42" }])
 
     expect(appended).toEqual([{ issue: 41 }, { issue: 42 }])
-    await expect(issueChannel.append({ issue: 41 } as never)).rejects.toThrow(PayloadSchemaValidationError)
+    await expect(issueStream.append({ issue: 41 } as never)).rejects.toThrow(PayloadSchemaValidationError)
   } finally {
     exit()
   }
 })
 
-test("channel waits reject names that cannot round-trip through the REST path", () => {
-  for (const id of ["release/approval", "release approval", "release%2Fapproval", ".approval", "_approval", "-approval", "å"]) {
-    expect(() => channel.input(id, { schema: issueStringToNumberSchema() })).toThrow("channel name must match")
+test("input stream on repeats waits and passes payloads to the handler", async () => {
+  const payloads = [{ issue: 41 }, { issue: 42 }]
+  const seen: unknown[] = []
+  const exit = enterRunRuntime(fakeRunRuntime({
+    inputStreamPeek: async () => {
+      const data = payloads.shift()
+      if (data === undefined) {
+        throw new Error("done")
+      }
+      return {
+        id: `record-${seen.length + 1}`,
+        streamId: "issues",
+        sequence: seen.length + 1,
+        data,
+        contentType: "application/json",
+        createdAt: "2026-04-20T00:00:00Z",
+      }
+    },
+  }))
+  try {
+    await expect(streams.input("issues").on(async (payload) => {
+      seen.push(payload)
+    })).rejects.toThrow("done")
+    expect(seen).toEqual([{ issue: 41 }, { issue: 42 }])
+  } finally {
+    exit()
   }
-  expect(channel.input("release.approval", { schema: issueStringToNumberSchema() }).id).toBe("release.approval")
+})
+
+test("input stream on terminates on explicit timeout", async () => {
+  const exit = enterRunRuntime(fakeRunRuntime({
+    inputStreamPeek: async () => null,
+  }))
+  try {
+    await expect(streams.input("issues").on(async () => {
+      throw new Error("handler should not run")
+    }, { timeout: "1s" })).rejects.toThrow(WaitTimeoutError)
+  } finally {
+    exit()
+  }
+})
+
+test("input stream on does not apply timeout to every quiet window", async () => {
+  const seen: unknown[] = []
+  let calls = 0
+  const exit = enterRunRuntime(fakeRunRuntime({
+    inputStreamPeek: async () => {
+      calls += 1
+      if (calls === 1) {
+        return {
+          id: "record-1",
+          streamId: "issues",
+          sequence: 1,
+          data: { issue: 41 },
+          contentType: "application/json",
+          createdAt: "2026-04-20T00:00:00Z",
+        }
+      }
+      if (calls === 2) {
+        return null
+      }
+      throw new Error("done")
+    },
+  }))
+  try {
+    await expect(streams.input("issues").on(async (payload) => {
+      seen.push(payload)
+    }, { timeout: "1s" })).rejects.toThrow("done")
+    expect(seen).toEqual([{ issue: 41 }])
+  } finally {
+    exit()
+  }
+})
+
+test("streams reject names that cannot round-trip through the REST path", () => {
+  for (const id of ["release/approval", "release approval", "release%2Fapproval", ".approval", "_approval", "-approval", "å"]) {
+    expect(() => streams.input(id, { schema: issueStringToNumberSchema() })).toThrow("stream name must match")
+  }
+  expect(streams.input("release.approval", { schema: issueStringToNumberSchema() }).id).toBe("release.approval")
 })
 
 test("task payload schema failures are reported with issue paths", async () => {
@@ -279,8 +387,14 @@ function issueStringToNumberSchema(): PayloadSchema<{ readonly issue: string }, 
 
 function fakeRunRuntime(overrides: Partial<RunRuntime>): RunRuntime {
   return {
-    waitpoint: async () => ({ ok: true, value: undefined, unwrap: () => undefined }),
-    channelOutputAppend: async () => {},
+    createToken: async () => ({ id: "token-1", status: "pending", callbackUrl: "https://api.example.test/api/tokens/token-1/callback/callback-secret", timeoutAt: null, wait: () => { throw new Error("not implemented") } }),
+    waitToken: async () => ({ ok: true, data: undefined, unwrap: () => undefined as never }),
+    inputStreamWait: async () => ({ ok: true, data: undefined, unwrap: () => undefined as never }),
+    inputStreamOnce: async () => ({ ok: true, data: undefined, unwrap: () => undefined as never }),
+    inputStreamPeek: async () => null,
+    outputStreamAppend: async () => {},
+    outputStreamRead: async () => null,
+    outputStreamList: async () => [],
     waitFor: async () => {},
     waitUntil: async () => {},
     metadataSet: async () => {},
@@ -288,25 +402,5 @@ function fakeRunRuntime(overrides: Partial<RunRuntime>): RunRuntime {
     metadataIncrement: async () => {},
     log: () => {},
     ...overrides,
-  }
-}
-
-function testSessionContext() {
-  return {
-    output<TSchema extends PayloadSchema<any, any>>(definition: { readonly id: string; readonly schema: TSchema }) {
-      return {
-        id: definition.id,
-        append: async (payload: unknown) => {
-          const parsed = await parsePayloadWithSchema(definition.schema, payload, `channel ${JSON.stringify(definition.id)} payload`)
-          return getRunRuntime().channelOutputAppend(definition.id, parsed)
-        },
-        pipe: async (source: AsyncIterable<unknown> | Iterable<unknown>) => {
-          for await (const payload of source) {
-            const parsed = await parsePayloadWithSchema(definition.schema, payload, `channel ${JSON.stringify(definition.id)} payload`)
-            await getRunRuntime().channelOutputAppend(definition.id, parsed)
-          }
-        },
-      }
-    },
   }
 }

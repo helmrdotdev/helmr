@@ -25,6 +25,7 @@ import (
 type WorkspaceMaterializer struct {
 	Connector            vm.Connector
 	CAS                  cas.Store
+	Sessions             WorkspaceMaterializationSessionRegistry
 	TempDir              string
 	Heartbeat            time.Duration
 	StartupTimeout       time.Duration
@@ -51,7 +52,7 @@ func (m WorkspaceMaterializer) RunWorkspaceMaterialization(ctx context.Context, 
 	defer renewal.stopAndWait()
 	startupCtx, cancelStartup := context.WithTimeout(renewal.ctx, m.startupTimeout())
 	defer cancelStartup()
-	session, sandboxImagePath, workspaceArtifactPath, cleanup, err := m.materializeSession(startupCtx, materialization)
+	rawSession, sandboxImagePath, workspaceArtifactPath, cleanup, err := m.materializeSession(startupCtx, materialization)
 	if err != nil {
 		cleanup()
 		if renewalErr := renewal.stopAndWait(); renewalErr != nil {
@@ -60,6 +61,7 @@ func (m WorkspaceMaterializer) RunWorkspaceMaterialization(ctx context.Context, 
 		_ = m.failMaterialization(client, materialization, err)
 		return fmt.Errorf("connect workspace materialization guest: %w", err)
 	}
+	session := newManagedWorkspaceMaterializationSession(rawSession)
 	defer cleanup()
 	defer func() { _ = m.closeSession(session) }()
 	if err := m.registerMaterializationContext(startupCtx, session, materialization, sandboxImagePath, workspaceArtifactPath); err != nil {
@@ -89,6 +91,11 @@ func (m WorkspaceMaterializer) RunWorkspaceMaterialization(ctx context.Context, 
 		_ = renewal.stopAndWait()
 		return nil
 	}
+	unregisterSession := func() {}
+	if m.Sessions != nil {
+		unregisterSession = m.Sessions.RegisterWorkspaceMaterializationSession(materialization.ID, session)
+	}
+	defer unregisterSession()
 	sessionExited := make(chan error, 1)
 	go func() {
 		sessionExited <- session.Wait(renewal.ctx)
@@ -154,6 +161,16 @@ func (m WorkspaceMaterializer) RunWorkspaceMaterialization(ctx context.Context, 
 			}
 		case err := <-sessionExited:
 			sessionExited = nil
+			if released, releaseErr := session.CheckpointReleaseResult(context.Background()); released {
+				_ = renewal.stopAndWait()
+				if releaseErr != nil {
+					return failAndReturn(materializationFailure{
+						code: "workspace_materialization_checkpoint_release_failed",
+						err:  fmt.Errorf("release checkpoint source: %w", releaseErr),
+					})
+				}
+				return nil
+			}
 			if renewal.ctx.Err() != nil {
 				continue
 			}
@@ -169,6 +186,16 @@ func (m WorkspaceMaterializer) RunWorkspaceMaterialization(ctx context.Context, 
 			})
 		case err := <-eventLoopExited:
 			eventLoopExited = nil
+			if released, releaseErr := session.CheckpointReleaseResult(context.Background()); released {
+				_ = renewal.stopAndWait()
+				if releaseErr != nil {
+					return failAndReturn(materializationFailure{
+						code: "workspace_materialization_checkpoint_release_failed",
+						err:  fmt.Errorf("release checkpoint source: %w", releaseErr),
+					})
+				}
+				return nil
+			}
 			if renewal.ctx.Err() != nil {
 				continue
 			}
@@ -183,6 +210,16 @@ func (m WorkspaceMaterializer) RunWorkspaceMaterialization(ctx context.Context, 
 				err:  fmt.Errorf("workspace materialization event stream exited: %w", err),
 			})
 		case err := <-inputRelayExited:
+			if released, releaseErr := session.CheckpointReleaseResult(context.Background()); released {
+				_ = renewal.stopAndWait()
+				if releaseErr != nil {
+					return failAndReturn(materializationFailure{
+						code: "workspace_materialization_checkpoint_release_failed",
+						err:  fmt.Errorf("release checkpoint source: %w", releaseErr),
+					})
+				}
+				return nil
+			}
 			if renewal.ctx.Err() != nil {
 				continue
 			}

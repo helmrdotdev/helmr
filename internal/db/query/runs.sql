@@ -28,7 +28,7 @@ created AS (
         queue_timestamp,
         ttl,
         queued_expires_at,
-        max_duration_seconds,
+        max_active_duration_ms,
         trace_id,
         root_span_id,
         current_attempt_id,
@@ -61,7 +61,7 @@ created AS (
            sqlc.arg(queue_timestamp),
            sqlc.arg(ttl),
            sqlc.narg(queued_expires_at),
-           sqlc.arg(max_duration_seconds),
+           sqlc.arg(max_active_duration_ms),
            sqlc.arg(trace_id),
            sqlc.arg(root_span_id),
            attempt_seed.id,
@@ -714,34 +714,16 @@ cancelled_queue AS (
        AND (updated.execution_status <> 'pending_cancel' OR sqlc.arg(force)::bool)
     RETURNING run_queue_items.run_id
 ),
-cancelled_run_suspensions AS (
-    UPDATE run_suspensions
-       SET status = 'cancelled',
-           failure = jsonb_build_object('reason', COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'), 'origin', 'cancel_operation'),
-           resolution_kind = 'cancelled',
-           resolution = jsonb_build_object('reason', COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'), 'origin', 'cancel_operation'),
-           failed_at = now(),
+cancelled_run_waits AS (
+    UPDATE run_waits
+       SET state = 'cancelled',
+           cancelled_at = now(),
            updated_at = now()
       FROM updated
-     WHERE run_suspensions.org_id = updated.org_id
-       AND run_suspensions.run_id = updated.id
-       AND run_suspensions.status IN ('opening', 'waiting', 'resuming')
-    RETURNING run_suspensions.id, run_suspensions.org_id
-),
-cancelled_waitpoints AS (
-    UPDATE waitpoints
-       SET status = 'cancelled',
-           data = NULL,
-           error = jsonb_build_object('reason', COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'), 'origin', 'cancel_operation'),
-           resolved_at = now(),
-           updated_at = now()
-      FROM cancelled_run_suspensions
-      JOIN run_suspension_waitpoints ON run_suspension_waitpoints.org_id = cancelled_run_suspensions.org_id
-                                AND run_suspension_waitpoints.run_suspension_id = cancelled_run_suspensions.id
-     WHERE waitpoints.org_id = run_suspension_waitpoints.org_id
-       AND waitpoints.id = run_suspension_waitpoints.waitpoint_id
-       AND waitpoints.status = 'pending'
-    RETURNING waitpoints.id
+     WHERE run_waits.org_id = updated.org_id
+       AND run_waits.run_id = updated.id
+       AND run_waits.state IN ('parking', 'waiting')
+    RETURNING run_waits.id
 ),
 terminal_session_runs AS (
     UPDATE task_session_runs
@@ -892,7 +874,7 @@ SELECT updated.id, updated.org_id, updated.project_id, updated.environment_id, u
   FROM updated
   JOIN operation_applied ON true
   JOIN event_outbox ON true
-	 WHERE (SELECT count(*) FROM cancelled_waitpoints) >= 0
+	 WHERE (SELECT count(*) FROM cancelled_run_waits) >= 0
 	   AND (SELECT count(*) FROM terminal_session_runs) >= 0
 	   AND (SELECT count(*) FROM terminal_task_sessions) >= 0
 UNION ALL

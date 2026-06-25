@@ -13,5 +13,6 @@
       "@helmr/sdk/*": ["../../sdk/typescript/src/*"]
     }
   },
-  "include": ["tasks/**/*.ts", "bridge/**/*.ts", "helmr.config.ts"]
+  "include": ["tasks/**/*.ts", "bridge/**/*.ts", "helmr.config.ts"],
+  "exclude": ["**/*.test.ts"]
 }

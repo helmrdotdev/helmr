@@ -1,20 +1,20 @@
-import { task, wait } from "@helmr/sdk"
+import { task, tokens } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 
 import { contractSandbox } from "../shared/sandboxes"
-import { approvalDecision, messageReply } from "./_waitpoint_schemas"
+import { approvalDecision, messageReply } from "./_token_schemas"
 
 export const approvalMessage = task({
   id: "approval-message",
   sandbox: contractSandbox,
   maxDuration: 900,
   run: async (ctx) => {
-    const decisionToken = await wait.createToken({
+    const decisionToken = await tokens.create({
       timeout: 60,
       tags: ["fixture", "approval"],
       metadata: { prompt: "continue?" },
     })
-    const decision = await wait.forToken(decisionToken, {
+    const decision = await tokens.wait(decisionToken, {
       schema: approvalDecision,
       timeout: 60,
       tags: ["fixture", "approval"],
@@ -23,12 +23,12 @@ export const approvalMessage = task({
     if (!decision.approved) {
       return { status: "denied" }
     }
-    const replyToken = await wait.createToken({
+    const replyToken = await tokens.create({
       timeout: 60,
       tags: ["fixture", "message"],
       metadata: { prompt: "next instruction" },
     })
-    const reply = await wait.forToken(replyToken, {
+    const reply = await tokens.wait(replyToken, {
       schema: messageReply,
       timeout: 60,
       tags: ["fixture", "message"],

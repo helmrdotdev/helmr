@@ -1,5 +1,4 @@
-import { cache, ConcurrentWaitError, image, logger, sandbox, source, task, wait } from "@helmr/sdk"
-import { randomUUID } from "node:crypto"
+import { cache, ConcurrentWaitError, image, logger, sandbox, source, task, tokens } from "@helmr/sdk"
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -63,24 +62,24 @@ export const edgeSmoke = task({
 })
 
 async function assertConcurrentWaitRejected(timeout: number): Promise<boolean> {
-  const firstToken = await wait.createToken({
+  const firstToken = await tokens.create({
     timeout,
     tags: ["smoke", "edge-case"],
     metadata: { subject: "Concurrent wait diagnostic first wait" },
   })
-  const first = wait.forToken(firstToken, {
+  const first = firstToken.wait({
     schema: approvalDecision,
     timeout,
     tags: ["smoke", "edge-case"],
     metadata: { subject: "Concurrent wait diagnostic first wait" },
   }).unwrap()
   try {
-    const secondToken = await wait.createToken({
+    const secondToken = await tokens.create({
       timeout,
       tags: ["smoke", "edge-case"],
       metadata: { subject: "Concurrent wait diagnostic second wait" },
     })
-    await wait.forToken(secondToken, {
+    await secondToken.wait({
       schema: approvalDecision,
       timeout,
       tags: ["smoke", "edge-case"],

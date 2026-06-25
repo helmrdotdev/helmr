@@ -25,6 +25,7 @@ import {
   SecretRefSchema,
   SourceDirRefSchema,
   SourceFileRefSchema,
+  StreamSpecSchema,
   TaskSpecSchema,
   TaskScheduleSpecSchema,
   UserSchema,
@@ -44,9 +45,11 @@ import {
   isSourceFileRef,
   validateSecretName,
   defaultTaskQueueName,
+  readStreamDefinitions,
   type AnyTask,
   type ImageCopyInput,
   type ImageBuildStep,
+  type InternalStreamDefinition,
   type Placement,
   type SandboxNetworkSpec,
   type SandboxWorkspace,
@@ -110,6 +113,7 @@ export function compile(opts: CompileOptions): Bundle {
       ...(task.ttl === undefined ? {} : { ttl: task.ttl }),
       retryPolicyJson: JSON.stringify(task.retry ?? false),
       schedules: compileTaskSchedules(task.schedule),
+      streams: compileTaskStreams(readStreamDefinitions(task.streams, `task ${JSON.stringify(task.id)} streams`)),
       secrets: Object.entries(readSecretDecls(task.secrets)).map(([name, placement]) =>
         create(BundleSecretPlacementSchema, {
           name,
@@ -118,6 +122,38 @@ export function compile(opts: CompileOptions): Bundle {
       ),
     }),
   })
+}
+
+function compileTaskStreams(streams: readonly InternalStreamDefinition[]) {
+  return streams.map((stream) => {
+    const schemaMetadata = streamSchemaMetadata(stream)
+    return create(StreamSpecSchema, {
+      name: stream.id,
+      direction: stream.direction,
+      schemaFingerprint: streamSchemaFingerprint(schemaMetadata),
+      schemaJson: JSON.stringify(schemaMetadata),
+    })
+  })
+}
+
+function streamSchemaMetadata(stream: InternalStreamDefinition): Record<string, unknown> {
+  const standard = stream.schema["~standard"] as Record<string, unknown>
+  const vendor = typeof standard["vendor"] === "string" && standard["vendor"].trim() !== ""
+    ? standard["vendor"].trim()
+    : "unknown"
+  return {
+    kind: "standard-schema-v1",
+    vendor,
+    direction: stream.direction,
+    name: stream.id,
+  }
+}
+
+function streamSchemaFingerprint(metadata: Record<string, unknown>): string {
+  const hash = createHash("sha256")
+  hash.update("helmr.stream-schema.v0\n")
+  hash.update(JSON.stringify(metadata))
+  return `sha256:${hash.digest("hex")}`
 }
 
 function compileNetwork(network: SandboxNetworkSpec) {

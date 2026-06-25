@@ -397,30 +397,34 @@ worker_image_apply() {
     if [ -n "${kms_key_arn}" ]; then
       kms_args=(-var="source_bundle_kms_key_arn=${kms_key_arn}")
     fi
-    tf_apply "${WORKER_IMAGE_STACK}" \
+    apply_args=(
       -var="aws_region=${AWS_REGION}" \
       -var="name=${WORKER_IMAGE_NAME}" \
       -var="source_ref=${source_ref}" \
       -var="source_bundle_s3_uri=${bundle_uri}" \
-      -var="source_bundle_object_arn=$(source_bundle_object_arn "${bundle_uri}")" \
-      "${distribution_args[@]}" \
-      "${instance_profile_args[@]}" \
-      "${public_args[@]}" \
-      "${encryption_args[@]}" \
-      "${kms_args[@]}" \
-      "${version_args[@]}"
+      -var="source_bundle_object_arn=$(source_bundle_object_arn "${bundle_uri}")"
+    )
+    if ((${#distribution_args[@]})); then apply_args+=("${distribution_args[@]}"); fi
+    if ((${#instance_profile_args[@]})); then apply_args+=("${instance_profile_args[@]}"); fi
+    if ((${#public_args[@]})); then apply_args+=("${public_args[@]}"); fi
+    if ((${#encryption_args[@]})); then apply_args+=("${encryption_args[@]}"); fi
+    if ((${#kms_args[@]})); then apply_args+=("${kms_args[@]}"); fi
+    if ((${#version_args[@]})); then apply_args+=("${version_args[@]}"); fi
+    tf_apply "${WORKER_IMAGE_STACK}" "${apply_args[@]}"
   else
     source_ref="$(resolve_remote_source_ref)"
-    tf_apply "${WORKER_IMAGE_STACK}" \
+    apply_args=(
       -var="aws_region=${AWS_REGION}" \
       -var="name=${WORKER_IMAGE_NAME}" \
       -var="source_repository_url=${WORKER_IMAGE_SOURCE_REPOSITORY_URL}" \
-      -var="source_ref=${source_ref}" \
-      "${distribution_args[@]}" \
-      "${instance_profile_args[@]}" \
-      "${public_args[@]}" \
-      "${encryption_args[@]}" \
-      "${version_args[@]}"
+      -var="source_ref=${source_ref}"
+    )
+    if ((${#distribution_args[@]})); then apply_args+=("${distribution_args[@]}"); fi
+    if ((${#instance_profile_args[@]})); then apply_args+=("${instance_profile_args[@]}"); fi
+    if ((${#public_args[@]})); then apply_args+=("${public_args[@]}"); fi
+    if ((${#encryption_args[@]})); then apply_args+=("${encryption_args[@]}"); fi
+    if ((${#version_args[@]})); then apply_args+=("${version_args[@]}"); fi
+    tf_apply "${WORKER_IMAGE_STACK}" "${apply_args[@]}"
   fi
 }
 

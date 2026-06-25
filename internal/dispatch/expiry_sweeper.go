@@ -27,7 +27,11 @@ type ExpirySweepOrgStore interface {
 	RequeueExpiredLeasedRunLeases(ctx context.Context, orgID pgtype.UUID) error
 	FailExpiredRunningRunLeases(ctx context.Context, orgID pgtype.UUID) error
 	ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
-	ExpireDuePendingWaitpoints(ctx context.Context, orgID pgtype.UUID) error
+	ExpireDueTokens(ctx context.Context, orgID pgtype.UUID) ([]db.ExpireDueTokensRow, error)
+	ResolveDueTimerWaits(ctx context.Context, arg db.ResolveDueTimerWaitsParams) ([]db.ResolveDueTimerWaitsRow, error)
+	ExpireDueRunWaits(ctx context.Context, orgID pgtype.UUID) ([]db.RunWait, error)
+	FailStaleResolvedRunWaits(ctx context.Context, arg db.FailStaleResolvedRunWaitsParams) ([]db.FailStaleResolvedRunWaitsRow, error)
+	RequeueResolvedRunWaits(ctx context.Context, arg db.RequeueResolvedRunWaitsParams) ([]db.RequeueResolvedRunWaitsRow, error)
 }
 
 type ExpirySweepLock interface {
@@ -195,7 +199,28 @@ func SweepExpiredForOrg(ctx context.Context, store ExpirySweepOrgStore, orgID pg
 	if err := store.ExpireQueuedRuns(ctx, orgID); err != nil {
 		return err
 	}
-	if err := store.ExpireDuePendingWaitpoints(ctx, orgID); err != nil {
+	if _, err := store.ExpireDueTokens(ctx, orgID); err != nil {
+		return err
+	}
+	if _, err := store.ResolveDueTimerWaits(ctx, db.ResolveDueTimerWaitsParams{
+		OrgID:      orgID,
+		LimitCount: 1000,
+	}); err != nil {
+		return err
+	}
+	if _, err := store.ExpireDueRunWaits(ctx, orgID); err != nil {
+		return err
+	}
+	if _, err := store.FailStaleResolvedRunWaits(ctx, db.FailStaleResolvedRunWaitsParams{
+		OrgID:      orgID,
+		LimitCount: 1000,
+	}); err != nil {
+		return err
+	}
+	if _, err := store.RequeueResolvedRunWaits(ctx, db.RequeueResolvedRunWaitsParams{
+		OrgID:      orgID,
+		LimitCount: 1000,
+	}); err != nil {
 		return err
 	}
 	return nil

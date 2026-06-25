@@ -88,13 +88,8 @@ func sessionPermissions(role auth.Role) []string {
 		auth.PermissionPortsExpose,
 		auth.PermissionPortsRead,
 		auth.PermissionPortsClose,
-		auth.PermissionRunWaitpointsRead,
-		auth.PermissionChannelsWrite,
 		auth.PermissionSecretsWrite,
 		auth.PermissionTasksDeploy,
-		auth.PermissionWaitpointTokensCreate,
-		auth.PermissionWaitpointTokensRead,
-		auth.PermissionWaitpointTokensComplete,
 	}
 	permissions := make([]string, 0, len(all))
 	for _, permission := range all {

@@ -16,6 +16,13 @@ const (
 	PermissionRunsCreate               Permission = "runs.create"
 	PermissionRunsRead                 Permission = "runs.read"
 	PermissionRunsManage               Permission = "runs.manage"
+	PermissionSessionStreamsRead       Permission = "session.streams.read"
+	PermissionSessionInputSend         Permission = "session.input.send"
+	PermissionSessionOutputAppend      Permission = "session.output.append"
+	PermissionTokensCreate             Permission = "tokens.create"
+	PermissionTokensRead               Permission = "tokens.read"
+	PermissionTokensComplete           Permission = "tokens.complete"
+	PermissionTokensCancel             Permission = "tokens.cancel"
 	PermissionWorkspaceLifecycleManage Permission = "workspace.lifecycle.manage"
 	PermissionFilesRead                Permission = "workspace.files.read"
 	PermissionFilesWrite               Permission = "workspace.files.write"
@@ -32,11 +39,6 @@ const (
 	PermissionPortsExpose              Permission = "workspace.ports.expose"
 	PermissionPortsRead                Permission = "workspace.ports.read"
 	PermissionPortsClose               Permission = "workspace.ports.close"
-	PermissionRunWaitpointsRead        Permission = "waitpoints.read"
-	PermissionWaitpointTokensCreate    Permission = "waitpoint_tokens.create"
-	PermissionWaitpointTokensRead      Permission = "waitpoint_tokens.read"
-	PermissionWaitpointTokensComplete  Permission = "waitpoint_tokens.complete"
-	PermissionChannelsWrite            Permission = "channels.write"
 	PermissionSecretsWrite             Permission = "secrets.write"
 	PermissionTasksDeploy              Permission = "tasks.deploy"
 )
@@ -74,6 +76,13 @@ func RoleAllows(role Role, permission Permission) bool {
 		case PermissionRunsCreate,
 			PermissionRunsRead,
 			PermissionRunsManage,
+			PermissionSessionStreamsRead,
+			PermissionSessionInputSend,
+			PermissionSessionOutputAppend,
+			PermissionTokensCreate,
+			PermissionTokensRead,
+			PermissionTokensComplete,
+			PermissionTokensCancel,
 			PermissionWorkspaceLifecycleManage,
 			PermissionFilesRead,
 			PermissionFilesWrite,
@@ -90,11 +99,6 @@ func RoleAllows(role Role, permission Permission) bool {
 			PermissionPortsExpose,
 			PermissionPortsRead,
 			PermissionPortsClose,
-			PermissionRunWaitpointsRead,
-			PermissionWaitpointTokensCreate,
-			PermissionWaitpointTokensRead,
-			PermissionWaitpointTokensComplete,
-			PermissionChannelsWrite,
 			PermissionTasksDeploy:
 			return true
 		default:
@@ -103,13 +107,13 @@ func RoleAllows(role Role, permission Permission) bool {
 	case RoleViewer:
 		switch permission {
 		case PermissionRunsRead,
+			PermissionSessionStreamsRead,
+			PermissionTokensRead,
 			PermissionFilesRead,
 			PermissionVersionsRead,
 			PermissionExecRead,
 			PermissionPtyRead,
-			PermissionPortsRead,
-			PermissionRunWaitpointsRead,
-			PermissionWaitpointTokensRead:
+			PermissionPortsRead:
 			return true
 		default:
 			return false

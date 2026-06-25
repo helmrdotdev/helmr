@@ -1,4 +1,4 @@
-import { cache, channel, image, logger, metadata, sandbox, source, task, wait } from "@helmr/sdk"
+import { cache, image, logger, metadata, sandbox, source, streams, task, tokens } from "@helmr/sdk"
 import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { checkCommand as checkProcessCommand } from "../lib/process"
@@ -39,9 +39,9 @@ const payload = z.object({
   marker: z.string().optional(),
   expectedWorkspaceMarker: z.string().optional(),
   expectedEnvironment: z.enum(["production", "staging", "unknown"]).default("unknown"),
-  exerciseWaitpoint: z.boolean().default(false),
-  waitpointTokenId: z.string().optional(),
-  waitpointTimeout: z.number().int().positive().max(900).default(120),
+  exerciseToken: z.boolean().default(false),
+  tokenId: z.string().optional(),
+  tokenTimeout: z.number().int().positive().max(900).default(120),
   largeFileKiB: z.number().int().min(1).max(4096).default(256),
 }).strict()
 
@@ -51,6 +51,9 @@ const approvalDecision = z.object({
   approved: z.boolean(),
   note: z.string().optional(),
 })
+
+const progressStream = streams.output("runtime-smoke.progress", { schema: z.unknown() })
+const reportStream = streams.output("runtime-smoke.report", { schema: z.unknown() })
 
 interface Check {
   readonly name: string
@@ -62,6 +65,7 @@ export const runtimeSmoke = task({
   id: "runtime-smoke",
   sandbox: sbx,
   maxDuration: 1200,
+  streams: [progressStream, reportStream],
   payload,
   run: async (input: Payload, ctx) => {
     const marker = input.marker?.trim() || `runtime-smoke-${ctx.run.id}`
@@ -99,32 +103,32 @@ export const runtimeSmoke = task({
       marker,
       checks: checks.map((check) => check.name),
     })
-    await ctx.session.output(channel.output("runtime-smoke.progress", { schema: z.unknown() })).append({
+    await progressStream.append({
       marker,
       scenario: input.scenario,
       completedChecks: checks.length,
     })
 
-    let waitpoint: unknown = null
-    if (input.exerciseWaitpoint) {
-      checks.push(await collectCheck("human-waitpoint", async () => {
-        const token = input.waitpointTokenId === undefined
-          ? await wait.createToken({
-              timeout: input.waitpointTimeout,
+    let tokenResult: unknown = null
+    if (input.exerciseToken) {
+      checks.push(await collectCheck("human-token", async () => {
+        const token = input.tokenId === undefined
+          ? await tokens.create({
+              timeout: input.tokenTimeout,
               tags: ["smoke", "runtime"],
               metadata: { marker, subject: `Approve Helmr product smoke marker ${marker}` },
             })
-          : { id: input.waitpointTokenId }
-        waitpoint = await wait.forToken(token, {
+          : { id: input.tokenId }
+        tokenResult = await tokens.wait(token, {
           schema: approvalDecision,
-          timeout: input.waitpointTimeout,
+          timeout: input.tokenTimeout,
           tags: ["smoke", "runtime"],
           metadata: { marker, subject: `Approve Helmr product smoke marker ${marker}` },
         }).unwrap()
         return {
-          name: "human-waitpoint",
+          name: "human-token",
           ok: true,
-          detail: waitpoint,
+          detail: tokenResult,
         }
       }))
     }
@@ -135,11 +139,11 @@ export const runtimeSmoke = task({
       scenario: input.scenario,
       marker,
       expectedEnvironment: input.expectedEnvironment,
-      waitpoint,
+      token: tokenResult,
       checks,
     }
     await writeFile("runtime-smoke-report.json", `${JSON.stringify(report, null, 2)}\n`)
-    await ctx.session.output(channel.output("runtime-smoke.report", { schema: z.unknown() })).append(report, { contentType: "application/vnd.helmr.runtime-smoke+json" })
+    await reportStream.append(report, { contentType: "application/vnd.helmr.runtime-smoke+json" })
     if (failures.length > 0) {
       logger.error({ phase: "runtime-smoke", marker, failures })
       throw new Error(`runtime smoke failed ${failures.length} check(s): ${failures.map((check) => check.name).join(", ")}`)

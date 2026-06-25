@@ -14,6 +14,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/client"
 )
 
+const defaultDeploymentBuildCompletionGrace = 30 * time.Second
+
 type ControlClient interface {
 	LeaseDeploymentBuild(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerDeploymentBuildLeaseResponse, error)
 	CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result api.WorkerDeploymentBuildResult) (api.WorkerDeploymentBuildResponse, error)
@@ -77,17 +79,20 @@ func (s *runLeaseState) set(lease api.WorkerRunLease) {
 }
 
 type Runner struct {
-	client            ControlClient
-	executor          Executor
-	deploymentBuilder DeploymentBuilder
-	materializer      Materializer
-	capabilities      api.WorkerCapabilities
-	pollEvery         time.Duration
-	renewEvery        time.Duration
-	renewWait         time.Duration
-	releaseWait       time.Duration
-	log               *slog.Logger
-	materializationWG sync.WaitGroup
+	client                         ControlClient
+	executor                       Executor
+	deploymentBuilder              DeploymentBuilder
+	materializer                   Materializer
+	capabilities                   api.WorkerCapabilities
+	pollEvery                      time.Duration
+	renewEvery                     time.Duration
+	renewWait                      time.Duration
+	releaseWait                    time.Duration
+	deploymentBuildCompletionGrace time.Duration
+	log                            *slog.Logger
+	deploymentBuildMu              sync.Mutex
+	deploymentBuildActive          bool
+	materializationWG              sync.WaitGroup
 }
 
 type Option func(*Runner)
@@ -130,14 +135,15 @@ func NewRunner(client ControlClient, executor Executor, capabilities api.WorkerC
 		return nil, errors.New("worker executor is required")
 	}
 	runner := &Runner{
-		client:       client,
-		executor:     executor,
-		capabilities: capabilities,
-		pollEvery:    2 * time.Second,
-		renewEvery:   10 * time.Second,
-		renewWait:    5 * time.Second,
-		releaseWait:  30 * time.Second,
-		log:          slog.Default(),
+		client:                         client,
+		executor:                       executor,
+		capabilities:                   capabilities,
+		pollEvery:                      2 * time.Second,
+		renewEvery:                     10 * time.Second,
+		renewWait:                      5 * time.Second,
+		releaseWait:                    30 * time.Second,
+		deploymentBuildCompletionGrace: defaultDeploymentBuildCompletionGrace,
+		log:                            slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(runner)
@@ -156,6 +162,9 @@ func NewRunner(client ControlClient, executor Executor, capabilities api.WorkerC
 	}
 	if runner.releaseWait <= 0 {
 		return nil, errors.New("worker release timeout must be positive")
+	}
+	if runner.deploymentBuildCompletionGrace <= 0 {
+		return nil, errors.New("worker deployment build completion grace must be positive")
 	}
 	if runner.log == nil {
 		runner.log = slog.Default()
@@ -193,7 +202,7 @@ func (r *Runner) waitForMaterializations() {
 }
 
 func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
-	if r.deploymentBuilder != nil {
+	if r.deploymentBuilder != nil && !r.hasActiveDeploymentBuild() {
 		leased, err := r.client.LeaseDeploymentBuild(ctx, r.capabilities)
 		if err != nil {
 			return false, fmt.Errorf("lease deployment build: %w", err)
@@ -202,7 +211,10 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 			lease := *leased.Lease
 			deployment := *leased.Deployment
 			r.log.Info("worker leased deployment build", "deployment_id", lease.DeploymentID)
-			result := r.deploymentBuilder.BuildDeployment(ctx, lease, deployment)
+			if !r.beginDeploymentBuild() {
+				return false, nil
+			}
+			result := r.buildDeploymentWithLease(ctx, lease, deployment)
 			response, err := r.client.CompleteDeploymentBuild(ctx, lease, result)
 			if err != nil {
 				return true, fmt.Errorf("complete deployment build %s: %w", lease.DeploymentID, err)
@@ -350,6 +362,57 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 	}
 	r.log.Info("worker released run", "run_id", lease.RunID, "result", result.Kind)
 	return true, nil
+}
+
+func (r *Runner) hasActiveDeploymentBuild() bool {
+	r.deploymentBuildMu.Lock()
+	defer r.deploymentBuildMu.Unlock()
+	return r.deploymentBuildActive
+}
+
+func (r *Runner) beginDeploymentBuild() bool {
+	r.deploymentBuildMu.Lock()
+	defer r.deploymentBuildMu.Unlock()
+	if r.deploymentBuildActive {
+		return false
+	}
+	r.deploymentBuildActive = true
+	return true
+}
+
+func (r *Runner) endDeploymentBuild() {
+	r.deploymentBuildMu.Lock()
+	defer r.deploymentBuildMu.Unlock()
+	r.deploymentBuildActive = false
+}
+
+func (r *Runner) buildDeploymentWithLease(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) api.WorkerDeploymentBuildResult {
+	deadline := lease.ExpiresAt.Add(-r.deploymentBuildCompletionGrace)
+	if !deadline.After(time.Now()) {
+		r.endDeploymentBuild()
+		message := "deployment build lease does not have enough time remaining to complete safely"
+		return api.WorkerDeploymentBuildResult{Error: &message}
+	}
+	buildCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+
+	done := make(chan api.WorkerDeploymentBuildResult, 1)
+	go func() {
+		defer r.endDeploymentBuild()
+		done <- r.deploymentBuilder.BuildDeployment(buildCtx, lease, deployment)
+	}()
+
+	select {
+	case result := <-done:
+		return result
+	case <-buildCtx.Done():
+		message := "deployment build timed out before lease expiry"
+		if ctx.Err() != nil {
+			message = "deployment build cancelled before completion"
+		}
+		r.log.Error("deployment build did not finish before lease deadline", "deployment_id", lease.DeploymentID, "error", buildCtx.Err())
+		return api.WorkerDeploymentBuildResult{Error: &message}
+	}
 }
 
 func (r *Runner) release(lease api.WorkerRunLease, result api.WorkerReleaseResult) error {

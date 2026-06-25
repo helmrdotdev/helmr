@@ -1,14 +1,26 @@
 import {
   parseTaskPayload,
-  validateChannelName,
+  validateStreamName,
   validateRetryPolicy,
   type AnyTask,
+  type DurationInput,
+  type InputStreamDefinition,
+  type InputStreamPeekOptions,
+  type InputStreamSendOptions,
+  type InputStreamWaitOptions,
   type NoPayload,
+  type OutputStreamDefinition,
   type SecretDecls,
+  type StreamAppendOptions,
+  type StreamListOptions,
+  type StreamReadOptions,
+  type StreamRecord,
+  type StreamWriter,
   type TaskOutput,
   type TaskRunOptions,
   type TaskSecrets,
   type TaskStartPayload,
+  type WaitHandle,
 } from "../internal"
 import { taskStartIdempotencyRequestFields } from "../idempotency"
 import { readOptionalMaxDurationSeconds } from "../schema/task"
@@ -19,8 +31,6 @@ import {
   type CancelRunOptions,
   type ListRunEventsOptions,
   type ListRunsOptions,
-  type PendingWaitpoint,
-  type PendingWaitpointResponse,
   type RetrieveRunOptions,
   type RunHandle,
   type RunEvent,
@@ -28,10 +38,9 @@ import {
   type RunEventRecordPage,
   type RunSnapshot,
   type RunSummary,
-  type RunWaitpointOptions,
+  type RunWaitOptions,
   type SubscribeRunEventsOptions,
   isTerminalRunStatus,
-  pendingWaitpointFromResponse,
   runHandle,
   runId,
   runSnapshot,
@@ -75,12 +84,7 @@ export type TasksStartAndWaitArgs<TTask extends AnyTask> =
     : [id: string, payload: TaskStartPayload<TTask>, opts: TaskStartAndWaitOptions<TaskSecrets<TTask>>]
 
 export const startTaskClientMethod = Symbol.for("helmr.sdk.client.startTask")
-export const waitpointTokenClientMethod = Symbol.for("helmr.sdk.client.waitpointToken")
-
-export interface RunWaitpointsApi {
-  readonly listPage: <TOutput = unknown>(idOrHandle: string | RunHandle<TOutput>, opts?: RunWaitpointListOptions) => Promise<RunWaitpointsPage>
-  readonly list: <TOutput = unknown>(idOrHandle: string | RunHandle<TOutput>, opts?: RunWaitpointListOptions) => Promise<PendingWaitpoint[]>
-}
+export const tokenClientMethod = Symbol.for("helmr.sdk.client.token")
 
 export type TaskSessionStatus = "open" | "completed" | "failed" | "closed" | "cancelled" | "expired"
 
@@ -173,56 +177,47 @@ export interface TaskSessionRun {
   readonly endedAt?: string
 }
 
-export interface ChannelRecord<TData = unknown> {
-  readonly id: string
-  readonly channelId: string
-  readonly sequence: number
-  readonly data: TData
-  readonly correlationId?: string
-  readonly contentType: string
-  readonly createdAt: string
-}
-
-export interface SessionChannelInputSendResult<TData = unknown> extends ChannelRecord<TData> {
+export interface SessionInputSendResult<TData = unknown> extends StreamRecord<TData> {
   readonly idempotencyStatus: "created" | "duplicate"
 }
 
-export interface SessionChannelInputSendOptions {
+export interface SessionInputSendOptions extends InputStreamSendOptions {
   readonly projectId?: string
   readonly environmentId?: string
-  readonly correlationId?: string
-  readonly externalEventId?: string
+  readonly publicAccessToken?: string
   readonly signal?: AbortSignal
 }
 
-export interface SessionChannelListOptions {
+export interface SessionStreamListOptions extends StreamListOptions {
   readonly projectId?: string
   readonly environmentId?: string
-  readonly cursor?: number
-  readonly limit?: number
-  readonly correlationId?: string
   readonly signal?: AbortSignal
 }
 
-export interface SessionChannelOutputStreamOptions {
+export interface SessionStreamReadOptions extends StreamReadOptions {
   readonly projectId?: string
   readonly environmentId?: string
-  readonly cursor?: number
-  readonly correlationId?: string
+  readonly publicAccessToken?: string
+  readonly signal?: AbortSignal
+}
+
+export interface SessionOutputAppendOptions extends StreamAppendOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly signal?: AbortSignal
 }
 
 export type PublicAccessTokenScope =
   | {
-      readonly type: "session.input.append"
+      readonly type: "session.input.send"
       readonly sessionId: string | TaskSessionHandle
-      readonly channel: string
+      readonly stream: string
       readonly correlationId?: string
     }
   | {
       readonly type: "session.output.read"
       readonly sessionId: string | TaskSessionHandle
-      readonly channel: string
+      readonly stream: string
       readonly correlationId?: string
     }
 
@@ -242,14 +237,23 @@ export interface PublicAccessToken {
   readonly createdAt: string
 }
 
-export interface SessionChannelInputApi {
-  send<TData = unknown>(data: TData, opts?: SessionChannelInputSendOptions): Promise<SessionChannelInputSendResult<TData>>
-  list<TData = unknown>(opts?: SessionChannelListOptions): Promise<ChannelRecord<TData>[]>
+export interface SessionInputStreamApi<TPayload = unknown, TInput = TPayload> {
+  readonly id: string
+  send(data: TInput, opts?: SessionInputSendOptions): Promise<SessionInputSendResult<TPayload>>
+  wait(opts?: InputStreamWaitOptions): WaitHandle<TPayload>
+  once(opts?: InputStreamWaitOptions): WaitHandle<TPayload>
+  on(handler: (record: StreamRecord<TPayload>) => void | Promise<void>, opts?: InputStreamWaitOptions): Promise<void>
+  peek(opts?: InputStreamPeekOptions): Promise<StreamRecord<TPayload> | null>
+  list(opts?: SessionStreamListOptions): Promise<StreamRecord<TPayload>[]>
 }
 
-export interface SessionChannelOutputApi {
-  list<TData = unknown>(opts?: SessionChannelListOptions): Promise<ChannelRecord<TData>[]>
-  stream<TData = unknown>(opts?: SessionChannelOutputStreamOptions): Promise<AsyncIterable<ChannelRecord<TData>>>
+export interface SessionOutputStreamApi<TPayload = unknown, TInput = TPayload> {
+  readonly id: string
+  append(data: TInput, opts?: SessionOutputAppendOptions): Promise<StreamRecord<TPayload>>
+  pipe(source: AsyncIterable<TInput> | Iterable<TInput>, opts?: SessionOutputAppendOptions): Promise<void>
+  writer(opts?: SessionOutputAppendOptions): StreamWriter<TInput>
+  read(opts?: SessionStreamReadOptions): Promise<StreamRecord<TPayload> | null>
+  list(opts?: SessionStreamListOptions): Promise<StreamRecord<TPayload>[]>
 }
 
 export interface OpenTaskSessionApi<TOutput = unknown> {
@@ -259,8 +263,10 @@ export interface OpenTaskSessionApi<TOutput = unknown> {
   close(opts?: TaskSessionCloseOptions): Promise<TaskSessionSnapshot<TOutput>>
   cancel(opts?: TaskSessionCancelOptions): Promise<TaskSessionSnapshot<TOutput>>
   runs(opts?: TaskSessionRunsOptions): Promise<TaskSessionRun[]>
-  input(channel: string): SessionChannelInputApi
-  output(channel: string): SessionChannelOutputApi
+  input<TSchema extends InputStreamDefinition<any, any>>(definition: TSchema): TSchema extends InputStreamDefinition<infer TPayload, infer TInput> ? SessionInputStreamApi<TPayload, TInput> : never
+  input(stream: string): SessionInputStreamApi<unknown, unknown>
+  output<TSchema extends OutputStreamDefinition<any, any>>(definition: TSchema): TSchema extends OutputStreamDefinition<infer TPayload, infer TInput> ? SessionOutputStreamApi<TPayload, TInput> : never
+  output(stream: string): SessionOutputStreamApi<unknown, unknown>
 }
 
 export type WorkspaceState = "active" | "deleting" | "recovery_required" | "archived" | "deleted"
@@ -625,28 +631,24 @@ export interface Schedule {
   readonly updatedAt: string
 }
 
-type WaitpointTokenExpirationOptions =
+type TokenExpirationOptions =
   | {
-      readonly timeoutInSeconds?: number
-      readonly timeoutAt?: never
-    }
-  | {
-      readonly timeoutInSeconds?: never
-      readonly timeoutAt?: string
+      readonly timeout?: DurationInput
     }
 
-export type WaitpointTokenCreateOptions = WaitpointTokenExpirationOptions & {
+export type TokenCreateOptions = TokenExpirationOptions & {
   readonly projectId?: string
   readonly environmentId?: string
+  readonly idempotencyKey?: string
   readonly tags?: readonly string[]
   readonly metadata?: Record<string, unknown>
   readonly signal?: AbortSignal
 }
 
-export interface WaitpointToken {
+export interface Token {
   readonly id: string
-  readonly status?: "waiting" | "completed" | "timed_out" | "cancelled"
-  readonly callbackUrl: string
+  readonly status?: "pending" | "completed" | "expired" | "cancelled"
+  readonly callbackUrl?: string
   readonly publicAccessToken?: string
   readonly timeoutAt: string | null
   readonly data?: unknown
@@ -654,78 +656,86 @@ export interface WaitpointToken {
   readonly metadata?: Record<string, unknown>
 }
 
-export interface WaitpointTokenRef {
+export interface TokenRef {
   readonly id: string
 }
 
-export interface WaitpointTokenCompleteOptions {
+export interface TokenCompleteOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly publicAccessToken?: string
   readonly signal?: AbortSignal
 }
 
-export interface WaitpointTokenRetrieveOptions {
+export interface TokenRetrieveOptions {
   readonly projectId?: string
   readonly environmentId?: string
   readonly signal?: AbortSignal
 }
 
-export interface WaitpointTokenListOptions {
+export interface TokenListOptions {
   readonly projectId?: string
   readonly environmentId?: string
-  readonly status?: "waiting" | "completed" | "timed_out" | "cancelled"
+  readonly status?: "pending" | "completed" | "expired" | "cancelled"
   readonly cursor?: string
   readonly limit?: number
   readonly signal?: AbortSignal
 }
 
-export interface WaitpointTokensPage {
-  readonly tokens: readonly WaitpointToken[]
+export interface TokensPage {
+  readonly tokens: readonly Token[]
   readonly nextCursor: string | null
 }
 
-type WaitpointTokenCreateRequest = {
+type TokenCreateRequest = {
   readonly operation: "create"
-  readonly opts?: WaitpointTokenCreateOptions
+  readonly opts?: TokenCreateOptions
 }
 
-type WaitpointTokenRetrieveRequest = {
+type TokenRetrieveRequest = {
   readonly operation: "retrieve"
   readonly id: string
-  readonly opts?: WaitpointTokenRetrieveOptions
+  readonly opts?: TokenRetrieveOptions
 }
 
-type WaitpointTokenListPageRequest = {
+type TokenListPageRequest = {
   readonly operation: "listPage"
-  readonly opts?: WaitpointTokenListOptions
+  readonly opts?: TokenListOptions
 }
 
-type WaitpointTokenCompleteRequest = {
+type TokenCompleteRequest = {
   readonly operation: "complete"
-  readonly token: WaitpointToken | WaitpointTokenRef | string
+  readonly token: Token | TokenRef | string
   readonly data: unknown
-  readonly opts?: WaitpointTokenCompleteOptions
+  readonly opts?: TokenCompleteOptions
 }
 
-type WaitpointTokenClientRequest =
-  | WaitpointTokenCreateRequest
-  | WaitpointTokenRetrieveRequest
-  | WaitpointTokenListPageRequest
-  | WaitpointTokenCompleteRequest
-
-export interface RunWaitpointsPage {
-  readonly waitpoints: readonly PendingWaitpoint[]
-  readonly nextCursor: string | null
+type TokenCancelRequest = {
+  readonly operation: "cancel"
+  readonly token: Token | TokenRef | string
+  readonly opts?: TokenCancelOptions
 }
 
-export type WaitpointStatus = "pending" | "completed" | "timed_out" | "cancelled" | "failed"
+type TokenClientRequest =
+  | TokenCreateRequest
+  | TokenRetrieveRequest
+  | TokenListPageRequest
+  | TokenCompleteRequest
+  | TokenCancelRequest
 
-export interface RunWaitpointListOptions {
+export interface TokenCancelOptions {
   readonly projectId?: string
   readonly environmentId?: string
-  readonly cursor?: string
-  readonly limit?: number
   readonly signal?: AbortSignal
-  readonly status?: WaitpointStatus
+}
+
+export interface TokensApi {
+  create(opts?: TokenCreateOptions): Promise<Token>
+  retrieve(id: string, opts?: TokenRetrieveOptions): Promise<Token>
+  listPage(opts?: TokenListOptions): Promise<TokensPage>
+  list(opts?: TokenListOptions): Promise<Token[]>
+  complete(token: Token | TokenRef | string, data: unknown, opts?: TokenCompleteOptions): Promise<void>
+  cancel(token: Token | TokenRef | string, opts?: TokenCancelOptions): Promise<Token>
 }
 
 export class HelmrClient {
@@ -861,27 +871,31 @@ export class HelmrClient {
     },
   }
 
-  readonly waitpoints = {
-    tokens: {
-      create: async (opts: WaitpointTokenCreateOptions = {}): Promise<WaitpointToken> => {
-        return await this[waitpointTokenClientMethod]({ operation: "create", opts })
-      },
-      retrieve: async (id: string, opts: WaitpointTokenRetrieveOptions = {}): Promise<WaitpointToken> => {
-        return await this[waitpointTokenClientMethod]({ operation: "retrieve", id, opts })
-      },
-      listPage: async (opts: WaitpointTokenListOptions = {}): Promise<WaitpointTokensPage> => {
-        return await this[waitpointTokenClientMethod]({ operation: "listPage", opts })
-      },
-      list: async (opts: WaitpointTokenListOptions = {}): Promise<WaitpointToken[]> => {
-        return [...(await this[waitpointTokenClientMethod]({ operation: "listPage", opts })).tokens]
-      },
-      complete: async (
-        token: WaitpointToken | WaitpointTokenRef | string,
-        data: unknown,
-        opts: WaitpointTokenCompleteOptions = {},
-      ): Promise<void> => {
-        await this[waitpointTokenClientMethod]({ operation: "complete", token, data, opts })
-      },
+  readonly tokens: TokensApi = {
+    create: async (opts: TokenCreateOptions = {}): Promise<Token> => {
+      return await this[tokenClientMethod]({ operation: "create", opts })
+    },
+    retrieve: async (id: string, opts: TokenRetrieveOptions = {}): Promise<Token> => {
+      return await this[tokenClientMethod]({ operation: "retrieve", id, opts })
+    },
+    listPage: async (opts: TokenListOptions = {}): Promise<TokensPage> => {
+      return await this[tokenClientMethod]({ operation: "listPage", opts })
+    },
+    list: async (opts: TokenListOptions = {}): Promise<Token[]> => {
+      return [...(await this[tokenClientMethod]({ operation: "listPage", opts })).tokens]
+    },
+    complete: async (
+      token: Token | TokenRef | string,
+      data: unknown,
+      opts: TokenCompleteOptions = {},
+    ): Promise<void> => {
+      await this[tokenClientMethod]({ operation: "complete", token, data, opts })
+    },
+    cancel: async (
+      token: Token | TokenRef | string,
+      opts: TokenCancelOptions = {},
+    ): Promise<Token> => {
+      return await this[tokenClientMethod]({ operation: "cancel", token, opts })
     },
   }
 
@@ -915,53 +929,57 @@ export class HelmrClient {
     return await this.#startTask(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration))
   }
 
-  async [waitpointTokenClientMethod](request: WaitpointTokenCreateRequest): Promise<WaitpointToken>
-  async [waitpointTokenClientMethod](request: WaitpointTokenRetrieveRequest): Promise<WaitpointToken>
-  async [waitpointTokenClientMethod](request: WaitpointTokenListPageRequest): Promise<WaitpointTokensPage>
-  async [waitpointTokenClientMethod](request: WaitpointTokenCompleteRequest): Promise<void>
-  async [waitpointTokenClientMethod](
-    request: WaitpointTokenClientRequest,
-  ): Promise<WaitpointToken | WaitpointTokensPage | void> {
+  async [tokenClientMethod](request: TokenCreateRequest): Promise<Token>
+  async [tokenClientMethod](request: TokenRetrieveRequest): Promise<Token>
+  async [tokenClientMethod](request: TokenListPageRequest): Promise<TokensPage>
+  async [tokenClientMethod](request: TokenCompleteRequest): Promise<void>
+  async [tokenClientMethod](request: TokenCancelRequest): Promise<Token>
+  async [tokenClientMethod](
+    request: TokenClientRequest,
+  ): Promise<Token | TokensPage | void> {
     switch (request.operation) {
       case "create": {
         const opts = request.opts ?? {}
-        const response = await this.#json<WaitpointTokenResponse>(
-          waitpointTokenCollectionPath(opts),
+        const response = await this.#json<TokenResponse>(
+          tokenCollectionPath(opts),
           {
             method: "POST",
-            body: JSON.stringify(waitpointTokenCreateBody(opts)),
+            body: JSON.stringify(tokenCreateBody(opts)),
             headers: { "content-type": "application/json" },
             ...requestSignal(opts.signal),
           },
         )
-        return waitpointTokenFromResponse(response)
+        return tokenFromResponse(response)
       }
       case "retrieve": {
         const opts = request.opts ?? {}
-        const response = await this.#json<WaitpointTokenResponse>(
-          `${waitpointTokenCollectionPath(opts)}/${encodeURIComponent(request.id)}`,
+        const response = await this.#json<TokenResponse>(
+          `${tokenCollectionPath(opts)}/${encodeURIComponent(request.id)}`,
           requestSignal(opts.signal),
         )
-        return waitpointTokenFromResponse(response)
+        return tokenFromResponse(response)
       }
       case "listPage": {
         const opts = request.opts ?? {}
-        const response = await this.#json<ListWaitpointTokensResponse>(
-          `${waitpointTokenCollectionPath(opts)}${waitpointTokenListQuery(opts)}`,
+        const response = await this.#json<ListTokensResponse>(
+          `${tokenCollectionPath(opts)}${tokenListQuery(opts)}`,
           requestSignal(opts.signal),
         )
         return {
-          tokens: response.tokens.map(waitpointTokenFromResponse),
+          tokens: response.tokens.map(tokenFromResponse),
           nextCursor: response.next_cursor ?? null,
         }
       }
       case "complete": {
         const opts = request.opts ?? {}
         const id = typeof request.token === "string" ? request.token : request.token.id
-        const publicAccessToken = opts.publicAccessToken ?? waitpointTokenPublicAccessToken(request.token)
-        await this.#fetch(`/api/waitpoints/tokens/${encodeURIComponent(id)}/complete`, {
+        const publicAccessToken = opts.publicAccessToken ?? tokenPublicAccessToken(request.token)
+        const path = publicAccessToken === undefined
+          ? `${tokenCollectionPath(opts)}/${encodeURIComponent(id)}/complete`
+          : `/api/v1/tokens/${encodeURIComponent(id)}/complete`
+        await this.#fetch(path, {
           method: "POST",
-          body: JSON.stringify(waitpointTokenCompleteBody(request.data, opts)),
+          body: JSON.stringify(tokenCompleteBody(request.data, opts)),
           headers: {
             "content-type": "application/json",
             ...(publicAccessToken === undefined ? {} : { authorization: `Bearer ${publicAccessToken}` }),
@@ -969,6 +987,20 @@ export class HelmrClient {
           ...requestSignal(opts.signal),
         })
         return
+      }
+      case "cancel": {
+        const opts = request.opts ?? {}
+        const id = typeof request.token === "string" ? request.token : request.token.id
+        const response = await this.#json<TokenResponse>(
+          `${tokenCollectionPath(opts)}/${encodeURIComponent(id)}/cancel`,
+          {
+            method: "POST",
+            body: "{}",
+            headers: { "content-type": "application/json" },
+            ...requestSignal(opts.signal),
+          },
+        )
+        return tokenFromResponse(response)
       }
     }
   }
@@ -1403,95 +1435,114 @@ export class HelmrClient {
         )
         return response.runs.map(taskSessionRunFromResponse)
       },
-      input: (channelInput: string) => {
-        const channel = validateChannelName(channelInput)
+      input: (target: string | InputStreamDefinition<any, any>) => {
+        const stream = streamTargetName(target)
         return {
-          send: async <TData = unknown>(data: TData, opts: SessionChannelInputSendOptions = {}) => {
-            const response = await this.#json<AppendChannelRecordResponse>(
-              taskSessionResourcePath(id, opts, `/channels/${encodeURIComponent(channel)}/inputs`),
+          id: stream,
+          send: async <TData = unknown>(data: TData, opts: SessionInputSendOptions = {}) => {
+            const path = sessionPublicAccessPath(id, stream, "input", opts) ??
+              taskSessionResourcePath(id, opts, `/inputs/${encodeURIComponent(stream)}`)
+            const response = await this.#json<AppendStreamRecordResponse>(
+              path,
               {
                 method: "POST",
-                body: JSON.stringify(channelInputAppendBody(data, opts)),
+                body: JSON.stringify(streamInputSendBody(data, opts)),
+                headers: {
+                  "content-type": "application/json",
+                  ...(opts.publicAccessToken === undefined ? {} : { authorization: `Bearer ${opts.publicAccessToken}` }),
+                },
+                ...requestSignal(opts.signal),
+              },
+            )
+            return appendStreamRecordFromResponse<TData>(response)
+          },
+          wait: () => unsupportedClientStreamWait(),
+          once: () => unsupportedClientStreamWait(),
+          on: async () => unsupportedClientStreamSubscribe(),
+          peek: async () => unsupportedClientStreamPeek(),
+          list: async <TData = unknown>(opts: SessionStreamListOptions = {}) => {
+            return await this.#listSessionStreamRecords<TData>(id, stream, "input", opts)
+          },
+        }
+      },
+      output: (target: string | OutputStreamDefinition<any, any>) => {
+        const stream = streamTargetName(target)
+        return {
+          id: stream,
+          append: async <TData = unknown>(data: TData, opts: SessionOutputAppendOptions = {}) => {
+            const response = await this.#json<AppendStreamRecordResponse>(
+              taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`),
+              {
+                method: "POST",
+                body: JSON.stringify(streamAppendBody(data, opts)),
                 headers: { "content-type": "application/json" },
                 ...requestSignal(opts.signal),
               },
             )
-            return appendChannelRecordFromResponse<TData>(response)
+            return appendStreamRecordFromResponse<TData>(response)
           },
-          list: async <TData = unknown>(opts: SessionChannelListOptions = {}) => {
-            return await this.#listSessionChannelRecords<TData>(id, channel, "inputs", opts)
+          pipe: async <TData = unknown>(source: AsyncIterable<TData> | Iterable<TData>, opts: SessionOutputAppendOptions = {}) => {
+            for await (const item of source) {
+              const response = await this.#json<AppendStreamRecordResponse>(
+                taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`),
+                {
+                  method: "POST",
+                  body: JSON.stringify(streamAppendBody(item, opts)),
+                  headers: { "content-type": "application/json" },
+                  ...requestSignal(opts.signal),
+                },
+              )
+              appendStreamRecordFromResponse<TData>(response)
+            }
           },
-        }
-      },
-      output: (channelInput: string) => {
-        const channel = validateChannelName(channelInput)
-        return {
-          list: async <TData = unknown>(opts: SessionChannelListOptions = {}) => {
-            return await this.#listSessionChannelRecords<TData>(id, channel, "outputs", opts)
+          writer: (opts: SessionOutputAppendOptions = {}): StreamWriter<unknown> => ({
+            write: async (data: unknown) => {
+              const response = await this.#json<AppendStreamRecordResponse>(
+                taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`),
+                {
+                  method: "POST",
+                  body: JSON.stringify(streamAppendBody(data, opts)),
+                  headers: { "content-type": "application/json" },
+                  ...requestSignal(opts.signal),
+                },
+              )
+              appendStreamRecordFromResponse(response)
+            },
+            close: async () => {},
+          }),
+          read: async <TData = unknown>(opts: SessionStreamReadOptions = {}) => {
+            const path = sessionPublicAccessPath(id, stream, "output", opts) ??
+              taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}/read`)
+            const response = await this.#json<ReadStreamRecordResponse>(
+              `${path}${sessionStreamQuery(opts)}`,
+              opts.publicAccessToken === undefined
+                ? requestSignal(opts.signal)
+                : {
+                    headers: { authorization: `Bearer ${opts.publicAccessToken}` },
+                    ...requestSignal(opts.signal),
+                  },
+            )
+            return response.record === undefined || response.record === null ? null : streamRecordFromResponse<TData>(response.record)
           },
-          stream: async <TData = unknown>(opts: SessionChannelOutputStreamOptions = {}) => {
-            return this.#streamSessionChannelOutputs<TData>(id, channel, opts)
+          list: async <TData = unknown>(opts: SessionStreamListOptions = {}) => {
+            return await this.#listSessionStreamRecords<TData>(id, stream, "output", opts)
           },
         }
       },
     }
   }
 
-  async #listSessionChannelRecords<TData>(
+  async #listSessionStreamRecords<TData>(
     sessionID: string,
-    channel: string,
-    direction: "inputs" | "outputs",
-    opts: SessionChannelListOptions,
-  ): Promise<ChannelRecord<TData>[]> {
-    const response = await this.#json<ListChannelRecordsResponse>(
-      `${taskSessionResourcePath(sessionID, opts, `/channels/${encodeURIComponent(channel)}/${direction}`)}${sessionChannelQuery(opts)}`,
+    stream: string,
+    direction: "input" | "output",
+    opts: SessionStreamListOptions,
+  ): Promise<StreamRecord<TData>[]> {
+    const response = await this.#json<ListStreamRecordsResponse>(
+      `${taskSessionResourcePath(sessionID, opts, `/${direction === "input" ? "inputs" : "outputs"}/${encodeURIComponent(stream)}`)}${sessionStreamQuery(opts)}`,
       requestSignal(opts.signal),
     )
-    return response.records.map(channelRecordFromResponse<TData>)
-  }
-
-  async #streamSessionChannelOutputs<TData>(
-    sessionID: string,
-    channel: string,
-    opts: SessionChannelOutputStreamOptions,
-  ): Promise<AsyncIterable<ChannelRecord<TData>>> {
-    const client = this
-    const stream = async function* (): AsyncIterable<ChannelRecord<TData>> {
-      let cursor = opts.cursor
-      for (;;) {
-        try {
-          const response = await client.#fetch(
-            `${taskSessionResourcePath(sessionID, opts, `/channels/${encodeURIComponent(channel)}/outputs/stream`)}${sessionChannelStreamQuery(opts, cursor)}`,
-            {
-              headers: { accept: "text/event-stream" },
-              ...requestSignal(opts.signal),
-            },
-          )
-          for await (const record of parseChannelRecordSse<TData>(response)) {
-            cursor = Math.max(cursor ?? 0, record.sequence)
-            yield record
-          }
-        } catch (error) {
-          throwIfAborted(opts.signal)
-          if (runEventStreamErrorIsFatal(error)) {
-            throw error
-          }
-        }
-        try {
-          const session = await client.sessions.retrieve(sessionID, taskSessionRetrieveOptions(opts, opts.signal))
-          if (taskSessionTerminal(session.status)) {
-            return
-          }
-        } catch (error) {
-          throwIfAborted(opts.signal)
-          if (runSnapshotErrorIsFatal(error)) {
-            throw error
-          }
-        }
-        await delay(RUN_EVENT_RECONNECT_DELAY_MS, opts.signal)
-      }
-    }
-    return stream()
+    return response.records.map(streamRecordFromResponse<TData>)
   }
 
   readonly runs = {
@@ -1507,7 +1558,7 @@ export class HelmrClient {
     },
     wait: async <TOutput = unknown>(
       idOrHandle: string | RunHandle<TOutput>,
-      opts: RunWaitpointOptions = {},
+      opts: RunWaitOptions = {},
     ): Promise<RunSnapshot<TOutput>> => {
       const id = runId(idOrHandle)
       const timeoutMs = opts.timeoutMs
@@ -1582,29 +1633,6 @@ export class HelmrClient {
       const suffix = query.size === 0 ? "" : `?${query}`
       const response = await this.#json<ListRunsResponse>(`${runCollectionPath(opts)}${suffix}`, requestSignal(opts.signal))
       return response.runs.map((run) => runResponseToSnapshot(run))
-    },
-    waitpoints: {
-      listPage: async <TOutput = unknown>(
-        idOrHandle: string | RunHandle<TOutput>,
-        opts: RunWaitpointListOptions = {},
-      ): Promise<RunWaitpointsPage> => {
-        const id = runId(idOrHandle)
-        const response = await this.#json<ListRunWaitpointsResponse>(
-          `${runResourcePath(id, opts, "/waitpoints")}${runWaitpointListQuery(opts)}`,
-          requestSignal(opts.signal),
-        )
-        return {
-          waitpoints: response.waitpoints.map((request) => pendingWaitpointFromResponse(id, request))
-            .filter((request): request is PendingWaitpoint => request !== null),
-          nextCursor: response.next_cursor ?? null,
-        }
-      },
-      list: async <TOutput = unknown>(
-        idOrHandle: string | RunHandle<TOutput>,
-        opts: RunWaitpointListOptions = {},
-      ): Promise<PendingWaitpoint[]> => {
-        return [...(await this.runs.waitpoints.listPage(idOrHandle, opts)).waitpoints]
-      },
     },
     logs: {
       retrieve: async <TOutput = unknown>(
@@ -1923,7 +1951,6 @@ export interface RunResponse {
   readonly exit_code?: number | null
   readonly created_at?: string
   readonly updated_at?: string
-  readonly pending_waitpoint?: PendingWaitpointResponse | null
   readonly output?: unknown
 }
 
@@ -1980,9 +2007,9 @@ interface ListTaskSessionRunsResponse {
   readonly runs: readonly TaskSessionRunResponse[]
 }
 
-interface ChannelRecordResponse {
+interface StreamRecordResponse {
   readonly id: string
-  readonly channel_id: string
+  readonly stream_id: string
   readonly sequence: number
   readonly data: unknown
   readonly correlation_id?: string
@@ -1990,19 +2017,23 @@ interface ChannelRecordResponse {
   readonly created_at: string
 }
 
-interface AppendChannelRecordResponse {
-  readonly record: ChannelRecordResponse
+interface AppendStreamRecordResponse {
+  readonly record: StreamRecordResponse
   readonly idempotency_status?: string
 }
 
-interface ListChannelRecordsResponse {
-  readonly records: readonly ChannelRecordResponse[]
+interface ListStreamRecordsResponse {
+  readonly records: readonly StreamRecordResponse[]
+}
+
+interface ReadStreamRecordResponse {
+  readonly record?: StreamRecordResponse | null
 }
 
 interface PublicAccessTokenScopeResponse {
-  readonly type: "session.input.append" | "session.output.read"
+  readonly type: "session.input.send" | "session.output.read"
   readonly session_id: string
-  readonly channel: string
+  readonly stream: string
   readonly correlation_id?: string
 }
 
@@ -2049,10 +2080,10 @@ interface LogSnapshotResponse {
   readonly truncated: boolean
 }
 
-interface WaitpointTokenResponse {
+interface TokenResponse {
   readonly id: string
-  readonly status?: "waiting" | "completed" | "timed_out" | "cancelled"
-  readonly callback_url: string
+  readonly status?: "pending" | "completed" | "expired" | "cancelled"
+  readonly callback_url?: string
   readonly public_access_token?: string
   readonly timeout_at?: string | null
   readonly data?: unknown
@@ -2060,8 +2091,8 @@ interface WaitpointTokenResponse {
   readonly metadata?: Record<string, unknown>
 }
 
-interface ListWaitpointTokensResponse {
-  readonly tokens: readonly WaitpointTokenResponse[]
+interface ListTokensResponse {
+  readonly tokens: readonly TokenResponse[]
   readonly next_cursor?: string | null
 }
 
@@ -2225,11 +2256,6 @@ interface WorkspaceStreamErrorResponse {
   readonly cursor?: number
 }
 
-interface ListRunWaitpointsResponse {
-  readonly waitpoints: readonly PendingWaitpointResponse[]
-  readonly next_cursor?: string | null
-}
-
 function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSnapshot<TOutput> {
   return runSnapshot<TOutput>({
     id: response.id,
@@ -2249,7 +2275,6 @@ function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSna
     exitCode: response.exit_code ?? null,
     ...(response.created_at === undefined ? {} : { createdAt: response.created_at }),
     ...(response.updated_at === undefined ? {} : { updatedAt: response.updated_at }),
-    pendingWaitpoint: pendingWaitpointFromResponse(response.id, response.pending_waitpoint),
     ...("output" in response ? { output: response.output as TOutput } : {}),
   })
 }
@@ -2301,10 +2326,10 @@ function taskSessionRunFromResponse(response: TaskSessionRunResponse): TaskSessi
   }
 }
 
-function channelRecordFromResponse<TData = unknown>(response: ChannelRecordResponse): ChannelRecord<TData> {
+function streamRecordFromResponse<TData = unknown>(response: StreamRecordResponse): StreamRecord<TData> {
   return {
     id: response.id,
-    channelId: response.channel_id,
+    streamId: response.stream_id,
     sequence: response.sequence,
     data: response.data as TData,
     ...(response.correlation_id === undefined || response.correlation_id === "" ? {} : { correlationId: response.correlation_id }),
@@ -2313,11 +2338,11 @@ function channelRecordFromResponse<TData = unknown>(response: ChannelRecordRespo
   }
 }
 
-function appendChannelRecordFromResponse<TData = unknown>(
-  response: AppendChannelRecordResponse,
-): SessionChannelInputSendResult<TData> {
+function appendStreamRecordFromResponse<TData = unknown>(
+  response: AppendStreamRecordResponse,
+): SessionInputSendResult<TData> {
   return {
-    ...channelRecordFromResponse<TData>(response.record),
+    ...streamRecordFromResponse<TData>(response.record),
     idempotencyStatus: response.idempotency_status === "duplicate" ? "duplicate" : "created",
   }
 }
@@ -2372,11 +2397,18 @@ function taskSessionWaitBody(opts: TaskSessionWaitOptions): Record<string, unkno
   }
 }
 
-function channelInputAppendBody(data: unknown, opts: SessionChannelInputSendOptions): Record<string, unknown> {
+function streamInputSendBody(data: unknown, opts: SessionInputSendOptions): Record<string, unknown> {
   return {
     data,
     ...(opts.correlationId === undefined ? {} : { correlation_id: opts.correlationId }),
-    ...(opts.externalEventId === undefined ? {} : { external_event_id: opts.externalEventId }),
+    ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
+  }
+}
+
+function streamAppendBody(data: unknown, opts: StreamAppendOptions): Record<string, unknown> {
+  return {
+    data,
+    ...(opts.contentType === undefined ? {} : { content_type: opts.contentType }),
   }
 }
 
@@ -2406,15 +2438,24 @@ function taskSessionResourcePath(
   return `${taskSessionCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`
 }
 
-function taskSessionRetrieveOptions(
-  opts: { readonly projectId?: string; readonly environmentId?: string; readonly signal?: AbortSignal },
-  signal: AbortSignal | undefined,
-): TaskSessionRetrieveOptions {
-  return {
-    ...(opts.projectId === undefined ? {} : { projectId: opts.projectId }),
-    ...(opts.environmentId === undefined ? {} : { environmentId: opts.environmentId }),
-    ...(signal === undefined ? {} : { signal }),
+function sessionPublicAccessPath(
+  sessionID: string,
+  stream: string,
+  direction: "input" | "output",
+  opts: { readonly projectId?: string; readonly environmentId?: string; readonly publicAccessToken?: string },
+): string | undefined {
+  if (opts.publicAccessToken === undefined) {
+    return undefined
   }
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    throw new Error("projectId and environmentId cannot be combined with publicAccessToken")
+  }
+  const encodedSessionID = encodeURIComponent(sessionID)
+  const encodedStream = encodeURIComponent(stream)
+  if (direction === "input") {
+    return `/api/v1/sessions/${encodedSessionID}/inputs/${encodedStream}`
+  }
+  return `/api/v1/sessions/${encodedSessionID}/outputs/${encodedStream}/read`
 }
 
 function runCollectionPath(opts: { readonly projectId?: string; readonly environmentId?: string }): string {
@@ -2458,17 +2499,26 @@ function runEventOptions(
   }
 }
 
-function sessionChannelQuery(opts: SessionChannelListOptions): string {
+function streamTargetName(target: { readonly id: string } | string): string {
+  return validateStreamName(typeof target === "string" ? target : target.id)
+}
+
+function unsupportedClientStreamWait(): WaitHandle<never> {
+  throw new UnsupportedTransportError("client session stream wait is not implemented until stream wait REST support lands")
+}
+
+async function unsupportedClientStreamSubscribe(): Promise<never> {
+  throw new UnsupportedTransportError("client session stream subscription is not implemented until stream follow REST support lands")
+}
+
+async function unsupportedClientStreamPeek(): Promise<never> {
+  throw new UnsupportedTransportError("client session stream peek is not implemented until stream read REST support lands")
+}
+
+function sessionStreamQuery(opts: SessionStreamListOptions): string {
   const query = new URLSearchParams()
   if (opts.cursor !== undefined) query.set("after_sequence", String(opts.cursor))
   if (opts.limit !== undefined) query.set("limit", String(opts.limit))
-  if (opts.correlationId !== undefined) query.set("correlation_id", opts.correlationId)
-  return query.size === 0 ? "" : `?${query}`
-}
-
-function sessionChannelStreamQuery(opts: SessionChannelOutputStreamOptions, cursor = opts.cursor): string {
-  const query = new URLSearchParams()
-  if (cursor !== undefined) query.set("after_sequence", String(cursor))
   if (opts.correlationId !== undefined) query.set("correlation_id", opts.correlationId)
   return query.size === 0 ? "" : `?${query}`
 }
@@ -2478,7 +2528,7 @@ function publicAccessTokenCreateBody(opts: PublicAccessTokenCreateOptions): Reco
     scope: {
       type: opts.scope.type,
       session_id: sessionId(opts.scope.sessionId),
-      channel: validateChannelName(opts.scope.channel),
+      stream: validateStreamName(opts.scope.stream),
       ...(opts.scope.correlationId === undefined ? {} : { correlation_id: opts.scope.correlationId }),
     },
     ...(opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") }),
@@ -2493,7 +2543,7 @@ function publicAccessTokenFromResponse(response: PublicAccessTokenResponse): Pub
     scope: {
       type: response.scope.type,
       sessionId: response.scope.session_id,
-      channel: response.scope.channel,
+      stream: response.scope.stream,
       ...(response.scope.correlation_id === undefined ? {} : { correlationId: response.scope.correlation_id }),
     },
     expiresAt: response.expires_at,
@@ -2801,31 +2851,23 @@ function scheduleFromResponse(response: ScheduleResponse): Schedule {
   }
 }
 
-function runWaitpointListQuery(opts: RunWaitpointListOptions): string {
-  const query = new URLSearchParams()
-  if (opts.cursor !== undefined) query.set("cursor", opts.cursor)
-  if (opts.limit !== undefined) query.set("limit", String(opts.limit))
-  if (opts.status !== undefined) query.set("status", opts.status)
-  return query.size === 0 ? "" : `?${query}`
-}
-
-function waitpointTokenCreateBody(
-  opts: WaitpointTokenCreateOptions,
+function tokenCreateBody(
+  opts: TokenCreateOptions,
 ): {
-  readonly timeout_in_seconds?: number
-  readonly timeout_at?: string
+  readonly timeout?: DurationInput
+  readonly idempotency_key?: string
   readonly tags?: readonly string[]
   readonly metadata?: Record<string, unknown>
 } {
   return {
-    ...(opts.timeoutInSeconds === undefined ? {} : { timeout_in_seconds: opts.timeoutInSeconds }),
-    ...(opts.timeoutAt === undefined ? {} : { timeout_at: opts.timeoutAt }),
+    ...(opts.timeout === undefined ? {} : { timeout: opts.timeout }),
+    ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
     ...(opts.tags === undefined ? {} : { tags: opts.tags }),
     ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
   }
 }
 
-function waitpointTokenCompleteBody(data: unknown, opts: WaitpointTokenCompleteOptions): {
+function tokenCompleteBody(data: unknown, opts: TokenCompleteOptions): {
   readonly data: unknown
 } {
   void opts
@@ -2834,17 +2876,17 @@ function waitpointTokenCompleteBody(data: unknown, opts: WaitpointTokenCompleteO
   }
 }
 
-function waitpointTokenCollectionPath(opts: { readonly projectId?: string; readonly environmentId?: string }): string {
+function tokenCollectionPath(opts: { readonly projectId?: string; readonly environmentId?: string }): string {
   if (opts.projectId !== undefined || opts.environmentId !== undefined) {
     if (opts.projectId === undefined || opts.environmentId === undefined) {
       throw new Error("projectId and environmentId must be provided together")
     }
-    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/waitpoints/tokens`
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/tokens`
   }
-  return "/api/waitpoints/tokens"
+  return "/api/tokens"
 }
 
-function waitpointTokenListQuery(opts: WaitpointTokenListOptions): string {
+function tokenListQuery(opts: TokenListOptions): string {
   const query = new URLSearchParams()
   if (opts.cursor !== undefined) query.set("cursor", opts.cursor)
   if (opts.limit !== undefined) query.set("limit", String(opts.limit))
@@ -2852,11 +2894,11 @@ function waitpointTokenListQuery(opts: WaitpointTokenListOptions): string {
   return query.size === 0 ? "" : `?${query}`
 }
 
-function waitpointTokenFromResponse(response: WaitpointTokenResponse): WaitpointToken {
+function tokenFromResponse(response: TokenResponse): Token {
   return {
     id: response.id,
     ...(response.status === undefined ? {} : { status: response.status }),
-    callbackUrl: response.callback_url,
+    ...(response.callback_url === undefined || response.callback_url === "" ? {} : { callbackUrl: response.callback_url }),
     ...(response.public_access_token === undefined ? {} : { publicAccessToken: response.public_access_token }),
     timeoutAt: response.timeout_at ?? null,
     ...(response.data === undefined ? {} : { data: response.data }),
@@ -2865,7 +2907,7 @@ function waitpointTokenFromResponse(response: WaitpointTokenResponse): Waitpoint
   }
 }
 
-function waitpointTokenPublicAccessToken(target: WaitpointToken | WaitpointTokenRef | string): string | undefined {
+function tokenPublicAccessToken(target: Token | TokenRef | string): string | undefined {
   if (typeof target === "string" || !("publicAccessToken" in target)) {
     return undefined
   }
@@ -3095,45 +3137,6 @@ async function* parseWorkspaceStreamSse(response: Response): AsyncIterable<Works
   }
 }
 
-async function* parseChannelRecordSse<TData = unknown>(response: Response): AsyncIterable<ChannelRecord<TData>> {
-  const reader = response.body?.getReader()
-  if (reader === undefined) {
-    return
-  }
-  const decoder = new TextDecoder()
-  let buffer = ""
-  try {
-    for (;;) {
-      const { value, done } = await reader.read()
-      if (done) {
-        buffer += decoder.decode()
-        const finalRecord = parseChannelRecordSseFrame<TData>(buffer)
-        if (finalRecord !== undefined) {
-          yield finalRecord
-        }
-        return
-      }
-      buffer += decoder.decode(value, { stream: true })
-      let boundary = findSseBoundary(buffer)
-      while (boundary !== -1) {
-        const delimiter = buffer.startsWith("\r\n\r\n", boundary) ? 4 : 2
-        const raw = buffer.slice(0, boundary)
-        buffer = buffer.slice(boundary + delimiter)
-        const record = parseChannelRecordSseFrame<TData>(raw)
-        if (record !== undefined) {
-          yield record
-        }
-        boundary = findSseBoundary(buffer)
-      }
-      if (buffer.length > MAX_SSE_BUFFER_CHARS) {
-        throw new SseFrameTooLargeError()
-      }
-    }
-  } finally {
-    reader.releaseLock()
-  }
-}
-
 function parseWorkspaceStreamSseFrame(raw: string): WorkspaceStreamFollowEvent | undefined {
   const data = raw
     .split(/\r?\n/)
@@ -3161,28 +3164,6 @@ function parseWorkspaceStreamSseFrame(raw: string): WorkspaceStreamFollowEvent |
     throw new WorkspaceStreamError(record.code, record.message, record.cursor)
   }
   throw new SseProtocolError(`unsupported workspace stream SSE event ${event}`, sseFrameCursor(raw))
-}
-
-function parseChannelRecordSseFrame<TData = unknown>(raw: string): ChannelRecord<TData> | undefined {
-  const data = raw
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trimStart())
-    .join("\n")
-  if (data === "") {
-    return undefined
-  }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(data)
-  } catch {
-    throw new SseProtocolError("SSE channel record data must be valid JSON", sseFrameCursor(raw))
-  }
-  const record = objectRecord(parsed)
-  if (record === undefined) {
-    throw new SseProtocolError("SSE channel record data must be a JSON object", sseFrameCursor(raw))
-  }
-  return channelRecordFromResponse<TData>(record as unknown as ChannelRecordResponse)
 }
 
 function parseSseFrame(raw: string): RunEventRecord | undefined {
@@ -3275,10 +3256,6 @@ function parseRunEventCursor(value: string): number | undefined {
 
 function runEventRecordIsTerminal(event: RunEventRecord): boolean {
   return runEventKindIsTerminal(event.message) || runEventKindIsTerminal(event.kind)
-}
-
-function taskSessionTerminal(status: TaskSessionStatus): boolean {
-  return status !== "open"
 }
 
 function runEventKindIsTerminal(kind: string | undefined): boolean {
@@ -3396,15 +3373,15 @@ function runEventRecordToRunEvent(event: unknown): RunEvent | undefined {
       at,
     }
   }
-  if (message === "waitpoint.created") {
-    const waitpointId = stringValue(attributes?.["waitpoint_id"])
-    const kind = stringValue(attributes?.["kind"])
-    if (waitpointId === undefined) return undefined
+  if (message === "run_wait.created") {
+    const runWaitId = stringValue(attributes?.["run_wait_id"])
+    const kind = publicWaitKind(attributes?.["kind"])
+    if (runWaitId === undefined) return undefined
     if (kind === undefined) return undefined
     return {
-      type: "waitpoint",
+      type: `${kind}_wait`,
       run_id: runId,
-      waitpoint_id: waitpointId,
+      wait_id: runWaitId,
       kind,
       params: attributes?.["params"] ?? {},
       metadata: objectRecord(attributes?.["metadata"]) ?? {},
@@ -3413,28 +3390,28 @@ function runEventRecordToRunEvent(event: unknown): RunEvent | undefined {
       at,
     }
   }
-  if (message === "waitpoint.completed") {
-    const waitpointId = stringValue(attributes?.["waitpoint_id"])
-    const kind = stringValue(attributes?.["kind"])
-    if (waitpointId === undefined) return undefined
+  if (message === "run_wait.completed") {
+    const runWaitId = stringValue(attributes?.["run_wait_id"])
+    const kind = publicWaitKind(attributes?.["kind"])
+    if (runWaitId === undefined) return undefined
     if (kind === undefined) return undefined
     return {
-      type: "waitpoint_completed",
+      type: `${kind}_wait_completed`,
       run_id: runId,
-      waitpoint_id: waitpointId,
+      wait_id: runWaitId,
       kind,
       payload: attributes?.["payload"],
       at,
     }
   }
-  if (message === "waitpoint.timed_out") {
-    const waitpointId = stringValue(attributes?.["waitpoint_id"])
-    const kind = stringValue(attributes?.["kind"])
-    if (waitpointId === undefined || kind === undefined) return undefined
+  if (message === "run_wait.timed_out") {
+    const runWaitId = stringValue(attributes?.["run_wait_id"])
+    const kind = publicWaitKind(attributes?.["kind"])
+    if (runWaitId === undefined || kind === undefined) return undefined
     return {
-      type: "waitpoint_timed_out",
+      type: `${kind}_wait_timed_out`,
       run_id: runId,
-      waitpoint_id: waitpointId,
+      wait_id: runWaitId,
       kind,
       at,
     }
@@ -3487,6 +3464,13 @@ function optionalNumber<K extends string>(key: K, value: unknown): { [P in K]?: 
 
 function objectRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : undefined
+}
+
+function publicWaitKind(value: unknown): "token" | "stream" | "timer" | undefined {
+  const kind = stringValue(value)
+  if (kind === "token" || kind === "timer") return kind
+  if (kind === "stream") return "stream"
+  return undefined
 }
 
 function stringValue(value: unknown): string | undefined {

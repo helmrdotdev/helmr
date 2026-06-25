@@ -42,7 +42,7 @@ locals {
     HELMR_VM_VCPUS                          = tostring(var.vm_vcpus)
     HELMR_VM_MEMORY_MIB                     = tostring(var.vm_memory_mib)
     HELMR_VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
-    HELMR_VM_HEALTH_TIMEOUT                 = "120s"
+    HELMR_VM_HEALTH_TIMEOUT                 = "300s"
   }, local.disk_environment, local.capacity_environment)
 
   reserved_worker_environment_keys = toset(concat(keys(local.managed_worker_environment), ["HELMR_CHECKPOINT_ENCRYPTION_KEY", "HELMR_WORKER_RESOURCE_ID"]))

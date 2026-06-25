@@ -17,9 +17,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/runprotocol"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 )
@@ -122,36 +124,37 @@ type runtimeCheckpointer struct {
 	runEvent  func(context.Context, *runv0.RunEvent) error
 }
 
-func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request CheckpointRequest) (api.WorkerCheckpointManifest, error) {
+func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request CheckpointRequest) (CheckpointResult, error) {
 	if c.cas == nil {
-		return api.WorkerCheckpointManifest{}, errors.New("checkpoint CAS is required")
+		return CheckpointResult{}, errors.New("checkpoint CAS is required")
 	}
 	if c.encryptor == nil {
-		return api.WorkerCheckpointManifest{}, errors.New("checkpoint encryption is required")
+		return CheckpointResult{}, errors.New("checkpoint encryption is required")
 	}
 	if c.stream == nil {
-		return api.WorkerCheckpointManifest{}, errors.New("checkpoint control stream is required")
+		return CheckpointResult{}, errors.New("checkpoint control stream is required")
 	}
 	phases := []api.WorkerCheckpointPhase{}
 	recordPhase := func(name string, started time.Time) {
 		phases = append(phases, api.WorkerCheckpointPhase{Name: name, DurationMs: durationMilliseconds(time.Since(started))})
 	}
 	started := time.Now()
-	if err := c.suspendGuestForCheckpoint(ctx, request); err != nil {
-		return api.WorkerCheckpointManifest{}, err
+	workspaceCapture, err := c.suspendGuestForCheckpoint(ctx, request)
+	if err != nil {
+		return CheckpointResult{}, err
 	}
 	recordPhase("suspend_guest", started)
 	started = time.Now()
 	if err := c.stream.Close(); err != nil {
 		_ = c.session.Resume(ctx)
-		return api.WorkerCheckpointManifest{}, fmt.Errorf("close checkpoint control stream: %w", err)
+		return CheckpointResult{}, fmt.Errorf("close checkpoint control stream: %w", err)
 	}
 	recordPhase("close_control_stream", started)
 	started = time.Now()
 	artifact, err := c.session.CreateSnapshot(ctx, vm.SnapshotRequest{ID: request.CheckpointID})
 	if err != nil {
 		_ = c.session.Resume(ctx)
-		return api.WorkerCheckpointManifest{}, err
+		return CheckpointResult{}, err
 	}
 	recordPhase("create_runtime_snapshot", started)
 	defer func() {
@@ -161,102 +164,133 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	manifest, err := c.storeSnapshotArtifact(ctx, request, artifact)
 	if err != nil {
 		_ = c.session.Resume(ctx)
-		return api.WorkerCheckpointManifest{}, err
+		return CheckpointResult{}, err
 	}
 	recordPhase("store_checkpoint_artifacts", started)
 	started = time.Now()
-	_ = c.session.Close(context.Background())
-	recordPhase("close_runtime", started)
+	if err := c.releaseCheckpointSource(ctx); err != nil {
+		return CheckpointResult{}, fmt.Errorf("release checkpoint source: %w", err)
+	}
+	recordPhase("release_checkpoint_source", started)
 	manifest.Phases = phases
-	return manifest, nil
+	return CheckpointResult{Manifest: manifest, WorkspaceCapture: workspaceCapture}, nil
 }
 
-func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, request CheckpointRequest) error {
-	if err := ctx.Err(); err != nil {
-		return err
+func (c runtimeCheckpointer) releaseCheckpointSource(ctx context.Context) error {
+	if releaser, ok := c.session.(CheckpointSourceReleaser); ok {
+		return releaser.ReleaseCheckpointSource(ctx)
 	}
-	if err := transport.WriteProtoFrame(c.stream, &runv0.CheckpointPauseRequest{
-		WaitpointId:  request.WaitpointID,
-		CheckpointId: request.CheckpointID,
+	return c.session.Close(ctx)
+}
+
+func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, request CheckpointRequest) (*workspace.WorkspaceArtifact, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := runprotocol.WriteCheckpointPauseRequest(c.stream, &runv0.CheckpointPauseRequest{
+		RunWaitId:        request.RunWaitID,
+		CheckpointId:     request.CheckpointID,
+		CaptureWorkspace: request.CaptureWorkspace,
 	}); err != nil {
-		return fmt.Errorf("write checkpoint suspend: %w", err)
+		return nil, fmt.Errorf("write checkpoint suspend: %w", err)
 	}
 	reader := bufio.NewReader(c.stream)
 	pauseCtx, cancelPause := context.WithTimeout(ctx, checkpointSuspendTimeout)
-	ready, err := c.readPauseReadyContext(pauseCtx, reader, request)
+	ready, workspaceCapture, err := c.readPauseReadyContext(pauseCtx, reader, request)
 	cancelPause()
 	if err != nil {
-		return fmt.Errorf("read checkpoint pause ready: %w", err)
+		return nil, fmt.Errorf("read checkpoint pause ready: %w", err)
 	}
-	if ready.WaitpointId != request.WaitpointID || ready.CheckpointId != request.CheckpointID {
-		return fmt.Errorf("checkpoint pause ready mismatch: waitpoint_id=%q checkpoint_id=%q", ready.WaitpointId, ready.CheckpointId)
+	if ready.RunWaitId != request.RunWaitID || ready.CheckpointId != request.CheckpointID {
+		return nil, fmt.Errorf("checkpoint pause ready mismatch: run_wait_id=%q checkpoint_id=%q", ready.RunWaitId, ready.CheckpointId)
 	}
-	return nil
+	if request.CaptureWorkspace && workspaceCapture == nil {
+		return nil, errors.New("checkpoint pause did not return required workspace capture")
+	}
+	return workspaceCapture, nil
 }
 
-func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) (*runv0.CheckpointPauseReady, error) {
+func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) (*runv0.CheckpointPauseReady, *workspace.WorkspaceArtifact, error) {
 	type pauseReadyResult struct {
-		ready *runv0.CheckpointPauseReady
-		err   error
+		ready            *runv0.CheckpointPauseReady
+		workspaceCapture *workspace.WorkspaceArtifact
+		err              error
 	}
 	result := make(chan pauseReadyResult, 1)
 	go func() {
 		parsed := &runv0.CheckpointPauseReady{}
-		err := c.readPauseReady(ctx, reader, request, parsed)
+		workspaceCapture, err := c.readPauseReady(ctx, reader, request, parsed)
 		result <- pauseReadyResult{
-			ready: parsed,
-			err:   err,
+			ready:            parsed,
+			workspaceCapture: workspaceCapture,
+			err:              err,
 		}
 	}()
 	select {
 	case result := <-result:
 		if result.err != nil {
-			return nil, result.err
+			return nil, nil, result.err
 		}
-		return result.ready, nil
+		return result.ready, result.workspaceCapture, nil
 	case <-ctx.Done():
 		_ = c.stream.Close()
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	}
 }
 
-func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.Reader, request CheckpointRequest, ready *runv0.CheckpointPauseReady) error {
+func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.Reader, request CheckpointRequest, ready *runv0.CheckpointPauseReady) (*workspace.WorkspaceArtifact, error) {
+	var workspaceCapture *workspace.WorkspaceArtifact
 	for {
 		prefix, err := reader.Peek(4)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if transport.IsStreamFramePrefix(prefix) {
 			header, bodyLen, err := transport.ReadStreamFrameHeader(reader)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			if header.Type != transport.StreamTypeCheckpointPauseReady {
-				return fmt.Errorf("unsupported checkpoint stream type %q", header.Type)
+			switch header.Type {
+			case transport.StreamTypeCheckpointPauseReady:
+				if bodyLen != 0 {
+					return nil, fmt.Errorf("checkpoint pause ready body length %d must be zero", bodyLen)
+				}
+				if header.RunWaitID != request.RunWaitID || header.CheckpointID != request.CheckpointID {
+					return nil, fmt.Errorf("checkpoint pause ready mismatch: run_wait_id=%q checkpoint_id=%q", header.RunWaitID, header.CheckpointID)
+				}
+				ready.RunWaitId = header.RunWaitID
+				ready.CheckpointId = header.CheckpointID
+				return workspaceCapture, nil
+			case transport.StreamTypeWorkspaceArtifact:
+				if !request.CaptureWorkspace {
+					return nil, errors.New("checkpoint pause returned unexpected workspace capture")
+				}
+				if workspaceCapture != nil {
+					return nil, errors.New("checkpoint pause returned multiple workspace captures")
+				}
+				artifact, err := storeWorkspaceArtifactFrame(ctx, c.cas, reader, header, bodyLen, request.RunID)
+				if err != nil {
+					return nil, err
+				}
+				workspaceCapture = &artifact
+			default:
+				return nil, fmt.Errorf("unsupported checkpoint stream type %q", header.Type)
 			}
-			if bodyLen != 0 {
-				return fmt.Errorf("checkpoint pause ready body length %d must be zero", bodyLen)
-			}
-			if header.WaitpointID != request.WaitpointID || header.CheckpointID != request.CheckpointID {
-				return fmt.Errorf("checkpoint pause ready mismatch: waitpoint_id=%q checkpoint_id=%q", header.WaitpointID, header.CheckpointID)
-			}
-			ready.WaitpointId = header.WaitpointID
-			ready.CheckpointId = header.CheckpointID
-			return nil
+			continue
 		}
 		body, err := transport.ReadMessageFrame(reader)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		var event runv0.RunEvent
 		if err := proto.Unmarshal(body, &event); err != nil {
-			return fmt.Errorf("unmarshal checkpoint interleaved run event: %w", err)
+			return nil, fmt.Errorf("unmarshal checkpoint interleaved run event: %w", err)
 		}
 		if c.runEvent == nil {
-			return errors.New("received run event while checkpoint pause ready is pending")
+			return nil, errors.New("received run event while checkpoint pause ready is pending")
 		}
 		if err := c.runEvent(ctx, &event); err != nil {
-			return err
+			return nil, err
 		}
 	}
 }
@@ -312,9 +346,9 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 	}
 	return api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
-			ID:          request.CheckpointID,
-			RunID:       request.RunID,
-			WaitpointID: request.WaitpointID,
+			ID:        request.CheckpointID,
+			RunID:     request.RunID,
+			RunWaitID: request.RunWaitID,
 			Runtime: api.WorkerCheckpointRuntime{
 				Backend:         artifact.RuntimeBackend,
 				ID:              artifact.RuntimeID,

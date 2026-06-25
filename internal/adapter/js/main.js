@@ -3694,7 +3694,7 @@ function timestampToJson(val) {
   return new Date(ms).toISOString().replace(".000Z", z);
 }
 // proto/typescript/src/gen/bundle_pb.ts
-var file_bundle = /* @__PURE__ */ fileDesc("CgxidW5kbGUucHJvdG8SD2hlbG1yLmJ1bmRsZS52MCKVAgoGQnVuZGxlEikKBWltYWdlGAEgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYxItCgdzYW5kYm94GAIgASgLMhwuaGVsbXIuYnVuZGxlLnYwLlNhbmRib3hTcGVjEicKBHRhc2sYAyABKAsyGS5oZWxtci5idW5kbGUudjAuVGFza1NwZWMSOgoKc3ViX2ltYWdlcxgEIAMoCzImLmhlbG1yLmJ1bmRsZS52MC5CdW5kbGUuU3ViSW1hZ2VzRW50cnkaTAoOU3ViSW1hZ2VzRW50cnkSCwoDa2V5GAEgASgJEikKBXZhbHVlGAIgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYzoCOAEiLAoIUGxhdGZvcm0SCgoCb3MYASABKAkSFAoMYXJjaGl0ZWN0dXJlGAIgASgJInsKCUltYWdlU3BlYxIWCg5mb3JtYXRfdmVyc2lvbhgBIAEoDRIrCghwbGF0Zm9ybRgCIAEoCzIZLmhlbG1yLmJ1bmRsZS52MC5QbGF0Zm9ybRIpCgVzdGVwcxgDIAMoCzIaLmhlbG1yLmJ1bmRsZS52MC5JbWFnZVN0ZXAiiwMKCUltYWdlU3RlcBIlCgRmcm9tGAEgASgLMhUuaGVsbXIuYnVuZGxlLnYwLkZyb21IABIjCgNydW4YAiABKAsyFC5oZWxtci5idW5kbGUudjAuUnVuSAASOwoQY29weV9zb3VyY2VfZmlsZRgFIAEoCzIfLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRmlsZUgAEjkKD2NvcHlfc291cmNlX2RpchgGIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRGlySAASOQoPY29weV9mcm9tX2ltYWdlGAcgASgLMh4uaGVsbXIuYnVuZGxlLnYwLkNvcHlGcm9tSW1hZ2VIABIrCgd3b3JrZGlyGAggASgLMhguaGVsbXIuYnVuZGxlLnYwLldvcmtkaXJIABIlCgR1c2VyGAkgASgLMhUuaGVsbXIuYnVuZGxlLnYwLlVzZXJIABIjCgNlbnYYCiABKAsyFC5oZWxtci5idW5kbGUudjAuRW52SABCBgoEa2luZCITCgRGcm9tEgsKA3JlZhgBIAEoCSKJAQoDUnVuEgwKBGFyZ3YYASADKAkSOAoMY2FjaGVfbW91bnRzGAIgAygLMiIuaGVsbXIuYnVuZGxlLnYwLkNhY2hlTW91bnRCaW5kaW5nEjoKDXNlY3JldF9tb3VudHMYAyADKAsyIy5oZWxtci5idW5kbGUudjAuU2VjcmV0TW91bnRCaW5kaW5nIh0KDVNvdXJjZUZpbGVSZWYSDAoEcGF0aBgBIAEoCSIsCgxTb3VyY2VEaXJSZWYSDAoEcGF0aBgBIAEoCRIOCgZpZ25vcmUYAiADKAkiXgoOQ29weVNvdXJjZUZpbGUSCwoDZHN0GAEgASgJEi8KB3NyY19yZWYYAiABKAsyHi5oZWxtci5idW5kbGUudjAuU291cmNlRmlsZVJlZhIOCgZkaWdlc3QYAyABKAkicQoNQ29weVNvdXJjZURpchILCgNkc3QYASABKAkSLgoHc3JjX3JlZhgCIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5Tb3VyY2VEaXJSZWYSEwoLdHJlZV9kaWdlc3QYAyABKAkSDgoGaWdub3JlGAQgAygJIkUKDUNvcHlGcm9tSW1hZ2USCwoDZHN0GAEgASgJEhUKDXNyY19pbWFnZV9rZXkYAiABKAkSEAoIc3JjX3BhdGgYAyABKAkiFwoHV29ya2RpchIMCgRwYXRoGAEgASgJIhQKBFVzZXISDAoEbmFtZRgBIAEoCSIhCgNFbnYSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJIkMKEUNhY2hlTW91bnRCaW5kaW5nEgsKA2RzdBgBIAEoCRIQCghjYWNoZV9pZBgCIAEoCRIPCgdzaGFyaW5nGAMgASgJIhkKCVNlY3JldFJlZhIMCgRuYW1lGAEgASgJIlEKElNlY3JldE1vdW50QmluZGluZxILCgNkc3QYASABKAkSLgoKc2VjcmV0X3JlZhgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRSZWYitgEKC1NhbmRib3hTcGVjEgoKAmlkGAEgASgJEjsKCXdvcmtzcGFjZRgCIAEoCzIoLmhlbG1yLmJ1bmRsZS52MC5Xb3Jrc3BhY2VSdW50aW1lQmluZGluZxItCglyZXNvdXJjZXMYAyABKAsyGi5oZWxtci5idW5kbGUudjAuUmVzb3VyY2VzEi8KB25ldHdvcmsYBCABKAsyHi5oZWxtci5idW5kbGUudjAuTmV0d29ya1BvbGljeSItChdXb3Jrc3BhY2VSdW50aW1lQmluZGluZxISCgptb3VudF9wYXRoGAEgASgJIjYKCVJlc291cmNlcxILCgNjcHUYASABKA0SDgoGbWVtb3J5GAIgASgJEgwKBGRpc2sYAyABKAkiPgoNTmV0d29ya1BvbGljeRIQCghpbnRlcm5ldBgBIAEoCBINCgVhbGxvdxgCIAMoCRIMCgRkZW55GAMgAygJIk4KD1NlY3JldFBsYWNlbWVudBIMCgRuYW1lGAEgASgJEi0KCXBsYWNlbWVudBgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5QbGFjZW1lbnQinwEKCVBsYWNlbWVudBIsCgNlbnYYASABKAsyHS5oZWxtci5idW5kbGUudjAuRW52UGxhY2VtZW50SAASLgoEZmlsZRgCIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5GaWxlUGxhY2VtZW50SAASLAoDZGlyGAMgASgLMh0uaGVsbXIuYnVuZGxlLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIirgIKCFRhc2tTcGVjEgoKAmlkGAEgASgJEhIKCnNhbmRib3hfaWQYAiABKAkSEwoLbW9kdWxlX3BhdGgYAyABKAkSEwoLZXhwb3J0X25hbWUYBCABKAkSHAoUbWF4X2R1cmF0aW9uX3NlY29uZHMYBSABKA0SMQoHc2VjcmV0cxgGIAMoCzIgLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRQbGFjZW1lbnQSKQoFcXVldWUYByABKAsyGi5oZWxtci5idW5kbGUudjAuUXVldWVTcGVjEgsKA3R0bBgIIAEoCRI0CglzY2hlZHVsZXMYCSADKAsyIS5oZWxtci5idW5kbGUudjAuVGFza1NjaGVkdWxlU3BlYxIZChFyZXRyeV9wb2xpY3lfanNvbhgKIAEoCSJPCglRdWV1ZVNwZWMSDAoEbmFtZRgBIAEoCRIeChFjb25jdXJyZW5jeV9saW1pdBgCIAEoDUgAiAEBQhQKEl9jb25jdXJyZW5jeV9saW1pdCJeChBUYXNrU2NoZWR1bGVTcGVjEgoKAmlkGAEgASgJEgwKBGNyb24YAiABKAkSEAoIdGltZXpvbmUYAyABKAkSEwoGYWN0aXZlGAQgASgISACIAQFCCQoHX2FjdGl2ZUJAWj5naXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL2J1bmRsZS92MDtidW5kbGV2MGIGcHJvdG8z");
+var file_bundle = /* @__PURE__ */ fileDesc("CgxidW5kbGUucHJvdG8SD2hlbG1yLmJ1bmRsZS52MCKVAgoGQnVuZGxlEikKBWltYWdlGAEgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYxItCgdzYW5kYm94GAIgASgLMhwuaGVsbXIuYnVuZGxlLnYwLlNhbmRib3hTcGVjEicKBHRhc2sYAyABKAsyGS5oZWxtci5idW5kbGUudjAuVGFza1NwZWMSOgoKc3ViX2ltYWdlcxgEIAMoCzImLmhlbG1yLmJ1bmRsZS52MC5CdW5kbGUuU3ViSW1hZ2VzRW50cnkaTAoOU3ViSW1hZ2VzRW50cnkSCwoDa2V5GAEgASgJEikKBXZhbHVlGAIgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYzoCOAEiLAoIUGxhdGZvcm0SCgoCb3MYASABKAkSFAoMYXJjaGl0ZWN0dXJlGAIgASgJInsKCUltYWdlU3BlYxIWCg5mb3JtYXRfdmVyc2lvbhgBIAEoDRIrCghwbGF0Zm9ybRgCIAEoCzIZLmhlbG1yLmJ1bmRsZS52MC5QbGF0Zm9ybRIpCgVzdGVwcxgDIAMoCzIaLmhlbG1yLmJ1bmRsZS52MC5JbWFnZVN0ZXAiiwMKCUltYWdlU3RlcBIlCgRmcm9tGAEgASgLMhUuaGVsbXIuYnVuZGxlLnYwLkZyb21IABIjCgNydW4YAiABKAsyFC5oZWxtci5idW5kbGUudjAuUnVuSAASOwoQY29weV9zb3VyY2VfZmlsZRgFIAEoCzIfLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRmlsZUgAEjkKD2NvcHlfc291cmNlX2RpchgGIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRGlySAASOQoPY29weV9mcm9tX2ltYWdlGAcgASgLMh4uaGVsbXIuYnVuZGxlLnYwLkNvcHlGcm9tSW1hZ2VIABIrCgd3b3JrZGlyGAggASgLMhguaGVsbXIuYnVuZGxlLnYwLldvcmtkaXJIABIlCgR1c2VyGAkgASgLMhUuaGVsbXIuYnVuZGxlLnYwLlVzZXJIABIjCgNlbnYYCiABKAsyFC5oZWxtci5idW5kbGUudjAuRW52SABCBgoEa2luZCITCgRGcm9tEgsKA3JlZhgBIAEoCSKJAQoDUnVuEgwKBGFyZ3YYASADKAkSOAoMY2FjaGVfbW91bnRzGAIgAygLMiIuaGVsbXIuYnVuZGxlLnYwLkNhY2hlTW91bnRCaW5kaW5nEjoKDXNlY3JldF9tb3VudHMYAyADKAsyIy5oZWxtci5idW5kbGUudjAuU2VjcmV0TW91bnRCaW5kaW5nIh0KDVNvdXJjZUZpbGVSZWYSDAoEcGF0aBgBIAEoCSIsCgxTb3VyY2VEaXJSZWYSDAoEcGF0aBgBIAEoCRIOCgZpZ25vcmUYAiADKAkiXgoOQ29weVNvdXJjZUZpbGUSCwoDZHN0GAEgASgJEi8KB3NyY19yZWYYAiABKAsyHi5oZWxtci5idW5kbGUudjAuU291cmNlRmlsZVJlZhIOCgZkaWdlc3QYAyABKAkicQoNQ29weVNvdXJjZURpchILCgNkc3QYASABKAkSLgoHc3JjX3JlZhgCIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5Tb3VyY2VEaXJSZWYSEwoLdHJlZV9kaWdlc3QYAyABKAkSDgoGaWdub3JlGAQgAygJIkUKDUNvcHlGcm9tSW1hZ2USCwoDZHN0GAEgASgJEhUKDXNyY19pbWFnZV9rZXkYAiABKAkSEAoIc3JjX3BhdGgYAyABKAkiFwoHV29ya2RpchIMCgRwYXRoGAEgASgJIhQKBFVzZXISDAoEbmFtZRgBIAEoCSIhCgNFbnYSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJIkMKEUNhY2hlTW91bnRCaW5kaW5nEgsKA2RzdBgBIAEoCRIQCghjYWNoZV9pZBgCIAEoCRIPCgdzaGFyaW5nGAMgASgJIhkKCVNlY3JldFJlZhIMCgRuYW1lGAEgASgJIlEKElNlY3JldE1vdW50QmluZGluZxILCgNkc3QYASABKAkSLgoKc2VjcmV0X3JlZhgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRSZWYitgEKC1NhbmRib3hTcGVjEgoKAmlkGAEgASgJEjsKCXdvcmtzcGFjZRgCIAEoCzIoLmhlbG1yLmJ1bmRsZS52MC5Xb3Jrc3BhY2VSdW50aW1lQmluZGluZxItCglyZXNvdXJjZXMYAyABKAsyGi5oZWxtci5idW5kbGUudjAuUmVzb3VyY2VzEi8KB25ldHdvcmsYBCABKAsyHi5oZWxtci5idW5kbGUudjAuTmV0d29ya1BvbGljeSItChdXb3Jrc3BhY2VSdW50aW1lQmluZGluZxISCgptb3VudF9wYXRoGAEgASgJIjYKCVJlc291cmNlcxILCgNjcHUYASABKA0SDgoGbWVtb3J5GAIgASgJEgwKBGRpc2sYAyABKAkiPgoNTmV0d29ya1BvbGljeRIQCghpbnRlcm5ldBgBIAEoCBINCgVhbGxvdxgCIAMoCRIMCgRkZW55GAMgAygJIk4KD1NlY3JldFBsYWNlbWVudBIMCgRuYW1lGAEgASgJEi0KCXBsYWNlbWVudBgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5QbGFjZW1lbnQinwEKCVBsYWNlbWVudBIsCgNlbnYYASABKAsyHS5oZWxtci5idW5kbGUudjAuRW52UGxhY2VtZW50SAASLgoEZmlsZRgCIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5GaWxlUGxhY2VtZW50SAASLAoDZGlyGAMgASgLMh0uaGVsbXIuYnVuZGxlLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIi3AIKCFRhc2tTcGVjEgoKAmlkGAEgASgJEhIKCnNhbmRib3hfaWQYAiABKAkSEwoLbW9kdWxlX3BhdGgYAyABKAkSEwoLZXhwb3J0X25hbWUYBCABKAkSHAoUbWF4X2R1cmF0aW9uX3NlY29uZHMYBSABKA0SMQoHc2VjcmV0cxgGIAMoCzIgLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRQbGFjZW1lbnQSKQoFcXVldWUYByABKAsyGi5oZWxtci5idW5kbGUudjAuUXVldWVTcGVjEgsKA3R0bBgIIAEoCRI0CglzY2hlZHVsZXMYCSADKAsyIS5oZWxtci5idW5kbGUudjAuVGFza1NjaGVkdWxlU3BlYxIZChFyZXRyeV9wb2xpY3lfanNvbhgKIAEoCRIsCgdzdHJlYW1zGAsgAygLMhsuaGVsbXIuYnVuZGxlLnYwLlN0cmVhbVNwZWMiXgoKU3RyZWFtU3BlYxIMCgRuYW1lGAEgASgJEhEKCWRpcmVjdGlvbhgCIAEoCRIaChJzY2hlbWFfZmluZ2VycHJpbnQYAyABKAkSEwoLc2NoZW1hX2pzb24YBCABKAkiTwoJUXVldWVTcGVjEgwKBG5hbWUYASABKAkSHgoRY29uY3VycmVuY3lfbGltaXQYAiABKA1IAIgBAUIUChJfY29uY3VycmVuY3lfbGltaXQiXgoQVGFza1NjaGVkdWxlU3BlYxIKCgJpZBgBIAEoCRIMCgRjcm9uGAIgASgJEhAKCHRpbWV6b25lGAMgASgJEhMKBmFjdGl2ZRgEIAEoCEgAiAEBQgkKB19hY3RpdmVCQFo+Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9idW5kbGUvdjA7YnVuZGxldjBiBnByb3RvMw");
 var BundleSchema = /* @__PURE__ */ messageDesc(file_bundle, 0);
 var PlatformSchema = /* @__PURE__ */ messageDesc(file_bundle, 1);
 var ImageSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 2);
@@ -3722,20 +3722,22 @@ var EnvPlacementSchema = /* @__PURE__ */ messageDesc(file_bundle, 23);
 var FilePlacementSchema = /* @__PURE__ */ messageDesc(file_bundle, 24);
 var DirPlacementSchema = /* @__PURE__ */ messageDesc(file_bundle, 25);
 var TaskSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 26);
-var QueueSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 27);
-var TaskScheduleSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 28);
+var StreamSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 27);
+var QueueSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 28);
+var TaskScheduleSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 29);
 // proto/typescript/src/gen/run_pb.ts
 var exports_run_pb = {};
 __export(exports_run_pb, {
   file_run: () => file_run,
   WorkspaceArtifactSchema: () => WorkspaceArtifactSchema,
-  WaitpointTokenCreateResultSchema: () => WaitpointTokenCreateResultSchema,
-  WaitpointTokenCreateRequestedSchema: () => WaitpointTokenCreateRequestedSchema,
-  WaitpointRequestedSchema: () => WaitpointRequestedSchema,
   TraceContextSchema: () => TraceContextSchema,
+  TokenCreateResultSchema: () => TokenCreateResultSchema,
+  TokenCreateRequestedSchema: () => TokenCreateRequestedSchema,
   TaskResultSchema: () => TaskResultSchema,
   TaskErrorSchema: () => TaskErrorSchema,
+  StreamRecordSchema: () => StreamRecordSchema,
   SecretInjectSchema: () => SecretInjectSchema,
+  RunWaitRequestedSchema: () => RunWaitRequestedSchema,
   RunTaskWorkspaceSchema: () => RunTaskWorkspaceSchema,
   RunTaskRequestSchema: () => RunTaskRequestSchema,
   RunEventSchema: () => RunEventSchema,
@@ -3744,15 +3746,17 @@ __export(exports_run_pb, {
   ResumeAttachSchema: () => ResumeAttachSchema,
   ResumeAckSchema: () => ResumeAckSchema,
   PlacementSchema: () => PlacementSchema2,
+  OutputStreamAppendedSchema: () => OutputStreamAppendedSchema,
   MetadataUpdatedSchema: () => MetadataUpdatedSchema,
   FilePlacementSchema: () => FilePlacementSchema2,
   EnvPlacementSchema: () => EnvPlacementSchema2,
   DirPlacementSchema: () => DirPlacementSchema2,
   CheckpointPauseRequestSchema: () => CheckpointPauseRequestSchema,
   CheckpointPauseReadySchema: () => CheckpointPauseReadySchema,
-  ChannelOutputAppendedSchema: () => ChannelOutputAppendedSchema
+  ActiveStreamReadResultSchema: () => ActiveStreamReadResultSchema,
+  ActiveStreamReadRequestedSchema: () => ActiveStreamReadRequestedSchema
 });
-var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCJ7ChBSdW5UYXNrV29ya3NwYWNlEgwKBHBhdGgYASABKAkSFAoMcHJvamVjdF9wYXRoGAIgASgJEjEKCGFydGlmYWN0GAMgASgLMh8uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFydGlmYWN0EhAKCHdyaXRhYmxlGAUgASgIInIKEVdvcmtzcGFjZUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJEhAKCGVuY29kaW5nGAMgASgJEhIKCnNpemVfYnl0ZXMYBCABKAQSEwoLZW50cnlfY291bnQYBSABKA0i/wIKDlJ1blRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSEwoLbW9kdWxlX3BhdGgYAiABKAkSCwoDY3dkGAMgASgJEisKB3NlY3JldHMYBCADKAsyGi5oZWxtci5ydW4udjAuU2VjcmV0SW5qZWN0Eg4KBnJ1bl9pZBgFIAEoCRIUCgxwYXlsb2FkX2pzb24YBiABKAkSMQoJd29ya3NwYWNlGAcgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2USKQoFdHJhY2UYCCABKAsyGi5oZWxtci5ydW4udjAuVHJhY2VDb250ZXh0EhIKCmF0dGVtcHRfaWQYCSABKAkSFgoOYXR0ZW1wdF9udW1iZXIYCiABKA0SFAoMcnVuX2xlYXNlX2lkGAsgASgJEhgKEHNuYXBzaG90X3ZlcnNpb24YDCABKAQSFwoPdGFza19zZXNzaW9uX2lkGA0gASgJEhQKDHJldHJ5X3JlYXNvbhgOIAEoCSJGCgxUcmFjZUNvbnRleHQSEAoIdHJhY2VfaWQYASABKAkSDwoHc3Bhbl9pZBgCIAEoCRITCgt0cmFjZXBhcmVudBgDIAEoCSJdCgxTZWNyZXRJbmplY3QSDAoEbmFtZRgBIAEoCRIqCglwbGFjZW1lbnQYAiABKAsyFy5oZWxtci5ydW4udjAuUGxhY2VtZW50EhMKC3ZhbHVlX2J5dGVzGAMgASgMIpYBCglQbGFjZW1lbnQSKQoDZW52GAEgASgLMhouaGVsbXIucnVuLnYwLkVudlBsYWNlbWVudEgAEisKBGZpbGUYAiABKAsyGy5oZWxtci5ydW4udjAuRmlsZVBsYWNlbWVudEgAEikKA2RpchgDIAEoCzIaLmhlbG1yLnJ1bi52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIt8DCghSdW5FdmVudBIWCgxzdGRvdXRfY2h1bmsYASABKAxIABIWCgxzdGRlcnJfY2h1bmsYAiABKAxIABITCglsb2dfZW50cnkYAyABKAlIABIvCgt0YXNrX3Jlc3VsdBgEIAEoCzIYLmhlbG1yLnJ1bi52MC5UYXNrUmVzdWx0SAASPwoTd2FpdHBvaW50X3JlcXVlc3RlZBgFIAEoCzIgLmhlbG1yLnJ1bi52MC5XYWl0cG9pbnRSZXF1ZXN0ZWRIABI5ChBtZXRhZGF0YV91cGRhdGVkGAcgASgLMh0uaGVsbXIucnVuLnYwLk1ldGFkYXRhVXBkYXRlZEgAElcKIHdhaXRwb2ludF90b2tlbl9jcmVhdGVfcmVxdWVzdGVkGAggASgLMisuaGVsbXIucnVuLnYwLldhaXRwb2ludFRva2VuQ3JlYXRlUmVxdWVzdGVkSAASRgoXY2hhbm5lbF9vdXRwdXRfYXBwZW5kZWQYCSABKAsyIy5oZWxtci5ydW4udjAuQ2hhbm5lbE91dHB1dEFwcGVuZGVkSAASNwoPcmVzdW1lX2NvbnN1bWVkGAYgASgLMhwuaGVsbXIucnVuLnYwLlJlc3VtZUNvbnN1bWVkSABCBwoFZXZlbnQirgEKClRhc2tSZXN1bHQSEQoJZXhpdF9jb2RlGAEgASgFEhoKDWVycm9yX21lc3NhZ2UYAiABKAlIAIgBARIYCgtvdXRwdXRfanNvbhgDIAEoCUgBiAEBEisKBWVycm9yGAQgASgLMhcuaGVsbXIucnVuLnYwLlRhc2tFcnJvckgCiAEBQhAKDl9lcnJvcl9tZXNzYWdlQg4KDF9vdXRwdXRfanNvbkIICgZfZXJyb3IiYQoJVGFza0Vycm9yEgwKBHR5cGUYASABKAkSDAoEY29kZRgCIAEoCRIPCgdtZXNzYWdlGAMgASgJEhEKCXJldHJ5YWJsZRgEIAEoCBIUCgxkZXRhaWxzX2pzb24YBSABKAki1wEKEldhaXRwb2ludFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIMCgRraW5kGAIgASgJEhMKC3BhcmFtc19qc29uGAMgASgJEhoKDW1ldGFkYXRhX2pzb24YBCABKAlIAIgBARIUCgd0aW1lb3V0GAUgASgNSAGIAQESDAoEdGFncxgGIAMoCRIPCgdvcmRpbmFsGAcgASgNEhcKD2FnZ3JlZ2F0ZV9jb3VudBgIIAEoDUIQCg5fbWV0YWRhdGFfanNvbkIKCghfdGltZW91dCK7AQodV2FpdHBvaW50VG9rZW5DcmVhdGVSZXF1ZXN0ZWQSFwoKdGltZW91dF9hdBgBIAEoCUgAiAEBEh8KEnRpbWVvdXRfaW5fc2Vjb25kcxgCIAEoDUgBiAEBEgwKBHRhZ3MYBCADKAkSGgoNbWV0YWRhdGFfanNvbhgFIAEoCUgCiAEBQg0KC190aW1lb3V0X2F0QhUKE190aW1lb3V0X2luX3NlY29uZHNCEAoOX21ldGFkYXRhX2pzb24iqgIKGldhaXRwb2ludFRva2VuQ3JlYXRlUmVzdWx0EgoKAmlkGAEgASgJEhQKDGNhbGxiYWNrX3VybBgCIAEoCRIgChNwdWJsaWNfYWNjZXNzX3Rva2VuGAMgASgJSACIAQESFwoKdGltZW91dF9hdBgEIAEoCUgBiAEBEhMKBnN0YXR1cxgFIAEoCUgCiAEBEgwKBHRhZ3MYBiADKAkSGgoNbWV0YWRhdGFfanNvbhgHIAEoCUgDiAEBEhoKDWVycm9yX21lc3NhZ2UYCSABKAlIBIgBAUIWChRfcHVibGljX2FjY2Vzc190b2tlbkINCgtfdGltZW91dF9hdEIJCgdfc3RhdHVzQhAKDl9tZXRhZGF0YV9qc29uQhAKDl9lcnJvcl9tZXNzYWdlIkUKFkNoZWNrcG9pbnRQYXVzZVJlcXVlc3QSFAoMd2FpdHBvaW50X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkiQwoUQ2hlY2twb2ludFBhdXNlUmVhZHkSFAoMd2FpdHBvaW50X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkiUQoMUmVzdW1lQXR0YWNoEhUKDWNoZWNrcG9pbnRfaWQYASABKAkSFAoMd2FpdHBvaW50X2lkGAIgASgJEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSJlCg5SZXN1bWVEZWNpc2lvbhIUCgx3YWl0cG9pbnRfaWQYASABKAkSDAoEa2luZBgCIAEoCRIRCglkYXRhX2pzb24YAyABKAkSHAoUcmVxdWlyZV9jb25zdW1lZF9hY2sYBCABKAgiIQoJUmVzdW1lQWNrEhQKDHdhaXRwb2ludF9pZBgBIAEoCSImCg5SZXN1bWVDb25zdW1lZBIUCgx3YWl0cG9pbnRfaWQYASABKAkinAEKFUNoYW5uZWxPdXRwdXRBcHBlbmRlZBIPCgdjaGFubmVsGAEgASgJEhQKDHBheWxvYWRfanNvbhgCIAEoCRIZCgxjb250ZW50X3R5cGUYAyABKAlIAIgBARIcCg9vYmplY3RfcmVmX2pzb24YBCABKAlIAYgBAUIPCg1fY29udGVudF90eXBlQhIKEF9vYmplY3RfcmVmX2pzb24irgEKD01ldGFkYXRhVXBkYXRlZBIRCglvcGVyYXRpb24YASABKAkSEAoDa2V5GAIgASgJSACIAQESFwoKdmFsdWVfanNvbhgDIAEoCUgBiAEBEhcKCnBhdGNoX2pzb24YBCABKAlIAogBARITCgZhbW91bnQYBSABKAFIA4gBAUIGCgRfa2V5Qg0KC192YWx1ZV9qc29uQg0KC19wYXRjaF9qc29uQgkKB19hbW91bnRCOlo4Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9ydW4vdjA7cnVudjBiBnByb3RvMw");
+var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCJ7ChBSdW5UYXNrV29ya3NwYWNlEgwKBHBhdGgYASABKAkSFAoMcHJvamVjdF9wYXRoGAIgASgJEjEKCGFydGlmYWN0GAMgASgLMh8uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFydGlmYWN0EhAKCHdyaXRhYmxlGAUgASgIInIKEVdvcmtzcGFjZUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJEhAKCGVuY29kaW5nGAMgASgJEhIKCnNpemVfYnl0ZXMYBCABKAQSEwoLZW50cnlfY291bnQYBSABKA0i/wIKDlJ1blRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSEwoLbW9kdWxlX3BhdGgYAiABKAkSCwoDY3dkGAMgASgJEisKB3NlY3JldHMYBCADKAsyGi5oZWxtci5ydW4udjAuU2VjcmV0SW5qZWN0Eg4KBnJ1bl9pZBgFIAEoCRIUCgxwYXlsb2FkX2pzb24YBiABKAkSMQoJd29ya3NwYWNlGAcgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2USKQoFdHJhY2UYCCABKAsyGi5oZWxtci5ydW4udjAuVHJhY2VDb250ZXh0EhIKCmF0dGVtcHRfaWQYCSABKAkSFgoOYXR0ZW1wdF9udW1iZXIYCiABKA0SFAoMcnVuX2xlYXNlX2lkGAsgASgJEhgKEHNuYXBzaG90X3ZlcnNpb24YDCABKAQSFwoPdGFza19zZXNzaW9uX2lkGA0gASgJEhQKDHJldHJ5X3JlYXNvbhgOIAEoCSJGCgxUcmFjZUNvbnRleHQSEAoIdHJhY2VfaWQYASABKAkSDwoHc3Bhbl9pZBgCIAEoCRITCgt0cmFjZXBhcmVudBgDIAEoCSJdCgxTZWNyZXRJbmplY3QSDAoEbmFtZRgBIAEoCRIqCglwbGFjZW1lbnQYAiABKAsyFy5oZWxtci5ydW4udjAuUGxhY2VtZW50EhMKC3ZhbHVlX2J5dGVzGAMgASgMIpYBCglQbGFjZW1lbnQSKQoDZW52GAEgASgLMhouaGVsbXIucnVuLnYwLkVudlBsYWNlbWVudEgAEisKBGZpbGUYAiABKAsyGy5oZWxtci5ydW4udjAuRmlsZVBsYWNlbWVudEgAEikKA2RpchgDIAEoCzIaLmhlbG1yLnJ1bi52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIpgECghSdW5FdmVudBIWCgxzdGRvdXRfY2h1bmsYASABKAxIABIWCgxzdGRlcnJfY2h1bmsYAiABKAxIABITCglsb2dfZW50cnkYAyABKAlIABIvCgt0YXNrX3Jlc3VsdBgEIAEoCzIYLmhlbG1yLnJ1bi52MC5UYXNrUmVzdWx0SAASPAoScnVuX3dhaXRfcmVxdWVzdGVkGAUgASgLMh4uaGVsbXIucnVuLnYwLlJ1bldhaXRSZXF1ZXN0ZWRIABI5ChBtZXRhZGF0YV91cGRhdGVkGAcgASgLMh0uaGVsbXIucnVuLnYwLk1ldGFkYXRhVXBkYXRlZEgAEkQKFnRva2VuX2NyZWF0ZV9yZXF1ZXN0ZWQYCCABKAsyIi5oZWxtci5ydW4udjAuVG9rZW5DcmVhdGVSZXF1ZXN0ZWRIABJEChZvdXRwdXRfc3RyZWFtX2FwcGVuZGVkGAkgASgLMiIuaGVsbXIucnVuLnYwLk91dHB1dFN0cmVhbUFwcGVuZGVkSAASTwocYWN0aXZlX3N0cmVhbV9yZWFkX3JlcXVlc3RlZBgKIAEoCzInLmhlbG1yLnJ1bi52MC5BY3RpdmVTdHJlYW1SZWFkUmVxdWVzdGVkSAASNwoPcmVzdW1lX2NvbnN1bWVkGAYgASgLMhwuaGVsbXIucnVuLnYwLlJlc3VtZUNvbnN1bWVkSABCBwoFZXZlbnQirgEKClRhc2tSZXN1bHQSEQoJZXhpdF9jb2RlGAEgASgFEhoKDWVycm9yX21lc3NhZ2UYAiABKAlIAIgBARIYCgtvdXRwdXRfanNvbhgDIAEoCUgBiAEBEisKBWVycm9yGAQgASgLMhcuaGVsbXIucnVuLnYwLlRhc2tFcnJvckgCiAEBQhAKDl9lcnJvcl9tZXNzYWdlQg4KDF9vdXRwdXRfanNvbkIICgZfZXJyb3IiYQoJVGFza0Vycm9yEgwKBHR5cGUYASABKAkSDAoEY29kZRgCIAEoCRIPCgdtZXNzYWdlGAMgASgJEhEKCXJldHJ5YWJsZRgEIAEoCBIUCgxkZXRhaWxzX2pzb24YBSABKAki4wEKEFJ1bldhaXRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDAoEa2luZBgCIAEoCRITCgtwYXJhbXNfanNvbhgDIAEoCRIaCg1tZXRhZGF0YV9qc29uGAQgASgJSACIAQESFAoHdGltZW91dBgFIAEoDUgBiAEBEgwKBHRhZ3MYBiADKAkSGQoMaWRsZV90aW1lb3V0GAkgASgNSAKIAQFCEAoOX21ldGFkYXRhX2pzb25CCgoIX3RpbWVvdXRCDwoNX2lkbGVfdGltZW91dEoECAcQCEoECAgQCSKyAQoUVG9rZW5DcmVhdGVSZXF1ZXN0ZWQSFwoKdGltZW91dF9hdBgBIAEoCUgAiAEBEh8KEnRpbWVvdXRfaW5fc2Vjb25kcxgCIAEoDUgBiAEBEgwKBHRhZ3MYBCADKAkSGgoNbWV0YWRhdGFfanNvbhgFIAEoCUgCiAEBQg0KC190aW1lb3V0X2F0QhUKE190aW1lb3V0X2luX3NlY29uZHNCEAoOX21ldGFkYXRhX2pzb24ioQIKEVRva2VuQ3JlYXRlUmVzdWx0EgoKAmlkGAEgASgJEhQKDGNhbGxiYWNrX3VybBgCIAEoCRIgChNwdWJsaWNfYWNjZXNzX3Rva2VuGAMgASgJSACIAQESFwoKdGltZW91dF9hdBgEIAEoCUgBiAEBEhMKBnN0YXR1cxgFIAEoCUgCiAEBEgwKBHRhZ3MYBiADKAkSGgoNbWV0YWRhdGFfanNvbhgHIAEoCUgDiAEBEhoKDWVycm9yX21lc3NhZ2UYCSABKAlIBIgBAUIWChRfcHVibGljX2FjY2Vzc190b2tlbkINCgtfdGltZW91dF9hdEIJCgdfc3RhdHVzQhAKDl9tZXRhZGF0YV9qc29uQhAKDl9lcnJvcl9tZXNzYWdlIsoBChlBY3RpdmVTdHJlYW1SZWFkUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEg4KBnN0cmVhbRgCIAEoCRIWCg5hZnRlcl9zZXF1ZW5jZRgDIAEoAxIiChVyZWNvcmRfY29ycmVsYXRpb25faWQYBCABKAlIAIgBARIUCgd0aW1lb3V0GAUgASgNSAGIAQESDQoFYmxvY2sYBiABKAhCGAoWX3JlY29yZF9jb3JyZWxhdGlvbl9pZEIKCghfdGltZW91dCKsAQoMU3RyZWFtUmVjb3JkEgoKAmlkGAEgASgJEhEKCXN0cmVhbV9pZBgCIAEoCRIQCghzZXF1ZW5jZRgDIAEoAxIRCglkYXRhX2pzb24YBCABKAkSGwoOY29ycmVsYXRpb25faWQYBSABKAlIAIgBARIUCgxjb250ZW50X3R5cGUYBiABKAkSEgoKY3JlYXRlZF9hdBgHIAEoCUIRCg9fY29ycmVsYXRpb25faWQirQEKFkFjdGl2ZVN0cmVhbVJlYWRSZXN1bHQSFgoOY29ycmVsYXRpb25faWQYASABKAkSLwoGcmVjb3JkGAIgASgLMhouaGVsbXIucnVuLnYwLlN0cmVhbVJlY29yZEgAiAEBEhEKCXRpbWVkX291dBgDIAEoCBIaCg1lcnJvcl9tZXNzYWdlGAQgASgJSAGIAQFCCQoHX3JlY29yZEIQCg5fZXJyb3JfbWVzc2FnZSJfChZDaGVja3BvaW50UGF1c2VSZXF1ZXN0EhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGQoRY2FwdHVyZV93b3Jrc3BhY2UYAyABKAgiQgoUQ2hlY2twb2ludFBhdXNlUmVhZHkSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCSJQCgxSZXN1bWVBdHRhY2gSFQoNY2hlY2twb2ludF9pZBgBIAEoCRITCgtydW5fd2FpdF9pZBgCIAEoCRIUCgxydW5fbGVhc2VfaWQYAyABKAkiZAoOUmVzdW1lRGVjaXNpb24SEwoLcnVuX3dhaXRfaWQYASABKAkSDAoEa2luZBgCIAEoCRIRCglkYXRhX2pzb24YAyABKAkSHAoUcmVxdWlyZV9jb25zdW1lZF9hY2sYBCABKAgiIAoJUmVzdW1lQWNrEhMKC3J1bl93YWl0X2lkGAEgASgJIiUKDlJlc3VtZUNvbnN1bWVkEhMKC3J1bl93YWl0X2lkGAEgASgJImgKFE91dHB1dFN0cmVhbUFwcGVuZGVkEg4KBnN0cmVhbRgBIAEoCRIUCgxwYXlsb2FkX2pzb24YAiABKAkSGQoMY29udGVudF90eXBlGAMgASgJSACIAQFCDwoNX2NvbnRlbnRfdHlwZSKuAQoPTWV0YWRhdGFVcGRhdGVkEhEKCW9wZXJhdGlvbhgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIXCgp2YWx1ZV9qc29uGAMgASgJSAGIAQESFwoKcGF0Y2hfanNvbhgEIAEoCUgCiAEBEhMKBmFtb3VudBgFIAEoAUgDiAEBQgYKBF9rZXlCDQoLX3ZhbHVlX2pzb25CDQoLX3BhdGNoX2pzb25CCQoHX2Ftb3VudEI6WjhnaXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL3J1bi92MDtydW52MGIGcHJvdG8z");
 var RunTaskWorkspaceSchema = /* @__PURE__ */ messageDesc(file_run, 0);
 var WorkspaceArtifactSchema = /* @__PURE__ */ messageDesc(file_run, 1);
 var RunTaskRequestSchema = /* @__PURE__ */ messageDesc(file_run, 2);
@@ -3765,17 +3769,20 @@ var DirPlacementSchema2 = /* @__PURE__ */ messageDesc(file_run, 8);
 var RunEventSchema = /* @__PURE__ */ messageDesc(file_run, 9);
 var TaskResultSchema = /* @__PURE__ */ messageDesc(file_run, 10);
 var TaskErrorSchema = /* @__PURE__ */ messageDesc(file_run, 11);
-var WaitpointRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 12);
-var WaitpointTokenCreateRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 13);
-var WaitpointTokenCreateResultSchema = /* @__PURE__ */ messageDesc(file_run, 14);
-var CheckpointPauseRequestSchema = /* @__PURE__ */ messageDesc(file_run, 15);
-var CheckpointPauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 16);
-var ResumeAttachSchema = /* @__PURE__ */ messageDesc(file_run, 17);
-var ResumeDecisionSchema = /* @__PURE__ */ messageDesc(file_run, 18);
-var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 19);
-var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_run, 20);
-var ChannelOutputAppendedSchema = /* @__PURE__ */ messageDesc(file_run, 21);
-var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_run, 22);
+var RunWaitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 12);
+var TokenCreateRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 13);
+var TokenCreateResultSchema = /* @__PURE__ */ messageDesc(file_run, 14);
+var ActiveStreamReadRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 15);
+var StreamRecordSchema = /* @__PURE__ */ messageDesc(file_run, 16);
+var ActiveStreamReadResultSchema = /* @__PURE__ */ messageDesc(file_run, 17);
+var CheckpointPauseRequestSchema = /* @__PURE__ */ messageDesc(file_run, 18);
+var CheckpointPauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 19);
+var ResumeAttachSchema = /* @__PURE__ */ messageDesc(file_run, 20);
+var ResumeDecisionSchema = /* @__PURE__ */ messageDesc(file_run, 21);
+var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 22);
+var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_run, 23);
+var OutputStreamAppendedSchema = /* @__PURE__ */ messageDesc(file_run, 24);
+var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_run, 25);
 // sdk/typescript/src/schema/payload.ts
 var payloadSchemaValidationErrorBrand = Symbol.for("helmr.sdk.PayloadSchemaValidationError");
 
@@ -3971,20 +3978,13 @@ function isAsciiAlnum(code) {
 }
 
 // sdk/typescript/src/internal.ts
-var CHANNEL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
-function validateChannelName(value, label = "channel name") {
+var STREAM_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
+function validateStreamName(value, label = "stream name") {
   const normalized = value.trim();
-  if (!CHANNEL_NAME_PATTERN.test(normalized)) {
-    throw new Error(`${label} must match ${CHANNEL_NAME_PATTERN}`);
+  if (!STREAM_NAME_PATTERN.test(normalized)) {
+    throw new Error(`${label} must match ${STREAM_NAME_PATTERN}`);
   }
   return normalized;
-}
-var runtimeWaitOperand = Symbol.for("helmr.sdk.runtimeWaitOperand");
-function getRuntimeWaitOperand(value) {
-  if (value === null || typeof value !== "object" && typeof value !== "function") {
-    return;
-  }
-  return value[runtimeWaitOperand];
 }
 var runRuntimeSlot = Symbol.for("helmr.sdk.runRuntime");
 function enterRunRuntime(runtime) {
@@ -4007,7 +4007,7 @@ function getRunRuntime() {
   return runtime;
 }
 
-class WaitpointResultImpl {
+class WaitResultImpl {
   ok;
   data;
   error;
@@ -4027,11 +4027,12 @@ class WaitpointResultImpl {
     if (this.error instanceof Error) {
       throw this.error;
     }
-    throw new Error(String(this.error ?? "waitpoint failed"));
+    throw new Error(String(this.error ?? "wait failed"));
   }
 }
 var concurrentWaitErrorBrand = Symbol.for("helmr.sdk.ConcurrentWaitError");
 var waitTimeoutErrorBrand = Symbol.for("helmr.sdk.WaitTimeoutError");
+var waitCancelledErrorBrand = Symbol.for("helmr.sdk.WaitCancelledError");
 
 class ConcurrentWaitError extends Error {
   constructor(message) {
@@ -4054,6 +4055,17 @@ class WaitTimeoutError extends Error {
   }
   static [Symbol.hasInstance](value) {
     return this === WaitTimeoutError && typeof value === "object" && value !== null && waitTimeoutErrorBrand in value;
+  }
+}
+
+class WaitCancelledError extends Error {
+  constructor(message = "wait cancelled") {
+    super(message);
+    this.name = "WaitCancelledError";
+    Object.defineProperty(this, waitCancelledErrorBrand, { value: true });
+  }
+  static [Symbol.hasInstance](value) {
+    return this === WaitCancelledError && typeof value === "object" && value !== null && waitCancelledErrorBrand in value;
   }
 }
 function validateSecretName(name, label = "secret name") {
@@ -4085,6 +4097,7 @@ function markTaskInternal(config, schedule) {
   validateOptionalTTL(config.ttl, `task ${JSON.stringify(config.id)} ttl`);
   validateRetryPolicy(config.retry, `task ${JSON.stringify(config.id)} retry`);
   assertPayloadSchema(config.payload, `task ${JSON.stringify(config.id)} payload`);
+  readStreamDefinitions(config.streams, `task ${JSON.stringify(config.id)} streams`);
   if (schedule !== undefined) {
     Object.defineProperty(config, "schedule", {
       value: Object.freeze({ ...schedule }),
@@ -4094,6 +4107,37 @@ function markTaskInternal(config, schedule) {
   Object.defineProperty(config, taskBrand, { value: true });
   Object.defineProperty(config, taskOriginBrand, { value: captureTaskOrigin() });
   return config;
+}
+function readStreamDefinitions(value, label = "streams") {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array`);
+  }
+  const seen = new Set;
+  return value.map((item, index) => {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`${label}.${index} must be a stream definition`);
+    }
+    const record = item;
+    const id = validateStreamName(record["id"], `${label}.${index}.id`);
+    const direction = record["direction"];
+    if (direction !== "input" && direction !== "output") {
+      throw new Error(`${label}.${index}.direction must be "input" or "output"`);
+    }
+    const schema = record["schema"];
+    if (schema === undefined) {
+      throw new Error(`${label}.${index}.schema is required`);
+    }
+    assertPayloadSchema(schema, `${label}.${index}.schema`);
+    const key = `${direction}:${id}`;
+    if (seen.has(key)) {
+      throw new Error(`${label} contains duplicate ${direction} stream ${JSON.stringify(id)}`);
+    }
+    seen.add(key);
+    return { id, direction, schema };
+  });
 }
 function validateRetryPolicy(value, label = "retry") {
   if (value === undefined || value === false) {
@@ -4357,7 +4401,6 @@ function runSnapshot(snapshot) {
     exitCode: snapshot.exitCode ?? null,
     createdAt: snapshot.createdAt ?? null,
     updatedAt: snapshot.updatedAt ?? null,
-    pendingWaitpoint: snapshot.pendingWaitpoint ?? null,
     ...snapshot.version === undefined && snapshot.deploymentVersion === undefined ? {} : { version: snapshot.version ?? snapshot.deploymentVersion ?? null },
     ...snapshot.deploymentVersion === undefined && snapshot.version === undefined ? {} : { deploymentVersion: snapshot.deploymentVersion ?? snapshot.version ?? null },
     ...snapshot.apiVersion === undefined ? {} : { apiVersion: snapshot.apiVersion },
@@ -4366,21 +4409,6 @@ function runSnapshot(snapshot) {
     attemptNumber: snapshot.attemptNumber ?? null,
     ...runStateBooleans(status),
     ...snapshot.output === undefined ? {} : { output: snapshot.output }
-  };
-}
-function pendingWaitpointFromResponse(runId, wait) {
-  if (wait === undefined || wait === null)
-    return null;
-  return {
-    runId,
-    id: wait.id,
-    kind: wait.kind ?? "token",
-    status: wait.status ?? "pending",
-    timeout: wait.timeout ?? null,
-    params: wait.params === undefined ? {} : wait.params,
-    metadata: wait.metadata ?? {},
-    tags: wait.tags ?? [],
-    createdAt: wait.created_at
   };
 }
 function isTerminalRunStatus(status) {
@@ -4422,7 +4450,7 @@ var RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS = 100;
 var TASK_START_PENDING_MAX_WAIT_MS = 1e4;
 var TASK_START_PENDING_DEFAULT_RETRY_MS = 250;
 var startTaskClientMethod = Symbol.for("helmr.sdk.client.startTask");
-var waitpointTokenClientMethod = Symbol.for("helmr.sdk.client.waitpointToken");
+var tokenClientMethod = Symbol.for("helmr.sdk.client.token");
 
 class WorkspaceStreamTerminalError extends Error {
   terminal;
@@ -4548,23 +4576,24 @@ class HelmrClient {
       return await this.#openWorkspace(workspaceId(idOrHandle)).stop(opts);
     }
   };
-  waitpoints = {
-    tokens: {
-      create: async (opts = {}) => {
-        return await this[waitpointTokenClientMethod]({ operation: "create", opts });
-      },
-      retrieve: async (id, opts = {}) => {
-        return await this[waitpointTokenClientMethod]({ operation: "retrieve", id, opts });
-      },
-      listPage: async (opts = {}) => {
-        return await this[waitpointTokenClientMethod]({ operation: "listPage", opts });
-      },
-      list: async (opts = {}) => {
-        return [...(await this[waitpointTokenClientMethod]({ operation: "listPage", opts })).tokens];
-      },
-      complete: async (token, data, opts = {}) => {
-        await this[waitpointTokenClientMethod]({ operation: "complete", token, data, opts });
-      }
+  tokens = {
+    create: async (opts = {}) => {
+      return await this[tokenClientMethod]({ operation: "create", opts });
+    },
+    retrieve: async (id, opts = {}) => {
+      return await this[tokenClientMethod]({ operation: "retrieve", id, opts });
+    },
+    listPage: async (opts = {}) => {
+      return await this[tokenClientMethod]({ operation: "listPage", opts });
+    },
+    list: async (opts = {}) => {
+      return [...(await this[tokenClientMethod]({ operation: "listPage", opts })).tokens];
+    },
+    complete: async (token, data, opts = {}) => {
+      await this[tokenClientMethod]({ operation: "complete", token, data, opts });
+    },
+    cancel: async (token, opts = {}) => {
+      return await this[tokenClientMethod]({ operation: "cancel", token, opts });
     }
   };
   auth = {
@@ -4592,38 +4621,39 @@ class HelmrClient {
     }
     return await this.#startTask(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration));
   }
-  async[waitpointTokenClientMethod](request) {
+  async[tokenClientMethod](request) {
     switch (request.operation) {
       case "create": {
         const opts = request.opts ?? {};
-        const response = await this.#json(waitpointTokenCollectionPath(opts), {
+        const response = await this.#json(tokenCollectionPath(opts), {
           method: "POST",
-          body: JSON.stringify(waitpointTokenCreateBody(opts)),
+          body: JSON.stringify(tokenCreateBody(opts)),
           headers: { "content-type": "application/json" },
           ...requestSignal(opts.signal)
         });
-        return waitpointTokenFromResponse(response);
+        return tokenFromResponse(response);
       }
       case "retrieve": {
         const opts = request.opts ?? {};
-        const response = await this.#json(`${waitpointTokenCollectionPath(opts)}/${encodeURIComponent(request.id)}`, requestSignal(opts.signal));
-        return waitpointTokenFromResponse(response);
+        const response = await this.#json(`${tokenCollectionPath(opts)}/${encodeURIComponent(request.id)}`, requestSignal(opts.signal));
+        return tokenFromResponse(response);
       }
       case "listPage": {
         const opts = request.opts ?? {};
-        const response = await this.#json(`${waitpointTokenCollectionPath(opts)}${waitpointTokenListQuery(opts)}`, requestSignal(opts.signal));
+        const response = await this.#json(`${tokenCollectionPath(opts)}${tokenListQuery(opts)}`, requestSignal(opts.signal));
         return {
-          tokens: response.tokens.map(waitpointTokenFromResponse),
+          tokens: response.tokens.map(tokenFromResponse),
           nextCursor: response.next_cursor ?? null
         };
       }
       case "complete": {
         const opts = request.opts ?? {};
         const id = typeof request.token === "string" ? request.token : request.token.id;
-        const publicAccessToken = opts.publicAccessToken ?? waitpointTokenPublicAccessToken(request.token);
-        await this.#fetch(`/api/waitpoints/tokens/${encodeURIComponent(id)}/complete`, {
+        const publicAccessToken = opts.publicAccessToken ?? tokenPublicAccessToken(request.token);
+        const path = publicAccessToken === undefined ? `${tokenCollectionPath(opts)}/${encodeURIComponent(id)}/complete` : `/api/v1/tokens/${encodeURIComponent(id)}/complete`;
+        await this.#fetch(path, {
           method: "POST",
-          body: JSON.stringify(waitpointTokenCompleteBody(request.data, opts)),
+          body: JSON.stringify(tokenCompleteBody(request.data, opts)),
           headers: {
             "content-type": "application/json",
             ...publicAccessToken === undefined ? {} : { authorization: `Bearer ${publicAccessToken}` }
@@ -4631,6 +4661,17 @@ class HelmrClient {
           ...requestSignal(opts.signal)
         });
         return;
+      }
+      case "cancel": {
+        const opts = request.opts ?? {};
+        const id = typeof request.token === "string" ? request.token : request.token.id;
+        const response = await this.#json(`${tokenCollectionPath(opts)}/${encodeURIComponent(id)}/cancel`, {
+          method: "POST",
+          body: "{}",
+          headers: { "content-type": "application/json" },
+          ...requestSignal(opts.signal)
+        });
+        return tokenFromResponse(response);
       }
     }
   }
@@ -4972,75 +5013,86 @@ class HelmrClient {
         const response = await this.#json(taskSessionResourcePath(id, opts, "/runs"), requestSignal(opts.signal));
         return response.runs.map(taskSessionRunFromResponse);
       },
-      input: (channelInput) => {
-        const channel = validateChannelName(channelInput);
+      input: (target) => {
+        const stream = streamTargetName(target);
         return {
+          id: stream,
           send: async (data, opts = {}) => {
-            const response = await this.#json(taskSessionResourcePath(id, opts, `/channels/${encodeURIComponent(channel)}/inputs`), {
+            const path = sessionPublicAccessPath(id, stream, "input", opts) ?? taskSessionResourcePath(id, opts, `/inputs/${encodeURIComponent(stream)}`);
+            const response = await this.#json(path, {
               method: "POST",
-              body: JSON.stringify(channelInputAppendBody(data, opts)),
-              headers: { "content-type": "application/json" },
+              body: JSON.stringify(streamInputSendBody(data, opts)),
+              headers: {
+                "content-type": "application/json",
+                ...opts.publicAccessToken === undefined ? {} : { authorization: `Bearer ${opts.publicAccessToken}` }
+              },
               ...requestSignal(opts.signal)
             });
-            return appendChannelRecordFromResponse(response);
+            return appendStreamRecordFromResponse(response);
           },
+          wait: () => unsupportedClientStreamWait(),
+          once: () => unsupportedClientStreamWait(),
+          on: async () => unsupportedClientStreamSubscribe(),
+          peek: async () => unsupportedClientStreamPeek(),
           list: async (opts = {}) => {
-            return await this.#listSessionChannelRecords(id, channel, "inputs", opts);
+            return await this.#listSessionStreamRecords(id, stream, "input", opts);
           }
         };
       },
-      output: (channelInput) => {
-        const channel = validateChannelName(channelInput);
+      output: (target) => {
+        const stream = streamTargetName(target);
         return {
-          list: async (opts = {}) => {
-            return await this.#listSessionChannelRecords(id, channel, "outputs", opts);
+          id: stream,
+          append: async (data, opts = {}) => {
+            const response = await this.#json(taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
+              method: "POST",
+              body: JSON.stringify(streamAppendBody(data, opts)),
+              headers: { "content-type": "application/json" },
+              ...requestSignal(opts.signal)
+            });
+            return appendStreamRecordFromResponse(response);
           },
-          stream: async (opts = {}) => {
-            return this.#streamSessionChannelOutputs(id, channel, opts);
+          pipe: async (source, opts = {}) => {
+            for await (const item of source) {
+              const response = await this.#json(taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
+                method: "POST",
+                body: JSON.stringify(streamAppendBody(item, opts)),
+                headers: { "content-type": "application/json" },
+                ...requestSignal(opts.signal)
+              });
+              appendStreamRecordFromResponse(response);
+            }
+          },
+          writer: (opts = {}) => ({
+            write: async (data) => {
+              const response = await this.#json(taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
+                method: "POST",
+                body: JSON.stringify(streamAppendBody(data, opts)),
+                headers: { "content-type": "application/json" },
+                ...requestSignal(opts.signal)
+              });
+              appendStreamRecordFromResponse(response);
+            },
+            close: async () => {}
+          }),
+          read: async (opts = {}) => {
+            const path = sessionPublicAccessPath(id, stream, "output", opts) ?? taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}/read`);
+            const response = await this.#json(`${path}${sessionStreamQuery(opts)}`, opts.publicAccessToken === undefined ? requestSignal(opts.signal) : {
+              headers: { authorization: `Bearer ${opts.publicAccessToken}` },
+              ...requestSignal(opts.signal)
+            });
+            return response.record === undefined || response.record === null ? null : streamRecordFromResponse(response.record);
+          },
+          list: async (opts = {}) => {
+            return await this.#listSessionStreamRecords(id, stream, "output", opts);
           }
         };
       }
     };
   }
-  async#listSessionChannelRecords(sessionID, channel, direction, opts) {
-    const response = await this.#json(`${taskSessionResourcePath(sessionID, opts, `/channels/${encodeURIComponent(channel)}/${direction}`)}${sessionChannelQuery(opts)}`, requestSignal(opts.signal));
-    return response.records.map(channelRecordFromResponse);
-  }
-  async#streamSessionChannelOutputs(sessionID, channel, opts) {
-    const client = this;
-    const stream = async function* () {
-      let cursor = opts.cursor;
-      for (;; ) {
-        try {
-          const response = await client.#fetch(`${taskSessionResourcePath(sessionID, opts, `/channels/${encodeURIComponent(channel)}/outputs/stream`)}${sessionChannelStreamQuery(opts, cursor)}`, {
-            headers: { accept: "text/event-stream" },
-            ...requestSignal(opts.signal)
-          });
-          for await (const record of parseChannelRecordSse(response)) {
-            cursor = Math.max(cursor ?? 0, record.sequence);
-            yield record;
-          }
-        } catch (error) {
-          throwIfAborted(opts.signal);
-          if (runEventStreamErrorIsFatal(error)) {
-            throw error;
-          }
-        }
-        try {
-          const session = await client.sessions.retrieve(sessionID, taskSessionRetrieveOptions(opts, opts.signal));
-          if (taskSessionTerminal(session.status)) {
-            return;
-          }
-        } catch (error) {
-          throwIfAborted(opts.signal);
-          if (runSnapshotErrorIsFatal(error)) {
-            throw error;
-          }
-        }
-        await delay(RUN_EVENT_RECONNECT_DELAY_MS, opts.signal);
-      }
-    };
-    return stream();
+  async#listSessionStreamRecords(sessionID, stream, direction, opts) {
+    const response = await this.#json(`${taskSessionResourcePath(sessionID, opts, `/${direction === "input" ? "inputs" : "outputs"}/${encodeURIComponent(stream)}`)}${sessionStreamQuery(opts)}`, requestSignal(opts.signal));
+    return response.records.map(streamRecordFromResponse);
   }
   runs = {
     retrieve: async (idOrHandle, opts = {}) => {
@@ -5117,19 +5169,6 @@ class HelmrClient {
       const suffix = query.size === 0 ? "" : `?${query}`;
       const response = await this.#json(`${runCollectionPath(opts)}${suffix}`, requestSignal(opts.signal));
       return response.runs.map((run) => runResponseToSnapshot(run));
-    },
-    waitpoints: {
-      listPage: async (idOrHandle, opts = {}) => {
-        const id = runId(idOrHandle);
-        const response = await this.#json(`${runResourcePath(id, opts, "/waitpoints")}${runWaitpointListQuery(opts)}`, requestSignal(opts.signal));
-        return {
-          waitpoints: response.waitpoints.map((request) => pendingWaitpointFromResponse(id, request)).filter((request) => request !== null),
-          nextCursor: response.next_cursor ?? null
-        };
-      },
-      list: async (idOrHandle, opts = {}) => {
-        return [...(await this.runs.waitpoints.listPage(idOrHandle, opts)).waitpoints];
-      }
     },
     logs: {
       retrieve: async (idOrHandle, opts = {}) => {
@@ -5399,7 +5438,6 @@ function runResponseToSnapshot(response) {
     exitCode: response.exit_code ?? null,
     ...response.created_at === undefined ? {} : { createdAt: response.created_at },
     ...response.updated_at === undefined ? {} : { updatedAt: response.updated_at },
-    pendingWaitpoint: pendingWaitpointFromResponse(response.id, response.pending_waitpoint),
     ..."output" in response ? { output: response.output } : {}
   });
 }
@@ -5447,10 +5485,10 @@ function taskSessionRunFromResponse(response) {
     ...response.ended_at === undefined ? {} : { endedAt: response.ended_at }
   };
 }
-function channelRecordFromResponse(response) {
+function streamRecordFromResponse(response) {
   return {
     id: response.id,
-    channelId: response.channel_id,
+    streamId: response.stream_id,
     sequence: response.sequence,
     data: response.data,
     ...response.correlation_id === undefined || response.correlation_id === "" ? {} : { correlationId: response.correlation_id },
@@ -5458,9 +5496,9 @@ function channelRecordFromResponse(response) {
     createdAt: response.created_at
   };
 }
-function appendChannelRecordFromResponse(response) {
+function appendStreamRecordFromResponse(response) {
   return {
-    ...channelRecordFromResponse(response.record),
+    ...streamRecordFromResponse(response.record),
     idempotencyStatus: response.idempotency_status === "duplicate" ? "duplicate" : "created"
   };
 }
@@ -5502,11 +5540,17 @@ function taskSessionWaitBody(opts) {
     ...opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }
   };
 }
-function channelInputAppendBody(data, opts) {
+function streamInputSendBody(data, opts) {
   return {
     data,
     ...opts.correlationId === undefined ? {} : { correlation_id: opts.correlationId },
-    ...opts.externalEventId === undefined ? {} : { external_event_id: opts.externalEventId }
+    ...opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }
+  };
+}
+function streamAppendBody(data, opts) {
+  return {
+    data,
+    ...opts.contentType === undefined ? {} : { content_type: opts.contentType }
   };
 }
 function taskSessionListQuery(opts) {
@@ -5531,12 +5575,19 @@ function taskSessionCollectionPath(opts) {
 function taskSessionResourcePath(id, opts, suffix) {
   return `${taskSessionCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`;
 }
-function taskSessionRetrieveOptions(opts, signal) {
-  return {
-    ...opts.projectId === undefined ? {} : { projectId: opts.projectId },
-    ...opts.environmentId === undefined ? {} : { environmentId: opts.environmentId },
-    ...signal === undefined ? {} : { signal }
-  };
+function sessionPublicAccessPath(sessionID, stream, direction, opts) {
+  if (opts.publicAccessToken === undefined) {
+    return;
+  }
+  if (opts.projectId !== undefined || opts.environmentId !== undefined) {
+    throw new Error("projectId and environmentId cannot be combined with publicAccessToken");
+  }
+  const encodedSessionID = encodeURIComponent(sessionID);
+  const encodedStream = encodeURIComponent(stream);
+  if (direction === "input") {
+    return `/api/v1/sessions/${encodedSessionID}/inputs/${encodedStream}`;
+  }
+  return `/api/v1/sessions/${encodedSessionID}/outputs/${encodedStream}/read`;
 }
 function runCollectionPath(opts) {
   if (opts.projectId !== undefined || opts.environmentId !== undefined) {
@@ -5565,7 +5616,19 @@ function runEventOptions(opts, cursor) {
     ...cursor === undefined ? {} : { cursor }
   };
 }
-function sessionChannelQuery(opts) {
+function streamTargetName(target) {
+  return validateStreamName(typeof target === "string" ? target : target.id);
+}
+function unsupportedClientStreamWait() {
+  throw new UnsupportedTransportError("client session stream wait is not implemented until stream wait REST support lands");
+}
+async function unsupportedClientStreamSubscribe() {
+  throw new UnsupportedTransportError("client session stream subscription is not implemented until stream follow REST support lands");
+}
+async function unsupportedClientStreamPeek() {
+  throw new UnsupportedTransportError("client session stream peek is not implemented until stream read REST support lands");
+}
+function sessionStreamQuery(opts) {
   const query = new URLSearchParams;
   if (opts.cursor !== undefined)
     query.set("after_sequence", String(opts.cursor));
@@ -5575,20 +5638,12 @@ function sessionChannelQuery(opts) {
     query.set("correlation_id", opts.correlationId);
   return query.size === 0 ? "" : `?${query}`;
 }
-function sessionChannelStreamQuery(opts, cursor = opts.cursor) {
-  const query = new URLSearchParams;
-  if (cursor !== undefined)
-    query.set("after_sequence", String(cursor));
-  if (opts.correlationId !== undefined)
-    query.set("correlation_id", opts.correlationId);
-  return query.size === 0 ? "" : `?${query}`;
-}
 function publicAccessTokenCreateBody(opts) {
   return {
     scope: {
       type: opts.scope.type,
       session_id: sessionId(opts.scope.sessionId),
-      channel: validateChannelName(opts.scope.channel),
+      stream: validateStreamName(opts.scope.stream),
       ...opts.scope.correlationId === undefined ? {} : { correlation_id: opts.scope.correlationId }
     },
     ...opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") },
@@ -5602,7 +5657,7 @@ function publicAccessTokenFromResponse(response) {
     scope: {
       type: response.scope.type,
       sessionId: response.scope.session_id,
-      channel: response.scope.channel,
+      stream: response.scope.stream,
       ...response.scope.correlation_id === undefined ? {} : { correlationId: response.scope.correlation_id }
     },
     expiresAt: response.expires_at,
@@ -5890,39 +5945,29 @@ function scheduleFromResponse(response) {
     updatedAt: response.updated_at
   };
 }
-function runWaitpointListQuery(opts) {
-  const query = new URLSearchParams;
-  if (opts.cursor !== undefined)
-    query.set("cursor", opts.cursor);
-  if (opts.limit !== undefined)
-    query.set("limit", String(opts.limit));
-  if (opts.status !== undefined)
-    query.set("status", opts.status);
-  return query.size === 0 ? "" : `?${query}`;
-}
-function waitpointTokenCreateBody(opts) {
+function tokenCreateBody(opts) {
   return {
-    ...opts.timeoutInSeconds === undefined ? {} : { timeout_in_seconds: opts.timeoutInSeconds },
-    ...opts.timeoutAt === undefined ? {} : { timeout_at: opts.timeoutAt },
+    ...opts.timeout === undefined ? {} : { timeout: opts.timeout },
+    ...opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey },
     ...opts.tags === undefined ? {} : { tags: opts.tags },
     ...opts.metadata === undefined ? {} : { metadata: opts.metadata }
   };
 }
-function waitpointTokenCompleteBody(data, opts) {
+function tokenCompleteBody(data, opts) {
   return {
     data
   };
 }
-function waitpointTokenCollectionPath(opts) {
+function tokenCollectionPath(opts) {
   if (opts.projectId !== undefined || opts.environmentId !== undefined) {
     if (opts.projectId === undefined || opts.environmentId === undefined) {
       throw new Error("projectId and environmentId must be provided together");
     }
-    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/waitpoints/tokens`;
+    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/tokens`;
   }
-  return "/api/waitpoints/tokens";
+  return "/api/tokens";
 }
-function waitpointTokenListQuery(opts) {
+function tokenListQuery(opts) {
   const query = new URLSearchParams;
   if (opts.cursor !== undefined)
     query.set("cursor", opts.cursor);
@@ -5932,11 +5977,11 @@ function waitpointTokenListQuery(opts) {
     query.set("status", opts.status);
   return query.size === 0 ? "" : `?${query}`;
 }
-function waitpointTokenFromResponse(response) {
+function tokenFromResponse(response) {
   return {
     id: response.id,
     ...response.status === undefined ? {} : { status: response.status },
-    callbackUrl: response.callback_url,
+    ...response.callback_url === undefined || response.callback_url === "" ? {} : { callbackUrl: response.callback_url },
     ...response.public_access_token === undefined ? {} : { publicAccessToken: response.public_access_token },
     timeoutAt: response.timeout_at ?? null,
     ...response.data === undefined ? {} : { data: response.data },
@@ -5944,7 +5989,7 @@ function waitpointTokenFromResponse(response) {
     ...response.metadata === undefined ? {} : { metadata: response.metadata }
   };
 }
-function waitpointTokenPublicAccessToken(target) {
+function tokenPublicAccessToken(target) {
   if (typeof target === "string" || !("publicAccessToken" in target)) {
     return;
   }
@@ -6160,46 +6205,6 @@ async function* parseWorkspaceStreamSse(response) {
     reader.releaseLock();
   }
 }
-async function* parseChannelRecordSse(response) {
-  const reader = response.body?.getReader();
-  if (reader === undefined) {
-    return;
-  }
-  const decoder = new TextDecoder;
-  let buffer = "";
-  try {
-    for (;; ) {
-      const { value, done } = await reader.read();
-      if (done) {
-        buffer += decoder.decode();
-        const finalRecord = parseChannelRecordSseFrame(buffer);
-        if (finalRecord !== undefined) {
-          yield finalRecord;
-        }
-        return;
-      }
-      buffer += decoder.decode(value, { stream: true });
-      let boundary = findSseBoundary(buffer);
-      while (boundary !== -1) {
-        const delimiter = buffer.startsWith(`\r
-\r
-`, boundary) ? 4 : 2;
-        const raw = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + delimiter);
-        const record = parseChannelRecordSseFrame(raw);
-        if (record !== undefined) {
-          yield record;
-        }
-        boundary = findSseBoundary(buffer);
-      }
-      if (buffer.length > MAX_SSE_BUFFER_CHARS) {
-        throw new SseFrameTooLargeError;
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
 function parseWorkspaceStreamSseFrame(raw) {
   const data = raw.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join(`
 `);
@@ -6224,24 +6229,6 @@ function parseWorkspaceStreamSseFrame(raw) {
     throw new WorkspaceStreamError(record.code, record.message, record.cursor);
   }
   throw new SseProtocolError(`unsupported workspace stream SSE event ${event}`, sseFrameCursor(raw));
-}
-function parseChannelRecordSseFrame(raw) {
-  const data = raw.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join(`
-`);
-  if (data === "") {
-    return;
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(data);
-  } catch {
-    throw new SseProtocolError("SSE channel record data must be valid JSON", sseFrameCursor(raw));
-  }
-  const record = objectRecord(parsed);
-  if (record === undefined) {
-    throw new SseProtocolError("SSE channel record data must be a JSON object", sseFrameCursor(raw));
-  }
-  return channelRecordFromResponse(record);
 }
 function parseSseFrame(raw) {
   const frameCursor = sseFrameCursor(raw);
@@ -6329,9 +6316,6 @@ function parseRunEventCursor(value) {
 }
 function runEventRecordIsTerminal(event) {
   return runEventKindIsTerminal(event.message) || runEventKindIsTerminal(event.kind);
-}
-function taskSessionTerminal(status) {
-  return status !== "open";
 }
 function runEventKindIsTerminal(kind) {
   return kind === "run.completed" || kind === "run.failed" || kind === "run.cancelled" || kind === "run.expired";
@@ -6440,17 +6424,17 @@ function runEventRecordToRunEvent(event) {
       at
     };
   }
-  if (message === "waitpoint.created") {
-    const waitpointId = stringValue(attributes?.["waitpoint_id"]);
-    const kind = stringValue(attributes?.["kind"]);
-    if (waitpointId === undefined)
+  if (message === "run_wait.created") {
+    const runWaitId = stringValue(attributes?.["run_wait_id"]);
+    const kind = publicWaitKind(attributes?.["kind"]);
+    if (runWaitId === undefined)
       return;
     if (kind === undefined)
       return;
     return {
-      type: "waitpoint",
+      type: `${kind}_wait`,
       run_id: runId2,
-      waitpoint_id: waitpointId,
+      wait_id: runWaitId,
       kind,
       params: attributes?.["params"] ?? {},
       metadata: objectRecord(attributes?.["metadata"]) ?? {},
@@ -6459,31 +6443,31 @@ function runEventRecordToRunEvent(event) {
       at
     };
   }
-  if (message === "waitpoint.completed") {
-    const waitpointId = stringValue(attributes?.["waitpoint_id"]);
-    const kind = stringValue(attributes?.["kind"]);
-    if (waitpointId === undefined)
+  if (message === "run_wait.completed") {
+    const runWaitId = stringValue(attributes?.["run_wait_id"]);
+    const kind = publicWaitKind(attributes?.["kind"]);
+    if (runWaitId === undefined)
       return;
     if (kind === undefined)
       return;
     return {
-      type: "waitpoint_completed",
+      type: `${kind}_wait_completed`,
       run_id: runId2,
-      waitpoint_id: waitpointId,
+      wait_id: runWaitId,
       kind,
       payload: attributes?.["payload"],
       at
     };
   }
-  if (message === "waitpoint.timed_out") {
-    const waitpointId = stringValue(attributes?.["waitpoint_id"]);
-    const kind = stringValue(attributes?.["kind"]);
-    if (waitpointId === undefined || kind === undefined)
+  if (message === "run_wait.timed_out") {
+    const runWaitId = stringValue(attributes?.["run_wait_id"]);
+    const kind = publicWaitKind(attributes?.["kind"]);
+    if (runWaitId === undefined || kind === undefined)
       return;
     return {
-      type: "waitpoint_timed_out",
+      type: `${kind}_wait_timed_out`,
       run_id: runId2,
-      waitpoint_id: waitpointId,
+      wait_id: runWaitId,
       kind,
       at
     };
@@ -6533,6 +6517,14 @@ function optionalNumber(key, value) {
 }
 function objectRecord(value) {
   return value !== null && typeof value === "object" ? value : undefined;
+}
+function publicWaitKind(value) {
+  const kind = stringValue(value);
+  if (kind === "token" || kind === "timer")
+    return kind;
+  if (kind === "stream")
+    return "stream";
+  return;
 }
 function stringValue(value) {
   return typeof value === "string" ? value : undefined;
@@ -6638,12 +6630,23 @@ var runs = new Proxy({}, {
     return Reflect.get(getDefaultClient().runs, property, receiver);
   }
 });
-var channel = Object.freeze({
-  input(id, opts) {
-    return Object.freeze({ id: validateChannelName(id), schema: opts.schema });
+var streams = Object.freeze({
+  input: createInputStream,
+  output: createOutputStream
+});
+var tokens = Object.freeze({
+  async create(opts = {}) {
+    const token = runRuntimeIsActive() ? await getRunRuntime().createToken(normalizeRuntimeTokenCreateOptions(opts)) : await getDefaultClient().tokens.create(normalizeTokenCreateOptions(opts));
+    return tokenHandle(token);
   },
-  output(id, opts) {
-    return Object.freeze({ id: validateChannelName(id), schema: opts.schema });
+  wait: tokenWaitHandle
+});
+var timers = Object.freeze({
+  waitFor(input) {
+    return timerHandle(() => getRunRuntime().waitFor(input));
+  },
+  waitUntil(input) {
+    return timerHandle(() => getRunRuntime().waitUntil(input));
   }
 });
 var metadata = Object.freeze({
@@ -6655,62 +6658,6 @@ var metadata = Object.freeze({
   },
   increment(key, amount = 1) {
     return getRunRuntime().metadataIncrement(key, amount);
-  }
-});
-var wait = Object.freeze({
-  async createToken(opts = {}) {
-    if (runRuntimeIsActive()) {
-      return await getRunRuntime().createWaitpointToken(normalizeRuntimeWaitpointTokenCreateOptions(opts));
-    }
-    return await getDefaultClient().waitpoints.tokens.create(normalizeWaitpointTokenCreateOptions(opts));
-  },
-  retrieveToken(id, opts) {
-    return getDefaultClient().waitpoints.tokens.retrieve(id, opts);
-  },
-  async listTokens(opts) {
-    return await getDefaultClient().waitpoints.tokens.list(opts);
-  },
-  listTokensPage(opts) {
-    return getDefaultClient().waitpoints.tokens.listPage(opts);
-  },
-  for(input) {
-    return waitDelayHandle({ type: "for", input }, () => getRunRuntime().waitFor(input));
-  },
-  until(input) {
-    return waitDelayHandle({ type: "until", input }, () => getRunRuntime().waitUntil(input));
-  },
-  forToken(token, opts) {
-    const tokenId = typeof token === "string" ? token : token.id;
-    const tokenTimeoutAt = typeof token === "string" ? undefined : ("timeoutAt" in token) ? token.timeoutAt : undefined;
-    const timeout = opts?.timeout ?? waitpointTokenTimeoutInput(tokenTimeoutAt);
-    const schema = opts?.schema;
-    const options = {
-      params: {
-        token_id: tokenId
-      },
-      ...timeout === undefined ? {} : { timeout },
-      ...opts?.metadata === undefined ? {} : { metadata: opts.metadata },
-      ...opts?.tags === undefined ? {} : { tags: opts.tags },
-      ...schema === undefined ? {} : { schema }
-    };
-    const operand = { type: "waitpoint", options };
-    return waitpointHandle(operand, () => getRunRuntime().waitpoint(options));
-  },
-  async all(operands) {
-    const normalized = operands.map((operand, index) => {
-      const waitOperand = getRuntimeWaitOperand(operand);
-      if (waitOperand === undefined) {
-        throw new Error(`wait.all operand at index ${index} is not a Helmr wait handle`);
-      }
-      return waitOperand;
-    });
-    if (normalized.length === 0) {
-      throw new Error("wait.all requires at least one operand");
-    }
-    return await getRunRuntime().waitAll(normalized);
-  },
-  completeToken(token, data, opts) {
-    return getDefaultClient().waitpoints.tokens.complete(token, data, opts);
   }
 });
 var logger = Object.freeze({
@@ -6734,35 +6681,135 @@ var schedules = Object.freeze({
   deactivate: (...args) => getDefaultClient().schedules.deactivate(...args),
   delete: (...args) => getDefaultClient().schedules.delete(...args)
 });
-function waitpointHandle(operand, factory) {
+function createInputStream(id, opts) {
+  return inputStreamHandle(validateStreamName(id), opts?.schema);
+}
+function createOutputStream(id, opts) {
+  return outputStreamHandle(validateStreamName(id), opts?.schema);
+}
+function inputStreamHandle(id, schema) {
+  const wait = (opts = {}) => {
+    return waitHandle(() => getRunRuntime().inputStreamWait(id, schema, opts));
+  };
+  return Object.freeze({
+    id,
+    direction: "input",
+    ...schema === undefined ? {} : { schema },
+    wait,
+    once: (opts = {}) => {
+      return activeWaitHandle(() => getRunRuntime().inputStreamOnce(id, schema, opts));
+    },
+    on: async (handler, opts = {}) => {
+      let afterSequence = opts.afterSequence;
+      let awaitingInitialRecord = true;
+      for (;; ) {
+        const peekOpts = awaitingInitialRecord ? { ...opts, afterSequence, block: true } : { ...opts, timeout: undefined, afterSequence, block: true };
+        const record = await getRunRuntime().inputStreamPeek(id, schema, peekOpts);
+        if (record === null) {
+          if (awaitingInitialRecord && opts.timeout !== undefined) {
+            throw new WaitTimeoutError(`input stream ${JSON.stringify(id)} subscription timed out`);
+          }
+          continue;
+        }
+        awaitingInitialRecord = false;
+        afterSequence = record.sequence;
+        await handler(record.data);
+      }
+    },
+    peek: async (opts) => {
+      return await getRunRuntime().inputStreamPeek(id, schema, opts);
+    }
+  });
+}
+function outputStreamHandle(id, schema) {
+  return Object.freeze({
+    id,
+    direction: "output",
+    ...schema === undefined ? {} : { schema },
+    append: async (payload, opts) => {
+      const parsed = schema === undefined ? payload : await parsePayloadWithSchema(schema, payload, `stream ${JSON.stringify(id)} payload`);
+      return await getRunRuntime().outputStreamAppend(id, parsed, opts);
+    },
+    pipe: async (source, opts) => {
+      for await (const item of source) {
+        const parsed = schema === undefined ? item : await parsePayloadWithSchema(schema, item, `stream ${JSON.stringify(id)} payload`);
+        await getRunRuntime().outputStreamAppend(id, parsed, opts);
+      }
+    },
+    writer: (opts) => ({
+      write: async (payload) => {
+        const parsed = schema === undefined ? payload : await parsePayloadWithSchema(schema, payload, `stream ${JSON.stringify(id)} payload`);
+        await getRunRuntime().outputStreamAppend(id, parsed, opts);
+      },
+      close: async () => {}
+    }),
+    read: async (opts) => {
+      return await getRunRuntime().outputStreamRead(id, schema, opts);
+    },
+    list: async (opts) => {
+      return await getRunRuntime().outputStreamList(id, schema, opts);
+    }
+  });
+}
+function tokenHandle(token) {
+  return Object.freeze({
+    ...token,
+    wait: (opts) => tokenWaitHandle(token, opts)
+  });
+}
+function tokenWaitHandle(token, opts = {}) {
+  const tokenId = typeof token === "string" ? token : token.id;
+  const tokenTimeoutAt = typeof token === "string" ? undefined : ("timeoutAt" in token) ? token.timeoutAt : undefined;
+  const timeout = opts.timeout ?? tokenTimeoutInput(tokenTimeoutAt);
+  const schema = opts.schema;
+  const options = {
+    tokenId,
+    ...timeout === undefined ? {} : { timeout },
+    ...opts.idleTimeout === undefined ? {} : { idleTimeout: opts.idleTimeout },
+    ...opts.metadata === undefined ? {} : { metadata: opts.metadata },
+    ...opts.tags === undefined ? {} : { tags: opts.tags },
+    ...schema === undefined ? {} : { schema }
+  };
+  return waitHandle(() => getRunRuntime().waitToken(options));
+}
+function waitHandle(factory) {
   let promise;
   const getPromise = () => {
     promise ??= factory();
     return promise;
   };
-  const handle = {
+  return {
     then(onfulfilled, onrejected) {
       return getPromise().then(onfulfilled, onrejected);
     },
     unwrap: async () => (await getPromise()).unwrap()
   };
-  Object.defineProperty(handle, runtimeWaitOperand, { value: operand });
-  return handle;
 }
-function waitDelayHandle(operand, factory) {
+function activeWaitHandle(factory) {
   let promise;
   const getPromise = () => {
     promise ??= factory();
     return promise;
   };
-  const handle = {
+  return {
+    then(onfulfilled, onrejected) {
+      return getPromise().then(onfulfilled, onrejected);
+    },
+    unwrap: async () => (await getPromise()).unwrap()
+  };
+}
+function timerHandle(factory) {
+  let promise;
+  const getPromise = () => {
+    promise ??= factory();
+    return promise;
+  };
+  return {
     then(onfulfilled, onrejected) {
       return getPromise().then(onfulfilled, onrejected);
     },
     unwrap: () => getPromise()
   };
-  Object.defineProperty(handle, runtimeWaitOperand, { value: operand });
-  return handle;
 }
 function runRuntimeIsActive() {
   try {
@@ -6772,71 +6819,28 @@ function runRuntimeIsActive() {
     return false;
   }
 }
-function normalizeWaitpointTokenCreateOptions(opts) {
-  const { timeout, ...clientOpts } = opts;
-  if (timeout === undefined) {
-    return clientOpts;
-  }
-  if (clientOpts.timeoutAt !== undefined || clientOpts.timeoutInSeconds !== undefined) {
-    throw new Error("wait.createToken timeout cannot be combined with timeoutAt or timeoutInSeconds");
-  }
-  const { timeoutAt: _timeoutAt, timeoutInSeconds: _timeoutInSeconds, ...baseOpts } = clientOpts;
-  return {
-    ...baseOpts,
-    timeoutInSeconds: Math.ceil(waitDurationMilliseconds(timeout) / 1000)
-  };
+function normalizeTokenCreateOptions(opts) {
+  return opts;
 }
-function normalizeRuntimeWaitpointTokenCreateOptions(opts) {
+function normalizeRuntimeTokenCreateOptions(opts) {
   if (opts.projectId !== undefined || opts.environmentId !== undefined) {
-    throw new Error("wait.createToken cannot override projectId or environmentId inside a running task");
+    throw new Error("tokens.create cannot override projectId or environmentId inside a running task");
   }
   if (opts.signal !== undefined) {
-    throw new Error("wait.createToken signal is not supported inside a running task");
+    throw new Error("tokens.create signal is not supported inside a running task");
   }
-  return normalizeWaitpointTokenCreateOptions(opts);
+  return normalizeTokenCreateOptions(opts);
 }
-function waitpointTokenTimeoutInput(timeoutAt) {
+function tokenTimeoutInput(timeoutAt) {
   if (timeoutAt === null || timeoutAt === undefined) {
     return;
   }
   const at = timeoutAt instanceof Date ? timeoutAt : new Date(timeoutAt);
   const milliseconds = at.getTime() - Date.now();
   if (!Number.isFinite(milliseconds)) {
-    throw new Error("wait.forToken token timeoutAt must be a valid date");
+    throw new Error("token timeoutAt must be a valid date");
   }
   return { milliseconds: Math.max(1, milliseconds) };
-}
-function waitDurationMilliseconds(input) {
-  if (typeof input === "number")
-    return positiveMilliseconds(input * 1000);
-  if (typeof input === "string")
-    return parseDurationMilliseconds(input);
-  if (input.milliseconds !== undefined)
-    return positiveMilliseconds(input.milliseconds);
-  if (input.seconds !== undefined)
-    return positiveMilliseconds(input.seconds * 1000);
-  if (input.minutes !== undefined)
-    return positiveMilliseconds(input.minutes * 60000);
-  if (input.hours !== undefined)
-    return positiveMilliseconds(input.hours * 3600000);
-  if (input.duration !== undefined)
-    return parseDurationMilliseconds(input.duration);
-  throw new Error("duration requires milliseconds, seconds, minutes, hours, or duration");
-}
-function parseDurationMilliseconds(value) {
-  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/.exec(value.trim());
-  if (match === null) {
-    throw new Error("duration must use ms, s, m, or h units");
-  }
-  const amount = Number(match[1]);
-  const unit = match[2];
-  return positiveMilliseconds(amount * (unit === "ms" ? 1 : unit === "s" ? 1000 : unit === "m" ? 60000 : 3600000));
-}
-function positiveMilliseconds(value) {
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`duration must be positive: ${value}`);
-  }
-  return Math.ceil(value);
 }
 
 // runtime/typescript/src/main.ts
@@ -6891,12 +6895,41 @@ function compile(opts) {
       ...task3.ttl === undefined ? {} : { ttl: task3.ttl },
       retryPolicyJson: JSON.stringify(task3.retry ?? false),
       schedules: compileTaskSchedules(task3.schedule),
+      streams: compileTaskStreams(readStreamDefinitions(task3.streams, `task ${JSON.stringify(task3.id)} streams`)),
       secrets: Object.entries(readSecretDecls(task3.secrets)).map(([name, placement]) => create(SecretPlacementSchema, {
         name,
         placement: compilePlacement(placement)
       }))
     })
   });
+}
+function compileTaskStreams(streams2) {
+  return streams2.map((stream) => {
+    const schemaMetadata = streamSchemaMetadata(stream);
+    return create(StreamSpecSchema, {
+      name: stream.id,
+      direction: stream.direction,
+      schemaFingerprint: streamSchemaFingerprint(schemaMetadata),
+      schemaJson: JSON.stringify(schemaMetadata)
+    });
+  });
+}
+function streamSchemaMetadata(stream) {
+  const standard = stream.schema["~standard"];
+  const vendor = typeof standard["vendor"] === "string" && standard["vendor"].trim() !== "" ? standard["vendor"].trim() : "unknown";
+  return {
+    kind: "standard-schema-v1",
+    vendor,
+    direction: stream.direction,
+    name: stream.id
+  };
+}
+function streamSchemaFingerprint(metadata2) {
+  const hash = createHash2("sha256");
+  hash.update(`helmr.stream-schema.v0
+`);
+  hash.update(JSON.stringify(metadata2));
+  return `sha256:${hash.digest("hex")}`;
 }
 function compileNetwork(network) {
   return create(NetworkPolicySchema, {
@@ -7771,11 +7804,16 @@ async function runCommand(args, io) {
     const taskContext = parseTaskContext(requireArg(args, "task-context-json"), runId2, taskId);
     const mintCorrelationId = createCorrelationIdMint();
     const waitGate = new WaitGate;
+    const inputStreamWaitPositions = new Map;
     leaveRuntime = enterRunRuntime({
-      createWaitpointToken: (opts) => createWaitpointToken(responses, control, opts),
-      waitpoint: (opts) => waitInput(responses, control, mintCorrelationId, waitGate, opts),
-      waitAll: (operands) => waitAll(responses, control, mintCorrelationId, waitGate, operands),
-      channelOutputAppend: (channel2, payload2, opts) => writeChannelOutput(control, channel2, payload2, opts),
+      createToken: (opts) => createToken(responses, control, waitGate, opts),
+      waitToken: (opts) => waitToken(responses, control, mintCorrelationId, waitGate, opts),
+      inputStreamWait: (stream, schema, opts) => waitInputStream(responses, control, mintCorrelationId, waitGate, inputStreamWaitPositions, stream, schema, opts),
+      inputStreamOnce: (stream, schema, opts) => onceInputStream(responses, control, mintCorrelationId, waitGate, stream, schema, opts),
+      inputStreamPeek: (stream, schema, opts) => peekInputStream(responses, control, mintCorrelationId, waitGate, stream, schema, opts),
+      outputStreamAppend: (stream, payload2, opts) => writeStreamOutput(control, stream, payload2, opts),
+      outputStreamRead: (stream, schema, opts) => readOutputStream(stream, schema, opts),
+      outputStreamList: (stream, schema, opts) => listOutputStream(stream, schema, opts),
       waitFor: (input) => waitFor(responses, control, mintCorrelationId, waitGate, input),
       waitUntil: (input) => waitUntil(responses, control, mintCorrelationId, waitGate, input),
       metadataSet: (key, value) => writeMetadataSet(control, key, value),
@@ -7788,7 +7826,7 @@ async function runCommand(args, io) {
       run: taskContext.run,
       task: taskContext.task,
       workspace: taskContext.workspace,
-      session: createTaskSessionContext(taskContext.session.id, responses, control, mintCorrelationId, waitGate)
+      session: createTaskSessionContext(taskContext.session.id)
     };
     let result;
     const payload = task3.payload === undefined ? undefined : await parseTaskPayload(task3, rawPayload);
@@ -7963,12 +8001,19 @@ class AdapterResponseReader {
     const body = await this.#readFrameBody();
     return fromBinary(exports_run_pb.ResumeDecisionSchema, body);
   }
-  async readWaitpointTokenCreateResult() {
+  async readTokenCreateResult() {
     if (this.#closed) {
       throw new Error("adapter response stream closed");
     }
     const body = await this.#readFrameBody();
-    return fromBinary(exports_run_pb.WaitpointTokenCreateResultSchema, body);
+    return fromBinary(exports_run_pb.TokenCreateResultSchema, body);
+  }
+  async readActiveStreamReadResult() {
+    if (this.#closed) {
+      throw new Error("adapter response stream closed");
+    }
+    const body = await this.#readFrameBody();
+    return fromBinary(exports_run_pb.ActiveStreamReadResultSchema, body);
   }
   async#readFrameBody() {
     await this.#fill(4);
@@ -8008,46 +8053,10 @@ class WaitGate {
     }
   }
 }
-function createTaskSessionContext(id, responses, control, mintCorrelationId, waitGate) {
+function createTaskSessionContext(id) {
   return Object.freeze({
-    id,
-    input(target) {
-      const channel2 = channelTargetName(target);
-      const schema = typeof target === "string" ? undefined : target.schema;
-      return Object.freeze({
-        id: channel2,
-        wait: (waitOpts = {}) => {
-          const operand = {
-            type: "channel",
-            channel: channel2,
-            ...schema === undefined ? {} : { schema },
-            options: waitOpts
-          };
-          return waitpointHandle2(operand, () => waitChannelInput(responses, control, mintCorrelationId, waitGate, channel2, schema, waitOpts));
-        }
-      });
-    },
-    output(target) {
-      const channel2 = channelTargetName(target);
-      const schema = typeof target === "string" ? undefined : target.schema;
-      return Object.freeze({
-        id: channel2,
-        append: async (payload, appendOpts) => {
-          const parsed = schema === undefined ? payload : await parsePayloadWithSchema(schema, payload, `channel ${JSON.stringify(channel2)} payload`);
-          return writeChannelOutput(control, channel2, parsed, appendOpts);
-        },
-        pipe: async (source, appendOpts) => {
-          for await (const item of source) {
-            const parsed = schema === undefined ? item : await parsePayloadWithSchema(schema, item, `channel ${JSON.stringify(channel2)} payload`);
-            await writeChannelOutput(control, channel2, parsed, appendOpts);
-          }
-        }
-      });
-    }
+    id
   });
-}
-function channelTargetName(target) {
-  return validateChannelName(typeof target === "string" ? target : target.id);
 }
 
 class AdapterControlWriter {
@@ -8117,34 +8126,36 @@ function connectControlSocket(socketPath) {
     });
   });
 }
-async function createWaitpointToken(responses, control, opts) {
+async function createToken(responses, control, waitGate, opts) {
+  return waitGate.run(async () => createTokenUnlocked(responses, control, opts));
+}
+async function createTokenUnlocked(responses, control, opts) {
   const metadata2 = opts.metadata === undefined ? undefined : normalizeWaitMetadata(opts.metadata);
   const metadataJson = metadata2 === undefined ? undefined : JSON.stringify(metadata2);
   const tags = opts.tags === undefined ? undefined : normalizeWaitTags(opts.tags);
-  const timeoutInSeconds = opts.timeoutInSeconds === undefined ? undefined : positiveDelaySeconds(opts.timeoutInSeconds);
+  const timeoutInSeconds = opts.timeout === undefined ? undefined : waitDurationSeconds(opts.timeout);
   control.write(create(exports_run_pb.RunEventSchema, {
     event: {
-      case: "waitpointTokenCreateRequested",
-      value: create(exports_run_pb.WaitpointTokenCreateRequestedSchema, {
-        ...opts.timeoutAt === undefined ? {} : { timeoutAt: opts.timeoutAt },
+      case: "tokenCreateRequested",
+      value: create(exports_run_pb.TokenCreateRequestedSchema, {
         ...timeoutInSeconds === undefined ? {} : { timeoutInSeconds },
         ...tags === undefined ? {} : { tags },
         ...metadataJson === undefined ? {} : { metadataJson }
       })
     }
   }));
-  const result = await responses.readWaitpointTokenCreateResult();
+  const result = await responses.readTokenCreateResult();
   if (result.errorMessage !== undefined && result.errorMessage.trim() !== "") {
     throw new Error(result.errorMessage);
   }
   if (result.id.trim() === "") {
-    throw new Error("waitpoint token create response id is required");
+    throw new Error("token create response id is required");
   }
   if (result.callbackUrl.trim() === "") {
-    throw new Error("waitpoint token create response callback_url is required");
+    throw new Error("token create response callback_url is required");
   }
-  const resultMetadata = result.metadataJson === undefined || result.metadataJson.trim() === "" ? undefined : parseWaitpointTokenMetadata(result.metadataJson);
-  const status = waitpointTokenStatus(result.status);
+  const resultMetadata = result.metadataJson === undefined || result.metadataJson.trim() === "" ? undefined : parseTokenMetadata(result.metadataJson);
+  const status = tokenStatus(result.status);
   return {
     id: result.id,
     callbackUrl: result.callbackUrl,
@@ -8152,26 +8163,33 @@ async function createWaitpointToken(responses, control, opts) {
     timeoutAt: result.timeoutAt ?? null,
     ...status === undefined ? {} : { status },
     ...result.tags.length === 0 ? {} : { tags: result.tags },
-    ...resultMetadata === undefined ? {} : { metadata: resultMetadata }
+    ...resultMetadata === undefined ? {} : { metadata: resultMetadata },
+    wait: () => {
+      throw new Error("token.wait() is attached by @helmr/sdk");
+    }
   };
 }
-function waitpointTokenStatus(value) {
+function tokenStatus(value) {
   switch (value) {
     case "waiting":
+      return "pending";
+    case "pending":
     case "completed":
-    case "timed_out":
+    case "expired":
     case "cancelled":
       return value;
+    case "timed_out":
+      return "expired";
     case undefined:
     case "":
       return;
     default:
-      throw new Error(`waitpoint token create response status is invalid: ${value}`);
+      throw new Error(`token create response status is invalid: ${value}`);
   }
 }
 async function waitFor(responses, control, mintCorrelationId, waitGate, input) {
   const seconds = waitDurationSeconds(input);
-  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("timer", normalizeWaitDurationInput(input), { timeout: seconds }));
+  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("timer", normalizeDurationInput(input), { timeout: seconds }));
   if (!(decision.kind === "timed_out" || decision.kind === "completed")) {
     throw new Error(`unexpected wait.for resume decision kind ${JSON.stringify(decision.kind)}`);
   }
@@ -8179,165 +8197,67 @@ async function waitFor(responses, control, mintCorrelationId, waitGate, input) {
 }
 async function waitUntil(responses, control, mintCorrelationId, waitGate, input) {
   const until = waitUntilInputDate(input);
-  const seconds = Math.max(1, Math.ceil((until.getTime() - Date.now()) / 1000));
-  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("timer", normalizeWaitUntilInput(input), { timeout: seconds }));
+  const seconds = Math.ceil((until.getTime() - Date.now()) / 1000);
+  if (seconds <= 0) {
+    return;
+  }
+  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("timer", normalizeUntilInput(input), { timeout: seconds }));
   if (!(decision.kind === "timed_out" || decision.kind === "completed")) {
     throw new Error(`unexpected wait.until resume decision kind ${JSON.stringify(decision.kind)}`);
   }
   maybeWriteResumeConsumed(control, decision);
 }
-async function waitInput(responses, control, mintCorrelationId, waitGate, opts) {
-  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest(opts.kind ?? "token", waitpointData(opts), {
-    ...opts.timeout === undefined ? {} : { timeout: waitDurationSeconds(opts.timeout) },
-    ...opts.metadata === undefined ? {} : { metadata: opts.metadata },
-    ...opts.tags === undefined ? {} : { tags: opts.tags }
-  }));
+async function waitToken(responses, control, mintCorrelationId, waitGate, opts) {
+  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("token", { token_id: opts.tokenId }, waitOptionsToRequest(opts)));
   if (decision.kind === "timed_out") {
     const seconds = opts.timeout === undefined ? undefined : waitDurationSeconds(opts.timeout);
     maybeWriteResumeConsumed(control, decision);
-    return new WaitpointResultImpl(false, undefined, new WaitTimeoutError(`waitpoint timed out${formatTimeoutSuffix(seconds)}`, seconds));
+    return new WaitResultImpl(false, undefined, new WaitTimeoutError(`token wait timed out${formatTimeoutSuffix(seconds)}`, seconds));
+  }
+  if (decision.kind === "cancelled") {
+    maybeWriteResumeConsumed(control, decision);
+    return new WaitResultImpl(false, undefined, new WaitCancelledError("token cancelled"));
   }
   if (decision.kind !== "completed") {
-    throw new Error(`unexpected waitpoint resume decision kind ${JSON.stringify(decision.kind)}`);
+    throw new Error(`unexpected token wait resume decision kind ${JSON.stringify(decision.kind)}`);
   }
   const data = parseResumeData(decision.dataJson);
   if (opts.schema === undefined) {
     maybeWriteResumeConsumed(control, decision);
-    return new WaitpointResultImpl(true, data);
+    return new WaitResultImpl(true, data);
   }
-  const payload = await parsePayloadWithSchema(opts.schema, data, "waitpoint data");
+  const payload = await parsePayloadWithSchema(opts.schema, data, "token data");
   maybeWriteResumeConsumed(control, decision);
-  return new WaitpointResultImpl(true, payload);
+  return new WaitResultImpl(true, payload);
 }
-async function waitChannelInput(responses, control, mintCorrelationId, waitGate, channel2, schema, opts = {}) {
+async function waitInputStream(responses, control, mintCorrelationId, waitGate, positions, stream, schema, opts = {}) {
   const correlationId = normalizeOptionalCorrelationId(opts.correlationId);
-  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("channel", {
-    channel: channel2,
-    ...correlationId === undefined ? {} : { correlation_id: correlationId }
-  }, {
-    ...opts.timeout === undefined ? {} : { timeout: waitDurationSeconds(opts.timeout) },
-    ...opts.metadata === undefined ? {} : { metadata: opts.metadata },
-    ...opts.tags === undefined ? {} : { tags: opts.tags }
-  }));
+  const positionKey = inputStreamPositionKey(stream, correlationId);
+  const afterSequence = opts.afterSequence === undefined ? positions.get(positionKey) : normalizeStreamSequence(opts.afterSequence, "input stream wait afterSequence");
+  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("stream", {
+    stream,
+    ...correlationId === undefined ? {} : { correlation_id: correlationId },
+    ...afterSequence === undefined ? {} : { after_sequence: afterSequence }
+  }, waitOptionsToRequest(opts)));
   if (decision.kind === "timed_out") {
     const seconds = opts.timeout === undefined ? undefined : waitDurationSeconds(opts.timeout);
     maybeWriteResumeConsumed(control, decision);
-    return new WaitpointResultImpl(false, undefined, new WaitTimeoutError(`channel ${JSON.stringify(channel2)} wait timed out${formatTimeoutSuffix(seconds)}`, seconds));
+    return new WaitResultImpl(false, undefined, new WaitTimeoutError(`input stream ${JSON.stringify(stream)} wait timed out${formatTimeoutSuffix(seconds)}`, seconds));
   }
   if (decision.kind !== "completed") {
-    throw new Error(`unexpected channel wait resume decision kind ${JSON.stringify(decision.kind)}`);
+    throw new Error(`unexpected input stream wait resume decision kind ${JSON.stringify(decision.kind)}`);
   }
-  const envelope = channelWaitpointEnvelope(parseResumeData(decision.dataJson), channel2);
-  const data = schema === undefined ? envelope.data : await parsePayloadWithSchema(schema, envelope.data, `channel ${JSON.stringify(channel2)} data`);
-  maybeWriteResumeConsumed(control, decision);
-  return completedWaitpointResult(data);
-}
-async function waitAll(responses, control, mintCorrelationId, waitGate, operands) {
-  if (operands.length === 0) {
-    throw new Error("wait.all requires at least one operand");
-  }
-  const requests = operands.map(runtimeWaitOperandRequest);
-  const decision = await waitGate.run(async () => {
-    const correlationId = mintCorrelationId();
-    const aggregateCount = requests.length;
-    requests.forEach((request, ordinal) => {
-      control.write(waitpointRequestedEvent({ ...request, correlationId, ordinal, aggregateCount }));
-    });
-    return responses.readDecision();
-  });
-  if (decision.kind === "timed_out") {
-    if (operands.length === 1 && (operands[0]?.type === "for" || operands[0]?.type === "until")) {
-      maybeWriteResumeConsumed(control, decision);
-      return [undefined];
-    }
-    maybeWriteResumeConsumed(control, decision);
-    throw new WaitTimeoutError("wait.all timed out");
-  }
-  if (operands.length === 1 && decision.kind === "completed") {
-    const operand = operands[0];
-    if (operand === undefined) {
-      throw new Error("wait.all operand is missing");
-    }
-    const result = await decodeWaitAllOperand(operand, parseResumeData(decision.dataJson));
-    maybeWriteResumeConsumed(control, decision);
-    return [result];
-  }
-  if (decision.kind !== "waitpoints") {
-    throw new Error(`unexpected wait.all resume decision kind ${JSON.stringify(decision.kind)}`);
-  }
-  const envelope = waitAllEnvelope(parseResumeData(decision.dataJson), operands.length);
-  const results = [];
-  for (let index = 0;index < operands.length; index += 1) {
-    const operand = operands[index];
-    if (operand === undefined) {
-      throw new Error(`wait.all operand at index ${index} is missing`);
-    }
-    results.push(await decodeWaitAllOperand(operand, envelope[index]));
+  const envelope = streamWaitEnvelope(parseResumeData(decision.dataJson), stream);
+  const data = schema === undefined ? envelope.data : await parsePayloadWithSchema(schema, envelope.data, `input stream ${JSON.stringify(stream)} data`);
+  const previous = positions.get(positionKey) ?? 0;
+  if (envelope.sequence > previous) {
+    positions.set(positionKey, envelope.sequence);
   }
   maybeWriteResumeConsumed(control, decision);
-  return results;
+  return completedWaitResult(data);
 }
-function runtimeWaitOperandRequest(operand) {
-  switch (operand.type) {
-    case "for": {
-      const seconds = waitDurationSeconds(operand.input);
-      return waitRequest("timer", normalizeWaitDurationInput(operand.input), { timeout: seconds });
-    }
-    case "until": {
-      const until = waitUntilInputDate(operand.input);
-      const seconds = Math.max(1, Math.ceil((until.getTime() - Date.now()) / 1000));
-      return waitRequest("timer", normalizeWaitUntilInput(operand.input), { timeout: seconds });
-    }
-    case "waitpoint":
-      return waitRequest(operand.options.kind ?? "token", waitpointData(operand.options), {
-        ...operand.options.timeout === undefined ? {} : { timeout: waitDurationSeconds(operand.options.timeout) },
-        ...operand.options.metadata === undefined ? {} : { metadata: operand.options.metadata },
-        ...operand.options.tags === undefined ? {} : { tags: operand.options.tags }
-      });
-    case "channel": {
-      const correlationId = normalizeOptionalCorrelationId(operand.options?.correlationId);
-      return waitRequest("channel", {
-        channel: operand.channel,
-        ...correlationId === undefined ? {} : { correlation_id: correlationId }
-      }, {
-        ...operand.options?.timeout === undefined ? {} : { timeout: waitDurationSeconds(operand.options.timeout) },
-        ...operand.options?.metadata === undefined ? {} : { metadata: operand.options.metadata },
-        ...operand.options?.tags === undefined ? {} : { tags: operand.options.tags }
-      });
-    }
-  }
-}
-async function decodeWaitAllOperand(operand, value) {
-  switch (operand.type) {
-    case "for":
-    case "until":
-      return;
-    case "waitpoint":
-      if (operand.options.schema === undefined) {
-        return value;
-      }
-      return await parsePayloadWithSchema(operand.options.schema, value, "wait.all waitpoint data");
-    case "channel": {
-      const envelope = channelWaitpointEnvelope(value, operand.channel);
-      if (operand.schema === undefined) {
-        return envelope.data;
-      }
-      return await parsePayloadWithSchema(operand.schema, envelope.data, `channel ${JSON.stringify(operand.channel)} data`);
-    }
-  }
-}
-function waitAllEnvelope(value, expectedLength) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("wait.all data must be an object");
-  }
-  const waitpoints = value.waitpoints;
-  if (!Array.isArray(waitpoints)) {
-    throw new Error("wait.all data.waitpoints must be an array");
-  }
-  if (waitpoints.length !== expectedLength) {
-    throw new Error(`wait.all data.waitpoints length ${waitpoints.length} did not match operand count ${expectedLength}`);
-  }
-  return waitpoints;
+function inputStreamPositionKey(stream, correlationId) {
+  return `${stream}\x00${correlationId ?? ""}`;
 }
 function normalizeOptionalCorrelationId(value) {
   if (value === undefined) {
@@ -8346,37 +8266,22 @@ function normalizeOptionalCorrelationId(value) {
   const normalized = value.trim();
   return normalized === "" ? undefined : normalized;
 }
-function waitpointHandle2(operand, factory) {
-  let promise;
-  const getPromise = () => {
-    promise ??= factory();
-    return promise;
-  };
-  const handle = {
-    then(onfulfilled, onrejected) {
-      return getPromise().then(onfulfilled, onrejected);
-    },
-    unwrap: async () => (await getPromise()).unwrap()
-  };
-  Object.defineProperty(handle, runtimeWaitOperand, { value: operand });
-  return handle;
+function completedWaitResult(data) {
+  return new WaitResultImpl(true, data);
 }
-function completedWaitpointResult(data) {
-  return new WaitpointResultImpl(true, data);
-}
-function channelWaitpointEnvelope(value, expectedChannel) {
+function streamWaitEnvelope(value, expectedStream) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("channel waitpoint data must be an object");
+    throw new Error("stream wait data must be an object");
   }
   const record = value;
-  if (record.channel !== expectedChannel) {
-    throw new Error(`channel waitpoint channel mismatch: expected ${JSON.stringify(expectedChannel)}`);
+  if (record.stream !== expectedStream) {
+    throw new Error(`stream wait stream mismatch: expected ${JSON.stringify(expectedStream)}`);
   }
   if (typeof record.sequence !== "number" || !Number.isInteger(record.sequence) || record.sequence < 0) {
-    throw new Error("channel waitpoint sequence must be a non-negative integer");
+    throw new Error("stream wait sequence must be a non-negative integer");
   }
   return {
-    channel: record.channel,
+    stream: record.stream,
     sequence: record.sequence,
     data: record.data
   };
@@ -8384,9 +8289,17 @@ function channelWaitpointEnvelope(value, expectedChannel) {
 async function waitGenericDecision(responses, control, mintCorrelationId, waitGate, request) {
   return waitGate.run(async () => {
     const correlationId = mintCorrelationId();
-    control.write(waitpointRequestedEvent({ ...request, correlationId }));
+    control.write(runWaitRequestedEvent({ ...request, correlationId }));
     return responses.readDecision();
   });
+}
+function waitOptionsToRequest(opts) {
+  return {
+    ...opts?.timeout === undefined ? {} : { timeout: waitDurationSeconds(opts.timeout) },
+    ...opts?.idleTimeout === undefined ? {} : { idleTimeout: waitDurationSeconds(opts.idleTimeout) },
+    ...opts?.metadata === undefined ? {} : { metadata: opts.metadata },
+    ...opts?.tags === undefined ? {} : { tags: opts.tags }
+  };
 }
 function waitRequest(kind, data, opts) {
   const normalizedKind = normalizeWaitKind(kind);
@@ -8394,57 +8307,58 @@ function waitRequest(kind, data, opts) {
   if (timeout !== undefined) {
     validateWaitTimeout(timeout);
   }
+  const idleTimeout = opts?.idleTimeout;
+  if (idleTimeout !== undefined) {
+    validateWaitTimeout(idleTimeout);
+  }
   const tags = normalizeWaitTags(opts?.tags);
   return {
     kind: normalizedKind,
     paramsJson: JSON.stringify(data),
     ...opts?.metadata === undefined ? {} : { metadataJson: JSON.stringify(normalizeWaitMetadata(opts.metadata)) },
     ...tags === undefined ? {} : { tags },
-    ...timeout === undefined ? {} : { timeout }
+    ...timeout === undefined ? {} : { timeout },
+    ...idleTimeout === undefined ? {} : { idleTimeout }
   };
 }
-function waitpointRequestedEvent(request) {
-  const value = waitpointRequestedValue(request);
+function runWaitRequestedEvent(request) {
+  const value = runWaitRequestedValue(request);
   return create(exports_run_pb.RunEventSchema, {
     event: {
-      case: "waitpointRequested",
+      case: "runWaitRequested",
       value
     }
   });
 }
-function waitpointRequestedValue(request) {
-  return create(exports_run_pb.WaitpointRequestedSchema, {
+function runWaitRequestedValue(request) {
+  return create(exports_run_pb.RunWaitRequestedSchema, {
     correlationId: request.correlationId,
     kind: request.kind,
     paramsJson: request.paramsJson,
     ...request.metadataJson === undefined ? {} : { metadataJson: request.metadataJson },
     ...request.tags === undefined ? {} : { tags: request.tags },
     ...request.timeout === undefined ? {} : { timeout: request.timeout },
-    ...request.ordinal === undefined ? {} : { ordinal: request.ordinal },
-    ...request.aggregateCount === undefined ? {} : { aggregateCount: request.aggregateCount }
+    ...request.idleTimeout === undefined ? {} : { idleTimeout: request.idleTimeout }
   });
 }
 function maybeWriteResumeConsumed(control, decision) {
   if (!decision.requireConsumedAck) {
     return;
   }
-  if (decision.waitpointId.trim() === "") {
-    throw new Error("resume decision waitpoint_id is required");
+  if (decision.runWaitId.trim() === "") {
+    throw new Error("resume decision run_wait_id is required");
   }
   control.write(create(exports_run_pb.RunEventSchema, {
     event: {
       case: "resumeConsumed",
       value: {
-        waitpointId: decision.waitpointId
+        runWaitId: decision.runWaitId
       }
     }
   }));
 }
 function formatTimeoutSuffix(timeout) {
   return timeout === undefined ? "" : ` after ${timeout}`;
-}
-function waitpointData(opts) {
-  return opts.params === undefined ? {} : normalizeWaitJson(opts.params, "waitpoint params");
 }
 function normalizeOptionalIdentifier(value, label) {
   if (value === undefined)
@@ -8455,7 +8369,7 @@ function normalizeOptionalIdentifier(value, label) {
   }
   return normalized;
 }
-function normalizeWaitDurationInput(input) {
+function normalizeDurationInput(input) {
   if (typeof input === "string") {
     return { duration: input };
   }
@@ -8503,7 +8417,7 @@ function parseDurationSeconds(value, label) {
   const multiplier = unit === "ms" ? 0.001 : unit === "s" ? 1 : unit === "m" ? 60 : 3600;
   return positiveDelaySeconds(amount * multiplier);
 }
-function normalizeWaitUntilInput(input) {
+function normalizeUntilInput(input) {
   if (typeof input === "string") {
     return { date: input };
   }
@@ -8579,10 +8493,10 @@ function normalizeWaitTags(value) {
     return normalized;
   });
 }
-function parseWaitpointTokenMetadata(value) {
+function parseTokenMetadata(value) {
   const parsed = JSON.parse(value);
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("waitpoint token create response metadata_json must be a JSON object");
+    throw new Error("token create response metadata_json must be a JSON object");
   }
   return parsed;
 }
@@ -8604,38 +8518,102 @@ function normalizeRequiredIdentifier(value, label) {
 }
 function parseResumeData(json) {
   if (json === "") {
-    throw new Error("waitpoint data is required");
+    throw new Error("run wait data is required");
   }
   try {
     return JSON.parse(json);
   } catch (error) {
     if (error instanceof Error) {
-      throw new Error(`waitpoint data must be valid JSON: ${error.message}`);
+      throw new Error(`run wait data must be valid JSON: ${error.message}`);
     }
-    throw new Error("waitpoint data must be valid JSON");
+    throw new Error("run wait data must be valid JSON");
   }
 }
-async function writeChannelOutput(control, channelInput, payload, opts = {}) {
-  const channel2 = validateChannelName(channelInput);
-  validateUtf8ByteLength("channel", channel2, CHANNEL_NAME_MAX_BYTES);
+async function onceInputStream(responses, control, mintCorrelationId, waitGate, stream, schema, opts = {}) {
+  const record = await activeReadInputStream(responses, control, mintCorrelationId, waitGate, stream, schema, opts, true);
+  if (record === null) {
+    const seconds = opts.timeout === undefined ? undefined : waitDurationSeconds(opts.timeout);
+    return new WaitResultImpl(false, undefined, new WaitTimeoutError(`input stream ${JSON.stringify(stream)} once timed out${formatTimeoutSuffix(seconds)}`, seconds));
+  }
+  return completedWaitResult(record.data);
+}
+async function peekInputStream(responses, control, mintCorrelationId, waitGate, stream, schema, opts) {
+  const block = opts?.block === true;
+  return activeReadInputStream(responses, control, mintCorrelationId, waitGate, stream, schema, opts ?? {}, block);
+}
+async function activeReadInputStream(responses, control, mintCorrelationId, waitGate, stream, schema, opts, block) {
+  const runRead = async () => {
+    const correlationId = mintCorrelationId();
+    const timeoutSeconds = block && "timeout" in opts && opts.timeout !== undefined ? waitDurationSeconds(opts.timeout) : undefined;
+    const recordCorrelationId = opts.correlationId === undefined ? undefined : normalizeOptionalCorrelationId(opts.correlationId);
+    control.write(create(exports_run_pb.RunEventSchema, {
+      event: {
+        case: "activeStreamReadRequested",
+        value: create(exports_run_pb.ActiveStreamReadRequestedSchema, {
+          correlationId,
+          stream,
+          afterSequence: BigInt(normalizeStreamSequence(opts.afterSequence ?? 0, "input stream afterSequence")),
+          ...recordCorrelationId === undefined ? {} : { recordCorrelationId },
+          ...timeoutSeconds === undefined ? {} : { timeout: timeoutSeconds },
+          block
+        })
+      }
+    }));
+    const result = await responses.readActiveStreamReadResult();
+    if (result.correlationId !== correlationId) {
+      throw new Error(`active stream read result correlation ${JSON.stringify(result.correlationId)} did not match ${JSON.stringify(correlationId)}`);
+    }
+    if (result.errorMessage !== undefined && result.errorMessage !== "") {
+      throw new Error(result.errorMessage);
+    }
+    if (result.timedOut || result.record === undefined) {
+      return null;
+    }
+    return protoStreamRecord(result.record, schema, stream);
+  };
+  return waitGate.run(runRead);
+}
+async function protoStreamRecord(record, schema, stream) {
+  const data = parseResumeData(record.dataJson);
+  const parsed = schema === undefined ? data : await parsePayloadWithSchema(schema, data, `input stream ${JSON.stringify(stream)} data`);
+  return {
+    id: record.id,
+    streamId: record.streamId,
+    sequence: Number(record.sequence),
+    data: parsed,
+    ...record.correlationId === undefined || record.correlationId === "" ? {} : { correlationId: record.correlationId },
+    contentType: record.contentType,
+    createdAt: record.createdAt
+  };
+}
+function normalizeStreamSequence(value, label) {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+  return value;
+}
+async function readOutputStream(_stream, _schema, _opts) {
+  throw new Error("output stream read requires runtime stream read support");
+}
+async function listOutputStream(_stream, _schema, _opts) {
+  throw new Error("output stream list requires runtime stream read support");
+}
+async function writeStreamOutput(control, streamInput, payload, opts = {}) {
+  const stream = validateStreamName(streamInput);
+  validateUtf8ByteLength("stream", stream, CHANNEL_NAME_MAX_BYTES);
   const contentType = opts.contentType?.trim();
   if (contentType !== undefined && contentType === "") {
-    throw new Error("channel output contentType must be non-empty");
+    throw new Error("output stream contentType must be non-empty");
   }
   const payloadJson = JSON.stringify(payload === undefined ? null : payload);
-  validateUtf8ByteLength("channel output payload_json", payloadJson, RUNTIME_CONTENT_JSON_MAX_BYTES);
-  const objectRefJson = opts.objectRef === undefined ? undefined : JSON.stringify(normalizeWaitJson(opts.objectRef, "channel output objectRef"));
-  if (objectRefJson !== undefined) {
-    validateUtf8ByteLength("channel output object_ref_json", objectRefJson, RUNTIME_CONTENT_JSON_MAX_BYTES);
-  }
+  validateUtf8ByteLength("output stream payload_json", payloadJson, RUNTIME_CONTENT_JSON_MAX_BYTES);
   control.write(create(exports_run_pb.RunEventSchema, {
     event: {
-      case: "channelOutputAppended",
+      case: "outputStreamAppended",
       value: {
-        channel: channel2,
+        stream,
         payloadJson,
-        ...contentType === undefined ? {} : { contentType },
-        ...objectRefJson === undefined ? {} : { objectRefJson }
+        ...contentType === undefined ? {} : { contentType }
       }
     }
   }));

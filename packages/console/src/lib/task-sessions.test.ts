@@ -3,11 +3,11 @@ import { afterEach, expect, test } from "bun:test";
 import {
   cancelTaskSession,
   closeTaskSession,
-  listTaskSessionChannelRecords,
-  listTaskSessionChannels,
   listTaskSessionRuns,
+  listTaskSessionStreamRecords,
+  listTaskSessionStreams,
   listTaskSessions,
-  type TaskSessionChannel,
+  type TaskSessionStream,
 } from "./task-sessions";
 
 const originalFetch = globalThis.fetch;
@@ -50,17 +50,17 @@ test("scopes session close and cancel actions", async () => {
   ]);
 });
 
-test("reads session runs, channels, and channel records", async () => {
+test("reads session runs, streams, and stream records", async () => {
   const requestedUrls: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     requestedUrls.push(String(input));
     if (String(input).endsWith("/runs")) return Response.json({ runs: [] });
-    if (String(input).endsWith("/channels")) return Response.json({ channels: [] });
+    if (String(input).endsWith("/streams")) return Response.json({ streams: [] });
     return Response.json({ records: [] });
   }) as typeof fetch;
 
-  const channel: TaskSessionChannel = {
-    id: "channel-1",
+  const stream: TaskSessionStream = {
+    id: "stream-1",
     task_session_id: "session-1",
     name: "agent.report",
     direction: "output",
@@ -68,12 +68,12 @@ test("reads session runs, channels, and channel records", async () => {
     created_at: "2026-06-18T00:00:00Z",
   };
   await listTaskSessionRuns("session/1", { projectID: "project-1", environmentID: "env-1" });
-  await listTaskSessionChannels("session/1", { projectID: "project-1", environmentID: "env-1" });
-  await listTaskSessionChannelRecords("session/1", { projectID: "project-1", environmentID: "env-1" }, channel, { limit: 25 });
+  await listTaskSessionStreams("session/1", { projectID: "project-1", environmentID: "env-1" });
+  await listTaskSessionStreamRecords("session/1", { projectID: "project-1", environmentID: "env-1" }, stream, { limit: 25 });
 
   expect(requestedUrls).toEqual([
     "/api/projects/project-1/environments/env-1/sessions/session%2F1/runs",
-    "/api/projects/project-1/environments/env-1/sessions/session%2F1/channels",
-    "/api/projects/project-1/environments/env-1/sessions/session%2F1/channels/agent.report/outputs?limit=25",
+    "/api/projects/project-1/environments/env-1/sessions/session%2F1/streams",
+    "/api/projects/project-1/environments/env-1/sessions/session%2F1/outputs/agent.report?limit=25",
   ]);
 });

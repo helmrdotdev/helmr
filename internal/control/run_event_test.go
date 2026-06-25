@@ -360,6 +360,37 @@ func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendR
 	}, nil
 }
 
+func (f *fakeStore) UpdateRunMetadataForExecution(_ context.Context, arg db.UpdateRunMetadataForExecutionParams) (db.UpdateRunMetadataForExecutionRow, error) {
+	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID {
+		return db.UpdateRunMetadataForExecutionRow{}, pgx.ErrNoRows
+	}
+	f.updateRunMetadata = arg
+	return db.UpdateRunMetadataForExecutionRow{
+		ID:                   f.run.ID,
+		OrgID:                f.run.OrgID,
+		ProjectID:            fakeRunProjectID(f.run),
+		EnvironmentID:        fakeRunEnvironmentID(f.run),
+		DeploymentID:         f.run.DeploymentID,
+		DeploymentTaskID:     f.run.DeploymentTaskID,
+		DeploymentVersion:    f.run.DeploymentVersion,
+		ApiVersion:           f.run.ApiVersion,
+		SdkVersion:           f.run.SdkVersion,
+		CliVersion:           f.run.CliVersion,
+		TaskID:               f.run.TaskID,
+		Status:               f.run.Status,
+		ExecutionStatus:      f.run.ExecutionStatus,
+		TerminalOutcome:      f.run.TerminalOutcome,
+		Metadata:             f.run.Metadata,
+		Tags:                 f.run.Tags,
+		LockedRetryPolicy:    f.run.LockedRetryPolicy,
+		CurrentAttemptNumber: f.run.CurrentAttemptNumber,
+		ExitCode:             f.run.ExitCode,
+		Output:               f.run.Output,
+		CreatedAt:            f.run.CreatedAt,
+		UpdatedAt:            f.run.UpdatedAt,
+	}, nil
+}
+
 func fakeEventRedactionClass(kind string) string {
 	return "sensitive"
 }

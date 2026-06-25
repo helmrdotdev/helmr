@@ -283,13 +283,21 @@ func (c *Client) RecordLogEntry(ctx context.Context, lease api.WorkerRunLease, e
 	return response, nil
 }
 
-func (c *Client) WriteOutput(ctx context.Context, request api.WorkerWriteOutputRequest) (api.WorkerEventResponse, error) {
-	var response api.WorkerEventResponse
-	if len(request.Payload) == 0 {
-		request.Payload = json.RawMessage(`null`)
+func (c *Client) AppendOutputStream(ctx context.Context, request api.WorkerOutputStreamAppendRequest) (api.AppendStreamRecordResponse, error) {
+	var response api.AppendStreamRecordResponse
+	if len(request.Data) == 0 {
+		request.Data = json.RawMessage(`null`)
 	}
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/channels", request, &response); err != nil {
-		return api.WorkerEventResponse{}, err
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/streams/output", request, &response); err != nil {
+		return api.AppendStreamRecordResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ReadInputStream(ctx context.Context, request api.WorkerActiveStreamReadRequest) (api.WorkerActiveStreamReadResponse, error) {
+	var response api.WorkerActiveStreamReadResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/streams/input/read", request, &response); err != nil {
+		return api.WorkerActiveStreamReadResponse{}, err
 	}
 	return response, nil
 }
@@ -302,34 +310,42 @@ func (c *Client) UpdateRunMetadata(ctx context.Context, request api.WorkerUpdate
 	return response, nil
 }
 
-func (c *Client) CreateRuntimeWaitpointToken(ctx context.Context, request api.WorkerCreateWaitpointTokenRequest) (api.WaitpointTokenResponse, error) {
-	var response api.WaitpointTokenResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/waitpoint-tokens", request, &response); err != nil {
-		return api.WaitpointTokenResponse{}, err
+func (c *Client) CreateRuntimeToken(ctx context.Context, request api.WorkerCreateTokenRequest) (api.TokenResponse, error) {
+	var response api.TokenResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/tokens", request, &response); err != nil {
+		return api.TokenResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) CreateWaitpoint(ctx context.Context, request api.WorkerCreateWaitpointRequest) (api.WorkerCreateWaitpointResponse, error) {
-	var response api.WorkerCreateWaitpointResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/waitpoints", request, &response); err != nil {
-		return api.WorkerCreateWaitpointResponse{}, err
+func (c *Client) CreateRunWait(ctx context.Context, request api.WorkerCreateRunWaitRequest) (api.WorkerCreateRunWaitResponse, error) {
+	var response api.WorkerCreateRunWaitResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/run-waits", request, &response); err != nil {
+		return api.WorkerCreateRunWaitResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) MarkCheckpointReady(ctx context.Context, request api.WorkerCheckpointReadyRequest) (api.WorkerCreateWaitpointResponse, error) {
-	var response api.WorkerCreateWaitpointResponse
+func (c *Client) CaptureRunWaitWorkspace(ctx context.Context, request api.WorkerRunWaitWorkspaceCaptureRequest) (api.WorkerRunWaitWorkspaceCaptureResponse, error) {
+	var response api.WorkerRunWaitWorkspaceCaptureResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/run-waits/workspace-capture", request, &response); err != nil {
+		return api.WorkerRunWaitWorkspaceCaptureResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) MarkCheckpointReady(ctx context.Context, request api.WorkerCheckpointReadyRequest) (api.WorkerCreateRunWaitResponse, error) {
+	var response api.WorkerCreateRunWaitResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/leases/checkpoints/ready", request, &response); err != nil {
-		return api.WorkerCreateWaitpointResponse{}, err
+		return api.WorkerCreateRunWaitResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) MarkCheckpointFailed(ctx context.Context, request api.WorkerCheckpointFailedRequest) (api.WorkerCreateWaitpointResponse, error) {
-	var response api.WorkerCreateWaitpointResponse
+func (c *Client) MarkCheckpointFailed(ctx context.Context, request api.WorkerCheckpointFailedRequest) (api.WorkerCreateRunWaitResponse, error) {
+	var response api.WorkerCreateRunWaitResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/leases/checkpoints/failed", request, &response); err != nil {
-		return api.WorkerCreateWaitpointResponse{}, err
+		return api.WorkerCreateRunWaitResponse{}, err
 	}
 	return response, nil
 }

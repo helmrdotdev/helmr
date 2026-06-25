@@ -1,9 +1,7 @@
 package control
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -202,121 +200,10 @@ func runResponse(run runSummary) api.RunResponse {
 	}
 }
 
-func (s *Server) runResponses(ctx context.Context, orgID pgtype.UUID, runs []runSummary) ([]api.RunResponse, error) {
+func runResponses(runs []runSummary) []api.RunResponse {
 	responses := make([]api.RunResponse, 0, len(runs))
-	waitingRunIDs := make([]pgtype.UUID, 0, len(runs))
-	responseIndexesByRunID := make(map[pgtype.UUID][]int, len(runs))
 	for _, run := range runs {
-		responseIndexesByRunID[run.ID] = append(responseIndexesByRunID[run.ID], len(responses))
 		responses = append(responses, runResponse(run))
-		if run.Status == db.RunStatusWaiting {
-			waitingRunIDs = append(waitingRunIDs, run.ID)
-		}
 	}
-	if len(waitingRunIDs) == 0 {
-		return responses, nil
-	}
-	waitpoints, err := s.db.ListPendingWaitpointsForRuns(ctx, db.ListPendingWaitpointsForRunsParams{
-		OrgID:  orgID,
-		RunIds: waitingRunIDs,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list pending waitpoints for runs: %w", err)
-	}
-	for _, waitpoint := range waitpoints {
-		indexes := responseIndexesByRunID[waitpoint.RunID]
-		if len(indexes) == 0 {
-			continue
-		}
-		pending := pendingWaitpointResponse(pendingWaitpointViewFromList(waitpoint))
-		for _, index := range indexes {
-			pendingCopy := pending
-			responses[index].PendingWaitpoint = &pendingCopy
-		}
-	}
-	return responses, nil
-}
-
-func (s *Server) runResponse(ctx context.Context, run runSummary) (api.RunResponse, error) {
-	response := runResponse(run)
-	if run.Status != db.RunStatusWaiting {
-		return response, nil
-	}
-	waitpoint, err := s.db.GetPendingWaitpointForRun(ctx, db.GetPendingWaitpointForRunParams{
-		OrgID: run.OrgID,
-		RunID: run.ID,
-	})
-	if isNoRows(err) {
-		return response, nil
-	}
-	if err != nil {
-		return api.RunResponse{}, err
-	}
-	pending := pendingWaitpointResponse(pendingWaitpointView(waitpoint))
-	response.PendingWaitpoint = &pending
-	return response, nil
-}
-
-func pendingWaitpointResponse(waitpoint waitpointView) api.PendingWaitpoint {
-	response := api.PendingWaitpoint{
-		ID:        pgvalue.MustUUIDValue(waitpoint.ID).String(),
-		Kind:      string(waitpoint.Kind),
-		Params:    waitpoint.Params,
-		Metadata:  waitpoint.Metadata,
-		Tags:      waitpoint.Tags,
-		Status:    waitpoint.WaitpointStatus,
-		CreatedAt: pgvalue.Time(waitpoint.CreatedAt),
-	}
-	if waitpoint.TimeoutSeconds.Valid {
-		response.Timeout = &waitpoint.TimeoutSeconds.Int32
-	}
-	return response
-}
-
-func pendingWaitpointView(waitpoint db.GetPendingWaitpointForRunRow) waitpointView {
-	return waitpointView{
-		ID:              waitpoint.ID,
-		RunSuspensionID: waitpoint.RunSuspensionID,
-		OrgID:           waitpoint.OrgID,
-		RunID:           waitpoint.RunID,
-		RunLeaseID:      waitpoint.RunLeaseID,
-		CheckpointID:    waitpoint.CheckpointID,
-		CorrelationID:   waitpoint.CorrelationID,
-		Kind:            waitpoint.Kind,
-		WaitpointStatus: string(waitpoint.WaitpointStatus),
-		Params:          waitpoint.Params,
-		Metadata:        waitpoint.Metadata,
-		Tags:            waitpoint.Tags,
-		TimeoutSeconds:  waitpoint.TimeoutSeconds,
-		Status:          waitpoint.Status,
-		ResolutionKind:  waitpoint.ResolutionKind,
-		Resolution:      waitpoint.Resolution,
-		CreatedAt:       waitpoint.CreatedAt,
-		WaitingAt:       waitpoint.WaitingAt,
-		ResolvedAt:      waitpoint.ResolvedAt,
-	}
-}
-
-func pendingWaitpointViewFromList(waitpoint db.ListPendingWaitpointsForRunsRow) waitpointView {
-	return waitpointView{
-		ID:              waitpoint.ID,
-		RunSuspensionID: waitpoint.RunSuspensionID,
-		OrgID:           waitpoint.OrgID,
-		RunID:           waitpoint.RunID,
-		RunLeaseID:      waitpoint.RunLeaseID,
-		CheckpointID:    waitpoint.CheckpointID,
-		CorrelationID:   waitpoint.CorrelationID,
-		Kind:            waitpoint.Kind,
-		WaitpointStatus: string(waitpoint.WaitpointStatus),
-		Params:          waitpoint.Params,
-		Metadata:        waitpoint.Metadata,
-		Tags:            waitpoint.Tags,
-		TimeoutSeconds:  waitpoint.TimeoutSeconds,
-		Status:          waitpoint.Status,
-		ResolutionKind:  waitpoint.ResolutionKind,
-		Resolution:      waitpoint.Resolution,
-		CreatedAt:       waitpoint.CreatedAt,
-		WaitingAt:       waitpoint.WaitingAt,
-		ResolvedAt:      waitpoint.ResolvedAt,
-	}
+	return responses
 }

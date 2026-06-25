@@ -50,28 +50,29 @@ await client.sessions.open(started.session).input("approval").send(
   { correlationId: "github:OWNER/REPO#42" },
 )
 
-for await (const record of await client.sessions.open(started.session).output("agent.report").stream()) {
+const reportRecords = await client.sessions.open(started.session).output("agent.report").list()
+for (const record of reportRecords.records) {
   console.log(record.sequence, record.data)
 }
 ```
 
-## Completing waitpoint tokens
+## Completing tokens
 
-Waitpoint tokens are the external completion primitive. Task code creates a token and waits for it:
+Tokens are the external completion primitive. Task code creates a token and waits for it:
 
 ```ts
-const token = await wait.createToken({ timeout: "1h" })
+const token = await tokens.create({ timeout: "1h" })
 await sendReviewEmail({
   tokenId: token.id,
 })
 
-const decision = await wait.forToken(token, { schema: approvalSchema }).unwrap()
+const decision = await token.wait({ schema: approvalSchema }).unwrap()
 ```
 
 A service that receives the external action completes the token:
 
 ```ts
-await wait.completeToken(token.id, {
+await client.tokens.complete(token.id, {
   approved: true,
   actor: "email:reviewer@example.com",
 })
@@ -80,7 +81,7 @@ await wait.completeToken(token.id, {
 The same completion route can be called without a Helmr API key when the caller has the token's `publicAccessToken`:
 
 ```ts
-await fetch(`${process.env.HELMR_API_URL}/api/waitpoints/tokens/${token.id}/complete`, {
+await fetch(`${process.env.HELMR_API_URL}/api/v1/tokens/${token.id}/complete`, {
   method: "POST",
   headers: {
     authorization: `Bearer ${token.publicAccessToken}`,

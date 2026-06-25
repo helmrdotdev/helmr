@@ -16,12 +16,12 @@ import type { TaskStartResult } from "./runtime/client"
 
 export { parsePayloadWithSchema } from "./schema/payload"
 
-const CHANNEL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/
+const STREAM_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/
 
-export function validateChannelName(value: string, label = "channel name"): string {
+export function validateStreamName(value: string, label = "stream name"): string {
   const normalized = value.trim()
-  if (!CHANNEL_NAME_PATTERN.test(normalized)) {
-    throw new Error(`${label} must match ${CHANNEL_NAME_PATTERN}`)
+  if (!STREAM_NAME_PATTERN.test(normalized)) {
+    throw new Error(`${label} must match ${STREAM_NAME_PATTERN}`)
   }
   return normalized
 }
@@ -73,25 +73,25 @@ export type WaitJson =
   | readonly WaitJson[]
   | { readonly [key: string]: WaitJson }
 
-export interface WaitpointOptions {
-  readonly params?: WaitJson
+export interface WaitOptions {
   readonly metadata?: { readonly [key: string]: WaitJson }
   readonly tags?: string | readonly string[]
-  readonly timeout?: WaitDurationInput
+  readonly timeout?: DurationInput
+  readonly idleTimeout?: DurationInput
 }
 
-export interface WaitpointSchemaOptions<TSchema extends PayloadSchema<any, any> = PayloadSchema<any, any>> extends WaitpointOptions {
+export interface WaitSchemaOptions<TSchema extends PayloadSchema<any, any> = PayloadSchema<any, any>> extends WaitOptions {
   readonly schema: TSchema
 }
 
-export interface WaitpointResult<TPayload = unknown> {
+export interface WaitResult<TPayload = unknown> {
   readonly ok: boolean
   readonly data?: TPayload
   readonly error?: unknown
   unwrap(): TPayload
 }
 
-export interface WaitpointHandle<TPayload = unknown> extends PromiseLike<WaitpointResult<TPayload>> {
+export interface WaitHandle<TPayload = unknown> extends PromiseLike<WaitResult<TPayload>> {
   unwrap(): Promise<TPayload>
 }
 
@@ -99,7 +99,7 @@ export interface WaitDelayHandle extends PromiseLike<void> {
   unwrap(): Promise<void>
 }
 
-export type WaitDurationInput =
+export type DurationInput =
   | string
   | number
   | {
@@ -110,104 +110,143 @@ export type WaitDurationInput =
       readonly duration?: string
     }
 
-export type WaitUntilInput =
+export type UntilInput =
   | string
   | Date
   | {
       readonly date?: string | Date
     }
 
-export interface ChannelOutputAppendOptions {
+export interface StreamAppendOptions {
   readonly contentType?: string
-  readonly objectRef?: WaitJson
 }
 
-export interface WaitpointToken {
+export interface Token {
   readonly id: string
-  readonly status?: "waiting" | "completed" | "timed_out" | "cancelled"
+  readonly status?: "pending" | "completed" | "expired" | "cancelled"
   readonly callbackUrl: string
   readonly publicAccessToken?: string
   readonly timeoutAt: string | null
   readonly tags?: readonly string[]
   readonly metadata?: Record<string, unknown>
+  wait<TSchema extends PayloadSchema<any, any>>(
+    opts: TokenWaitOptions<TSchema> & { readonly schema: TSchema },
+  ): WaitHandle<PayloadSchemaOutput<TSchema>>
+  wait(opts?: TokenWaitOptions): WaitHandle<unknown>
 }
 
-export interface WaitpointTokenRef {
+export interface TokenRef {
   readonly id: string
 }
 
-export interface ChannelOutputDefinition<TPayload = unknown, TInput = TPayload> {
+export interface OutputStreamDefinition<TPayload = unknown, TInput = TPayload> {
   readonly id: string
+  readonly direction: "output"
   readonly schema: PayloadSchema<TInput, TPayload>
 }
 
-export interface ChannelInputDefinition<TPayload = unknown, TInput = TPayload> {
+export interface InputStreamDefinition<TPayload = unknown, TInput = TPayload> {
   readonly id: string
+  readonly direction: "input"
   readonly schema: PayloadSchema<TInput, TPayload>
 }
 
-export interface ChannelInputWaitOptions extends Omit<WaitpointOptions, "params"> {
+export type StreamDefinition =
+  | InputStreamDefinition<any, any>
+  | OutputStreamDefinition<any, any>
+
+export interface InternalStreamDefinition {
+  readonly id: string
+  readonly direction: "input" | "output"
+  readonly schema: PayloadSchema<any, any>
+}
+
+export interface InputStreamWaitOptions extends WaitOptions {
+  readonly correlationId?: string
+  readonly afterSequence?: number
+}
+
+export interface InputStreamSendOptions {
+  readonly correlationId?: string
+  readonly idempotencyKey?: string
+}
+
+export interface InputStreamHandle<TPayload = unknown, TInput = TPayload> {
+  readonly id: string
+  wait(opts?: InputStreamWaitOptions): WaitHandle<TPayload>
+  once(opts?: InputStreamWaitOptions): WaitHandle<TPayload>
+  on(handler: (payload: TPayload) => void | Promise<void>, opts?: InputStreamWaitOptions): Promise<void>
+  peek(opts?: InputStreamPeekOptions): Promise<StreamRecord<TPayload> | null>
+}
+
+export interface InputStreamPeekOptions {
+  readonly correlationId?: string
+  readonly afterSequence?: number
+}
+
+export interface OutputStreamHandle<TPayload = unknown, TInput = TPayload> {
+  readonly id: string
+  append(payload: TInput, opts?: StreamAppendOptions): Promise<void>
+  pipe(source: AsyncIterable<TInput> | Iterable<TInput>, opts?: StreamAppendOptions): Promise<void>
+  writer(opts?: StreamAppendOptions): StreamWriter<TInput>
+  read(opts?: StreamReadOptions): Promise<StreamRecord<TPayload> | null>
+  list(opts?: StreamListOptions): Promise<StreamRecord<TPayload>[]>
+}
+
+export interface StreamWriter<TInput = unknown> {
+  write(payload: TInput): Promise<void>
+  close(): Promise<void>
+}
+
+export interface StreamRecord<TPayload = unknown> {
+  readonly id: string
+  readonly streamId: string
+  readonly sequence: number
+  readonly data: TPayload
+  readonly correlationId?: string
+  readonly contentType: string
+  readonly createdAt: string
+}
+
+export interface StreamReadOptions {
+  readonly cursor?: number
   readonly correlationId?: string
 }
 
-export interface ChannelInputHandle<TPayload = unknown> {
-  readonly id: string
-  wait(opts?: ChannelInputWaitOptions): WaitpointHandle<TPayload>
+export interface StreamListOptions extends StreamReadOptions {
+  readonly limit?: number
 }
 
-export interface ChannelOutputHandle<TInput = unknown> {
-  readonly id: string
-  append(payload: TInput, opts?: ChannelOutputAppendOptions): Promise<void>
-  pipe(source: AsyncIterable<TInput> | Iterable<TInput>, opts?: ChannelOutputAppendOptions): Promise<void>
+export interface TokenWaitOptions<TSchema extends PayloadSchema<any, any> = PayloadSchema<any, any>> extends WaitOptions {
+  readonly schema?: TSchema
 }
 
 export interface RunRuntime {
-  createWaitpointToken(opts: RuntimeWaitpointTokenCreateOptions): Promise<WaitpointToken>
-  waitpoint<TPayload>(opts: RuntimeWaitpointOptions): Promise<WaitpointResult<TPayload>>
-  waitAll(operands: readonly RuntimeWaitOperand[]): Promise<readonly unknown[]>
-  channelOutputAppend(channel: string, payload: unknown, opts?: ChannelOutputAppendOptions): Promise<void>
-  waitFor(input: WaitDurationInput): Promise<void>
-  waitUntil(input: WaitUntilInput): Promise<void>
+  createToken(opts: RuntimeTokenCreateOptions): Promise<Token>
+  waitToken<TPayload>(opts: RuntimeTokenWaitOptions): Promise<WaitResult<TPayload>>
+  inputStreamWait<TPayload>(stream: string, schema: PayloadSchema<any, TPayload> | undefined, opts?: InputStreamWaitOptions): Promise<WaitResult<TPayload>>
+  inputStreamOnce<TPayload>(stream: string, schema: PayloadSchema<any, TPayload> | undefined, opts?: InputStreamWaitOptions): Promise<WaitResult<TPayload>>
+  inputStreamPeek<TPayload>(stream: string, schema: PayloadSchema<any, TPayload> | undefined, opts?: InputStreamPeekOptions): Promise<StreamRecord<TPayload> | null>
+  outputStreamAppend(stream: string, payload: unknown, opts?: StreamAppendOptions): Promise<void>
+  outputStreamRead<TPayload>(stream: string, schema: PayloadSchema<any, TPayload> | undefined, opts?: StreamReadOptions): Promise<StreamRecord<TPayload> | null>
+  outputStreamList<TPayload>(stream: string, schema: PayloadSchema<any, TPayload> | undefined, opts?: StreamListOptions): Promise<StreamRecord<TPayload>[]>
+  waitFor(input: DurationInput): Promise<void>
+  waitUntil(input: UntilInput): Promise<void>
   metadataSet(key: string, value: unknown): Promise<void>
   metadataPatch(value: Record<string, unknown>): Promise<void>
   metadataIncrement(key: string, amount?: number): Promise<void>
   log(level: "info" | "warn" | "error", values: readonly unknown[]): void
 }
 
-export interface RuntimeWaitpointTokenCreateOptions {
-  readonly timeoutAt?: string
-  readonly timeoutInSeconds?: number
+export interface RuntimeTokenCreateOptions {
+  readonly timeout?: DurationInput
   readonly tags?: readonly string[]
   readonly metadata?: Record<string, unknown>
 }
 
-export type RuntimeWaitpointOptions = WaitpointOptions & {
-  readonly kind?: "token" | "channel"
+export type RuntimeTokenWaitOptions = WaitOptions & {
+  readonly tokenId: string
   readonly schema?: PayloadSchema<any, any>
-}
-
-export type RuntimeWaitOperand =
-  | { readonly type: "for"; readonly input: WaitDurationInput }
-  | { readonly type: "until"; readonly input: WaitUntilInput }
-  | { readonly type: "waitpoint"; readonly options: RuntimeWaitpointOptions }
-  | {
-      readonly type: "channel"
-      readonly channel: string
-      readonly schema?: PayloadSchema<any, any>
-      readonly options?: ChannelInputWaitOptions
-    }
-
-export const runtimeWaitOperand = Symbol.for("helmr.sdk.runtimeWaitOperand")
-
-export type RuntimeWaitOperandCarrier = {
-  readonly [runtimeWaitOperand]?: RuntimeWaitOperand
-}
-
-export function getRuntimeWaitOperand(value: unknown): RuntimeWaitOperand | undefined {
-  if (value === null || (typeof value !== "object" && typeof value !== "function")) {
-    return undefined
-  }
-  return (value as RuntimeWaitOperandCarrier)[runtimeWaitOperand]
 }
 
 const runRuntimeSlot = Symbol.for("helmr.sdk.runRuntime")
@@ -237,7 +276,7 @@ export function getRunRuntime(): RunRuntime {
   return runtime
 }
 
-export class WaitpointResultImpl<TPayload> implements WaitpointResult<TPayload> {
+export class WaitResultImpl<TPayload> implements WaitResult<TPayload> {
   readonly ok: boolean
   readonly data?: TPayload
   readonly error?: unknown
@@ -259,12 +298,13 @@ export class WaitpointResultImpl<TPayload> implements WaitpointResult<TPayload> 
     if (this.error instanceof Error) {
       throw this.error
     }
-    throw new Error(String(this.error ?? "waitpoint failed"))
+    throw new Error(String(this.error ?? "wait failed"))
   }
 }
 
 const concurrentWaitErrorBrand = Symbol.for("helmr.sdk.ConcurrentWaitError")
 const waitTimeoutErrorBrand = Symbol.for("helmr.sdk.WaitTimeoutError")
+const waitCancelledErrorBrand = Symbol.for("helmr.sdk.WaitCancelledError")
 
 export class ConcurrentWaitError extends Error {
   constructor(message: string) {
@@ -299,6 +339,23 @@ export class WaitTimeoutError extends Error {
       typeof value === "object" &&
       value !== null &&
       waitTimeoutErrorBrand in value
+    )
+  }
+}
+
+export class WaitCancelledError extends Error {
+  constructor(message = "wait cancelled") {
+    super(message)
+    this.name = "WaitCancelledError"
+    Object.defineProperty(this, waitCancelledErrorBrand, { value: true })
+  }
+
+  static override [Symbol.hasInstance](value: unknown): boolean {
+    return (
+      this === WaitCancelledError &&
+      typeof value === "object" &&
+      value !== null &&
+      waitCancelledErrorBrand in value
     )
   }
 }
@@ -407,14 +464,6 @@ export interface TaskContext {
 
 export interface TaskSessionContext {
   readonly id: string
-  input<TSchema extends PayloadSchema<any, any>>(
-    definition: ChannelInputDefinition<PayloadSchemaOutput<TSchema>, PayloadSchemaInput<TSchema>> & { readonly schema: TSchema },
-  ): ChannelInputHandle<PayloadSchemaOutput<TSchema>>
-  input(channel: string): ChannelInputHandle<unknown>
-  output<TSchema extends PayloadSchema<any, any>>(
-    definition: ChannelOutputDefinition<PayloadSchemaOutput<TSchema>, PayloadSchemaInput<TSchema>> & { readonly schema: TSchema },
-  ): ChannelOutputHandle<PayloadSchemaInput<TSchema>>
-  output(channel: string): ChannelOutputHandle<unknown>
 }
 
 export type MaybePromise<T> = T | Promise<T>
@@ -435,6 +484,7 @@ export interface TaskConfigBase<
   readonly ttl?: string
   readonly retry?: RetryPolicy
   readonly secrets?: TSecrets
+  readonly streams?: readonly StreamDefinition[]
 }
 
 export interface TaskQueueConfig {
@@ -674,6 +724,7 @@ function markTaskInternal<
   validateOptionalTTL(config.ttl, `task ${JSON.stringify(config.id)} ttl`)
   validateRetryPolicy(config.retry, `task ${JSON.stringify(config.id)} retry`)
   assertPayloadSchema(config.payload, `task ${JSON.stringify(config.id)} payload`)
+  readStreamDefinitions(config.streams, `task ${JSON.stringify(config.id)} streams`)
   if (schedule !== undefined) {
     Object.defineProperty(config, "schedule", {
       value: Object.freeze({ ...schedule }),
@@ -683,6 +734,38 @@ function markTaskInternal<
   Object.defineProperty(config, taskBrand, { value: true })
   Object.defineProperty(config, taskOriginBrand, { value: captureTaskOrigin() })
   return config as unknown as MarkedTask<TPayload, TOutput, TSecrets, TPayloadSchema>
+}
+
+export function readStreamDefinitions(value: unknown, label = "streams"): readonly InternalStreamDefinition[] {
+  if (value === undefined) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array`)
+  }
+  const seen = new Set<string>()
+  return value.map((item, index) => {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`${label}.${index} must be a stream definition`)
+    }
+    const record = item as Record<string, unknown>
+    const id = validateStreamName(record["id"] as string, `${label}.${index}.id`)
+    const direction = record["direction"]
+    if (direction !== "input" && direction !== "output") {
+      throw new Error(`${label}.${index}.direction must be "input" or "output"`)
+    }
+    const schema = record["schema"]
+    if (schema === undefined) {
+      throw new Error(`${label}.${index}.schema is required`)
+    }
+    assertPayloadSchema(schema, `${label}.${index}.schema`)
+    const key = `${direction}:${id}`
+    if (seen.has(key)) {
+      throw new Error(`${label} contains duplicate ${direction} stream ${JSON.stringify(id)}`)
+    }
+    seen.add(key)
+    return { id, direction, schema }
+  })
 }
 
 export function validateRetryPolicy(value: unknown, label = "retry"): void {

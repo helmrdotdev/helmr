@@ -10,20 +10,20 @@ import {
   cancelTaskSession,
   closeTaskSession,
   getTaskSession,
-  listTaskSessionChannelRecords,
-  listTaskSessionChannels,
   listTaskSessionRuns,
-  type ChannelRecord,
+  listTaskSessionStreamRecords,
+  listTaskSessionStreams,
+  type StreamRecord,
   type TaskSession,
-  type TaskSessionChannel,
   type TaskSessionRun,
+  type TaskSessionStream,
 } from "../lib/task-sessions";
 import { useScope } from "../lib/scope";
 import { cx, ui } from "../ui/styles";
 
-type TimelineChannel = {
-  channel: TaskSessionChannel;
-  records: ChannelRecord[];
+type TimelineStream = {
+  stream: TaskSessionStream;
+  records: StreamRecord[];
 };
 
 function sessionErrorMessage(error: unknown): string {
@@ -116,19 +116,19 @@ function SessionRuns(props: { sessionID: string; runs: TaskSessionRun[]; project
   );
 }
 
-function ChannelTimeline(props: { channels: TimelineChannel[] }) {
-  const rows = createMemo(() => props.channels
-    .flatMap((item) => item.records.map((record) => ({ channel: item.channel, record })))
+function StreamTimeline(props: { streams: TimelineStream[] }) {
+  const rows = createMemo(() => props.streams
+    .flatMap((item) => item.records.map((record) => ({ stream: item.stream, record })))
     .sort((left, right) => left.record.created_at.localeCompare(right.record.created_at)));
   return (
     <section class={"border border-console-border bg-console-surface p-4"}>
       <div class={"mb-3 flex items-center justify-between gap-3"}>
-        <h2 class={ui.h2}>Channel timeline</h2>
+        <h2 class={ui.h2}>Stream timeline</h2>
         <span class={ui.muted}>{rows().length} records</span>
       </div>
       <Show
         when={rows().length > 0}
-        fallback={<p class={ui.emptyState}>No channel records yet.</p>}
+        fallback={<p class={ui.emptyState}>No stream records yet.</p>}
       >
         <ol class={"m-0 grid max-h-130 list-none gap-0 overflow-auto border border-console-border bg-console-bg-panel p-0"}>
           <For each={rows()}>
@@ -139,7 +139,7 @@ function ChannelTimeline(props: { channels: TimelineChannel[] }) {
                 </time>
                 <div class={"min-w-0"}>
                   <div class={"font-mono text-[11px] font-medium text-console-text"}>
-                    {item.channel.direction}:{item.channel.name}
+                    {item.stream.direction}:{item.stream.name}
                   </div>
                   <div class={"font-mono text-[10.5px] text-console-subtle"}>
                     seq {item.record.sequence}
@@ -228,12 +228,12 @@ export function SessionDetail() {
     retry: false,
   }));
   const timeline = createQuery(() => ({
-    queryKey: ["task-session-channels", sessionID(), projectID(), environmentID()],
-    queryFn: async (): Promise<TimelineChannel[]> => {
-      const channels = await listTaskSessionChannels(sessionID(), scopeIDs());
-      return Promise.all(channels.channels.map(async (channel) => ({
-        channel,
-        records: (await listTaskSessionChannelRecords(sessionID(), scopeIDs(), channel, { limit: 100 })).records,
+    queryKey: ["task-session-streams", sessionID(), projectID(), environmentID()],
+    queryFn: async (): Promise<TimelineStream[]> => {
+      const streams = await listTaskSessionStreams(sessionID(), scopeIDs());
+      return Promise.all(streams.streams.map(async (stream) => ({
+        stream,
+        records: (await listTaskSessionStreamRecords(sessionID(), scopeIDs(), stream, { limit: 100 })).records,
       })));
     },
     enabled: hasSessionID() && !!projectID() && !!environmentID(),
@@ -331,8 +331,8 @@ export function SessionDetail() {
                   <Show when={timeline.isError}>
                     <p class={ui.error} role="alert">{sessionErrorMessage(timeline.error)}</p>
                   </Show>
-                  <Show when={!timeline.isPending} fallback={<p class={ui.muted}>Loading channel records...</p>}>
-                    <ChannelTimeline channels={timeline.data ?? []} />
+                  <Show when={!timeline.isPending} fallback={<p class={ui.muted}>Loading stream records...</p>}>
+                    <StreamTimeline streams={timeline.data ?? []} />
                   </Show>
                 </div>
                 <DetailsAside session={current()} currentRunHref={currentRunHref()} />

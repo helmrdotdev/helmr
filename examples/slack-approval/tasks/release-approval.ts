@@ -1,8 +1,9 @@
-import { cache, channel, image, sandbox, source, task, type PayloadSchema } from "@helmr/sdk"
+import { cache, image, logger, sandbox, source, task, tokens, type PayloadSchema } from "@helmr/sdk"
 
 interface ReleaseApprovalPayload {
   readonly release: string
   readonly summary: string
+  readonly tokenId: string
   readonly risk?: string
   readonly stagingUrl?: string
   readonly productionUrl?: string
@@ -11,6 +12,7 @@ interface ReleaseApprovalPayload {
 interface ApprovalDecision {
   readonly approved: boolean
   readonly actor?: string
+  readonly channelId?: string
 }
 
 type SchemaIssue = { readonly message: string; readonly path?: readonly string[] }
@@ -25,6 +27,7 @@ const releasePayload: PayloadSchema<ReleaseApprovalPayload> = {
       const issues = [
         stringIssue(record.release, "release"),
         stringIssue(record.summary, "summary"),
+        stringIssue(record.tokenId, "tokenId"),
         optionalStringIssue(record.risk, "risk"),
         optionalStringIssue(record.stagingUrl, "stagingUrl"),
         optionalStringIssue(record.productionUrl, "productionUrl"),
@@ -35,6 +38,7 @@ const releasePayload: PayloadSchema<ReleaseApprovalPayload> = {
         value: {
           release: record.release,
           summary: record.summary,
+          tokenId: record.tokenId,
           ...(record.risk === undefined ? {} : { risk: record.risk }),
           ...(record.stagingUrl === undefined ? {} : { stagingUrl: record.stagingUrl }),
           ...(record.productionUrl === undefined ? {} : { productionUrl: record.productionUrl }),
@@ -54,6 +58,7 @@ const approvalDecision: PayloadSchema<ApprovalDecision> = {
       const issues = [
         booleanIssue(record.approved, "approved"),
         optionalStringIssue(record.actor, "actor"),
+        optionalStringIssue(record.channelId, "channelId"),
       ].filter((issue): issue is SchemaIssue => issue !== null)
 
       if (issues.length > 0) return { issues }
@@ -61,6 +66,7 @@ const approvalDecision: PayloadSchema<ApprovalDecision> = {
         value: {
           approved: record.approved,
           ...(record.actor === undefined ? {} : { actor: record.actor }),
+          ...(record.channelId === undefined ? {} : { channelId: record.channelId }),
         } as ApprovalDecision,
       }
     },
@@ -85,20 +91,17 @@ const sbx = sandbox("slack-approval")
 export const releaseApproval = task({
   id: "slack-approval",
   sandbox: sbx,
-  maxDuration: 86400,
+  maxDuration: 15 * 60,
   payload: releasePayload,
-  run: async (payload, ctx) => {
-    const approval = channel.input("approval", { schema: approvalDecision })
-    const decision = await ctx.session.input(approval).wait({
-      timeout: 86400,
-      tags: ["approval", "channel:slack"],
+  run: async (payload) => {
+    logger.info("waiting for Slack approval token", { tokenId: payload.tokenId, release: payload.release })
+    const decision = await tokens.wait(payload.tokenId, {
+      schema: approvalDecision,
+      timeout: "7d",
+      tags: ["approval", "bridge:slack-approval", "medium:slack"],
       metadata: {
-        sessionId: ctx.session.id,
         release: payload.release,
         summary: payload.summary,
-        risk: payload.risk ?? "not specified",
-        stagingUrl: payload.stagingUrl ?? null,
-        productionUrl: payload.productionUrl ?? null,
       },
     }).unwrap()
 
@@ -106,7 +109,7 @@ export const releaseApproval = task({
       release: payload.release,
       approved: decision.approved,
       actor: decision.actor ?? null,
-      sessionId: ctx.session.id,
+      channelId: decision.channelId ?? null,
       completedAt: new Date().toISOString(),
     }
   },

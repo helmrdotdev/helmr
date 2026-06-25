@@ -78,4 +78,4 @@ helmr run logs RUN_ID
 helmr run events RUN_ID
 ```
 
-If a run is waiting on a waitpoint, inspect it with `helmr waitpoint list`. For a token-backed waitpoint, complete the token from an authenticated app or bridge with `helmr waitpoint token complete TOKEN_ID --data JSON`, or call `/api/waitpoints/tokens/{tokenId}/complete` with the token's `publicAccessToken` bearer.
+If a task is waiting on a token, complete it from an authenticated app or bridge with `client.tokens.complete(token, data)`, or call `/api/v1/tokens/{tokenId}/complete` with the token's `publicAccessToken` bearer. Server-to-server providers can use the `callbackUrl` returned at token creation time.

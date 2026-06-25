@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workspace"
 
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/runprotocol"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"google.golang.org/protobuf/proto"
 )
@@ -548,7 +549,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 		defer controlConn.Close()
 		controlEvents := make(chan adapterControlEvent, 8)
 		go readAdapterControlEvents(controlConn, controlEvents)
-		var pendingResumeAckWaitpointID string
+		var pendingResumeAckRunWaitID string
 		for {
 			controlEvent, ok := <-controlEvents
 			if !ok {
@@ -561,50 +562,66 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 				return
 			}
 			event := controlEvent.event
-			if wait := event.GetWaitpointRequested(); wait != nil {
-				if pendingResumeAckWaitpointID != "" {
-					recordControlErr(fmt.Errorf("waitpoint requested before resume consumption was acknowledged for waitpoint_id=%s", pendingResumeAckWaitpointID))
+			if wait := event.GetRunWaitRequested(); wait != nil {
+				if pendingResumeAckRunWaitID != "" {
+					recordControlErr(fmt.Errorf("run wait requested before resume consumption was acknowledged for run_wait_id=%s", pendingResumeAckRunWaitID))
 					return
 				}
 				if err := runStream.writeEvent(event); err != nil {
 					recordControlErr(fmt.Errorf("write wait request event: %w", err))
 					return
 				}
-				waitpointID, err := checkpointAndAttachAdapterRun(ctx, runStream, registry, stdin, controlEvents, wait)
+				runWaitID, err := checkpointAndAttachAdapterRun(ctx, runStream, registry, stdin, request.RunId, workspaceRoot, workspaceSecretPaths)
 				if err != nil {
 					recordControlErr(err)
 					return
 				}
-				pendingResumeAckWaitpointID = waitpointID
+				pendingResumeAckRunWaitID = runWaitID
 				continue
 			}
 			if consumed := event.GetResumeConsumed(); consumed != nil {
-				if pendingResumeAckWaitpointID == "" {
+				if pendingResumeAckRunWaitID == "" {
 					continue
 				}
-				if consumed.WaitpointId != pendingResumeAckWaitpointID {
-					recordControlErr(fmt.Errorf("resume consumed waitpoint %q did not match pending waitpoint %q", consumed.WaitpointId, pendingResumeAckWaitpointID))
+				if consumed.RunWaitId != pendingResumeAckRunWaitID {
+					recordControlErr(fmt.Errorf("resume consumed run wait %q did not match pending run wait %q", consumed.RunWaitId, pendingResumeAckRunWaitID))
 					return
 				}
-				if err := runStream.writeResumeAck(consumed.WaitpointId); err != nil {
+				if err := runStream.writeResumeAck(consumed.RunWaitId); err != nil {
 					recordControlErr(fmt.Errorf("write resume ack: %w", err))
 					return
 				}
-				pendingResumeAckWaitpointID = ""
+				pendingResumeAckRunWaitID = ""
 				continue
 			}
-			if event.GetWaitpointTokenCreateRequested() != nil {
+			if event.GetTokenCreateRequested() != nil {
 				if err := runStream.writeEvent(event); err != nil {
-					recordControlErr(fmt.Errorf("write waitpoint token create event: %w", err))
+					recordControlErr(fmt.Errorf("write token create event: %w", err))
 					return
 				}
-				var result runv0.WaitpointTokenCreateResult
+				var result runv0.TokenCreateResult
 				if err := runStream.readProto(&result); err != nil {
-					recordControlErr(fmt.Errorf("read waitpoint token create result: %w", err))
+					recordControlErr(fmt.Errorf("read token create result: %w", err))
 					return
 				}
 				if err := transport.WriteProtoFrame(stdin, &result); err != nil {
-					recordControlErr(fmt.Errorf("write waitpoint token create result: %w", err))
+					recordControlErr(fmt.Errorf("write token create result: %w", err))
+					return
+				}
+				continue
+			}
+			if event.GetActiveStreamReadRequested() != nil {
+				if err := runStream.writeEvent(event); err != nil {
+					recordControlErr(fmt.Errorf("write active stream read event: %w", err))
+					return
+				}
+				var result runv0.ActiveStreamReadResult
+				if err := runStream.readProto(&result); err != nil {
+					recordControlErr(fmt.Errorf("read active stream read result: %w", err))
+					return
+				}
+				if err := transport.WriteProtoFrame(stdin, &result); err != nil {
+					recordControlErr(fmt.Errorf("write active stream read result: %w", err))
 					return
 				}
 				continue
@@ -705,28 +722,49 @@ func readAdapterControlEvents(conn io.Reader, events chan<- adapterControlEvent)
 	}
 }
 
-func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream, registry *waitingRunRegistry, stdin io.Writer, controlEvents <-chan adapterControlEvent, initialWait *runv0.WaitpointRequested) (string, error) {
-	var suspend runv0.CheckpointPauseRequest
-	if err := stream.readProto(&suspend); err != nil {
+func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream, registry *waitingRunRegistry, stdin io.Writer, runID string, workspaceRoot string, workspaceSecretPaths []string) (string, error) {
+	header, bodyLen, err := stream.readControlFrame()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "helmr checkpoint: read suspend failed: %v\n", err)
 		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("read checkpoint suspend request: %v", err))
 		return "", fmt.Errorf("read checkpoint suspend request: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "helmr checkpoint: suspend received waitpoint_id=%s checkpoint_id=%s\n", suspend.WaitpointId, suspend.CheckpointId)
-	registration := registry.register(suspend.WaitpointId, suspend.CheckpointId)
+	if header.Type == transport.StreamTypeResumeDecision {
+		decision, err := runprotocol.ReadResumeDecision(header, stream.currentConn(), bodyLen)
+		if err != nil {
+			return "", err
+		}
+		if err := transport.WriteProtoFrame(stdin, decision); err != nil {
+			return "", fmt.Errorf("write immediate resume decision: %w", err)
+		}
+		if decision.GetRequireConsumedAck() {
+			return decision.GetRunWaitId(), nil
+		}
+		return "", nil
+	}
+	suspend, err := runprotocol.ReadCheckpointPauseRequest(header, stream.currentConn(), bodyLen)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "helmr checkpoint: read suspend failed: %v\n", err)
+		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("read checkpoint suspend request: %v", err))
+		return "", fmt.Errorf("read checkpoint suspend request: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "helmr checkpoint: suspend received run_wait_id=%s checkpoint_id=%s\n", suspend.RunWaitId, suspend.CheckpointId)
+	registration := registry.register(suspend.RunWaitId, suspend.CheckpointId)
 	defer registration.unregister()
 	syscall.Sync()
-	if err := forwardCheckpointControlEvents(ctx, controlEvents, stream, initialWait); err != nil {
-		fmt.Fprintf(os.Stderr, "helmr checkpoint: forward control events failed: %v\n", err)
-		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("forward checkpoint control events: %v", err))
-		return "", fmt.Errorf("forward checkpoint control events: %w", err)
+	if suspend.GetCaptureWorkspace() {
+		if err := stream.writeWorkspaceArtifactBeforePauseReady(runID, workspaceRoot, workspaceSecretPaths); err != nil {
+			fmt.Fprintf(os.Stderr, "helmr checkpoint: capture workspace failed: %v\n", err)
+			_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("capture checkpoint workspace: %v", err))
+			return "", fmt.Errorf("capture checkpoint workspace: %w", err)
+		}
 	}
-	if err := stream.writeCheckpointPauseReady(suspend.WaitpointId, suspend.CheckpointId); err != nil {
+	if err := stream.writeCheckpointPauseReady(suspend.RunWaitId, suspend.CheckpointId); err != nil {
 		fmt.Fprintf(os.Stderr, "helmr checkpoint: write pause ready failed: %v\n", err)
 		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("write checkpoint pause ready: %v", err))
 		return "", fmt.Errorf("write checkpoint pause ready: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "helmr checkpoint: waiting for resume attach waitpoint_id=%s checkpoint_id=%s\n", suspend.WaitpointId, suspend.CheckpointId)
+	fmt.Fprintf(os.Stderr, "helmr checkpoint: waiting for resume attach run_wait_id=%s checkpoint_id=%s\n", suspend.RunWaitId, suspend.CheckpointId)
 	attachCtx, cancelAttach := context.WithTimeout(ctx, resumeAttachTimeout)
 	attached, err := registration.wait(attachCtx)
 	cancelAttach()
@@ -735,7 +773,7 @@ func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream
 		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("wait for resume attach: %v", err))
 		return "", fmt.Errorf("wait for resume attach: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "helmr checkpoint: resume attached waitpoint_id=%s checkpoint_id=%s\n", suspend.WaitpointId, suspend.CheckpointId)
+	fmt.Fprintf(os.Stderr, "helmr checkpoint: resume attached run_wait_id=%s checkpoint_id=%s\n", suspend.RunWaitId, suspend.CheckpointId)
 	decisionCtx, cancelDecision := context.WithTimeout(ctx, resumeAttachTimeout)
 	decision, err := readResumeDecision(decisionCtx, attached)
 	cancelDecision()
@@ -749,67 +787,11 @@ func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream
 		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("resume adapter stream: %v", err))
 		return "", fmt.Errorf("resume adapter stream: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "helmr checkpoint: resumed waitpoint_id=%s checkpoint_id=%s\n", suspend.WaitpointId, suspend.CheckpointId)
+	fmt.Fprintf(os.Stderr, "helmr checkpoint: resumed run_wait_id=%s checkpoint_id=%s\n", suspend.RunWaitId, suspend.CheckpointId)
 	if decision.GetRequireConsumedAck() {
-		return decision.WaitpointId, nil
+		return decision.RunWaitId, nil
 	}
 	return "", nil
-}
-
-func forwardCheckpointControlEvents(ctx context.Context, controlEvents <-chan adapterControlEvent, stream *adapterRunStream, initialWait *runv0.WaitpointRequested) error {
-	aggregateCount := initialWait.GetAggregateCount()
-	if aggregateCount <= 1 {
-		return nil
-	}
-	correlationID := strings.TrimSpace(initialWait.GetCorrelationId())
-	seenOrdinals := map[uint32]struct{}{
-		initialWait.GetOrdinal(): {},
-	}
-	if initialWait.GetOrdinal() >= aggregateCount {
-		return fmt.Errorf("aggregate wait ordinal %d is outside aggregate_count %d", initialWait.GetOrdinal(), aggregateCount)
-	}
-	for uint32(len(seenOrdinals)) < aggregateCount {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case controlEvent, ok := <-controlEvents:
-			if !ok {
-				return fmt.Errorf("adapter control stream closed before aggregate wait completed: got %d of %d waitpoints", len(seenOrdinals), aggregateCount)
-			}
-			if controlEvent.err != nil {
-				if errors.Is(controlEvent.err, io.EOF) {
-					return fmt.Errorf("adapter control stream ended before aggregate wait completed: got %d of %d waitpoints", len(seenOrdinals), aggregateCount)
-				}
-				return fmt.Errorf("read adapter control event: %w", controlEvent.err)
-			}
-			if controlEvent.event.GetResumeConsumed() != nil {
-				return errors.New("resume consumption was acknowledged before checkpoint resume decision")
-			}
-			if controlEvent.event.GetTaskResult() != nil {
-				return errors.New("task_result received before checkpoint was ready")
-			}
-			if wait := controlEvent.event.GetWaitpointRequested(); wait != nil {
-				if strings.TrimSpace(wait.GetCorrelationId()) != correlationID {
-					return fmt.Errorf("aggregate wait correlation_id %q does not match initial correlation_id %q", wait.GetCorrelationId(), correlationID)
-				}
-				if wait.GetAggregateCount() != aggregateCount {
-					return fmt.Errorf("aggregate wait count %d does not match initial aggregate_count %d", wait.GetAggregateCount(), aggregateCount)
-				}
-				ordinal := wait.GetOrdinal()
-				if ordinal >= aggregateCount {
-					return fmt.Errorf("aggregate wait ordinal %d is outside aggregate_count %d", ordinal, aggregateCount)
-				}
-				if _, ok := seenOrdinals[ordinal]; ok {
-					return fmt.Errorf("aggregate wait ordinal %d was emitted more than once", ordinal)
-				}
-				seenOrdinals[ordinal] = struct{}{}
-			}
-			if err := stream.writeEvent(controlEvent.event); err != nil {
-				return fmt.Errorf("write checkpoint control event: %w", err)
-			}
-		}
-	}
-	return nil
 }
 
 func writeRunSetupFailure(conn io.ReadWriter, err error) error {
@@ -825,13 +807,13 @@ func writeRunSetupFailure(conn io.ReadWriter, err error) error {
 }
 
 type adapterRunStream struct {
-	mu                 sync.Mutex
-	writeMu            sync.Mutex
-	resumeAckReady     *sync.Cond
-	conn               io.ReadWriter
-	resumeAckPending   bool
-	resumeAckWaitpoint string
-	resumeAckDeadline  time.Time
+	mu                sync.Mutex
+	writeMu           sync.Mutex
+	resumeAckReady    *sync.Cond
+	conn              io.ReadWriter
+	resumeAckPending  bool
+	resumeAckRunWait  string
+	resumeAckDeadline time.Time
 }
 
 func newAdapterRunStream(conn io.ReadWriter) *adapterRunStream {
@@ -859,13 +841,13 @@ func (s *adapterRunStream) connAfterResumeAckGate() (io.ReadWriter, error) {
 	return s.conn, nil
 }
 
-func (s *adapterRunStream) writeCheckpointPauseReady(waitpointID string, checkpointID string) error {
+func (s *adapterRunStream) writeCheckpointPauseReady(runWaitID string, checkpointID string) error {
 	conn := s.currentConn()
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return transport.WriteStreamFrameHeader(conn, transport.StreamHeader{
 		Type:         transport.StreamTypeCheckpointPauseReady,
-		WaitpointID:  waitpointID,
+		RunWaitID:    runWaitID,
 		CheckpointID: checkpointID,
 	}, 0)
 }
@@ -881,6 +863,18 @@ func (s *adapterRunStream) writeCheckpointDiagnostic(message string) error {
 }
 
 func (s *adapterRunStream) writeWorkspaceArtifact(runID string, workspaceRoot string, workspaceSecretPaths []string) error {
+	conn, err := s.connAfterResumeAckGate()
+	if err != nil {
+		return err
+	}
+	return s.writeWorkspaceArtifactToConn(conn, runID, workspaceRoot, workspaceSecretPaths)
+}
+
+func (s *adapterRunStream) writeWorkspaceArtifactBeforePauseReady(runID string, workspaceRoot string, workspaceSecretPaths []string) error {
+	return s.writeWorkspaceArtifactToConn(s.currentConn(), runID, workspaceRoot, workspaceSecretPaths)
+}
+
+func (s *adapterRunStream) writeWorkspaceArtifactToConn(conn io.Writer, runID string, workspaceRoot string, workspaceSecretPaths []string) error {
 	artifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRootWithExcludes(
 		workspaceRoot,
 		os.TempDir(),
@@ -892,10 +886,6 @@ func (s *adapterRunStream) writeWorkspaceArtifact(runID string, workspaceRoot st
 	}
 	defer cleanup()
 	entryCount := artifact.EntryCount
-	conn, err := s.connAfterResumeAckGate()
-	if err != nil {
-		return err
-	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return transport.WriteFileFrameWithMetadata(conn, transport.StreamHeader{
@@ -926,24 +916,31 @@ func (s *adapterRunStream) readProto(message proto.Message) error {
 	return transport.ReadProtoFrame(conn, message)
 }
 
+func (s *adapterRunStream) readControlFrame() (transport.StreamHeader, uint64, error) {
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	return transport.ReadStreamFrameHeader(conn)
+}
+
 func (s *adapterRunStream) attachAndResume(conn io.ReadWriter, stdin io.Writer, decision *runv0.ResumeDecision) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.conn = conn
 	s.resumeAckPending = decision.GetRequireConsumedAck()
-	s.resumeAckWaitpoint = ""
+	s.resumeAckRunWait = ""
 	s.resumeAckDeadline = time.Time{}
 	if s.resumeAckPending {
-		s.resumeAckWaitpoint = decision.GetWaitpointId()
+		s.resumeAckRunWait = decision.GetRunWaitId()
 		s.resumeAckDeadline = time.Now().Add(resumeAttachTimeout)
 	}
 	return transport.WriteProtoFrame(stdin, decision)
 }
 
-func (s *adapterRunStream) writeResumeAck(waitpointID string) error {
+func (s *adapterRunStream) writeResumeAck(runWaitID string) error {
 	conn := s.currentConn()
 	s.writeMu.Lock()
-	err := transport.WriteProtoFrame(conn, &runv0.ResumeAck{WaitpointId: waitpointID})
+	err := transport.WriteProtoFrame(conn, &runv0.ResumeAck{RunWaitId: runWaitID})
 	s.writeMu.Unlock()
 	if err != nil {
 		return err
@@ -951,7 +948,7 @@ func (s *adapterRunStream) writeResumeAck(waitpointID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.resumeAckPending = false
-	s.resumeAckWaitpoint = ""
+	s.resumeAckRunWait = ""
 	s.resumeAckDeadline = time.Time{}
 	s.resumeAckReady.Broadcast()
 	return nil
@@ -962,7 +959,7 @@ func (s *adapterRunStream) releaseResumeAckGate() {
 	defer s.mu.Unlock()
 	if s.resumeAckPending {
 		s.resumeAckPending = false
-		s.resumeAckWaitpoint = ""
+		s.resumeAckRunWait = ""
 		s.resumeAckDeadline = time.Time{}
 		s.resumeAckReady.Broadcast()
 	}
@@ -976,15 +973,15 @@ func (s *adapterRunStream) waitResumeAckGateLocked() error {
 		}
 		remaining := time.Until(s.resumeAckDeadline)
 		if remaining <= 0 {
-			waitpointID := s.resumeAckWaitpoint
+			runWaitID := s.resumeAckRunWait
 			s.resumeAckPending = false
-			s.resumeAckWaitpoint = ""
+			s.resumeAckRunWait = ""
 			s.resumeAckDeadline = time.Time{}
 			s.resumeAckReady.Broadcast()
-			if strings.TrimSpace(waitpointID) == "" {
+			if strings.TrimSpace(runWaitID) == "" {
 				return errors.New("resume consumption was not acknowledged before timeout")
 			}
-			return fmt.Errorf("resume consumption for waitpoint %q was not acknowledged before timeout", waitpointID)
+			return fmt.Errorf("resume consumption for run wait %q was not acknowledged before timeout", runWaitID)
 		}
 		timer := time.AfterFunc(remaining, func() {
 			s.mu.Lock()

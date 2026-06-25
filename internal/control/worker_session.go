@@ -385,10 +385,6 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid worker release request JSON: %w", err)))
 		return
 	}
-	if request.Result.Usage.ActiveDurationMs < 0 {
-		writeError(w, badRequest(errors.New("result.usage.active_duration_ms must be non-negative")))
-		return
-	}
 	leaseIDs, err := parseWorkerRunLease(request.Lease)
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -451,7 +447,6 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		ErrorMessage:                errorMessage,
 		TerminalEventKind:           terminalEventKind,
 		TerminalEventPayload:        terminalEventPayload,
-		ReleaseActiveDurationMs:     request.Result.Usage.ActiveDurationMs,
 	})
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("worker run lease is stale")))
@@ -731,19 +726,18 @@ func (s *Server) failLeasedRunPayload(ctx context.Context, row db.LeaseRunLeaseR
 		return err
 	}
 	_, err = s.db.ReleaseRunLease(ctx, db.ReleaseRunLeaseParams{
-		OrgID:                   row.OrgID,
-		RunID:                   row.ID,
-		RunLeaseID:              row.RunLeaseID,
-		WorkerInstanceID:        row.RunLeaseWorkerInstanceID,
-		DispatchMessageID:       row.RunLeaseDispatchMessageID,
-		DispatchLeaseID:         row.RunLeaseDispatchLeaseID,
-		RunStatus:               db.RunStatusFailed,
-		AttemptStatus:           db.RunAttemptStatusFailed,
-		ExitCode:                pgtype.Int4{},
-		ErrorMessage:            pgtype.Text{String: failure.message, Valid: true},
-		TerminalEventKind:       kind,
-		TerminalEventPayload:    payload,
-		ReleaseActiveDurationMs: 0,
+		OrgID:                row.OrgID,
+		RunID:                row.ID,
+		RunLeaseID:           row.RunLeaseID,
+		WorkerInstanceID:     row.RunLeaseWorkerInstanceID,
+		DispatchMessageID:    row.RunLeaseDispatchMessageID,
+		DispatchLeaseID:      row.RunLeaseDispatchLeaseID,
+		RunStatus:            db.RunStatusFailed,
+		AttemptStatus:        db.RunAttemptStatusFailed,
+		ExitCode:             pgtype.Int4{},
+		ErrorMessage:         pgtype.Text{String: failure.message, Valid: true},
+		TerminalEventKind:    kind,
+		TerminalEventPayload: payload,
 	})
 	if err != nil {
 		return err
@@ -841,6 +835,22 @@ func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, l
 		},
 	}
 	return row, lease, nil
+}
+
+func (s *Server) workerCurrentRunningLease(ctx context.Context, worker workerActor, leaseIDs workerRunLeaseIDs) (db.GetCurrentRunningRunLeaseRow, error) {
+	row, err := s.db.GetCurrentRunningRunLease(ctx, db.GetCurrentRunningRunLeaseParams{
+		OrgID:            pgvalue.UUID(leaseIDs.orgID),
+		RunID:            pgvalue.UUID(leaseIDs.runID),
+		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+	})
+	if err != nil {
+		return db.GetCurrentRunningRunLeaseRow{}, err
+	}
+	if row.WorkerProtocolVersion != leaseIDs.protocolVersion || row.DispatchMessageID != leaseIDs.queueMessageID || row.DispatchLeaseID != leaseIDs.queueLeaseID || row.AttemptNumber != leaseIDs.attemptNumber {
+		return db.GetCurrentRunningRunLeaseRow{}, errRecordNotFound
+	}
+	return row, nil
 }
 
 func releaseFields(result api.WorkerReleaseResult) (db.RunStatus, pgtype.Int4, pgtype.Text, error) {
@@ -1103,7 +1113,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunLeaseRow
 		},
 		Workspace:          workerWorkspaceFromLease(row),
 		Requirements:       requirements,
-		MaxDurationSeconds: row.MaxDurationSeconds,
+		MaxDurationSeconds: activeDurationMsToSeconds(row.MaxActiveDurationMs),
 		ActiveDurationMs:   row.ActiveDurationMs,
 		Trace: api.TraceContext{
 			TraceID:     row.RunLeaseTraceID,
@@ -1121,6 +1131,7 @@ func workerWorkspaceFromLease(row db.LeaseRunLeaseRow) api.WorkerWorkspace {
 	}
 	workspace := api.WorkerWorkspace{
 		ID:                pgvalue.MustUUIDValue(row.WorkspaceID).String(),
+		MaterializationID: pgvalue.MustUUIDValue(row.WorkspaceMaterializationID).String(),
 		WriteLeaseID:      pgvalue.MustUUIDValue(row.WorkspaceLeaseID).String(),
 		WriteFencingToken: row.WorkspaceFencingToken.String,
 		MountPath:         row.WorkspaceMountPath.String,
@@ -1175,8 +1186,8 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunLeaseR
 		WorkerInstanceID: row.RunLeaseWorkerInstanceID,
 	})
 	if isNoRows(err) {
-		if row.RunLeaseRestoreCheckpointID.Valid {
-			return nil, fmt.Errorf("restore checkpoint %s is unavailable", pgvalue.MustUUIDValue(row.RunLeaseRestoreCheckpointID).String())
+		if row.RunLeaseRestoreRuntimeCheckpointID.Valid {
+			return nil, fmt.Errorf("restore runtime checkpoint %s is unavailable", pgvalue.MustUUIDValue(row.RunLeaseRestoreRuntimeCheckpointID).String())
 		}
 		return nil, nil
 	}
@@ -1187,15 +1198,68 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunLeaseR
 	if err := json.Unmarshal(payload.Manifest, &manifest); err != nil {
 		return nil, fmt.Errorf("decode checkpoint manifest: %w", err)
 	}
+	runWait, err := workerRestoreRunWait(payload)
+	if err != nil {
+		return nil, err
+	}
 	return &api.WorkerRestore{
-		CheckpointID: pgvalue.MustUUIDValue(payload.CheckpointID).String(),
+		CheckpointID: pgvalue.MustUUIDValue(payload.RuntimeCheckpointID).String(),
 		Checkpoint:   manifest,
-		Waitpoint: api.WorkerRestoreWaitpoint{
-			ID:                pgvalue.MustUUIDValue(payload.WaitpointID).String(),
-			RunSuspensionID:   pgvalue.MustUUIDValue(payload.RunSuspensionID).String(),
-			Kind:              string(payload.WaitpointKind),
-			ResumeKind:        payload.ResolutionKind.String,
-			ResumePayloadJSON: json.RawMessage(payload.Resolution),
-		},
+		RunWait:      runWait,
 	}, nil
+}
+
+func workerRestoreRunWait(payload db.GetRunRestorePayloadRow) (api.WorkerRestoreRunWait, error) {
+	resumeKind, resumePayload, err := workerRestoreRunWaitDecision(payload)
+	if err != nil {
+		return api.WorkerRestoreRunWait{}, err
+	}
+	return api.WorkerRestoreRunWait{
+		ID:                pgvalue.UUIDString(payload.RunWaitID),
+		Kind:              string(payload.RunWaitKind),
+		ResumeKind:        resumeKind,
+		ResumePayloadJSON: resumePayload,
+	}, nil
+}
+
+func workerRestoreRunWaitDecision(payload db.GetRunRestorePayloadRow) (string, json.RawMessage, error) {
+	switch payload.RunWaitKind {
+	case db.RunWaitKindStream:
+		if payload.StreamRecordSequence.Valid {
+			data := json.RawMessage(payload.StreamRecordData)
+			if len(data) == 0 {
+				data = json.RawMessage(`null`)
+			}
+			envelope, err := json.Marshal(map[string]any{
+				"stream":   payload.StreamName.String,
+				"sequence": payload.StreamRecordSequence.Int64,
+				"data":     data,
+			})
+			if err == nil {
+				return "completed", envelope, nil
+			}
+			return "", nil, fmt.Errorf("encode stream wait resume payload: %w", err)
+		}
+		return "timed_out", json.RawMessage(`null`), nil
+	case db.RunWaitKindToken:
+		if payload.TokenState.Valid {
+			switch payload.TokenState.TokenState {
+			case db.TokenStateCompleted:
+				data := json.RawMessage(payload.TokenCompletionData)
+				if len(data) == 0 {
+					data = json.RawMessage(`null`)
+				}
+				return "completed", data, nil
+			case db.TokenStateCancelled:
+				return "cancelled", json.RawMessage(`null`), nil
+			case db.TokenStateExpired:
+				return "timed_out", json.RawMessage(`null`), nil
+			}
+		}
+		return "timed_out", json.RawMessage(`null`), nil
+	case db.RunWaitKindTimer:
+		return "timed_out", json.RawMessage(`null`), nil
+	default:
+		return "failed", json.RawMessage(`null`), nil
+	}
 }

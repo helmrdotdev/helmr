@@ -173,6 +173,20 @@ func normalizeAPIKeyGrantPermission(permission string) []Permission {
 		return []Permission{PermissionRunsRead}
 	case string(PermissionRunsManage):
 		return []Permission{PermissionRunsManage}
+	case string(PermissionSessionStreamsRead):
+		return []Permission{PermissionSessionStreamsRead}
+	case string(PermissionSessionInputSend):
+		return []Permission{PermissionSessionInputSend}
+	case string(PermissionSessionOutputAppend):
+		return []Permission{PermissionSessionOutputAppend}
+	case string(PermissionTokensCreate):
+		return []Permission{PermissionTokensCreate}
+	case string(PermissionTokensRead):
+		return []Permission{PermissionTokensRead}
+	case string(PermissionTokensComplete):
+		return []Permission{PermissionTokensComplete}
+	case string(PermissionTokensCancel):
+		return []Permission{PermissionTokensCancel}
 	case string(PermissionWorkspaceLifecycleManage):
 		return []Permission{PermissionWorkspaceLifecycleManage}
 	case string(PermissionFilesRead):
@@ -205,16 +219,6 @@ func normalizeAPIKeyGrantPermission(permission string) []Permission {
 		return []Permission{PermissionPortsRead}
 	case string(PermissionPortsClose):
 		return []Permission{PermissionPortsClose}
-	case string(PermissionRunWaitpointsRead):
-		return []Permission{PermissionRunWaitpointsRead}
-	case string(PermissionChannelsWrite):
-		return []Permission{PermissionChannelsWrite}
-	case string(PermissionWaitpointTokensCreate):
-		return []Permission{PermissionWaitpointTokensCreate}
-	case string(PermissionWaitpointTokensRead):
-		return []Permission{PermissionWaitpointTokensRead}
-	case string(PermissionWaitpointTokensComplete):
-		return []Permission{PermissionWaitpointTokensComplete}
 	case string(PermissionSecretsWrite):
 		return []Permission{PermissionSecretsWrite}
 	case string(PermissionTasksDeploy):

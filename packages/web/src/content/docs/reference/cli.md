@@ -23,9 +23,8 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr session get SESSION` | Show task session details. |
 | `helmr session wait SESSION` | Wait for a task session to finish. |
 | `helmr session cancel SESSION` | Cancel a task session. |
-| `helmr session input send SESSION CHANNEL --data-json JSON` | Append a session input record. |
-| `helmr session output list SESSION CHANNEL` | List retained session channel output. |
-| `helmr session output follow SESSION CHANNEL` | Follow session channel output. |
+| `helmr session input send SESSION STREAM --data-json JSON` | Append a session input record. |
+| `helmr session output list SESSION STREAM` | List retained session stream output. |
 | `helmr run list [--session SESSION] [--json]` | List run attempts. |
 | `helmr run get RUN [--json]` | Show run details. |
 | `helmr run logs RUN [--follow]` | Print latest stdout/stderr snapshots and optionally stream new log chunks. |
@@ -58,11 +57,6 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr secret get NAME [--json]` | Show remote secret metadata. Secret values are never returned. |
 | `helmr secret set NAME [VALUE] [--json]` | Create or update a remote secret; reads stdin if value is omitted. |
 | `helmr secret delete NAME --yes` | Delete a remote secret. |
-| `helmr waitpoint list [--json] [--project ID] [--env ID] [--limit N]` | List open waitpoints. |
-| `helmr waitpoint token create [--timeout-seconds N] [--metadata JSON] [--tag TAG]` | Create a waitpoint token. |
-| `helmr waitpoint token list [--status STATUS]` | List waitpoint tokens. |
-| `helmr waitpoint token get TOKEN_ID` | Show waitpoint token metadata. |
-| `helmr waitpoint token complete TOKEN_ID [--data JSON \| --data-file FILE]` | Complete a waitpoint token. |
 
 Common options:
 
@@ -82,4 +76,4 @@ Common options:
 
 `helmr workspace exec` uses `--` before the remote command. Foreground exec streams stdout/stderr and exits with the remote process exit code. `--detach` returns the exec handle without waiting.
 
-`helmr waitpoint token complete` accepts inline JSON with `--data`, reads JSON from a file with `--data-file FILE`, or reads JSON from stdin with `--data-file -`.
+`helmr session input send SESSION STREAM --data-json JSON` appends a record to a named session input stream. `helmr session output list SESSION STREAM` reads retained output records.

@@ -720,28 +720,28 @@ func (q *Queries) GetTaskSessionByOrgID(ctx context.Context, arg GetTaskSessionB
 	return i, err
 }
 
-const getTaskSessionChannelByName = `-- name: GetTaskSessionChannelByName :one
-SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at
-  FROM channels
+const getTaskSessionStreamByName = `-- name: GetTaskSessionStreamByName :one
+SELECT id, org_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
+  FROM streams
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
-   AND task_session_id = $4
+   AND session_id = $4
    AND name = $5
-   AND direction = $6::channel_direction
+   AND direction = $6::stream_direction
 `
 
-type GetTaskSessionChannelByNameParams struct {
-	OrgID         pgtype.UUID      `json:"org_id"`
-	ProjectID     pgtype.UUID      `json:"project_id"`
-	EnvironmentID pgtype.UUID      `json:"environment_id"`
-	TaskSessionID pgtype.UUID      `json:"task_session_id"`
-	Name          string           `json:"name"`
-	Direction     ChannelDirection `json:"direction"`
+type GetTaskSessionStreamByNameParams struct {
+	OrgID         pgtype.UUID     `json:"org_id"`
+	ProjectID     pgtype.UUID     `json:"project_id"`
+	EnvironmentID pgtype.UUID     `json:"environment_id"`
+	TaskSessionID pgtype.UUID     `json:"task_session_id"`
+	Name          string          `json:"name"`
+	Direction     StreamDirection `json:"direction"`
 }
 
-func (q *Queries) GetTaskSessionChannelByName(ctx context.Context, arg GetTaskSessionChannelByNameParams) (Channel, error) {
-	row := q.db.QueryRow(ctx, getTaskSessionChannelByName,
+func (q *Queries) GetTaskSessionStreamByName(ctx context.Context, arg GetTaskSessionStreamByNameParams) (Stream, error) {
+	row := q.db.QueryRow(ctx, getTaskSessionStreamByName,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
@@ -749,16 +749,18 @@ func (q *Queries) GetTaskSessionChannelByName(ctx context.Context, arg GetTaskSe
 		arg.Name,
 		arg.Direction,
 	)
-	var i Channel
+	var i Stream
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.TaskSessionID,
-		&i.DefinitionID,
+		&i.SessionID,
+		&i.DeploymentStreamID,
 		&i.Name,
 		&i.Direction,
+		&i.SchemaFingerprint,
+		&i.Metadata,
 		&i.NextSequence,
 		&i.CreatedAt,
 	)
@@ -1072,59 +1074,6 @@ func (q *Queries) GetWorkspaceForTaskStart(ctx context.Context, arg GetWorkspace
 	return i, err
 }
 
-const listTaskSessionChannels = `-- name: ListTaskSessionChannels :many
-SELECT id, org_id, project_id, environment_id, task_session_id, definition_id, name, direction, next_sequence, created_at
-  FROM channels
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND task_session_id = $4
- ORDER BY name ASC, direction ASC
-`
-
-type ListTaskSessionChannelsParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	TaskSessionID pgtype.UUID `json:"task_session_id"`
-}
-
-func (q *Queries) ListTaskSessionChannels(ctx context.Context, arg ListTaskSessionChannelsParams) ([]Channel, error) {
-	rows, err := q.db.Query(ctx, listTaskSessionChannels,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.TaskSessionID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Channel
-	for rows.Next() {
-		var i Channel
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.TaskSessionID,
-			&i.DefinitionID,
-			&i.Name,
-			&i.Direction,
-			&i.NextSequence,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listTaskSessionRuns = `-- name: ListTaskSessionRuns :many
 SELECT task_session_runs.id, task_session_runs.org_id, task_session_runs.project_id, task_session_runs.environment_id, task_session_runs.task_session_id, task_session_runs.run_id, task_session_runs.deployment_id, task_session_runs.previous_run_id, task_session_runs.turn_index, task_session_runs.created_at, task_session_runs.ended_at,
        runs.status,
@@ -1201,6 +1150,61 @@ func (q *Queries) ListTaskSessionRuns(ctx context.Context, arg ListTaskSessionRu
 			&i.TerminalOutcome,
 			&i.RunCreatedAt,
 			&i.RunUpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskSessionStreams = `-- name: ListTaskSessionStreams :many
+SELECT id, org_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
+  FROM streams
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND session_id = $4
+ ORDER BY name ASC, direction ASC
+`
+
+type ListTaskSessionStreamsParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	TaskSessionID pgtype.UUID `json:"task_session_id"`
+}
+
+func (q *Queries) ListTaskSessionStreams(ctx context.Context, arg ListTaskSessionStreamsParams) ([]Stream, error) {
+	rows, err := q.db.Query(ctx, listTaskSessionStreams,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.TaskSessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Stream
+	for rows.Next() {
+		var i Stream
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.SessionID,
+			&i.DeploymentStreamID,
+			&i.Name,
+			&i.Direction,
+			&i.SchemaFingerprint,
+			&i.Metadata,
+			&i.NextSequence,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

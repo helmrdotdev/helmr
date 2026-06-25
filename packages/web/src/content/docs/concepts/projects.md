@@ -18,4 +18,4 @@ Use separate environments when you need separate task versions, secret values, o
 
 ## Permissions
 
-API keys are issued for one project environment. Supported permissions include creating and reading task sessions and runs, reading waitpoints, creating or completing waitpoint tokens, reading session channel output, using or writing secrets, and deploying tasks.
+API keys are issued for one project environment. Supported permissions include creating and reading task sessions and runs, reading session streams, creating or completing tokens, using or writing secrets, and deploying tasks.

@@ -41,31 +41,12 @@ export interface RunSnapshot<TOutput = unknown> extends RunStateBooleans {
   readonly exitCode: number | null
   readonly createdAt: string | null
   readonly updatedAt: string | null
-  readonly pendingWaitpoint: PendingWaitpoint | null
   readonly output?: TOutput
 }
 
 export type RunSummary<TOutput = unknown> = RunSnapshot<TOutput>
 
-export interface PendingWaitpoint {
-  readonly runId: string
-  readonly id: string
-  readonly kind: string
-  readonly status: "pending" | "completed" | "timed_out" | "cancelled" | "failed" | string
-  readonly timeout: number | null
-  readonly createdAt: string
-  readonly params: unknown
-  readonly metadata: Record<string, unknown>
-  readonly tags: readonly string[]
-}
-
-export interface WaitpointRef {
-  readonly runId: string
-  readonly waitpointId: string
-  readonly kind?: never
-}
-
-export interface RunWaitpointOptions {
+export interface RunWaitOptions {
   readonly projectId?: string
   readonly environmentId?: string
   readonly timeoutMs?: number
@@ -120,10 +101,10 @@ export type RunEvent =
       readonly at: string
     }
   | {
-      readonly type: "waitpoint"
+      readonly type: "token_wait" | "stream_wait" | "timer_wait"
       readonly run_id: string
-      readonly waitpoint_id: string
-      readonly kind: string
+      readonly wait_id: string
+      readonly kind: "token" | "stream" | "timer"
       readonly params: unknown
       readonly metadata: Record<string, unknown>
       readonly tags: readonly string[]
@@ -131,18 +112,18 @@ export type RunEvent =
       readonly at: string
     }
   | {
-      readonly type: "waitpoint_completed"
+      readonly type: "token_wait_completed" | "stream_wait_completed" | "timer_wait_completed"
       readonly run_id: string
-      readonly waitpoint_id: string
-      readonly kind: string
+      readonly wait_id: string
+      readonly kind: "token" | "stream" | "timer"
       readonly payload: unknown
       readonly at: string
     }
   | {
-      readonly type: "waitpoint_timed_out"
+      readonly type: "token_wait_timed_out" | "stream_wait_timed_out" | "timer_wait_timed_out"
       readonly run_id: string
-      readonly waitpoint_id: string
-      readonly kind: string
+      readonly wait_id: string
+      readonly kind: "token" | "stream" | "timer"
       readonly at: string
     }
   | { readonly type: "task_result"; readonly run_id: string; readonly exit_code: number; readonly at: string }
@@ -186,17 +167,6 @@ export interface LogSnapshot {
   readonly truncated: boolean
 }
 
-export interface PendingWaitpointResponse {
-  readonly id: string
-  readonly kind?: string
-  readonly status?: string | null
-  readonly timeout?: number | null
-  readonly params?: unknown
-  readonly metadata?: Record<string, unknown> | null
-  readonly tags?: readonly string[] | null
-  readonly created_at: string
-}
-
 export function runHandle<TOutput = unknown>(id: string, taskId: string): RunHandle<TOutput> {
   return { id, taskId }
 }
@@ -215,7 +185,6 @@ export function runSnapshot<TOutput = unknown>(snapshot: {
   readonly exitCode?: number | null
   readonly createdAt?: string | null
   readonly updatedAt?: string | null
-  readonly pendingWaitpoint?: PendingWaitpoint | null
   readonly output?: TOutput
 }): RunSnapshot<TOutput> {
   const status = runStatus(snapshot.status)
@@ -227,7 +196,6 @@ export function runSnapshot<TOutput = unknown>(snapshot: {
     exitCode: snapshot.exitCode ?? null,
     createdAt: snapshot.createdAt ?? null,
     updatedAt: snapshot.updatedAt ?? null,
-    pendingWaitpoint: snapshot.pendingWaitpoint ?? null,
     ...(snapshot.version === undefined && snapshot.deploymentVersion === undefined
       ? {}
       : { version: snapshot.version ?? snapshot.deploymentVersion ?? null }),
@@ -240,24 +208,6 @@ export function runSnapshot<TOutput = unknown>(snapshot: {
     attemptNumber: snapshot.attemptNumber ?? null,
     ...runStateBooleans(status),
     ...(snapshot.output === undefined ? {} : { output: snapshot.output }),
-  }
-}
-
-export function pendingWaitpointFromResponse(
-  runId: string,
-  wait: PendingWaitpointResponse | null | undefined,
-): PendingWaitpoint | null {
-  if (wait === undefined || wait === null) return null
-  return {
-    runId,
-    id: wait.id,
-    kind: wait.kind ?? "token",
-    status: wait.status ?? "pending",
-    timeout: wait.timeout ?? null,
-    params: wait.params === undefined ? {} : wait.params,
-    metadata: wait.metadata ?? {},
-    tags: wait.tags ?? [],
-    createdAt: wait.created_at,
   }
 }
 

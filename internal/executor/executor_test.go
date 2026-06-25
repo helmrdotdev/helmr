@@ -234,10 +234,9 @@ func TestExecutorRestoresWithoutCheckoutOrBuild(t *testing.T) {
 	run := validRun()
 	run.Restore = &api.WorkerRestore{
 		CheckpointID: "checkpoint-1",
-		Waitpoint: api.WorkerRestoreWaitpoint{
-			ID:              "waitpoint-1",
-			RunSuspensionID: "run-wait-1",
-			ResumeKind:      "completed",
+		RunWait: api.WorkerRestoreRunWait{
+			ID:         "run-wait-id-1",
+			ResumeKind: "completed",
 		},
 	}
 	result := Executor{

@@ -1,4 +1,4 @@
-import { cache, image, logger, sandbox, source, task, wait } from "@helmr/sdk"
+import { cache, image, logger, sandbox, source, task, tokens } from "@helmr/sdk"
 import { z } from "zod"
 
 const base = image("github-pr-review")
@@ -58,8 +58,8 @@ export const reviewPullRequest = task({
 
     logger.info({ pullRequest: target.prNumber, filesChanged: files.length })
 
-    const waitpointToken = await wait.createToken({ timeout: 600 })
-    const decision = await wait.forToken(waitpointToken, {
+    const approvalToken = await tokens.create({ timeout: "10m" })
+    const decision = await approvalToken.wait({
       schema: z.object({ approved: z.boolean() }),
       metadata: { prompt: "Post this review summary?", summary },
     }).unwrap()

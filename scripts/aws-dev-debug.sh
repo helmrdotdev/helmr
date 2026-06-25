@@ -252,7 +252,10 @@ status() {
       --output json
   )"
   if [ "$(printf '%s\n' "${services}" | jq 'length')" -gt 0 ]; then
-    mapfile -t service_arns < <(printf '%s\n' "${services}" | jq -r '.[]')
+    service_arns=()
+    while IFS= read -r service_arn; do
+      [ -n "${service_arn}" ] && service_arns+=("${service_arn}")
+    done < <(printf '%s\n' "${services}" | jq -r '.[]')
     aws ecs describe-services \
       --region "${AWS_REGION}" \
       --cluster "${cluster}" \
@@ -543,7 +546,10 @@ worker_image_cleanup() {
   printf '%s\n' "${images}" | jq -c ".[:${delete_count}][]" | while read -r image; do
     image_id="$(printf '%s\n' "${image}" | jq -r '.ImageId')"
     image_name="$(printf '%s\n' "${image}" | jq -r '.Name')"
-    mapfile -t snapshot_ids < <(printf '%s\n' "${image}" | jq -r '.BlockDeviceMappings[]?.Ebs.SnapshotId // empty')
+    snapshot_ids=()
+    while IFS= read -r snapshot_id; do
+      [ -n "${snapshot_id}" ] && snapshot_ids+=("${snapshot_id}")
+    done < <(printf '%s\n' "${image}" | jq -r '.BlockDeviceMappings[]?.Ebs.SnapshotId // empty')
     if [ "${WORKER_IMAGE_CLEANUP_FORCE:-0}" != "1" ] && printf '%s\n' "${protected_images}" | grep -Fxq "${image_id}"; then
       info "skipped worker AMI still referenced by current worker resources: ${image_id} (${image_name})"
       continue
@@ -577,7 +583,10 @@ protected_worker_image_ids() {
   )"
   [ -n "${group}" ] && [ "${group}" != "null" ] || return 0
 
-  mapfile -t instance_ids < <(printf '%s\n' "${group}" | jq -r '.Instances[]?.InstanceId // empty')
+  instance_ids=()
+  while IFS= read -r instance_id; do
+    [ -n "${instance_id}" ] && instance_ids+=("${instance_id}")
+  done < <(printf '%s\n' "${group}" | jq -r '.Instances[]?.InstanceId // empty')
   if [ "${#instance_ids[@]}" -gt 0 ]; then
     aws ec2 describe-instances \
       --region "${AWS_REGION}" \

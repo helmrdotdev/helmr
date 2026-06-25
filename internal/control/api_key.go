@@ -239,6 +239,20 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeRunsRead, true
 	case string(api.APIKeyScopeRunsManage):
 		return api.APIKeyScopeRunsManage, true
+	case string(api.APIKeyScopeSessionStreamsRead):
+		return api.APIKeyScopeSessionStreamsRead, true
+	case string(api.APIKeyScopeSessionInputSend):
+		return api.APIKeyScopeSessionInputSend, true
+	case string(api.APIKeyScopeSessionOutputAppend):
+		return api.APIKeyScopeSessionOutputAppend, true
+	case string(api.APIKeyScopeTokensCreate):
+		return api.APIKeyScopeTokensCreate, true
+	case string(api.APIKeyScopeTokensRead):
+		return api.APIKeyScopeTokensRead, true
+	case string(api.APIKeyScopeTokensComplete):
+		return api.APIKeyScopeTokensComplete, true
+	case string(api.APIKeyScopeTokensCancel):
+		return api.APIKeyScopeTokensCancel, true
 	case string(api.APIKeyScopeWorkspaceLifecycleManage):
 		return api.APIKeyScopeWorkspaceLifecycleManage, true
 	case string(api.APIKeyScopeWorkspaceFilesRead):
@@ -271,16 +285,6 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeWorkspacePortsRead, true
 	case string(api.APIKeyScopeWorkspacePortsClose):
 		return api.APIKeyScopeWorkspacePortsClose, true
-	case string(api.APIKeyScopeRunWaitpointsRead):
-		return api.APIKeyScopeRunWaitpointsRead, true
-	case string(api.APIKeyScopeChannelsWrite):
-		return api.APIKeyScopeChannelsWrite, true
-	case string(api.APIKeyScopeWaitpointTokensCreate):
-		return api.APIKeyScopeWaitpointTokensCreate, true
-	case string(api.APIKeyScopeWaitpointTokensRead):
-		return api.APIKeyScopeWaitpointTokensRead, true
-	case string(api.APIKeyScopeWaitpointTokensComplete):
-		return api.APIKeyScopeWaitpointTokensComplete, true
 	case string(api.APIKeyScopeSecretsWrite):
 		return api.APIKeyScopeSecretsWrite, true
 	case string(api.APIKeyScopeTasksDeploy):
@@ -298,6 +302,20 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionRunsRead, true
 	case api.APIKeyScopeRunsManage:
 		return auth.PermissionRunsManage, true
+	case api.APIKeyScopeSessionStreamsRead:
+		return auth.PermissionSessionStreamsRead, true
+	case api.APIKeyScopeSessionInputSend:
+		return auth.PermissionSessionInputSend, true
+	case api.APIKeyScopeSessionOutputAppend:
+		return auth.PermissionSessionOutputAppend, true
+	case api.APIKeyScopeTokensCreate:
+		return auth.PermissionTokensCreate, true
+	case api.APIKeyScopeTokensRead:
+		return auth.PermissionTokensRead, true
+	case api.APIKeyScopeTokensComplete:
+		return auth.PermissionTokensComplete, true
+	case api.APIKeyScopeTokensCancel:
+		return auth.PermissionTokensCancel, true
 	case api.APIKeyScopeWorkspaceLifecycleManage:
 		return auth.PermissionWorkspaceLifecycleManage, true
 	case api.APIKeyScopeWorkspaceFilesRead:
@@ -330,16 +348,6 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionPortsRead, true
 	case api.APIKeyScopeWorkspacePortsClose:
 		return auth.PermissionPortsClose, true
-	case api.APIKeyScopeRunWaitpointsRead:
-		return auth.PermissionRunWaitpointsRead, true
-	case api.APIKeyScopeChannelsWrite:
-		return auth.PermissionChannelsWrite, true
-	case api.APIKeyScopeWaitpointTokensCreate:
-		return auth.PermissionWaitpointTokensCreate, true
-	case api.APIKeyScopeWaitpointTokensRead:
-		return auth.PermissionWaitpointTokensRead, true
-	case api.APIKeyScopeWaitpointTokensComplete:
-		return auth.PermissionWaitpointTokensComplete, true
 	case api.APIKeyScopeSecretsWrite:
 		return auth.PermissionSecretsWrite, true
 	case api.APIKeyScopeTasksDeploy:
@@ -357,6 +365,20 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeRunsRead, true
 	case string(auth.PermissionRunsManage):
 		return api.APIKeyScopeRunsManage, true
+	case string(auth.PermissionSessionStreamsRead):
+		return api.APIKeyScopeSessionStreamsRead, true
+	case string(auth.PermissionSessionInputSend):
+		return api.APIKeyScopeSessionInputSend, true
+	case string(auth.PermissionSessionOutputAppend):
+		return api.APIKeyScopeSessionOutputAppend, true
+	case string(auth.PermissionTokensCreate):
+		return api.APIKeyScopeTokensCreate, true
+	case string(auth.PermissionTokensRead):
+		return api.APIKeyScopeTokensRead, true
+	case string(auth.PermissionTokensComplete):
+		return api.APIKeyScopeTokensComplete, true
+	case string(auth.PermissionTokensCancel):
+		return api.APIKeyScopeTokensCancel, true
 	case string(auth.PermissionWorkspaceLifecycleManage):
 		return api.APIKeyScopeWorkspaceLifecycleManage, true
 	case string(auth.PermissionFilesRead):
@@ -389,16 +411,6 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeWorkspacePortsRead, true
 	case string(auth.PermissionPortsClose):
 		return api.APIKeyScopeWorkspacePortsClose, true
-	case string(auth.PermissionRunWaitpointsRead):
-		return api.APIKeyScopeRunWaitpointsRead, true
-	case string(auth.PermissionChannelsWrite):
-		return api.APIKeyScopeChannelsWrite, true
-	case string(auth.PermissionWaitpointTokensCreate):
-		return api.APIKeyScopeWaitpointTokensCreate, true
-	case string(auth.PermissionWaitpointTokensRead):
-		return api.APIKeyScopeWaitpointTokensRead, true
-	case string(auth.PermissionWaitpointTokensComplete):
-		return api.APIKeyScopeWaitpointTokensComplete, true
 	case string(auth.PermissionSecretsWrite):
 		return api.APIKeyScopeSecretsWrite, true
 	case string(auth.PermissionTasksDeploy):

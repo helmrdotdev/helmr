@@ -418,7 +418,7 @@ INSERT INTO deployment_tasks (
     queue_name,
     queue_concurrency_limit,
     ttl,
-    max_duration_seconds,
+    max_active_duration_ms,
     retry_policy
 ) SELECT
     $1,
@@ -446,7 +446,7 @@ INSERT INTO deployment_tasks (
     $23,
     coalesce($24::jsonb, 'false'::jsonb)
   FROM catalog_task
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, secret_declarations, resource_requirements, network_policy, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_duration_seconds, retry_policy, created_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, secret_declarations, resource_requirements, network_policy, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_active_duration_ms, retry_policy, created_at
 `
 
 type CreateDeploymentTaskParams struct {
@@ -472,7 +472,7 @@ type CreateDeploymentTaskParams struct {
 	QueueName             string      `json:"queue_name"`
 	QueueConcurrencyLimit pgtype.Int4 `json:"queue_concurrency_limit"`
 	Ttl                   string      `json:"ttl"`
-	MaxDurationSeconds    int32       `json:"max_duration_seconds"`
+	MaxActiveDurationMs   int64       `json:"max_active_duration_ms"`
 	RetryPolicy           []byte      `json:"retry_policy"`
 }
 
@@ -500,7 +500,7 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		arg.QueueName,
 		arg.QueueConcurrencyLimit,
 		arg.Ttl,
-		arg.MaxDurationSeconds,
+		arg.MaxActiveDurationMs,
 		arg.RetryPolicy,
 	)
 	var i DeploymentTask
@@ -527,7 +527,7 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		&i.QueueName,
 		&i.QueueConcurrencyLimit,
 		&i.Ttl,
-		&i.MaxDurationSeconds,
+		&i.MaxActiveDurationMs,
 		&i.RetryPolicy,
 		&i.CreatedAt,
 	)
@@ -726,7 +726,7 @@ func (q *Queries) GetCurrentDeploymentSandbox(ctx context.Context, arg GetCurren
 }
 
 const getCurrentDeploymentTask = `-- name: GetCurrentDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.retry_policy, deployment_tasks.created_at,
+SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at,
        deployment_sandboxes.sandbox_id,
        deployment_sandboxes.fingerprint AS sandbox_fingerprint,
        deployment_sandboxes.workspace_mount_path,
@@ -808,7 +808,7 @@ type GetCurrentDeploymentTaskRow struct {
 	QueueName                         string             `json:"queue_name"`
 	QueueConcurrencyLimit             pgtype.Int4        `json:"queue_concurrency_limit"`
 	Ttl                               string             `json:"ttl"`
-	MaxDurationSeconds                int32              `json:"max_duration_seconds"`
+	MaxActiveDurationMs               int64              `json:"max_active_duration_ms"`
 	RetryPolicy                       []byte             `json:"retry_policy"`
 	CreatedAt                         pgtype.Timestamptz `json:"created_at"`
 	SandboxID                         string             `json:"sandbox_id"`
@@ -863,7 +863,7 @@ func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDe
 		&i.QueueName,
 		&i.QueueConcurrencyLimit,
 		&i.Ttl,
-		&i.MaxDurationSeconds,
+		&i.MaxActiveDurationMs,
 		&i.RetryPolicy,
 		&i.CreatedAt,
 		&i.SandboxID,
@@ -1152,7 +1152,7 @@ func (q *Queries) GetDeploymentQueueConfig(ctx context.Context, arg GetDeploymen
 }
 
 const getDeploymentTask = `-- name: GetDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.retry_policy, deployment_tasks.created_at,
+SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at,
        deployment_sandboxes.sandbox_id,
        deployment_sandboxes.fingerprint AS sandbox_fingerprint,
        deployment_sandboxes.workspace_mount_path,
@@ -1232,7 +1232,7 @@ type GetDeploymentTaskRow struct {
 	QueueName                         string             `json:"queue_name"`
 	QueueConcurrencyLimit             pgtype.Int4        `json:"queue_concurrency_limit"`
 	Ttl                               string             `json:"ttl"`
-	MaxDurationSeconds                int32              `json:"max_duration_seconds"`
+	MaxActiveDurationMs               int64              `json:"max_active_duration_ms"`
 	RetryPolicy                       []byte             `json:"retry_policy"`
 	CreatedAt                         pgtype.Timestamptz `json:"created_at"`
 	SandboxID                         string             `json:"sandbox_id"`
@@ -1288,7 +1288,7 @@ func (q *Queries) GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskPa
 		&i.QueueName,
 		&i.QueueConcurrencyLimit,
 		&i.Ttl,
-		&i.MaxDurationSeconds,
+		&i.MaxActiveDurationMs,
 		&i.RetryPolicy,
 		&i.CreatedAt,
 		&i.SandboxID,
@@ -1595,7 +1595,7 @@ func (q *Queries) ListCurrentDeploymentSandboxes(ctx context.Context, arg ListCu
 }
 
 const listCurrentDeploymentTasks = `-- name: ListCurrentDeploymentTasks :many
-SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.retry_policy, deployment_tasks.created_at
+SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at
   FROM deployment_tasks
   JOIN environments ON environments.org_id = deployment_tasks.org_id
                    AND environments.project_id = deployment_tasks.project_id
@@ -1650,7 +1650,7 @@ func (q *Queries) ListCurrentDeploymentTasks(ctx context.Context, arg ListCurren
 			&i.QueueName,
 			&i.QueueConcurrencyLimit,
 			&i.Ttl,
-			&i.MaxDurationSeconds,
+			&i.MaxActiveDurationMs,
 			&i.RetryPolicy,
 			&i.CreatedAt,
 		); err != nil {
@@ -1665,7 +1665,7 @@ func (q *Queries) ListCurrentDeploymentTasks(ctx context.Context, arg ListCurren
 }
 
 const listDeploymentTasks = `-- name: ListDeploymentTasks :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, secret_declarations, resource_requirements, network_policy, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_duration_seconds, retry_policy, created_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, secret_declarations, resource_requirements, network_policy, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_active_duration_ms, retry_policy, created_at
   FROM deployment_tasks
  WHERE org_id = $1
    AND project_id = $2
@@ -1718,7 +1718,7 @@ func (q *Queries) ListDeploymentTasks(ctx context.Context, arg ListDeploymentTas
 			&i.QueueName,
 			&i.QueueConcurrencyLimit,
 			&i.Ttl,
-			&i.MaxDurationSeconds,
+			&i.MaxActiveDurationMs,
 			&i.RetryPolicy,
 			&i.CreatedAt,
 		); err != nil {

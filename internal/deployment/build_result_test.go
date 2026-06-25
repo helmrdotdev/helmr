@@ -442,6 +442,49 @@ func TestDeploymentTaskSecretsMapsBundlePlacements(t *testing.T) {
 	}
 }
 
+func TestValidateWorkerDeploymentBuildResultValidatesTaskStreams(t *testing.T) {
+	t.Run("valid", func(t *testing.T) {
+		result := validBuildResult()
+		result.Tasks[0].Streams = []api.WorkerDeploymentTaskStream{
+			{Name: "approval", Direction: "input", SchemaFingerprint: "sha256:schema", SchemaJSON: []byte(`{"kind":"standard-schema-v1"}`)},
+			{Name: "events", Direction: "output", SchemaJSON: []byte(`null`)},
+		}
+		if _, err := ValidateBuildResult(result); err != nil {
+			t.Fatalf("ValidateBuildResult() error = %v", err)
+		}
+	})
+
+	t.Run("invalid direction", func(t *testing.T) {
+		result := validBuildResult()
+		result.Tasks[0].Streams = []api.WorkerDeploymentTaskStream{{Name: "approval", Direction: "sideways", SchemaJSON: []byte(`null`)}}
+		_, err := ValidateBuildResult(result)
+		if err == nil || !strings.Contains(err.Error(), "direction must be input or output") {
+			t.Fatalf("ValidateBuildResult() error = %v", err)
+		}
+	})
+
+	t.Run("duplicate", func(t *testing.T) {
+		result := validBuildResult()
+		result.Tasks[0].Streams = []api.WorkerDeploymentTaskStream{
+			{Name: "approval", Direction: "input", SchemaJSON: []byte(`null`)},
+			{Name: "approval", Direction: "input", SchemaJSON: []byte(`null`)},
+		}
+		_, err := ValidateBuildResult(result)
+		if err == nil || !strings.Contains(err.Error(), "duplicate input stream") {
+			t.Fatalf("ValidateBuildResult() error = %v", err)
+		}
+	})
+
+	t.Run("invalid schema json", func(t *testing.T) {
+		result := validBuildResult()
+		result.Tasks[0].Streams = []api.WorkerDeploymentTaskStream{{Name: "approval", Direction: "input", SchemaJSON: []byte(`{`)}}
+		_, err := ValidateBuildResult(result)
+		if err == nil || !strings.Contains(err.Error(), "schema_json must be valid JSON") {
+			t.Fatalf("ValidateBuildResult() error = %v", err)
+		}
+	})
+}
+
 func TestValidateWorkerDeploymentBuildResultRejectsInvalidDeclarativeSchedule(t *testing.T) {
 	result := validBuildResult()
 	result.Tasks[0].Schedules = []api.WorkerDeploymentTaskSchedule{{

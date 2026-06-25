@@ -237,10 +237,24 @@ promoted_workspace AS (
        AND workspaces.id = created_version.workspace_id
        AND workspaces.current_version_id IS NOT DISTINCT FROM created_version.parent_version_id
     RETURNING workspaces.id
+),
+cleaned_materialization AS (
+    UPDATE workspace_materializations
+       SET dirty_generation = 0,
+           updated_at = now()
+      FROM created_version
+     WHERE workspace_materializations.org_id = created_version.org_id
+       AND workspace_materializations.project_id = created_version.project_id
+       AND workspace_materializations.environment_id = created_version.environment_id
+       AND workspace_materializations.workspace_id = created_version.workspace_id
+       AND workspace_materializations.id = created_version.source_materialization_id
+       AND workspace_materializations.dirty_generation = sqlc.arg(dirty_generation)
+    RETURNING workspace_materializations.id
 )
 SELECT created_version.*
   FROM created_version
-  JOIN promoted_workspace ON promoted_workspace.id = created_version.workspace_id;
+  JOIN promoted_workspace ON promoted_workspace.id = created_version.workspace_id
+  JOIN cleaned_materialization ON cleaned_materialization.id = created_version.source_materialization_id;
 
 -- name: ReleaseWorkspaceLease :one
 UPDATE workspace_leases

@@ -3,7 +3,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { pixelsFromRows } from "../lib/pixels";
 import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
-const runtimeCode = `import { cache, channel, image, sandbox, source, task } from "@helmr/sdk"
+const runtimeCode = `import { cache, image, sandbox, source, streams, task } from "@helmr/sdk"
 import { Codex } from "@openai/codex-sdk"
 import { z } from "zod"
 
@@ -30,15 +30,15 @@ export const reviewPr = task({
     const thread = codex.startThread({ workingDirectory: process.cwd() })
     const turn = await thread.run("Review this PR and propose a patch.")
 
-    const approval = channel.input("approval", {
+    const approval = streams.input("approval", {
       schema: z.object({ approved: z.boolean() })
     })
     await sendSlackApproval({
       sessionId: ctx.session.id,
-      channel: approval.id
+      stream: approval.id
     })
     // The microVM freezes here — filesystem, memory, process.
-    const decision = await ctx.session.input(approval).wait({
+    const decision = await approval.wait({
       timeout: "30m",
       tags: ["approval", "github-review"],
       metadata: { subject: "Post this review to GitHub?" },
@@ -225,17 +225,17 @@ const codeTags = codeRegions.map((region) => ({
 
 const features = [
   {
-    label: "session.input",
+    label: "streams.input",
     icon: "pause",
     tone: "yellow",
     title: "Pause for session input",
     caption:
       "The microVM freezes whole while it waits. A webhook, UI, or operator appends input and resumes it mid-instruction.",
-    code: `const approval = channel.input("approval", {
+    code: `const approval = streams.input("approval", {
   schema: z.object({ approved: z.boolean() })
 })
 
-const decision = await ctx.session.input(approval).wait({
+const decision = await approval.wait({
   timeout: "30m",
   tags: ["approval", "github-review"]
 }).unwrap()`,
@@ -618,12 +618,12 @@ const renderedFeatures = features.map((feature) => ({
       cursorLine?.removeAttribute("data-cursor");
       const respondCommand = document.createElement("span");
       cursorLine?.appendChild(respondCommand);
-      await typeInto(respondCommand, "curl -sS -H 'authorization: Bearer $SESSION_INPUT_TOKEN' -H 'content-type: application/json' -d '{\"data\":{\"approved\":true}}' $HELMR_API_URL/api/sessions/sess_9d2c/channels/approval/inputs");
+      await typeInto(respondCommand, "curl -sS -H 'authorization: Bearer $SESSION_INPUT_TOKEN' -H 'content-type: application/json' -d '{\"data\":{\"approved\":true}}' $HELMR_API_URL/api/sessions/sess_9d2c/inputs/approval");
       await sleep(reduceMotion ? 0 : 500);
 
       const psLine = appendLine('<span class="t-prompt">$</span> <span class="t-cmd"></span>', "t-line t-gap");
       const psCommand = psLine?.querySelector(".t-cmd");
-      if (psCommand) await typeInto(psCommand, "helmr ps");
+      if (psCommand) await typeInto(psCommand, "helmr run list");
       await sleep(reduceMotion ? 0 : 350);
       appendLine("RUN ID    TASK       STATUS", "t-line t-dim");
       appendLine('run_8f3a  review-pr  <span class="t-ok">succeeded</span>', "t-line");

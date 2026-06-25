@@ -24,7 +24,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicaccess"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -378,259 +377,6 @@ func TestRunRoutesRequireBearerAuth(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-}
-
-func TestSessionChannelInputFingerprintIncludesCorrelationAndAuthSubject(t *testing.T) {
-	session := db.TaskSession{ID: pgvalue.UUID(uuid.Must(uuid.NewV7()))}
-	base, err := channelInputFingerprint(session, "approval", []byte(`{"approved":true}`), "thread-1", "application/json", "api_key", "key-1", "event-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	changedCorrelation, err := channelInputFingerprint(session, "approval", []byte(`{"approved":true}`), "thread-2", "application/json", "api_key", "key-1", "event-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	changedAuth, err := channelInputFingerprint(session, "approval", []byte(`{"approved":true}`), "thread-1", "application/json", "api_key", "key-2", "event-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	changedExternalEvent, err := channelInputFingerprint(session, "approval", []byte(`{"approved":true}`), "thread-1", "application/json", "api_key", "key-1", "event-2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if base == changedCorrelation {
-		t.Fatal("fingerprint did not change when correlation changed")
-	}
-	if base == changedAuth {
-		t.Fatal("fingerprint did not change when auth subject changed")
-	}
-	if base == changedExternalEvent {
-		t.Fatal("fingerprint did not change when external event changed")
-	}
-}
-
-func TestAppendTaskSessionChannelInputReturnsDuplicateIdempotencyStatus(t *testing.T) {
-	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	channelID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	recordID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &fakeStore{
-		taskSession: db.TaskSession{
-			ID:                  sessionID,
-			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:           testProjectID(),
-			EnvironmentID:       testEnvironmentID(),
-			TaskID:              "deploy",
-			InitialDeploymentID: testDeploymentID(),
-			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
-			CurrentRunID:        runID,
-			Metadata:            []byte(`{}`),
-			Tags:                []string{},
-			TerminalReason:      []byte(`{}`),
-			CreatedAt:           testTime(),
-			UpdatedAt:           testTime(),
-		},
-		appendSessionChannelInput: db.AppendSessionChannelInputRow{
-			ID:                     recordID,
-			OrgID:                  pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:              testProjectID(),
-			EnvironmentID:          testEnvironmentID(),
-			RunID:                  runID,
-			ChannelID:              channelID,
-			Channel:                "approval",
-			Data:                   []byte(`{"approved":true}`),
-			CorrelationID:          "thread-1",
-			Sequence:               1,
-			ContentType:            "application/json",
-			IdempotencyKey:         "external-action-1",
-			IdempotencyFingerprint: "fingerprint-1",
-			ExternalEventID:        "event-1",
-			AuthSubjectType:        "api_key",
-			AuthSubjectID:          "key-1",
-			Inserted:               false,
-			CreatedAt:              testTime(),
-		},
-	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
-	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/channels/approval/inputs", strings.NewReader(`{"data":{"approved":true},"correlation_id":"thread-1","external_event_id":"event-1"}`))
-	req.Header.Set("authorization", "Bearer test-key")
-	req.Header.Set("idempotency-key", "external-action-1")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	var response api.AppendChannelRecordResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.IdempotencyStatus != "duplicate" || response.Record.ID != pgvalue.MustUUIDValue(recordID).String() {
-		t.Fatalf("response = %+v", response)
-	}
-	if store.appendSessionChannelInput.ExternalEventID != "event-1" {
-		t.Fatalf("external event id = %q", store.appendSessionChannelInput.ExternalEventID)
-	}
-}
-
-func TestAppendTaskSessionChannelInputReturnsDuplicateAfterTerminalSession(t *testing.T) {
-	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	channelID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	recordID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	session := db.TaskSession{
-		ID:                  sessionID,
-		OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-		ProjectID:           testProjectID(),
-		EnvironmentID:       testEnvironmentID(),
-		TaskID:              "deploy",
-		InitialDeploymentID: testDeploymentID(),
-		ActiveDeploymentID:  testDeploymentID(),
-		Status:              db.TaskSessionStatusCompleted,
-		Metadata:            []byte(`{}`),
-		Tags:                []string{},
-		TerminalReason:      []byte(`{}`),
-		CreatedAt:           testTime(),
-		UpdatedAt:           testTime(),
-	}
-	authSubjectID := "00000000-0000-0000-0000-000000000002"
-	fingerprint, err := channelInputFingerprint(session, "approval", []byte(`{"approved":true}`), "thread-1", "application/json", "api_key", authSubjectID, "event-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &fakeStore{
-		taskSession: session,
-		appendSessionChannelInput: db.AppendSessionChannelInputRow{
-			ID:                     recordID,
-			OrgID:                  pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:              testProjectID(),
-			EnvironmentID:          testEnvironmentID(),
-			ChannelID:              channelID,
-			Channel:                "approval",
-			Data:                   []byte(`{"approved":true}`),
-			CorrelationID:          "thread-1",
-			Sequence:               1,
-			ContentType:            "application/json",
-			IdempotencyKey:         "external-action-1",
-			IdempotencyFingerprint: fingerprint,
-			ExternalEventID:        "event-1",
-			AuthSubjectType:        "api_key",
-			AuthSubjectID:          authSubjectID,
-			Inserted:               false,
-			CreatedAt:              testTime(),
-		},
-	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
-	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/channels/approval/inputs", strings.NewReader(`{"data":{"approved":true},"correlation_id":"thread-1","external_event_id":"event-1"}`))
-	req.Header.Set("authorization", "Bearer test-key")
-	req.Header.Set("idempotency-key", "external-action-1")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	var response api.AppendChannelRecordResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.IdempotencyStatus != "duplicate" || response.Record.ID != pgvalue.MustUUIDValue(recordID).String() {
-		t.Fatalf("response = %+v", response)
-	}
-	if store.appendSessionChannelInputCalls != 0 {
-		t.Fatalf("append calls = %d, want 0", store.appendSessionChannelInputCalls)
-	}
-}
-
-func TestListTaskSessionChannelsReturnsChannelSummary(t *testing.T) {
-	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	channelID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &fakeStore{
-		taskSession: db.TaskSession{
-			ID:                  sessionID,
-			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:           testProjectID(),
-			EnvironmentID:       testEnvironmentID(),
-			TaskID:              "deploy",
-			InitialDeploymentID: testDeploymentID(),
-			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
-			Metadata:            []byte(`{}`),
-			Tags:                []string{},
-			TerminalReason:      []byte(`{}`),
-			CreatedAt:           testTime(),
-			UpdatedAt:           testTime(),
-		},
-		taskSessionChannels: []db.Channel{{
-			ID:            channelID,
-			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:     testProjectID(),
-			EnvironmentID: testEnvironmentID(),
-			TaskSessionID: sessionID,
-			Name:          "approval",
-			Direction:     db.ChannelDirectionInput,
-			NextSequence:  2,
-			CreatedAt:     testTime(),
-		}},
-	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
-	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/channels", nil)
-	req.Header.Set("authorization", "Bearer test-key")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	var response api.ListTaskSessionChannelsResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if len(response.Channels) != 1 {
-		t.Fatalf("channels len = %d, want 1", len(response.Channels))
-	}
-	channel := response.Channels[0]
-	if channel.ID != pgvalue.MustUUIDValue(channelID).String() ||
-		channel.Name != "approval" ||
-		channel.Direction != "input" ||
-		channel.NextSequence != 2 {
-		t.Fatalf("channel = %+v", channel)
-	}
-}
-
-func TestAppendTaskSessionChannelInputRejectsClosedInputWithStableCode(t *testing.T) {
-	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &fakeStore{
-		taskSession: db.TaskSession{
-			ID:                  sessionID,
-			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:           testProjectID(),
-			EnvironmentID:       testEnvironmentID(),
-			TaskID:              "deploy",
-			InitialDeploymentID: testDeploymentID(),
-			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusClosed,
-			Metadata:            []byte(`{}`),
-			Tags:                []string{},
-			TerminalReason:      []byte(`{}`),
-			CreatedAt:           testTime(),
-			UpdatedAt:           testTime(),
-		},
-	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
-	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/channels/approval/inputs", strings.NewReader(`{"data":{"approved":true}}`))
-	req.Header.Set("authorization", "Bearer test-key")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	requireErrorCode(t, rec.Body.Bytes(), "session_input_closed")
 }
 
 func TestTaskStartRejectsDeploymentSelection(t *testing.T) {
@@ -2050,206 +1796,6 @@ func TestCancelTaskSessionTerminalizesPendingCancelRun(t *testing.T) {
 	}
 }
 
-func TestStreamTaskSessionChannelOutputsWaitsForMissingChannel(t *testing.T) {
-	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &fakeStore{
-		taskSession: db.TaskSession{
-			ID:                  sessionID,
-			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:           testProjectID(),
-			EnvironmentID:       testEnvironmentID(),
-			TaskID:              "deploy",
-			InitialDeploymentID: testDeploymentID(),
-			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
-			Metadata:            []byte(`{}`),
-			Tags:                []string{},
-			TerminalReason:      []byte(`{}`),
-			CreatedAt:           testTime(),
-			UpdatedAt:           testTime(),
-		},
-	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/channels/release/outputs/stream", nil).WithContext(ctx)
-	req.Header.Set("authorization", "Bearer test-key")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if got := rec.Header().Get("content-type"); got != "text/event-stream" {
-		t.Fatalf("content-type = %q", got)
-	}
-	if !strings.Contains(rec.Body.String(), ": keep-alive") {
-		t.Fatalf("body = %q", rec.Body.String())
-	}
-}
-
-func TestListTaskSessionChannelOutputsPassesCursorAndCorrelationFilter(t *testing.T) {
-	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	channelID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	recordID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &fakeStore{
-		taskSession: db.TaskSession{
-			ID:                  sessionID,
-			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:           testProjectID(),
-			EnvironmentID:       testEnvironmentID(),
-			TaskID:              "deploy",
-			InitialDeploymentID: testDeploymentID(),
-			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
-			Metadata:            []byte(`{}`),
-			Tags:                []string{},
-			TerminalReason:      []byte(`{}`),
-			CreatedAt:           testTime(),
-			UpdatedAt:           testTime(),
-		},
-		taskSessionChannel: db.Channel{
-			ID:            channelID,
-			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:     testProjectID(),
-			EnvironmentID: testEnvironmentID(),
-			TaskSessionID: sessionID,
-			Name:          "agent.report",
-			Direction:     db.ChannelDirectionOutput,
-		},
-		channelRecords: []db.ChannelRecord{{
-			ID:            recordID,
-			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:     testProjectID(),
-			EnvironmentID: testEnvironmentID(),
-			ChannelID:     channelID,
-			Sequence:      5,
-			Data:          []byte(`{"text":"ready"}`),
-			CorrelationID: "thread-1",
-			ContentType:   "application/json",
-			CreatedAt:     testTime(),
-		}},
-	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
-	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/channels/agent.report/outputs?after_sequence=4&limit=3&correlation_id=thread-1", nil)
-	req.Header.Set("authorization", "Bearer test-key")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if store.listChannelRecords.AfterSequence != 4 || store.listChannelRecords.LimitCount != 3 || store.listChannelRecords.CorrelationID.String != "thread-1" {
-		t.Fatalf("list params = %+v", store.listChannelRecords)
-	}
-}
-
-func TestCreatePublicAccessTokenStoresSessionChannelScope(t *testing.T) {
-	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	channelID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &fakeStore{
-		taskSession: db.TaskSession{
-			ID:                  sessionID,
-			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:           testProjectID(),
-			EnvironmentID:       testEnvironmentID(),
-			TaskID:              "deploy",
-			InitialDeploymentID: testDeploymentID(),
-			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
-			Metadata:            []byte(`{}`),
-			Tags:                []string{},
-			TerminalReason:      []byte(`{}`),
-			CreatedAt:           testTime(),
-			UpdatedAt:           testTime(),
-		},
-		taskSessionChannel: db.Channel{
-			ID:            channelID,
-			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:     testProjectID(),
-			EnvironmentID: testEnvironmentID(),
-			TaskSessionID: sessionID,
-			Name:          "approval",
-			Direction:     db.ChannelDirectionInput,
-		},
-	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, AuthSecret: []byte(waitpointTokenTestAuthSecret)})
-	body := `{"scope":{"type":"session.input.append","session_id":"` + pgvalue.MustUUIDValue(sessionID).String() + `","channel":"approval","correlation_id":"thread-1"},"max_uses":1}`
-	req := httptest.NewRequest(http.MethodPost, "/api/public-access-tokens", strings.NewReader(body))
-	req.Header.Set("authorization", "Bearer test-key")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	var response api.PublicAccessTokenResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if !publicaccess.IsToken(response.PublicAccessToken) || response.Scope.Type != "session.input.append" || response.Scope.Channel != "approval" || response.Scope.CorrelationID != "thread-1" {
-		t.Fatalf("response = %+v", response)
-	}
-	if bytes.Contains(store.createPublicAccessToken.TokenHash, []byte(response.PublicAccessToken)) {
-		t.Fatal("stored token hash contains raw token")
-	}
-	if !store.createPublicAccessToken.MaxUses.Valid || store.createPublicAccessToken.MaxUses.Int32 != 1 {
-		t.Fatalf("max uses = %+v", store.createPublicAccessToken.MaxUses)
-	}
-	if !publicAccessTokenAllowsChannel(store.createPublicAccessToken.AllowedScopes, "session.input.append", store.taskSessionChannel, "thread-1") {
-		t.Fatal("created token does not authorize the requested session channel")
-	}
-}
-
-func TestCreatePublicAccessTokenAllowsFutureOutputChannel(t *testing.T) {
-	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &fakeStore{
-		taskSession: db.TaskSession{
-			ID:                  sessionID,
-			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:           testProjectID(),
-			EnvironmentID:       testEnvironmentID(),
-			TaskID:              "deploy",
-			InitialDeploymentID: testDeploymentID(),
-			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
-			Metadata:            []byte(`{}`),
-			Tags:                []string{},
-			TerminalReason:      []byte(`{}`),
-			CreatedAt:           testTime(),
-			UpdatedAt:           testTime(),
-		},
-	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, AuthSecret: []byte(waitpointTokenTestAuthSecret)})
-	body := `{"scope":{"type":"session.output.read","session_id":"` + pgvalue.MustUUIDValue(sessionID).String() + `","channel":"agent.report"}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/public-access-tokens", strings.NewReader(body))
-	req.Header.Set("authorization", "Bearer test-key")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !publicAccessTokenAllowsSessionChannel(store.createPublicAccessToken.AllowedScopes, "session.output.read", pgvalue.MustUUIDValue(sessionID).String(), "agent.report", "") {
-		t.Fatal("created token does not authorize the future output channel")
-	}
-	var metadata struct {
-		ChannelID string `json:"channelId,omitempty"`
-		Channel   string `json:"channel"`
-		Direction string `json:"direction"`
-	}
-	if err := json.Unmarshal(store.createPublicAccessToken.Metadata, &metadata); err != nil {
-		t.Fatal(err)
-	}
-	if metadata.ChannelID != "" || metadata.Channel != "agent.report" || metadata.Direction != "output" {
-		t.Fatalf("metadata = %+v", metadata)
-	}
-}
-
 func TestReleaseOutputOnlyForSuccessfulZeroExit(t *testing.T) {
 	output := json.RawMessage(`{"ok":true}`)
 	zero := pgtype.Int4{Int32: 0, Valid: true}
@@ -2297,35 +1843,6 @@ func assertTerminalPayloadFailure(t *testing.T, store *fakeStore, failureKind st
 	}
 }
 
-type fakeWaitpoint struct {
-	ID              pgtype.UUID
-	RunSuspensionID pgtype.UUID
-	OrgID           pgtype.UUID
-	ProjectID       pgtype.UUID
-	EnvironmentID   pgtype.UUID
-	RunID           pgtype.UUID
-	RunLeaseID      pgtype.UUID
-	CheckpointID    pgtype.UUID
-	CorrelationID   string
-	Kind            db.WaitpointKind
-	Request         []byte
-	TimeoutSeconds  pgtype.Int4
-	Status          db.RunSuspensionStatus
-	ResolutionKind  pgtype.Text
-	Output          []byte
-	Resolution      []byte
-	CreatedAt       pgtype.Timestamptz
-	WaitingAt       pgtype.Timestamptz
-	ResolvedAt      pgtype.Timestamptz
-}
-
-func runSuspensionID(waitpoint fakeWaitpoint) pgtype.UUID {
-	if waitpoint.RunSuspensionID.Valid {
-		return waitpoint.RunSuspensionID
-	}
-	return waitpoint.ID
-}
-
 type fakeListRunsParams struct {
 	StatusFilter string
 	RowLimit     int32
@@ -2353,6 +1870,8 @@ type fakeStore struct {
 	createDeploymentErr                         error
 	deploymentEvents                            []db.Event
 	deploymentTasks                             []db.DeploymentTask
+	deploymentStreams                           []db.DeploymentStream
+	ensuredSessionStreams                       []db.EnsureSessionStreamParams
 	artifacts                                   []db.Artifact
 	runEvent                                    db.AppendRunEventParams
 	events                                      []db.Event
@@ -2365,6 +1884,7 @@ type fakeStore struct {
 	deferLogChunksUntilSecondList               bool
 	logChunks                                   []db.RunLogChunk
 	logTruncated                                bool
+	updateRunMetadata                           db.UpdateRunMetadataForExecutionParams
 	secret                                      db.GetScopedSecretMetadataByNameRow
 	secrets                                     []db.ListScopedSecretsRow
 	deleteSecret                                db.DeleteScopedSecretParams
@@ -2378,8 +1898,7 @@ type fakeStore struct {
 	sessionID                                   pgtype.UUID
 	executionWorkerInstanceID                   pgtype.UUID
 	executionLeaseExpiresAt                     pgtype.Timestamptz
-	waitpoint                                   fakeWaitpoint
-	checkpoint                                  db.Checkpoint
+	checkpoint                                  db.RuntimeCheckpoint
 	abandonedClaim                              bool
 	workerBootstrapTokenHash                    []byte
 	workerCredentialID                          pgtype.UUID
@@ -2394,9 +1913,6 @@ type fakeStore struct {
 	workerQueueCapacitySet                      bool
 	claimWorkspaceMaterialization               db.ClaimWorkspaceMaterializationParams
 	claimWorkspaceMaterializationCalls          int
-	waitpointToken                              db.WaitpointToken
-	publicAccessToken                           db.PublicAccessToken
-	createPublicAccessToken                     db.CreatePublicAccessTokenParams
 	taskSession                                 db.TaskSession
 	lockTaskSession                             db.TaskSession
 	createTaskSessionErr                        error
@@ -2416,20 +1932,7 @@ type fakeStore struct {
 	attachedWorkspace                           db.GetWorkspaceForTaskStartRow
 	createWorkspaceCalls                        int
 	startIdempotency                            db.GetTaskStartIdempotencyRow
-	appendSessionChannelInput                   db.AppendSessionChannelInputRow
-	appendSessionChannelInputCalls              int
-	taskSessionChannel                          db.Channel
-	taskSessionChannels                         []db.Channel
-	listChannelRecords                          db.ListChannelRecordsParams
-	channelRecords                              []db.ChannelRecord
 	taskSessionRuns                             []db.TaskSessionRun
-	getWaitpointToken                           db.GetWaitpointTokenParams
-	getWaitpointTokenForAuthenticatedCompletion db.GetWaitpointTokenForAuthenticatedCompletionParams
-	getWaitpointTokenForPublicCompletion        db.GetWaitpointTokenForPublicCompletionParams
-	lockPublicAccessTokenByHash                 []byte
-	consumePublicAccessToken                    db.ConsumePublicAccessTokenParams
-	getWaitpointTokenForCallbackCompletion      db.GetWaitpointTokenForCallbackCompletionParams
-	completeWaitpointToken                      db.CompleteWaitpointTokenParams
 	scheduleTriggerNotCurrent                   bool
 	closeTaskSessionAttachesRun                 pgtype.UUID
 }
@@ -2496,7 +1999,7 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		QueueTimestamp:        arg.QueueTimestamp,
 		Ttl:                   arg.Ttl,
 		QueuedExpiresAt:       arg.QueuedExpiresAt,
-		MaxDurationSeconds:    arg.MaxDurationSeconds,
+		MaxActiveDurationMs:   arg.MaxActiveDurationMs,
 		TraceID:               arg.TraceID,
 		RootSpanID:            arg.RootSpanID,
 		CreatedAt:             now,
@@ -2888,77 +2391,6 @@ func (f *fakeStore) CreateTaskSessionRun(_ context.Context, arg db.CreateTaskSes
 	return row, nil
 }
 
-func (f *fakeStore) AppendSessionChannelInput(_ context.Context, arg db.AppendSessionChannelInputParams) (db.AppendSessionChannelInputRow, error) {
-	f.appendSessionChannelInputCalls++
-	row := f.appendSessionChannelInput
-	if !row.ID.Valid {
-		row = db.AppendSessionChannelInputRow{
-			ID:                     arg.ID,
-			OrgID:                  arg.OrgID,
-			ProjectID:              f.taskSession.ProjectID,
-			EnvironmentID:          f.taskSession.EnvironmentID,
-			RunID:                  arg.RunID,
-			ChannelID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			Channel:                arg.Channel,
-			Data:                   arg.Data,
-			CorrelationID:          arg.CorrelationID,
-			Sequence:               1,
-			ContentType:            arg.ContentType,
-			IdempotencyKey:         arg.IdempotencyKey,
-			IdempotencyFingerprint: arg.IdempotencyFingerprint,
-			ExternalEventID:        arg.ExternalEventID,
-			AuthSubjectType:        arg.AuthSubjectType,
-			AuthSubjectID:          arg.AuthSubjectID,
-			Inserted:               true,
-			CreatedAt:              testTime(),
-		}
-	} else {
-		row.ExternalEventID = arg.ExternalEventID
-		row.IdempotencyKey = arg.IdempotencyKey
-		row.CorrelationID = arg.CorrelationID
-		row.AuthSubjectType = arg.AuthSubjectType
-		row.AuthSubjectID = arg.AuthSubjectID
-	}
-	f.appendSessionChannelInput = row
-	return row, nil
-}
-
-func (f *fakeStore) GetExistingSessionChannelInputRecord(_ context.Context, arg db.GetExistingSessionChannelInputRecordParams) (db.GetExistingSessionChannelInputRecordRow, error) {
-	row := f.appendSessionChannelInput
-	if !row.ID.Valid ||
-		row.OrgID != arg.OrgID ||
-		f.taskSession.ID != arg.TaskSessionID ||
-		row.Channel != arg.Channel ||
-		row.IdempotencyFingerprint != arg.IdempotencyFingerprint ||
-		(arg.IdempotencyKey == "" && arg.ExternalEventID == "") {
-		return db.GetExistingSessionChannelInputRecordRow{}, pgx.ErrNoRows
-	}
-	if arg.IdempotencyKey != "" && row.IdempotencyKey != arg.IdempotencyKey {
-		return db.GetExistingSessionChannelInputRecordRow{}, pgx.ErrNoRows
-	}
-	if arg.ExternalEventID != "" && row.ExternalEventID != arg.ExternalEventID {
-		return db.GetExistingSessionChannelInputRecordRow{}, pgx.ErrNoRows
-	}
-	return db.GetExistingSessionChannelInputRecordRow{
-		ID:                     row.ID,
-		OrgID:                  row.OrgID,
-		ProjectID:              row.ProjectID,
-		EnvironmentID:          row.EnvironmentID,
-		ChannelID:              row.ChannelID,
-		Channel:                row.Channel,
-		Data:                   row.Data,
-		CorrelationID:          row.CorrelationID,
-		Sequence:               row.Sequence,
-		ContentType:            row.ContentType,
-		IdempotencyKey:         row.IdempotencyKey,
-		IdempotencyFingerprint: row.IdempotencyFingerprint,
-		ExternalEventID:        row.ExternalEventID,
-		AuthSubjectType:        row.AuthSubjectType,
-		AuthSubjectID:          row.AuthSubjectID,
-		CreatedAt:              row.CreatedAt,
-	}, nil
-}
-
 func (f *fakeStore) GetTaskStartIdempotency(_ context.Context, arg db.GetTaskStartIdempotencyParams) (db.GetTaskStartIdempotencyRow, error) {
 	if f.startIdempotency.ID.Valid &&
 		f.startIdempotency.OrgID == arg.OrgID &&
@@ -3136,37 +2568,6 @@ func (f *fakeStore) GetTaskSessionByExternalID(_ context.Context, arg db.GetTask
 	return db.TaskSession{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) GetTaskSessionChannelByName(_ context.Context, arg db.GetTaskSessionChannelByNameParams) (db.Channel, error) {
-	if f.taskSessionChannel.ID.Valid &&
-		f.taskSessionChannel.OrgID == arg.OrgID &&
-		f.taskSessionChannel.ProjectID == arg.ProjectID &&
-		f.taskSessionChannel.EnvironmentID == arg.EnvironmentID &&
-		f.taskSessionChannel.TaskSessionID == arg.TaskSessionID &&
-		f.taskSessionChannel.Name == arg.Name &&
-		f.taskSessionChannel.Direction == db.ChannelDirection(arg.Direction) {
-		return f.taskSessionChannel, nil
-	}
-	return db.Channel{}, pgx.ErrNoRows
-}
-
-func (f *fakeStore) ListTaskSessionChannels(_ context.Context, arg db.ListTaskSessionChannelsParams) ([]db.Channel, error) {
-	channels := make([]db.Channel, 0, len(f.taskSessionChannels))
-	for _, channel := range f.taskSessionChannels {
-		if channel.OrgID == arg.OrgID &&
-			channel.ProjectID == arg.ProjectID &&
-			channel.EnvironmentID == arg.EnvironmentID &&
-			channel.TaskSessionID == arg.TaskSessionID {
-			channels = append(channels, channel)
-		}
-	}
-	return channels, nil
-}
-
-func (f *fakeStore) ListChannelRecords(_ context.Context, arg db.ListChannelRecordsParams) ([]db.ChannelRecord, error) {
-	f.listChannelRecords = arg
-	return f.channelRecords, nil
-}
-
 func (f *fakeStore) CancelTaskSession(_ context.Context, arg db.CancelTaskSessionParams) (db.TaskSession, error) {
 	if f.taskSession.ID.Valid &&
 		f.taskSession.OrgID == arg.OrgID &&
@@ -3307,6 +2708,13 @@ func (f fakeAuth) Authenticate(context.Context, string) (auth.Actor, error) {
 			auth.PermissionRunsCreate,
 			auth.PermissionRunsRead,
 			auth.PermissionRunsManage,
+			auth.PermissionSessionStreamsRead,
+			auth.PermissionSessionInputSend,
+			auth.PermissionSessionOutputAppend,
+			auth.PermissionTokensCreate,
+			auth.PermissionTokensRead,
+			auth.PermissionTokensComplete,
+			auth.PermissionTokensCancel,
 			auth.PermissionWorkspaceLifecycleManage,
 			auth.PermissionFilesRead,
 			auth.PermissionFilesWrite,
@@ -3323,10 +2731,7 @@ func (f fakeAuth) Authenticate(context.Context, string) (auth.Actor, error) {
 			auth.PermissionPortsExpose,
 			auth.PermissionPortsRead,
 			auth.PermissionPortsClose,
-			auth.PermissionRunWaitpointsRead,
-			auth.PermissionChannelsWrite,
 			auth.PermissionSecretsWrite,
-			auth.PermissionWaitpointTokensCreate,
 			auth.PermissionTasksDeploy,
 		}
 	}

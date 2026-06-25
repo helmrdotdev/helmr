@@ -61,6 +61,22 @@ export const secretSmoke = task({
   },
 })
 
+export const missingSecretSmoke = task({
+  id: "missing-secret-smoke",
+  sandbox: sbx,
+  maxDuration: 300,
+  secrets: [
+    {
+      name: "HELMR_RELEASE_SMOKE_REQUIRED_ABSENT_SECRET",
+      env: "HELMR_RELEASE_SMOKE_REQUIRED_ABSENT_SECRET",
+    },
+  ],
+  payload,
+  run: async () => {
+    throw new Error("missing-secret-smoke should be rejected before run creation")
+  },
+})
+
 function secretFingerprint(name: typeof secretNames[number]): { present: true } {
   const value = process.env[name]
   if (!value) {

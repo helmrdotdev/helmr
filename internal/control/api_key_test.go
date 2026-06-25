@@ -270,29 +270,24 @@ func TestIssueAPIKeyRejectsLegacyBroadWorkspaceScopes(t *testing.T) {
 	}
 }
 
-func TestIssueAPIKeySupportsChannelScopes(t *testing.T) {
-	store := &apiKeyStore{role: db.OrgMemberRoleOwner}
-	server := testAPIKeyServer(store)
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", strings.NewReader(`{"name":"channels","expires_in_days":30,"permissions":[{"scopes":["run-waitpoints:read","channels:write","waitpoint-tokens:create"]}]}`))
-	addSessionCookie(req)
-	rec := httptest.NewRecorder()
+func TestIssueAPIKeyRejectsLegacyWaitpointAndChannelScopes(t *testing.T) {
+	for _, scope := range []string{"run-waitpoints:read", "channels:write", "waitpoint-tokens:create", "waitpoint-tokens:read", "waitpoint-tokens:complete"} {
+		t.Run(scope, func(t *testing.T) {
+			store := &apiKeyStore{role: db.OrgMemberRoleOwner}
+			server := testAPIKeyServer(store)
+			req := httptest.NewRequest(http.MethodPost, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", strings.NewReader(`{"name":"legacy","expires_in_days":30,"permissions":[{"scopes":["`+scope+`"]}]}`))
+			addSessionCookie(req)
+			rec := httptest.NewRecorder()
 
-	server.ServeHTTP(rec, req)
+			server.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	got := make([]string, 0, len(store.grants))
-	for _, grant := range store.grants {
-		got = append(got, grant.Permission)
-	}
-	want := []string{
-		string(auth.PermissionRunWaitpointsRead),
-		string(auth.PermissionChannelsWrite),
-		string(auth.PermissionWaitpointTokensCreate),
-	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("grants = %+v, want %+v", got, want)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+			if len(store.grants) != 0 {
+				t.Fatalf("legacy scope created grants = %+v", store.grants)
+			}
+		})
 	}
 }
 

@@ -1,10 +1,10 @@
 {
   "runtime_contract_version": 0,
   "adapter_files": {
-    "main.js": "sha256:6402d41490409be04642ad49bf301158b79373deb7075072f570a4bcc8c308cb",
+    "main.js": "sha256:ec99a72986c7341cf90597b33269e96524f608f4490ddb014213839a53f6c77d",
     "register.mjs": "sha256:5c1d2c0717ddf23f9b0b44a9311935b9a69c9277b74b236c8a633d6b2896ac74",
     "loader.mjs": "sha256:966b6109943f62c7d542eb2b84ee334d47c52d8c9225f9f83611f21a7a98041a"
   },
-  "proto_schema_hash": "sha256:fd002e4b5c1c651bef7eabb3f3dfc8875d5b366ba3b309c474320f874fc8b122",
+  "proto_schema_hash": "sha256:f11344b91e75868a335cc29a9312ab43d427959d2deaba919eafadf108062016",
   "bundle_target": "node"
 }

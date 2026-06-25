@@ -1,7 +1,7 @@
 # Resend Email Approval
 
-This example shows an email approval surface backed by a Helmr waitpoint token
-and Resend. Helmr owns the durable task session, run, and waitpoint token; the
+This example shows an email approval surface backed by a Helmr token
+and Resend. Helmr owns the durable task session, run, and token; the
 app owns email delivery, sender identity, and recipient routing.
 
 ## Deploy and Start a Session
@@ -18,12 +18,11 @@ helmr task start resend-email-approval --json \
   }'
 ```
 
-Copy `run.id` from the JSON start response and start the bridge:
+Start the bridge:
 
 ```sh
 export HELMR_API_URL="https://dev.helmr.dev"
 export HELMR_API_KEY="..."
-export HELMR_CURRENT_RUN_ID="run_..."
 export PUBLIC_BASE_URL="https://your-bridge.example.com"
 export RESEND_API_KEY="re_..."
 export RESEND_FROM="Helmr <approvals@your-domain.example>"
@@ -38,16 +37,16 @@ that only fetch links do not approve or reject the wait.
 
 ## Flow
 
-1. The task creates a waitpoint token and waits with `wait.forToken(token)`.
-2. The bridge polls pending waitpoints for the current run id.
-3. The bridge sends an email through Resend backed by the waitpoint token.
+1. The task creates a token and waits with `tokens.wait(token)`.
+2. The bridge polls pending tokens tagged `bridge:resend-email-approval`.
+3. The bridge sends an email through Resend backed by the token.
 4. The recipient opens approve or reject and submits the confirmation form.
-5. The bridge completes the waitpoint token.
+5. The bridge completes the token.
 
 The task contains no email-specific SDK code. Resend is just one delivery
-surface for the generic Helmr waitpoint.
+surface for the generic Helmr token.
 
-Waitpoint tokens are bearer-equivalent capabilities for one pending wait.
+Tokens are bearer-equivalent capabilities for one pending wait.
 Treat email links as sensitive. This example keeps delivered wait ids in memory
 for clarity; a production bridge should persist provider message ids so restarts
 do not resend the same pending wait.

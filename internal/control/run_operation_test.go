@@ -123,7 +123,7 @@ func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) 
 		SecretDeclarations:   []byte("[]"),
 		ResourceRequirements: []byte("{}"),
 		QueueName:            "reports",
-		MaxDurationSeconds:   300,
+		MaxActiveDurationMs:  300_000,
 		CreatedAt:            testTime(),
 	}}}
 	runEnqueuer := &fakeRunEnqueuer{}

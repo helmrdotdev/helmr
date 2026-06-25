@@ -19,7 +19,7 @@ const client = new HelmrClient({
 })
 ```
 
-Authenticated SDK calls require an API key. Scoped public access tokens can be used as raw HTTP bearer tokens for the single session channel or waitpoint action they grant. `http://` is allowed only for loopback hosts.
+Authenticated SDK calls require an API key. Scoped public access tokens can be used as raw HTTP bearer tokens for the single session stream or token action they grant. `http://` is allowed only for loopback hosts.
 
 The SDK sends a pinned `Helmr-API-Version` header and `Helmr-SDK-Version` on every request. The pinned API version is the contract the SDK was built and tested against; it does not change with the current date.
 
@@ -31,9 +31,9 @@ Main surfaces:
 | `client.tasks.startAndWait<typeof task>(id, payload, opts)` | Start or reuse a task session, then wait for the session to become terminal or time out. |
 | `client.sessions.retrieve(session)` | Fetch current task session state. |
 | `client.sessions.wait(session, opts)` | Wait for terminal task session state. |
-| `client.sessions.open(session).input(channel).send(data)` | Append durable input to a session channel. |
-| `client.sessions.open(session).output(channel).list(opts)` | Read durable session output records from a cursor. |
-| `client.sessions.open(session).output(channel).stream(opts)` | Stream durable session output records over SSE. |
+| `client.sessions.open(session).input(stream).send(data)` | Append durable input to a session stream. |
+| `client.sessions.open(session).output(stream).list(opts)` | Read durable session output records from a cursor. |
+| `client.sessions.open(session).output(stream).read(opts)` | Read one durable session output record from a cursor. |
 | `client.auth.createPublicToken(opts)` | Create a scoped opaque bearer token for one session input append or output read grant. |
 | `client.workspaces.create(opts)` | Create a durable workspace from a deployed sandbox. |
 | `client.workspaces.open(id)` | Create a lazy handle for a workspace. |
@@ -54,11 +54,11 @@ Main surfaces:
 | `client.runs.logs.retrieve(run)` | Read latest stdout/stderr snapshot. |
 | `client.runs.events.list(run, opts)` | Page through run events. |
 | `client.runs.events.subscribe(run, opts)` | Follow durable run events over SSE with cursor reconnects. |
-| `client.runs.waitpoints.list(run, opts)` | Page through durable waitpoints. |
-| `client.waitpoints.tokens.create(opts)` / `wait.createToken(opts)` | Create an externally completable waitpoint token. |
-| `client.waitpoints.tokens.retrieve(id, opts)` / `wait.retrieveToken(id, opts)` | Retrieve waitpoint token metadata and completion result. |
-| `client.waitpoints.tokens.list(opts)` / `wait.listTokens(opts)` | List waitpoint tokens. |
-| `client.waitpoints.tokens.complete(token, data, opts)` / `wait.completeToken(token, data, opts)` | Complete a waitpoint token with JSON data. |
+| `client.tokens.create(opts)` / `tokens.create(opts)` | Create an externally completable token. |
+| `client.tokens.retrieve(id, opts)` | Retrieve token metadata and completion result. |
+| `client.tokens.list(opts)` | List tokens. |
+| `client.tokens.complete(token, data, opts)` | Complete a token with JSON data. |
+| `client.tokens.cancel(token, opts)` | Cancel a pending token. |
 | `client.schedules.create(opts)` | Create an imperative cron schedule for a deployed task. |
 | `client.schedules.list(opts)` | List schedules in a project environment. |
 | `client.schedules.retrieve(id, opts)` | Fetch one schedule. |
@@ -67,25 +67,25 @@ Main surfaces:
 | `client.schedules.deactivate(id, opts)` | Deactivate an imperative schedule. |
 | `client.schedules.delete(id, opts)` | Delete an imperative schedule. |
 
-Task start `payload` is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload. Follow-up user messages, webhooks, or operator replies belong in session input channels, not in task start payload.
+Task start `payload` is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload. Follow-up user messages, webhooks, or operator replies belong in session input streams, not in task start payload.
 
 Task starts create or reuse a task session and attach a workspace. When no
 workspace is supplied, Helmr creates one from the deployed task's sandbox.
 Direct workspace operations are separate: creating an exec or PTY on a
 workspace does not create a task session or run.
 
-Session channels are named lanes on a task session. Input channels accept
-follow-up records. Output channels expose task-published records through list
-and stream APIs.
+Session streams are named lanes on a task session. Input streams accept
+follow-up records. Output streams expose task-published records through list
+and read APIs.
 
-Create public access tokens with explicit resource bindings. A session input grant can append only to the bound session channel; a session output grant can read only from the bound session channel. Use separate tokens for read and write grants.
+Create public access tokens with explicit resource bindings. A session input grant can append only to the bound session stream; a session output grant can read only from the bound session stream. Use separate tokens for read and write grants.
 
 ```ts
 const outputToken = await client.auth.createPublicToken({
   scope: {
     type: "session.output.read",
     sessionId: session.id,
-    channel: "agent.report",
+    stream: "agent.report",
     correlationId: "thread-1",
   },
   maxUses: 100,

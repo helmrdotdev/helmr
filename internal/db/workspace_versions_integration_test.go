@@ -13,7 +13,7 @@ import (
 func TestWorkspaceMaterializationRequiresReadyCurrentVersion(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
-	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	ids := seedIntegration(t, ctx, pool)
 	artifactID := seedWorkspaceVersionArtifact(t, ctx, pool, ids)
 	versionID := uuid.Must(uuid.NewV7())
 	digest := "sha256:" + strings.ReplaceAll(uuid.NewString(), "-", "")
@@ -43,7 +43,7 @@ func TestWorkspaceMaterializationRequiresReadyCurrentVersion(t *testing.T) {
 func TestWorkspaceCurrentVersionAllowsReadyVersionCreatedInSameTransaction(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
-	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	ids := seedIntegration(t, ctx, pool)
 	workspaceID := uuid.Must(uuid.NewV7())
 	versionID := uuid.Must(uuid.NewV7())
 	artifactID := seedWorkspaceVersionArtifact(t, ctx, pool, ids)
@@ -80,7 +80,7 @@ func TestWorkspaceCurrentVersionAllowsReadyVersionCreatedInSameTransaction(t *te
 func TestCreateWorkspaceFromSandboxCreatesInitialCurrentVersion(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
-	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 	artifactID := seedWorkspaceVersionArtifact(t, ctx, pool, ids)
 	workspaceID := uuid.Must(uuid.NewV7())

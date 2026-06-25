@@ -17,7 +17,7 @@ order: 800
 | Worker does not activate | Check KVM, Firecracker, jailer, CNI, BuildKit, guest artifacts, bootstrap token, and outbound network access. |
 | External repository access fails | Check the task secret, token scope, payload values, and worker egress. |
 | Image build fails | Check BuildKit service status and worker egress to registries and AWS APIs. |
-| Waitpoint resume fails | Check worker availability and checkpoint runtime compatibility. |
+| Parked wait resume fails | Check worker availability and checkpoint runtime compatibility. |
 
 For control or dispatcher task failures, inspect ECS service events and CloudWatch logs for the affected ECS service. For worker failures, use SSM to inspect systemd journals on the worker instance.
 

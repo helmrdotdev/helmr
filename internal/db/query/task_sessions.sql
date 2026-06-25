@@ -403,21 +403,21 @@ SELECT task_session_runs.*,
    AND task_session_runs.task_session_id = sqlc.arg(task_session_id)
  ORDER BY task_session_runs.turn_index ASC, task_session_runs.created_at ASC;
 
--- name: GetTaskSessionChannelByName :one
+-- name: GetTaskSessionStreamByName :one
 SELECT *
-  FROM channels
+  FROM streams
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
-   AND task_session_id = sqlc.arg(task_session_id)
+   AND session_id = sqlc.arg(task_session_id)
    AND name = sqlc.arg(name)
-   AND direction = sqlc.arg(direction)::channel_direction;
+   AND direction = sqlc.arg(direction)::stream_direction;
 
--- name: ListTaskSessionChannels :many
+-- name: ListTaskSessionStreams :many
 SELECT *
-  FROM channels
+  FROM streams
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
-   AND task_session_id = sqlc.arg(task_session_id)
+   AND session_id = sqlc.arg(task_session_id)
  ORDER BY name ASC, direction ASC;

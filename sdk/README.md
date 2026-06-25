@@ -50,15 +50,25 @@ for await (const event of await client.runs.events.subscribe(started.run)) {
 console.log(session.status, current.status, logs.stdout, events.length)
 ```
 
-Waitpoint tokens are the external completion primitive. Create a token in task code with `wait.createToken()`, wait with `wait.forToken(token)`, and complete it from trusted server-side code or a userland bridge:
+Tokens are the external completion primitive. Create a token in task code with `tokens.create()`, wait with the returned handle, and complete it from trusted server-side code or a userland bridge:
 
 ```ts
-const token = await wait.createToken({
-  timeoutInSeconds: 3600,
+// Task code.
+import { tokens } from "@helmr/sdk"
+
+const token = await tokens.create({
+  timeout: "1h",
   metadata: { recipient: "reviewer@example.com" },
 })
 
-await wait.completeToken(token, {
+await token.wait({
+  schema: approvalSchema,
+})
+```
+
+```ts
+// Trusted server-side bridge code.
+await client.tokens.complete(token.id, {
   approved: true,
   reviewer: "slack:U123",
 })

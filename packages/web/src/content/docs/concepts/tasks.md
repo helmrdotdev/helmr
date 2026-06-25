@@ -53,7 +53,7 @@ Payload is audit data. Helmr persists it in plaintext in the database, run event
 
 ## Runtime Context
 
-The task context provides read-only execution context such as `ctx.signal`, `ctx.run.id`, `ctx.task.id`, `ctx.workspace`, and `ctx.session.id`. Use `ctx.session` for durable session channel input and output. Use module-level APIs for other operations: `logger` for logs, `wait` for durable time waits and waitpoint tokens, and `metadata` for current run state. The return value becomes run output when the task succeeds.
+The task context provides read-only execution context such as `ctx.signal`, `ctx.run.id`, `ctx.task.id`, `ctx.workspace`, and `ctx.session.id`. Use module-level APIs for durable session streams, `logger` for logs, `timers` for durable time waits, `tokens` for external completions, and metadata APIs for current run state. The return value becomes run output when the task succeeds.
 
 ## Scheduled Tasks
 

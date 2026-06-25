@@ -30,13 +30,13 @@ task
 
 task session
   -> task invocation history
-  -> channel records
+  -> stream records
   -> runs
   -> attached workspace
 
 run
   -> one execution attempt
-  -> logs, events, waitpoints, output
+  -> logs, events, waits, output
   -> attached workspace
 ```
 
@@ -57,12 +57,12 @@ run
 | Materialization | A live worker/VM instance for a workspace. Direct exec, PTY, and task runs use materializations when they need live execution. |
 | Exec | A durable command handle created directly on a workspace. It records command state and stream cursors. |
 | PTY session | A durable interactive terminal handle created directly on a workspace. It records terminal state and stream cursors. |
-| Task session | One task invocation and its interaction history. It has channel records and ordered runs, and it references a workspace. |
-| Run | One execution attempt for a task session. It records pinned deployment metadata, logs, events, waitpoints, and output. |
+| Task session | One task invocation and its interaction history. It has stream records and ordered runs, and it references a workspace. |
+| Run | One execution attempt for a task session. It records pinned deployment metadata, logs, events, waits, and output. |
 | Schedule | A cron definition that starts task sessions for a deployed task. |
-| Waitpoint | A durable pause in a run for time or external completion. |
-| Waitpoint token | A scoped capability that can complete one token waitpoint. |
-| Session channel | A named durable input or output lane owned by a task session. |
+| Run wait | A durable internal pause in a run for stream input, token completion, or time. |
+| Token | A scoped external completion primitive for browser, provider, or server-to-server workflows. |
+| Session stream | A named durable input or output lane owned by a task session. |
 | Secret | An encrypted value stored by name and bound to a declared task secret at run time. |
 
 ## Workspace First

@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 
-import { HelmrClient, WorkspaceStreamError, WorkspaceStreamTerminalError, waitpointTokenClientMethod } from "./client"
+import { HelmrClient, WorkspaceStreamError, WorkspaceStreamTerminalError, tokenClientMethod } from "./client"
 import { runStateBooleans } from "./run"
 import { PayloadSchemaValidationError, idempotencyKeys, image, sandbox, source, task, type PayloadSchema } from "../index"
 import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER, HELMR_SDK_VERSION, HELMR_SDK_VERSION_HEADER } from "../version"
@@ -649,7 +649,7 @@ test("tasks.startAndWait retries a pending idempotent start before returning the
   expect(session.result).toEqual({ ok: true })
 })
 
-test("sessions facade retrieves state and reads/writes session channels", async () => {
+test("sessions facade retrieves state and reads/writes session streams", async () => {
   const requestedUrls: string[] = []
   const bodies: unknown[] = []
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -664,13 +664,13 @@ test("sessions facade retrieves state and reads/writes session channels", async 
     if (url.endsWith("/api/sessions/session-1/wait")) {
       return Response.json(taskSessionFixture({ id: "session-1", status: "completed", result: { ok: true } }))
     }
-    if (url.endsWith("/api/sessions/session-1/channels/approval/inputs")) {
+    if (url.endsWith("/api/sessions/session-1/inputs/approval")) {
       return Response.json({
         record: channelRecordFixture({ data: { approved: true }, correlation_id: "thread-1" }),
         idempotency_status: "created",
       }, { status: 201 })
     }
-    if (url.includes("/api/sessions/session-1/channels/agent.report/outputs")) {
+    if (url.includes("/api/sessions/session-1/outputs/agent.report")) {
       return Response.json({
         records: [
           channelRecordFixture({ sequence: 2, data: { text: "ready" }, content_type: "application/json" }),
@@ -692,7 +692,7 @@ test("sessions facade retrieves state and reads/writes session channels", async 
   expect(await session.output("agent.report").list({ cursor: 1, limit: 10, correlationId: "thread-1" })).toEqual([
     {
       id: "record-1",
-      channelId: "channel-1",
+      streamId: "stream-1",
       sequence: 2,
       data: { text: "ready" },
       contentType: "application/json",
@@ -702,8 +702,8 @@ test("sessions facade retrieves state and reads/writes session channels", async 
   expect(requestedUrls).toEqual([
     "https://api.example.test/api/sessions/session-1",
     "https://api.example.test/api/sessions/session-1/wait",
-    "https://api.example.test/api/sessions/session-1/channels/approval/inputs",
-    "https://api.example.test/api/sessions/session-1/channels/agent.report/outputs?after_sequence=1&limit=10&correlation_id=thread-1",
+    "https://api.example.test/api/sessions/session-1/inputs/approval",
+    "https://api.example.test/api/sessions/session-1/outputs/agent.report?after_sequence=1&limit=10&correlation_id=thread-1",
   ])
   expect(bodies).toEqual([
     { timeout_seconds: 10 },
@@ -711,12 +711,53 @@ test("sessions facade retrieves state and reads/writes session channels", async 
   ])
 })
 
+test("sessions facade uses public access token stream routes when provided", async () => {
+  const requestedUrls: string[] = []
+  const authHeaders: Array<string | null> = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrls.push(String(input))
+    authHeaders.push(new Headers(init?.headers).get("authorization"))
+    if (String(input).includes("/outputs/agent.report/read")) {
+      return Response.json({ record: channelRecordFixture({ data: { text: "ready" } }) })
+    }
+    return Response.json({
+      record: channelRecordFixture({ data: { approved: true }, correlation_id: "thread-1" }),
+      idempotency_status: "created",
+    }, { status: 201 })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const session = client.sessions.open("session-1")
+
+  await session.input("approval").send({ approved: true }, {
+    correlationId: "thread-1",
+    publicAccessToken: "public-input-token",
+  })
+  await session.output("agent.report").read({
+    cursor: 1,
+    correlationId: "thread-1",
+    publicAccessToken: "public-output-token",
+  })
+
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/v1/sessions/session-1/inputs/approval",
+    "https://api.example.test/api/v1/sessions/session-1/outputs/agent.report/read?after_sequence=1&correlation_id=thread-1",
+  ])
+  expect(authHeaders).toEqual([
+    "Bearer public-input-token",
+    "Bearer public-output-token",
+  ])
+})
+
 test("sessions facade uses project environment scoped routes when scope is provided", async () => {
   const requestedUrls: string[] = []
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     requestedUrls.push(url)
-    if (url.endsWith("/session-1/channels/agent.report/outputs")) {
+    if (init?.method === "POST" && url.endsWith("/session-1/outputs/agent.report")) {
+      return Response.json({ record: channelRecordFixture({ data: { text: "ready" } }) })
+    }
+    if (url.endsWith("/session-1/outputs/agent.report")) {
       return Response.json({ records: [] })
     }
     return Response.json(taskSessionFixture({ id: "session-1", status: "completed", result: { ok: true } }))
@@ -728,97 +769,14 @@ test("sessions facade uses project environment scoped routes when scope is provi
 
   await session.retrieve(scope)
   await session.wait(scope)
+  await session.output("agent.report").append({ text: "ready" }, scope)
   await session.output("agent.report").list(scope)
 
   expect(requestedUrls).toEqual([
     "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1",
     "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1/wait",
-    "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1/channels/agent.report/outputs",
-  ])
-})
-
-test("session output stream maps channel record SSE frames", async () => {
-  const encoder = new TextEncoder()
-  const requestedUrls: string[] = []
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input)
-    requestedUrls.push(url)
-    if (url.endsWith("/api/sessions/session-1")) {
-      return Response.json(taskSessionFixture({ status: "completed", current_run_id: null }))
-    }
-    const record = channelRecordFixture({ sequence: 7, data: { text: "done" } })
-    return new Response(
-      new ReadableStream({
-        start(controller) {
-          controller.enqueue(encoder.encode(`id: 7\nevent: channel_output\ndata: ${JSON.stringify(record)}\n\n`))
-          controller.close()
-        },
-      }),
-      { status: 200, headers: { "content-type": "text/event-stream" } },
-    )
-  }) as typeof fetch
-
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const records: unknown[] = []
-  for await (const record of await client.sessions.open("session-1").output("agent.report").stream({ cursor: 6, correlationId: "thread-1" })) {
-    records.push(record)
-  }
-
-  expect(requestedUrls).toEqual([
-    "https://api.example.test/api/sessions/session-1/channels/agent.report/outputs/stream?after_sequence=6&correlation_id=thread-1",
-    "https://api.example.test/api/sessions/session-1",
-  ])
-  expect(records).toEqual([{
-    id: "record-1",
-    channelId: "channel-1",
-    sequence: 7,
-    data: { text: "done" },
-    contentType: "application/json",
-    createdAt: "2026-04-20T00:00:00Z",
-  }])
-})
-
-test("session output stream reconnects with the last yielded sequence", async () => {
-  const encoder = new TextEncoder()
-  const requestedUrls: string[] = []
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input)
-    requestedUrls.push(url)
-    if (url.endsWith("/api/sessions/session-1")) {
-      const openChecks = requestedUrls.filter((requested) => requested.endsWith("/api/sessions/session-1")).length
-      return Response.json(taskSessionFixture({
-        status: openChecks === 1 ? "open" : "completed",
-        current_run_id: openChecks === 1 ? "run-1" : null,
-      }))
-    }
-    const sequence = url.includes("after_sequence=7") ? 8 : 7
-    const record = channelRecordFixture({ id: `record-${sequence}`, sequence, data: { text: `step-${sequence}` } })
-    return new Response(
-      new ReadableStream({
-        start(controller) {
-          controller.enqueue(encoder.encode(`id: ${sequence}\nevent: channel_output\ndata: ${JSON.stringify(record)}\n\n`))
-          controller.close()
-        },
-      }),
-      { status: 200, headers: { "content-type": "text/event-stream" } },
-    )
-  }) as typeof fetch
-
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const records: unknown[] = []
-  for await (const record of await client.sessions.open("session-1").output("agent.report").stream({ cursor: 6 })) {
-    records.push(record)
-  }
-
-  expect(requestedUrls).toEqual([
-    "https://api.example.test/api/sessions/session-1/channels/agent.report/outputs/stream?after_sequence=6",
-    "https://api.example.test/api/sessions/session-1",
-    "https://api.example.test/api/sessions/session-1/channels/agent.report/outputs/stream?after_sequence=7",
-    "https://api.example.test/api/sessions/session-1",
-  ])
-  expect(records).toMatchObject([
-    { sequence: 7, data: { text: "step-7" } },
-    { sequence: 8, data: { text: "step-8" } },
+    "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1/outputs/agent.report",
+    "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1/outputs/agent.report",
   ])
 })
 
@@ -834,7 +792,7 @@ test("auth.createPublicToken posts a scoped public access token request", async 
       scope: {
         type: "session.output.read",
         session_id: "session-1",
-        channel: "agent.report",
+        stream: "agent.report",
         correlation_id: "thread-1",
       },
       expires_at: "2026-04-20T01:00:00Z",
@@ -848,7 +806,7 @@ test("auth.createPublicToken posts a scoped public access token request", async 
     scope: {
       type: "session.output.read",
       sessionId: "session-1",
-      channel: "agent.report",
+      stream: "agent.report",
       correlationId: "thread-1",
     },
     expiresAt: new Date("2026-04-20T01:00:00Z"),
@@ -860,7 +818,7 @@ test("auth.createPublicToken posts a scoped public access token request", async 
     scope: {
       type: "session.output.read",
       session_id: "session-1",
-      channel: "agent.report",
+      stream: "agent.report",
       correlation_id: "thread-1",
     },
     expires_at: "2026-04-20T01:00:00.000Z",
@@ -872,7 +830,7 @@ test("auth.createPublicToken posts a scoped public access token request", async 
     scope: {
       type: "session.output.read",
       sessionId: "session-1",
-      channel: "agent.report",
+      stream: "agent.report",
       correlationId: "thread-1",
     },
     expiresAt: "2026-04-20T01:00:00Z",
@@ -881,14 +839,14 @@ test("auth.createPublicToken posts a scoped public access token request", async 
   })
 })
 
-test("waitpoints token namespace exposes create and complete", async () => {
+test("tokens namespace exposes create and complete", async () => {
   const requestedUrls: string[] = []
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     requestedUrls.push(String(input))
-    if (init?.method === "POST" && String(input).endsWith("/api/waitpoints/tokens")) {
+    if (init?.method === "POST" && String(input).endsWith("/api/tokens")) {
       return Response.json({
         id: "token-id",
-        callback_url: "https://api.example.test/api/waitpoints/tokens/token-id/callback/callback-secret",
+        callback_url: "https://api.example.test/api/v1/tokens/token-id/callback/callback-secret",
         public_access_token: "public-token",
         timeout_at: null,
       }, { status: 201 })
@@ -897,12 +855,12 @@ test("waitpoints token namespace exposes create and complete", async () => {
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const token = await client.waitpoints.tokens.create()
-  await client.waitpoints.tokens.complete(token, { approved: true })
+  const token = await client.tokens.create()
+  await client.tokens.complete(token, { approved: true })
 
   expect(requestedUrls).toEqual([
-    "https://api.example.test/api/waitpoints/tokens",
-    "https://api.example.test/api/waitpoints/tokens/token-id/complete",
+    "https://api.example.test/api/tokens",
+    "https://api.example.test/api/v1/tokens/token-id/complete",
   ])
 })
 
@@ -1211,7 +1169,6 @@ test("runs facade uses project environment scoped routes when scope is provided"
       task_id: "inspect",
       status: "succeeded",
       exit_code: 0,
-      pending_waitpoint: null,
     })
   }) as typeof fetch
 
@@ -1470,7 +1427,7 @@ test("runs.retrieve accepts a run handle and returns a run snapshot", async () =
       exit_code: 0,
       created_at: "2026-05-09T00:00:00Z",
       updated_at: "2026-05-09T00:01:00Z",
-      pending_waitpoint: null,
+      pending_wait: null,
     })
   }) as typeof fetch
 
@@ -1487,7 +1444,6 @@ test("runs.retrieve accepts a run handle and returns a run snapshot", async () =
       exitCode: 0,
     createdAt: "2026-05-09T00:00:00Z",
     updatedAt: "2026-05-09T00:01:00Z",
-    pendingWaitpoint: null,
     isQueued: false,
     isRunning: false,
     isWaiting: false,
@@ -1579,12 +1535,12 @@ test("runs.events.list maps backend audit payload fields", async () => {
         {
           id: "1",
           run_id: "run-1",
-          kind: "waitpoint",
-          message: "waitpoint.created",
+          kind: "run_wait",
+          message: "run_wait.created",
           at: "2026-04-28T00:00:00Z",
             attributes: {
               kind: "token",
-              waitpoint_id: "token-1",
+              run_wait_id: "token-1",
               timeout: 30,
             params: { message: "Approve deploy?", timeout: 30 },
             metadata: { bridge: "slack" },
@@ -1594,12 +1550,12 @@ test("runs.events.list maps backend audit payload fields", async () => {
         {
           id: "2",
           run_id: "run-1",
-          kind: "waitpoint",
-          message: "waitpoint.created",
+          kind: "run_wait",
+          message: "run_wait.created",
           at: "2026-04-28T00:00:01Z",
             attributes: {
               kind: "token",
-              waitpoint_id: "token-2",
+              run_wait_id: "token-2",
               timeout: 60,
             params: { prompt: "What changed?", timeout: 60 },
           },
@@ -1607,12 +1563,12 @@ test("runs.events.list maps backend audit payload fields", async () => {
         {
           id: "3",
           run_id: "run-1",
-          kind: "waitpoint",
-          message: "waitpoint.completed",
+          kind: "run_wait",
+          message: "run_wait.completed",
           at: "2026-04-28T00:00:02Z",
           attributes: {
             kind: "token",
-            waitpoint_id: "token-2",
+            run_wait_id: "token-2",
             principal: "user",
             payload: { text: "Dependency update", attachments: [] },
           },
@@ -1671,9 +1627,9 @@ test("runs.events.list maps backend audit payload fields", async () => {
   expect(requestedUrl).toBe("https://api.example.test/api/runs/run-1/events")
   expect(events).toEqual([
     {
-      type: "waitpoint",
+      type: "token_wait",
       run_id: "run-1",
-      waitpoint_id: "token-1",
+      wait_id: "token-1",
       kind: "token",
       params: { message: "Approve deploy?", timeout: 30 },
       metadata: { bridge: "slack" },
@@ -1682,9 +1638,9 @@ test("runs.events.list maps backend audit payload fields", async () => {
       at: "2026-04-28T00:00:00Z",
     },
     {
-      type: "waitpoint",
+      type: "token_wait",
       run_id: "run-1",
-      waitpoint_id: "token-2",
+      wait_id: "token-2",
       kind: "token",
       params: { prompt: "What changed?", timeout: 60 },
       metadata: {},
@@ -1693,9 +1649,9 @@ test("runs.events.list maps backend audit payload fields", async () => {
       at: "2026-04-28T00:00:01Z",
     },
     {
-      type: "waitpoint_completed",
+      type: "token_wait_completed",
       run_id: "run-1",
-      waitpoint_id: "token-2",
+      wait_id: "token-2",
       kind: "token",
       payload: { text: "Dependency update", attachments: [] },
       at: "2026-04-28T00:00:02Z",
@@ -1802,38 +1758,7 @@ test("task.start posts the start request directly without uploading source tar",
   })
 })
 
-test("retrieved run snapshots expose pending waitpoints", async () => {
-  globalThis.fetch = (async () => {
-    return Response.json({
-      id: "run-1",
-      task_id: "inspect",
-      status: "waiting",
-      exit_code: null,
-      pending_waitpoint: {
-        id: "request-1",
-        kind: "token",
-        status: "pending",
-        params: { channel: "deploy-review" },
-        metadata: {},
-        tags: [],
-        created_at: "2026-04-20T00:00:00Z",
-      },
-    })
-  }) as typeof fetch
-
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const run = await client.runs.retrieve("run-1")
-
-  expect(run.pendingWaitpoint).toMatchObject({
-    id: "request-1",
-    runId: "run-1",
-    kind: "token",
-    status: "pending",
-    params: { channel: "deploy-review" },
-  })
-})
-
-test("waitpoint token method posts to the token create route", async () => {
+test("token method posts to the token create route", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1842,10 +1767,10 @@ test("waitpoint token method posts to the token create route", async () => {
     return Response.json(
       {
         id: "token-id",
-        callback_url: "https://api.example.test/api/waitpoints/tokens/token-id/callback/callback-secret",
+        callback_url: "https://api.example.test/api/v1/tokens/token-id/callback/callback-secret",
         public_access_token: "secret-token",
         timeout_at: "2026-04-20T01:00:00Z",
-        status: "waiting",
+        status: "pending",
         tags: ["prod"],
         metadata: { recipient: "reviewer@example.com" },
       },
@@ -1854,25 +1779,27 @@ test("waitpoint token method posts to the token create route", async () => {
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const token = await client[waitpointTokenClientMethod]({
+  const token = await client[tokenClientMethod]({
     operation: "create",
     opts: {
-      timeoutInSeconds: 3600,
+      timeout: "1h",
+      idempotencyKey: "token-create-1",
       tags: ["prod"],
       metadata: { recipient: "reviewer@example.com" },
     },
   })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens")
+  expect(requestedUrl).toBe("https://api.example.test/api/tokens")
   expect(body).toEqual({
-    timeout_in_seconds: 3600,
+    timeout: "1h",
+    idempotency_key: "token-create-1",
     tags: ["prod"],
     metadata: { recipient: "reviewer@example.com" },
   })
-  expect(token).toEqual({
+  expect(token).toMatchObject({
     id: "token-id",
-    status: "waiting",
-    callbackUrl: "https://api.example.test/api/waitpoints/tokens/token-id/callback/callback-secret",
+    status: "pending",
+    callbackUrl: "https://api.example.test/api/v1/tokens/token-id/callback/callback-secret",
     publicAccessToken: "secret-token",
     timeoutAt: "2026-04-20T01:00:00Z",
     tags: ["prod"],
@@ -1880,34 +1807,33 @@ test("waitpoint token method posts to the token create route", async () => {
   })
 })
 
-test("waitpoint token method can target an explicit environment", async () => {
+test("token method can target an explicit environment", async () => {
   let requestedUrl: string | undefined
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     requestedUrl = String(input)
     return Response.json({
       id: "token-id",
-      callback_url: "https://api.example.test/api/waitpoints/tokens/token-id/callback/callback-secret",
+      callback_url: "https://api.example.test/api/v1/tokens/token-id/callback/callback-secret",
       public_access_token: "secret-token",
       timeout_at: null,
     }, { status: 201 })
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client[waitpointTokenClientMethod]({
+  await client[tokenClientMethod]({
     operation: "create",
     opts: { projectId: "project-1", environmentId: "env-1" },
   })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/projects/project-1/environments/env-1/waitpoints/tokens")
+  expect(requestedUrl).toBe("https://api.example.test/api/projects/project-1/environments/env-1/tokens")
 })
 
-test("waitpoint token method retrieve maps completed data", async () => {
+test("token method retrieve maps completed data", async () => {
   let requestedUrl: string | undefined
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     requestedUrl = String(input)
     return Response.json({
       id: "token-id",
-      callback_url: "https://api.example.test/api/waitpoints/tokens/token-id/callback/callback-secret",
       timeout_at: "2026-04-20T01:00:00Z",
       status: "completed",
       data: { approved: true },
@@ -1916,20 +1842,20 @@ test("waitpoint token method retrieve maps completed data", async () => {
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const token = await client[waitpointTokenClientMethod]({ operation: "retrieve", id: "token-id" })
+  const token = await client[tokenClientMethod]({ operation: "retrieve", id: "token-id" })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens/token-id")
-  expect(token).toEqual({
+  expect(requestedUrl).toBe("https://api.example.test/api/tokens/token-id")
+  expect(token).toMatchObject({
     id: "token-id",
     status: "completed",
-    callbackUrl: "https://api.example.test/api/waitpoints/tokens/token-id/callback/callback-secret",
     timeoutAt: "2026-04-20T01:00:00Z",
     data: { approved: true },
     metadata: { channel: "slack" },
   })
+  expect(token.callbackUrl).toBeUndefined()
 })
 
-test("waitpoint token method complete uses token public access token when present", async () => {
+test("token method complete uses token public access token when present", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   let authorization: string | null | undefined
@@ -1941,25 +1867,25 @@ test("waitpoint token method complete uses token public access token when presen
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client[waitpointTokenClientMethod]({
+  await client[tokenClientMethod]({
     operation: "complete",
     token: {
       id: "token-id",
-      callbackUrl: "https://api.example.test/api/waitpoints/tokens/token-id/callback/callback-secret",
+      callbackUrl: "https://api.example.test/api/v1/tokens/token-id/callback/callback-secret",
       publicAccessToken: "raw-token",
       timeoutAt: null,
     },
     data: { text: "continue" },
   })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens/token-id/complete")
+  expect(requestedUrl).toBe("https://api.example.test/api/v1/tokens/token-id/complete")
   expect(authorization).toBe("Bearer raw-token")
   expect(body).toEqual({
     data: { text: "continue" },
   })
 })
 
-test("waitpoint token method complete accepts explicit public access token option", async () => {
+test("token method complete accepts explicit public access token option", async () => {
   let authorization: string | null | undefined
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     authorization = new Headers(init?.headers).get("authorization")
@@ -1967,7 +1893,7 @@ test("waitpoint token method complete accepts explicit public access token optio
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client[waitpointTokenClientMethod]({
+  await client[tokenClientMethod]({
     operation: "complete",
     token: "token-id",
     data: { reviewed: true },
@@ -1977,7 +1903,7 @@ test("waitpoint token method complete accepts explicit public access token optio
   expect(authorization).toBe("Bearer raw-token")
 })
 
-test("waitpoint token method complete accepts explicit id", async () => {
+test("token method complete accepts explicit id", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   let authorization: string | null | undefined
@@ -1989,13 +1915,13 @@ test("waitpoint token method complete accepts explicit id", async () => {
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client[waitpointTokenClientMethod]({
+  await client[tokenClientMethod]({
     operation: "complete",
     token: "token-id",
     data: { reviewed: true },
   })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens/token-id/complete")
+  expect(requestedUrl).toBe("https://api.example.test/api/tokens/token-id/complete")
   expect(authorization).toBe("Bearer token")
   expect(body).toEqual({
     data: { reviewed: true },
@@ -2007,12 +1933,12 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
   const event = {
     id: "1",
     kind: "audit",
-    message: "waitpoint.created",
+    message: "run_wait.created",
     at: "2026-04-20T00:00:00Z",
       attributes: {
         run_id: "run-1",
         kind: "token",
-        waitpoint_id: "token-1",
+        run_wait_id: "token-1",
         params: { subject: "deploy" },
     },
   }
@@ -2037,9 +1963,9 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
 
   expect(events).toEqual([
     {
-      type: "waitpoint",
+      type: "token_wait",
       run_id: "run-1",
-      waitpoint_id: "token-1",
+      wait_id: "token-1",
       kind: "token",
       params: { subject: "deploy" },
       metadata: {},
@@ -2135,12 +2061,12 @@ test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
   const event = {
     id: "1",
     kind: "audit",
-    message: "waitpoint.created",
+    message: "run_wait.created",
     at: "2026-04-20T00:00:00Z",
       attributes: {
         run_id: "run-1",
         kind: "token",
-        waitpoint_id: "token-1",
+        run_wait_id: "token-1",
         params: { type: "note" },
     },
   }
@@ -2164,9 +2090,9 @@ test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
 
   expect(events).toEqual([
     {
-      type: "waitpoint",
+      type: "token_wait",
       run_id: "run-1",
-      waitpoint_id: "token-1",
+      wait_id: "token-1",
       kind: "token",
       params: { type: "note" },
       metadata: {},
@@ -2182,12 +2108,12 @@ test("runs.events.subscribe reconnects with the last event cursor and ends after
   const first = {
     id: "1",
     kind: "audit",
-    message: "waitpoint.created",
+    message: "run_wait.created",
     at: "2026-04-20T00:00:00Z",
       attributes: {
         run_id: "run-1",
         kind: "token",
-        waitpoint_id: "token-1",
+        run_wait_id: "token-1",
         params: {},
     },
   }
@@ -2240,9 +2166,9 @@ test("runs.events.subscribe reconnects with the last event cursor and ends after
   ])
   expect(events).toEqual([
     {
-      type: "waitpoint",
+      type: "token_wait",
       run_id: "run-1",
-      waitpoint_id: "token-1",
+      wait_id: "token-1",
       kind: "token",
       params: {},
       metadata: {},
@@ -2314,41 +2240,6 @@ test("runs.events.subscribe drains remaining events when a clean disconnect find
     "https://api.example.test/api/runs/run-1",
     "https://api.example.test/api/runs/run-1/events?cursor=2",
   ])
-})
-
-test("runs.retrieve returns a run snapshot with a discriminated pending waitpoint", async () => {
-  globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
-    Response.json({
-      id: "run-1",
-      task_id: "inspect",
-      status: "waiting",
-      exit_code: null,
-      pending_waitpoint: {
-        kind: "token",
-        id: "token-1",
-        status: "pending",
-        params: { action: "deploy" },
-        metadata: { bridge: "slack" },
-        tags: ["approval"],
-        timeout: 30 * 60,
-        created_at: "2026-04-20T00:00:00Z",
-      },
-    })) as typeof fetch
-
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const run = await client.runs.retrieve("run-1")
-
-  if (run.pendingWaitpoint) {
-    expect(run.pendingWaitpoint.runId).toBe("run-1")
-    expect(run.pendingWaitpoint.id).toBe("token-1")
-    expect(run.pendingWaitpoint.kind).toBe("token")
-    expect(run.pendingWaitpoint.status).toBe("pending")
-    expect(run.pendingWaitpoint.params).toEqual({ action: "deploy" })
-    expect(run.pendingWaitpoint.metadata).toEqual({ bridge: "slack" })
-    expect(run.pendingWaitpoint.tags).toEqual(["approval"])
-  } else {
-    throw new Error("expected pending waitpoint")
-  }
 })
 
 test("runs.wait follows events and treats succeeded as terminal", async () => {
@@ -2793,7 +2684,7 @@ function workspaceStreamSseResponse(frames: readonly (readonly [string, string, 
 
 function channelRecordFixture(overrides: Partial<{
   readonly id: string
-  readonly channel_id: string
+  readonly stream_id: string
   readonly sequence: number
   readonly data: unknown
   readonly correlation_id: string
@@ -2802,7 +2693,7 @@ function channelRecordFixture(overrides: Partial<{
 }> = {}) {
   return {
     id: "record-1",
-    channel_id: "channel-1",
+    stream_id: "stream-1",
     sequence: 1,
     data: null,
     content_type: "application/json",

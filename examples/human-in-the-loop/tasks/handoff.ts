@@ -1,4 +1,4 @@
-import { cache, image, sandbox, source, task, wait, type PayloadSchema } from "@helmr/sdk"
+import { cache, image, sandbox, source, task, tokens, type PayloadSchema } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 
 interface ApprovalDecision {
@@ -63,8 +63,8 @@ export const handoff = task({
   sandbox: sbx,
   maxDuration: 900,
   run: async (ctx) => {
-    const decisionToken = await wait.createToken({ timeout: 900 })
-    const decision = await wait.forToken(decisionToken, {
+    const decisionToken = await tokens.create({ timeout: "15m" })
+    const decision = await tokens.wait(decisionToken, {
       schema: approvalDecision,
       metadata: { prompt: "Continue and ask for a handoff note?" },
     }).unwrap()
@@ -72,8 +72,8 @@ export const handoff = task({
       return { approved: false }
     }
 
-    const replyToken = await wait.createToken({ timeout: 900 })
-    const reply = await wait.forToken(replyToken, {
+    const replyToken = await tokens.create({ timeout: "15m" })
+    const reply = await tokens.wait(replyToken, {
       schema: handoffMessage,
       metadata: { prompt: "What should this run write to handoff.txt?" },
     }).unwrap()

@@ -44,7 +44,7 @@ export type ListTaskSessionRunsResponse = {
   runs: TaskSessionRun[];
 };
 
-export type TaskSessionChannel = {
+export type TaskSessionStream = {
   id: string;
   task_session_id: string;
   name: string;
@@ -54,23 +54,22 @@ export type TaskSessionChannel = {
   created_at: string;
 };
 
-export type ListTaskSessionChannelsResponse = {
-  channels: TaskSessionChannel[];
+export type ListTaskSessionStreamsResponse = {
+  streams: TaskSessionStream[];
 };
 
-export type ChannelRecord = {
+export type StreamRecord = {
   id: string;
-  channel_id: string;
+  stream_id: string;
   sequence: number;
   data: unknown;
   correlation_id?: string;
   content_type?: string;
-  object_ref?: unknown;
   created_at: string;
 };
 
-export type ListChannelRecordsResponse = {
-  records: ChannelRecord[];
+export type ListStreamRecordsResponse = {
+  records: StreamRecord[];
 };
 
 export type ListTaskSessionsOptions = {
@@ -117,22 +116,22 @@ export async function listTaskSessionRuns(id: string, scope: TaskSessionScope): 
   return request<ListTaskSessionRunsResponse>(`${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/runs`);
 }
 
-export async function listTaskSessionChannels(id: string, scope: TaskSessionScope): Promise<ListTaskSessionChannelsResponse> {
-  return request<ListTaskSessionChannelsResponse>(`${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/channels`);
+export async function listTaskSessionStreams(id: string, scope: TaskSessionScope): Promise<ListTaskSessionStreamsResponse> {
+  return request<ListTaskSessionStreamsResponse>(`${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/streams`);
 }
 
-export async function listTaskSessionChannelRecords(
+export async function listTaskSessionStreamRecords(
   id: string,
   scope: TaskSessionScope,
-  channel: TaskSessionChannel,
+  stream: TaskSessionStream,
   options: { limit?: number } = {},
-): Promise<ListChannelRecordsResponse> {
+): Promise<ListStreamRecordsResponse> {
   const params = new URLSearchParams();
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   const query = params.toString();
-  const directionPath = channel.direction === "input" ? "inputs" : "outputs";
-  return request<ListChannelRecordsResponse>(
-    `${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/channels/${encodeURIComponent(channel.name)}/${directionPath}${query ? `?${query}` : ""}`,
+  const directionPath = stream.direction === "input" ? "inputs" : "outputs";
+  return request<ListStreamRecordsResponse>(
+    `${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/${directionPath}/${encodeURIComponent(stream.name)}${query ? `?${query}` : ""}`,
   );
 }
 

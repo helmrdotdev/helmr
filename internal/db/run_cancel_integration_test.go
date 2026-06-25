@@ -15,7 +15,7 @@ import (
 func TestCancelRunTerminalizesQueuedTaskSession(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
-	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 	taskSessionID := seedTaskSessionForRun(t, ctx, pool, ids)
 	seedTaskSessionRun(t, ctx, pool, ids, taskSessionID)
@@ -58,7 +58,7 @@ func TestCancelRunTerminalizesQueuedTaskSession(t *testing.T) {
 func TestCancelRunLeavesExecutingTaskSessionForRelease(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
-	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 	taskSessionID, _, _ := seedRunningTaskSessionLease(t, ctx, pool, ids)
 	seedTaskSessionRun(t, ctx, pool, ids, taskSessionID)
@@ -106,7 +106,7 @@ func TestCancelRunLeavesExecutingTaskSessionForRelease(t *testing.T) {
 func TestCancelTaskSessionLeavesPendingCancelRunForRelease(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
-	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 	taskSessionID, _, _ := seedRunningTaskSessionLease(t, ctx, pool, ids)
 	seedTaskSessionRun(t, ctx, pool, ids, taskSessionID)
@@ -157,7 +157,7 @@ func TestCancelTaskSessionLeavesPendingCancelRunForRelease(t *testing.T) {
 func TestDeadLetterRunQueueItemTerminalizesTaskSession(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
-	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 	taskSessionID := seedTaskSessionForRun(t, ctx, pool, ids)
 	seedTaskSessionRun(t, ctx, pool, ids, taskSessionID)
@@ -241,7 +241,7 @@ func TestDeadLetterRunQueueItemTerminalizesTaskSession(t *testing.T) {
 	}
 }
 
-func seedCurrentAttempt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs, status db.RunAttemptStatus) {
+func seedCurrentAttempt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, status db.RunAttemptStatus) {
 	t.Helper()
 	attemptID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
@@ -261,7 +261,7 @@ func seedCurrentAttempt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, i
 	}
 }
 
-func seedTaskSessionRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids waitpointTokenIntegrationIDs, taskSessionID uuid.UUID) {
+func seedTaskSessionRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, taskSessionID uuid.UUID) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO task_session_runs (
@@ -273,7 +273,7 @@ func seedTaskSessionRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, i
 	}
 }
 
-func seedCancelOperation(t *testing.T, ctx context.Context, queries *db.Queries, ids waitpointTokenIntegrationIDs, reason string) db.RunOperation {
+func seedCancelOperation(t *testing.T, ctx context.Context, queries *db.Queries, ids integrationIDs, reason string) db.RunOperation {
 	t.Helper()
 	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
 		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),

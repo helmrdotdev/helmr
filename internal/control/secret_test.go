@@ -339,14 +339,14 @@ func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
 func TestWorkerRunLeaseFailsRunWhenSecretUnavailable(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
-			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
-			TaskID:             "deploy",
-			Status:             db.RunStatusQueued,
-			Output:             []byte(`{}`),
-			MaxDurationSeconds: 3600,
-			CreatedAt:          testTime(),
-			UpdatedAt:          testTime(),
+			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			TaskID:              "deploy",
+			Status:              db.RunStatusQueued,
+			Output:              []byte(`{}`),
+			MaxActiveDurationMs: 3600_000,
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
 		},
 		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
 	}

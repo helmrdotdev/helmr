@@ -17,14 +17,14 @@ SDK event types:
 | Type | Meaning |
 | --- | --- |
 | `log` | stdout/stderr bytes were observed. The event is a lightweight notification, not the log body. |
-| `waitpoint` | A task created a waitpoint. |
-| `waitpoint_completed` | A waitpoint completed. |
-| `waitpoint_timed_out` | A waitpoint timed out. |
+| `stream_wait` / `token_wait` / `timer_wait` | A task parked on an input stream, token, or timer. |
+| `stream_wait_completed` / `token_wait_completed` / `timer_wait_completed` | A parked wait resolved. |
+| `stream_wait_timed_out` / `token_wait_timed_out` / `timer_wait_timed_out` | A parked wait timed out. |
 | `task_result` | Guest task completed with an exit code. |
 | `run_failed` | Run failed before success, including non-zero task exits and active duration limits. |
 | `run_cancelled` | Run was cancelled. |
 | `run_expired` | Queued run TTL expired before a worker started it. |
 
-Raw protocol events include log notifications, task completion, waitpoints, task output JSON, channel append notifications, run metadata update notifications, and platform execution lifecycle events such as `run.execution_lost` when a worker lease expires and the attempt is no longer accepted. Channel and metadata event payloads are notifications for timeline subscribers; read user-facing channel payloads through the session channel APIs and current run metadata from the run snapshot.
+Raw protocol events include log notifications, task completion, waits, task output JSON, stream append notifications, run metadata update notifications, and platform execution lifecycle events such as `run.execution_lost` when a worker lease expires and the attempt is no longer accepted. Stream and metadata event payloads are notifications for timeline subscribers; read user-facing stream payloads through the session stream APIs and current run metadata from the run snapshot.
 
 Use event streams for live UI, agents watching progress, and waiting for terminal run state. `helmr run wait` follows the stream, resumes with the last cursor after reconnects, and fetches the final run snapshot after a terminal event. Use run logs for stdout/stderr bytes. `helmr run logs --follow` follows the dedicated log stream with a run-wide cursor, so stdout and stderr chunks can be resumed with a single `Last-Event-ID` value.

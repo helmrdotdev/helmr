@@ -1,4 +1,4 @@
-import { channel, image, sandbox, task, wait, type PayloadSchema } from "./index"
+import { image, sandbox, streams, task, tokens, type PayloadSchema } from "./index"
 
 const sb = sandbox("task-type-test").image(image("task-type-test").from("debian:trixie-slim"))
 
@@ -34,34 +34,34 @@ if (false) {
     id: "token-validation-schema-type",
     sandbox: sb,
     run: async () => {
-      const token = await wait.forToken("token-1", { schema: validationOnlySchema }).unwrap()
+      const token = await tokens.wait("token-1", { schema: validationOnlySchema }).unwrap()
       const approved: boolean = token.approved
-      // @ts-expect-error wait.forToken receives parsed schema output.
+      // @ts-expect-error tokens.wait receives parsed schema output.
       const rawApproved: string = token.approved
       return { approved, rawApproved }
     },
   })
 
   task({
-    id: "channel-output-write-schema-input-type",
+    id: "stream-output-write-schema-input-type",
     sandbox: sb,
-    run: async (ctx) => {
-      const issueChannel = ctx.session.output(channel.output("issue-channel", { schema: payload }))
-      await issueChannel.append({ issue: "41" })
-      await issueChannel.pipe([{ issue: "42" }])
-      // @ts-expect-error defined output channel writes schema input, not parsed output.
-      await issueChannel.append({ issue: 41 })
+    run: async () => {
+      const issueStream = streams.output("issue-stream", { schema: payload })
+      await issueStream.append({ issue: "41" })
+      await issueStream.pipe([{ issue: "42" }])
+      // @ts-expect-error defined output stream writes schema input, not parsed output.
+      await issueStream.append({ issue: 41 })
     },
   })
 
   task({
-    id: "channel-input-read-schema-output-type",
+    id: "stream-input-read-schema-output-type",
     sandbox: sb,
-    run: async (ctx) => {
-      const approvalChannel = ctx.session.input(channel.input("approval", { schema: validationOnlySchema }))
-      const approval = await approvalChannel.wait({ correlationId: "thread-1" }).unwrap()
+    run: async () => {
+      const approvalStream = streams.input("approval", { schema: validationOnlySchema })
+      const approval = await approvalStream.wait({ correlationId: "thread-1" }).unwrap()
       const approved: boolean = approval.approved
-      // @ts-expect-error defined input channel reads parsed schema output.
+      // @ts-expect-error defined input stream reads parsed schema output.
       const rawApproved: string = approval.approved
       return { approved, rawApproved }
     },
@@ -80,6 +80,9 @@ if (false) {
     run: async (ctx) => {
       const runId: string = ctx.run.id
       const sessionId: string = ctx.session.id
+      const sessionFacts = ctx.session
+      // @ts-expect-error ctx.session is facts-only; stream operations use top-level streams.
+      sessionFacts.input
       return { runId, sessionId }
     },
   })
