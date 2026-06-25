@@ -12,15 +12,15 @@ Use the SDK from external TypeScript code when another service should start a He
 
 ```ts
 import { HelmrClient } from "@helmr/sdk"
-import type { reviewPullRequest } from "./tasks/review-pull-request"
+import { reviewPullRequest } from "./tasks/review-pull-request"
 
 const client = new HelmrClient({
   url: process.env.HELMR_API_URL,
   apiKey: process.env.HELMR_API_KEY,
 })
 
-const started = await client.sessions.start<typeof reviewPullRequest>(
-  "review-pull-request",
+const started = await client.sessions.start(
+  reviewPullRequest,
   { owner: "OWNER", repo: "REPO", prNumber: 42 },
   {
     externalId: "github:OWNER/REPO#42",
@@ -30,14 +30,14 @@ const started = await client.sessions.start<typeof reviewPullRequest>(
 )
 ```
 
-`client.sessions.start()` is the canonical API for starting or reusing a task session by task id. Imported task definitions can use `task.start()` as a typed convenience when local payload schema validation is needed before posting. `externalId` identifies the durable session; `idempotencyKey` identifies one retry-safe start request. Use `startAndWait()` when the caller needs the first run's terminal output; use the returned run handle for compute/debug views:
+`client.sessions.start()` and `sessions.start()` are the canonical APIs for starting or reusing a task session. `task(...)` returns a definition object only; pass that task object to the sessions namespace for payload input, output, and secrets type inference plus local payload schema validation. Pass a string task id when the caller is at an external boundary or the task id is dynamic. `externalId` identifies the durable session; `idempotencyKey` identifies one retry-safe start request. Use `startAndWait()` when the caller needs the first run's terminal output; use the returned run handle for compute/debug views:
 
 ```ts
-const completed = await client.sessions.startAndWait<typeof task>(
-  task.id,
+const completed = await client.sessions.startAndWait(
+  reviewPullRequest,
   payload,
   {
-  timeoutSeconds: 10 * 60,
+    timeoutSeconds: 10 * 60,
   },
 )
 

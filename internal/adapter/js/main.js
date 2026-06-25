@@ -4449,7 +4449,6 @@ var RUN_EVENT_RECONNECT_DELAY_MS = 1000;
 var RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS = 100;
 var TASK_START_PENDING_MAX_WAIT_MS = 1e4;
 var TASK_START_PENDING_DEFAULT_RETRY_MS = 250;
-var startSessionClientMethod = Symbol.for("helmr.sdk.client.startSession");
 var tokenClientMethod = Symbol.for("helmr.sdk.client.token");
 
 class WorkspaceStreamTerminalError extends Error {
@@ -4505,24 +4504,46 @@ class HelmrClient {
   }
   sessions = {
     start: async (...args) => {
-      const taskId = args[0];
+      const target = args[0];
       const hasPayload = args.length === 3;
       const payload = hasPayload ? args[1] : undefined;
       const opts = hasPayload ? args[2] : args[1];
-      if (hasPayload && payload === undefined) {
-        throw new Error(`task ${JSON.stringify(taskId)} requires payload`);
+      if (typeof target === "string") {
+        if (hasPayload && payload === undefined) {
+          throw new Error(`task ${JSON.stringify(target)} requires payload`);
+        }
+        return await this.#startSession(target, payload, opts);
       }
-      return await this.#startSession(taskId, payload, opts);
+      if (target.payload !== undefined) {
+        if (payload === undefined) {
+          throw new Error(`task ${JSON.stringify(target.id)} requires payload`);
+        }
+        await parseTaskPayload(target, payload);
+      } else if (hasPayload) {
+        throw new Error(`task ${JSON.stringify(target.id)} does not accept payload`);
+      }
+      return await this.#startSession(target.id, payload, opts, readOptionalMaxDurationSeconds(target.maxDuration));
     },
     startAndWait: async (...args) => {
-      const taskId = args[0];
+      const target = args[0];
       const hasPayload = args.length === 3;
       const payload = hasPayload ? args[1] : undefined;
       const opts = hasPayload ? args[2] : args[1];
-      if (hasPayload && payload === undefined) {
-        throw new Error(`task ${JSON.stringify(taskId)} requires payload`);
+      if (typeof target === "string") {
+        if (hasPayload && payload === undefined) {
+          throw new Error(`task ${JSON.stringify(target)} requires payload`);
+        }
+        return await this.#startSessionAndWait(target, payload, opts);
       }
-      return await this.#startSessionAndWait(taskId, payload, opts);
+      if (target.payload !== undefined) {
+        if (payload === undefined) {
+          throw new Error(`task ${JSON.stringify(target.id)} requires payload`);
+        }
+        await parseTaskPayload(target, payload);
+      } else if (hasPayload) {
+        throw new Error(`task ${JSON.stringify(target.id)} does not accept payload`);
+      }
+      return await this.#startSessionAndWait(target.id, payload, opts, readOptionalMaxDurationSeconds(target.maxDuration));
     },
     open: (idOrHandle) => {
       return this.#openSession(sessionId(idOrHandle));
@@ -4602,20 +4623,6 @@ class HelmrClient {
       return publicAccessTokenFromResponse(response);
     }
   };
-  async[startSessionClientMethod](task, ...args) {
-    const hasPayload = task.payload !== undefined;
-    const payload = hasPayload ? args[0] : undefined;
-    const opts = hasPayload ? args[1] : args[0];
-    if (task.payload !== undefined) {
-      if (payload === undefined) {
-        throw new Error(`task ${JSON.stringify(task.id)} requires payload`);
-      }
-      await parseTaskPayload(task, payload);
-    } else if (args.length > 1) {
-      throw new Error(`task ${JSON.stringify(task.id)} does not accept payload`);
-    }
-    return await this.#startSession(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration));
-  }
   async[tokenClientMethod](request) {
     switch (request.operation) {
       case "create": {
@@ -6528,16 +6535,6 @@ function decodeBase64Text(value) {
   return new TextDecoder().decode(bytes);
 }
 
-// sdk/typescript/src/start.ts
-var defaultClient;
-function getDefaultClient() {
-  defaultClient ??= new HelmrClient;
-  return defaultClient;
-}
-function startTask(task, ...args) {
-  return getDefaultClient()[startSessionClientMethod](task, ...args);
-}
-
 // sdk/typescript/src/schedules.ts
 function task(config) {
   const { cron, ...taskConfig } = config;
@@ -6546,9 +6543,6 @@ function task(config) {
     ...typeof cron === "string" || cron.timezone === undefined ? {} : { timezone: cron.timezone }
   };
   const marked = markScheduledTask({ ...taskConfig, payload: scheduledTaskPayloadSchema }, schedule);
-  Object.defineProperty(marked, "start", {
-    value: (...args) => startTask(marked, ...args)
-  });
   return marked;
 }
 var scheduledTaskPayloadSchema = {
@@ -6610,6 +6604,13 @@ function parseOptionalDateField(value, path) {
     return { issues: [] };
   }
   return parseDateField(value, path);
+}
+
+// sdk/typescript/src/start.ts
+var defaultClient;
+function getDefaultClient() {
+  defaultClient ??= new HelmrClient;
+  return defaultClient;
 }
 // sdk/typescript/src/index.ts
 var runs = new Proxy({}, {

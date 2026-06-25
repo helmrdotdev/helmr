@@ -13,7 +13,6 @@ import {
   type TaskPayload,
   type SessionStartPayload,
 } from "./internal"
-import { startTask } from "./start"
 import type {
   PayloadSchema,
   PayloadSchemaInput,
@@ -35,11 +34,7 @@ export function task<TOutput = unknown, TSecrets extends SecretDecls = readonly 
 export function task(
   config: TaskConfigWithPayload<PayloadSchema<any, any>, any, SecretDecls> | TaskConfigWithoutPayload<any, SecretDecls>,
 ): AnyTask {
-  const marked = markTask(config)
-  Object.defineProperty(marked, "start", {
-    value: (...args: readonly unknown[]) => (startTask as (...values: readonly unknown[]) => unknown)(marked, ...args),
-  })
-  return marked
+  return markTask(config)
 }
 
 export function queue(config: TaskQueueConfig): TaskQueueConfig {

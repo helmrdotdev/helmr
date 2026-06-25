@@ -1,11 +1,12 @@
-import type { AnyTask, NoPayload, SecretDecls, TaskOutput, TaskSecrets, SessionStartPayload } from "./internal"
+import type { AnyTask, SecretDecls, TaskOutput } from "./internal"
 import {
   HelmrClient,
   type SessionStartAndWaitOptions,
   type SessionStartAndWaitResult,
   type SessionStartOptions,
   type SessionStartResult,
-  startSessionClientMethod,
+  type SessionsStartArgs,
+  type SessionsStartAndWaitArgs,
 } from "./runtime/client"
 
 let defaultClient: HelmrClient | undefined
@@ -22,20 +23,8 @@ export function resetDefaultClientForTest(): void {
 export type StartOptions<TSecrets extends SecretDecls> = SessionStartOptions<TSecrets>
 export type StartAndWaitOptions<TSecrets extends SecretDecls> = SessionStartAndWaitOptions<TSecrets>
 
-export type StartArgs<TTask extends AnyTask> =
-  [SessionStartPayload<TTask>] extends [NoPayload]
-    ? [id: string, opts: StartOptions<TaskSecrets<TTask>>]
-    : [id: string, payload: SessionStartPayload<TTask>, opts: StartOptions<TaskSecrets<TTask>>]
-
-export type StartAndWaitArgs<TTask extends AnyTask> =
-  [SessionStartPayload<TTask>] extends [NoPayload]
-    ? [id: string, opts: StartAndWaitOptions<TaskSecrets<TTask>>]
-    : [id: string, payload: SessionStartPayload<TTask>, opts: StartAndWaitOptions<TaskSecrets<TTask>>]
-
-export type SessionStartArgs<TTask extends AnyTask> =
-  [SessionStartPayload<TTask>] extends [NoPayload]
-    ? [opts: StartOptions<TaskSecrets<TTask>>]
-    : [payload: SessionStartPayload<TTask>, opts: StartOptions<TaskSecrets<TTask>>]
+export type StartArgs<TTask extends AnyTask> = SessionsStartArgs<TTask>
+export type StartAndWaitArgs<TTask extends AnyTask> = SessionsStartAndWaitArgs<TTask>
 
 export const sessions = {
   start<TTask extends AnyTask>(
@@ -48,11 +37,4 @@ export const sessions = {
   ): Promise<SessionStartAndWaitResult<TaskOutput<TTask>>> {
     return getDefaultClient().sessions.startAndWait<TTask>(...args)
   },
-}
-
-export function startTask<TTask extends AnyTask>(
-  task: TTask,
-  ...args: SessionStartArgs<TTask>
-): Promise<SessionStartResult<TaskOutput<TTask>>> {
-  return getDefaultClient()[startSessionClientMethod](task, ...args)
 }

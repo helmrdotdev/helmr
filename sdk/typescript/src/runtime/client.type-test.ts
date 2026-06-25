@@ -1,18 +1,18 @@
 import type { PublicAccessToken, TaskSessionSnapshot, SessionStartResult, SessionStartAndWaitResult, HelmrClient, Token } from "./client"
 import type { RunEventRecord, RunHandle, RunSnapshot } from "./run"
 import type { StreamRecord, Task } from "../internal"
-import { idempotencyKeys, image, sandbox, schedules, source, streams, task, tokens, type PayloadSchema } from "../index"
+import { idempotencyKeys, image, sandbox, schedules, sessions, source, streams, task, tokens, type PayloadSchema } from "../index"
 
 declare const client: HelmrClient
 declare const handle: RunHandle
-declare const startTask: Task<{ issue: number }, { issue: number }, readonly []>
+declare const taskWithPayload: Task<{ issue: number }, { issue: number }, readonly []>
 declare const schemaTask: Task<{ issue: number }, { parsed: number }, readonly [], { issue: string }>
 declare const signal: AbortSignal
 declare const approvalSchema: PayloadSchema<{ approved: boolean }, { approved: boolean }>
 declare const reportSchema: PayloadSchema<{ text: string }, { text: string }>
 
 if (false) {
-  const started: Promise<SessionStartResult<{ issue: number }>> = client.sessions.start<typeof startTask>(
+  const started: Promise<SessionStartResult<{ issue: number }>> = client.sessions.start<typeof taskWithPayload>(
     "inspect",
     { issue: 123 },
     {
@@ -21,12 +21,12 @@ if (false) {
       idempotencyKeyTTL: "24h",
     },
   )
-  const startAndWait: Promise<SessionStartAndWaitResult<{ issue: number }>> = client.sessions.startAndWait<typeof startTask>(
+  const startAndWait: Promise<SessionStartAndWaitResult<{ issue: number }>> = client.sessions.startAndWait<typeof taskWithPayload>(
     "inspect",
     { issue: 123 },
     { timeoutSeconds: 30 },
   )
-  const startedAgain: Promise<SessionStartResult<{ issue: number }>> = client.sessions.start<typeof startTask>(
+  const startedAgain: Promise<SessionStartResult<{ issue: number }>> = client.sessions.start<typeof taskWithPayload>(
     "inspect",
     { issue: 123 },
     {
@@ -35,9 +35,25 @@ if (false) {
     },
   )
   const helperKey = idempotencyKeys.create(["issue", "123"], { scope: "global" })
-  const schemaStartedRun: Promise<SessionStartResult<{ parsed: number }>> = schemaTask.start(
+  const schemaStartedRun: Promise<SessionStartResult<{ parsed: number }>> = sessions.start(
+    schemaTask,
     { issue: "123" },
     { projectId: "project-1", environmentId: "env-1", idempotencyKey: helperKey },
+  )
+  const clientSchemaStartedRun: Promise<SessionStartResult<{ parsed: number }>> = client.sessions.start(
+    schemaTask,
+    { issue: "123" },
+    { projectId: "project-1", environmentId: "env-1", idempotencyKey: helperKey },
+  )
+  const schemaStartAndWait: Promise<SessionStartAndWaitResult<{ parsed: number }>> = sessions.startAndWait(
+    schemaTask,
+    { issue: "123" },
+    { projectId: "project-1", environmentId: "env-1", timeoutSeconds: 30 },
+  )
+  const clientSchemaStartAndWait: Promise<SessionStartAndWaitResult<{ parsed: number }>> = client.sessions.startAndWait(
+    schemaTask,
+    { issue: "123" },
+    { projectId: "project-1", environmentId: "env-1", timeoutSeconds: 30 },
   )
   const canonicalStartedRun: Promise<SessionStartResult<{ parsed: number }>> = client.sessions.start<typeof schemaTask>(
     schemaTask.id,
@@ -58,7 +74,10 @@ if (false) {
     at: "2026-04-28T00:00:00Z",
     attributes: {},
   }
-  const noPayloadStartedRun: Promise<SessionStartResult<{ runId: string }>> = noPayloadTask.start({})
+  const noPayloadStartedRun: Promise<SessionStartResult<{ runId: string }>> = sessions.start(noPayloadTask, {})
+  const clientNoPayloadStartedRun: Promise<SessionStartResult<{ runId: string }>> = client.sessions.start(noPayloadTask, {})
+  const noPayloadStartAndWait: Promise<SessionStartAndWaitResult<{ runId: string }>> = sessions.startAndWait(noPayloadTask, {})
+  const clientNoPayloadStartAndWait: Promise<SessionStartAndWaitResult<{ runId: string }>> = client.sessions.startAndWait(noPayloadTask, {})
   const session = client.sessions.open<{ ok: boolean }>("session-1")
   const sessionSnapshot: Promise<TaskSessionSnapshot<{ ok: boolean }>> = session.retrieve()
   const approvalStream = streams.input("approval", { schema: approvalSchema })
@@ -148,10 +167,16 @@ if (false) {
   delegatedById.then
   clientToken.then
   schemaStartedRun.then
+  clientSchemaStartedRun.then
+  schemaStartAndWait.then
+  clientSchemaStartAndWait.then
   canonicalStartedRun.then
   started.then
   startAndWait.then
   noPayloadStartedRun.then
+  clientNoPayloadStartedRun.then
+  noPayloadStartAndWait.then
+  clientNoPayloadStartAndWait.then
   sessionSnapshot.then
   inputRecord.then
   outputRecords.then
@@ -200,15 +225,15 @@ if (false) {
   tokens.create({ timeoutInSeconds: 3600 })
   // @ts-expect-error token complete options do not accept action-specific fields.
   client.tokens.complete("token-1", { approved: true }, { reason: "ok" })
-  client.sessions.start<typeof startTask>("inspect", { issue: 123 }, {
+  client.sessions.start<typeof taskWithPayload>("inspect", { issue: 123 }, {
     // @ts-expect-error start options do not accept source inputs.
     source: source.file("README.md"),
   })
-  client.sessions.start<typeof startTask>("inspect", { issue: 123 }, {
+  client.sessions.start<typeof taskWithPayload>("inspect", { issue: 123 }, {
     externalId: "case-123",
     idempotencyKey: "request-123",
   })
-  client.sessions.start<typeof startTask>(
+  client.sessions.start<typeof taskWithPayload>(
     "inspect",
     // @ts-expect-error task payload and session input are distinct surfaces.
     { input: { approved: true } },
@@ -230,16 +255,34 @@ if (false) {
   client.runs.replay("run-1")
   // @ts-expect-error old task trigger client surface is not exposed.
   client.sessions.trigger("inspect", { issue: 123 }, {})
-  schemaTask.start(
+  sessions.start(
+    schemaTask,
     // @ts-expect-error schema-backed start accepts schema input, not parsed run payload.
     { issue: 123 },
     {},
   )
-  noPayloadTask.start(
+  sessions.startAndWait(
+    schemaTask,
+    // @ts-expect-error schema-backed startAndWait accepts schema input, not parsed run payload.
+    { issue: 123 },
+    {},
+  )
+  sessions.start(
+    noPayloadTask,
     {},
     // @ts-expect-error no-payload tasks accept options as the first argument, not payload.
     { idempotencyKey: "payload-not-options" },
   )
+  sessions.startAndWait(
+    noPayloadTask,
+    {},
+    // @ts-expect-error no-payload tasks accept options as the first argument, not payload.
+    { timeoutSeconds: 30 },
+  )
+  // @ts-expect-error task definitions do not expose direct start helpers.
+  schemaTask.start
+  // @ts-expect-error task definitions do not expose direct startAndWait helpers.
+  schemaTask.startAndWait
   // @ts-expect-error source helpers are only for image file/directory inputs.
   source.tar("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
   // @ts-expect-error source helpers use file() or directory().

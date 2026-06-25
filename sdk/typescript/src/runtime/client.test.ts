@@ -2,7 +2,8 @@ import { afterEach, expect, test } from "bun:test"
 
 import { HelmrClient, WorkspaceStreamError, WorkspaceStreamTerminalError, tokenClientMethod } from "./client"
 import { runStateBooleans } from "./run"
-import { PayloadSchemaValidationError, idempotencyKeys, image, sandbox, source, task, type PayloadSchema } from "../index"
+import { PayloadSchemaValidationError, idempotencyKeys, image, sandbox, sessions, source, task, type PayloadSchema } from "../index"
+import { resetDefaultClientForTest } from "../start"
 import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER, HELMR_SDK_VERSION, HELMR_SDK_VERSION_HEADER } from "../version"
 
 const originalFetch = globalThis.fetch
@@ -14,6 +15,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch
   process.env = { ...originalEnv }
   console.warn = originalWarn
+  resetDefaultClientForTest()
 })
 
 test("constructor requires url option or HELMR_API_URL", () => {
@@ -610,6 +612,48 @@ test("sessions.startAndWait posts one start-and-wait request and returns the ter
   expect(started.timedOut).toBe(false)
 })
 
+test("client.sessions.startAndWait accepts task objects and posts task maxDuration", async () => {
+  let requestedUrl: string | undefined
+  let body: unknown
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input)
+    body = JSON.parse(String(init?.body))
+    return Response.json({
+      ...sessionStartFixture({ id: "run-1", task_id: "inspect", status: "succeeded", output: { parsed: 123 } }),
+      timed_out: false,
+    })
+  }) as typeof fetch
+  const payload: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate(value) {
+        const issue = (value as { readonly issue: string }).issue
+        return { value: { issue: Number(issue) } }
+      },
+    },
+  }
+
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    maxDuration: 600,
+    payload,
+    run: async (payload) => ({ parsed: payload.issue }),
+  })
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const started = await client.sessions.startAndWait(inspect, { issue: "123" }, { timeoutSeconds: 30 })
+
+  expect(requestedUrl).toBe("https://api.example.test/api/sessions/start-and-wait")
+  expect(body).toEqual({
+    task_id: "inspect",
+    payload: { issue: "123" },
+    timeout_seconds: 30,
+    max_duration_seconds: 600,
+  })
+  expect(started.run.output).toEqual({ parsed: 123 })
+})
+
 test("sessions.start requires complete project environment scope", async () => {
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
 
@@ -851,9 +895,7 @@ test("tokens namespace exposes create and complete", async () => {
   ])
 })
 
-test("task.start returns the session start response with session and run handles", async () => {
-  process.env["HELMR_API_URL"] = "https://api.example.test"
-  process.env["HELMR_API_KEY"] = "token"
+test("client.sessions.start accepts task objects and returns session and run handles", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -876,8 +918,8 @@ test("task.start returns the session start response with session and run handles
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
     run: async () => undefined,
   })
-  const started = await inspect.start({
-  })
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const started = await client.sessions.start(inspect, {})
 
   expect(requestedUrl).toBe("https://api.example.test/api/sessions")
   expect(body).toEqual({
@@ -891,7 +933,7 @@ test("task.start returns the session start response with session and run handles
   })
 })
 
-test("task.start posts idempotency options", async () => {
+test("sessions.start(task) posts idempotency options", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -905,7 +947,7 @@ test("task.start posts idempotency options", async () => {
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
     run: async () => undefined,
   })
-  await inspect.start({
+  await sessions.start(inspect, {
     idempotencyKey: key,
     idempotencyKeyTTL: "24h",
   })
@@ -918,7 +960,7 @@ test("task.start posts idempotency options", async () => {
   })
 })
 
-test("task.start retries pending session start before returning the start response", async () => {
+test("sessions.start(task) retries pending session start before returning the start response", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   let calls = 0
   let pendingBodyPulls = 0
@@ -945,7 +987,7 @@ test("task.start retries pending session start before returning the start respon
     run: async () => undefined,
   })
 
-  await expect(inspect.start({ idempotencyKey: idempotencyKeys.create("inspect") })).resolves.toMatchObject({
+  await expect(sessions.start(inspect, { idempotencyKey: idempotencyKeys.create("inspect") })).resolves.toMatchObject({
     session: { id: "session-1", taskId: "inspect", currentRunId: "run-1" },
     run: { id: "run-1", taskId: "inspect" },
   })
@@ -953,7 +995,7 @@ test("task.start retries pending session start before returning the start respon
   expect(pendingBodyPulls).toBe(1)
 })
 
-test("task.start does not retry non-pending accepted responses", async () => {
+test("sessions.start(task) does not retry non-pending accepted responses", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   let calls = 0
   globalThis.fetch = (async () => {
@@ -967,13 +1009,13 @@ test("task.start does not retry non-pending accepted responses", async () => {
     run: async () => undefined,
   })
 
-  await expect(inspect.start({ idempotencyKey: idempotencyKeys.create("inspect") })).rejects.toThrow(
+  await expect(sessions.start(inspect, { idempotencyKey: idempotencyKeys.create("inspect") })).rejects.toThrow(
     "accepted elsewhere",
   )
   expect(calls).toBe(1)
 })
 
-test("task.start backs off for stale HTTP-date retry-after headers", async () => {
+test("sessions.start(task) backs off for stale HTTP-date retry-after headers", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   let calls = 0
   globalThis.fetch = (async () => {
@@ -994,13 +1036,13 @@ test("task.start backs off for stale HTTP-date retry-after headers", async () =>
   })
 
   const startedAt = Date.now()
-  await inspect.start({ idempotencyKey: idempotencyKeys.create("inspect") })
+  await sessions.start(inspect, { idempotencyKey: idempotencyKeys.create("inspect") })
 
   expect(calls).toBe(2)
   expect(Date.now() - startedAt).toBeGreaterThanOrEqual(100)
 })
 
-test("task.start posts scheduling options", async () => {
+test("sessions.start(task) posts scheduling options", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -1013,7 +1055,7 @@ test("task.start posts scheduling options", async () => {
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
     run: async () => undefined,
   })
-  await inspect.start({
+  await sessions.start(inspect, {
     queue: "review/pr",
     concurrencyKey: "repo:42",
     priority: 30,
@@ -1030,7 +1072,7 @@ test("task.start posts scheduling options", async () => {
   })
 })
 
-test("task.start posts retry metadata and tags", async () => {
+test("sessions.start(task) posts retry metadata and tags", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -1043,7 +1085,7 @@ test("task.start posts retry metadata and tags", async () => {
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
     run: async () => undefined,
   })
-  await inspect.start({
+  await sessions.start(inspect, {
     retry: { maxAttempts: 3, backoff: { minMs: 1000, maxMs: 30000, factor: 2, jitter: "full" } },
     metadata: { customer: "acme" },
     tags: ["nightly", "prod"],
@@ -1058,7 +1100,7 @@ test("task.start posts retry metadata and tags", async () => {
   })
 })
 
-test("task.start rejects unsupported retry fields before posting", async () => {
+test("sessions.start(task) rejects unsupported retry fields before posting", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   let posted = false
   globalThis.fetch = (async () => {
@@ -1072,7 +1114,7 @@ test("task.start rejects unsupported retry fields before posting", async () => {
     run: async () => undefined,
   })
 
-  await expect(inspect.start({
+  await expect(sessions.start(inspect, {
     retry: { maxAttempts: 2, retryOn: ["timeout"] } as never,
   })).rejects.toThrow("retry.retryOn is not supported")
   expect(posted).toBe(false)
@@ -1175,7 +1217,7 @@ test("runs facade uses project environment scoped routes when scope is provided"
   ])
 })
 
-test("task.start validates payload before posting the start request", async () => {
+test("sessions.start(task) validates payload before posting the start request", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let fetched = false
@@ -1199,14 +1241,14 @@ test("task.start validates payload before posting the start request", async () =
     payload,
     run: async (payload) => payload.issue,
   })
-  await expect(inspect.start(
+  await expect(sessions.start(inspect,
     { issue: "123" },
     {},
   )).rejects.toThrow(PayloadSchemaValidationError)
   expect(fetched).toBe(false)
 })
 
-test("task.start rejects undefined payload for schema-backed tasks before posting", async () => {
+test("sessions.start(task) rejects undefined payload for schema-backed tasks before posting", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let fetched = false
@@ -1230,14 +1272,15 @@ test("task.start rejects undefined payload for schema-backed tasks before postin
     payload,
     run: async (payload) => payload.issue,
   })
-  await expect((inspect.start as (...args: any[]) => Promise<unknown>)(
+  await expect((sessions.start as (...args: any[]) => Promise<unknown>)(
+    inspect,
     undefined,
     {},
   )).rejects.toThrow('task "inspect" requires payload')
   expect(fetched).toBe(false)
 })
 
-test("task.start rejects payload on no-payload tasks before posting", async () => {
+test("sessions.start(task) rejects payload on no-payload tasks before posting", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let fetched = false
@@ -1251,14 +1294,15 @@ test("task.start rejects payload on no-payload tasks before posting", async () =
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
     run: async () => undefined,
   })
-  await expect((inspect.start as (...args: any[]) => Promise<unknown>)(
+  await expect((sessions.start as (...args: any[]) => Promise<unknown>)(
+    inspect,
     undefined,
     {},
   )).rejects.toThrow('task "inspect" does not accept payload')
   expect(fetched).toBe(false)
 })
 
-test("task.start posts payload for schema-backed tasks", async () => {
+test("sessions.start(task) posts payload for schema-backed tasks", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let body: unknown
@@ -1282,7 +1326,7 @@ test("task.start posts payload for schema-backed tasks", async () => {
     payload,
     run: async (payload) => payload.issue,
   })
-  await inspect.start(
+  await sessions.start(inspect,
     { issue: 123 },
     {},
   )
@@ -1290,7 +1334,7 @@ test("task.start posts payload for schema-backed tasks", async () => {
   expect(body).toMatchObject({ payload: { issue: 123 } })
 })
 
-test("task.start validates payload and posts through the default client", async () => {
+test("sessions.start(task) validates payload and posts through the default client", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let requestedUrl: string | undefined
@@ -1319,7 +1363,7 @@ test("task.start validates payload and posts through the default client", async 
     payload,
     run: async (payload) => payload.issue,
   })
-  const started = await inspect.start(
+  const started = await sessions.start(inspect,
     { issue: "123" },
     {},
   )
@@ -1461,7 +1505,7 @@ test("run snapshots reject unsupported internal statuses", async () => {
   await expect(client.runs.retrieve("run-1")).rejects.toThrow('unsupported run status "leased"')
 })
 
-test("task.start posts a session start without workspace preparation", async () => {
+test("sessions.start(task) posts a session start without workspace preparation", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let body: unknown
@@ -1484,7 +1528,7 @@ test("task.start posts a session start without workspace preparation", async () 
       .workspace("/workspace"),
     run: async () => undefined,
   })
-  await inspect.start({})
+  await sessions.start(inspect, {})
 
   expect(body).toMatchObject({
     task_id: "inspect",
@@ -1714,7 +1758,7 @@ test("runs.logs.retrieve decodes log snapshots", async () => {
   expect(logs).toEqual({ stdout: "hello", stderr: "warn", cursor: "3:2", truncated: false })
 })
 
-test("task.start posts the start request directly without uploading source tar", async () => {
+test("sessions.start(task) posts the start request directly without uploading source tar", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   const urls: string[] = []
@@ -1738,7 +1782,7 @@ test("task.start posts the start request directly without uploading source tar",
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
     run: async () => undefined,
   })
-  await inspect.start({})
+  await sessions.start(inspect, {})
 
   expect(urls).toEqual(["https://api.example.test/api/sessions"])
   expect(createRunBody).toMatchObject({

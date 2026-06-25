@@ -260,12 +260,13 @@ const decision = await approval.wait({
     lang: "ts",
   },
   {
-    label: "task.start",
+    label: "sessions.start",
     icon: "bolt",
     tone: "pink",
     title: "Start from anywhere",
     caption: "Your product, a webhook, CI, or another task — deduplicated with idempotency keys.",
-    code: `const started = await reviewPr.start(
+    code: `const started = await sessions.start(
+  reviewPr,
   { prNumber: 482 },
   { idempotencyKey: pr.head.sha }
 )`,

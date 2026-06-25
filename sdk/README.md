@@ -19,7 +19,7 @@ binding maps.
 
 ## TypeScript Runtime Client
 
-External TypeScript processes start tasks with `client.sessions.start()`. Starting a task creates or reuses a task session and returns both the session snapshot and the current run handle. Imported task definitions also expose `task.start()` as a local helper that validates payload before returning the same session-first start result.
+External TypeScript processes start tasks with `client.sessions.start()`. Starting a task creates or reuses a task session and returns both the session snapshot and the current run handle. `task(...)` returns a definition object only; pass an imported task definition to `client.sessions.start(taskObject, payload, options)` for local payload validation and type inference, or pass a string task id for external boundaries and dynamic task ids.
 
 ```ts
 import { HelmrClient } from "@helmr/sdk"
@@ -30,14 +30,14 @@ const client = new HelmrClient({
   apiKey: process.env.HELMR_API_KEY,
 })
 
-const started = await client.sessions.start<typeof impl>(
-  "impl",
+const started = await client.sessions.start(
+  impl,
   { issue: 123 },
   {},
 )
 
-const completed = await client.sessions.startAndWait<typeof impl>(
-  "impl",
+const completed = await client.sessions.startAndWait(
+  impl,
   { issue: 124 },
   { timeoutSeconds: 10 * 60 },
 )

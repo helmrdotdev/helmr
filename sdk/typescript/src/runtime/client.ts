@@ -68,22 +68,18 @@ export type SessionStartAndWaitOptions<TSecrets extends SecretDecls> = SessionSt
   readonly timeoutSeconds?: number
 }
 
-export type DirectSessionStartArgs<TTask extends AnyTask> =
-  [SessionStartPayload<TTask>] extends [NoPayload]
-    ? [opts: SessionStartOptions<TaskSecrets<TTask>>]
-    : [payload: SessionStartPayload<TTask>, opts: SessionStartOptions<TaskSecrets<TTask>>]
+export type SessionStartTarget<TTask extends AnyTask> = string | TTask
 
 export type SessionsStartArgs<TTask extends AnyTask> =
   [SessionStartPayload<TTask>] extends [NoPayload]
-    ? [id: string, opts: SessionStartOptions<TaskSecrets<TTask>>]
-    : [id: string, payload: SessionStartPayload<TTask>, opts: SessionStartOptions<TaskSecrets<TTask>>]
+    ? [target: SessionStartTarget<TTask>, opts: SessionStartOptions<TaskSecrets<TTask>>]
+    : [target: SessionStartTarget<TTask>, payload: SessionStartPayload<TTask>, opts: SessionStartOptions<TaskSecrets<TTask>>]
 
 export type SessionsStartAndWaitArgs<TTask extends AnyTask> =
   [SessionStartPayload<TTask>] extends [NoPayload]
-    ? [id: string, opts: SessionStartAndWaitOptions<TaskSecrets<TTask>>]
-    : [id: string, payload: SessionStartPayload<TTask>, opts: SessionStartAndWaitOptions<TaskSecrets<TTask>>]
+    ? [target: SessionStartTarget<TTask>, opts: SessionStartAndWaitOptions<TaskSecrets<TTask>>]
+    : [target: SessionStartTarget<TTask>, payload: SessionStartPayload<TTask>, opts: SessionStartAndWaitOptions<TaskSecrets<TTask>>]
 
-export const startSessionClientMethod = Symbol.for("helmr.sdk.client.startSession")
 export const tokenClientMethod = Symbol.for("helmr.sdk.client.token")
 
 export type TaskSessionStatus = "open" | "closed" | "cancelled"
@@ -782,26 +778,48 @@ export class HelmrClient {
     start: async <TTask extends AnyTask>(
       ...args: SessionsStartArgs<TTask>
     ): Promise<SessionStartResult<TaskOutput<TTask>>> => {
-      const taskId = args[0]
+      const target = args[0]
       const hasPayload = args.length === 3
       const payload = hasPayload ? args[1] : undefined
       const opts = (hasPayload ? args[2] : args[1]) as SessionStartOptions<TaskSecrets<TTask>>
-      if (hasPayload && payload === undefined) {
-        throw new Error(`task ${JSON.stringify(taskId)} requires payload`)
+      if (typeof target === "string") {
+        if (hasPayload && payload === undefined) {
+          throw new Error(`task ${JSON.stringify(target)} requires payload`)
+        }
+        return await this.#startSession(target, payload, opts)
       }
-      return await this.#startSession(taskId, payload, opts)
+      if (target.payload !== undefined) {
+        if (payload === undefined) {
+          throw new Error(`task ${JSON.stringify(target.id)} requires payload`)
+        }
+        await parseTaskPayload(target, payload)
+      } else if (hasPayload) {
+        throw new Error(`task ${JSON.stringify(target.id)} does not accept payload`)
+      }
+      return await this.#startSession(target.id, payload, opts, readOptionalMaxDurationSeconds(target.maxDuration))
     },
     startAndWait: async <TTask extends AnyTask>(
       ...args: SessionsStartAndWaitArgs<TTask>
     ): Promise<SessionStartAndWaitResult<TaskOutput<TTask>>> => {
-      const taskId = args[0]
+      const target = args[0]
       const hasPayload = args.length === 3
       const payload = hasPayload ? args[1] : undefined
       const opts = (hasPayload ? args[2] : args[1]) as SessionStartAndWaitOptions<TaskSecrets<TTask>>
-      if (hasPayload && payload === undefined) {
-        throw new Error(`task ${JSON.stringify(taskId)} requires payload`)
+      if (typeof target === "string") {
+        if (hasPayload && payload === undefined) {
+          throw new Error(`task ${JSON.stringify(target)} requires payload`)
+        }
+        return await this.#startSessionAndWait(target, payload, opts)
       }
-      return await this.#startSessionAndWait(taskId, payload, opts)
+      if (target.payload !== undefined) {
+        if (payload === undefined) {
+          throw new Error(`task ${JSON.stringify(target.id)} requires payload`)
+        }
+        await parseTaskPayload(target, payload)
+      } else if (hasPayload) {
+        throw new Error(`task ${JSON.stringify(target.id)} does not accept payload`)
+      }
+      return await this.#startSessionAndWait(target.id, payload, opts, readOptionalMaxDurationSeconds(target.maxDuration))
     },
     open: <TOutput = unknown>(idOrHandle: string | TaskSessionHandle<TOutput>): OpenTaskSessionApi<TOutput> => {
       return this.#openSession<TOutput>(sessionId(idOrHandle))
@@ -899,24 +917,6 @@ export class HelmrClient {
       })
       return publicAccessTokenFromResponse(response)
     },
-  }
-
-  async [startSessionClientMethod]<TTask extends AnyTask>(
-    task: TTask,
-    ...args: DirectSessionStartArgs<TTask>
-  ): Promise<SessionStartResult<TaskOutput<TTask>>> {
-    const hasPayload = task.payload !== undefined
-    const payload = hasPayload ? args[0] : undefined
-    const opts = (hasPayload ? args[1] : args[0]) as SessionStartOptions<TaskSecrets<TTask>>
-    if (task.payload !== undefined) {
-      if (payload === undefined) {
-        throw new Error(`task ${JSON.stringify(task.id)} requires payload`)
-      }
-      await parseTaskPayload(task, payload)
-    } else if (args.length > 1) {
-      throw new Error(`task ${JSON.stringify(task.id)} does not accept payload`)
-    }
-    return await this.#startSession(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration))
   }
 
   async [tokenClientMethod](request: TokenCreateRequest): Promise<Token>

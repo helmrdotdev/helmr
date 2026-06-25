@@ -6,7 +6,6 @@ import {
   type TaskContext,
   type TaskConfigBase,
 } from "./internal"
-import { startTask } from "./start"
 import type { PayloadSchema } from "./schema/payload"
 
 export interface ScheduledTaskPayload {
@@ -56,9 +55,6 @@ export function task<TOutput = unknown, TSecrets extends SecretDecls = readonly 
     { ...taskConfig, payload: scheduledTaskPayloadSchema } as never,
     schedule,
   )
-  Object.defineProperty(marked, "start", {
-    value: (...args: readonly unknown[]) => (startTask as (...values: readonly unknown[]) => unknown)(marked, ...args),
-  })
   return marked as unknown as MarkedTask<ScheduledTaskPayload, Awaited<TOutput>, TSecrets, typeof scheduledTaskPayloadSchema>
 }
 
