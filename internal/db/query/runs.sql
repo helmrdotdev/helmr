@@ -226,28 +226,8 @@ expired_session_runs AS (
     RETURNING task_session_runs.id
 ),
 expired_task_sessions AS (
-    UPDATE task_sessions
-       SET status = 'expired',
-           result = jsonb_build_object(
-               'ok', false,
-               'error', jsonb_build_object(
-                   'name', 'TaskExpired',
-                   'message', 'run ttl expired before execution started',
-                   'details', jsonb_build_object('origin', 'queued_ttl')
-               )
-           ),
-           terminal_reason = jsonb_build_object('origin', 'queued_ttl', 'message', 'run ttl expired before execution started'),
-           current_run_id = NULL,
-           current_run_version = task_sessions.current_run_version + 1,
-           updated_at = now()
+    SELECT expired_runs.task_session_id AS id
       FROM expired_runs
-     WHERE task_sessions.org_id = expired_runs.org_id
-       AND task_sessions.project_id = expired_runs.project_id
-       AND task_sessions.environment_id = expired_runs.environment_id
-       AND task_sessions.id = expired_runs.task_session_id
-       AND task_sessions.current_run_id = expired_runs.id
-       AND task_sessions.status = 'open'
-    RETURNING task_sessions.id
 ),
 expired_attempts AS (
     UPDATE run_attempts
@@ -409,29 +389,8 @@ failed_session_run AS (
     RETURNING task_session_runs.id
 ),
 failed_task_session AS (
-    UPDATE task_sessions
-       SET status = 'failed',
-           failed_at = now(),
-           result = jsonb_build_object(
-               'ok', false,
-               'error', jsonb_build_object(
-                   'name', COALESCE(NULLIF(sqlc.arg(error_name)::text, ''), 'RunFailed'),
-                   'message', failed_run.error_message,
-                   'details', COALESCE(sqlc.arg(reason)::jsonb, '{}'::jsonb)
-               )
-           ),
-           terminal_reason = COALESCE(sqlc.arg(reason)::jsonb, '{}'::jsonb),
-           current_run_id = NULL,
-           current_run_version = task_sessions.current_run_version + 1,
-           updated_at = now()
+    SELECT failed_run.task_session_id AS id
       FROM failed_run
-     WHERE task_sessions.org_id = failed_run.org_id
-       AND task_sessions.project_id = failed_run.project_id
-       AND task_sessions.environment_id = failed_run.environment_id
-       AND task_sessions.id = failed_run.task_session_id
-       AND task_sessions.current_run_id = failed_run.id
-       AND task_sessions.status = 'open'
-    RETURNING task_sessions.id
 ),
 failed_attempt AS (
     UPDATE run_attempts
@@ -738,30 +697,9 @@ terminal_session_runs AS (
     RETURNING task_session_runs.id
 ),
 terminal_task_sessions AS (
-    UPDATE task_sessions
-       SET status = 'cancelled',
-           cancelled_at = now(),
-           result = jsonb_build_object(
-               'ok', false,
-               'error', jsonb_build_object(
-                   'name', 'TaskCancelled',
-                   'message', COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'),
-                   'details', jsonb_build_object('origin', 'cancel_operation')
-               )
-           ),
-           terminal_reason = jsonb_build_object('origin', 'cancel_operation', 'reason', COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled')),
-           current_run_id = NULL,
-           current_run_version = task_sessions.current_run_version + 1,
-           updated_at = now()
+    SELECT updated.task_session_id AS id
       FROM updated
      WHERE (updated.execution_status <> 'pending_cancel' OR sqlc.arg(force)::bool)
-       AND task_sessions.org_id = updated.org_id
-       AND task_sessions.project_id = updated.project_id
-       AND task_sessions.environment_id = updated.environment_id
-       AND task_sessions.id = updated.task_session_id
-       AND task_sessions.current_run_id = updated.id
-       AND task_sessions.status = 'open'
-    RETURNING task_sessions.id
 ),
 cancelled_session AS (
     UPDATE run_leases

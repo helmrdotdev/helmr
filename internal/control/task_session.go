@@ -34,21 +34,21 @@ const (
 )
 
 var (
-	errTaskArchived                    = codedError{code: "task_archived"}
-	errTaskNotDeployed                 = codedError{code: "task_not_deployed"}
-	errTaskStartSessionFingerprint     = codedError{code: "session_fingerprint_mismatch", message: "task session start fingerprint mismatch"}
-	errTaskStartIdempotencyFingerprint = codedError{code: "idempotency_fingerprint_mismatch", message: "idempotency_key was already used with different task start parameters"}
-	errTaskStartIdempotencyExternalID  = codedError{code: "idempotency_external_id_mismatch", message: "idempotency_key resolves to a different task session"}
-	errTaskSessionTerminated           = codedError{code: "session_terminal", message: "task session is terminal"}
-	errTaskSessionNoCurrentRun         = codedError{code: "session_has_no_current_run"}
-	errCloseRunActive                  = codedError{code: "close_run_active"}
-	errTaskSessionExpiresAtPatch       = codedError{code: "session_expires_at_not_extendable", message: "session expires_at can only extend an existing future expiry"}
-	errSandboxNotDeployed              = codedError{code: "sandbox_not_deployed", message: "task sandbox is not deployed"}
-	errWorkspaceSandboxIncompatible    = codedError{code: "workspace_sandbox_incompatible", message: "workspace sandbox is incompatible with this task"}
-	errWorkspaceResourceFloor          = codedError{code: "workspace_resource_floor_unsatisfied", message: "workspace resource floor is lower than this task requires"}
+	errTaskArchived                       = codedError{code: "task_archived"}
+	errTaskNotDeployed                    = codedError{code: "task_not_deployed"}
+	errSessionStartSessionFingerprint     = codedError{code: "session_fingerprint_mismatch", message: "task session start fingerprint mismatch"}
+	errSessionStartIdempotencyFingerprint = codedError{code: "idempotency_fingerprint_mismatch", message: "idempotency_key was already used with different session start parameters"}
+	errSessionStartIdempotencyExternalID  = codedError{code: "idempotency_external_id_mismatch", message: "idempotency_key resolves to a different task session"}
+	errTaskSessionTerminated              = codedError{code: "session_terminal", message: "task session is terminal"}
+	errTaskSessionNoCurrentRun            = codedError{code: "session_has_no_current_run"}
+	errCloseRunActive                     = codedError{code: "close_run_active"}
+	errTaskSessionExpiresAtPatch          = codedError{code: "session_expires_at_not_extendable", message: "session expires_at can only extend an existing future expiry"}
+	errSandboxNotDeployed                 = codedError{code: "sandbox_not_deployed", message: "task sandbox is not deployed"}
+	errWorkspaceSandboxIncompatible       = codedError{code: "workspace_sandbox_incompatible", message: "workspace sandbox is incompatible with this task"}
+	errWorkspaceResourceFloor             = codedError{code: "workspace_resource_floor_unsatisfied", message: "workspace resource floor is lower than this task requires"}
 )
 
-type taskStartSource struct {
+type sessionStartSource struct {
 	scheduleID            pgtype.UUID
 	scheduleInstanceID    pgtype.UUID
 	scheduleGeneration    int64
@@ -58,14 +58,14 @@ type taskStartSource struct {
 	scheduledAt           pgtype.Timestamptz
 }
 
-type taskStartResult struct {
+type sessionStartResult struct {
 	session        db.TaskSession
 	run            runSummary
 	idempotencyHit bool
 	sessionReused  bool
 }
 
-type taskStartIdempotencyBinding struct {
+type sessionStartIdempotencyBinding struct {
 	ID                 pgtype.UUID
 	OrgID              pgtype.UUID
 	ProjectID          pgtype.UUID
@@ -101,16 +101,16 @@ func (s *Server) beginControlTransaction(ctx context.Context) (db.Querier, contr
 	return db.New(tx), tx, nil
 }
 
-func (s *Server) startTask(w http.ResponseWriter, r *http.Request) {
-	taskID := strings.TrimSpace(chi.URLParam(r, "taskID"))
-	if err := api.ValidateTaskID(taskID); err != nil {
-		writeError(w, badRequest(err))
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
+	actor := actorFromContext(r.Context())
+	var request api.SessionStartRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid session start request JSON: %w", err)))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	var request api.TaskStartRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid task start request JSON: %w", err)))
+	taskID := strings.TrimSpace(request.TaskID)
+	if err := api.ValidateTaskID(taskID); err != nil {
+		writeError(w, badRequest(err))
 		return
 	}
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, request.ProjectID, request.EnvironmentID)
@@ -118,9 +118,9 @@ func (s *Server) startTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	result, err := s.startTaskSessionFromRequestInScope(contextWithRequestVersionMetadata(r.Context(), r), actor, scope, projectID, environmentID, taskID, request, taskStartSource{})
+	result, err := s.startTaskSessionFromRequestInScope(contextWithRequestVersionMetadata(r.Context(), r), actor, scope, projectID, environmentID, taskID, request, sessionStartSource{})
 	if err != nil {
-		s.writeTaskStartError(w, err)
+		s.writeSessionStartError(w, err)
 		return
 	}
 	runResponse := runResponse(result.run)
@@ -128,23 +128,23 @@ func (s *Server) startTask(w http.ResponseWriter, r *http.Request) {
 	if result.idempotencyHit || result.sessionReused {
 		status = http.StatusOK
 	}
-	writeJSON(w, status, api.TaskStartResponse{
+	writeJSON(w, status, api.SessionStartResponse{
 		Session:  taskSessionResponse(result.session),
 		Run:      runResponse,
 		IsCached: result.idempotencyHit || result.sessionReused,
 	})
 }
 
-func (s *Server) startTaskAndWait(w http.ResponseWriter, r *http.Request) {
-	taskID := strings.TrimSpace(chi.URLParam(r, "taskID"))
-	if err := api.ValidateTaskID(taskID); err != nil {
-		writeError(w, badRequest(err))
+func (s *Server) startSessionAndWait(w http.ResponseWriter, r *http.Request) {
+	actor := actorFromContext(r.Context())
+	var request api.SessionStartAndWaitRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid session start-and-wait request JSON: %w", err)))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	var request api.TaskStartAndWaitRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid task start-and-wait request JSON: %w", err)))
+	taskID := strings.TrimSpace(request.TaskID)
+	if err := api.ValidateTaskID(taskID); err != nil {
+		writeError(w, badRequest(err))
 		return
 	}
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, request.ProjectID, request.EnvironmentID)
@@ -152,78 +152,93 @@ func (s *Server) startTaskAndWait(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	result, err := s.startTaskSessionFromRequestInScope(contextWithRequestVersionMetadata(r.Context(), r), actor, scope, projectID, environmentID, taskID, request.TaskStartRequest, taskStartSource{})
+	result, err := s.startTaskSessionFromRequestInScope(contextWithRequestVersionMetadata(r.Context(), r), actor, scope, projectID, environmentID, taskID, request.SessionStartRequest, sessionStartSource{})
 	if err != nil {
-		s.writeTaskStartError(w, err)
+		s.writeSessionStartError(w, err)
 		return
 	}
-	session, timedOut, err := s.waitForTaskSession(r.Context(), actor, result.session.ProjectID, result.session.EnvironmentID, pgvalue.MustUUIDValue(result.session.ID), waitTimeout(request.TimeoutSeconds))
+	run, timedOut, err := s.waitForRunTerminal(r.Context(), actor, result.run.ID, waitTimeout(request.TimeoutSeconds))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, taskSessionWaitResponse(session, timedOut))
+	session, err := s.db.GetTaskSession(r.Context(), db.GetTaskSessionParams{
+		OrgID:         pgvalue.UUID(actor.OrgID),
+		ProjectID:     result.session.ProjectID,
+		EnvironmentID: result.session.EnvironmentID,
+		ID:            result.session.ID,
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, api.SessionStartResponse{
+		Session:  taskSessionResponse(session),
+		Run:      runResponse(run),
+		IsCached: result.idempotencyHit || result.sessionReused,
+		TimedOut: timedOut,
+	})
 }
 
-func (s *Server) startTaskSessionFromRequest(ctx context.Context, actor auth.Actor, taskID string, request api.TaskStartRequest, source taskStartSource) (taskStartResult, error) {
+func (s *Server) startTaskSessionFromRequest(ctx context.Context, actor auth.Actor, taskID string, request api.SessionStartRequest, source sessionStartSource) (sessionStartResult, error) {
 	if s.db == nil {
-		return taskStartResult{}, errors.New("task session storage is not configured")
+		return sessionStartResult{}, errors.New("task session storage is not configured")
 	}
 	taskID = strings.TrimSpace(taskID)
 	if err := api.ValidateTaskID(taskID); err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	scope, projectID, environmentID, err := s.requestEnvironmentScope(ctx, actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	return s.startTaskSessionFromRequestInScope(ctx, actor, scope, projectID, environmentID, taskID, request, source)
 }
 
-func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor auth.Actor, scope auth.Scope, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, request api.TaskStartRequest, source taskStartSource) (taskStartResult, error) {
+func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor auth.Actor, scope auth.Scope, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, request api.SessionStartRequest, source sessionStartSource) (sessionStartResult, error) {
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
-		return taskStartResult{}, errPermissionRequired
+		return sessionStartResult{}, errPermissionRequired
 	}
-	runOptions := taskStartRunOptions(request.Options)
+	runOptions := sessionStartRunOptions(request.Options)
 	idempotency, err := normalizeRunIdempotency(runOptions)
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	payload := request.Payload
 	if len(payload) == 0 {
 		payload = json.RawMessage(`{}`)
 	}
 	if !json.Valid(payload) {
-		return taskStartResult{}, errors.New("payload must be valid JSON")
+		return sessionStartResult{}, errors.New("payload must be valid JSON")
 	}
 	externalID := strings.TrimSpace(request.ExternalID)
 	if err := validateTaskSessionExternalID(externalID); err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	requestedWorkspaceID, err := parseOptionalWorkspaceID(request.Options.WorkspaceID)
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	metadata, err := normalizedJSONObject(request.Options.Metadata, "metadata")
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	tags, err := normalizedRunTags(request.Options.Tags)
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
-	startFingerprint, err := taskStartRequestFingerprint(taskID, payload, request.Options, metadata, tags, externalID, request.Options.ExpiresAt)
+	startFingerprint, err := sessionStartRequestFingerprint(taskID, payload, request.Options, externalID, request.Options.ExpiresAt)
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	idempotencyFingerprint := pgtype.Text{}
 	if idempotency.key.Valid {
 		idempotencyFingerprint = startFingerprint
-		if existing, hit, err := s.existingTaskStartIdempotency(ctx, actor.OrgID, projectID, environmentID, taskID, idempotency.key.String, idempotencyFingerprint.String, externalID); err != nil {
-			return taskStartResult{}, err
+		if existing, hit, err := s.existingSessionStartIdempotency(ctx, actor.OrgID, projectID, environmentID, taskID, idempotency.key.String, idempotencyFingerprint.String, externalID); err != nil {
+			return sessionStartResult{}, err
 		} else if hit {
-			if err := s.ensureTaskStartSourceCurrent(ctx, source); err != nil {
-				return taskStartResult{}, err
+			if err := s.ensureSessionStartSourceCurrent(ctx, source); err != nil {
+				return sessionStartResult{}, err
 			}
 			return existing, nil
 		}
@@ -232,7 +247,7 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 		if existing, err := s.loadExistingTaskSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, taskID, externalID, startFingerprint.String, idempotency, idempotencyFingerprint.String, source); err == nil {
 			return existing, nil
 		} else if !isNoRows(err) {
-			return taskStartResult{}, err
+			return sessionStartResult{}, err
 		}
 	}
 	task, err := s.db.GetTaskForStart(ctx, db.GetTaskForStartParams{
@@ -242,60 +257,60 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 		TaskID:        taskID,
 	})
 	if isNoRows(err) {
-		return taskStartResult{}, errTaskNotDeployed
+		return sessionStartResult{}, errTaskNotDeployed
 	}
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	if task.ArchivedAt.Valid {
-		return taskStartResult{}, errTaskArchived
+		return sessionStartResult{}, errTaskArchived
 	}
 	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, projectID, environmentID, taskID, runDeploymentSelection{})
 	if isNoRows(err) {
-		return taskStartResult{}, errTaskNotDeployed
+		return sessionStartResult{}, errTaskNotDeployed
 	}
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	secretNames, err := deploymentTaskSecretNames(deploymentTask.SecretDeclarations)
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	if len(secretNames) > 0 {
 		if s.secrets == nil {
-			return taskStartResult{}, errors.New("secret store is not configured")
+			return sessionStartResult{}, errors.New("secret store is not configured")
 		}
 		projectUUID, err := pgvalue.UUIDValue(projectID)
 		if err != nil {
-			return taskStartResult{}, fmt.Errorf("project id is invalid: %v", err)
+			return sessionStartResult{}, fmt.Errorf("project id is invalid: %v", err)
 		}
 		environmentUUID, err := pgvalue.UUIDValue(environmentID)
 		if err != nil {
-			return taskStartResult{}, fmt.Errorf("environment id is invalid: %v", err)
+			return sessionStartResult{}, fmt.Errorf("environment id is invalid: %v", err)
 		}
 		if err := s.secrets.CheckScopedNames(ctx, actor.OrgID, projectUUID, environmentUUID, secretNames); err != nil {
-			return taskStartResult{}, err
+			return sessionStartResult{}, err
 		}
 	}
 	maxDurationSeconds, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, deploymentTask.MaxActiveDurationMs)
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	lockedRetryPolicy, err := resolvedRetryPolicy(request.Options.Retry, deploymentTask.RetryPolicy)
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	scheduling, err := s.resolveRunScheduling(runOptions, deploymentTask)
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	scheduling, err = s.validateRunQueueOverride(ctx, actor.OrgID, projectID, environmentID, runOptions, deploymentTask, scheduling)
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
-	startClaim, err := s.claimTaskStart(ctx, actor.OrgID, projectID, environmentID, taskID, idempotency.key.String, idempotency.expiresAt)
+	startClaim, err := s.claimSessionStart(ctx, actor.OrgID, projectID, environmentID, taskID, idempotency.key.String, idempotency.expiresAt)
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	claimResolved := false
 	defer func() {
@@ -305,21 +320,21 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 	}()
 	resolvedClaimIsStale := false
 	if startClaim.resolved && idempotency.key.Valid {
-		if existing, hit, err := s.existingTaskStartIdempotency(ctx, actor.OrgID, projectID, environmentID, taskID, idempotency.key.String, idempotencyFingerprint.String, externalID); err != nil {
-			return taskStartResult{}, err
+		if existing, hit, err := s.existingSessionStartIdempotency(ctx, actor.OrgID, projectID, environmentID, taskID, idempotency.key.String, idempotencyFingerprint.String, externalID); err != nil {
+			return sessionStartResult{}, err
 		} else if hit {
-			if err := s.ensureTaskStartSourceCurrent(ctx, source); err != nil {
-				return taskStartResult{}, err
+			if err := s.ensureSessionStartSourceCurrent(ctx, source); err != nil {
+				return sessionStartResult{}, err
 			}
 			return existing, nil
 		}
 		startClaim.clearResolved(context.WithoutCancel(ctx))
-		startClaim, err = s.claimTaskStart(ctx, actor.OrgID, projectID, environmentID, taskID, idempotency.key.String, idempotency.expiresAt)
+		startClaim, err = s.claimSessionStart(ctx, actor.OrgID, projectID, environmentID, taskID, idempotency.key.String, idempotency.expiresAt)
 		if err != nil {
-			return taskStartResult{}, err
+			return sessionStartResult{}, err
 		}
 		if startClaim.resolved {
-			return taskStartResult{}, errTaskStartPending
+			return sessionStartResult{}, errSessionStartPending
 		}
 		resolvedClaimIsStale = true
 	}
@@ -328,19 +343,19 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 	sessionID := uuid.Must(uuid.NewV7())
 	traceID, err := tracing.NewTraceID()
 	if err != nil {
-		return taskStartResult{}, fmt.Errorf("generate run trace id: %w", err)
+		return sessionStartResult{}, fmt.Errorf("generate run trace id: %w", err)
 	}
 	rootSpanID, err := tracing.NewSpanID()
 	if err != nil {
-		return taskStartResult{}, fmt.Errorf("generate run root span id: %w", err)
+		return sessionStartResult{}, fmt.Errorf("generate run root span id: %w", err)
 	}
-	createdPayload, err := runCreatedEventPayload(taskID, payload, maxDurationSeconds, secretNames, lockedRetryPolicy, metadata, tags)
+	createdPayload, err := runCreatedEventPayload(taskID, payload, maxDurationSeconds, secretNames, lockedRetryPolicy, metadata, tags, "initial", json.RawMessage(`{}`))
 	if err != nil {
-		return taskStartResult{}, fmt.Errorf("encode run created event: %w", err)
+		return sessionStartResult{}, fmt.Errorf("encode run created event: %w", err)
 	}
 	store, tx, err := s.beginControlTransaction(ctx)
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	defer func() {
 		if tx != nil {
@@ -352,20 +367,19 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 			OrgID:         pgvalue.UUID(actor.OrgID),
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
-			TaskID:        taskID,
 			ExternalID:    externalID,
 		}); err == nil {
 			if !taskSessionStartReusable(existing) {
-				return taskStartResult{}, errTaskSessionTerminated
+				return sessionStartResult{}, errTaskSessionTerminated
 			}
 			if existing.StartFingerprint != startFingerprint.String {
-				return taskStartResult{}, errTaskStartSessionFingerprint
+				return sessionStartResult{}, errSessionStartSessionFingerprint
 			}
 			if !existing.CurrentRunID.Valid {
-				return taskStartResult{}, errTaskSessionNoCurrentRun
+				return sessionStartResult{}, errTaskSessionNoCurrentRun
 			}
 			if idempotency.key.Valid {
-				if existingResult, existingHit, err := s.createTaskStartIdempotency(ctx, store, taskStartIdempotencyBinding{
+				if existingResult, existingHit, err := s.createSessionStartIdempotency(ctx, store, sessionStartIdempotencyBinding{
 					ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 					OrgID:              pgvalue.UUID(actor.OrgID),
 					ProjectID:          projectID,
@@ -377,32 +391,32 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 					FirstRunID:         existing.CurrentRunID,
 					ExpiresAt:          idempotency.expiresAt,
 				}, externalID, source); err != nil {
-					return taskStartResult{}, err
+					return sessionStartResult{}, err
 				} else if existingHit {
 					return existingResult, nil
 				}
 			}
 			runRow, err := store.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: pgvalue.UUID(actor.OrgID), ID: existing.CurrentRunID})
 			if err != nil {
-				return taskStartResult{}, err
+				return sessionStartResult{}, err
 			}
 			if err := tx.Commit(ctx); err != nil {
-				return taskStartResult{}, err
+				return sessionStartResult{}, err
 			}
 			tx = nil
 			startClaim.resolve(context.WithoutCancel(ctx))
 			claimResolved = true
-			return taskStartResult{session: existing, run: getRunSummary(runRow), idempotencyHit: idempotency.key.Valid, sessionReused: true}, nil
+			return sessionStartResult{session: existing, run: getRunSummary(runRow), idempotencyHit: idempotency.key.Valid, sessionReused: true}, nil
 		} else if !isNoRows(err) {
-			return taskStartResult{}, err
+			return sessionStartResult{}, err
 		}
 	}
 	if startClaim.resolved && !resolvedClaimIsStale {
-		return taskStartResult{}, errTaskStartPending
+		return sessionStartResult{}, errSessionStartPending
 	}
-	workspace, err := s.createOrAttachTaskStartWorkspace(ctx, store, actor.OrgID, projectID, environmentID, deploymentTask, requestedWorkspaceID)
+	workspace, err := s.createOrAttachSessionStartWorkspace(ctx, store, actor.OrgID, projectID, environmentID, deploymentTask, requestedWorkspaceID)
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	session, err := store.CreateTaskSession(ctx, db.CreateTaskSessionParams{
 		ID:                  pgvalue.UUID(sessionID),
@@ -425,16 +439,16 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 			tx = nil
 			existing, err := s.loadExistingTaskSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, taskID, externalID, startFingerprint.String, idempotency, idempotencyFingerprint.String, source)
 			if err != nil {
-				return taskStartResult{}, err
+				return sessionStartResult{}, err
 			}
 			startClaim.resolve(context.WithoutCancel(ctx))
 			claimResolved = true
 			return existing, nil
 		}
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	if err := s.ensureTaskSessionStreams(ctx, store, pgvalue.UUID(actor.OrgID), projectID, environmentID, deploymentTask.DeploymentID, taskID, session.ID); err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	run, err := store.CreateScopedRun(ctx, db.CreateScopedRunParams{
 		ID:                    pgvalue.UUID(runID),
@@ -472,16 +486,16 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 	})
 	if err != nil {
 		if isNoRows(err) && source.scheduleInstanceID.Valid {
-			return taskStartResult{}, schedule.ErrTriggerSuperseded
+			return sessionStartResult{}, schedule.ErrTriggerSuperseded
 		}
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	materializationRequest, err := json.Marshal(map[string]string{
-		"source": "task_start",
+		"source": "session_start",
 		"run_id": pgvalue.MustUUIDValue(run.ID).String(),
 	})
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	materialization, err := store.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -494,9 +508,9 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 	})
 	if err != nil {
 		if isNoRows(err) {
-			return taskStartResult{}, s.workspaceMaterializationPrerequisiteErrorWithStore(ctx, store, pgvalue.UUID(actor.OrgID), projectID, environmentID, workspace.ID)
+			return sessionStartResult{}, s.workspaceMaterializationPrerequisiteErrorWithStore(ctx, store, pgvalue.UUID(actor.OrgID), projectID, environmentID, workspace.ID)
 		}
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	if err := store.SetQueuedRunWorkspaceMaterialization(ctx, db.SetQueuedRunWorkspaceMaterializationParams{
 		OrgID:                      pgvalue.UUID(actor.OrgID),
@@ -504,7 +518,7 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 		WorkspaceID:                workspace.ID,
 		WorkspaceMaterializationID: materialization.ID,
 	}); err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	if _, err := store.CreateTaskSessionRun(ctx, db.CreateTaskSessionRunParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -515,8 +529,9 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 		RunID:         run.ID,
 		DeploymentID:  deploymentTask.DeploymentID,
 		TurnIndex:     0,
+		Reason:        "initial",
 	}); err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	session, err = store.SetTaskSessionCurrentRun(ctx, db.SetTaskSessionCurrentRunParams{
 		OrgID:         pgvalue.UUID(actor.OrgID),
@@ -526,10 +541,10 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 		RunID:         run.ID,
 	})
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	if idempotency.key.Valid {
-		if existingResult, existingHit, err := s.createTaskStartIdempotency(ctx, store, taskStartIdempotencyBinding{
+		if existingResult, existingHit, err := s.createSessionStartIdempotency(ctx, store, sessionStartIdempotencyBinding{
 			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:              pgvalue.UUID(actor.OrgID),
 			ProjectID:          projectID,
@@ -541,13 +556,13 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 			FirstRunID:         run.ID,
 			ExpiresAt:          idempotency.expiresAt,
 		}, externalID, source); err != nil {
-			return taskStartResult{}, err
+			return sessionStartResult{}, err
 		} else if existingHit {
 			return existingResult, nil
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	tx = nil
 	startClaim.resolve(context.WithoutCancel(ctx))
@@ -557,7 +572,7 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 			s.log.Error("enqueue task session run failed", "run_id", pgvalue.MustUUIDValue(run.ID).String(), "error", err)
 		}
 	}
-	return taskStartResult{session: session, run: createScopedRunSummary(run)}, nil
+	return sessionStartResult{session: session, run: createScopedRunSummary(run)}, nil
 }
 
 func (s *Server) ensureTaskSessionStreams(ctx context.Context, store db.Querier, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, taskID string, sessionID pgtype.UUID) error {
@@ -609,7 +624,7 @@ func parseOptionalWorkspaceID(raw string) (pgtype.UUID, error) {
 	return pgvalue.UUID(parsed), nil
 }
 
-func (s *Server) createOrAttachTaskStartWorkspace(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, task db.GetDeploymentTaskRow, requestedWorkspaceID pgtype.UUID) (db.Workspace, error) {
+func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, task db.GetDeploymentTaskRow, requestedWorkspaceID pgtype.UUID) (db.Workspace, error) {
 	if !requestedWorkspaceID.Valid {
 		workspaceArtifact, initialWorkspace, err := s.createInitialWorkspaceArtifact(ctx, store, orgID, projectID, environmentID)
 		if err != nil {
@@ -640,7 +655,7 @@ func (s *Server) createOrAttachTaskStartWorkspace(ctx context.Context, store db.
 		}
 		return workspaceFromCreateWorkspaceFromSandbox(workspace), nil
 	}
-	workspace, err := store.GetWorkspaceForTaskStart(ctx, db.GetWorkspaceForTaskStartParams{
+	workspace, err := store.GetWorkspaceForSessionStart(ctx, db.GetWorkspaceForSessionStartParams{
 		OrgID:         pgvalue.UUID(orgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
@@ -703,7 +718,7 @@ func jsonPayloadsEqual(left []byte, right []byte) bool {
 	return bytes.Equal(leftCanonical, rightCanonical)
 }
 
-func workspaceResourceFloorSatisfies(workspace db.GetWorkspaceForTaskStartRow, task db.GetDeploymentTaskRow) error {
+func workspaceResourceFloorSatisfies(workspace db.GetWorkspaceForSessionStartRow, task db.GetDeploymentTaskRow) error {
 	floor, err := decodeWorkspaceResourceFloor(workspace.DeploymentSandboxResourceFloor)
 	if err != nil {
 		return errWorkspaceResourceFloor
@@ -735,29 +750,29 @@ func decodeWorkspaceResourceFloor(raw []byte) (workspaceResourceFloor, error) {
 	return workspaceResourceFloor{milliCPU: decoded.MilliCPU, memoryMiB: decoded.MemoryMiB}, nil
 }
 
-func (s *Server) createTaskStartIdempotency(ctx context.Context, store db.Querier, binding taskStartIdempotencyBinding, externalID string, source taskStartSource) (taskStartResult, bool, error) {
-	created, existingResult, existingHit, err := s.tryCreateTaskStartIdempotency(ctx, store, binding, externalID, source)
+func (s *Server) createSessionStartIdempotency(ctx context.Context, store db.Querier, binding sessionStartIdempotencyBinding, externalID string, source sessionStartSource) (sessionStartResult, bool, error) {
+	created, existingResult, existingHit, err := s.tryCreateSessionStartIdempotency(ctx, store, binding, externalID, source)
 	if err != nil || created.ID.Valid || existingHit {
 		return existingResult, existingHit, err
 	}
-	if err := store.DeleteExpiredTaskStartIdempotency(ctx, db.DeleteExpiredTaskStartIdempotencyParams{
+	if err := store.DeleteExpiredSessionStartIdempotency(ctx, db.DeleteExpiredSessionStartIdempotencyParams{
 		OrgID:          binding.OrgID,
 		ProjectID:      binding.ProjectID,
 		EnvironmentID:  binding.EnvironmentID,
 		TaskID:         binding.TaskID,
 		IdempotencyKey: binding.IdempotencyKey,
 	}); err != nil {
-		return taskStartResult{}, false, err
+		return sessionStartResult{}, false, err
 	}
-	created, existingResult, existingHit, err = s.tryCreateTaskStartIdempotency(ctx, store, binding, externalID, source)
+	created, existingResult, existingHit, err = s.tryCreateSessionStartIdempotency(ctx, store, binding, externalID, source)
 	if err != nil || created.ID.Valid || existingHit {
 		return existingResult, existingHit, err
 	}
-	return taskStartResult{}, false, errTaskStartPending
+	return sessionStartResult{}, false, errSessionStartPending
 }
 
-func (s *Server) tryCreateTaskStartIdempotency(ctx context.Context, store db.Querier, binding taskStartIdempotencyBinding, externalID string, source taskStartSource) (db.TaskStartIdempotency, taskStartResult, bool, error) {
-	created, err := store.CreateTaskStartIdempotency(ctx, db.CreateTaskStartIdempotencyParams{
+func (s *Server) tryCreateSessionStartIdempotency(ctx context.Context, store db.Querier, binding sessionStartIdempotencyBinding, externalID string, source sessionStartSource) (db.SessionStartIdempotency, sessionStartResult, bool, error) {
+	created, err := store.CreateSessionStartIdempotency(ctx, db.CreateSessionStartIdempotencyParams{
 		ID:                 binding.ID,
 		OrgID:              binding.OrgID,
 		ProjectID:          binding.ProjectID,
@@ -770,18 +785,18 @@ func (s *Server) tryCreateTaskStartIdempotency(ctx context.Context, store db.Que
 		ExpiresAt:          binding.ExpiresAt,
 	})
 	if err == nil {
-		return created, taskStartResult{}, false, nil
+		return created, sessionStartResult{}, false, nil
 	}
 	if !isNoRows(err) {
-		return db.TaskStartIdempotency{}, taskStartResult{}, false, err
+		return db.SessionStartIdempotency{}, sessionStartResult{}, false, err
 	}
-	if existingResult, hit, hitErr := s.existingTaskStartIdempotency(ctx, pgvalue.MustUUIDValue(binding.OrgID), binding.ProjectID, binding.EnvironmentID, binding.TaskID, binding.IdempotencyKey, binding.RequestFingerprint, externalID); hitErr != nil {
-		return db.TaskStartIdempotency{}, taskStartResult{}, false, hitErr
+	if existingResult, hit, hitErr := s.existingSessionStartIdempotency(ctx, pgvalue.MustUUIDValue(binding.OrgID), binding.ProjectID, binding.EnvironmentID, binding.TaskID, binding.IdempotencyKey, binding.RequestFingerprint, externalID); hitErr != nil {
+		return db.SessionStartIdempotency{}, sessionStartResult{}, false, hitErr
 	} else if hit {
-		if err := s.ensureTaskStartSourceCurrent(ctx, source); err != nil {
-			return db.TaskStartIdempotency{}, taskStartResult{}, false, err
+		if err := s.ensureSessionStartSourceCurrent(ctx, source); err != nil {
+			return db.SessionStartIdempotency{}, sessionStartResult{}, false, err
 		}
-		return db.TaskStartIdempotency{
+		return db.SessionStartIdempotency{
 			ID:                 binding.ID,
 			OrgID:              binding.OrgID,
 			ProjectID:          binding.ProjectID,
@@ -794,31 +809,30 @@ func (s *Server) tryCreateTaskStartIdempotency(ctx context.Context, store db.Que
 			ExpiresAt:          binding.ExpiresAt,
 		}, existingResult, true, nil
 	}
-	return db.TaskStartIdempotency{}, taskStartResult{}, false, nil
+	return db.SessionStartIdempotency{}, sessionStartResult{}, false, nil
 }
 
-func (s *Server) loadExistingTaskSessionStart(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, externalID string, startFingerprint string, idempotency runIdempotency, idempotencyFingerprint string, source taskStartSource) (taskStartResult, error) {
+func (s *Server) loadExistingTaskSessionStart(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, externalID string, startFingerprint string, idempotency runIdempotency, idempotencyFingerprint string, source sessionStartSource) (sessionStartResult, error) {
 	existing, err := store.GetTaskSessionByExternalID(ctx, db.GetTaskSessionByExternalIDParams{
 		OrgID:         pgvalue.UUID(orgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		TaskID:        taskID,
 		ExternalID:    externalID,
 	})
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
 	if !taskSessionStartReusable(existing) {
-		return taskStartResult{}, errTaskSessionTerminated
+		return sessionStartResult{}, errTaskSessionTerminated
 	}
 	if existing.StartFingerprint != startFingerprint {
-		return taskStartResult{}, errTaskStartSessionFingerprint
+		return sessionStartResult{}, errSessionStartSessionFingerprint
 	}
 	if !existing.CurrentRunID.Valid {
-		return taskStartResult{}, errTaskSessionNoCurrentRun
+		return sessionStartResult{}, errTaskSessionNoCurrentRun
 	}
 	if idempotency.key.Valid {
-		if existingResult, existingHit, err := s.createTaskStartIdempotency(ctx, store, taskStartIdempotencyBinding{
+		if existingResult, existingHit, err := s.createSessionStartIdempotency(ctx, store, sessionStartIdempotencyBinding{
 			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:              pgvalue.UUID(orgID),
 			ProjectID:          projectID,
@@ -830,19 +844,19 @@ func (s *Server) loadExistingTaskSessionStart(ctx context.Context, store db.Quer
 			FirstRunID:         existing.CurrentRunID,
 			ExpiresAt:          idempotency.expiresAt,
 		}, externalID, source); err != nil {
-			return taskStartResult{}, err
+			return sessionStartResult{}, err
 		} else if existingHit {
 			return existingResult, nil
 		}
 	}
 	runRow, err := store.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: pgvalue.UUID(orgID), ID: existing.CurrentRunID})
 	if err != nil {
-		return taskStartResult{}, err
+		return sessionStartResult{}, err
 	}
-	return taskStartResult{session: existing, run: getRunSummary(runRow), idempotencyHit: idempotency.key.Valid, sessionReused: true}, nil
+	return sessionStartResult{session: existing, run: getRunSummary(runRow), idempotencyHit: idempotency.key.Valid, sessionReused: true}, nil
 }
 
-func (s *Server) ensureTaskStartSourceCurrent(ctx context.Context, source taskStartSource) error {
+func (s *Server) ensureSessionStartSourceCurrent(ctx context.Context, source sessionStartSource) error {
 	if !source.scheduleInstanceID.Valid {
 		return nil
 	}
@@ -864,7 +878,7 @@ func (s *Server) ensureTaskStartSourceCurrent(ctx context.Context, source taskSt
 	return nil
 }
 
-func taskStartRunOptions(options api.TaskStartOptions) api.CreateRunOptions {
+func sessionStartRunOptions(options api.SessionStartOptions) api.CreateRunOptions {
 	return api.CreateRunOptions{
 		Queue:              options.Queue,
 		ConcurrencyKey:     options.ConcurrencyKey,
@@ -879,7 +893,7 @@ func taskStartRunOptions(options api.TaskStartOptions) api.CreateRunOptions {
 	}
 }
 
-func taskStartRequestFingerprint(taskID string, payload json.RawMessage, options api.TaskStartOptions, metadata []byte, tags []string, externalID string, expiresAt *time.Time) (pgtype.Text, error) {
+func sessionStartRequestFingerprint(taskID string, payload json.RawMessage, options api.SessionStartOptions, externalID string, expiresAt *time.Time) (pgtype.Text, error) {
 	canonicalPayload, err := canonicalJSON(payload)
 	if err != nil {
 		return pgtype.Text{}, fmt.Errorf("payload canonicalization failed: %w", err)
@@ -896,8 +910,6 @@ func taskStartRequestFingerprint(taskID string, payload json.RawMessage, options
 		Payload    json.RawMessage `json:"payload"`
 		ExternalID string          `json:"external_id,omitempty"`
 		ExpiresAt  string          `json:"expires_at,omitempty"`
-		Metadata   json.RawMessage `json:"metadata"`
-		Tags       []string        `json:"tags"`
 		Options    struct {
 			QueueName          string `json:"queue_name,omitempty"`
 			ConcurrencyKey     string `json:"concurrency_key,omitempty"`
@@ -911,8 +923,6 @@ func taskStartRequestFingerprint(taskID string, payload json.RawMessage, options
 		TaskID:      taskID,
 		Payload:     canonicalPayload,
 		ExternalID:  strings.TrimSpace(externalID),
-		Metadata:    json.RawMessage(metadata),
-		Tags:        append([]string(nil), tags...),
 		RetryPolicy: retry,
 	}
 	if expiresAt != nil {
@@ -928,14 +938,14 @@ func taskStartRequestFingerprint(taskID string, payload json.RawMessage, options
 	fingerprint.Options.WorkspaceID = strings.TrimSpace(options.WorkspaceID)
 	body, err := json.Marshal(fingerprint)
 	if err != nil {
-		return pgtype.Text{}, fmt.Errorf("task start fingerprint encode failed: %w", err)
+		return pgtype.Text{}, fmt.Errorf("session start fingerprint encode failed: %w", err)
 	}
 	digest := sha256.Sum256(body)
 	return pgtype.Text{String: hex.EncodeToString(digest[:]), Valid: true}, nil
 }
 
-func (s *Server) existingTaskStartIdempotency(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, fingerprint string, externalID string) (taskStartResult, bool, error) {
-	existing, err := s.db.GetTaskStartIdempotency(ctx, db.GetTaskStartIdempotencyParams{
+func (s *Server) existingSessionStartIdempotency(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, fingerprint string, externalID string) (sessionStartResult, bool, error) {
+	existing, err := s.db.GetSessionStartIdempotency(ctx, db.GetSessionStartIdempotencyParams{
 		OrgID:          pgvalue.UUID(orgID),
 		ProjectID:      projectID,
 		EnvironmentID:  environmentID,
@@ -943,23 +953,23 @@ func (s *Server) existingTaskStartIdempotency(ctx context.Context, orgID uuid.UU
 		IdempotencyKey: key,
 	})
 	if isNoRows(err) {
-		return taskStartResult{}, false, nil
+		return sessionStartResult{}, false, nil
 	}
 	if err != nil {
-		return taskStartResult{}, false, err
+		return sessionStartResult{}, false, err
 	}
 	if existing.RequestFingerprint != fingerprint {
-		return taskStartResult{}, false, errTaskStartIdempotencyFingerprint
+		return sessionStartResult{}, false, errSessionStartIdempotencyFingerprint
 	}
 	session := taskSessionFromIdempotency(existing)
 	if strings.TrimSpace(externalID) != "" && session.ExternalID != strings.TrimSpace(externalID) {
-		return taskStartResult{}, false, errTaskStartIdempotencyExternalID
+		return sessionStartResult{}, false, errSessionStartIdempotencyExternalID
 	}
-	_ = s.db.TouchTaskStartIdempotency(ctx, db.TouchTaskStartIdempotencyParams{OrgID: pgvalue.UUID(orgID), ID: existing.ID})
-	return taskStartResult{session: session, run: runSummaryFromIdempotency(existing), idempotencyHit: true}, true, nil
+	_ = s.db.TouchSessionStartIdempotency(ctx, db.TouchSessionStartIdempotencyParams{OrgID: pgvalue.UUID(orgID), ID: existing.ID})
+	return sessionStartResult{session: session, run: runSummaryFromIdempotency(existing), idempotencyHit: true}, true, nil
 }
 
-func taskSessionFromIdempotency(row db.GetTaskStartIdempotencyRow) db.TaskSession {
+func taskSessionFromIdempotency(row db.GetSessionStartIdempotencyRow) db.TaskSession {
 	return db.TaskSession{
 		ID:                  row.SessionID,
 		OrgID:               row.SessionOrgID,
@@ -979,15 +989,13 @@ func taskSessionFromIdempotency(row db.GetTaskStartIdempotencyRow) db.TaskSessio
 		Result:              row.SessionResult,
 		TerminalReason:      row.SessionTerminalReason,
 		ExpiresAt:           row.SessionExpiresAt,
-		CompletedAt:         row.SessionCompletedAt,
-		FailedAt:            row.SessionFailedAt,
 		CancelledAt:         row.SessionCancelledAt,
 		CreatedAt:           row.SessionCreatedAt,
 		UpdatedAt:           row.SessionUpdatedAt,
 	}
 }
 
-func runSummaryFromIdempotency(row db.GetTaskStartIdempotencyRow) runSummary {
+func runSummaryFromIdempotency(row db.GetSessionStartIdempotencyRow) runSummary {
 	return runSummary{
 		ID:                   row.RunID,
 		OrgID:                row.RunOrgID,
@@ -1032,14 +1040,14 @@ func waitTimeout(seconds int32) time.Duration {
 	return timeout
 }
 
-func (s *Server) writeTaskStartError(w http.ResponseWriter, err error) {
+func (s *Server) writeSessionStartError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, errTaskArchived), errors.Is(err, errTaskNotDeployed), errors.Is(err, errTaskStartSessionFingerprint), errors.Is(err, errTaskStartIdempotencyFingerprint), errors.Is(err, errTaskStartIdempotencyExternalID), errors.Is(err, errTaskSessionTerminated), errors.Is(err, errTaskSessionNoCurrentRun), errors.Is(err, errSandboxNotDeployed), errors.Is(err, errWorkspaceSandboxIncompatible), errors.Is(err, errWorkspaceResourceFloor):
+	case errors.Is(err, errTaskArchived), errors.Is(err, errTaskNotDeployed), errors.Is(err, errSessionStartSessionFingerprint), errors.Is(err, errSessionStartIdempotencyFingerprint), errors.Is(err, errSessionStartIdempotencyExternalID), errors.Is(err, errTaskSessionTerminated), errors.Is(err, errTaskSessionNoCurrentRun), errors.Is(err, errSandboxNotDeployed), errors.Is(err, errWorkspaceSandboxIncompatible), errors.Is(err, errWorkspaceResourceFloor):
 		writeError(w, conflict(err))
-	case errors.Is(err, errTaskStartPending):
+	case errors.Is(err, errSessionStartPending):
 		w.Header().Set("Retry-After", "1")
 		writeErrorStatus(w, http.StatusAccepted, err)
-	case errors.Is(err, errTaskStartCoordinationUnavailable):
+	case errors.Is(err, errSessionStartCoordinationUnavailable):
 		writeError(w, unavailable(err))
 	case errors.Is(err, errPermissionRequired):
 		writeError(w, forbidden(err))
@@ -1048,7 +1056,7 @@ func (s *Server) writeTaskStartError(w http.ResponseWriter, err error) {
 	case isCreateRunClientError(err):
 		writeError(w, badRequest(err))
 	default:
-		s.log.Error("task start failed", "error", err)
+		s.log.Error("session start failed", "error", err)
 		writeError(w, errors.New("start task"))
 	}
 }
@@ -1228,59 +1236,30 @@ func (s *Server) patchTaskSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, taskSessionResponse(updated))
 }
 
-func (s *Server) waitTaskSession(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.loadTaskSessionForRequest(w, r, auth.PermissionRunsRead)
-	if !ok {
-		return
-	}
-	var request api.TaskWaitRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid session wait JSON: %w", err)))
-		return
-	}
-	actor := actorFromContext(r.Context())
-	updated, timedOut, err := s.waitForTaskSession(r.Context(), actor, session.ProjectID, session.EnvironmentID, pgvalue.MustUUIDValue(session.ID), waitTimeout(request.TimeoutSeconds))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, taskSessionWaitResponse(updated, timedOut))
-}
-
-func (s *Server) waitForTaskSession(ctx context.Context, actor auth.Actor, projectID pgtype.UUID, environmentID pgtype.UUID, sessionID uuid.UUID, timeout time.Duration) (db.TaskSession, bool, error) {
+func (s *Server) waitForRunTerminal(ctx context.Context, actor auth.Actor, runID pgtype.UUID, timeout time.Duration) (runSummary, bool, error) {
 	deadline := time.Now().Add(timeout)
 	for {
-		session, err := s.db.GetTaskSession(ctx, db.GetTaskSessionParams{
-			OrgID:         pgvalue.UUID(actor.OrgID),
-			ProjectID:     projectID,
-			EnvironmentID: environmentID,
-			ID:            pgvalue.UUID(sessionID),
+		row, err := s.db.GetRunSummary(ctx, db.GetRunSummaryParams{
+			OrgID: pgvalue.UUID(actor.OrgID),
+			ID:    runID,
 		})
 		if err != nil {
-			return db.TaskSession{}, false, err
+			return runSummary{}, false, err
 		}
-		if taskSessionTerminal(session.Status) {
-			return session, false, nil
+		run := getRunSummary(row)
+		if runStatusTerminal(run.Status) {
+			return run, false, nil
 		}
 		if time.Now().After(deadline) {
-			return session, true, nil
+			return run, true, nil
 		}
 		timer := time.NewTimer(taskSessionWaitPollEvery)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return db.TaskSession{}, false, ctx.Err()
+			return runSummary{}, false, ctx.Err()
 		case <-timer.C:
 		}
-	}
-}
-
-func taskSessionTerminal(status db.TaskSessionStatus) bool {
-	switch status {
-	case db.TaskSessionStatusCompleted, db.TaskSessionStatusFailed, db.TaskSessionStatusClosed, db.TaskSessionStatusCancelled, db.TaskSessionStatusExpired:
-		return true
-	default:
-		return false
 	}
 }
 
@@ -1292,10 +1271,6 @@ func (s *Server) closeTaskSession(w http.ResponseWriter, r *http.Request) {
 	var request api.CloseTaskSessionRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid session close JSON: %w", err)))
-		return
-	}
-	if session.CurrentRunID.Valid {
-		writeError(w, conflict(errCloseRunActive))
 		return
 	}
 	reason := strings.TrimSpace(request.Reason)
@@ -1310,15 +1285,40 @@ func (s *Server) closeTaskSession(w http.ResponseWriter, r *http.Request) {
 		Reason:        reason,
 	})
 	if isNoRows(err) {
-		latest, latestErr := s.db.GetTaskSession(r.Context(), db.GetTaskSessionParams{
-			OrgID:         session.OrgID,
-			ProjectID:     session.ProjectID,
-			EnvironmentID: session.EnvironmentID,
-			ID:            session.ID,
-		})
-		if latestErr == nil && latest.Status == db.TaskSessionStatusOpen && latest.CurrentRunID.Valid {
+		activeRun, terminalRun, stateErr := s.closeTaskSessionCurrentRunState(r.Context(), session)
+		if stateErr != nil {
+			writeError(w, errors.New("close session"))
+			return
+		}
+		if activeRun {
 			writeError(w, conflict(errCloseRunActive))
 			return
+		}
+		if terminalRun {
+			closed, err = s.db.CloseTaskSession(r.Context(), db.CloseTaskSessionParams{
+				OrgID:         session.OrgID,
+				ProjectID:     session.ProjectID,
+				EnvironmentID: session.EnvironmentID,
+				ID:            session.ID,
+				Reason:        reason,
+			})
+			if err == nil {
+				writeJSON(w, http.StatusOK, taskSessionResponse(closed))
+				return
+			}
+			if !isNoRows(err) {
+				writeError(w, errors.New("close session"))
+				return
+			}
+			activeRun, _, stateErr = s.closeTaskSessionCurrentRunState(r.Context(), session)
+			if stateErr != nil {
+				writeError(w, errors.New("close session"))
+				return
+			}
+			if activeRun {
+				writeError(w, conflict(errCloseRunActive))
+				return
+			}
 		}
 		writeError(w, conflict(errTaskSessionTerminated))
 		return
@@ -1328,6 +1328,32 @@ func (s *Server) closeTaskSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, taskSessionResponse(closed))
+}
+
+func (s *Server) closeTaskSessionCurrentRunState(ctx context.Context, session db.TaskSession) (activeRun bool, terminalRun bool, err error) {
+	latest, err := s.db.GetTaskSession(ctx, db.GetTaskSessionParams{
+		OrgID:         session.OrgID,
+		ProjectID:     session.ProjectID,
+		EnvironmentID: session.EnvironmentID,
+		ID:            session.ID,
+	})
+	if isNoRows(err) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	if latest.Status != db.TaskSessionStatusOpen || !latest.CurrentRunID.Valid {
+		return false, false, nil
+	}
+	run, err := s.db.GetRun(ctx, db.GetRunParams{OrgID: latest.OrgID, ID: latest.CurrentRunID})
+	if err != nil {
+		return false, false, err
+	}
+	if runStatusTerminal(run.Status) {
+		return false, true, nil
+	}
+	return true, false, nil
 }
 
 func (s *Server) cancelTaskSession(w http.ResponseWriter, r *http.Request) {

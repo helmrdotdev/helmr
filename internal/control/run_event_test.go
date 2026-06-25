@@ -144,11 +144,11 @@ func TestTerminalRunEventJSONShapes(t *testing.T) {
 }
 
 func TestWorkerEventPayloadJSONShapes(t *testing.T) {
-	payload, err := runCreatedEventPayload("deploy", json.RawMessage(`{"env":"prod"}`), 300, []string{"TOKEN", "API_KEY"}, []byte("false"), []byte("{}"), []string{})
+	payload, err := runCreatedEventPayload("deploy", json.RawMessage(`{"env":"prod"}`), 300, []string{"TOKEN", "API_KEY"}, []byte("false"), []byte("{}"), []string{}, "initial", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertJSONBytes(t, payload, `{"max_duration_seconds":300,"metadata":{},"payload":{"env":"prod"},"retry_policy":false,"secret_names":["API_KEY","TOKEN"],"tags":[],"task_id":"deploy"}`)
+	assertJSONBytes(t, payload, `{"cause":{},"max_duration_seconds":300,"metadata":{},"payload":{"env":"prod"},"reason":"initial","retry_policy":false,"secret_names":["API_KEY","TOKEN"],"tags":[],"task_id":"deploy"}`)
 
 	payload, err = json.Marshal(workerLogChunkPayload{
 		RunID:       "run-1",

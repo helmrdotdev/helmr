@@ -551,32 +551,10 @@ terminal_session_runs AS (
     RETURNING task_session_runs.id
 ),
 terminal_task_sessions AS (
-    UPDATE task_sessions
-       SET status = CASE WHEN updated_runs.status = 'cancelled' THEN 'cancelled'::task_session_status ELSE 'failed'::task_session_status END,
-           failed_at = CASE WHEN updated_runs.status = 'failed' THEN now() ELSE task_sessions.failed_at END,
-           cancelled_at = CASE WHEN updated_runs.status = 'cancelled' THEN now() ELSE task_sessions.cancelled_at END,
-           result = jsonb_build_object(
-               'ok', false,
-               'error', jsonb_build_object(
-                   'name', CASE WHEN updated_runs.status = 'cancelled' THEN 'TaskCancelled' ELSE 'TaskFailed' END,
-                   'message', COALESCE(updated_runs.error_message, 'worker lease expired'),
-                   'details', jsonb_build_object('origin', 'lease_sweeper')
-               )
-           ),
-           terminal_reason = jsonb_build_object('origin', 'lease_sweeper', 'message', COALESCE(updated_runs.error_message, 'worker lease expired')),
-           current_run_id = NULL,
-           current_run_version = task_sessions.current_run_version + 1,
-           updated_at = now()
+    SELECT updated_runs.task_session_id AS id
       FROM updated_runs
       LEFT JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
      WHERE retry_plan.run_id IS NULL
-       AND task_sessions.org_id = $1
-       AND task_sessions.project_id = updated_runs.project_id
-       AND task_sessions.environment_id = updated_runs.environment_id
-       AND task_sessions.id = updated_runs.task_session_id
-       AND task_sessions.current_run_id = updated_runs.run_id
-       AND task_sessions.status = 'open'
-    RETURNING task_sessions.id
 ),
 failed_attempts AS (
     UPDATE run_attempts
@@ -2212,49 +2190,8 @@ released_with_result_size AS (
      WHERE retry_plan.run_id IS NULL
 ),
 released_task_session AS (
-    UPDATE task_sessions
-       SET status = CASE
-             WHEN released_with_result_size.status = 'succeeded' AND (released_with_result_size.output IS NULL OR released_with_result_size.output_json_bytes <= 1048576) THEN 'completed'::task_session_status
-             WHEN released_with_result_size.status = 'cancelled' THEN 'cancelled'::task_session_status
-             WHEN released_with_result_size.status = 'expired' THEN 'expired'::task_session_status
-             ELSE 'failed'::task_session_status
-           END,
-           completed_at = CASE WHEN released_with_result_size.status = 'succeeded' AND (released_with_result_size.output IS NULL OR released_with_result_size.output_json_bytes <= 1048576) THEN now() ELSE task_sessions.completed_at END,
-           failed_at = CASE WHEN released_with_result_size.status = 'failed' OR (released_with_result_size.status = 'succeeded' AND released_with_result_size.output IS NOT NULL AND released_with_result_size.output_json_bytes > 1048576) THEN now() ELSE task_sessions.failed_at END,
-           cancelled_at = CASE WHEN released_with_result_size.status = 'cancelled' THEN now() ELSE task_sessions.cancelled_at END,
-           result = CASE
-             WHEN released_with_result_size.status = 'succeeded' AND released_with_result_size.output IS NOT NULL AND released_with_result_size.output_json_bytes <= 1048576 THEN jsonb_build_object('ok', true, 'value', released_with_result_size.output)
-             WHEN released_with_result_size.status = 'succeeded' AND released_with_result_size.output IS NOT NULL THEN jsonb_build_object('ok', false, 'error', jsonb_build_object('name', 'ResultTooLarge', 'message', 'task result exceeds the session result limit', 'details', jsonb_build_object('max_bytes', 1048576)))
-             WHEN released_with_result_size.status = 'succeeded' THEN jsonb_build_object('ok', true, 'value', 'null'::jsonb)
-             ELSE jsonb_build_object(
-                 'ok', false,
-                 'error', jsonb_build_object(
-                     'name', CASE
-                       WHEN released_with_result_size.status = 'cancelled' THEN 'TaskCancelled'
-                       WHEN released_with_result_size.status = 'expired' THEN 'TaskExpired'
-                       ELSE 'TaskFailed'
-                     END,
-                     'message', COALESCE(released_with_result_size.error_message, released_with_result_size.status::text),
-                     'details', jsonb_build_object('origin', 'run_release')
-                 )
-             )
-           END,
-           terminal_reason = CASE
-             WHEN released_with_result_size.status = 'succeeded' AND released_with_result_size.output IS NOT NULL AND released_with_result_size.output_json_bytes > 1048576 THEN jsonb_build_object('origin', 'run_release', 'message', 'ResultTooLarge')
-             WHEN released_with_result_size.status = 'succeeded' THEN jsonb_build_object('origin', 'run_release')
-             ELSE jsonb_build_object('origin', 'run_release', 'message', COALESCE(released_with_result_size.error_message, released_with_result_size.status::text))
-           END,
-           current_run_id = NULL,
-           current_run_version = task_sessions.current_run_version + 1,
-           updated_at = now()
+    SELECT released_with_result_size.task_session_id AS id
       FROM released_with_result_size
-     WHERE task_sessions.org_id = released_with_result_size.org_id
-       AND task_sessions.project_id = released_with_result_size.project_id
-       AND task_sessions.environment_id = released_with_result_size.environment_id
-       AND task_sessions.id = released_with_result_size.task_session_id
-       AND task_sessions.current_run_id = released_with_result_size.id
-        AND task_sessions.status = 'open'
-    RETURNING task_sessions.id
 ),
 workspace_commit_input AS (
     SELECT released.org_id,

@@ -51,7 +51,7 @@ func (s *Server) workerAppendOutputStream(w http.ResponseWriter, r *http.Request
 		s.writeWorkerStreamError(w, err)
 		return
 	}
-	record, err := s.appendStreamRecord(r.Context(), s.db, session, stream, db.StreamDirectionOutput, db.StreamRecordSourceTypeWorkerLease, leaseIDs.runLeaseID.String(), pgtype.UUID{}, api.AppendStreamRecordRequest{
+	appended, err := s.appendStreamRecord(r.Context(), s.db, session, stream, db.StreamDirectionOutput, db.StreamRecordSourceTypeWorkerLease, leaseIDs.runLeaseID.String(), pgtype.UUID{}, api.AppendStreamRecordRequest{
 		Data:           request.Data,
 		ContentType:    request.ContentType,
 		CorrelationID:  request.CorrelationID,
@@ -61,7 +61,7 @@ func (s *Server) workerAppendOutputStream(w http.ResponseWriter, r *http.Request
 		s.writeWorkerStreamError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, appendStreamRecordResponse(record))
+	writeJSON(w, http.StatusCreated, appendStreamRecordResponse(appended.record, ""))
 }
 
 func (s *Server) workerReadInputStream(w http.ResponseWriter, r *http.Request) {

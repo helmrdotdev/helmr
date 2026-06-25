@@ -543,13 +543,13 @@ test("http transport allows loopback IPv4, IPv6, and localhost", () => {
   expect(() => new HelmrClient({ url: "http://localhost:8080", apiKey: "token" })).not.toThrow()
 })
 
-test("tasks.start returns session and run handles from the task start response", async () => {
+test("sessions.start returns session and run handles from the session start response", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     requestedUrl = String(input)
     body = JSON.parse(String(init?.body))
-    return Response.json(taskStartFixture(
+    return Response.json(sessionStartFixture(
       { id: "run-1", task_id: "inspect", status: "running" },
       { isCached: true },
     ))
@@ -557,7 +557,7 @@ test("tasks.start returns session and run handles from the task start response",
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const key = idempotencyKeys.create("case-123")
-  const started = await client.tasks.start("inspect", { issue: 123 }, {
+  const started = await client.sessions.start("inspect", { issue: 123 }, {
     projectId: "project-1",
     environmentId: "env-1",
     externalId: "case-123",
@@ -567,16 +567,15 @@ test("tasks.start returns session and run handles from the task start response",
     expiresAt: "2026-04-21T00:00:00Z",
   })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/projects/project-1/environments/env-1/tasks/inspect/start")
+  expect(requestedUrl).toBe("https://api.example.test/api/projects/project-1/environments/env-1/sessions")
   expect(body).toEqual({
+    task_id: "inspect",
     payload: { issue: 123 },
     external_id: "case-123",
-    options: {
-      idempotency_key: key.value,
-      idempotency_key_ttl: "24h",
-      expires_at: "2026-04-21T00:00:00.000Z",
-      workspace_id: "workspace-1",
-    },
+    idempotency_key: key.value,
+    idempotency_key_ttl: "24h",
+    expires_at: "2026-04-21T00:00:00.000Z",
+    workspace_id: "workspace-1",
   })
   expect(started.run).toEqual({ id: "run-1", taskId: "inspect" })
   expect(started.session.id).toBe("session-1")
@@ -584,42 +583,42 @@ test("tasks.start returns session and run handles from the task start response",
   expect(started.isCached).toBe(true)
 })
 
-test("tasks.startAndWait posts one start-and-wait request and returns the session", async () => {
+test("sessions.startAndWait posts one start-and-wait request and returns the terminal run", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     requestedUrl = String(input)
     body = JSON.parse(String(init?.body))
-    return Response.json(taskSessionFixture({
-      status: "completed",
-      current_run_id: null,
-      result: { ok: true },
+    return Response.json({
+      ...sessionStartFixture({ id: "run-1", task_id: "inspect", status: "succeeded", output: { ok: true } }),
       timed_out: false,
-    }))
+    })
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const session = await client.tasks.startAndWait("inspect", {
+  const started = await client.sessions.startAndWait("inspect", {
     projectId: "project-1",
     environmentId: "env-1",
     timeoutSeconds: 30,
   })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/projects/project-1/environments/env-1/tasks/inspect/start-and-wait")
-  expect(body).toEqual({ timeout_seconds: 30 })
-  expect(session.status).toBe("completed")
-  expect(session.result).toEqual({ ok: true })
+  expect(requestedUrl).toBe("https://api.example.test/api/projects/project-1/environments/env-1/sessions/start-and-wait")
+  expect(body).toEqual({ task_id: "inspect", timeout_seconds: 30 })
+  expect(started.session.status).toBe("open")
+  expect(started.run.status).toBe("succeeded")
+  expect(started.run.output).toEqual({ ok: true })
+  expect(started.timedOut).toBe(false)
 })
 
-test("tasks.start requires complete project environment scope", async () => {
+test("sessions.start requires complete project environment scope", async () => {
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
 
-  await expect(client.tasks.start("inspect", { projectId: "project-1" })).rejects.toThrow(
+  await expect(client.sessions.start("inspect", { projectId: "project-1" })).rejects.toThrow(
     "projectId and environmentId must be provided together",
   )
 })
 
-test("tasks.startAndWait retries a pending idempotent start before returning the session", async () => {
+test("sessions.startAndWait retries a pending idempotent start before returning the session", async () => {
   const requestedUrls: string[] = []
   let calls = 0
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -631,22 +630,18 @@ test("tasks.startAndWait retries a pending idempotent start before returning the
         headers: { "retry-after": "0" },
       })
     }
-    return Response.json(taskSessionFixture({
-      status: "completed",
-      current_run_id: null,
-      result: { ok: true },
-    }))
+    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "succeeded", output: { ok: true } }))
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const session = await client.tasks.startAndWait("inspect", { idempotencyKey: "retry-key" })
+  const started = await client.sessions.startAndWait("inspect", { idempotencyKey: "retry-key" })
 
   expect(requestedUrls).toEqual([
-    "https://api.example.test/api/tasks/inspect/start-and-wait",
-    "https://api.example.test/api/tasks/inspect/start-and-wait",
+    "https://api.example.test/api/sessions/start-and-wait",
+    "https://api.example.test/api/sessions/start-and-wait",
   ])
-  expect(session.status).toBe("completed")
-  expect(session.result).toEqual({ ok: true })
+  expect(started.run.status).toBe("succeeded")
+  expect(started.run.output).toEqual({ ok: true })
 })
 
 test("sessions facade retrieves state and reads/writes session streams", async () => {
@@ -660,9 +655,6 @@ test("sessions facade retrieves state and reads/writes session streams", async (
     }
     if (url.endsWith("/api/sessions/session-1")) {
       return Response.json(taskSessionFixture({ id: "session-1", external_id: "case-123" }))
-    }
-    if (url.endsWith("/api/sessions/session-1/wait")) {
-      return Response.json(taskSessionFixture({ id: "session-1", status: "completed", result: { ok: true } }))
     }
     if (url.endsWith("/api/sessions/session-1/inputs/approval")) {
       return Response.json({
@@ -683,7 +675,6 @@ test("sessions facade retrieves state and reads/writes session streams", async (
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const session = client.sessions.open("session-1")
   expect((await session.retrieve()).externalId).toBe("case-123")
-  expect((await session.wait({ timeoutSeconds: 10 })).result).toEqual({ ok: true })
   expect(await session.input("approval").send({ approved: true }, { correlationId: "thread-1" })).toMatchObject({
     data: { approved: true },
     correlationId: "thread-1",
@@ -701,12 +692,10 @@ test("sessions facade retrieves state and reads/writes session streams", async (
   ])
   expect(requestedUrls).toEqual([
     "https://api.example.test/api/sessions/session-1",
-    "https://api.example.test/api/sessions/session-1/wait",
     "https://api.example.test/api/sessions/session-1/inputs/approval",
     "https://api.example.test/api/sessions/session-1/outputs/agent.report?after_sequence=1&limit=10&correlation_id=thread-1",
   ])
   expect(bodies).toEqual([
-    { timeout_seconds: 10 },
     { data: { approved: true }, correlation_id: "thread-1" },
   ])
 })
@@ -768,13 +757,11 @@ test("sessions facade uses project environment scoped routes when scope is provi
   const scope = { projectId: "project-1", environmentId: "env-1" }
 
   await session.retrieve(scope)
-  await session.wait(scope)
   await session.output("agent.report").append({ text: "ready" }, scope)
   await session.output("agent.report").list(scope)
 
   expect(requestedUrls).toEqual([
     "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1",
-    "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1/wait",
     "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1/outputs/agent.report",
     "https://api.example.test/api/projects/project-1/environments/env-1/sessions/session-1/outputs/agent.report",
   ])
@@ -864,7 +851,7 @@ test("tokens namespace exposes create and complete", async () => {
   ])
 })
 
-test("task.start returns the task start response with session and run handles", async () => {
+test("task.start returns the session start response with session and run handles", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let requestedUrl: string | undefined
@@ -873,7 +860,7 @@ test("task.start returns the task start response with session and run handles", 
     requestedUrl = String(input)
     body = JSON.parse(String(init?.body))
     return Response.json(
-      taskStartFixture({
+      sessionStartFixture({
         id: "018f0000000070008000000000000001",
         task_id: "inspect",
         status: "running",
@@ -892,9 +879,10 @@ test("task.start returns the task start response with session and run handles", 
   const started = await inspect.start({
   })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/tasks/inspect/start")
+  expect(requestedUrl).toBe("https://api.example.test/api/sessions")
   expect(body).toEqual({
-    options: { max_duration_seconds: 900 },
+    task_id: "inspect",
+    max_duration_seconds: 900,
   })
   expect(started).toMatchObject({
     session: { id: "session-1", taskId: "inspect", currentRunId: "018f0000000070008000000000000001" },
@@ -908,7 +896,7 @@ test("task.start posts idempotency options", async () => {
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
-    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 201 })
+    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 201 })
   }) as typeof fetch
 
   const key = idempotencyKeys.create(["deploy", "prod"], { scope: "global" })
@@ -923,15 +911,14 @@ test("task.start posts idempotency options", async () => {
   })
 
   expect(body).toMatchObject({
-    options: {
-      idempotency_key: key.value,
-      idempotency_key_ttl: "24h",
-      max_duration_seconds: 900,
-    },
+    task_id: "inspect",
+    idempotency_key: key.value,
+    idempotency_key_ttl: "24h",
+    max_duration_seconds: 900,
   })
 })
 
-test("task.start retries pending task start before returning the start response", async () => {
+test("task.start retries pending session start before returning the start response", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   let calls = 0
   let pendingBodyPulls = 0
@@ -942,14 +929,14 @@ test("task.start retries pending task start before returning the start response"
         new ReadableStream({
           pull(controller) {
             pendingBodyPulls += 1
-            controller.enqueue(new TextEncoder().encode(`{"code":"idempotency_pending","error":"task_start_pending"}`))
+            controller.enqueue(new TextEncoder().encode(`{"code":"idempotency_pending","error":"session_start_pending"}`))
             controller.close()
           },
         }),
         { status: 202, headers: { "retry-after": "0.001" } },
       )
     }
-    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 200 })
+    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 200 })
   }) as typeof fetch
 
   const inspect = task({
@@ -993,11 +980,11 @@ test("task.start backs off for stale HTTP-date retry-after headers", async () =>
     calls += 1
     if (calls === 1) {
       return Response.json(
-        { code: "idempotency_pending", error: "task_start_pending" },
+        { code: "idempotency_pending", error: "session_start_pending" },
         { status: 202, headers: { "retry-after": new Date(Date.now() - 1000).toUTCString() } },
       )
     }
-    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 200 })
+    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 200 })
   }) as typeof fetch
 
   const inspect = task({
@@ -1018,7 +1005,7 @@ test("task.start posts scheduling options", async () => {
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
-    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 201 })
+    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 201 })
   }) as typeof fetch
 
   const inspect = task({
@@ -1034,13 +1021,12 @@ test("task.start posts scheduling options", async () => {
   })
 
   expect(body).toMatchObject({
-    options: {
-      queue: { name: "review/pr" },
-      concurrency_key: "repo:42",
-      priority: 30,
-      ttl: "10m",
-      max_duration_seconds: 900,
-    },
+    task_id: "inspect",
+    queue: { name: "review/pr" },
+    concurrency_key: "repo:42",
+    priority: 30,
+    ttl: "10m",
+    max_duration_seconds: 900,
   })
 })
 
@@ -1049,7 +1035,7 @@ test("task.start posts retry metadata and tags", async () => {
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
-    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 201 })
+    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 201 })
   }) as typeof fetch
 
   const inspect = task({
@@ -1064,12 +1050,11 @@ test("task.start posts retry metadata and tags", async () => {
   })
 
   expect(body).toMatchObject({
-    options: {
-      retry: { maxAttempts: 3, backoff: { minMs: 1000, maxMs: 30000, factor: 2, jitter: "full" } },
-      metadata: { customer: "acme" },
-      tags: ["nightly", "prod"],
-      max_duration_seconds: 900,
-    },
+    task_id: "inspect",
+    retry: { maxAttempts: 3, backoff: { minMs: 1000, maxMs: 30000, factor: 2, jitter: "full" } },
+    metadata: { customer: "acme" },
+    tags: ["nightly", "prod"],
+    max_duration_seconds: 900,
   })
 })
 
@@ -1196,7 +1181,7 @@ test("task.start validates payload before posting the start request", async () =
   let fetched = false
   globalThis.fetch = (async () => {
     fetched = true
-    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
+    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
   }) as typeof fetch
   const payload: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
     "~standard": {
@@ -1227,7 +1212,7 @@ test("task.start rejects undefined payload for schema-backed tasks before postin
   let fetched = false
   globalThis.fetch = (async () => {
     fetched = true
-    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
+    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
   }) as typeof fetch
   const payload: PayloadSchema<undefined | { readonly issue: number }, { readonly issue: number }> = {
     "~standard": {
@@ -1258,7 +1243,7 @@ test("task.start rejects payload on no-payload tasks before posting", async () =
   let fetched = false
   globalThis.fetch = (async () => {
     fetched = true
-    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
+    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
   }) as typeof fetch
 
   const inspect = task({
@@ -1279,7 +1264,7 @@ test("task.start posts payload for schema-backed tasks", async () => {
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
-    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
+    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
   }) as typeof fetch
   const payload: PayloadSchema<{ readonly issue: number }, { readonly issue: number }> = {
     "~standard": {
@@ -1325,7 +1310,7 @@ test("task.start validates payload and posts through the default client", async 
     requestedUrl = String(input)
     authorization = new Headers(init?.headers).get("authorization")
     body = JSON.parse(String(init?.body))
-    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
+    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
   }) as typeof fetch
 
   const inspect = task({
@@ -1339,11 +1324,12 @@ test("task.start validates payload and posts through the default client", async 
     {},
   )
 
-  expect(requestedUrl).toBe("https://api.example.test/api/tasks/inspect/start")
+  expect(requestedUrl).toBe("https://api.example.test/api/sessions")
   expect(authorization).toBe("Bearer token")
   expect(body).toMatchObject({
+    task_id: "inspect",
     payload: { issue: "123" },
-    options: { max_duration_seconds: 900 },
+    max_duration_seconds: 900,
   })
   expect(started).toMatchObject({
     session: { id: "session-1", taskId: "inspect", currentRunId: "run-1" },
@@ -1351,12 +1337,12 @@ test("task.start validates payload and posts through the default client", async 
   })
 })
 
-test("client.tasks.start posts id-based payload without local schema validation", async () => {
+test("client.sessions.start posts id-based payload without local schema validation", async () => {
   let validated = false
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
-    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
+    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "running" }), { status: 201 })
   }) as typeof fetch
   const payload: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
     "~standard": {
@@ -1376,7 +1362,7 @@ test("client.tasks.start posts id-based payload without local schema validation"
   })
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.tasks.start<typeof inspect>(
+  await client.sessions.start<typeof inspect>(
     "inspect",
     { issue: "123" },
     {},
@@ -1384,6 +1370,7 @@ test("client.tasks.start posts id-based payload without local schema validation"
 
   expect(validated).toBe(false)
   expect(body).toEqual({
+    task_id: "inspect",
     payload: { issue: "123" },
   })
 })
@@ -1474,14 +1461,14 @@ test("run snapshots reject unsupported internal statuses", async () => {
   await expect(client.runs.retrieve("run-1")).rejects.toThrow('unsupported run status "leased"')
 })
 
-test("task.start posts a task start without workspace preparation", async () => {
+test("task.start posts a session start without workspace preparation", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
     return Response.json(
-      taskStartFixture({
+      sessionStartFixture({
         id: "018f0000000070008000000000000003",
         task_id: "inspect",
         status: "running",
@@ -1500,15 +1487,16 @@ test("task.start posts a task start without workspace preparation", async () => 
   await inspect.start({})
 
   expect(body).toMatchObject({
-    options: { max_duration_seconds: 900 },
+    task_id: "inspect",
+    max_duration_seconds: 900,
   })
 })
 
-test("tasks.start leaves build validation to the remote worker", async () => {
+test("sessions.start leaves build validation to the remote worker", async () => {
   let requestedUrl: string | undefined
   globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => {
     requestedUrl = String(_input)
-    return Response.json(taskStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 201 })
+    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 201 })
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
@@ -1519,9 +1507,9 @@ test("tasks.start leaves build validation to the remote worker", async () => {
     ),
     run: async () => undefined,
   })
-  await client.tasks.start<typeof inspect>("inspect", {
+  await client.sessions.start<typeof inspect>("inspect", {
   })
-  expect(requestedUrl).toBe("https://api.example.test/api/tasks/inspect/start")
+  expect(requestedUrl).toBe("https://api.example.test/api/sessions")
 })
 
 test("runs.events.list maps backend audit payload fields", async () => {
@@ -1736,7 +1724,7 @@ test("task.start posts the start request directly without uploading source tar",
     urls.push(url)
     createRunBody = JSON.parse(String(init?.body))
     return Response.json(
-      taskStartFixture({
+      sessionStartFixture({
         id: "018f0000000070008000000000000002",
         task_id: "inspect",
         status: "running",
@@ -1752,9 +1740,10 @@ test("task.start posts the start request directly without uploading source tar",
   })
   await inspect.start({})
 
-  expect(urls).toEqual(["https://api.example.test/api/tasks/inspect/start"])
+  expect(urls).toEqual(["https://api.example.test/api/sessions"])
   expect(createRunBody).toMatchObject({
-    options: { max_duration_seconds: 900 },
+    task_id: "inspect",
+    max_duration_seconds: 900,
   })
 })
 
@@ -2423,7 +2412,7 @@ test("runs.wait aborts an in-flight retrieve when timeout elapses", async () => 
   )
 })
 
-function taskStartFixture(run: {
+function sessionStartFixture(run: {
   readonly id: string
   readonly task_id: string
   readonly status: string

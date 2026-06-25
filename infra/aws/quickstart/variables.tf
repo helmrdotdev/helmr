@@ -162,7 +162,7 @@ variable "control_environment" {
 }
 
 variable "email_provider" {
-  description = "Email delivery provider for magic links and waitpoint notifications."
+  description = "Email delivery provider for magic links and run wait notifications."
   type        = string
   default     = "none"
 }

@@ -1,4 +1,4 @@
-import type { PublicAccessToken, TaskSessionSnapshot, TaskStartResult, HelmrClient, Token } from "./client"
+import type { PublicAccessToken, TaskSessionSnapshot, SessionStartResult, SessionStartAndWaitResult, HelmrClient, Token } from "./client"
 import type { RunEventRecord, RunHandle, RunSnapshot } from "./run"
 import type { StreamRecord, Task } from "../internal"
 import { idempotencyKeys, image, sandbox, schedules, source, streams, task, tokens, type PayloadSchema } from "../index"
@@ -6,13 +6,13 @@ import { idempotencyKeys, image, sandbox, schedules, source, streams, task, toke
 declare const client: HelmrClient
 declare const handle: RunHandle
 declare const startTask: Task<{ issue: number }, { issue: number }, readonly []>
-declare const schemaStartTask: Task<{ issue: number }, { parsed: number }, readonly [], { issue: string }>
+declare const schemaTask: Task<{ issue: number }, { parsed: number }, readonly [], { issue: string }>
 declare const signal: AbortSignal
 declare const approvalSchema: PayloadSchema<{ approved: boolean }, { approved: boolean }>
 declare const reportSchema: PayloadSchema<{ text: string }, { text: string }>
 
 if (false) {
-  const started: Promise<TaskStartResult<{ issue: number }>> = client.tasks.start<typeof startTask>(
+  const started: Promise<SessionStartResult<{ issue: number }>> = client.sessions.start<typeof startTask>(
     "inspect",
     { issue: 123 },
     {
@@ -21,12 +21,12 @@ if (false) {
       idempotencyKeyTTL: "24h",
     },
   )
-  const startAndWait: Promise<TaskSessionSnapshot<{ issue: number }>> = client.tasks.startAndWait<typeof startTask>(
+  const startAndWait: Promise<SessionStartAndWaitResult<{ issue: number }>> = client.sessions.startAndWait<typeof startTask>(
     "inspect",
     { issue: 123 },
     { timeoutSeconds: 30 },
   )
-  const startedAgain: Promise<TaskStartResult<{ issue: number }>> = client.tasks.start<typeof startTask>(
+  const startedAgain: Promise<SessionStartResult<{ issue: number }>> = client.sessions.start<typeof startTask>(
     "inspect",
     { issue: 123 },
     {
@@ -35,7 +35,12 @@ if (false) {
     },
   )
   const helperKey = idempotencyKeys.create(["issue", "123"], { scope: "global" })
-  const schemaStartedRun: Promise<TaskStartResult<{ parsed: number }>> = schemaStartTask.start(
+  const schemaStartedRun: Promise<SessionStartResult<{ parsed: number }>> = schemaTask.start(
+    { issue: "123" },
+    { projectId: "project-1", environmentId: "env-1", idempotencyKey: helperKey },
+  )
+  const canonicalStartedRun: Promise<SessionStartResult<{ parsed: number }>> = client.sessions.start<typeof schemaTask>(
+    schemaTask.id,
     { issue: "123" },
     { projectId: "project-1", environmentId: "env-1", idempotencyKey: helperKey },
   )
@@ -53,10 +58,9 @@ if (false) {
     at: "2026-04-28T00:00:00Z",
     attributes: {},
   }
-  const noPayloadStartedRun: Promise<TaskStartResult<{ runId: string }>> = noPayloadTask.start({})
+  const noPayloadStartedRun: Promise<SessionStartResult<{ runId: string }>> = noPayloadTask.start({})
   const session = client.sessions.open<{ ok: boolean }>("session-1")
   const sessionSnapshot: Promise<TaskSessionSnapshot<{ ok: boolean }>> = session.retrieve()
-  const waitedSession: Promise<TaskSessionSnapshot<{ ok: boolean }>> = client.sessions.wait("session-1", { timeoutSeconds: 30 })
   const approvalStream = streams.input("approval", { schema: approvalSchema })
   const reportStream = streams.output("agent.report", { schema: reportSchema })
   const inputRecord: Promise<StreamRecord<{ approved: boolean }>> = session.input(approvalStream).send({ approved: true }, {
@@ -144,11 +148,11 @@ if (false) {
   delegatedById.then
   clientToken.then
   schemaStartedRun.then
+  canonicalStartedRun.then
   started.then
   startAndWait.then
   noPayloadStartedRun.then
   sessionSnapshot.then
-  waitedSession.then
   inputRecord.then
   outputRecords.then
   outputRecord.then
@@ -196,15 +200,15 @@ if (false) {
   tokens.create({ timeoutInSeconds: 3600 })
   // @ts-expect-error token complete options do not accept action-specific fields.
   client.tokens.complete("token-1", { approved: true }, { reason: "ok" })
-  client.tasks.start<typeof startTask>("inspect", { issue: 123 }, {
+  client.sessions.start<typeof startTask>("inspect", { issue: 123 }, {
     // @ts-expect-error start options do not accept source inputs.
     source: source.file("README.md"),
   })
-  client.tasks.start<typeof startTask>("inspect", { issue: 123 }, {
+  client.sessions.start<typeof startTask>("inspect", { issue: 123 }, {
     externalId: "case-123",
     idempotencyKey: "request-123",
   })
-  client.tasks.start<typeof startTask>(
+  client.sessions.start<typeof startTask>(
     "inspect",
     // @ts-expect-error task payload and session input are distinct surfaces.
     { input: { approved: true } },
@@ -225,8 +229,8 @@ if (false) {
   // @ts-expect-error run replay is not exposed.
   client.runs.replay("run-1")
   // @ts-expect-error old task trigger client surface is not exposed.
-  client.tasks.trigger("inspect", { issue: 123 }, {})
-  schemaStartTask.start(
+  client.sessions.trigger("inspect", { issue: 123 }, {})
+  schemaTask.start(
     // @ts-expect-error schema-backed start accepts schema input, not parsed run payload.
     { issue: 123 },
     {},

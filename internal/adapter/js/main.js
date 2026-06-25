@@ -4337,7 +4337,7 @@ var idempotencyKeys = {
     };
   }
 };
-function taskStartIdempotencyRequestFields(input, ttl) {
+function sessionStartIdempotencyRequestFields(input, ttl) {
   if (input === undefined) {
     return {};
   }
@@ -4449,7 +4449,7 @@ var RUN_EVENT_RECONNECT_DELAY_MS = 1000;
 var RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS = 100;
 var TASK_START_PENDING_MAX_WAIT_MS = 1e4;
 var TASK_START_PENDING_DEFAULT_RETRY_MS = 250;
-var startTaskClientMethod = Symbol.for("helmr.sdk.client.startTask");
+var startSessionClientMethod = Symbol.for("helmr.sdk.client.startSession");
 var tokenClientMethod = Symbol.for("helmr.sdk.client.token");
 
 class WorkspaceStreamTerminalError extends Error {
@@ -4503,7 +4503,7 @@ class HelmrClient {
       throw new UnsupportedTransportError(`unsupported HelmrClient transport scheme ${parsedUrl.protocol.replace(/:$/, "")}`);
     }
   }
-  tasks = {
+  sessions = {
     start: async (...args) => {
       const taskId = args[0];
       const hasPayload = args.length === 3;
@@ -4512,7 +4512,7 @@ class HelmrClient {
       if (hasPayload && payload === undefined) {
         throw new Error(`task ${JSON.stringify(taskId)} requires payload`);
       }
-      return await this.#startTask(taskId, payload, opts);
+      return await this.#startSession(taskId, payload, opts);
     },
     startAndWait: async (...args) => {
       const taskId = args[0];
@@ -4522,18 +4522,13 @@ class HelmrClient {
       if (hasPayload && payload === undefined) {
         throw new Error(`task ${JSON.stringify(taskId)} requires payload`);
       }
-      return await this.#startTaskAndWait(taskId, payload, opts);
-    }
-  };
-  sessions = {
+      return await this.#startSessionAndWait(taskId, payload, opts);
+    },
     open: (idOrHandle) => {
       return this.#openSession(sessionId(idOrHandle));
     },
     retrieve: async (idOrHandle, opts = {}) => {
       return await this.#openSession(sessionId(idOrHandle)).retrieve(opts);
-    },
-    wait: async (idOrHandle, opts = {}) => {
-      return await this.#openSession(sessionId(idOrHandle)).wait(opts);
     },
     list: async (opts = {}) => {
       const response = await this.#json(`${taskSessionCollectionPath(opts)}${taskSessionListQuery(opts)}`, requestSignal(opts.signal));
@@ -4607,7 +4602,7 @@ class HelmrClient {
       return publicAccessTokenFromResponse(response);
     }
   };
-  async[startTaskClientMethod](task, ...args) {
+  async[startSessionClientMethod](task, ...args) {
     const hasPayload = task.payload !== undefined;
     const payload = hasPayload ? args[0] : undefined;
     const opts = hasPayload ? args[1] : args[0];
@@ -4619,7 +4614,7 @@ class HelmrClient {
     } else if (args.length > 1) {
       throw new Error(`task ${JSON.stringify(task.id)} does not accept payload`);
     }
-    return await this.#startTask(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration));
+    return await this.#startSession(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration));
   }
   async[tokenClientMethod](request) {
     switch (request.operation) {
@@ -4675,10 +4670,10 @@ class HelmrClient {
       }
     }
   }
-  async#startTask(taskId, payload, opts, maxDurationSeconds) {
+  async#startSession(taskId, payload, opts, maxDurationSeconds) {
     validateRetryPolicy(opts.retry, "retry");
-    const body = taskStartBody(payload, opts, maxDurationSeconds);
-    const path = taskStartPath(taskId, opts, "start");
+    const body = sessionStartBody(taskId, payload, opts, maxDurationSeconds);
+    const path = sessionStartPath(opts, "start");
     const startedAt = Date.now();
     for (;; ) {
       const response = await this.#fetch(path, {
@@ -4689,26 +4684,26 @@ class HelmrClient {
       });
       if (response.status !== 202) {
         const start = await response.json();
-        return taskStartFromResponse(start);
+        return sessionStartFromResponse(start);
       }
       const pendingBody = await response.text();
-      if (!taskStartPendingResponse(pendingBody)) {
+      if (!sessionStartPendingResponse(pendingBody)) {
         throw new HelmrApiError(response.status, pendingBody);
       }
-      const retryDelay = taskStartPendingRetryDelay(response);
+      const retryDelay = sessionStartPendingRetryDelay(response);
       if (Date.now() - startedAt + retryDelay > TASK_START_PENDING_MAX_WAIT_MS) {
         throw new HelmrApiError(response.status, pendingBody);
       }
       await delay(retryDelay, opts.signal);
     }
   }
-  async#startTaskAndWait(taskId, payload, opts, maxDurationSeconds) {
+  async#startSessionAndWait(taskId, payload, opts, maxDurationSeconds) {
     validateRetryPolicy(opts.retry, "retry");
     const body = {
-      ...taskStartBody(payload, opts, maxDurationSeconds),
+      ...sessionStartBody(taskId, payload, opts, maxDurationSeconds),
       ...opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }
     };
-    const path = taskStartPath(taskId, opts, "start-and-wait");
+    const path = sessionStartPath(opts, "start-and-wait");
     const startedAt = Date.now();
     for (;; ) {
       const response = await this.#fetch(path, {
@@ -4718,13 +4713,13 @@ class HelmrClient {
         ...requestSignal(opts.signal)
       });
       if (response.status !== 202) {
-        return taskSessionFromResponse(await response.json());
+        return sessionStartAndWaitFromResponse(await response.json());
       }
       const pendingBody = await response.text();
-      if (!taskStartPendingResponse(pendingBody)) {
+      if (!sessionStartPendingResponse(pendingBody)) {
         throw new HelmrApiError(response.status, pendingBody);
       }
-      const retryDelay = taskStartPendingRetryDelay(response);
+      const retryDelay = sessionStartPendingRetryDelay(response);
       if (Date.now() - startedAt + retryDelay > TASK_START_PENDING_MAX_WAIT_MS) {
         throw new HelmrApiError(response.status, pendingBody);
       }
@@ -4980,15 +4975,6 @@ class HelmrClient {
       id,
       retrieve: async (opts = {}) => {
         const response = await this.#json(taskSessionResourcePath(id, opts, ""), requestSignal(opts.signal));
-        return taskSessionFromResponse(response);
-      },
-      wait: async (opts = {}) => {
-        const response = await this.#json(taskSessionResourcePath(id, opts, "/wait"), {
-          method: "POST",
-          body: JSON.stringify(taskSessionWaitBody(opts)),
-          headers: { "content-type": "application/json" },
-          ...requestSignal(opts.signal)
-        });
         return taskSessionFromResponse(response);
       },
       close: async (opts = {}) => {
@@ -5441,11 +5427,19 @@ function runResponseToSnapshot(response) {
     ..."output" in response ? { output: response.output } : {}
   });
 }
-function taskStartFromResponse(response) {
+function sessionStartFromResponse(response) {
   return {
     session: taskSessionFromResponse(response.session),
     run: runHandle(response.run.id, response.run.task_id),
     isCached: response.is_cached ?? false
+  };
+}
+function sessionStartAndWaitFromResponse(response) {
+  return {
+    session: taskSessionFromResponse(response.session),
+    run: runResponseToSnapshot(response.run),
+    isCached: response.is_cached ?? false,
+    timedOut: response.timed_out ?? false
   };
 }
 function taskSessionFromResponse(response) {
@@ -5505,8 +5499,11 @@ function appendStreamRecordFromResponse(response) {
 function sessionId(idOrHandle) {
   return typeof idOrHandle === "string" ? idOrHandle : idOrHandle.id;
 }
-function taskStartBody(payload, opts, maxDurationSeconds) {
-  const runOptions = {
+function sessionStartBody(taskId, payload, opts, maxDurationSeconds) {
+  return {
+    task_id: taskId,
+    ...payload === undefined ? {} : { payload },
+    ...opts.externalId === undefined ? {} : { external_id: opts.externalId },
     ...opts.queue === undefined ? {} : { queue: { name: opts.queue } },
     ...opts.concurrencyKey === undefined ? {} : { concurrency_key: opts.concurrencyKey },
     ...opts.priority === undefined ? {} : { priority: opts.priority },
@@ -5517,28 +5514,18 @@ function taskStartBody(payload, opts, maxDurationSeconds) {
     ...opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") },
     ...opts.workspaceId === undefined ? {} : { workspace_id: opts.workspaceId },
     ...maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds },
-    ...taskStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL)
-  };
-  return {
-    ...payload === undefined ? {} : { payload },
-    ...opts.externalId === undefined ? {} : { external_id: opts.externalId },
-    ...Object.keys(runOptions).length === 0 ? {} : { options: runOptions }
+    ...sessionStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL)
   };
 }
-function taskStartPath(taskId, opts, operation) {
-  const encodedTaskId = encodeURIComponent(taskId);
+function sessionStartPath(opts, operation) {
   if (opts.projectId !== undefined || opts.environmentId !== undefined) {
     if (opts.projectId === undefined || opts.environmentId === undefined) {
       throw new Error("projectId and environmentId must be provided together");
     }
-    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/tasks/${encodedTaskId}/${operation}`;
+    const base = `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/sessions`;
+    return operation === "start" ? base : `${base}/start-and-wait`;
   }
-  return `/api/tasks/${encodedTaskId}/${operation}`;
-}
-function taskSessionWaitBody(opts) {
-  return {
-    ...opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }
-  };
+  return operation === "start" ? "/api/sessions" : "/api/sessions/start-and-wait";
 }
 function streamInputSendBody(data, opts) {
   return {
@@ -6068,7 +6055,7 @@ function delay(ms, signal) {
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
-function taskStartPendingRetryDelay(response) {
+function sessionStartPendingRetryDelay(response) {
   const retryAfter = response.headers.get("retry-after");
   if (retryAfter === null) {
     return TASK_START_PENDING_DEFAULT_RETRY_MS;
@@ -6090,7 +6077,7 @@ function taskStartPendingRetryDelay(response) {
   }
   return TASK_START_PENDING_DEFAULT_RETRY_MS;
 }
-function taskStartPendingResponse(body) {
+function sessionStartPendingResponse(body) {
   try {
     const decoded = JSON.parse(body);
     return decoded.code === "idempotency_pending";
@@ -6548,7 +6535,7 @@ function getDefaultClient() {
   return defaultClient;
 }
 function startTask(task, ...args) {
-  return getDefaultClient()[startTaskClientMethod](task, ...args);
+  return getDefaultClient()[startSessionClientMethod](task, ...args);
 }
 
 // sdk/typescript/src/schedules.ts

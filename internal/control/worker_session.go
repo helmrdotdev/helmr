@@ -460,6 +460,9 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 	if activeQueueLeaseFound {
 		s.ackWorkerQueueLease(r.Context(), pgvalue.UUID(leaseIDs.runID), lease)
 	}
+	if run.TaskSessionID.Valid && runStatusTerminal(run.Status) {
+		s.reconcileAcceptedTaskSessionRunRequests(r.Context(), run.OrgID, run.ProjectID, run.EnvironmentID, run.TaskSessionID)
+	}
 	writeJSON(w, http.StatusOK, api.WorkerReleaseResponse{RunID: request.Lease.RunID, Status: string(run.Status)})
 }
 

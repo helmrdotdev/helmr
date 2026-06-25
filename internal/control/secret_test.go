@@ -48,11 +48,11 @@ func TestDeploymentTaskSecretNames(t *testing.T) {
 func TestCreateRunWithoutSecretsAllowsDeveloper(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{role: auth.RoleDeveloper}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}})
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{})
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer developer-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -73,11 +73,11 @@ func TestAPIKeyRunCreateAllowsDeclaredTaskSecrets(t *testing.T) {
 		permissions:   []auth.Permission{auth.PermissionRunsCreate},
 	}, CAS: &fakeCAS{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}},
 	)
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{})
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer machine-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -145,11 +145,11 @@ func TestCreateRunRejectsUnavailableDeclaredSecret(t *testing.T) {
 		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"other": []byte("secret")}}})
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{})
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)

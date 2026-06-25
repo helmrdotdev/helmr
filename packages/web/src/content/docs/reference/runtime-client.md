@@ -27,10 +27,9 @@ Main surfaces:
 
 | API | Purpose |
 | --- | --- |
-| `client.tasks.start<typeof task>(id, payload, opts)` | Start or reuse a task session by task id and return the session plus first/current run handle. |
-| `client.tasks.startAndWait<typeof task>(id, payload, opts)` | Start or reuse a task session, then wait for the session to become terminal or time out. |
+| `client.sessions.start<typeof task>(id, payload, opts)` | Start or reuse a task session by task id and return the session plus first/current run handle. |
+| `client.sessions.startAndWait<typeof task>(id, payload, opts)` | Start or reuse a task session, then wait for the first run to become terminal or time out. The session remains open unless explicitly closed or cancelled. |
 | `client.sessions.retrieve(session)` | Fetch current task session state. |
-| `client.sessions.wait(session, opts)` | Wait for terminal task session state. |
 | `client.sessions.open(session).input(stream).send(data)` | Append durable input to a session stream. |
 | `client.sessions.open(session).output(stream).list(opts)` | Read durable session output records from a cursor. |
 | `client.sessions.open(session).output(stream).read(opts)` | Read one durable session output record from a cursor. |
@@ -67,9 +66,9 @@ Main surfaces:
 | `client.schedules.deactivate(id, opts)` | Deactivate an imperative schedule. |
 | `client.schedules.delete(id, opts)` | Delete an imperative schedule. |
 
-Task start `payload` is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload. Follow-up user messages, webhooks, or operator replies belong in session input streams, not in task start payload.
+Session start `payload` is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload. Follow-up user messages, webhooks, or operator replies belong in session input streams, not in session start payload.
 
-Task starts create or reuse a task session and attach a workspace. When no
+Session starts create or reuse a task session and attach a workspace. When no
 workspace is supplied, Helmr creates one from the deployed task's sandbox.
 Direct workspace operations are separate: creating an exec or PTY on a
 workspace does not create a task session or run.

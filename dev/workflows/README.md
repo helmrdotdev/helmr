@@ -48,22 +48,22 @@ Expected release-smoke coverage:
 helmr deploy ./dev/workflows --project helmr --env staging
 helmr deploy ./dev/workflows --project helmr --env production
 
-helmr task start runtime-smoke \
+helmr session start runtime-smoke \
   --project helmr \
   --env staging \
   --payload-json '{"scenario":"staging-runtime","expectedEnvironment":"staging"}'
 
-helmr task start secret-smoke \
+helmr session start secret-smoke \
   --project helmr \
   --env production \
   --payload-json '{"scenario":"production-secrets","expectedEnvironment":"production"}'
 
-helmr task start edge-smoke \
+helmr session start edge-smoke \
   --project helmr \
   --env staging \
   --payload-json '{"mode":"workspace-overwrite"}'
 
-helmr task start agent-toolchain-smoke \
+helmr session start agent-toolchain-smoke \
   --project helmr \
   --env production \
   --payload-json '{"repository":"helmrdotdev/helmr","ref":"main"}'
@@ -96,7 +96,7 @@ For token UX checks, start a run and complete the pending token from the
 console or a trusted bridge:
 
 ```sh
-helmr task start runtime-smoke \
+helmr session start runtime-smoke \
   --project helmr \
   --env staging \
   --payload-json '{"scenario":"token-ui","exerciseToken":true,"tokenTimeout":300}'
@@ -111,17 +111,17 @@ and console evidence:
 ```sh
 # Missing-secret observability: expected to fail before run creation because
 # this task intentionally declares a required absent smoke secret.
-helmr task start missing-secret-smoke --project helmr --env staging
+helmr session start missing-secret-smoke --project helmr --env staging
 
 # Strict payload observability: expected to create a failed run with a validation
 # error from the task adapter.
-helmr task start runtime-smoke \
+helmr session start runtime-smoke \
   --project helmr \
   --env staging \
   --payload-json '{"scenario":"bad-payload","unknown":true}'
 
 # Runtime expected-error observability: expected to fail inside task code.
-helmr task start edge-smoke \
+helmr session start edge-smoke \
   --project helmr \
   --env staging \
   --payload-json '{"mode":"expected-error"}'

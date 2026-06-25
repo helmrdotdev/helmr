@@ -227,11 +227,11 @@ func TestDeadLetterRunQueueItemTerminalizesTaskSession(t *testing.T) {
 	`, taskSessionID, ids.runID).Scan(&sessionStatus, &currentRunID, &endedAt, &runStatus, &terminalOutcome); err != nil {
 		t.Fatal(err)
 	}
-	if sessionStatus != db.TaskSessionStatusFailed {
-		t.Fatalf("session status = %s, want failed", sessionStatus)
+	if sessionStatus != db.TaskSessionStatusOpen {
+		t.Fatalf("session status = %s, want open", sessionStatus)
 	}
-	if currentRunID.Valid {
-		t.Fatalf("current_run_id should be cleared, got %v", currentRunID)
+	if currentRunID != pgvalue.UUID(ids.runID) {
+		t.Fatalf("current_run_id = %v, want %v", currentRunID, ids.runID)
 	}
 	if !endedAt.Valid {
 		t.Fatal("task_session_runs.ended_at was not set")

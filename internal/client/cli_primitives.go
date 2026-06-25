@@ -557,18 +557,6 @@ func (c *Client) GetTaskSession(ctx context.Context, sessionID string, opts Task
 	return response, nil
 }
 
-func (c *Client) WaitTaskSession(ctx context.Context, sessionID string, input api.TaskWaitRequest, opts TaskSessionScopeOptions) (api.TaskSessionResponse, error) {
-	path, err := c.sessionItemPath(sessionID, "/wait", opts)
-	if err != nil {
-		return api.TaskSessionResponse{}, err
-	}
-	var response api.TaskSessionResponse
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.TaskSessionResponse{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) CancelTaskSession(ctx context.Context, sessionID string, input api.CancelTaskSessionRequest, opts TaskSessionScopeOptions) (api.TaskSessionResponse, error) {
 	path, err := c.sessionItemPath(sessionID, "/cancel", opts)
 	if err != nil {

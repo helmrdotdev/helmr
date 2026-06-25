@@ -24,44 +24,44 @@ func newTestEventStream(t *testing.T) *EventStream {
 	return &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), redis: redisClient}
 }
 
-func TestTaskStartClaimUsesOwnerTokenForRelease(t *testing.T) {
+func TestSessionStartClaimUsesOwnerTokenForRelease(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
 	server := &Server{eventStream: &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), redis: redisClient}}
 	ctx := context.Background()
 
-	claim, err := server.claimTaskStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", taskStartClaimTestExpiresAt())
+	claim, err := server.claimSessionStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", sessionStartClaimTestExpiresAt())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := server.claimTaskStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", taskStartClaimTestExpiresAt()); !errors.Is(err, errTaskStartPending) {
+	if _, err := server.claimSessionStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", sessionStartClaimTestExpiresAt()); !errors.Is(err, errSessionStartPending) {
 		t.Fatalf("second claim err = %v, want pending", err)
 	}
 	claim.release(ctx)
-	if _, err := server.claimTaskStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", taskStartClaimTestExpiresAt()); err != nil {
+	if _, err := server.claimSessionStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", sessionStartClaimTestExpiresAt()); err != nil {
 		t.Fatalf("claim after release error = %v", err)
 	}
 }
 
-func TestTaskStartClaimSerializesIdempotencyKeyAcrossRequestFingerprints(t *testing.T) {
+func TestSessionStartClaimSerializesIdempotencyKeyAcrossRequestFingerprints(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
 	server := &Server{eventStream: &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), redis: redisClient}}
 	ctx := context.Background()
 
-	if _, err := server.claimTaskStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", taskStartClaimTestExpiresAt()); err != nil {
+	if _, err := server.claimSessionStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", sessionStartClaimTestExpiresAt()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := server.claimTaskStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", taskStartClaimTestExpiresAt()); !errors.Is(err, errTaskStartPending) {
+	if _, err := server.claimSessionStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", sessionStartClaimTestExpiresAt()); !errors.Is(err, errSessionStartPending) {
 		t.Fatalf("different fingerprint claim err = %v, want pending", err)
 	}
 }
 
-func TestTaskStartClaimSkipsMissingIdempotencyKey(t *testing.T) {
+func TestSessionStartClaimSkipsMissingIdempotencyKey(t *testing.T) {
 	server := &Server{}
-	claim, err := server.claimTaskStart(context.Background(), dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "", pgtype.Timestamptz{})
+	claim, err := server.claimSessionStart(context.Background(), dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "", pgtype.Timestamptz{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,19 +70,19 @@ func TestTaskStartClaimSkipsMissingIdempotencyKey(t *testing.T) {
 	}
 }
 
-func TestTaskStartClaimReturnsResolvedHintForDurableReread(t *testing.T) {
+func TestSessionStartClaimReturnsResolvedHintForDurableReread(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
 	server := &Server{eventStream: &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), redis: redisClient}}
 	ctx := context.Background()
 
-	claim, err := server.claimTaskStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", taskStartClaimTestExpiresAt())
+	claim, err := server.claimSessionStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", sessionStartClaimTestExpiresAt())
 	if err != nil {
 		t.Fatal(err)
 	}
 	claim.resolve(ctx)
-	retry, err := server.claimTaskStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", taskStartClaimTestExpiresAt())
+	retry, err := server.claimSessionStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", sessionStartClaimTestExpiresAt())
 	if err != nil {
 		t.Fatalf("claim after stale resolved hint error = %v", err)
 	}
@@ -91,19 +91,19 @@ func TestTaskStartClaimReturnsResolvedHintForDurableReread(t *testing.T) {
 	}
 }
 
-func TestTaskStartClaimResolvedHintCoversAllIdentityKeys(t *testing.T) {
+func TestSessionStartClaimResolvedHintCoversAllIdentityKeys(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
 	server := &Server{eventStream: &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), redis: redisClient}}
 	ctx := context.Background()
 
-	claim, err := server.claimTaskStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", taskStartClaimTestExpiresAt())
+	claim, err := server.claimSessionStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", sessionStartClaimTestExpiresAt())
 	if err != nil {
 		t.Fatal(err)
 	}
 	claim.resolve(ctx)
-	retry, err := server.claimTaskStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", taskStartClaimTestExpiresAt())
+	retry, err := server.claimSessionStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", sessionStartClaimTestExpiresAt())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestTaskStartClaimResolvedHintCoversAllIdentityKeys(t *testing.T) {
 		t.Fatalf("retry claim = %+v, want resolved hint for idempotency key", retry)
 	}
 	retry.clearResolved(ctx)
-	key := taskStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idempotency", "idem")
+	key := sessionStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idempotency", "idem")
 	exists, err := redisClient.Exists(ctx, key).Result()
 	if err != nil {
 		t.Fatal(err)
@@ -121,27 +121,27 @@ func TestTaskStartClaimResolvedHintCoversAllIdentityKeys(t *testing.T) {
 	}
 }
 
-func TestTaskStartClaimRedisFailureReturnsCoordinationUnavailable(t *testing.T) {
+func TestSessionStartClaimRedisFailureReturnsCoordinationUnavailable(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
 	server := &Server{eventStream: &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), redis: redisClient}}
 	redisServer.Close()
 
-	_, err := server.claimTaskStart(context.Background(), dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", taskStartClaimTestExpiresAt())
-	if !errors.Is(err, errTaskStartCoordinationUnavailable) {
+	_, err := server.claimSessionStart(context.Background(), dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", sessionStartClaimTestExpiresAt())
+	if !errors.Is(err, errSessionStartCoordinationUnavailable) {
 		t.Fatalf("claim error = %v, want coordination unavailable", err)
 	}
 }
 
-func TestTaskStartClaimKeyIncludesScope(t *testing.T) {
-	key := taskStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "external", "ext")
+func TestSessionStartClaimKeyIncludesScope(t *testing.T) {
+	key := sessionStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "external", "ext")
 	if want := pgvalue.MustUUIDValue(testProjectID()).String(); !containsAll(key, dbtest.DefaultOrgID.String(), want, pgvalue.MustUUIDValue(testEnvironmentID()).String()) {
 		t.Fatalf("claim key %q does not include org/project/environment scope", key)
 	}
 }
 
-func TestTaskStartClaimCapsTTLToIdempotencyExpiry(t *testing.T) {
+func TestSessionStartClaimCapsTTLToIdempotencyExpiry(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
@@ -149,11 +149,11 @@ func TestTaskStartClaimCapsTTLToIdempotencyExpiry(t *testing.T) {
 	ctx := context.Background()
 	expiresAt := pgtype.Timestamptz{Time: time.Now().Add(time.Second), Valid: true}
 
-	claim, err := server.claimTaskStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", expiresAt)
+	claim, err := server.claimSessionStart(ctx, dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idem", expiresAt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := taskStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idempotency", "idem")
+	key := sessionStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idempotency", "idem")
 	pendingTTL, err := redisClient.PTTL(ctx, key).Result()
 	if err != nil {
 		t.Fatal(err)
@@ -171,7 +171,7 @@ func TestTaskStartClaimCapsTTLToIdempotencyExpiry(t *testing.T) {
 	}
 }
 
-func taskStartClaimTestExpiresAt() pgtype.Timestamptz {
+func sessionStartClaimTestExpiresAt() pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true}
 }
 

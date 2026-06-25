@@ -17,9 +17,9 @@ func sessionCommand() *cobra.Command {
 		Short: "Work with task sessions.",
 	}
 	cmd.AddCommand(
+		sessionStartCommand(),
 		sessionListCommand(),
 		sessionGetCommand(),
-		sessionWaitCommand(),
 		sessionCancelCommand(),
 		sessionStreamCommand(),
 	)
@@ -81,49 +81,6 @@ func sessionGetCommand() *cobra.Command {
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	return cmd
-}
-
-func sessionWaitCommand() *cobra.Command {
-	var projectID string
-	var environmentID string
-	var timeout string
-	var jsonOutput bool
-	cmd := &cobra.Command{
-		Use:   "wait SESSION",
-		Short: "Wait for a task session to finish.",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
-			if err != nil {
-				return err
-			}
-			scope, err := taskSessionScopeForClient(control, projectID, environmentID)
-			if err != nil {
-				return err
-			}
-			timeoutSeconds, err := waitTimeoutSeconds(timeout, "--timeout")
-			if err != nil {
-				return err
-			}
-			var deadline time.Time
-			if timeoutSeconds > 0 {
-				deadline = time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
-			}
-			session, err := waitTaskSessionUntilTerminal(cmd.Context(), control, args[0], deadline, timeoutSeconds, scope)
-			if err != nil {
-				return err
-			}
-			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), session)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", session.ID, session.Status)
-			return nil
-		},
-	}
-	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().StringVar(&timeout, "timeout", "", "Maximum wait duration, for example 10m or 1h.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
@@ -365,7 +322,7 @@ func writeSessionSummary(cmd *cobra.Command, session api.TaskSessionResponse) {
 
 func taskSessionStatusTerminal(status string) bool {
 	switch strings.TrimSpace(status) {
-	case "completed", "failed", "closed", "cancelled", "expired":
+	case "closed", "cancelled":
 		return true
 	default:
 		return false

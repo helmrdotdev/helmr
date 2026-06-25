@@ -12,7 +12,7 @@ import {
   validateTaskId,
 } from "./schema/task"
 import type { IdempotencyKeyInput } from "./idempotency"
-import type { TaskStartResult } from "./runtime/client"
+import type { SessionStartResult } from "./runtime/client"
 
 export { parsePayloadWithSchema } from "./schema/payload"
 
@@ -531,8 +531,8 @@ export type TaskDirectStart<
   TOutput,
   TSecrets extends SecretDecls,
 > = [TPayloadInput] extends [NoPayload]
-  ? (opts: TaskRunOptions<TSecrets>) => Promise<TaskStartResult<Awaited<TOutput>>>
-  : (payload: TPayloadInput, opts: TaskRunOptions<TSecrets>) => Promise<TaskStartResult<Awaited<TOutput>>>
+  ? (opts: TaskRunOptions<TSecrets>) => Promise<SessionStartResult<Awaited<TOutput>>>
+  : (payload: TPayloadInput, opts: TaskRunOptions<TSecrets>) => Promise<SessionStartResult<Awaited<TOutput>>>
 
 export type TaskConfigWithPayload<
   TPayloadSchema extends PayloadSchema<any, any>,
@@ -589,14 +589,14 @@ export type AnyTask = TaskConfigBase<SecretDecls> & {
   }
   readonly payload?: PayloadSchema<any, any>
   readonly run: (...args: any[]) => MaybePromise<any>
-  readonly start: (...args: any[]) => Promise<TaskStartResult<any>>
+  readonly start: (...args: any[]) => Promise<SessionStartResult<any>>
 }
 
 export type TaskPayload<TTask> =
   TTask extends { readonly "~types"?: { readonly payload: infer TPayload } }
     ? [TPayload] extends [NoPayload] ? never : TPayload
     : never
-export type TaskStartPayload<TTask> =
+export type SessionStartPayload<TTask> =
   TTask extends { readonly "~types"?: { readonly payloadInput: infer TPayloadInput } } ? TPayloadInput : never
 export type TaskOutput<TTask> =
   TTask extends { readonly "~types"?: { readonly output: infer TOutput } } ? Awaited<TOutput> : never

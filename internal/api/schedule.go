@@ -38,10 +38,10 @@ func (o *ScheduleRunOptions) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if _, ok := raw["deployment_id"]; ok {
-		return errors.New("deployment_id is not accepted for scheduled task starts")
+		return errors.New("deployment_id is not accepted for scheduled session starts")
 	}
 	if _, ok := raw["version"]; ok {
-		return errors.New("version is not accepted for scheduled task starts")
+		return errors.New("version is not accepted for scheduled session starts")
 	}
 	var decoded scheduleRunOptions
 	if err := json.Unmarshal(data, &decoded); err != nil {

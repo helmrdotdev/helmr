@@ -91,7 +91,7 @@ start_capture_ids() {
   local task=$1
   shift
   local output
-  if ! output="$(run_helmr task start "${task}" "$@" --json)"; then
+  if ! output="$(run_helmr session start "${task}" "$@" --json)"; then
     return 1
   fi
   printf '%s\n' "${output}" >&2
@@ -169,20 +169,6 @@ session_run_id() {
   run_helmr run list --session "${session_id}" "$@" --json | jq -er '.runs[0].id'
 }
 
-wait_for_session_status() {
-  local session_id=$1
-  local timeout_seconds="${2:-900}"
-  api_json POST "/sessions/${session_id}/wait" "$(jq -nc --argjson timeout "${timeout_seconds}" '{timeout_seconds:$timeout}')" |
-    jq -er '.status'
-}
-
-expect_session_still_waiting() {
-  local session_id=$1
-  local timeout_seconds="${2:-5}"
-  api_json POST "/sessions/${session_id}/wait" "$(jq -nc --argjson timeout "${timeout_seconds}" '{timeout_seconds:$timeout}')" |
-    jq -e '.status == "open" and .timed_out == true' >/dev/null
-}
-
 expect_workspace_version() {
   local name=$1
   local session_id=$2
@@ -216,7 +202,8 @@ expect_start_and_wait_success() {
   local run_id
   local status
   marker="release-smoke-${name}-$(date -u +%Y%m%d%H%M%S)"
-  response="$(api_json POST /tasks/runtime-smoke/start-and-wait "$(jq -nc --arg marker "${marker}" '{
+  response="$(api_json POST /sessions/start-and-wait "$(jq -nc --arg marker "${marker}" '{
+    task_id: "runtime-smoke",
     payload: {
       scenario: "start-and-wait",
       marker: $marker,

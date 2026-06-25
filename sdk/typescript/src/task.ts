@@ -11,7 +11,7 @@ import {
   type TaskRunOptions,
   type TaskOutput,
   type TaskPayload,
-  type TaskStartPayload,
+  type SessionStartPayload,
 } from "./internal"
 import { startTask } from "./start"
 import type {
@@ -46,4 +46,4 @@ export function queue(config: TaskQueueConfig): TaskQueueConfig {
   return Object.freeze({ ...config })
 }
 
-export type { NoPayload, Task, TaskConfig, TaskOutput, TaskPayload, TaskQueueConfig, TaskRunOptions, TaskStartPayload }
+export type { NoPayload, Task, TaskConfig, TaskOutput, TaskPayload, TaskQueueConfig, TaskRunOptions, SessionStartPayload }

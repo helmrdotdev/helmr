@@ -307,44 +307,8 @@ ended_session_runs AS (
     RETURNING task_session_runs.id
 ),
 failed_task_sessions AS (
-    UPDATE task_sessions
-       SET status = 'failed',
-           failed_at = now(),
-           result = jsonb_build_object(
-               'ok', false,
-               'error', jsonb_build_object(
-                   'name', 'RunFailed',
-                   'message', failed_runs.error_message,
-                   'details', jsonb_build_object(
-                       'origin', 'run_wait_resume',
-                       'reason', failed_runs.failure_reason,
-                       'runtime_checkpoint_id', failed_runs.runtime_checkpoint_id,
-                       'base_workspace_version_id', failed_runs.base_workspace_version_id,
-                       'current_workspace_version_id', failed_runs.current_version_id,
-                       'runtime_checkpoint_expires_at', failed_runs.runtime_checkpoint_expires_at
-                   )
-               )
-           ),
-           terminal_reason = jsonb_build_object(
-               'origin', 'run_wait_resume',
-               'reason', failed_runs.failure_reason,
-               'message', failed_runs.error_message,
-               'runtime_checkpoint_id', failed_runs.runtime_checkpoint_id,
-               'base_workspace_version_id', failed_runs.base_workspace_version_id,
-               'current_workspace_version_id', failed_runs.current_version_id,
-               'runtime_checkpoint_expires_at', failed_runs.runtime_checkpoint_expires_at
-           ),
-           current_run_id = NULL,
-           current_run_version = task_sessions.current_run_version + 1,
-           updated_at = now()
+    SELECT failed_runs.task_session_id AS id
       FROM failed_runs
-     WHERE task_sessions.org_id = failed_runs.org_id
-       AND task_sessions.project_id = failed_runs.project_id
-       AND task_sessions.environment_id = failed_runs.environment_id
-       AND task_sessions.id = failed_runs.task_session_id
-       AND task_sessions.current_run_id = failed_runs.id
-       AND task_sessions.status = 'open'
-    RETURNING task_sessions.id
 ),
 failed_attempts AS (
     UPDATE run_attempts

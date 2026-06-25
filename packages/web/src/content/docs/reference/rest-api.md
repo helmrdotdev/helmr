@@ -34,12 +34,11 @@ Common user/API-key routes:
 
 | Method | Path |
 | --- | --- |
-| `POST` | `/api/tasks/{task_id}/start` |
-| `POST` | `/api/tasks/{task_id}/start-and-wait` |
+| `POST` | `/api/sessions` |
+| `POST` | `/api/sessions/start-and-wait` |
 | `GET` | `/api/sessions` |
 | `GET` | `/api/sessions/{id}` |
 | `PATCH` | `/api/sessions/{id}` |
-| `POST` | `/api/sessions/{id}/wait` |
 | `POST` | `/api/sessions/{id}/close` |
 | `POST` | `/api/sessions/{id}/cancel` |
 | `GET` | `/api/sessions/{id}/runs` |

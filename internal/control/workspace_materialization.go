@@ -687,7 +687,6 @@ func failQueuedRunsForWorkspaceMaterializationFailure(ctx context.Context, store
 		if err := store.FailQueuedRun(ctx, db.FailQueuedRunParams{
 			OrgID:        row.OrgID,
 			RunID:        runID,
-			ErrorName:    "WorkspaceMaterializationFailed",
 			ErrorMessage: message,
 			Reason:       reason,
 		}); err != nil {

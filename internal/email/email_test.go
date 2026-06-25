@@ -17,7 +17,7 @@ func TestResendEmailSenderSendsPlainTextEmail(t *testing.T) {
 		To:             "Owner <owner@example.test>",
 		Subject:        "Hello\nWorld",
 		PlainText:      "line one\r\nline two",
-		IdempotencyKey: "waitpoint-delivery/123",
+		IdempotencyKey: "notification-delivery/123",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +34,7 @@ func TestResendEmailSenderSendsPlainTextEmail(t *testing.T) {
 	if service.request.Text != "line one\nline two\n" {
 		t.Fatalf("text = %q", service.request.Text)
 	}
-	if service.options == nil || service.options.IdempotencyKey != "waitpoint-delivery/123" {
+	if service.options == nil || service.options.IdempotencyKey != "notification-delivery/123" {
 		t.Fatalf("options = %+v", service.options)
 	}
 }

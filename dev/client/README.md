@@ -15,7 +15,7 @@ workspace APIs and task attachment:
 - `workspace.update`
 - `workspace.materialize`
 - `workspace.connect`
-- `tasks.start` with `workspaceId`
+- `sessions.start` with `workspaceId`
 - `sessions.retrieve`
 - `runs.wait`
 

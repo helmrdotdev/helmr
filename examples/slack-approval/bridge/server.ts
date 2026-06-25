@@ -86,7 +86,7 @@ export async function startBridge(config: Config, client: HelmrClient): Promise<
       throw error
     }
 
-    const started = await client.tasks.start<ReleaseApprovalTask>(config.taskId, {
+    const started = await client.sessions.start<ReleaseApprovalTask>(config.taskId, {
       release: config.release,
       summary: config.summary,
       tokenId: token.id,

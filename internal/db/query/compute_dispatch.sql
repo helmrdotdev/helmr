@@ -873,29 +873,8 @@ queue_entry AS (
 	    RETURNING task_session_runs.id
 	),
 	failed_task_sessions AS (
-	    UPDATE task_sessions
-	       SET status = 'failed',
-	           failed_at = now(),
-	           result = jsonb_build_object(
-	               'ok', false,
-	               'error', jsonb_build_object(
-	                   'name', 'TaskFailed',
-	                   'message', COALESCE(NULLIF(sqlc.arg(last_error)::text, ''), 'run dead-lettered before execution'),
-	                   'details', jsonb_build_object('origin', 'dead_letter')
-	               )
-	           ),
-	           terminal_reason = jsonb_build_object('origin', 'dead_letter', 'message', COALESCE(NULLIF(sqlc.arg(last_error)::text, ''), 'run dead-lettered before execution')),
-	           current_run_id = NULL,
-	           current_run_version = task_sessions.current_run_version + 1,
-	           updated_at = now()
-      FROM failed_run
-     WHERE task_sessions.org_id = failed_run.org_id
-	       AND task_sessions.project_id = failed_run.project_id
-	       AND task_sessions.environment_id = failed_run.environment_id
-	       AND task_sessions.id = failed_run.task_session_id
-	       AND task_sessions.current_run_id = failed_run.id
-	       AND task_sessions.status = 'open'
-	    RETURNING task_sessions.id
+	    SELECT failed_run.task_session_id AS id
+	      FROM failed_run
 	),
 	run_event_seq AS (
 	    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)

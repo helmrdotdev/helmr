@@ -12,7 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func TestNewScheduleRunCreatorWiresTaskStartCoordination(t *testing.T) {
+func TestNewScheduleRunCreatorWiresSessionStartCoordination(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
@@ -26,7 +26,7 @@ func TestNewScheduleRunCreatorWiresTaskStartCoordination(t *testing.T) {
 	}
 }
 
-func TestNewScheduleRunCreatorRequiresTaskStartCoordination(t *testing.T) {
+func TestNewScheduleRunCreatorRequiresSessionStartCoordination(t *testing.T) {
 	if _, err := NewScheduleRunCreator(slog.Default(), fakeScheduleRunCreatorDB{}, nil, nil, nil); err == nil {
 		t.Fatal("expected missing event stream to be rejected")
 	}

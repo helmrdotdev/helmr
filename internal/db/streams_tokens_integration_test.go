@@ -202,7 +202,7 @@ func TestFailStaleResolvedRunWaitsTerminalizesWorkspaceVersionMismatch(t *testin
 	`, ids.orgID, pgvalue.MustUUIDValue(run.TaskSessionID)).Scan(&sessionStatus, &sessionReason); err != nil {
 		t.Fatal(err)
 	}
-	if sessionStatus != db.TaskSessionStatusFailed || !strings.Contains(string(sessionReason), "workspace_version_mismatch") {
+	if sessionStatus != db.TaskSessionStatusOpen || string(sessionReason) != "{}" {
 		t.Fatalf("session status=%s reason=%s", sessionStatus, string(sessionReason))
 	}
 	var queueStatus db.RunQueueStatus

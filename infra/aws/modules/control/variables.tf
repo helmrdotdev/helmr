@@ -208,7 +208,7 @@ variable "secret_encryption_key_old_kms_key_arns" {
 }
 
 variable "email_provider" {
-  description = "Email delivery provider for magic links and waitpoint notifications."
+  description = "Email delivery provider for magic links and run wait notifications."
   type        = string
   default     = "none"
 

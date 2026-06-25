@@ -11,66 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-func TestSessionWaitPassesTimeout(t *testing.T) {
-	var request api.TaskWaitRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions/session-1/wait" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		_ = json.NewEncoder(w).Encode(api.TaskSessionResponse{ID: "session-1", Status: "completed"})
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"session", "wait", "session-1", "--timeout", "1500ms"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if request.TimeoutSeconds != 2 {
-		t.Fatalf("timeout seconds = %d", request.TimeoutSeconds)
-	}
-}
-
-func TestSessionWaitContinuesAfterServerLongPollTimeout(t *testing.T) {
-	waitCalls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions/session-1/wait" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		waitCalls++
-		if waitCalls == 1 {
-			_ = json.NewEncoder(w).Encode(api.TaskSessionResponse{ID: "session-1", Status: "open", TimedOut: true})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(api.TaskSessionResponse{ID: "session-1", Status: "completed"})
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"session", "wait", "session-1"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if waitCalls != 2 {
-		t.Fatalf("wait calls = %d", waitCalls)
-	}
-	if got := strings.TrimSpace(out.String()); got != "session-1 completed" {
-		t.Fatalf("output = %q", out.String())
-	}
-}
-
 func TestSessionStreamInputSendUsesCanonicalCommand(t *testing.T) {
 	var request api.AppendStreamRecordRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

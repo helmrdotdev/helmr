@@ -1,10 +1,11 @@
-import type { AnyTask, NoPayload, SecretDecls, TaskOutput, TaskSecrets, TaskStartPayload } from "./internal"
+import type { AnyTask, NoPayload, SecretDecls, TaskOutput, TaskSecrets, SessionStartPayload } from "./internal"
 import {
   HelmrClient,
-  startTaskClientMethod,
-  type TaskStartAndWaitOptions,
-  type TaskStartOptions,
-  type TaskStartResult,
+  type SessionStartAndWaitOptions,
+  type SessionStartAndWaitResult,
+  type SessionStartOptions,
+  type SessionStartResult,
+  startSessionClientMethod,
 } from "./runtime/client"
 
 let defaultClient: HelmrClient | undefined
@@ -18,40 +19,40 @@ export function resetDefaultClientForTest(): void {
   defaultClient = undefined
 }
 
-export type StartOptions<TSecrets extends SecretDecls> = TaskStartOptions<TSecrets>
-export type StartAndWaitOptions<TSecrets extends SecretDecls> = TaskStartAndWaitOptions<TSecrets>
+export type StartOptions<TSecrets extends SecretDecls> = SessionStartOptions<TSecrets>
+export type StartAndWaitOptions<TSecrets extends SecretDecls> = SessionStartAndWaitOptions<TSecrets>
 
 export type StartArgs<TTask extends AnyTask> =
-  [TaskStartPayload<TTask>] extends [NoPayload]
+  [SessionStartPayload<TTask>] extends [NoPayload]
     ? [id: string, opts: StartOptions<TaskSecrets<TTask>>]
-    : [id: string, payload: TaskStartPayload<TTask>, opts: StartOptions<TaskSecrets<TTask>>]
+    : [id: string, payload: SessionStartPayload<TTask>, opts: StartOptions<TaskSecrets<TTask>>]
 
 export type StartAndWaitArgs<TTask extends AnyTask> =
-  [TaskStartPayload<TTask>] extends [NoPayload]
+  [SessionStartPayload<TTask>] extends [NoPayload]
     ? [id: string, opts: StartAndWaitOptions<TaskSecrets<TTask>>]
-    : [id: string, payload: TaskStartPayload<TTask>, opts: StartAndWaitOptions<TaskSecrets<TTask>>]
+    : [id: string, payload: SessionStartPayload<TTask>, opts: StartAndWaitOptions<TaskSecrets<TTask>>]
 
-export type TaskStartArgs<TTask extends AnyTask> =
-  [TaskStartPayload<TTask>] extends [NoPayload]
+export type SessionStartArgs<TTask extends AnyTask> =
+  [SessionStartPayload<TTask>] extends [NoPayload]
     ? [opts: StartOptions<TaskSecrets<TTask>>]
-    : [payload: TaskStartPayload<TTask>, opts: StartOptions<TaskSecrets<TTask>>]
+    : [payload: SessionStartPayload<TTask>, opts: StartOptions<TaskSecrets<TTask>>]
 
-export const tasks = {
+export const sessions = {
   start<TTask extends AnyTask>(
     ...args: StartArgs<TTask>
-  ): Promise<TaskStartResult<TaskOutput<TTask>>> {
-    return getDefaultClient().tasks.start<TTask>(...args)
+  ): Promise<SessionStartResult<TaskOutput<TTask>>> {
+    return getDefaultClient().sessions.start<TTask>(...args)
   },
   startAndWait<TTask extends AnyTask>(
     ...args: StartAndWaitArgs<TTask>
-  ) {
-    return getDefaultClient().tasks.startAndWait<TTask>(...args)
+  ): Promise<SessionStartAndWaitResult<TaskOutput<TTask>>> {
+    return getDefaultClient().sessions.startAndWait<TTask>(...args)
   },
 }
 
 export function startTask<TTask extends AnyTask>(
   task: TTask,
-  ...args: TaskStartArgs<TTask>
-): Promise<TaskStartResult<TaskOutput<TTask>>> {
-  return getDefaultClient()[startTaskClientMethod](task, ...args)
+  ...args: SessionStartArgs<TTask>
+): Promise<SessionStartResult<TaskOutput<TTask>>> {
+  return getDefaultClient()[startSessionClientMethod](task, ...args)
 }

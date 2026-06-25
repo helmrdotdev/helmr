@@ -88,6 +88,10 @@ func testDeploymentSandboxID() pgtype.UUID {
 	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000307"))
 }
 
+func testWorkspaceID() pgtype.UUID {
+	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000308"))
+}
+
 func testArtifactID() pgtype.UUID {
 	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000306"))
 }
@@ -161,8 +165,8 @@ func testSandboxFingerprint() string {
 	return "sha256:" + strings.Repeat("7", 64)
 }
 
-func fakeWorkspaceForTaskStart(workspaceID pgtype.UUID) db.GetWorkspaceForTaskStartRow {
-	return db.GetWorkspaceForTaskStartRow{
+func fakeWorkspaceForSessionStart(workspaceID pgtype.UUID) db.GetWorkspaceForSessionStartRow {
+	return db.GetWorkspaceForSessionStartRow{
 		ID:                                workspaceID,
 		OrgID:                             pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:                         testProjectID(),
@@ -188,11 +192,11 @@ func fakeWorkspaceForTaskStart(workspaceID pgtype.UUID) db.GetWorkspaceForTaskSt
 func TestAPIKeyRunCreateRejectsActorWithoutEnvironmentScope(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{kind: auth.ActorKindAPIKey, role: auth.RoleOwner}})
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{})
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer machine-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -217,11 +221,11 @@ func TestAPIKeyRunCreateUsesActorEnvironmentScope(t *testing.T) {
 		permissions:   []auth.Permission{auth.PermissionRunsCreate},
 	}, CAS: &fakeCAS{}},
 	)
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{})
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer machine-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -243,14 +247,14 @@ func TestAPIKeyRunCreateRejectsExplicitScopeOverride(t *testing.T) {
 		permissions:   []auth.Permission{auth.PermissionRunsCreate},
 	}},
 	)
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		ProjectID:     testProjectIDString(),
 		EnvironmentID: testEnvironmentIDString(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer machine-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -327,11 +331,11 @@ func TestCreateRunRejectsInvalidTaskID(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{})
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "bad task"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/bad%20task/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -349,7 +353,8 @@ func TestCreateRunRejectsClientSuppliedBundle(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewBufferString(`{
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewBufferString(`{
+		"task_id": "deploy",
 		"bundle": "dGVzdA==",
 		"source": {"kind": "github", "repository": "helmrdotdev/helmr", "ref": "`+testGitSHA+`"}
 	}`))
@@ -370,7 +375,7 @@ func TestRunRoutesRequireBearerAuth(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", nil)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 
@@ -379,11 +384,11 @@ func TestRunRoutesRequireBearerAuth(t *testing.T) {
 	}
 }
 
-func TestTaskStartRejectsDeploymentSelection(t *testing.T) {
+func TestSessionStartRejectsDeploymentSelection(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", strings.NewReader(`{"options":{"version":"20260101.99"}}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"task_id":"deploy","version":"20260101.99"}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -392,16 +397,16 @@ func TestTaskStartRejectsDeploymentSelection(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "version is not accepted for task start") {
+	if !strings.Contains(rec.Body.String(), "version is not accepted for session start") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 
-func TestTaskStartRejectsOversizedExternalID(t *testing.T) {
+func TestSessionStartRejectsOversizedExternalID(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", strings.NewReader(`{"external_id":"`+strings.Repeat("x", maxTaskSessionExternalIDBytes+1)+`"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"task_id":"deploy","external_id":"`+strings.Repeat("x", maxTaskSessionExternalIDBytes+1)+`"}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -897,17 +902,17 @@ func TestWorkspaceMaterializeReturnsServerErrorWhenEnsureFails(t *testing.T) {
 	}
 }
 
-func TestTaskStartAttachesCompatibleWorkspace(t *testing.T) {
+func TestSessionStartAttachesCompatibleWorkspace(t *testing.T) {
 	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &fakeStore{attachedWorkspace: fakeWorkspaceForTaskStart(workspaceID)}
+	store := &fakeStore{attachedWorkspace: fakeWorkspaceForSessionStart(workspaceID)}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
-		Options: api.TaskStartOptions{WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String()},
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
+		Options: api.SessionStartOptions{WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String()},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -916,7 +921,7 @@ func TestTaskStartAttachesCompatibleWorkspace(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var response api.TaskStartResponse
+	var response api.SessionStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -943,10 +948,10 @@ func TestTaskStartAttachesCompatibleWorkspace(t *testing.T) {
 	}
 }
 
-func TestTaskStartCreatesArtifactBackedWorkspaceForColdStart(t *testing.T) {
+func TestSessionStartCreatesArtifactBackedWorkspaceForColdStart(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", strings.NewReader(`{}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"task_id":"deploy"}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -1001,19 +1006,19 @@ func TestTaskStartCreatesArtifactBackedWorkspaceForColdStart(t *testing.T) {
 	}
 }
 
-func TestTaskStartRejectsIncompatibleWorkspaceBeforeSessionCreation(t *testing.T) {
+func TestSessionStartRejectsIncompatibleWorkspaceBeforeSessionCreation(t *testing.T) {
 	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	workspace := fakeWorkspaceForTaskStart(workspaceID)
+	workspace := fakeWorkspaceForSessionStart(workspaceID)
 	workspace.SandboxFingerprint = "sha256:" + strings.Repeat("9", 64)
 	store := &fakeStore{attachedWorkspace: workspace}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
-		Options: api.TaskStartOptions{WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String()},
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
+		Options: api.SessionStartOptions{WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String()},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -1028,19 +1033,19 @@ func TestTaskStartRejectsIncompatibleWorkspaceBeforeSessionCreation(t *testing.T
 	}
 }
 
-func TestTaskStartRejectsWorkspaceResourceFloorBeforeSessionCreation(t *testing.T) {
+func TestSessionStartRejectsWorkspaceResourceFloorBeforeSessionCreation(t *testing.T) {
 	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	workspace := fakeWorkspaceForTaskStart(workspaceID)
+	workspace := fakeWorkspaceForSessionStart(workspaceID)
 	workspace.DeploymentSandboxResourceFloor = []byte(`{"milli_cpu":100,"memory_mib":512,"disk_mib":1024}`)
 	store := &fakeStore{attachedWorkspace: workspace}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
-		Options: api.TaskStartOptions{WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String()},
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
+		Options: api.SessionStartOptions{WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String()},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -1055,10 +1060,10 @@ func TestTaskStartRejectsWorkspaceResourceFloorBeforeSessionCreation(t *testing.
 	}
 }
 
-func TestTaskStartIdempotencyRequiresCoordinationBeforeDBSideEffects(t *testing.T) {
+func TestSessionStartIdempotencyRequiresCoordinationBeforeDBSideEffects(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", strings.NewReader(`{"options":{"idempotency_key":"retry-1"}}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"task_id":"deploy","idempotency_key":"retry-1"}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -1073,7 +1078,7 @@ func TestTaskStartIdempotencyRequiresCoordinationBeforeDBSideEffects(t *testing.
 	}
 }
 
-func TestTaskStartExternalIDRejectsDifferentFingerprint(t *testing.T) {
+func TestSessionStartExternalIDRejectsDifferentFingerprint(t *testing.T) {
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
@@ -1109,14 +1114,14 @@ func TestTaskStartExternalIDRejectsDifferentFingerprint(t *testing.T) {
 		},
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		ExternalID: "durable-1",
 		Payload:    json.RawMessage(`{"env":"prod"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -1128,18 +1133,18 @@ func TestTaskStartExternalIDRejectsDifferentFingerprint(t *testing.T) {
 	requireErrorCode(t, rec.Body.Bytes(), "session_fingerprint_mismatch")
 }
 
-func TestTaskStartExternalIDReturnsExistingSessionOK(t *testing.T) {
+func TestSessionStartExternalIDReturnsExistingSessionOK(t *testing.T) {
 	store := &fakeStore{}
 	eventStream := newTestEventStream(t)
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: eventStream})
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		ExternalID: "durable-1",
 		Payload:    json.RawMessage(`{"env":"prod"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -1147,20 +1152,20 @@ func TestTaskStartExternalIDReturnsExistingSessionOK(t *testing.T) {
 		t.Fatalf("first status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	firstRunID := pgvalue.MustUUIDValue(store.run.ID).String()
-	staleExternalKey := taskStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "external", "durable-1")
+	staleExternalKey := sessionStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "external", "durable-1")
 	if err := eventStream.redis.Set(context.Background(), staleExternalKey, "pending:stale-owner", time.Minute).Err(); err != nil {
 		t.Fatal(err)
 	}
 
 	store.currentDeploymentMissing = true
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var response api.TaskStartResponse
+	var response api.SessionStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -1169,17 +1174,321 @@ func TestTaskStartExternalIDReturnsExistingSessionOK(t *testing.T) {
 	}
 }
 
-func TestTaskStartExternalIDRejectsExpiredOpenSession(t *testing.T) {
+func TestStartAndWaitReturnsAfterInitialRunWhileSessionOpen(t *testing.T) {
+	store := &fakeStore{createRunStatus: db.RunStatusSucceeded}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	bodyBytes, err := json.Marshal(api.SessionStartAndWaitRequest{
+		SessionStartRequest: api.SessionStartRequest{
+			TaskID:  "deploy",
+			Payload: json.RawMessage(`{"env":"prod"}`),
+		},
+		TimeoutSeconds: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/start-and-wait", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.SessionStartResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Session.Status != string(db.TaskSessionStatusOpen) || response.Run.Status != api.RunStatusSucceeded || response.TimedOut {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestSessionStartExternalIDDifferentTaskConflicts(t *testing.T) {
+	payload := json.RawMessage(`{"env":"prod"}`)
+	startFingerprint, err := sessionStartRequestFingerprint("deploy", payload, sessionStartFingerprintTestOptions(t, api.CreateRunOptions{}), "durable-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &fakeStore{
+		taskSession: db.TaskSession{
+			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			TaskID:              "deploy",
+			InitialDeploymentID: testDeploymentID(),
+			ActiveDeploymentID:  testDeploymentID(),
+			ExternalID:          "durable-1",
+			StartFingerprint:    startFingerprint.String,
+			Status:              db.TaskSessionStatusOpen,
+			CurrentRunID:        runID,
+			Metadata:            []byte(`{}`),
+			Tags:                []string{},
+			TerminalReason:      []byte(`{}`),
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
+		},
+		run: db.Run{
+			ID:               runID,
+			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:        testProjectID(),
+			EnvironmentID:    testEnvironmentID(),
+			DeploymentID:     testDeploymentID(),
+			DeploymentTaskID: testDeploymentTaskID(),
+			TaskID:           "deploy",
+			Status:           db.RunStatusQueued,
+			CreatedAt:        testTime(),
+			UpdatedAt:        testTime(),
+		},
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "review", ExternalID: "durable-1", Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	requireErrorCode(t, rec.Body.Bytes(), "session_fingerprint_mismatch")
+}
+
+func TestSessionStartExternalIDIgnoresMetadataTagsInFingerprint(t *testing.T) {
+	payload := json.RawMessage(`{"env":"prod"}`)
+	startFingerprint, err := sessionStartRequestFingerprint("deploy", payload, sessionStartFingerprintTestOptions(t, api.CreateRunOptions{}), "durable-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &fakeStore{
+		taskSession: db.TaskSession{
+			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			TaskID:              "deploy",
+			InitialDeploymentID: testDeploymentID(),
+			ActiveDeploymentID:  testDeploymentID(),
+			ExternalID:          "durable-1",
+			StartFingerprint:    startFingerprint.String,
+			Status:              db.TaskSessionStatusOpen,
+			CurrentRunID:        runID,
+			Metadata:            []byte(`{"origin":"first"}`),
+			Tags:                []string{"first"},
+			TerminalReason:      []byte(`{}`),
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
+		},
+		run: db.Run{
+			ID:               runID,
+			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:        testProjectID(),
+			EnvironmentID:    testEnvironmentID(),
+			DeploymentID:     testDeploymentID(),
+			DeploymentTaskID: testDeploymentTaskID(),
+			TaskID:           "deploy",
+			Status:           db.RunStatusQueued,
+			CreatedAt:        testTime(),
+			UpdatedAt:        testTime(),
+		},
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{
+		TaskID:     "deploy",
+		ExternalID: "durable-1",
+		Payload:    payload,
+		Options: api.SessionStartOptions{
+			Metadata: json.RawMessage(`{"origin":"retry"}`),
+			Tags:     []string{"retry"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestContinuationRunRequestRetriesTransientEnsureFailure(t *testing.T) {
+	store := continuationRunRequestFakeStore(db.RunStatusSucceeded)
+	previousRun := store.run
+	store.ensureWorkspaceMaterializationErr = errors.New("transient materialization failure")
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store}
+	runID, err := server.reconcileClaimedTaskSessionRunRequest(context.Background(), store.taskSessionRunRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runID.Valid || store.taskSessionRunRequest.Status != "accepted" || !strings.Contains(store.taskSessionRunRequest.LastError, "transient materialization failure") {
+		t.Fatalf("first reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.taskSessionRunRequest)
+	}
+	if len(store.taskSessionRuns) != 1 {
+		t.Fatalf("session runs after first reconcile = %d, want previous only", len(store.taskSessionRuns))
+	}
+
+	store.ensureWorkspaceMaterializationErr = nil
+	store.run = previousRun
+	store.taskSessionRunRequest.Status = "claimed"
+	runID, err = server.reconcileClaimedTaskSessionRunRequest(context.Background(), store.taskSessionRunRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runID.Valid || store.taskSessionRunRequest.Status != "created" || store.taskSessionRunRequest.RunID != runID {
+		t.Fatalf("second reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.taskSessionRunRequest)
+	}
+	if len(store.taskSessionRuns) != 2 || store.taskSessionRuns[1].PreviousRunID != store.taskSessionRuns[0].RunID || store.taskSessionRuns[1].Reason != "input" {
+		t.Fatalf("session runs = %+v", store.taskSessionRuns)
+	}
+	if store.taskSession.CurrentRunID != runID || store.ensureWorkspaceMaterializationCalls != 2 {
+		t.Fatalf("session current=%s materialization calls=%d", pgvalue.UUIDString(store.taskSession.CurrentRunID), store.ensureWorkspaceMaterializationCalls)
+	}
+}
+
+func TestContinuationRunRequestCreatedAfterLiveRunTerminal(t *testing.T) {
+	store := continuationRunRequestFakeStore(db.RunStatusRunning)
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store}
+	runID, err := server.reconcileClaimedTaskSessionRunRequest(context.Background(), store.taskSessionRunRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runID.Valid || store.taskSessionRunRequest.Status != "accepted" || store.taskSessionRunRequest.LastError != "current_run_not_terminal" {
+		t.Fatalf("running reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.taskSessionRunRequest)
+	}
+
+	store.run.Status = db.RunStatusSucceeded
+	store.taskSessionRunRequest.Status = "claimed"
+	runID, err = server.reconcileClaimedTaskSessionRunRequest(context.Background(), store.taskSessionRunRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runID.Valid || store.taskSessionRunRequest.Status != "created" {
+		t.Fatalf("terminal reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.taskSessionRunRequest)
+	}
+	if len(store.taskSessionRuns) != 2 || store.taskSession.CurrentRunID != runID {
+		t.Fatalf("session runs=%+v current=%s", store.taskSessionRuns, pgvalue.UUIDString(store.taskSession.CurrentRunID))
+	}
+}
+
+func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	previousRunID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	streamID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	recordID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	requestID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	now := testTime()
+	store := &fakeStore{
+		taskSession: db.TaskSession{
+			ID:                  sessionID,
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			TaskID:              "deploy",
+			InitialDeploymentID: testDeploymentID(),
+			ActiveDeploymentID:  testDeploymentID(),
+			Status:              db.TaskSessionStatusOpen,
+			CurrentRunID:        previousRunID,
+			WorkspaceID:         testWorkspaceID(),
+			Metadata:            []byte(`{}`),
+			Tags:                []string{},
+			TerminalReason:      []byte(`{}`),
+			CreatedAt:           now,
+			UpdatedAt:           now,
+		},
+		run: db.Run{
+			ID:               previousRunID,
+			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:        testProjectID(),
+			EnvironmentID:    testEnvironmentID(),
+			DeploymentID:     testDeploymentID(),
+			DeploymentTaskID: testDeploymentTaskID(),
+			TaskSessionID:    sessionID,
+			TaskID:           "deploy",
+			Status:           previousStatus,
+			Payload:          []byte(`{"env":"prod"}`),
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		},
+		streamRecord: db.StreamRecord{
+			ID:            recordID,
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			SessionID:     sessionID,
+			StreamID:      streamID,
+			Direction:     db.StreamDirectionInput,
+			Sequence:      2,
+			Data:          []byte(`{"approved":true}`),
+			ContentType:   "application/json",
+			SourceType:    db.StreamRecordSourceTypeApiKey,
+			CreatedAt:     now,
+		},
+		taskSessionRunRequest: db.TaskSessionRunRequest{
+			ID:             requestID,
+			OrgID:          pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:      testProjectID(),
+			EnvironmentID:  testEnvironmentID(),
+			TaskSessionID:  sessionID,
+			StreamRecordID: recordID,
+			StreamID:       streamID,
+			CauseKind:      "stream_record",
+			Status:         "claimed",
+			Attempts:       1,
+			NextAttemptAt:  now,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		},
+		deploymentTaskRow: db.GetDeploymentTaskRow{
+			ID:                  testDeploymentTaskID(),
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			DeploymentID:        testDeploymentID(),
+			DeploymentSandboxID: testDeploymentSandboxID(),
+			TaskID:              "deploy",
+			BundleArtifactID:    testArtifactID(),
+			QueueName:           "default",
+			MaxActiveDurationMs: 300000,
+			RetryPolicy:         []byte(`false`),
+			DeploymentVersion:   "v1",
+			ApiVersion:          api.CurrentAPIVersion,
+			CreatedAt:           now,
+		},
+		taskSessionRuns: []db.TaskSessionRun{{
+			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			TaskSessionID: sessionID,
+			RunID:         previousRunID,
+			DeploymentID:  testDeploymentID(),
+			TurnIndex:     1,
+			Reason:        "initial",
+			CreatedAt:     now,
+		}},
+	}
+	store.lockTaskSession = store.taskSession
+	return store
+}
+
+func TestSessionStartExternalIDRejectsExpiredOpenSession(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		ExternalID: "durable-1",
 		Payload:    json.RawMessage(`{"env":"prod"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -1188,7 +1497,7 @@ func TestTaskStartExternalIDRejectsExpiredOpenSession(t *testing.T) {
 	}
 	store.taskSession.ExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -1198,9 +1507,9 @@ func TestTaskStartExternalIDRejectsExpiredOpenSession(t *testing.T) {
 	requireErrorCode(t, rec.Body.Bytes(), "session_terminal")
 }
 
-func TestTaskStartExternalIDUniqueRaceReturnsExistingSessionOK(t *testing.T) {
+func TestSessionStartExternalIDUniqueRaceReturnsExistingSessionOK(t *testing.T) {
 	payload := json.RawMessage(`{"env":"prod"}`)
-	startFingerprint, err := taskStartRequestFingerprint("deploy", payload, taskStartFingerprintTestOptions(t, api.CreateRunOptions{}), []byte(`{}`), nil, "durable-1", nil)
+	startFingerprint, err := sessionStartRequestFingerprint("deploy", payload, sessionStartFingerprintTestOptions(t, api.CreateRunOptions{}), "durable-1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1242,21 +1551,21 @@ func TestTaskStartExternalIDUniqueRaceReturnsExistingSessionOK(t *testing.T) {
 		},
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		ExternalID: "durable-1",
 		Payload:    payload,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var response api.TaskStartResponse
+	var response api.SessionStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -1265,17 +1574,17 @@ func TestTaskStartExternalIDUniqueRaceReturnsExistingSessionOK(t *testing.T) {
 	}
 }
 
-func TestTaskStartExternalIDWithoutCurrentRunReturnsConflict(t *testing.T) {
+func TestSessionStartExternalIDWithoutCurrentRunReturnsConflict(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		ExternalID: "durable-1",
 		Payload:    json.RawMessage(`{"env":"prod"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -1284,7 +1593,7 @@ func TestTaskStartExternalIDWithoutCurrentRunReturnsConflict(t *testing.T) {
 	}
 	store.taskSession.CurrentRunID = pgtype.UUID{}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -1330,14 +1639,14 @@ func TestScopedTaskSessionRouteRejectsWrongPathScope(t *testing.T) {
 	}
 }
 
-func TestTaskStartRejectsArchivedTask(t *testing.T) {
+func TestSessionStartRejectsArchivedTask(t *testing.T) {
 	store := &fakeStore{archivedTask: true}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{})
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -1349,14 +1658,14 @@ func TestTaskStartRejectsArchivedTask(t *testing.T) {
 	}
 }
 
-func TestTaskStartRejectsUndeployedTask(t *testing.T) {
+func TestSessionStartRejectsUndeployedTask(t *testing.T) {
 	store := &fakeStore{currentDeploymentMissing: true}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{})
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -1414,6 +1723,7 @@ func TestTopLevelTaskSessionRouteRejectsSessionActor(t *testing.T) {
 
 func TestCloseTaskSessionRejectsActiveRun(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
 		taskSession: db.TaskSession{
 			ID:                  sessionID,
@@ -1424,12 +1734,19 @@ func TestCloseTaskSessionRejectsActiveRun(t *testing.T) {
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
 			Status:              db.TaskSessionStatusOpen,
-			CurrentRunID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			CurrentRunID:        runID,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
 			TerminalReason:      []byte(`{}`),
 			CreatedAt:           testTime(),
 			UpdatedAt:           testTime(),
+		},
+		run: db.Run{
+			ID:            runID,
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			Status:        db.RunStatusRunning,
 		},
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
@@ -1447,6 +1764,53 @@ func TestCloseTaskSessionRejectsActiveRun(t *testing.T) {
 	}
 }
 
+func TestCloseTaskSessionAllowsTerminalCurrentRun(t *testing.T) {
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &fakeStore{
+		taskSession: db.TaskSession{
+			ID:                  sessionID,
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			TaskID:              "deploy",
+			InitialDeploymentID: testDeploymentID(),
+			ActiveDeploymentID:  testDeploymentID(),
+			Status:              db.TaskSessionStatusOpen,
+			CurrentRunID:        runID,
+			Metadata:            []byte(`{}`),
+			Tags:                []string{},
+			TerminalReason:      []byte(`{}`),
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
+		},
+		run: db.Run{
+			ID:            runID,
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			Status:        db.RunStatusSucceeded,
+		},
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/close", strings.NewReader(`{"reason":"done"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.TaskSessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != string(db.TaskSessionStatusClosed) || response.CurrentRunID != pgvalue.MustUUIDValue(runID).String() {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
 func TestGetTaskSessionUnwrapsStoredResult(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
@@ -1458,7 +1822,7 @@ func TestGetTaskSessionUnwrapsStoredResult(t *testing.T) {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusCompleted,
+			Status:              db.TaskSessionStatusClosed,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
 			Result:              []byte(`{"ok":true,"value":{"answer":42}}`),
@@ -1508,7 +1872,110 @@ func TestCloseTaskSessionReportsActiveRunAfterAttachRace(t *testing.T) {
 			CreatedAt:           testTime(),
 			UpdatedAt:           testTime(),
 		},
+		run: db.Run{
+			ID:            runID,
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			Status:        db.RunStatusRunning,
+		},
 		closeTaskSessionAttachesRun: runID,
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/close", strings.NewReader(`{"reason":"done"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	requireErrorCode(t, rec.Body.Bytes(), "close_run_active")
+}
+
+func TestCloseTaskSessionRetriesAfterTerminalAttachRace(t *testing.T) {
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &fakeStore{
+		taskSession: db.TaskSession{
+			ID:                  sessionID,
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			TaskID:              "deploy",
+			InitialDeploymentID: testDeploymentID(),
+			ActiveDeploymentID:  testDeploymentID(),
+			Status:              db.TaskSessionStatusOpen,
+			Metadata:            []byte(`{}`),
+			Tags:                []string{},
+			TerminalReason:      []byte(`{}`),
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
+		},
+		run: db.Run{
+			ID:            runID,
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			Status:        db.RunStatusSucceeded,
+		},
+		closeTaskSessionAttachesRun: runID,
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/close", strings.NewReader(`{"reason":"done"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.TaskSessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != string(db.TaskSessionStatusClosed) || response.CurrentRunID != pgvalue.MustUUIDValue(runID).String() {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestCloseTaskSessionReportsActiveRunAfterRetryAttachRace(t *testing.T) {
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	terminalRunID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	activeRunID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &fakeStore{
+		taskSession: db.TaskSession{
+			ID:                  sessionID,
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			TaskID:              "deploy",
+			InitialDeploymentID: testDeploymentID(),
+			ActiveDeploymentID:  testDeploymentID(),
+			Status:              db.TaskSessionStatusOpen,
+			Metadata:            []byte(`{}`),
+			Tags:                []string{},
+			TerminalReason:      []byte(`{}`),
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
+		},
+		run: db.Run{
+			ID:            terminalRunID,
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			Status:        db.RunStatusSucceeded,
+		},
+		closeTaskSessionAttachesRun: terminalRunID,
+		closeTaskSessionRetryRun: db.Run{
+			ID:            activeRunID,
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			Status:        db.RunStatusRunning,
+		},
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/close", strings.NewReader(`{"reason":"done"}`))
@@ -1851,6 +2318,7 @@ type fakeListRunsParams struct {
 type fakeStore struct {
 	db.Querier
 	createRun                                   db.CreateScopedRunParams
+	createRunStatus                             db.RunStatus
 	listRuns                                    fakeListRunsParams
 	listScopedRuns                              db.ListScopedRunSummariesParams
 	countScopedRuns                             db.CountScopedRunsByStatusParams
@@ -1929,12 +2397,16 @@ type fakeStore struct {
 	createdWorkspaceOperationIdempotencies      []db.EnsureWorkspaceOperationIdempotencyParams
 	getTaskSessionByExternalIDMisses            int
 	workspace                                   db.Workspace
-	attachedWorkspace                           db.GetWorkspaceForTaskStartRow
+	attachedWorkspace                           db.GetWorkspaceForSessionStartRow
 	createWorkspaceCalls                        int
-	startIdempotency                            db.GetTaskStartIdempotencyRow
+	startIdempotency                            db.GetSessionStartIdempotencyRow
 	taskSessionRuns                             []db.TaskSessionRun
+	streamRecord                                db.StreamRecord
+	taskSessionRunRequest                       db.TaskSessionRunRequest
+	deploymentTaskRow                           db.GetDeploymentTaskRow
 	scheduleTriggerNotCurrent                   bool
 	closeTaskSessionAttachesRun                 pgtype.UUID
+	closeTaskSessionRetryRun                    db.Run
 }
 
 type fakeControlTransaction struct{}
@@ -1975,6 +2447,10 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 	}
 	f.createRun = arg
 	now := testTime()
+	status := f.createRunStatus
+	if status == "" {
+		status = db.RunStatusQueued
+	}
 	f.run = db.Run{
 		ID:                    arg.ID,
 		OrgID:                 arg.OrgID,
@@ -1989,7 +2465,7 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		CliVersion:            arg.CliVersion,
 		TaskSessionID:         arg.TaskSessionID,
 		TaskID:                arg.TaskID,
-		Status:                db.RunStatusQueued,
+		Status:                status,
 		ExecutionStatus:       db.RunExecutionStatusQueued,
 		Payload:               arg.Payload,
 		QueueName:             arg.QueueName,
@@ -2321,7 +2797,7 @@ func (f *fakeStore) CompleteWorkspaceOperationIdempotency(_ context.Context, arg
 	return db.WorkspaceOperationIdempotency{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) GetWorkspaceForTaskStart(_ context.Context, arg db.GetWorkspaceForTaskStartParams) (db.GetWorkspaceForTaskStartRow, error) {
+func (f *fakeStore) GetWorkspaceForSessionStart(_ context.Context, arg db.GetWorkspaceForSessionStartParams) (db.GetWorkspaceForSessionStartRow, error) {
 	if f.attachedWorkspace.ID.Valid &&
 		f.attachedWorkspace.OrgID == arg.OrgID &&
 		f.attachedWorkspace.ProjectID == arg.ProjectID &&
@@ -2329,7 +2805,7 @@ func (f *fakeStore) GetWorkspaceForTaskStart(_ context.Context, arg db.GetWorksp
 		f.attachedWorkspace.ID == arg.WorkspaceID {
 		return f.attachedWorkspace, nil
 	}
-	return db.GetWorkspaceForTaskStartRow{}, pgx.ErrNoRows
+	return db.GetWorkspaceForSessionStartRow{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) EnsureWorkspaceMaterializationRequested(_ context.Context, arg db.EnsureWorkspaceMaterializationRequestedParams) (db.EnsureWorkspaceMaterializationRequestedRow, error) {
@@ -2385,13 +2861,94 @@ func (f *fakeStore) CreateTaskSessionRun(_ context.Context, arg db.CreateTaskSes
 		DeploymentID:  arg.DeploymentID,
 		PreviousRunID: arg.PreviousRunID,
 		TurnIndex:     arg.TurnIndex,
+		Reason:        arg.Reason,
 		CreatedAt:     testTime(),
 	}
 	f.taskSessionRuns = append(f.taskSessionRuns, row)
 	return row, nil
 }
 
-func (f *fakeStore) GetTaskStartIdempotency(_ context.Context, arg db.GetTaskStartIdempotencyParams) (db.GetTaskStartIdempotencyRow, error) {
+func (f *fakeStore) GetTaskSessionRunByRunID(_ context.Context, arg db.GetTaskSessionRunByRunIDParams) (db.TaskSessionRun, error) {
+	for _, row := range f.taskSessionRuns {
+		if row.OrgID == arg.OrgID &&
+			row.ProjectID == arg.ProjectID &&
+			row.EnvironmentID == arg.EnvironmentID &&
+			row.TaskSessionID == arg.TaskSessionID &&
+			row.RunID == arg.RunID {
+			return row, nil
+		}
+	}
+	return db.TaskSessionRun{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) GetStreamRecord(_ context.Context, arg db.GetStreamRecordParams) (db.StreamRecord, error) {
+	if f.streamRecord.ID.Valid &&
+		f.streamRecord.OrgID == arg.OrgID &&
+		f.streamRecord.ProjectID == arg.ProjectID &&
+		f.streamRecord.EnvironmentID == arg.EnvironmentID &&
+		f.streamRecord.ID == arg.ID {
+		return f.streamRecord, nil
+	}
+	return db.StreamRecord{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ClaimDueTaskSessionRunRequests(_ context.Context, _ db.ClaimDueTaskSessionRunRequestsParams) ([]db.TaskSessionRunRequest, error) {
+	if !f.taskSessionRunRequest.ID.Valid {
+		return nil, nil
+	}
+	f.taskSessionRunRequest.Status = "claimed"
+	f.taskSessionRunRequest.Attempts++
+	return []db.TaskSessionRunRequest{f.taskSessionRunRequest}, nil
+}
+
+func (f *fakeStore) ReleaseTaskSessionRunRequestForRetry(_ context.Context, arg db.ReleaseTaskSessionRunRequestForRetryParams) (db.TaskSessionRunRequest, error) {
+	if f.taskSessionRunRequest.ID != arg.ID {
+		return db.TaskSessionRunRequest{}, pgx.ErrNoRows
+	}
+	f.taskSessionRunRequest.Status = "accepted"
+	f.taskSessionRunRequest.LastError = arg.LastError
+	f.taskSessionRunRequest.ErrorMessage = arg.LastError
+	f.taskSessionRunRequest.ClaimedAt = pgtype.Timestamptz{}
+	f.taskSessionRunRequest.ClaimExpiresAt = pgtype.Timestamptz{}
+	f.taskSessionRunRequest.ClaimOwner = ""
+	return f.taskSessionRunRequest, nil
+}
+
+func (f *fakeStore) MarkTaskSessionRunRequestCreated(_ context.Context, arg db.MarkTaskSessionRunRequestCreatedParams) (db.TaskSessionRunRequest, error) {
+	if f.taskSessionRunRequest.ID != arg.ID {
+		return db.TaskSessionRunRequest{}, pgx.ErrNoRows
+	}
+	f.taskSessionRunRequest.Status = "created"
+	f.taskSessionRunRequest.RunID = arg.RunID
+	f.taskSessionRunRequest.LastError = ""
+	f.taskSessionRunRequest.ErrorMessage = ""
+	f.taskSessionRunRequest.ClaimedAt = pgtype.Timestamptz{}
+	f.taskSessionRunRequest.ClaimExpiresAt = pgtype.Timestamptz{}
+	f.taskSessionRunRequest.ClaimOwner = ""
+	return f.taskSessionRunRequest, nil
+}
+
+func (f *fakeStore) MarkTaskSessionRunRequestSkipped(_ context.Context, arg db.MarkTaskSessionRunRequestSkippedParams) (db.TaskSessionRunRequest, error) {
+	if f.taskSessionRunRequest.ID != arg.ID {
+		return db.TaskSessionRunRequest{}, pgx.ErrNoRows
+	}
+	f.taskSessionRunRequest.Status = "skipped"
+	f.taskSessionRunRequest.LastError = arg.Reason
+	f.taskSessionRunRequest.ErrorMessage = arg.Reason
+	return f.taskSessionRunRequest, nil
+}
+
+func (f *fakeStore) MarkTaskSessionRunRequestFailed(_ context.Context, arg db.MarkTaskSessionRunRequestFailedParams) (db.TaskSessionRunRequest, error) {
+	if f.taskSessionRunRequest.ID != arg.ID {
+		return db.TaskSessionRunRequest{}, pgx.ErrNoRows
+	}
+	f.taskSessionRunRequest.Status = "failed"
+	f.taskSessionRunRequest.LastError = arg.Reason
+	f.taskSessionRunRequest.ErrorMessage = arg.Reason
+	return f.taskSessionRunRequest, nil
+}
+
+func (f *fakeStore) GetSessionStartIdempotency(_ context.Context, arg db.GetSessionStartIdempotencyParams) (db.GetSessionStartIdempotencyRow, error) {
 	if f.startIdempotency.ID.Valid &&
 		f.startIdempotency.OrgID == arg.OrgID &&
 		f.startIdempotency.ProjectID == arg.ProjectID &&
@@ -2401,11 +2958,11 @@ func (f *fakeStore) GetTaskStartIdempotency(_ context.Context, arg db.GetTaskSta
 		(!f.startIdempotency.ExpiresAt.Valid || f.startIdempotency.ExpiresAt.Time.After(time.Now())) {
 		return f.startIdempotency, nil
 	}
-	return db.GetTaskStartIdempotencyRow{}, pgx.ErrNoRows
+	return db.GetSessionStartIdempotencyRow{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) CreateTaskStartIdempotency(_ context.Context, arg db.CreateTaskStartIdempotencyParams) (db.TaskStartIdempotency, error) {
-	f.startIdempotency = db.GetTaskStartIdempotencyRow{
+func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.CreateSessionStartIdempotencyParams) (db.SessionStartIdempotency, error) {
+	f.startIdempotency = db.GetSessionStartIdempotencyRow{
 		ID:                         arg.ID,
 		OrgID:                      arg.OrgID,
 		ProjectID:                  arg.ProjectID,
@@ -2436,8 +2993,6 @@ func (f *fakeStore) CreateTaskStartIdempotency(_ context.Context, arg db.CreateT
 		SessionResult:              f.taskSession.Result,
 		SessionTerminalReason:      f.taskSession.TerminalReason,
 		SessionExpiresAt:           f.taskSession.ExpiresAt,
-		SessionCompletedAt:         f.taskSession.CompletedAt,
-		SessionFailedAt:            f.taskSession.FailedAt,
 		SessionCancelledAt:         f.taskSession.CancelledAt,
 		SessionCreatedAt:           f.taskSession.CreatedAt,
 		SessionUpdatedAt:           f.taskSession.UpdatedAt,
@@ -2463,7 +3018,7 @@ func (f *fakeStore) CreateTaskStartIdempotency(_ context.Context, arg db.CreateT
 		RunCreatedAt:               f.run.CreatedAt,
 		RunUpdatedAt:               f.run.UpdatedAt,
 	}
-	return db.TaskStartIdempotency{
+	return db.SessionStartIdempotency{
 		ID:                 arg.ID,
 		OrgID:              arg.OrgID,
 		ProjectID:          arg.ProjectID,
@@ -2479,7 +3034,7 @@ func (f *fakeStore) CreateTaskStartIdempotency(_ context.Context, arg db.CreateT
 	}, nil
 }
 
-func (f *fakeStore) DeleteExpiredTaskStartIdempotency(_ context.Context, arg db.DeleteExpiredTaskStartIdempotencyParams) error {
+func (f *fakeStore) DeleteExpiredSessionStartIdempotency(_ context.Context, arg db.DeleteExpiredSessionStartIdempotencyParams) error {
 	if f.startIdempotency.ID.Valid &&
 		f.startIdempotency.OrgID == arg.OrgID &&
 		f.startIdempotency.ProjectID == arg.ProjectID &&
@@ -2488,12 +3043,12 @@ func (f *fakeStore) DeleteExpiredTaskStartIdempotency(_ context.Context, arg db.
 		f.startIdempotency.IdempotencyKey == arg.IdempotencyKey &&
 		f.startIdempotency.ExpiresAt.Valid &&
 		!f.startIdempotency.ExpiresAt.Time.After(time.Now()) {
-		f.startIdempotency = db.GetTaskStartIdempotencyRow{}
+		f.startIdempotency = db.GetSessionStartIdempotencyRow{}
 	}
 	return nil
 }
 
-func (f *fakeStore) TouchTaskStartIdempotency(context.Context, db.TouchTaskStartIdempotencyParams) error {
+func (f *fakeStore) TouchSessionStartIdempotency(context.Context, db.TouchSessionStartIdempotencyParams) error {
 	return nil
 }
 
@@ -2561,7 +3116,6 @@ func (f *fakeStore) GetTaskSessionByExternalID(_ context.Context, arg db.GetTask
 		f.taskSession.OrgID == arg.OrgID &&
 		f.taskSession.ProjectID == arg.ProjectID &&
 		f.taskSession.EnvironmentID == arg.EnvironmentID &&
-		f.taskSession.TaskID == arg.TaskID &&
 		f.taskSession.ExternalID == arg.ExternalID {
 		return f.taskSession, nil
 	}
@@ -2593,13 +3147,23 @@ func (f *fakeStore) CloseTaskSession(_ context.Context, arg db.CloseTaskSessionP
 		f.closeTaskSessionAttachesRun = pgtype.UUID{}
 		return db.TaskSession{}, pgx.ErrNoRows
 	}
+	if f.closeTaskSessionRetryRun.ID.Valid {
+		f.taskSession.CurrentRunID = f.closeTaskSessionRetryRun.ID
+		f.run = f.closeTaskSessionRetryRun
+		f.closeTaskSessionRetryRun = db.Run{}
+		return db.TaskSession{}, pgx.ErrNoRows
+	}
 	if f.taskSession.ID.Valid &&
 		f.taskSession.OrgID == arg.OrgID &&
 		f.taskSession.ProjectID == arg.ProjectID &&
 		f.taskSession.EnvironmentID == arg.EnvironmentID &&
 		f.taskSession.ID == arg.ID &&
-		f.taskSession.Status == db.TaskSessionStatusOpen &&
-		!f.taskSession.CurrentRunID.Valid {
+		f.taskSession.Status == db.TaskSessionStatusOpen {
+		if f.taskSession.CurrentRunID.Valid {
+			if f.run.ID != f.taskSession.CurrentRunID || !runStatusTerminal(f.run.Status) {
+				return db.TaskSession{}, pgx.ErrNoRows
+			}
+		}
 		f.taskSession.Status = db.TaskSessionStatusClosed
 		f.taskSession.ClosedAt = testTime()
 		f.taskSession.ClosedReason = arg.Reason

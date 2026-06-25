@@ -8,7 +8,7 @@ app owns email delivery, sender identity, and recipient routing.
 
 ```sh
 helmr deploy examples/resend-email-approval
-helmr task start resend-email-approval --json \
+helmr session start resend-email-approval --json \
   --payload-json '{
     "release": "helmr-web-2026-06-14",
     "summary": "Promote the validated staging build to production.",

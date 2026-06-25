@@ -19,10 +19,10 @@ import {
   type TaskOutput,
   type TaskRunOptions,
   type TaskSecrets,
-  type TaskStartPayload,
+  type SessionStartPayload,
   type WaitHandle,
 } from "../internal"
-import { taskStartIdempotencyRequestFields } from "../idempotency"
+import { sessionStartIdempotencyRequestFields } from "../idempotency"
 import { readOptionalMaxDurationSeconds } from "../schema/task"
 import { AuthError, TimeoutError, UnsupportedTransportError } from "./errors"
 import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER, HELMR_SDK_VERSION, HELMR_SDK_VERSION_HEADER } from "../version"
@@ -57,36 +57,36 @@ export interface HelmrClientOptions {
   readonly apiKey?: string
 }
 
-export type TaskStartOptions<TSecrets extends SecretDecls> = TaskRunOptions<TSecrets> & {
+export type SessionStartOptions<TSecrets extends SecretDecls> = TaskRunOptions<TSecrets> & {
   readonly projectId?: string
   readonly environmentId?: string
   readonly externalId?: string
   readonly workspaceId?: string
   readonly expiresAt?: string | Date
 }
-export type TaskStartAndWaitOptions<TSecrets extends SecretDecls> = TaskStartOptions<TSecrets> & {
+export type SessionStartAndWaitOptions<TSecrets extends SecretDecls> = SessionStartOptions<TSecrets> & {
   readonly timeoutSeconds?: number
 }
 
-export type DirectTaskStartArgs<TTask extends AnyTask> =
-  [TaskStartPayload<TTask>] extends [NoPayload]
-    ? [opts: TaskStartOptions<TaskSecrets<TTask>>]
-    : [payload: TaskStartPayload<TTask>, opts: TaskStartOptions<TaskSecrets<TTask>>]
+export type DirectSessionStartArgs<TTask extends AnyTask> =
+  [SessionStartPayload<TTask>] extends [NoPayload]
+    ? [opts: SessionStartOptions<TaskSecrets<TTask>>]
+    : [payload: SessionStartPayload<TTask>, opts: SessionStartOptions<TaskSecrets<TTask>>]
 
-export type TasksStartArgs<TTask extends AnyTask> =
-  [TaskStartPayload<TTask>] extends [NoPayload]
-    ? [id: string, opts: TaskStartOptions<TaskSecrets<TTask>>]
-    : [id: string, payload: TaskStartPayload<TTask>, opts: TaskStartOptions<TaskSecrets<TTask>>]
+export type SessionsStartArgs<TTask extends AnyTask> =
+  [SessionStartPayload<TTask>] extends [NoPayload]
+    ? [id: string, opts: SessionStartOptions<TaskSecrets<TTask>>]
+    : [id: string, payload: SessionStartPayload<TTask>, opts: SessionStartOptions<TaskSecrets<TTask>>]
 
-export type TasksStartAndWaitArgs<TTask extends AnyTask> =
-  [TaskStartPayload<TTask>] extends [NoPayload]
-    ? [id: string, opts: TaskStartAndWaitOptions<TaskSecrets<TTask>>]
-    : [id: string, payload: TaskStartPayload<TTask>, opts: TaskStartAndWaitOptions<TaskSecrets<TTask>>]
+export type SessionsStartAndWaitArgs<TTask extends AnyTask> =
+  [SessionStartPayload<TTask>] extends [NoPayload]
+    ? [id: string, opts: SessionStartAndWaitOptions<TaskSecrets<TTask>>]
+    : [id: string, payload: SessionStartPayload<TTask>, opts: SessionStartAndWaitOptions<TaskSecrets<TTask>>]
 
-export const startTaskClientMethod = Symbol.for("helmr.sdk.client.startTask")
+export const startSessionClientMethod = Symbol.for("helmr.sdk.client.startSession")
 export const tokenClientMethod = Symbol.for("helmr.sdk.client.token")
 
-export type TaskSessionStatus = "open" | "completed" | "failed" | "closed" | "cancelled" | "expired"
+export type TaskSessionStatus = "open" | "closed" | "cancelled"
 
 export interface TaskSessionHandle<TOutput = unknown> {
   readonly id: string
@@ -94,10 +94,17 @@ export interface TaskSessionHandle<TOutput = unknown> {
   readonly currentRunId: string | null
 }
 
-export interface TaskStartResult<TOutput = unknown> {
+export interface SessionStartResult<TOutput = unknown> {
   readonly session: TaskSessionSnapshot<TOutput>
   readonly run: RunHandle<TOutput>
   readonly isCached: boolean
+}
+
+export interface SessionStartAndWaitResult<TOutput = unknown> {
+  readonly session: TaskSessionSnapshot<TOutput>
+  readonly run: RunSnapshot<TOutput>
+  readonly isCached: boolean
+  readonly timedOut: boolean
 }
 
 export interface TaskSessionSnapshot<TOutput = unknown> {
@@ -134,13 +141,6 @@ export interface TaskSessionListOptions {
 export interface TaskSessionRetrieveOptions {
   readonly projectId?: string
   readonly environmentId?: string
-  readonly signal?: AbortSignal
-}
-
-export interface TaskSessionWaitOptions {
-  readonly projectId?: string
-  readonly environmentId?: string
-  readonly timeoutSeconds?: number
   readonly signal?: AbortSignal
 }
 
@@ -259,7 +259,6 @@ export interface SessionOutputStreamApi<TPayload = unknown, TInput = TPayload> {
 export interface OpenTaskSessionApi<TOutput = unknown> {
   readonly id: string
   retrieve(opts?: TaskSessionRetrieveOptions): Promise<TaskSessionSnapshot<TOutput>>
-  wait(opts?: TaskSessionWaitOptions): Promise<TaskSessionSnapshot<TOutput>>
   close(opts?: TaskSessionCloseOptions): Promise<TaskSessionSnapshot<TOutput>>
   cancel(opts?: TaskSessionCancelOptions): Promise<TaskSessionSnapshot<TOutput>>
   runs(opts?: TaskSessionRunsOptions): Promise<TaskSessionRun[]>
@@ -779,34 +778,31 @@ export class HelmrClient {
     }
   }
 
-  readonly tasks = {
+  readonly sessions = {
     start: async <TTask extends AnyTask>(
-      ...args: TasksStartArgs<TTask>
-    ): Promise<TaskStartResult<TaskOutput<TTask>>> => {
+      ...args: SessionsStartArgs<TTask>
+    ): Promise<SessionStartResult<TaskOutput<TTask>>> => {
       const taskId = args[0]
       const hasPayload = args.length === 3
       const payload = hasPayload ? args[1] : undefined
-      const opts = (hasPayload ? args[2] : args[1]) as TaskStartOptions<TaskSecrets<TTask>>
+      const opts = (hasPayload ? args[2] : args[1]) as SessionStartOptions<TaskSecrets<TTask>>
       if (hasPayload && payload === undefined) {
         throw new Error(`task ${JSON.stringify(taskId)} requires payload`)
       }
-      return await this.#startTask(taskId, payload, opts)
+      return await this.#startSession(taskId, payload, opts)
     },
     startAndWait: async <TTask extends AnyTask>(
-      ...args: TasksStartAndWaitArgs<TTask>
-    ): Promise<TaskSessionSnapshot<TaskOutput<TTask>>> => {
+      ...args: SessionsStartAndWaitArgs<TTask>
+    ): Promise<SessionStartAndWaitResult<TaskOutput<TTask>>> => {
       const taskId = args[0]
       const hasPayload = args.length === 3
       const payload = hasPayload ? args[1] : undefined
-      const opts = (hasPayload ? args[2] : args[1]) as TaskStartAndWaitOptions<TaskSecrets<TTask>>
+      const opts = (hasPayload ? args[2] : args[1]) as SessionStartAndWaitOptions<TaskSecrets<TTask>>
       if (hasPayload && payload === undefined) {
         throw new Error(`task ${JSON.stringify(taskId)} requires payload`)
       }
-      return await this.#startTaskAndWait(taskId, payload, opts)
+      return await this.#startSessionAndWait(taskId, payload, opts)
     },
-  }
-
-  readonly sessions = {
     open: <TOutput = unknown>(idOrHandle: string | TaskSessionHandle<TOutput>): OpenTaskSessionApi<TOutput> => {
       return this.#openSession<TOutput>(sessionId(idOrHandle))
     },
@@ -815,12 +811,6 @@ export class HelmrClient {
       opts: TaskSessionRetrieveOptions = {},
     ): Promise<TaskSessionSnapshot<TOutput>> => {
       return await this.#openSession<TOutput>(sessionId(idOrHandle)).retrieve(opts)
-    },
-    wait: async <TOutput = unknown>(
-      idOrHandle: string | TaskSessionHandle<TOutput>,
-      opts: TaskSessionWaitOptions = {},
-    ): Promise<TaskSessionSnapshot<TOutput>> => {
-      return await this.#openSession<TOutput>(sessionId(idOrHandle)).wait(opts)
     },
     list: async (opts: TaskSessionListOptions = {}): Promise<TaskSessionSnapshot[]> => {
       const response = await this.#json<ListTaskSessionsResponse>(
@@ -911,13 +901,13 @@ export class HelmrClient {
     },
   }
 
-  async [startTaskClientMethod]<TTask extends AnyTask>(
+  async [startSessionClientMethod]<TTask extends AnyTask>(
     task: TTask,
-    ...args: DirectTaskStartArgs<TTask>
-  ): Promise<TaskStartResult<TaskOutput<TTask>>> {
+    ...args: DirectSessionStartArgs<TTask>
+  ): Promise<SessionStartResult<TaskOutput<TTask>>> {
     const hasPayload = task.payload !== undefined
     const payload = hasPayload ? args[0] : undefined
-    const opts = (hasPayload ? args[1] : args[0]) as TaskStartOptions<TaskSecrets<TTask>>
+    const opts = (hasPayload ? args[1] : args[0]) as SessionStartOptions<TaskSecrets<TTask>>
     if (task.payload !== undefined) {
       if (payload === undefined) {
         throw new Error(`task ${JSON.stringify(task.id)} requires payload`)
@@ -926,7 +916,7 @@ export class HelmrClient {
     } else if (args.length > 1) {
       throw new Error(`task ${JSON.stringify(task.id)} does not accept payload`)
     }
-    return await this.#startTask(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration))
+    return await this.#startSession(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration))
   }
 
   async [tokenClientMethod](request: TokenCreateRequest): Promise<Token>
@@ -1005,15 +995,15 @@ export class HelmrClient {
     }
   }
 
-  async #startTask<TTask extends AnyTask>(
+  async #startSession<TTask extends AnyTask>(
     taskId: string,
     payload: unknown,
-    opts: TaskStartOptions<TaskSecrets<TTask>>,
+    opts: SessionStartOptions<TaskSecrets<TTask>>,
     maxDurationSeconds?: number,
-  ): Promise<TaskStartResult<TaskOutput<TTask>>> {
+  ): Promise<SessionStartResult<TaskOutput<TTask>>> {
     validateRetryPolicy(opts.retry, "retry")
-    const body = taskStartBody(payload, opts, maxDurationSeconds)
-    const path = taskStartPath(taskId, opts, "start")
+    const body = sessionStartBody(taskId, payload, opts, maxDurationSeconds)
+    const path = sessionStartPath(opts, "start")
     const startedAt = Date.now()
     for (;;) {
       const response = await this.#fetch(path, {
@@ -1023,14 +1013,14 @@ export class HelmrClient {
         ...requestSignal(opts.signal),
       })
       if (response.status !== 202) {
-        const start = (await response.json()) as TaskStartResponse
-        return taskStartFromResponse<TaskOutput<TTask>>(start)
+        const start = (await response.json()) as SessionStartResponse
+        return sessionStartFromResponse<TaskOutput<TTask>>(start)
       }
       const pendingBody = await response.text()
-      if (!taskStartPendingResponse(pendingBody)) {
+      if (!sessionStartPendingResponse(pendingBody)) {
         throw new HelmrApiError(response.status, pendingBody)
       }
-      const retryDelay = taskStartPendingRetryDelay(response)
+      const retryDelay = sessionStartPendingRetryDelay(response)
       if (Date.now() - startedAt + retryDelay > TASK_START_PENDING_MAX_WAIT_MS) {
         throw new HelmrApiError(response.status, pendingBody)
       }
@@ -1038,18 +1028,18 @@ export class HelmrClient {
     }
   }
 
-  async #startTaskAndWait<TTask extends AnyTask>(
+  async #startSessionAndWait<TTask extends AnyTask>(
     taskId: string,
     payload: unknown,
-    opts: TaskStartAndWaitOptions<TaskSecrets<TTask>>,
+    opts: SessionStartAndWaitOptions<TaskSecrets<TTask>>,
     maxDurationSeconds?: number,
-  ): Promise<TaskSessionSnapshot<TaskOutput<TTask>>> {
+  ): Promise<SessionStartAndWaitResult<TaskOutput<TTask>>> {
     validateRetryPolicy(opts.retry, "retry")
     const body = {
-      ...taskStartBody(payload, opts, maxDurationSeconds),
+      ...sessionStartBody(taskId, payload, opts, maxDurationSeconds),
       ...(opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }),
     }
-    const path = taskStartPath(taskId, opts, "start-and-wait")
+    const path = sessionStartPath(opts, "start-and-wait")
     const startedAt = Date.now()
     for (;;) {
       const response = await this.#fetch(path, {
@@ -1059,13 +1049,13 @@ export class HelmrClient {
         ...requestSignal(opts.signal),
       })
       if (response.status !== 202) {
-        return taskSessionFromResponse<TaskOutput<TTask>>((await response.json()) as TaskSessionResponse)
+        return sessionStartAndWaitFromResponse<TaskOutput<TTask>>((await response.json()) as SessionStartResponse)
       }
       const pendingBody = await response.text()
-      if (!taskStartPendingResponse(pendingBody)) {
+      if (!sessionStartPendingResponse(pendingBody)) {
         throw new HelmrApiError(response.status, pendingBody)
       }
-      const retryDelay = taskStartPendingRetryDelay(response)
+      const retryDelay = sessionStartPendingRetryDelay(response)
       if (Date.now() - startedAt + retryDelay > TASK_START_PENDING_MAX_WAIT_MS) {
         throw new HelmrApiError(response.status, pendingBody)
       }
@@ -1389,18 +1379,6 @@ export class HelmrClient {
         const response = await this.#json<TaskSessionResponse>(
           taskSessionResourcePath(id, opts, ""),
           requestSignal(opts.signal),
-        )
-        return taskSessionFromResponse<TOutput>(response)
-      },
-      wait: async (opts = {}) => {
-        const response = await this.#json<TaskSessionResponse>(
-          taskSessionResourcePath(id, opts, "/wait"),
-          {
-            method: "POST",
-            body: JSON.stringify(taskSessionWaitBody(opts)),
-            headers: { "content-type": "application/json" },
-            ...requestSignal(opts.signal),
-          },
         )
         return taskSessionFromResponse<TOutput>(response)
       },
@@ -1958,10 +1936,11 @@ export interface ListRunsResponse {
   readonly runs: readonly RunResponse[]
 }
 
-interface TaskStartResponse {
+interface SessionStartResponse {
   readonly session: TaskSessionResponse
   readonly run: RunResponse
   readonly is_cached?: boolean
+  readonly timed_out?: boolean
 }
 
 interface TaskSessionResponse {
@@ -2279,11 +2258,20 @@ function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSna
   })
 }
 
-function taskStartFromResponse<TOutput = unknown>(response: TaskStartResponse): TaskStartResult<TOutput> {
+function sessionStartFromResponse<TOutput = unknown>(response: SessionStartResponse): SessionStartResult<TOutput> {
   return {
     session: taskSessionFromResponse<TOutput>(response.session),
     run: runHandle<TOutput>(response.run.id, response.run.task_id),
     isCached: response.is_cached ?? false,
+  }
+}
+
+function sessionStartAndWaitFromResponse<TOutput = unknown>(response: SessionStartResponse): SessionStartAndWaitResult<TOutput> {
+  return {
+    session: taskSessionFromResponse<TOutput>(response.session),
+    run: runResponseToSnapshot<TOutput>(response.run),
+    isCached: response.is_cached ?? false,
+    timedOut: response.timed_out ?? false,
   }
 }
 
@@ -2351,12 +2339,16 @@ function sessionId<TOutput>(idOrHandle: string | TaskSessionHandle<TOutput>): st
   return typeof idOrHandle === "string" ? idOrHandle : idOrHandle.id
 }
 
-function taskStartBody(
+function sessionStartBody(
+  taskId: string,
   payload: unknown,
-  opts: TaskStartOptions<SecretDecls>,
+  opts: SessionStartOptions<SecretDecls>,
   maxDurationSeconds?: number,
 ): Record<string, unknown> {
-  const runOptions = {
+  return {
+    task_id: taskId,
+    ...(payload === undefined ? {} : { payload }),
+    ...(opts.externalId === undefined ? {} : { external_id: opts.externalId }),
     ...(opts.queue === undefined ? {} : { queue: { name: opts.queue } }),
     ...(opts.concurrencyKey === undefined ? {} : { concurrency_key: opts.concurrencyKey }),
     ...(opts.priority === undefined ? {} : { priority: opts.priority }),
@@ -2367,34 +2359,22 @@ function taskStartBody(
     ...(opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") }),
     ...(opts.workspaceId === undefined ? {} : { workspace_id: opts.workspaceId }),
     ...(maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds }),
-    ...taskStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL),
-  }
-  return {
-    ...(payload === undefined ? {} : { payload }),
-    ...(opts.externalId === undefined ? {} : { external_id: opts.externalId }),
-    ...(Object.keys(runOptions).length === 0 ? {} : { options: runOptions }),
+    ...sessionStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL),
   }
 }
 
-function taskStartPath(
-  taskId: string,
+function sessionStartPath(
   opts: { readonly projectId?: string; readonly environmentId?: string },
   operation: "start" | "start-and-wait",
 ): string {
-  const encodedTaskId = encodeURIComponent(taskId)
   if (opts.projectId !== undefined || opts.environmentId !== undefined) {
     if (opts.projectId === undefined || opts.environmentId === undefined) {
       throw new Error("projectId and environmentId must be provided together")
     }
-    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/tasks/${encodedTaskId}/${operation}`
+    const base = `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/sessions`
+    return operation === "start" ? base : `${base}/start-and-wait`
   }
-  return `/api/tasks/${encodedTaskId}/${operation}`
-}
-
-function taskSessionWaitBody(opts: TaskSessionWaitOptions): Record<string, unknown> {
-  return {
-    ...(opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }),
-  }
+  return operation === "start" ? "/api/sessions" : "/api/sessions/start-and-wait"
 }
 
 function streamInputSendBody(data: unknown, opts: SessionInputSendOptions): Record<string, unknown> {
@@ -2998,7 +2978,7 @@ function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
   })
 }
 
-function taskStartPendingRetryDelay(response: Response): number {
+function sessionStartPendingRetryDelay(response: Response): number {
   const retryAfter = response.headers.get("retry-after")
   if (retryAfter === null) {
     return TASK_START_PENDING_DEFAULT_RETRY_MS
@@ -3021,7 +3001,7 @@ function taskStartPendingRetryDelay(response: Response): number {
   return TASK_START_PENDING_DEFAULT_RETRY_MS
 }
 
-function taskStartPendingResponse(body: string): boolean {
+function sessionStartPendingResponse(body: string): boolean {
   try {
     const decoded = JSON.parse(body) as { code?: unknown }
     return decoded.code === "idempotency_pending"

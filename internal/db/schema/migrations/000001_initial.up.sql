@@ -540,11 +540,8 @@ CREATE TYPE run_retry_decision_kind AS ENUM (
 
 CREATE TYPE task_session_status AS ENUM (
     'open',
-    'completed',
-    'failed',
     'closed',
-    'cancelled',
-    'expired'
+    'cancelled'
 );
 
 CREATE TYPE workspace_state AS ENUM (
@@ -1020,8 +1017,6 @@ CREATE TABLE task_sessions (
     workspace_id UUID NOT NULL,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     tags TEXT[] NOT NULL DEFAULT '{}'::text[],
-    completed_at TIMESTAMPTZ,
-    failed_at TIMESTAMPTZ,
     closed_at TIMESTAMPTZ,
     closed_reason TEXT NOT NULL DEFAULT '',
     cancelled_at TIMESTAMPTZ,
@@ -1171,6 +1166,7 @@ CREATE TABLE task_session_runs (
     deployment_id UUID NOT NULL,
     previous_run_id UUID,
     turn_index INTEGER NOT NULL CHECK (turn_index >= 0),
+    reason TEXT NOT NULL CHECK (reason IN ('initial', 'input')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     ended_at TIMESTAMPTZ,
     UNIQUE (org_id, task_session_id, run_id),
@@ -1189,7 +1185,7 @@ CREATE TABLE task_session_runs (
         ON DELETE SET NULL (previous_run_id)
 );
 
-CREATE TABLE task_start_idempotencies (
+CREATE TABLE session_start_idempotencies (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
@@ -1925,12 +1921,48 @@ CREATE TABLE stream_records (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, stream_id, sequence),
     UNIQUE (org_id, stream_id, id),
+    UNIQUE (org_id, project_id, environment_id, id),
     FOREIGN KEY (org_id, project_id, environment_id, stream_id, session_id, direction)
         REFERENCES streams(org_id, project_id, environment_id, id, session_id, direction)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id, public_access_token_id)
         REFERENCES public_access_tokens(org_id, project_id, environment_id, id)
         ON DELETE SET NULL (public_access_token_id)
+);
+
+CREATE TABLE task_session_run_requests (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    task_session_id UUID NOT NULL,
+    stream_record_id UUID NOT NULL,
+    stream_id UUID NOT NULL,
+    cause_kind TEXT NOT NULL CHECK (cause_kind = 'stream_record'),
+    status TEXT NOT NULL DEFAULT 'accepted' CHECK (status IN ('accepted', 'claimed', 'created', 'skipped', 'failed')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_error TEXT NOT NULL DEFAULT '',
+    claimed_at TIMESTAMPTZ,
+    claim_expires_at TIMESTAMPTZ,
+    claim_owner TEXT NOT NULL DEFAULT '',
+    run_id UUID,
+    error_message TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, project_id, environment_id, stream_record_id),
+    FOREIGN KEY (org_id, project_id, environment_id, task_session_id)
+        REFERENCES task_sessions(org_id, project_id, environment_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id, stream_record_id)
+        REFERENCES stream_records(org_id, project_id, environment_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id, stream_id)
+        REFERENCES streams(org_id, project_id, environment_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id, run_id)
+        REFERENCES runs(org_id, project_id, environment_id, id)
+        ON DELETE SET NULL (run_id)
 );
 
 ALTER TABLE runs
@@ -2716,12 +2748,14 @@ CREATE INDEX task_schedule_instances_environment_idx
 CREATE INDEX task_schedule_instances_index_due_idx
     ON task_schedule_instances (coalesce(retry_after, next_fire_at), id)
     WHERE active AND next_fire_at IS NOT NULL;
-CREATE UNIQUE INDEX task_sessions_external_id_idx ON task_sessions(org_id, project_id, environment_id, task_id, external_id)
+CREATE UNIQUE INDEX task_sessions_external_id_idx ON task_sessions(org_id, project_id, environment_id, external_id)
     WHERE external_id <> '';
 CREATE INDEX task_sessions_scope_status_updated_idx ON task_sessions(org_id, project_id, environment_id, status, updated_at DESC);
 CREATE INDEX task_sessions_tags_idx ON task_sessions USING GIN (tags);
-CREATE INDEX task_start_idempotencies_expiry_idx ON task_start_idempotencies(org_id, project_id, environment_id, expires_at);
+CREATE INDEX session_start_idempotencies_expiry_idx ON session_start_idempotencies(org_id, project_id, environment_id, expires_at);
 CREATE INDEX task_session_runs_timeline_idx ON task_session_runs(org_id, task_session_id, turn_index, created_at);
+CREATE INDEX task_session_run_requests_pending_idx ON task_session_run_requests(next_attempt_at, created_at)
+    WHERE status IN ('accepted', 'claimed');
 CREATE INDEX workspaces_state_idx ON workspaces(org_id, project_id, environment_id, state, updated_at DESC);
 CREATE INDEX workspaces_tags_idx ON workspaces USING GIN (tags);
 CREATE UNIQUE INDEX workspaces_external_id_idx ON workspaces(org_id, project_id, environment_id, external_id)

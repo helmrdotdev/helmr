@@ -43,7 +43,7 @@ import {
   type TaskWorkspace,
   type TaskOutput,
   type TaskPayload,
-  type TaskStartPayload,
+  type SessionStartPayload,
   type RuntimeTokenCreateOptions,
   type RuntimeTokenWaitOptions,
   type TokenWaitOptions,
@@ -86,10 +86,10 @@ export type {
   TaskSessionRun,
   TaskSessionSnapshot,
   TaskSessionStatus,
-  TaskSessionWaitOptions,
-  TaskStartAndWaitOptions,
-  TaskStartOptions,
-  TaskStartResult,
+  SessionStartAndWaitOptions,
+  SessionStartOptions,
+  SessionStartAndWaitResult,
+  SessionStartResult,
   TokenRef,
   TokenCompleteOptions,
   TokenCreateOptions,
@@ -142,7 +142,7 @@ import {
   type ScheduledTaskConfig,
   type ScheduledTaskPayload,
 } from "./schedules"
-import { getDefaultClient, tasks } from "./start"
+import { getDefaultClient, sessions } from "./start"
 
 type SchemaInput<TSchema> = TSchema extends PayloadSchema<infer TInput, any> ? TInput : never
 type SchemaOutput<TSchema> = TSchema extends PayloadSchema<any, infer TOutput> ? TOutput : never
@@ -171,7 +171,7 @@ export {
   type RunSummary,
   type SubscribeRunEventsOptions,
 } from "./runtime/run"
-export { defineConfig, idempotencyKeys, queue, sandbox, task, tasks }
+export { defineConfig, idempotencyKeys, queue, sandbox, task, sessions }
 export type {
   HelmrConfig,
   HelmrConfigInput,
@@ -183,7 +183,7 @@ export type {
   TaskQueueConfig,
   TaskOutput,
   TaskPayload,
-  TaskStartPayload,
+  SessionStartPayload,
   WaitHandle,
   WaitDelayHandle,
   WaitResult,

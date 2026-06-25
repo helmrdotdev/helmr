@@ -19,7 +19,7 @@ binding maps.
 
 ## TypeScript Runtime Client
 
-External TypeScript processes start tasks with `client.tasks.start()`. Starting a task creates or reuses a task session and returns both the session snapshot and the current run handle. Imported task definitions also expose `task.start()` as a local helper that validates payload before returning the same session-first start result.
+External TypeScript processes start tasks with `client.sessions.start()`. Starting a task creates or reuses a task session and returns both the session snapshot and the current run handle. Imported task definitions also expose `task.start()` as a local helper that validates payload before returning the same session-first start result.
 
 ```ts
 import { HelmrClient } from "@helmr/sdk"
@@ -30,15 +30,17 @@ const client = new HelmrClient({
   apiKey: process.env.HELMR_API_KEY,
 })
 
-const started = await client.tasks.start<typeof impl>(
+const started = await client.sessions.start<typeof impl>(
   "impl",
   { issue: 123 },
   {},
 )
 
-const session = await client.sessions.wait(started.session, {
-  timeoutSeconds: 10 * 60,
-})
+const completed = await client.sessions.startAndWait<typeof impl>(
+  "impl",
+  { issue: 124 },
+  { timeoutSeconds: 10 * 60 },
+)
 const current = await client.runs.retrieve(started.run)
 const logs = await client.runs.logs.retrieve(started.run)
 const events = await client.runs.events.list(started.run)
@@ -47,7 +49,7 @@ for await (const event of await client.runs.events.subscribe(started.run)) {
   console.log(event)
 }
 
-console.log(session.status, current.status, logs.stdout, events.length)
+console.log(completed.session.status, completed.run.status, current.status, logs.stdout, events.length)
 ```
 
 Tokens are the external completion primitive. Create a token in task code with `tokens.create()`, wait with the returned handle, and complete it from trusted server-side code or a userland bridge:
@@ -76,7 +78,7 @@ await client.tokens.complete(token.id, {
 
 ## API Reference
 
-### `POST /api/tasks/{task_id}/start`
+### `POST /api/sessions`
 
 `payload` is a JSON field for tasks that accept payload. Payload is audit data: Helmr persists it in plaintext in the `run.created` event, DB, and events stream. Do not put secret values (tokens, API keys, credentials, or PII) in payload; declare task secrets instead. Use payload for business context such as PR numbers, repo names, ticket ids, and other identifiers.
 

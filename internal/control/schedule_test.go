@@ -77,7 +77,7 @@ func TestCreateScheduleRejectsDeploymentSelection(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "deployment_id is not accepted for scheduled task starts") {
+	if !strings.Contains(rec.Body.String(), "deployment_id is not accepted for scheduled session starts") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }

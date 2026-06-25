@@ -574,7 +574,7 @@ const renderedFeatures = features.map((feature) => ({
     const codeRows = Array.from(document.querySelectorAll<HTMLElement>(".code-frame .cl"));
     const markIndex = codeRows.findIndex((row) => row.classList.contains("cl-mark"));
     const waitIndex = markIndex >= 0 ? Math.min(markIndex + 1, codeRows.length - 1) : -1;
-    let waitpointResolved = false;
+    let waitResolved = false;
     let runStarted = false;
     let executedUntil = -1;
     let sweepBusy = false;
@@ -585,7 +585,7 @@ const renderedFeatures = features.map((feature) => ({
         const row = codeRows[i];
         row.classList.add("cl-active");
         if (!reduceMotion) await sleep(36);
-        if (!(i === waitIndex && !waitpointResolved)) row.classList.remove("cl-active");
+        if (!(i === waitIndex && !waitResolved)) row.classList.remove("cl-active");
         row.classList.add("cl-done");
         executedUntil = i;
       }
@@ -594,8 +594,8 @@ const renderedFeatures = features.map((feature) => ({
 
     const maybeSweep = async () => {
       if (!runStarted || waitIndex < 0 || sweepBusy) return;
-      const target = waitpointResolved ? codeRows.length - 1 : waitIndex;
-      if (waitpointResolved) codeRows[waitIndex]?.classList.remove("cl-active");
+      const target = waitResolved ? codeRows.length - 1 : waitIndex;
+      if (waitResolved) codeRows[waitIndex]?.classList.remove("cl-active");
       if (target > executedUntil) {
         await sweepTo(target);
         void maybeSweep();
@@ -603,9 +603,9 @@ const renderedFeatures = features.map((feature) => ({
     };
 
     approveButton?.addEventListener("click", async () => {
-      if (!term || waitpointResolved) return;
-      waitpointResolved = true;
-      landing?.setAttribute("data-waitpoint-completed", "");
+      if (!term || waitResolved) return;
+      waitResolved = true;
+      landing?.setAttribute("data-wait-completed", "");
       term.setAttribute("data-completed", "");
       termFoot?.removeAttribute("data-ready");
       // Pin the height so the page doesn't shift; old lines scroll out like a real terminal.
@@ -670,7 +670,7 @@ const renderedFeatures = features.map((feature) => ({
     }
 
     .landing[data-circuit-ready] .circuit { opacity: 1; }
-    .landing[data-waitpoint-completed] .circuit { opacity: 0; }
+    .landing[data-wait-completed] .circuit { opacity: 0; }
 
     .circuit-edge-out {
       position: absolute;

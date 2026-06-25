@@ -22,18 +22,19 @@ import (
 )
 
 const (
-	taskStartPendingMaxWait      = 10 * time.Second
-	taskStartPendingDefaultDelay = 250 * time.Millisecond
+	sessionStartPendingMaxWait      = 10 * time.Second
+	sessionStartPendingDefaultDelay = 250 * time.Millisecond
 )
 
-func (c *Client) StartTask(ctx context.Context, taskID string, input api.TaskStartRequest) (api.TaskStartResponse, error) {
+func (c *Client) StartSession(ctx context.Context, taskID string, input api.SessionStartRequest) (api.SessionStartResponse, error) {
 	taskID = strings.TrimSpace(taskID)
 	if err := api.ValidateTaskID(taskID); err != nil {
-		return api.TaskStartResponse{}, err
+		return api.SessionStartResponse{}, err
 	}
-	path, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/tasks/"+url.PathEscape(taskID)+"/start")
+	input.TaskID = taskID
+	path, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/sessions")
 	if err != nil {
-		return api.TaskStartResponse{}, err
+		return api.SessionStartResponse{}, err
 	}
 	if scoped {
 		input.ProjectID = ""
@@ -41,84 +42,84 @@ func (c *Client) StartTask(ctx context.Context, taskID string, input api.TaskSta
 	}
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(input); err != nil {
-		return api.TaskStartResponse{}, fmt.Errorf("encode request: %w", err)
+		return api.SessionStartResponse{}, fmt.Errorf("encode request: %w", err)
 	}
 	bodyBytes := body.Bytes()
 	startedAt := time.Now()
 	for {
 		req, err := c.newRequestWithBearer(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes), c.bearer)
 		if err != nil {
-			return api.TaskStartResponse{}, err
+			return api.SessionStartResponse{}, err
 		}
 		req.Header.Set("content-type", "application/json")
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			return api.TaskStartResponse{}, err
+			return api.SessionStartResponse{}, err
 		}
 		if resp.StatusCode == http.StatusAccepted {
 			body, readErr := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if readErr != nil {
-				return api.TaskStartResponse{}, fmt.Errorf("read task start pending response: %w", readErr)
+				return api.SessionStartResponse{}, fmt.Errorf("read session start pending response: %w", readErr)
 			}
-			if !taskStartPendingResponse(body) {
-				return api.TaskStartResponse{}, decodeErrorBody(resp.StatusCode, resp.Status, body)
+			if !sessionStartPendingResponse(body) {
+				return api.SessionStartResponse{}, decodeErrorBody(resp.StatusCode, resp.Status, body)
 			}
-			delay := taskStartPendingRetryDelay(resp.Header.Get("Retry-After"))
-			if time.Since(startedAt)+delay > taskStartPendingMaxWait {
-				return api.TaskStartResponse{}, decodeErrorBody(resp.StatusCode, resp.Status, body)
+			delay := sessionStartPendingRetryDelay(resp.Header.Get("Retry-After"))
+			if time.Since(startedAt)+delay > sessionStartPendingMaxWait {
+				return api.SessionStartResponse{}, decodeErrorBody(resp.StatusCode, resp.Status, body)
 			}
 			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return api.TaskStartResponse{}, ctx.Err()
+				return api.SessionStartResponse{}, ctx.Err()
 			case <-timer.C:
 			}
 			continue
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return api.TaskStartResponse{}, decodeError(resp)
+			return api.SessionStartResponse{}, decodeError(resp)
 		}
-		var response api.TaskStartResponse
+		var response api.SessionStartResponse
 		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			return api.TaskStartResponse{}, fmt.Errorf("decode response: %w", err)
+			return api.SessionStartResponse{}, fmt.Errorf("decode response: %w", err)
 		}
 		return response, nil
 	}
 }
 
-func taskStartPendingResponse(body []byte) bool {
+func sessionStartPendingResponse(body []byte) bool {
 	var payload struct {
 		Code string `json:"code"`
 	}
 	return json.Unmarshal(body, &payload) == nil && payload.Code == "idempotency_pending"
 }
 
-func taskStartPendingRetryDelay(raw string) time.Duration {
+func sessionStartPendingRetryDelay(raw string) time.Duration {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return taskStartPendingDefaultDelay
+		return sessionStartPendingDefaultDelay
 	}
 	if seconds, err := strconv.ParseFloat(raw, 64); err == nil && seconds > 0 {
 		delay := time.Duration(seconds * float64(time.Second))
-		if delay > taskStartPendingMaxWait {
-			return taskStartPendingMaxWait
+		if delay > sessionStartPendingMaxWait {
+			return sessionStartPendingMaxWait
 		}
 		return delay
 	}
 	if retryAt, err := http.ParseTime(raw); err == nil {
 		delay := time.Until(retryAt)
 		if delay <= 0 {
-			return taskStartPendingDefaultDelay
+			return sessionStartPendingDefaultDelay
 		}
-		if delay > taskStartPendingMaxWait {
-			return taskStartPendingMaxWait
+		if delay > sessionStartPendingMaxWait {
+			return sessionStartPendingMaxWait
 		}
 		return delay
 	}
-	return taskStartPendingDefaultDelay
+	return sessionStartPendingDefaultDelay
 }
 
 func (c *Client) ListProjects(ctx context.Context) (api.ListProjectsResponse, error) {

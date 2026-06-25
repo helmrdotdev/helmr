@@ -6,6 +6,14 @@ SELECT *
    AND idempotency_key = sqlc.arg(idempotency_key)
    AND sqlc.arg(idempotency_key)::text <> '';
 
+-- name: GetStreamRecord :one
+SELECT *
+  FROM stream_records
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id);
+
 -- name: AppendStreamRecord :one
 WITH existing_record AS MATERIALIZED (
     SELECT stream_records.*

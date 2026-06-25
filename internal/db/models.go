@@ -1296,11 +1296,8 @@ type TaskSessionStatus string
 
 const (
 	TaskSessionStatusOpen      TaskSessionStatus = "open"
-	TaskSessionStatusCompleted TaskSessionStatus = "completed"
-	TaskSessionStatusFailed    TaskSessionStatus = "failed"
 	TaskSessionStatusClosed    TaskSessionStatus = "closed"
 	TaskSessionStatusCancelled TaskSessionStatus = "cancelled"
-	TaskSessionStatusExpired   TaskSessionStatus = "expired"
 )
 
 func (e *TaskSessionStatus) Scan(src interface{}) error {
@@ -3073,6 +3070,21 @@ type Session struct {
 	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
 }
 
+type SessionStartIdempotency struct {
+	ID                 pgtype.UUID        `json:"id"`
+	OrgID              pgtype.UUID        `json:"org_id"`
+	ProjectID          pgtype.UUID        `json:"project_id"`
+	EnvironmentID      pgtype.UUID        `json:"environment_id"`
+	TaskID             string             `json:"task_id"`
+	IdempotencyKey     string             `json:"idempotency_key"`
+	RequestFingerprint string             `json:"request_fingerprint"`
+	TaskSessionID      pgtype.UUID        `json:"task_session_id"`
+	FirstRunID         pgtype.UUID        `json:"first_run_id"`
+	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt         pgtype.Timestamptz `json:"last_used_at"`
+}
+
 type Stream struct {
 	ID                 pgtype.UUID        `json:"id"`
 	OrgID              pgtype.UUID        `json:"org_id"`
@@ -3187,8 +3199,6 @@ type TaskSession struct {
 	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
 	Metadata            []byte             `json:"metadata"`
 	Tags                []string           `json:"tags"`
-	CompletedAt         pgtype.Timestamptz `json:"completed_at"`
-	FailedAt            pgtype.Timestamptz `json:"failed_at"`
 	ClosedAt            pgtype.Timestamptz `json:"closed_at"`
 	ClosedReason        string             `json:"closed_reason"`
 	CancelledAt         pgtype.Timestamptz `json:"cancelled_at"`
@@ -3209,23 +3219,31 @@ type TaskSessionRun struct {
 	DeploymentID  pgtype.UUID        `json:"deployment_id"`
 	PreviousRunID pgtype.UUID        `json:"previous_run_id"`
 	TurnIndex     int32              `json:"turn_index"`
+	Reason        string             `json:"reason"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	EndedAt       pgtype.Timestamptz `json:"ended_at"`
 }
 
-type TaskStartIdempotency struct {
-	ID                 pgtype.UUID        `json:"id"`
-	OrgID              pgtype.UUID        `json:"org_id"`
-	ProjectID          pgtype.UUID        `json:"project_id"`
-	EnvironmentID      pgtype.UUID        `json:"environment_id"`
-	TaskID             string             `json:"task_id"`
-	IdempotencyKey     string             `json:"idempotency_key"`
-	RequestFingerprint string             `json:"request_fingerprint"`
-	TaskSessionID      pgtype.UUID        `json:"task_session_id"`
-	FirstRunID         pgtype.UUID        `json:"first_run_id"`
-	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	LastUsedAt         pgtype.Timestamptz `json:"last_used_at"`
+type TaskSessionRunRequest struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	TaskSessionID  pgtype.UUID        `json:"task_session_id"`
+	StreamRecordID pgtype.UUID        `json:"stream_record_id"`
+	StreamID       pgtype.UUID        `json:"stream_id"`
+	CauseKind      string             `json:"cause_kind"`
+	Status         string             `json:"status"`
+	Attempts       int32              `json:"attempts"`
+	NextAttemptAt  pgtype.Timestamptz `json:"next_attempt_at"`
+	LastError      string             `json:"last_error"`
+	ClaimedAt      pgtype.Timestamptz `json:"claimed_at"`
+	ClaimExpiresAt pgtype.Timestamptz `json:"claim_expires_at"`
+	ClaimOwner     string             `json:"claim_owner"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	ErrorMessage   string             `json:"error_message"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type TimerWait struct {

@@ -37,7 +37,7 @@ execution model.
 
 1. A task project is deployed from a directory containing `helmr.config.ts`.
 2. The control plane stores the deployment-source artifact and marks the deployment active for a project environment.
-3. A task start or scheduled fire creates or reuses a task session, creates a run attempt, and attaches a workspace.
+3. A session start or scheduled fire creates or reuses a task session, creates a run attempt, and attaches a workspace.
 4. If no workspace is supplied, Helmr creates one from the deployed task's sandbox. If a workspace is supplied, Helmr validates that it matches the task's sandbox.
 5. A worker in the matching worker group leases the run and receives the resolved task source, workspace mount metadata, secrets, and duration limit.
 6. The worker starts an isolated Linux guest, materializes the workspace, injects task-declared secrets, and runs the TypeScript task.

@@ -140,6 +140,8 @@ type ServerConfig struct {
 	MagicLinkTTL       time.Duration
 	DeviceCodeTTL      time.Duration
 	DevicePollEvery    time.Duration
+
+	BackgroundContext context.Context
 }
 
 func NewServer(cfg ServerConfig) (http.Handler, error) {
@@ -196,6 +198,9 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		magicLinkTTL:        cfg.MagicLinkTTL,
 		deviceCodeTTL:       cfg.DeviceCodeTTL,
 		devicePollEvery:     cfg.DevicePollEvery,
+	}
+	if cfg.BackgroundContext != nil {
+		go server.RunTaskSessionRunRequestReconciler(cfg.BackgroundContext)
 	}
 	router := chi.NewRouter()
 	router.Use(server.recoverPanics)
@@ -477,12 +482,11 @@ func (s *Server) mountRunRoutes(r chi.Router) {
 func (s *Server) mountTaskSessionRoutes(r chi.Router, prefix string) {
 	r.Get(prefix+"/tasks", s.listTasks)
 	r.Get(prefix+"/tasks/{taskID}", s.getTask)
-	r.Post(prefix+"/tasks/{taskID}/start", s.startTask)
-	r.Post(prefix+"/tasks/{taskID}/start-and-wait", s.startTaskAndWait)
+	r.Post(prefix+"/sessions", s.startSession)
+	r.Post(prefix+"/sessions/start-and-wait", s.startSessionAndWait)
 	r.Get(prefix+"/sessions", s.listTaskSessions)
 	r.Get(prefix+"/sessions/{sessionID}", s.getTaskSession)
 	r.Patch(prefix+"/sessions/{sessionID}", s.patchTaskSession)
-	r.Post(prefix+"/sessions/{sessionID}/wait", s.waitTaskSession)
 	r.Post(prefix+"/sessions/{sessionID}/close", s.closeTaskSession)
 	r.Post(prefix+"/sessions/{sessionID}/cancel", s.cancelTaskSession)
 	r.Get(prefix+"/sessions/{sessionID}/runs", s.listTaskSessionRuns)
