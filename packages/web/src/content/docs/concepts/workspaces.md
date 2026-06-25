@@ -48,7 +48,9 @@ before dispatching the operation.
 Workspace exec creates a durable command handle on a workspace:
 
 ```ts
-const workspace = client.workspaces.open("workspace-id")
+import { workspaces } from "@helmr/sdk"
+
+const workspace = workspaces.open("workspace-id")
 const exec = await workspace.exec(["bash", "-lc", "echo ok"], {
   cwd: "/workspace",
 })
@@ -66,7 +68,7 @@ of the current documented contract.
 Workspace PTY creates a durable interactive terminal handle:
 
 ```ts
-const pty = await client.workspaces.open("workspace-id").pty.create({
+const pty = await workspaces.open("workspace-id").pty.create({
   cwd: "/workspace",
   cols: 100,
   rows: 32,

@@ -278,7 +278,7 @@ const decision = await approval.wait({
     tone: "green",
     title: "Reuse the workspace",
     caption: "The session records the workflow. The workspace stays available for follow-up execs and terminals.",
-    code: `const workspace = client.workspaces.open(started.session.workspaceId)
+    code: `const workspace = workspaces.open(started.session.workspaceId)
 const exec = await workspace.exec(["bash", "-lc", "bun test"], {
   cwd: "/workspace"
 })

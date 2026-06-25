@@ -1,7 +1,7 @@
-import type { PublicAccessToken, TaskSessionSnapshot, SessionStartResult, SessionStartAndWaitResult, HelmrClient, Token } from "./client"
+import type { PublicAccessToken, TaskSessionSnapshot, SessionStartResult, SessionStartAndWaitResult, HelmrClient, Token, Workspace } from "./client"
 import type { RunEventRecord, RunHandle, RunSnapshot } from "./run"
 import type { StreamRecord, Task } from "../internal"
-import { idempotencyKeys, image, sandbox, schedules, sessions, source, streams, task, tokens, type PayloadSchema } from "../index"
+import { idempotencyKeys, image, sandbox, schedules, sessions, source, streams, task, tokens, workspaces, type PayloadSchema } from "../index"
 
 declare const client: HelmrClient
 declare const handle: RunHandle
@@ -118,6 +118,9 @@ if (false) {
   client.runs.events.subscribe(handle)
   client.runs.events.subscribe("run-1")
   client.runs.list({ status: "running" })
+  const workspace: Promise<Workspace> = workspaces.retrieve("workspace-1")
+  const openedWorkspace = workspaces.open("workspace-1")
+  const workspaceExec = openedWorkspace.exec(["bash", "-lc", "echo ok"])
   client.schedules.create({
     deduplicationKey: "inspect-customer-1",
     task: "inspect",
@@ -166,6 +169,8 @@ if (false) {
   delegatedToken.then
   delegatedById.then
   clientToken.then
+  workspace.then
+  workspaceExec.then
   schemaStartedRun.then
   clientSchemaStartedRun.then
   schemaStartAndWait.then

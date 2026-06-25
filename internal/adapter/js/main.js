@@ -6618,6 +6618,11 @@ var runs = new Proxy({}, {
     return Reflect.get(getDefaultClient().runs, property, receiver);
   }
 });
+var workspaces = new Proxy({}, {
+  get(_target, property, receiver) {
+    return Reflect.get(getDefaultClient().workspaces, property, receiver);
+  }
+});
 var streams = Object.freeze({
   input: createInputStream,
   output: createOutputStream

@@ -229,6 +229,12 @@ export const runs = new Proxy({} as HelmrClient["runs"], {
   },
 })
 
+export const workspaces = new Proxy({} as HelmrClient["workspaces"], {
+  get(_target, property, receiver) {
+    return Reflect.get(getDefaultClient().workspaces, property, receiver)
+  },
+})
+
 export const streams = Object.freeze({
   input: createInputStream,
   output: createOutputStream,

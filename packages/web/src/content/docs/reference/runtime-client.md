@@ -34,19 +34,19 @@ Main surfaces:
 | `client.sessions.open(session).output(stream).list(opts)` | Read durable session output records from a cursor. |
 | `client.sessions.open(session).output(stream).read(opts)` | Read one durable session output record from a cursor. |
 | `client.auth.createPublicToken(opts)` | Create a scoped opaque bearer token for one session input append or output read grant. |
-| `client.workspaces.create(opts)` | Create a durable workspace from a deployed sandbox. |
-| `client.workspaces.open(id)` | Create a lazy handle for a workspace. |
-| `client.workspaces.retrieve(idOrHandle, opts)` | Fetch current workspace state. |
-| `client.workspaces.list(opts)` | List workspaces in the selected project environment. |
-| `client.workspaces.update(idOrHandle, opts)` | Update workspace metadata or tags. |
-| `client.workspaces.delete(idOrHandle, opts)` | Delete a workspace. |
-| `client.workspaces.materialize(idOrHandle, opts)` | Request worker materialization for a workspace. |
-| `client.workspaces.connect(idOrHandle, opts)` | Connect to an existing or newly materialized workspace. |
-| `client.workspaces.stop(idOrHandle, opts)` | Stop the active materialization for a workspace. |
-| `client.workspaces.open(id).exec(command, opts)` | Start a write-capable command in the workspace. |
-| `client.workspaces.open(id).execs.list(opts)` | List execs for a workspace. |
-| `client.workspaces.open(id).pty.create(opts)` | Start an interactive PTY in the workspace. |
-| `client.workspaces.open(id).pty.list(opts)` | List PTYs for a workspace. |
+| `workspaces.create(opts)` / `client.workspaces.create(opts)` | Create a durable workspace from a deployed sandbox. |
+| `workspaces.open(id)` / `client.workspaces.open(id)` | Create a lazy handle for a workspace. |
+| `workspaces.retrieve(idOrHandle, opts)` / `client.workspaces.retrieve(idOrHandle, opts)` | Fetch current workspace state. |
+| `workspaces.list(opts)` / `client.workspaces.list(opts)` | List workspaces in the selected project environment. |
+| `workspaces.update(idOrHandle, opts)` / `client.workspaces.update(idOrHandle, opts)` | Update workspace metadata or tags. |
+| `workspaces.delete(idOrHandle, opts)` / `client.workspaces.delete(idOrHandle, opts)` | Delete a workspace. |
+| `workspaces.materialize(idOrHandle, opts)` / `client.workspaces.materialize(idOrHandle, opts)` | Request worker materialization for a workspace. |
+| `workspaces.connect(idOrHandle, opts)` / `client.workspaces.connect(idOrHandle, opts)` | Connect to an existing or newly materialized workspace. |
+| `workspaces.stop(idOrHandle, opts)` / `client.workspaces.stop(idOrHandle, opts)` | Stop the active materialization for a workspace. |
+| `workspaces.open(id).exec(command, opts)` / `client.workspaces.open(id).exec(command, opts)` | Start a write-capable command in the workspace. |
+| `workspaces.open(id).execs.list(opts)` / `client.workspaces.open(id).execs.list(opts)` | List execs for a workspace. |
+| `workspaces.open(id).pty.create(opts)` / `client.workspaces.open(id).pty.create(opts)` | Start an interactive PTY in the workspace. |
+| `workspaces.open(id).pty.list(opts)` / `client.workspaces.open(id).pty.list(opts)` | List PTYs for a workspace. |
 | `client.runs.retrieve(run)` | Fetch current run snapshot. |
 | `client.runs.wait(run, opts)` | Wait for terminal status using durable run events. |
 | `client.runs.list(opts)` | List run summaries. |
@@ -66,7 +66,7 @@ Main surfaces:
 | `client.schedules.deactivate(id, opts)` | Deactivate an imperative schedule. |
 | `client.schedules.delete(id, opts)` | Delete an imperative schedule. |
 
-The top-level `sessions.start(...)` and `sessions.startAndWait(...)` facades mirror the client methods and use the default client from `HELMR_API_URL` and `HELMR_API_KEY`. Imported task definitions are typed targets for the sessions namespace; they do not expose direct `.start()` or `.startAndWait()` helpers.
+The top-level `sessions.start(...)`, `sessions.startAndWait(...)`, and `workspaces.*` facades mirror the client methods and use the default client from `HELMR_API_URL` and `HELMR_API_KEY`. Imported task definitions are typed targets for the sessions namespace; they do not expose direct `.start()` or `.startAndWait()` helpers.
 
 Session start `payload` is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload. Follow-up user messages, webhooks, or operator replies belong in session input streams, not in session start payload.
 

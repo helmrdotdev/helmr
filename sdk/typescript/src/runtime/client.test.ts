@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 
 import { HelmrClient, WorkspaceStreamError, WorkspaceStreamTerminalError, tokenClientMethod } from "./client"
 import { runStateBooleans } from "./run"
-import { PayloadSchemaValidationError, idempotencyKeys, image, sandbox, sessions, source, task, type PayloadSchema } from "../index"
+import { PayloadSchemaValidationError, idempotencyKeys, image, sandbox, sessions, source, task, workspaces, type PayloadSchema } from "../index"
 import { resetDefaultClientForTest } from "../start"
 import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER, HELMR_SDK_VERSION, HELMR_SDK_VERSION_HEADER } from "../version"
 
@@ -281,6 +281,24 @@ test("workspaces create list update materialize connect and stop use workspace r
     ["POST", "https://api.example.test/api/workspaces/workspace-1/connect", {}],
     ["POST", "https://api.example.test/api/workspaces/workspace-1/stop", { idempotency_key: "stop-key" }],
   ])
+})
+
+test("workspaces namespace uses the default client", async () => {
+  process.env["HELMR_API_URL"] = "https://api.example.test"
+  process.env["HELMR_API_KEY"] = "token"
+  let requestedUrl: string | undefined
+  let authorization: string | null | undefined
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input)
+    authorization = new Headers(init?.headers).get("authorization")
+    return Response.json({ workspace: workspaceFixture({ id: "workspace-1" }) })
+  }) as typeof fetch
+
+  const workspace = await workspaces.retrieve("workspace-1")
+
+  expect(requestedUrl).toBe("https://api.example.test/api/workspaces/workspace-1")
+  expect(authorization).toBe("Bearer token")
+  expect(workspace.id).toBe("workspace-1")
 })
 
 test("workspace exec handle uses direct workspace exec routes", async () => {
