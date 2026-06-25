@@ -19,9 +19,11 @@ const client = new HelmrClient({
   apiKey: process.env.HELMR_API_KEY,
 })
 
+const reviewPayload = { owner: "OWNER", repo: "REPO", prNumber: 42 }
+
 const started = await client.sessions.start(
   reviewPullRequest,
-  { owner: "OWNER", repo: "REPO", prNumber: 42 },
+  reviewPayload,
   {
     externalId: "github:OWNER/REPO#42",
     idempotencyKey: "github:delivery-id",
@@ -35,7 +37,7 @@ const started = await client.sessions.start(
 ```ts
 const completed = await client.sessions.startAndWait(
   reviewPullRequest,
-  payload,
+  reviewPayload,
   {
     timeoutSeconds: 10 * 60,
   },
@@ -55,7 +57,7 @@ await client.sessions.open(started.session).input("approval").send(
 )
 
 const reportRecords = await client.sessions.open(started.session).output("agent.report").list()
-for (const record of reportRecords.records) {
+for (const record of reportRecords) {
   console.log(record.sequence, record.data)
 }
 ```

@@ -66,6 +66,8 @@ Main surfaces:
 | `client.schedules.deactivate(id, opts)` | Deactivate an imperative schedule. |
 | `client.schedules.delete(id, opts)` | Delete an imperative schedule. |
 
+The top-level `sessions.start(...)` and `sessions.startAndWait(...)` facades mirror the client methods and use the default client from `HELMR_API_URL` and `HELMR_API_KEY`. Imported task definitions are typed targets for the sessions namespace; they do not expose direct `.start()` or `.startAndWait()` helpers.
+
 Session start `payload` is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload. Follow-up user messages, webhooks, or operator replies belong in session input streams, not in session start payload.
 
 Session starts create or reuse a task session and attach a workspace. When no
