@@ -120,16 +120,3 @@ type TaskSessionRunResponse struct {
 type ListTaskSessionRunsResponse struct {
 	Runs []TaskSessionRunResponse `json:"runs"`
 }
-
-type TaskSessionChannelResponse struct {
-	ID            string    `json:"id"`
-	TaskSessionID string    `json:"task_session_id"`
-	Name          string    `json:"name"`
-	Direction     string    `json:"direction"`
-	NextSequence  int64     `json:"next_sequence"`
-	CreatedAt     time.Time `json:"created_at"`
-}
-
-type ListTaskSessionChannelsResponse struct {
-	Channels []TaskSessionChannelResponse `json:"channels"`
-}

@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/runprotocol"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -40,6 +41,7 @@ type GuestRunner struct {
 	Connector           vm.Connector
 	CAS                 cas.Store
 	CheckpointEncryptor *checkpoint.Encryptor
+	Materializations    WorkspaceMaterializationSessionRegistry
 	Events              RuntimeEventSink
 	TempDir             string
 	Stdout              io.Writer
@@ -49,9 +51,10 @@ type GuestRunner struct {
 type RuntimeEventSink interface {
 	AppendLog(context.Context, api.WorkerRunLease, api.WorkerLogStream, uint64, []byte) (api.WorkerEventResponse, error)
 	RecordLogEntry(context.Context, api.WorkerRunLease, string) (api.WorkerEventResponse, error)
-	WriteOutput(context.Context, api.WorkerWriteOutputRequest) (api.WorkerEventResponse, error)
+	AppendOutputStream(context.Context, api.WorkerOutputStreamAppendRequest) (api.AppendStreamRecordResponse, error)
+	ReadInputStream(context.Context, api.WorkerActiveStreamReadRequest) (api.WorkerActiveStreamReadResponse, error)
 	UpdateRunMetadata(context.Context, api.WorkerUpdateRunMetadataRequest) (api.WorkerEventResponse, error)
-	CreateRuntimeWaitpointToken(context.Context, api.WorkerCreateWaitpointTokenRequest) (api.WaitpointTokenResponse, error)
+	CreateRuntimeToken(context.Context, api.WorkerCreateTokenRequest) (api.TokenResponse, error)
 }
 
 func (r GuestRunner) Run(ctx context.Context, request Request) (Result, error) {
@@ -79,6 +82,22 @@ func (r GuestRunner) Run(ctx context.Context, request Request) (Result, error) {
 	}
 	if strings.TrimSpace(request.Workspace.Digest) == "" {
 		return Result{}, errors.New("workspace artifact digest is required")
+	}
+	if materializationID := strings.TrimSpace(request.Run.Workspace.MaterializationID); materializationID != "" {
+		if r.Materializations == nil {
+			return Result{}, errors.New("workspace materialization session registry is required")
+		}
+		session, err := r.Materializations.OpenWorkspaceMaterializationSession(ctx, materializationID)
+		if err != nil {
+			return Result{}, err
+		}
+		defer session.Close(context.Background())
+		stream := session.Stream()
+		inputMetadata, err := r.writeRuntimeInput(ctx, stream, request, deploymentSourceRoot)
+		if err != nil {
+			return Result{}, err
+		}
+		return r.readRunEvents(ctx, session, request, inputMetadata)
 	}
 	session, err := r.Connector.Connect(ctx, request.Run.Requirements.Network)
 	if err != nil {
@@ -108,8 +127,8 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 	if strings.TrimSpace(restore.CheckpointID) == "" {
 		return Result{}, errors.New("restore checkpoint_id is required")
 	}
-	if strings.TrimSpace(restore.Waitpoint.ID) == "" {
-		return Result{}, errors.New("restore waitpoint id is required")
+	if strings.TrimSpace(restore.RunWait.ID) == "" {
+		return Result{}, errors.New("restore run wait id is required")
 	}
 	if err := validateRestoreIdentity(restore.Checkpoint); err != nil {
 		return Result{}, err
@@ -229,15 +248,15 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 	restore := request.Run.Restore
 	if err := transport.WriteProtoFrame(stream, &runv0.ResumeAttach{
 		CheckpointId: restore.CheckpointID,
-		WaitpointId:  restore.Waitpoint.ID,
+		RunWaitId:    restore.RunWait.ID,
 		RunLeaseId:   currentRunLease(request).ID,
 	}); err != nil {
 		return fmt.Errorf("write resume attach: %w", err)
 	}
 	if err := transport.WriteProtoFrame(stream, &runv0.ResumeDecision{
-		WaitpointId:        restore.Waitpoint.ID,
-		Kind:               restore.Waitpoint.ResumeKind,
-		DataJson:           string(restore.Waitpoint.ResumePayloadJSON),
+		RunWaitId:          restore.RunWait.ID,
+		Kind:               restore.RunWait.ResumeKind,
+		DataJson:           string(restore.RunWait.ResumePayloadJSON),
 		RequireConsumedAck: true,
 	}); err != nil {
 		return fmt.Errorf("write resume decision: %w", err)
@@ -248,14 +267,13 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 	if err != nil {
 		return fmt.Errorf("read resume ack: %w", err)
 	}
-	if ack.WaitpointId != restore.Waitpoint.ID {
-		return fmt.Errorf("resume ack waitpoint %q did not match expected %q", ack.WaitpointId, restore.Waitpoint.ID)
+	if ack.RunWaitId != restore.RunWait.ID {
+		return fmt.Errorf("resume ack run wait %q did not match expected %q", ack.RunWaitId, restore.RunWait.ID)
 	}
 	if err := acknowledger.AcknowledgeRestore(ctx, RestoreAcknowledgement{
-		Lease:           currentRunLease(request),
-		RunSuspensionID: restore.Waitpoint.RunSuspensionID,
-		WaitpointID:     restore.Waitpoint.ID,
-		CheckpointID:    restore.CheckpointID,
+		Lease:        currentRunLease(request),
+		RunWaitID:    restore.RunWait.ID,
+		CheckpointID: restore.CheckpointID,
 	}); err != nil {
 		return fmt.Errorf("acknowledge restore: %w", err)
 	}
@@ -328,7 +346,7 @@ func (r GuestRunner) readRunEventOrWorkspaceFrame(ctx context.Context, reader io
 		if err != nil {
 			return nil, nil, err
 		}
-		artifact, err := r.storeWorkspaceArtifactFrame(ctx, reader, header, bodyLen, runID)
+		artifact, err := storeWorkspaceArtifactFrame(ctx, r.CAS, reader, header, bodyLen, runID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -347,63 +365,6 @@ func (r GuestRunner) readRunEventOrWorkspaceFrame(ctx context.Context, reader io
 		return nil, nil, fmt.Errorf("unmarshal transport proto frame: %w", err)
 	}
 	return &event, nil, nil
-}
-
-func (r GuestRunner) storeWorkspaceArtifactFrame(ctx context.Context, reader io.Reader, header transport.StreamHeader, bodyLen uint64, runID string) (workspace.WorkspaceArtifact, error) {
-	if header.Type != transport.StreamTypeWorkspaceArtifact {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("unsupported runtime stream type %q", header.Type)
-	}
-	if strings.TrimSpace(header.RunID) != strings.TrimSpace(runID) {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace artifact run_id %q did not match run %q", header.RunID, runID)
-	}
-	if header.BodyDigest == nil || strings.TrimSpace(*header.BodyDigest) == "" {
-		return workspace.WorkspaceArtifact{}, errors.New("workspace artifact frame body_digest is required")
-	}
-	if header.EntryCount == nil {
-		return workspace.WorkspaceArtifact{}, errors.New("workspace artifact frame entry_count is required")
-	}
-	if *header.EntryCount < 0 {
-		return workspace.WorkspaceArtifact{}, errors.New("workspace artifact frame entry_count must be non-negative")
-	}
-	if *header.EntryCount > workspace.MaxArtifactEntries {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace artifact entry_count %d exceeds max %d", *header.EntryCount, workspace.MaxArtifactEntries)
-	}
-	if bodyLen == 0 {
-		return workspace.WorkspaceArtifact{}, errors.New("workspace artifact frame body is required")
-	}
-	if bodyLen > uint64(workspace.MaxArtifactArchiveBytes) {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace artifact size_bytes %d exceeds max %d", bodyLen, workspace.MaxArtifactArchiveBytes)
-	}
-	if r.CAS == nil {
-		return workspace.WorkspaceArtifact{}, errors.New("workspace artifact CAS is required")
-	}
-	body := &io.LimitedReader{R: reader, N: int64(bodyLen)}
-	object, err := r.CAS.Put(ctx, workspace.ArtifactMediaType, body)
-	if err != nil {
-		_, _ = io.Copy(io.Discard, body)
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("put workspace artifact: %w", err)
-	}
-	if body.N > 0 {
-		if _, err := io.Copy(io.Discard, body); err != nil {
-			return workspace.WorkspaceArtifact{}, fmt.Errorf("drain workspace artifact: %w", err)
-		}
-	}
-	if object.Digest != strings.TrimSpace(*header.BodyDigest) {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace artifact digest mismatch: got %s, want %s", object.Digest, *header.BodyDigest)
-	}
-	if object.SizeBytes != int64(bodyLen) {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace artifact size mismatch: got %d, want %d", object.SizeBytes, bodyLen)
-	}
-	if strings.TrimSpace(object.MediaType) != workspace.ArtifactMediaType {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace artifact media_type mismatch: got %q, want %q", object.MediaType, workspace.ArtifactMediaType)
-	}
-	return workspace.WorkspaceArtifact{
-		Digest:     object.Digest,
-		MediaType:  object.MediaType,
-		Encoding:   workspace.ArtifactEncoding,
-		SizeBytes:  object.SizeBytes,
-		EntryCount: *header.EntryCount,
-	}, nil
 }
 
 type activeRuntimeClock struct {
@@ -544,21 +505,37 @@ func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, requ
 			if err := r.recordLogEntry(ctx, currentRunLease(request), value.LogEntry); err != nil {
 				return Result{}, err
 			}
-		case *runv0.RunEvent_ChannelOutputAppended:
-			if err := r.writeChannelOutput(ctx, currentRunLease(request), value.ChannelOutputAppended); err != nil {
+		case *runv0.RunEvent_OutputStreamAppended:
+			if err := r.appendOutputStream(ctx, currentRunLease(request), value.OutputStreamAppended); err != nil {
 				return Result{}, err
+			}
+		case *runv0.RunEvent_ActiveStreamReadRequested:
+			readCtx, cancelRead, activeLimited, err := active.readContext(ctx)
+			if err != nil {
+				return Result{}, runtimeMaxDurationError(request.Run.MaxDuration)
+			}
+			result, err := r.readInputStream(readCtx, currentRunLease(request), value.ActiveStreamReadRequested)
+			cancelRead()
+			if err != nil {
+				if activeLimited && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+					return Result{}, runtimeMaxDurationError(request.Run.MaxDuration)
+				}
+				return Result{}, err
+			}
+			if err := transport.WriteProtoFrame(stream, result); err != nil {
+				return Result{}, fmt.Errorf("write active stream read result: %w", err)
 			}
 		case *runv0.RunEvent_MetadataUpdated:
 			if err := r.updateRunMetadata(ctx, currentRunLease(request), value.MetadataUpdated); err != nil {
 				return Result{}, err
 			}
-		case *runv0.RunEvent_WaitpointTokenCreateRequested:
-			result := r.createWaitpointToken(ctx, currentRunLease(request), value.WaitpointTokenCreateRequested)
+		case *runv0.RunEvent_TokenCreateRequested:
+			result := r.createToken(ctx, currentRunLease(request), value.TokenCreateRequested)
 			if err := transport.WriteProtoFrame(stream, result); err != nil {
-				return Result{}, fmt.Errorf("write waitpoint token create result: %w", err)
+				return Result{}, fmt.Errorf("write token create result: %w", err)
 			}
-		case *runv0.RunEvent_WaitpointRequested:
-			if err := r.handleWaitpointRequested(ctx, stream, session, request, value.WaitpointRequested, active.elapsed(), inputMetadata, &observedSeq); err != nil {
+		case *runv0.RunEvent_RunWaitRequested:
+			if err := r.handleRunWaitRequested(ctx, stream, session, request, value.RunWaitRequested, active.elapsed(), inputMetadata, &observedSeq); err != nil {
 				if errors.Is(err, ErrDetached) {
 					return Result{Detached: true, ActiveDuration: active.elapsed()}, nil
 				}
@@ -613,30 +590,16 @@ func (r GuestRunner) processCheckpointRunEvent(ctx context.Context, request Requ
 		return r.appendLog(ctx, currentRunLease(request), api.WorkerLogStreamStderr, *observedSeq, value.StderrChunk)
 	case *runv0.RunEvent_LogEntry:
 		return r.recordLogEntry(ctx, currentRunLease(request), value.LogEntry)
-	case *runv0.RunEvent_ChannelOutputAppended:
-		return r.writeChannelOutput(ctx, currentRunLease(request), value.ChannelOutputAppended)
+	case *runv0.RunEvent_OutputStreamAppended:
+		return r.appendOutputStream(ctx, currentRunLease(request), value.OutputStreamAppended)
+	case *runv0.RunEvent_ActiveStreamReadRequested:
+		return errors.New("active stream read is not supported while checkpointing")
 	case *runv0.RunEvent_MetadataUpdated:
 		return r.updateRunMetadata(ctx, currentRunLease(request), value.MetadataUpdated)
-	case *runv0.RunEvent_WaitpointTokenCreateRequested:
-		return errors.New("waitpoint token creation is not supported while checkpointing")
-	case *runv0.RunEvent_WaitpointRequested:
-		appender, ok := request.WaitHandler.(WaitpointAppender)
-		if !ok {
-			return errors.New("aggregate waitpoint creation is not supported by this wait handler")
-		}
-		runtimeWait, err := runtimeWaitRequest(request, value.WaitpointRequested)
-		if err != nil {
-			return err
-		}
-		runtimeWait.Lease = currentRunLease(request)
-		opened, err := appender.AddWaitpoint(ctx, runtimeWait)
-		if err != nil {
-			return fmt.Errorf("add aggregate waitpoint: %w", err)
-		}
-		if strings.TrimSpace(opened.ResolutionKind) != "" {
-			return errors.New("aggregate waitpoint resolved before checkpoint was ready")
-		}
-		return nil
+	case *runv0.RunEvent_TokenCreateRequested:
+		return errors.New("token creation is not supported while checkpointing")
+	case *runv0.RunEvent_RunWaitRequested:
+		return errors.New("additional run wait requests are not supported while checkpointing")
 	case nil:
 		return errors.New("guest run event is empty")
 	default:
@@ -676,59 +639,117 @@ func (r GuestRunner) recordLogEntry(ctx context.Context, claim api.WorkerRunLeas
 	return nil
 }
 
-func (r GuestRunner) writeChannelOutput(ctx context.Context, claim api.WorkerRunLease, output *runv0.ChannelOutputAppended) error {
+func (r GuestRunner) appendOutputStream(ctx context.Context, claim api.WorkerRunLease, output *runv0.OutputStreamAppended) error {
 	if r.Events == nil {
 		return nil
 	}
 	if output == nil {
-		return errors.New("guest channel_output_appended is empty")
+		return errors.New("guest output_stream_appended is empty")
 	}
-	channel := strings.TrimSpace(output.GetChannel())
-	if channel == "" {
-		return errors.New("guest channel_output_appended channel is required")
+	stream := strings.TrimSpace(output.GetStream())
+	if stream == "" {
+		return errors.New("guest output_stream_appended stream is required")
 	}
 	payload := json.RawMessage(output.GetPayloadJson())
 	if len(payload) == 0 {
 		payload = json.RawMessage(`null`)
 	}
 	if !json.Valid(payload) {
-		return errors.New("guest channel_output_appended payload_json must be valid JSON")
+		return errors.New("guest output_stream_appended payload_json must be valid JSON")
 	}
-	objectRef := json.RawMessage(output.GetObjectRefJson())
-	if len(objectRef) > 0 && !json.Valid(objectRef) {
-		return errors.New("guest channel_output_appended object_ref_json must be valid JSON")
-	}
-	if _, err := r.Events.WriteOutput(ctx, api.WorkerWriteOutputRequest{
+	if _, err := r.Events.AppendOutputStream(ctx, api.WorkerOutputStreamAppendRequest{
 		Lease:       claim,
-		Channel:     channel,
-		Payload:     payload,
+		Stream:      stream,
+		Data:        payload,
 		ContentType: output.GetContentType(),
-		ObjectRef:   objectRef,
 	}); err != nil {
-		return fmt.Errorf("write channel output %q: %w", channel, err)
+		return fmt.Errorf("append output stream %q: %w", stream, err)
 	}
 	return nil
 }
 
-func (r GuestRunner) createWaitpointToken(ctx context.Context, lease api.WorkerRunLease, request *runv0.WaitpointTokenCreateRequested) *runv0.WaitpointTokenCreateResult {
+func (r GuestRunner) readInputStream(ctx context.Context, lease api.WorkerRunLease, request *runv0.ActiveStreamReadRequested) (*runv0.ActiveStreamReadResult, error) {
+	correlationID := ""
+	if request != nil {
+		correlationID = request.GetCorrelationId()
+	}
 	if r.Events == nil {
-		return &runv0.WaitpointTokenCreateResult{ErrorMessage: ptrString("runtime event sink is required")}
+		return &runv0.ActiveStreamReadResult{CorrelationId: correlationID, ErrorMessage: ptrString("runtime event sink is required")}, nil
 	}
 	if request == nil {
-		return &runv0.WaitpointTokenCreateResult{ErrorMessage: ptrString("guest waitpoint_token_create_requested is empty")}
+		return &runv0.ActiveStreamReadResult{ErrorMessage: ptrString("guest active_stream_read_requested is empty")}, nil
+	}
+	stream := strings.TrimSpace(request.GetStream())
+	if stream == "" {
+		return &runv0.ActiveStreamReadResult{CorrelationId: correlationID, ErrorMessage: ptrString("active stream read stream is required")}, nil
+	}
+	response, err := r.Events.ReadInputStream(ctx, api.WorkerActiveStreamReadRequest{
+		Lease:          lease,
+		Stream:         stream,
+		AfterSequence:  request.GetAfterSequence(),
+		CorrelationID:  request.GetRecordCorrelationId(),
+		TimeoutSeconds: protoUint32ToInt32Ptr(request.Timeout),
+		Block:          request.GetBlock(),
+	})
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return &runv0.ActiveStreamReadResult{CorrelationId: correlationID, ErrorMessage: ptrString(err.Error())}, nil
+	}
+	result := &runv0.ActiveStreamReadResult{
+		CorrelationId: correlationID,
+		TimedOut:      response.TimedOut,
+	}
+	if response.Record != nil {
+		result.Record = protoStreamRecord(*response.Record)
+	}
+	return result, nil
+}
+
+func protoStreamRecord(record api.StreamRecordResponse) *runv0.StreamRecord {
+	return &runv0.StreamRecord{
+		Id:            record.ID,
+		StreamId:      record.StreamID,
+		Sequence:      record.Sequence,
+		DataJson:      string(record.Data),
+		CorrelationId: optionalString(record.CorrelationID),
+		ContentType:   record.ContentType,
+		CreatedAt:     record.CreatedAt.Format(time.RFC3339Nano),
+	}
+}
+
+func protoUint32ToInt32Ptr(value *uint32) *int32 {
+	if value == nil {
+		return nil
+	}
+	if *value > math.MaxInt32 {
+		max := int32(math.MaxInt32)
+		return &max
+	}
+	converted := int32(*value)
+	return &converted
+}
+
+func (r GuestRunner) createToken(ctx context.Context, lease api.WorkerRunLease, request *runv0.TokenCreateRequested) *runv0.TokenCreateResult {
+	if r.Events == nil {
+		return &runv0.TokenCreateResult{ErrorMessage: ptrString("runtime event sink is required")}
+	}
+	if request == nil {
+		return &runv0.TokenCreateResult{ErrorMessage: ptrString("guest token_create_requested is empty")}
 	}
 	var timeoutAt *time.Time
 	if strings.TrimSpace(request.GetTimeoutAt()) != "" {
 		parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(request.GetTimeoutAt()))
 		if err != nil {
-			return &runv0.WaitpointTokenCreateResult{ErrorMessage: ptrString("waitpoint token timeout_at must be an RFC3339 timestamp")}
+			return &runv0.TokenCreateResult{ErrorMessage: ptrString("token timeout_at must be an RFC3339 timestamp")}
 		}
 		timeoutAt = &parsed
 	}
 	var timeoutInSeconds *int32
 	if request.TimeoutInSeconds != nil {
 		if request.GetTimeoutInSeconds() > math.MaxInt32 {
-			return &runv0.WaitpointTokenCreateResult{ErrorMessage: ptrString("waitpoint token timeout_in_seconds is too large")}
+			return &runv0.TokenCreateResult{ErrorMessage: ptrString("token timeout_in_seconds is too large")}
 		}
 		value := int32(request.GetTimeoutInSeconds())
 		timeoutInSeconds = &value
@@ -738,21 +759,19 @@ func (r GuestRunner) createWaitpointToken(ctx context.Context, lease api.WorkerR
 		metadata = json.RawMessage(`{}`)
 	}
 	if !json.Valid(metadata) {
-		return &runv0.WaitpointTokenCreateResult{ErrorMessage: ptrString("waitpoint token metadata_json must be valid JSON")}
+		return &runv0.TokenCreateResult{ErrorMessage: ptrString("token metadata_json must be valid JSON")}
 	}
-	token, err := r.Events.CreateRuntimeWaitpointToken(ctx, api.WorkerCreateWaitpointTokenRequest{
-		Lease: lease,
-		CreateWaitpointTokenRequest: api.CreateWaitpointTokenRequest{
-			TimeoutAt:        timeoutAt,
-			TimeoutInSeconds: timeoutInSeconds,
-			Tags:             request.GetTags(),
-			Metadata:         metadata,
-		},
+	token, err := r.Events.CreateRuntimeToken(ctx, api.WorkerCreateTokenRequest{
+		Lease:            lease,
+		TimeoutAt:        timeoutAt,
+		TimeoutInSeconds: timeoutInSeconds,
+		Tags:             request.GetTags(),
+		Metadata:         metadata,
 	})
 	if err != nil {
-		return &runv0.WaitpointTokenCreateResult{ErrorMessage: ptrString(err.Error())}
+		return &runv0.TokenCreateResult{ErrorMessage: ptrString(err.Error())}
 	}
-	result := &runv0.WaitpointTokenCreateResult{
+	result := &runv0.TokenCreateResult{
 		Id:          token.ID,
 		CallbackUrl: token.CallbackURL,
 		TimeoutAt:   timePtrString(token.TimeoutAt),
@@ -825,28 +844,29 @@ func (r GuestRunner) updateRunMetadata(ctx context.Context, claim api.WorkerRunL
 	return nil
 }
 
-func (r GuestRunner) handleWaitpointRequested(ctx context.Context, stream io.ReadWriteCloser, session vm.Session, request Request, wait *runv0.WaitpointRequested, activeDuration time.Duration, inputMetadata runtimeInputMetadata, observedSeq *uint64) error {
+func (r GuestRunner) handleRunWaitRequested(ctx context.Context, stream io.ReadWriteCloser, session vm.Session, request Request, wait *runv0.RunWaitRequested, activeDuration time.Duration, inputMetadata runtimeInputMetadata, observedSeq *uint64) error {
 	if request.WaitHandler == nil {
-		return errors.New("guest wait request requires a waitpoint handler")
+		return errors.New("guest wait request requires a run wait handler")
 	}
 	runtimeWait, err := runtimeWaitRequest(request, wait)
 	if err != nil {
 		return err
 	}
+	runtimeWait.Leases = request.Leases
 	runtimeWait.Lease = currentRunLease(request)
 	runtimeWait.ActiveDuration = activeDuration
 	resumeSent := false
 	runtimeWait.Resume = func(resumeCtx context.Context, decision WaitResumeDecision) error {
 		if strings.TrimSpace(decision.Kind) == "" {
-			return errors.New("waitpoint resume kind is required")
+			return errors.New("run wait resume kind is required")
 		}
 		if len(decision.Data) == 0 {
 			decision.Data = json.RawMessage(`null`)
 		}
-		if err := transport.WriteProtoFrame(stream, &runv0.ResumeDecision{
-			WaitpointId: wait.CorrelationId,
-			Kind:        decision.Kind,
-			DataJson:    string(decision.Data),
+		if err := runprotocol.WriteResumeDecision(stream, &runv0.ResumeDecision{
+			RunWaitId: wait.CorrelationId,
+			Kind:      decision.Kind,
+			DataJson:  string(decision.Data),
 		}); err != nil {
 			return fmt.Errorf("write immediate resume decision: %w", err)
 		}
@@ -872,14 +892,14 @@ func (r GuestRunner) handleWaitpointRequested(ctx context.Context, stream io.Rea
 	if resumeSent {
 		return nil
 	}
-	return errors.New("waitpoint handler returned without detaching runtime")
+	return errors.New("run wait handler returned without detaching runtime")
 }
 
 func currentRunLease(request Request) api.WorkerRunLease {
 	return request.Leases.CurrentWorkerRunLease()
 }
 
-func runtimeWaitRequest(request Request, wait *runv0.WaitpointRequested) (WaitRequest, error) {
+func runtimeWaitRequest(request Request, wait *runv0.RunWaitRequested) (WaitRequest, error) {
 	if wait == nil {
 		return WaitRequest{}, errors.New("guest wait request is empty")
 	}
@@ -887,7 +907,7 @@ func runtimeWaitRequest(request Request, wait *runv0.WaitpointRequested) (WaitRe
 	if correlationID == "" {
 		return WaitRequest{}, errors.New("guest wait request correlation_id is required")
 	}
-	kind := api.WorkerWaitpointKind(strings.TrimSpace(wait.GetKind()))
+	kind := api.WorkerRunWaitKind(strings.TrimSpace(wait.GetKind()))
 	if kind == "" {
 		return WaitRequest{}, errors.New("guest wait request kind is required")
 	}
@@ -923,15 +943,19 @@ func runtimeWaitRequest(request Request, wait *runv0.WaitpointRequested) (WaitRe
 	if err != nil {
 		return WaitRequest{}, err
 	}
+	idleTimeout, err := waitTimeoutSeconds(wait.IdleTimeout)
+	if err != nil {
+		return WaitRequest{}, err
+	}
 	return WaitRequest{
-		Lease:          currentRunLease(request),
-		CorrelationID:  correlationID,
-		Kind:           kind,
-		Params:         []byte(paramsJSON),
-		Metadata:       []byte(metadataJSON),
-		Tags:           tags,
-		TimeoutSeconds: timeout,
-		Ordinal:        int32(wait.GetOrdinal()),
+		Lease:              currentRunLease(request),
+		CorrelationID:      correlationID,
+		Kind:               kind,
+		Params:             []byte(paramsJSON),
+		Metadata:           []byte(metadataJSON),
+		Tags:               tags,
+		TimeoutSeconds:     timeout,
+		IdleTimeoutSeconds: idleTimeout,
 	}, nil
 }
 

@@ -581,76 +581,154 @@ func (c *Client) CancelTaskSession(ctx context.Context, sessionID string, input 
 	return response, nil
 }
 
-func (c *Client) AppendTaskSessionInput(ctx context.Context, sessionID string, channel string, input api.AppendChannelRecordRequest, opts TaskSessionScopeOptions) (api.AppendChannelRecordResponse, error) {
-	path, err := c.sessionItemPath(sessionID, "/channels/"+url.PathEscape(channel)+"/inputs", opts)
+func (c *Client) AppendTaskSessionInput(ctx context.Context, sessionID string, stream string, input api.AppendStreamRecordRequest, opts TaskSessionScopeOptions) (api.AppendStreamRecordResponse, error) {
+	path, err := c.sessionItemPath(sessionID, "/inputs/"+url.PathEscape(stream), opts)
 	if err != nil {
-		return api.AppendChannelRecordResponse{}, err
+		return api.AppendStreamRecordResponse{}, err
 	}
-	var response api.AppendChannelRecordResponse
+	var response api.AppendStreamRecordResponse
 	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.AppendChannelRecordResponse{}, err
+		return api.AppendStreamRecordResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) ListTaskSessionOutputs(ctx context.Context, sessionID string, channel string, cursor int64, opts TaskSessionScopeOptions) (api.ListChannelRecordsResponse, error) {
-	path, err := c.sessionItemPath(sessionID, "/channels/"+url.PathEscape(channel)+"/outputs", opts)
+func (c *Client) ListTaskSessionStreams(ctx context.Context, sessionID string, opts TaskSessionScopeOptions) (api.ListSessionStreamsResponse, error) {
+	path, err := c.sessionItemPath(sessionID, "/streams", opts)
 	if err != nil {
-		return api.ListChannelRecordsResponse{}, err
-	}
-	values := url.Values{}
-	if cursor > 0 {
-		values.Set("after_sequence", strconv.FormatInt(cursor, 10))
-	}
-	if encoded := values.Encode(); encoded != "" {
-		path += "?" + encoded
+		return api.ListSessionStreamsResponse{}, err
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.ListChannelRecordsResponse{}, err
+		return api.ListSessionStreamsResponse{}, err
 	}
-	var response api.ListChannelRecordsResponse
+	var response api.ListSessionStreamsResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return api.ListChannelRecordsResponse{}, err
+		return api.ListSessionStreamsResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) FollowTaskSessionOutputs(ctx context.Context, sessionID string, channel string, cursor int64, opts TaskSessionScopeOptions, handle func(api.ChannelRecordResponse) error) error {
-	path, err := c.sessionItemPath(sessionID, "/channels/"+url.PathEscape(channel)+"/outputs/stream", opts)
+func (c *Client) ListTaskSessionInputs(ctx context.Context, sessionID string, stream string, cursor int64, limit int32, opts TaskSessionScopeOptions) (api.ListStreamRecordsResponse, error) {
+	path, err := c.sessionItemPath(sessionID, "/inputs/"+url.PathEscape(stream), opts)
 	if err != nil {
-		return err
+		return api.ListStreamRecordsResponse{}, err
 	}
 	values := url.Values{}
 	if cursor > 0 {
 		values.Set("after_sequence", strconv.FormatInt(cursor, 10))
+	}
+	if limit > 0 {
+		values.Set("limit", strconv.FormatInt(int64(limit), 10))
 	}
 	if encoded := values.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return err
+		return api.ListStreamRecordsResponse{}, err
 	}
-	req.Header.Set("accept", "text/event-stream")
-	res, err := c.httpClient.Do(req)
+	var response api.ListStreamRecordsResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.ListStreamRecordsResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ListTaskSessionOutputs(ctx context.Context, sessionID string, stream string, cursor int64, limit int32, opts TaskSessionScopeOptions) (api.ListStreamRecordsResponse, error) {
+	path, err := c.sessionItemPath(sessionID, "/outputs/"+url.PathEscape(stream), opts)
+	if err != nil {
+		return api.ListStreamRecordsResponse{}, err
+	}
+	values := url.Values{}
+	if cursor > 0 {
+		values.Set("after_sequence", strconv.FormatInt(cursor, 10))
+	}
+	if limit > 0 {
+		values.Set("limit", strconv.FormatInt(int64(limit), 10))
+	}
+	if encoded := values.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return api.ListStreamRecordsResponse{}, err
+	}
+	var response api.ListStreamRecordsResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.ListStreamRecordsResponse{}, err
+	}
+	return response, nil
+}
+
+type TokenScopeOptions struct {
+	ProjectID     string
+	EnvironmentID string
+}
+
+func (c *Client) tokenCollectionPath(opts TokenScopeOptions) (string, error) {
+	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/tokens")
+	return path, err
+}
+
+func (c *Client) tokenItemPath(tokenID string, suffix string, opts TokenScopeOptions) (string, error) {
+	path, err := c.tokenCollectionPath(opts)
+	if err != nil {
+		return "", err
+	}
+	return environmentScopedResourcePath(path, tokenID, suffix), nil
+}
+
+func (c *Client) CreateToken(ctx context.Context, input api.CreateTokenRequest) (api.TokenResponse, error) {
+	path, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/tokens")
+	if err != nil {
+		return api.TokenResponse{}, err
+	}
+	if scoped {
+		input.ProjectID = ""
+		input.EnvironmentID = ""
+	}
+	var response api.TokenResponse
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
+		return api.TokenResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) GetToken(ctx context.Context, tokenID string, opts TokenScopeOptions) (api.TokenResponse, error) {
+	path, err := c.tokenItemPath(tokenID, "", opts)
+	if err != nil {
+		return api.TokenResponse{}, err
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return api.TokenResponse{}, err
+	}
+	var response api.TokenResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.TokenResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CompleteToken(ctx context.Context, tokenID string, input api.CompleteTokenRequest, opts TokenScopeOptions) error {
+	path, err := c.tokenItemPath(tokenID, "/complete", opts)
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return decodeError(res)
+	return c.postJSON(ctx, path, input, nil)
+}
+
+func (c *Client) CancelToken(ctx context.Context, tokenID string, opts TokenScopeOptions) (api.TokenResponse, error) {
+	path, err := c.tokenItemPath(tokenID, "/cancel", opts)
+	if err != nil {
+		return api.TokenResponse{}, err
 	}
-	return readSSE(res.Body, func(eventName string, _ string, data []byte) error {
-		if eventName != "" && eventName != "channel_output" {
-			return nil
-		}
-		var record api.ChannelRecordResponse
-		if err := json.Unmarshal(data, &record); err != nil {
-			return err
-		}
-		return handle(record)
-	})
+	var response api.TokenResponse
+	if err := c.postJSON(ctx, path, struct{}{}, &response); err != nil {
+		return api.TokenResponse{}, err
+	}
+	return response, nil
 }
 
 func readSSE(reader io.Reader, handle func(eventName string, eventID string, data []byte) error) error {

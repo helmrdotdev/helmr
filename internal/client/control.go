@@ -388,12 +388,6 @@ type SecretOptions struct {
 	EnvironmentID string
 }
 
-type WaitpointTokenOptions struct {
-	ProjectID     string
-	EnvironmentID string
-	Status        string
-}
-
 func (c *Client) ListSecrets(ctx context.Context, opts ...SecretOptions) (api.ListSecretsResponse, error) {
 	path, err := c.secretCollectionPath(opts...)
 	if err != nil {
@@ -459,68 +453,6 @@ func (c *Client) DeleteSecret(ctx context.Context, name string, opts ...SecretOp
 	return c.doJSON(req, nil)
 }
 
-func (c *Client) CreateWaitpointToken(ctx context.Context, request api.CreateWaitpointTokenRequest, opts ...WaitpointTokenOptions) (api.WaitpointTokenResponse, error) {
-	path, err := c.waitpointTokenCollectionPath(opts...)
-	if err != nil {
-		return api.WaitpointTokenResponse{}, err
-	}
-	var response api.WaitpointTokenResponse
-	if err := c.postJSON(ctx, path, request, &response); err != nil {
-		return api.WaitpointTokenResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) ListWaitpointTokens(ctx context.Context, opts ...WaitpointTokenOptions) (api.ListWaitpointTokensResponse, error) {
-	path, err := c.waitpointTokenCollectionPath(opts...)
-	if err != nil {
-		return api.ListWaitpointTokensResponse{}, err
-	}
-	if len(opts) > 0 && strings.TrimSpace(opts[0].Status) != "" {
-		values := url.Values{}
-		values.Set("status", strings.TrimSpace(opts[0].Status))
-		path += "?" + values.Encode()
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return api.ListWaitpointTokensResponse{}, err
-	}
-	var response api.ListWaitpointTokensResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.ListWaitpointTokensResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) GetWaitpointToken(ctx context.Context, tokenID string, opts ...WaitpointTokenOptions) (api.WaitpointTokenResponse, error) {
-	path, err := c.waitpointTokenCollectionPath(opts...)
-	if err != nil {
-		return api.WaitpointTokenResponse{}, err
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path+"/"+url.PathEscape(tokenID), nil)
-	if err != nil {
-		return api.WaitpointTokenResponse{}, err
-	}
-	var response api.WaitpointTokenResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.WaitpointTokenResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) CompleteWaitpointToken(ctx context.Context, tokenID string, request api.CompleteWaitpointTokenRequest) error {
-	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(request); err != nil {
-		return fmt.Errorf("encode request: %w", err)
-	}
-	req, err := c.newRequest(ctx, http.MethodPost, "/api/waitpoints/tokens/"+url.PathEscape(tokenID)+"/complete", &body)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("content-type", "application/json")
-	return c.doJSON(req, nil)
-}
-
 func (c *Client) secretCollectionPath(opts ...SecretOptions) (string, error) {
 	hasScope := len(opts) > 0 && (strings.TrimSpace(opts[0].ProjectID) != "" || strings.TrimSpace(opts[0].EnvironmentID) != "")
 	if hasScope && c.sessionScopedRoutes {
@@ -533,22 +465,6 @@ func (c *Client) secretCollectionPath(opts ...SecretOptions) (string, error) {
 		return c.secretCollectionPathWithScope(SecretOptions{})
 	}
 	return "/api/secrets", nil
-}
-
-func (c *Client) waitpointTokenCollectionPath(opts ...WaitpointTokenOptions) (string, error) {
-	hasScope := len(opts) > 0 && (strings.TrimSpace(opts[0].ProjectID) != "" || strings.TrimSpace(opts[0].EnvironmentID) != "")
-	if hasScope && c.sessionScopedRoutes {
-		path, _, err := c.environmentScopedPath(opts[0].ProjectID, opts[0].EnvironmentID, "/waitpoints/tokens")
-		return path, err
-	}
-	if hasScope {
-		return "", errors.New("project and environment scope is only accepted on session-scoped API routes")
-	}
-	if c.sessionScopedRoutes {
-		path, _, err := c.environmentScopedPath("", "", "/waitpoints/tokens")
-		return path, err
-	}
-	return "/api/waitpoints/tokens", nil
 }
 
 func (c *Client) secretCollectionPathWithScope(opts SecretOptions) (string, error) {

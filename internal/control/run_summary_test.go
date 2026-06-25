@@ -49,8 +49,8 @@ func TestCreateGetAndListRun(t *testing.T) {
 	if string(store.createRun.Payload) != `{"env":"prod"}` {
 		t.Fatalf("payload = %s", store.createRun.Payload)
 	}
-	if store.createRun.MaxDurationSeconds != 300 {
-		t.Fatalf("max duration = %d", store.createRun.MaxDurationSeconds)
+	if store.createRun.MaxActiveDurationMs != 300_000 {
+		t.Fatalf("max duration = %d", store.createRun.MaxActiveDurationMs)
 	}
 	if store.currentDeploymentTaskCalls != 1 {
 		t.Fatalf("current deployment task calls = %d, want 1", store.currentDeploymentTaskCalls)

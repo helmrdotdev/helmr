@@ -1,49 +1,133 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
-import { HelmrClient } from "@helmr/sdk"
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
+import { HelmrClient, type Task } from "@helmr/sdk"
 
-type Config = {
+export type Config = {
   readonly helmrUrl: string
   readonly helmrApiKey: string
-  readonly sessionId: string
+  readonly taskId: string
   readonly port: number
   readonly slackBotToken: string
   readonly slackSigningSecret: string
   readonly slackChannelId: string
+  readonly release: string
   readonly title: string
   readonly summary: string
+  readonly risk?: string
+  readonly stagingUrl?: string
+  readonly productionUrl?: string
+  readonly startIdempotencyKey?: string
+  readonly tokenIdempotencyKey?: string
 }
 
-const config = readConfig()
-const client = new HelmrClient({ url: config.helmrUrl, apiKey: config.helmrApiKey })
+type SlackAction = {
+  readonly tokenId: string
+  readonly approved: boolean
+  readonly userId: string
+  readonly channelId?: string
+  readonly actionTs?: string
+}
 
-createServer((request, response) => {
-  void route(request, response).catch((error: unknown) => {
+type ReleaseApprovalPayload = {
+  readonly release: string
+  readonly summary: string
+  readonly tokenId: string
+  readonly risk?: string
+  readonly stagingUrl?: string
+  readonly productionUrl?: string
+}
+
+type ReleaseApprovalTask = Task<ReleaseApprovalPayload>
+
+type BridgeDeps = {
+  readonly completeToken: (tokenId: string, data: unknown) => Promise<void>
+}
+
+type CompletionToken = {
+  readonly id: string
+}
+
+if (import.meta.main) {
+  const config = readConfig()
+  const client = new HelmrClient({ url: config.helmrUrl, apiKey: config.helmrApiKey })
+  startBridge(config, client).catch((error: unknown) => {
     console.error(error)
-    sendText(response, 500, "internal error")
+    process.exitCode = 1
   })
-}).listen(config.port, () => {
-  console.log(`Slack approval bridge listening on http://localhost:${config.port}`)
-  console.log(`sending approval input to Helmr session ${config.sessionId}`)
-  void postSlackApproval().catch((error: unknown) => {
-    console.error("initial Slack post failed", error)
-  })
-})
+}
 
-async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
+export async function startBridge(config: Config, client: HelmrClient): Promise<void> {
+  const server = createServer((request, response) => {
+    void route(request, response, config, {
+      completeToken: (tokenId, data) => client.tokens.complete(tokenId, data),
+    }).catch((error: unknown) => {
+      console.error(error)
+      if (response.headersSent || response.writableEnded) return
+      sendText(response, 500, "internal error")
+    })
+  })
+  await listenBridge(server, config.port)
+  console.log(`Slack approval bridge listening on http://localhost:${config.port}`)
+
+  try {
+    const token = await client.tokens.create({
+      timeout: "7d",
+      tags: ["approval", "bridge:slack-approval", "medium:slack"],
+      metadata: approvalMetadata(config),
+      idempotencyKey: tokenIdempotencyKey(config),
+    })
+
+    try {
+      await postSlackApproval(config, token)
+    } catch (error) {
+      await client.tokens.cancel(token.id).catch((cancelError: unknown) => {
+        console.error("failed to cancel Slack approval token after post failure", cancelError)
+      })
+      throw error
+    }
+
+    const started = await client.tasks.start<ReleaseApprovalTask>(config.taskId, {
+      release: config.release,
+      summary: config.summary,
+      tokenId: token.id,
+      ...(config.risk === undefined ? {} : { risk: config.risk }),
+      ...(config.stagingUrl === undefined ? {} : { stagingUrl: config.stagingUrl }),
+      ...(config.productionUrl === undefined ? {} : { productionUrl: config.productionUrl }),
+    }, {
+      idempotencyKey: startIdempotencyKey(config),
+    })
+
+    console.log(`started Helmr session ${started.session.id} for token ${token.id}`)
+  } catch (error) {
+    server.close()
+    throw error
+  }
+}
+
+export async function route(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: Config,
+  deps: BridgeDeps,
+): Promise<void> {
   const url = new URL(request.url ?? "/", `http://localhost:${config.port}`)
   if (request.method === "GET" && url.pathname === "/health") {
     sendJson(response, 200, { ok: true })
     return
   }
   if (request.method === "POST" && url.pathname === "/slack/actions") {
-    await handleSlackAction(request, response)
+    await handleSlackAction(request, response, config, deps)
     return
   }
   sendText(response, 404, "not found")
 }
 
-async function handleSlackAction(request: IncomingMessage, response: ServerResponse): Promise<void> {
+export async function handleSlackAction(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: Config,
+  deps: BridgeDeps,
+): Promise<void> {
   const rawBody = await readBody(request)
   if (!verifySlackSignature(request, rawBody, config.slackSigningSecret)) {
     sendText(response, 401, "invalid slack signature")
@@ -56,23 +140,34 @@ async function handleSlackAction(request: IncomingMessage, response: ServerRespo
     return
   }
 
-  const action = parseSlackAction(payloadJson)
-  await client.sessions.open(action.sessionId).input("approval").send({
+  let action: SlackAction
+  try {
+    action = parseSlackAction(payloadJson)
+  } catch {
+    sendText(response, 400, "invalid slack payload")
+    return
+  }
+  const completion = {
     approved: action.approved,
     actor: action.userId,
     channelId: action.channelId,
-  }, {
-    correlationId: action.channelId,
-    externalEventId: action.actionTs,
-  })
-
-  sendJson(response, 200, {
-    response_type: "ephemeral",
-    text: action.approved ? "Approved in Helmr." : "Rejected in Helmr.",
-  })
+  }
+  try {
+    await deps.completeToken(action.tokenId, completion)
+    sendJson(response, 200, {
+      response_type: "ephemeral",
+      text: action.approved ? "Approved in Helmr." : "Rejected in Helmr.",
+    })
+  } catch (error) {
+    if (!isDuplicateTokenCompletion(error)) throw error
+    sendJson(response, 200, {
+      response_type: "ephemeral",
+      text: "This approval was already recorded in Helmr.",
+    })
+  }
 }
 
-async function postSlackApproval(): Promise<void> {
+export async function postSlackApproval(config: Config, token: CompletionToken): Promise<void> {
   const response = await fetch("https://slack.com/api/chat.postMessage", {
     method: "POST",
     headers: {
@@ -88,8 +183,8 @@ async function postSlackApproval(): Promise<void> {
         {
           type: "actions",
           elements: [
-            slackButton("Approve", "primary", true),
-            slackButton("Reject", "danger", false),
+            slackButton(token.id, "Approve", "primary", true),
+            slackButton(token.id, "Reject", "danger", false),
           ],
         },
       ],
@@ -99,20 +194,17 @@ async function postSlackApproval(): Promise<void> {
   if (!response.ok || result.ok !== true) throw new Error(`Slack post failed: ${result.error ?? response.statusText}`)
 }
 
-function slackButton(text: string, style: "primary" | "danger", approved: boolean) {
+export function slackButton(tokenId: string, text: string, style: "primary" | "danger", approved: boolean) {
   return {
     type: "button",
     text: { type: "plain_text", text },
     style,
     action_id: approved ? "helmr_approve" : "helmr_reject",
-    value: JSON.stringify({
-      sessionId: config.sessionId,
-      approved,
-    }),
+    value: JSON.stringify({ tokenId, approved }),
   }
 }
 
-function verifySlackSignature(request: IncomingMessage, rawBody: string, signingSecret: string): boolean {
+export function verifySlackSignature(request: Pick<IncomingMessage, "headers">, rawBody: string, signingSecret: string): boolean {
   const timestamp = request.headers["x-slack-request-timestamp"]
   const signature = request.headers["x-slack-signature"]
   if (typeof timestamp !== "string" || typeof signature !== "string") return false
@@ -120,19 +212,17 @@ function verifySlackSignature(request: IncomingMessage, rawBody: string, signing
   if (!Number.isFinite(timestampSeconds)) return false
   if (Math.abs(Date.now() / 1000 - timestampSeconds) > 60 * 5) return false
 
-  const expected = `v0=${createHmac("sha256", signingSecret).update(`v0:${timestamp}:${rawBody}`).digest("hex")}`
+  const expected = slackSignature(rawBody, signingSecret, timestamp)
   const expectedBytes = Buffer.from(expected)
   const signatureBytes = Buffer.from(signature)
   return expectedBytes.length === signatureBytes.length && timingSafeEqual(expectedBytes, signatureBytes)
 }
 
-function parseSlackAction(payloadJson: string): {
-  readonly sessionId: string
-  readonly approved: boolean
-  readonly userId: string
-  readonly channelId?: string
-  readonly actionTs?: string
-} {
+export function slackSignature(rawBody: string, signingSecret: string, timestamp: string): string {
+  return `v0=${createHmac("sha256", signingSecret).update(`v0:${timestamp}:${rawBody}`).digest("hex")}`
+}
+
+export function parseSlackAction(payloadJson: string): SlackAction {
   const payload = JSON.parse(payloadJson) as Record<string, unknown>
   const actions = payload.actions
   if (!Array.isArray(actions) || actions.length === 0) throw new Error("missing Slack action")
@@ -140,13 +230,24 @@ function parseSlackAction(payloadJson: string): {
   const value = JSON.parse(String(action.value)) as Record<string, unknown>
   const user = payload.user as Record<string, unknown> | undefined
   const channel = payload.channel as Record<string, unknown> | undefined
+  const tokenId = typeof value.tokenId === "string" ? value.tokenId.trim() : ""
+  if (tokenId.length === 0) throw new Error("missing token id")
+  if (typeof value.approved !== "boolean") throw new Error("missing approval decision")
   return {
-    sessionId: String(value.sessionId),
-    approved: value.approved === true,
+    tokenId,
+    approved: value.approved,
     userId: String(user?.id ?? "slack-user"),
     channelId: typeof channel?.id === "string" ? channel.id : undefined,
     actionTs: typeof action.action_ts === "string" ? action.action_ts : undefined,
   }
+}
+
+export function isDuplicateTokenCompletion(error: unknown): boolean {
+  if (error === null || typeof error !== "object") return false
+  const code = "code" in error ? String((error as { readonly code?: unknown }).code) : ""
+  if (code === "token_completion_conflict") return true
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes("token_completion_conflict")
 }
 
 async function readBody(request: IncomingMessage): Promise<string> {
@@ -159,14 +260,39 @@ function readConfig(): Config {
   return {
     helmrUrl: requiredEnv("HELMR_API_URL"),
     helmrApiKey: requiredEnv("HELMR_API_KEY"),
-    sessionId: requiredEnv("HELMR_SESSION_ID"),
+    taskId: optionalEnv("HELMR_TASK_ID", "slack-approval"),
     port: numberEnv("PORT", 8787),
     slackBotToken: requiredEnv("SLACK_BOT_TOKEN"),
     slackSigningSecret: requiredEnv("SLACK_SIGNING_SECRET"),
     slackChannelId: requiredEnv("SLACK_CHANNEL_ID"),
+    release: optionalEnv("APPROVAL_RELEASE", "release"),
     title: optionalEnv("APPROVAL_TITLE", "Approve release?"),
     summary: optionalEnv("APPROVAL_SUMMARY", "Review the release request and choose an action."),
+    risk: optionalEnvOrUndefined("APPROVAL_RISK"),
+    stagingUrl: optionalEnvOrUndefined("APPROVAL_STAGING_URL"),
+    productionUrl: optionalEnvOrUndefined("APPROVAL_PRODUCTION_URL"),
+    startIdempotencyKey: optionalEnvOrUndefined("HELMR_START_IDEMPOTENCY_KEY"),
+    tokenIdempotencyKey: optionalEnvOrUndefined("HELMR_TOKEN_IDEMPOTENCY_KEY"),
   }
+}
+
+function approvalMetadata(config: Config): Record<string, unknown> {
+  return {
+    release: config.release,
+    summary: config.summary,
+    title: config.title,
+    risk: config.risk ?? null,
+    stagingUrl: config.stagingUrl ?? null,
+    productionUrl: config.productionUrl ?? null,
+  }
+}
+
+function tokenIdempotencyKey(config: Config): string {
+  return config.tokenIdempotencyKey ?? `slack-approval:${config.taskId}:${config.slackChannelId}:${config.release}:token`
+}
+
+function startIdempotencyKey(config: Config): string {
+  return config.startIdempotencyKey ?? `slack-approval:${config.taskId}:${config.slackChannelId}:${config.release}:start`
 }
 
 function requiredEnv(name: string): string {
@@ -180,12 +306,33 @@ function optionalEnv(name: string, fallback: string): string {
   return value === undefined || value.length === 0 ? fallback : value
 }
 
+function optionalEnvOrUndefined(name: string): string | undefined {
+  const value = process.env[name]
+  return value === undefined || value.length === 0 ? undefined : value
+}
+
 function numberEnv(name: string, fallback: number): number {
   const value = process.env[name]
   if (value === undefined || value.length === 0) return fallback
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) throw new Error(`${name} must be a number`)
   return parsed
+}
+
+async function listenBridge(server: Server, port: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.off("listening", onListening)
+      reject(error)
+    }
+    const onListening = () => {
+      server.off("error", onError)
+      resolve()
+    }
+    server.once("error", onError)
+    server.once("listening", onListening)
+    server.listen(port)
+  })
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {

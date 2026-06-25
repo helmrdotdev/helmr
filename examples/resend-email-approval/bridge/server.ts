@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
-import { HelmrClient, wait, type PendingWaitpoint } from "@helmr/sdk"
+import { HelmrClient } from "@helmr/sdk"
 
 type Config = {
   readonly helmrUrl: string
   readonly helmrApiKey: string
-  readonly currentRunId: string
   readonly port: number
   readonly publicBaseUrl: string
   readonly pollIntervalMs: number
@@ -23,6 +22,8 @@ type PendingResponse = {
 
 const config = readConfig()
 const client = new HelmrClient({ url: config.helmrUrl, apiKey: config.helmrApiKey })
+type ClientToken = Awaited<ReturnType<typeof client.tokens.list>>[number]
+const bridgeTag = "bridge:resend-email-approval"
 const delivered = new Set<string>()
 const pendingResponseTTLMS = 24 * 60 * 60 * 1000
 // Demo bridge state is intentionally in-memory. Production bridges should
@@ -37,7 +38,7 @@ createServer((request, response) => {
   })
 }).listen(config.port, () => {
   console.log(`Resend email approval bridge listening on ${config.publicBaseUrl}`)
-  console.log(`watching Helmr current run ${config.currentRunId}`)
+  console.log(`watching Helmr tokens tagged ${bridgeTag}`)
 })
 
 void pollLoop()
@@ -45,7 +46,7 @@ void pollLoop()
 async function pollLoop(): Promise<void> {
   for (;;) {
     try {
-      const requests = await client.runs.waitpoints.list(config.currentRunId, { status: "pending", limit: 25 })
+      const requests = await client.tokens.list({ status: "pending", limit: 25 })
       await Promise.all(requests.map(deliverRequest))
     } catch (error) {
       console.error("poll failed", error)
@@ -54,10 +55,10 @@ async function pollLoop(): Promise<void> {
   }
 }
 
-async function deliverRequest(request: PendingWaitpoint): Promise<void> {
+async function deliverRequest(request: ClientToken): Promise<void> {
+  if (!request.tags?.includes(bridgeTag)) return
   if (delivered.has(request.id)) return
-  const token = waitpointToken(request)
-  await sendApprovalEmail(request, token)
+  await sendApprovalEmail(request, request)
   delivered.add(request.id)
 }
 
@@ -110,12 +111,12 @@ async function handleEmailResponse(request: IncomingMessage, response: ServerRes
     bridge: "resend",
     actor: config.emailTo,
   }
-  await wait.completeToken(pending.tokenId, payload)
+  await client.tokens.complete(pending.tokenId, payload)
   deletePendingResponse(responseId, pending)
   sendHtml(response, 200, `<h1>Response recorded</h1><p>${payload.approved ? "Approved" : "Rejected"}.</p>`)
 }
 
-async function sendApprovalEmail(request: PendingWaitpoint, token: WaitpointTokenForDelivery): Promise<void> {
+async function sendApprovalEmail(request: ClientToken, token: ClientToken): Promise<void> {
   const message = formatEmail(request, token)
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -138,7 +139,7 @@ async function sendApprovalEmail(request: PendingWaitpoint, token: WaitpointToke
   }
 }
 
-function formatEmail(request: PendingWaitpoint, token: WaitpointTokenForDelivery): {
+function formatEmail(request: ClientToken, token: ClientToken): {
   readonly subject: string
   readonly html: string
   readonly text: string
@@ -164,7 +165,7 @@ function formatEmail(request: PendingWaitpoint, token: WaitpointTokenForDelivery
   }
 }
 
-function responseUrls(token: WaitpointTokenForDelivery): { readonly approveUrl: string; readonly rejectUrl: string } {
+function responseUrls(token: ClientToken): { readonly approveUrl: string; readonly rejectUrl: string } {
   pruneExpiredPendingResponses()
   const approveId = randomUUID()
   const rejectId = randomUUID()
@@ -202,10 +203,10 @@ function pruneExpiredPendingResponses(): void {
   }
 }
 
-function requestDetails(request: PendingWaitpoint): { readonly title: string; readonly summary: string } {
+function requestDetails(request: ClientToken): { readonly title: string; readonly summary: string } {
   const value = request.metadata
   const record = value !== null && typeof value === "object" ? value as Record<string, unknown> : {}
-  const title = typeof record.release === "string" ? `Approve ${record.release}` : `Waitpoint ${request.id}`
+  const title = typeof record.release === "string" ? `Approve ${record.release}` : `Token ${request.id}`
   const lines = [
     field("Release", record.release),
     field("Summary", record.summary),
@@ -213,18 +214,7 @@ function requestDetails(request: PendingWaitpoint): { readonly title: string; re
     field("Staging", record.stagingUrl),
     field("Production", record.productionUrl),
   ].filter((line): line is string => line !== null)
-  return { title, summary: lines.length === 0 ? `Waitpoint ${request.id}` : lines.join("\n") }
-}
-
-type WaitpointTokenForDelivery = {
-  readonly id: string
-}
-
-function waitpointToken(request: PendingWaitpoint): WaitpointTokenForDelivery {
-  const record = request.params !== null && typeof request.params === "object" ? request.params as Record<string, unknown> : {}
-  const id = record.token_id
-  if (typeof id !== "string" || id.length === 0) throw new Error(`waitpoint ${request.id} is missing token_id`)
-  return { id }
+  return { title, summary: lines.length === 0 ? `Token ${request.id}` : lines.join("\n") }
 }
 
 function field(label: string, value: unknown): string | null {
@@ -252,7 +242,6 @@ function readConfig(): Config {
   return {
     helmrUrl: requiredEnv("HELMR_API_URL"),
     helmrApiKey: requiredEnv("HELMR_API_KEY"),
-    currentRunId: requiredEnv("HELMR_CURRENT_RUN_ID"),
     port,
     publicBaseUrl: requiredEnv("PUBLIC_BASE_URL"),
     pollIntervalMs: numberEnv("POLL_INTERVAL_MS", 2000),

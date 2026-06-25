@@ -18,7 +18,6 @@ import { SessionDetail } from "./routes/session-detail";
 import { Sessions } from "./routes/sessions";
 import { Schedules } from "./routes/schedules";
 import { Tasks } from "./routes/tasks";
-import { Waitpoints } from "./routes/waitpoints";
 import { ApiKeys } from "./routes/api-keys";
 import { Secrets } from "./routes/secrets";
 import { Members } from "./routes/members";
@@ -166,7 +165,6 @@ function AppShell(props: { children?: JSX.Element }) {
           <TabLink href="/tasks">Tasks</TabLink>
           <TabLink href="/sessions" matchPrefix>Sessions</TabLink>
           <TabLink href="/schedules">Schedules</TabLink>
-          <TabLink href="/waitpoints">Waitpoints</TabLink>
           <TabLink href="/settings/projects" activePrefix="/settings">Settings</TabLink>
         </nav>
         <div class={"flex items-center gap-2"}>
@@ -220,7 +218,6 @@ export function App() {
       <Route path="/sessions/:id" component={wrap(SessionDetail)} />
       <Route path="/schedules" component={wrap(Schedules)} />
       <Route path="/tasks" component={wrap(Tasks)} />
-      <Route path="/waitpoints" component={wrap(Waitpoints)} />
       <Route path="/projects/new" component={() => <RequireAuth allowOnboarding><ProjectNew /></RequireAuth>} />
 
       <Route path="/settings" component={() => <Navigate href="/settings/projects" />} />

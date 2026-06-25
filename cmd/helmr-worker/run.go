@@ -147,6 +147,7 @@ func run(log *slog.Logger) error {
 		Connector: connector,
 		TempDir:   filepath.Join(workDir, "tmp"),
 	}
+	materializationSessions := executor.NewWorkspaceMaterializationSessions()
 	runner, err := worker.NewRunner(
 		controlClient,
 		executor.Executor{
@@ -154,13 +155,14 @@ func run(log *slog.Logger) error {
 			GitPath: cfg.GitPath,
 			CAS:     store,
 			Builder: builder,
-			Waitpoints: executor.ControlWaitpoints{
+			RunWaits: executor.ControlRunWaits{
 				Client: controlClient,
 			},
 			Runner: executor.GuestRunner{
 				Connector:           connector,
 				CAS:                 store,
 				CheckpointEncryptor: checkpointEncryptor,
+				Materializations:    materializationSessions,
 				Events:              controlClient,
 				TempDir:             filepath.Join(workDir, "tmp"),
 				Stdout:              os.Stdout,
@@ -180,6 +182,7 @@ func run(log *slog.Logger) error {
 		worker.WithMaterializer(executor.WorkspaceMaterializer{
 			Connector:      connector,
 			CAS:            store,
+			Sessions:       materializationSessions,
 			TempDir:        filepath.Join(workDir, "tmp"),
 			StartupTimeout: cfg.WorkspaceMaterializeTimeout,
 		}),

@@ -22,6 +22,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/runprotocol"
 	"github.com/helmrdotdev/helmr/internal/safepath"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
@@ -412,7 +413,7 @@ func TestRunAdapterReportsWaitHandoffControlFailure(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if event.GetWaitpointRequested() != nil {
+		if event.GetRunWaitRequested() != nil {
 			sawWait = true
 			continue
 		}
@@ -430,6 +431,57 @@ func TestRunAdapterReportsWaitHandoffControlFailure(t *testing.T) {
 			t.Fatalf("complete = %+v", complete)
 		}
 		return
+	}
+}
+
+func TestRunAdapterBridgesActiveStreamReadResultToAdapterStdin(t *testing.T) {
+	t.Setenv("HELMR_GUESTD_HELPER", "active-stream-read-control")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	tempDir, runner := guestAdapterHelperRunner(t, "active-stream-read-control")
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runAdapter(ctx, guest, Config{
+			AdapterRuntimePath: runner,
+			AdapterPath:        "-test.run=TestGuestAdapterHelperProcess",
+		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), newWaitingRunRegistry())
+	}()
+
+	event, err := transport.ReadRunEvent(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := event.GetActiveStreamReadRequested()
+	if read == nil {
+		t.Fatalf("event = %+v, want active stream read request", event)
+	}
+	if read.CorrelationId != "active-read-1" || read.Stream != "inbox" || read.Block {
+		t.Fatalf("active read request = %+v", read)
+	}
+	if err := transport.WriteProtoFrame(host, &runv0.ActiveStreamReadResult{
+		CorrelationId: "active-read-1",
+		TimedOut:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var complete *runv0.TaskResult
+	for complete == nil {
+		event, err := transport.ReadRunEvent(host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		complete = event.GetTaskResult()
+	}
+	if complete.ExitCode != 0 || complete.OutputJson == nil || *complete.OutputJson != `{"timedOut":true}` {
+		t.Fatalf("complete = %+v", complete)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -836,7 +888,7 @@ func TestReadConnectionStartAcceptsResumeAttach(t *testing.T) {
 	var stream bytes.Buffer
 	if err := transport.WriteProtoFrame(&stream, &runv0.ResumeAttach{
 		CheckpointId: "checkpoint-1",
-		WaitpointId:  "waitpoint-1",
+		RunWaitId:    "run-wait-id-1",
 		RunLeaseId:   "execution-1",
 	}); err != nil {
 		t.Fatal(err)
@@ -845,7 +897,7 @@ func TestReadConnectionStartAcceptsResumeAttach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if start.attach == nil || start.attach.CheckpointId != "checkpoint-1" || start.attach.WaitpointId != "waitpoint-1" {
+	if start.attach == nil || start.attach.CheckpointId != "checkpoint-1" || start.attach.RunWaitId != "run-wait-id-1" {
 		t.Fatalf("start = %+v", start)
 	}
 }
@@ -1155,18 +1207,18 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event.GetWaitpointRequested() == nil {
+	if event.GetRunWaitRequested() == nil {
 		t.Fatalf("first event = %+v", event)
 	}
-	writeSuspendAndReadReady(t, originalHost, "waitpoint-1", "checkpoint-1")
+	writeSuspendAndReadReady(t, originalHost, "run-wait-id-1", "checkpoint-1")
 	if err := originalHost.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := registry.attach("waitpoint-1", "checkpoint-1", attachedGuest); err != nil {
+	if err := registry.attach("run-wait-id-1", "checkpoint-1", attachedGuest); err != nil {
 		t.Fatal(err)
 	}
 	if err := transport.WriteProtoFrame(attachedHost, &runv0.ResumeDecision{
-		WaitpointId:        "waitpoint-1",
+		RunWaitId:          "run-wait-id-1",
 		Kind:               "completed",
 		DataJson:           "{}",
 		RequireConsumedAck: true,
@@ -1177,7 +1229,7 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 	if err := transport.ReadProtoFrame(attachedHost, &ack); err != nil {
 		t.Fatal(err)
 	}
-	if ack.WaitpointId != "waitpoint-1" {
+	if ack.RunWaitId != "run-wait-id-1" {
 		t.Fatalf("ack = %+v", &ack)
 	}
 
@@ -1238,19 +1290,19 @@ func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), registry)
 	}()
 
-	readWaitpointRequested(t, originalHost)
-	writeSuspendAndReadReady(t, originalHost, "waitpoint-1", "checkpoint-1")
-	if err := registry.attach("waitpoint-1", "checkpoint-1", firstGuest); err != nil {
+	readRunWaitRequested(t, originalHost)
+	writeSuspendAndReadReady(t, originalHost, "run-wait-id-1", "checkpoint-1")
+	if err := registry.attach("run-wait-id-1", "checkpoint-1", firstGuest); err != nil {
 		t.Fatal(err)
 	}
-	writeDecisionAndReadAck(t, firstHost, "waitpoint-1", "completed")
+	writeDecisionAndReadAck(t, firstHost, "run-wait-id-1", "completed")
 
-	readWaitpointRequested(t, firstHost)
-	writeSuspendAndReadReady(t, firstHost, "waitpoint-2", "checkpoint-2")
-	if err := registry.attach("waitpoint-2", "checkpoint-2", secondGuest); err != nil {
+	readRunWaitRequested(t, firstHost)
+	writeSuspendAndReadReady(t, firstHost, "run-wait-id-2", "checkpoint-2")
+	if err := registry.attach("run-wait-id-2", "checkpoint-2", secondGuest); err != nil {
 		t.Fatal(err)
 	}
-	writeDecisionAndReadAck(t, secondHost, "waitpoint-2", "completed")
+	writeDecisionAndReadAck(t, secondHost, "run-wait-id-2", "completed")
 
 	var stdout strings.Builder
 	var completed bool
@@ -1289,93 +1341,11 @@ func TestReadResumeDecisionTimesOut(t *testing.T) {
 	}
 }
 
-func TestRunAdapterForwardsAggregateWaitpointsBeforeCheckpointReady(t *testing.T) {
-	t.Setenv("HELMR_GUESTD_HELPER", "wait-all-control")
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	originalGuest, originalHost := net.Pipe()
-	defer originalGuest.Close()
-	defer originalHost.Close()
-	attachedGuest, attachedHost := net.Pipe()
-	defer attachedGuest.Close()
-	defer attachedHost.Close()
-
-	deadline := time.Now().Add(15 * time.Second)
-	for _, conn := range []net.Conn{originalHost, attachedHost} {
-		if err := conn.SetDeadline(deadline); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	registry := newWaitingRunRegistry()
-	tempDir, runner := guestAdapterHelperRunner(t, "wait-all-control")
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- runAdapter(ctx, originalGuest, Config{
-			AdapterRuntimePath: runner,
-			AdapterPath:        "-test.run=TestGuestAdapterHelperProcess",
-		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), registry)
-	}()
-
-	first := readWaitpointRequestedEvent(t, originalHost)
-	if first.CorrelationId != "aggregate-1" || first.Ordinal != 0 || first.AggregateCount != 2 {
-		t.Fatalf("first wait = %+v", first)
-	}
-	if err := transport.WriteProtoFrame(originalHost, &runv0.CheckpointPauseRequest{
-		WaitpointId:  "waitpoint-1",
-		CheckpointId: "checkpoint-1",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	second := readWaitpointRequestedEvent(t, originalHost)
-	if second.CorrelationId != "aggregate-1" || second.Ordinal != 1 || second.AggregateCount != 2 {
-		t.Fatalf("second wait = %+v", second)
-	}
-	readCheckpointPauseReady(t, originalHost, "waitpoint-1", "checkpoint-1")
-	if err := registry.attach("waitpoint-1", "checkpoint-1", attachedGuest); err != nil {
-		t.Fatal(err)
-	}
-	writeDecisionAndReadAck(t, attachedHost, "waitpoint-1", "waitpoints")
-
-	var completed bool
-	for !completed {
-		event, err := transport.ReadRunEvent(attachedHost)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if result := event.GetTaskResult(); result != nil {
-			completed = true
-			if result.ExitCode != 0 {
-				t.Fatalf("exit code = %d message=%v", result.ExitCode, result.ErrorMessage)
-			}
-		}
-	}
-	if err := <-errCh; err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestForwardCheckpointControlEventsRejectsIncompleteAggregate(t *testing.T) {
-	controlEvents := make(chan adapterControlEvent)
-	close(controlEvents)
-	err := forwardCheckpointControlEvents(context.Background(), controlEvents, nil, &runv0.WaitpointRequested{
-		CorrelationId:  "aggregate-1",
-		Kind:           "timer",
-		ParamsJson:     `{}`,
-		Ordinal:        0,
-		AggregateCount: 2,
-	})
-	if err == nil || !strings.Contains(err.Error(), "before aggregate wait completed") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
 func TestAdapterRunStreamTimesOutWaitingForResumeConsumed(t *testing.T) {
 	var out bytes.Buffer
 	stream := newAdapterRunStream(&out)
 	stream.resumeAckPending = true
-	stream.resumeAckWaitpoint = "waitpoint-1"
+	stream.resumeAckRunWait = "run-wait-id-1"
 	stream.resumeAckDeadline = time.Now().Add(-time.Millisecond)
 	err := stream.writeEvent(&runv0.RunEvent{
 		Event: &runv0.RunEvent_LogEntry{LogEntry: "blocked"},
@@ -1388,36 +1358,36 @@ func TestAdapterRunStreamTimesOutWaitingForResumeConsumed(t *testing.T) {
 	}
 }
 
-func readWaitpointRequested(t *testing.T, conn io.Reader) {
+func readRunWaitRequested(t *testing.T, conn io.Reader) {
 	t.Helper()
-	_ = readWaitpointRequestedEvent(t, conn)
+	_ = readRunWaitRequestedEvent(t, conn)
 }
 
-func readWaitpointRequestedEvent(t *testing.T, conn io.Reader) *runv0.WaitpointRequested {
+func readRunWaitRequestedEvent(t *testing.T, conn io.Reader) *runv0.RunWaitRequested {
 	t.Helper()
 	for {
 		event, err := transport.ReadRunEvent(conn)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if wait := event.GetWaitpointRequested(); wait != nil {
+		if wait := event.GetRunWaitRequested(); wait != nil {
 			return wait
 		}
 	}
 }
 
-func writeSuspendAndReadReady(t *testing.T, conn io.ReadWriter, waitpointID string, checkpointID string) {
+func writeSuspendAndReadReady(t *testing.T, conn io.ReadWriter, runWaitID string, checkpointID string) {
 	t.Helper()
-	if err := transport.WriteProtoFrame(conn, &runv0.CheckpointPauseRequest{
-		WaitpointId:  waitpointID,
+	if err := runprotocol.WriteCheckpointPauseRequest(conn, &runv0.CheckpointPauseRequest{
+		RunWaitId:    runWaitID,
 		CheckpointId: checkpointID,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	readCheckpointPauseReady(t, conn, waitpointID, checkpointID)
+	readCheckpointPauseReady(t, conn, runWaitID, checkpointID)
 }
 
-func readCheckpointPauseReady(t *testing.T, conn io.Reader, waitpointID string, checkpointID string) {
+func readCheckpointPauseReady(t *testing.T, conn io.Reader, runWaitID string, checkpointID string) {
 	t.Helper()
 	reader := bufio.NewReader(conn)
 	for {
@@ -1430,8 +1400,8 @@ func readCheckpointPauseReady(t *testing.T, conn io.Reader, waitpointID string, 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if header.Type != transport.StreamTypeCheckpointPauseReady || header.WaitpointID != waitpointID || header.CheckpointID != checkpointID || bodyLen != 0 {
-				t.Fatalf("pause ready = %+v bodyLen=%d, want waitpoint=%s checkpoint=%s", header, bodyLen, waitpointID, checkpointID)
+			if header.Type != transport.StreamTypeCheckpointPauseReady || header.RunWaitID != runWaitID || header.CheckpointID != checkpointID || bodyLen != 0 {
+				t.Fatalf("pause ready = %+v bodyLen=%d, want run wait=%s checkpoint=%s", header, bodyLen, runWaitID, checkpointID)
 			}
 			return
 		}
@@ -1446,10 +1416,10 @@ func readCheckpointPauseReady(t *testing.T, conn io.Reader, waitpointID string, 
 	}
 }
 
-func writeDecisionAndReadAck(t *testing.T, conn io.ReadWriter, waitpointID string, kind string) {
+func writeDecisionAndReadAck(t *testing.T, conn io.ReadWriter, runWaitID string, kind string) {
 	t.Helper()
 	if err := transport.WriteProtoFrame(conn, &runv0.ResumeDecision{
-		WaitpointId:        waitpointID,
+		RunWaitId:          runWaitID,
 		Kind:               kind,
 		DataJson:           "{}",
 		RequireConsumedAck: true,
@@ -1460,8 +1430,8 @@ func writeDecisionAndReadAck(t *testing.T, conn io.ReadWriter, waitpointID strin
 	if err := transport.ReadProtoFrame(conn, &ack); err != nil {
 		t.Fatal(err)
 	}
-	if ack.WaitpointId != waitpointID {
-		t.Fatalf("ack = %+v, want waitpoint=%s", &ack, waitpointID)
+	if ack.RunWaitId != runWaitID {
+		t.Fatalf("ack = %+v, want run wait=%s", &ack, runWaitID)
 	}
 }
 
@@ -1586,7 +1556,7 @@ func runGuestAdapterHelperProcess() int {
 			return 2
 		}
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
-			Event: &runv0.RunEvent_WaitpointRequested{WaitpointRequested: &runv0.WaitpointRequested{
+			Event: &runv0.RunEvent_RunWaitRequested{RunWaitRequested: &runv0.RunWaitRequested{
 				CorrelationId: "approval-1",
 				Kind:          "token",
 				ParamsJson:    `{}`,
@@ -1596,22 +1566,44 @@ func runGuestAdapterHelperProcess() int {
 		}
 		_ = control.Close()
 		return 0
+	case "active-stream-read-control":
+		control, err := helperControlWriter()
+		if err != nil {
+			return 2
+		}
+		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+			Event: &runv0.RunEvent_ActiveStreamReadRequested{ActiveStreamReadRequested: &runv0.ActiveStreamReadRequested{
+				CorrelationId: "active-read-1",
+				Stream:        "inbox",
+				AfterSequence: 2,
+				Block:         false,
+			}},
+		}); err != nil {
+			_ = control.Close()
+			return 2
+		}
+		var result runv0.ActiveStreamReadResult
+		if err := transport.ReadProtoFrame(os.Stdin, &result); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			_ = control.Close()
+			return 2
+		}
+		outputJSON := fmt.Sprintf(`{"timedOut":%t}`, result.GetTimedOut())
+		return writeHelperTaskResult(control, 0, outputJSON)
 	case "wait-all-control":
 		control, err := helperControlWriter()
 		if err != nil {
 			return 2
 		}
-		for ordinal, kind := range []string{"timer", "channel"} {
-			if ordinal == 1 {
+		for index, kind := range []string{"timer", "channel"} {
+			if index == 1 {
 				time.Sleep(200 * time.Millisecond)
 			}
 			if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
-				Event: &runv0.RunEvent_WaitpointRequested{WaitpointRequested: &runv0.WaitpointRequested{
-					CorrelationId:  "aggregate-1",
-					Kind:           kind,
-					ParamsJson:     `{}`,
-					Ordinal:        uint32(ordinal),
-					AggregateCount: 2,
+				Event: &runv0.RunEvent_RunWaitRequested{RunWaitRequested: &runv0.RunWaitRequested{
+					CorrelationId: "run-wait-1",
+					Kind:          kind,
+					ParamsJson:    `{}`,
 				}},
 			}); err != nil {
 				_ = control.Close()
@@ -1623,7 +1615,7 @@ func runGuestAdapterHelperProcess() int {
 			_ = control.Close()
 			return 2
 		}
-		if err := writeHelperResumeConsumed(control, decision.WaitpointId); err != nil {
+		if err := writeHelperResumeConsumed(control, decision.RunWaitId); err != nil {
 			_ = control.Close()
 			return 2
 		}
@@ -1636,7 +1628,7 @@ func runGuestAdapterHelperProcess() int {
 		return 2
 	}
 	if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
-		Event: &runv0.RunEvent_WaitpointRequested{WaitpointRequested: &runv0.WaitpointRequested{
+		Event: &runv0.RunEvent_RunWaitRequested{RunWaitRequested: &runv0.RunWaitRequested{
 			CorrelationId: "approval-1",
 			Kind:          "token",
 			ParamsJson:    `{}`,
@@ -1648,13 +1640,13 @@ func runGuestAdapterHelperProcess() int {
 	if err := transport.ReadProtoFrame(os.Stdin, &decision); err != nil {
 		return 2
 	}
-	if err := writeHelperResumeConsumed(control, decision.WaitpointId); err != nil {
+	if err := writeHelperResumeConsumed(control, decision.RunWaitId); err != nil {
 		return 2
 	}
 	fmt.Println("after-first")
 	if os.Getenv("HELMR_GUESTD_HELPER") == "resume-handoff-twice" {
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
-			Event: &runv0.RunEvent_WaitpointRequested{WaitpointRequested: &runv0.WaitpointRequested{
+			Event: &runv0.RunEvent_RunWaitRequested{RunWaitRequested: &runv0.RunWaitRequested{
 				CorrelationId: "message-1",
 				Kind:          "token",
 				ParamsJson:    `{}`,
@@ -1665,7 +1657,7 @@ func runGuestAdapterHelperProcess() int {
 		if err := transport.ReadProtoFrame(os.Stdin, &decision); err != nil {
 			return 2
 		}
-		if err := writeHelperResumeConsumed(control, decision.WaitpointId); err != nil {
+		if err := writeHelperResumeConsumed(control, decision.RunWaitId); err != nil {
 			return 2
 		}
 		fmt.Println("after-second")
@@ -1675,10 +1667,10 @@ func runGuestAdapterHelperProcess() int {
 	return writeHelperTaskResult(control, 0, "")
 }
 
-func writeHelperResumeConsumed(control io.Writer, waitpointID string) error {
+func writeHelperResumeConsumed(control io.Writer, runWaitID string) error {
 	return transport.WriteProtoFrame(control, &runv0.RunEvent{
 		Event: &runv0.RunEvent_ResumeConsumed{ResumeConsumed: &runv0.ResumeConsumed{
-			WaitpointId: waitpointID,
+			RunWaitId: runWaitID,
 		}},
 	})
 }

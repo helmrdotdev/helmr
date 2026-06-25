@@ -43,21 +43,27 @@ Common user/API-key routes:
 | `POST` | `/api/sessions/{id}/close` |
 | `POST` | `/api/sessions/{id}/cancel` |
 | `GET` | `/api/sessions/{id}/runs` |
-| `GET` | `/api/sessions/{id}/channels/{channel}/inputs` |
-| `POST` | `/api/sessions/{id}/channels/{channel}/inputs` |
-| `GET` | `/api/sessions/{id}/channels/{channel}/outputs` |
-| `GET` | `/api/sessions/{id}/channels/{channel}/outputs/stream` |
+| `GET` | `/api/sessions/{id}/streams` |
+| `POST` | `/api/sessions/{id}/inputs/{stream}` |
+| `GET` | `/api/sessions/{id}/inputs/{stream}` |
+| `POST` | `/api/sessions/{id}/outputs/{stream}` |
+| `GET` | `/api/sessions/{id}/outputs/{stream}` |
+| `GET` | `/api/sessions/{id}/outputs/{stream}/read` |
 | `GET` | `/api/runs` |
 | `GET` | `/api/runs/counts` |
 | `GET` | `/api/runs/{id}` |
 | `GET` | `/api/runs/{id}/events` |
 | `GET` | `/api/runs/{id}/logs` |
-| `GET` | `/api/runs/{id}/waitpoints` |
-| `POST` | `/api/waitpoints/tokens` |
-| `GET` | `/api/waitpoints/tokens` |
-| `GET` | `/api/waitpoints/tokens/{id}` |
-| `POST` | `/api/waitpoints/tokens/{id}/complete` |
-| `POST` | `/api/waitpoints/tokens/{id}/callback/{secret}` |
+| `POST` | `/api/tokens` |
+| `GET` | `/api/tokens` |
+| `GET` | `/api/tokens/{id}` |
+| `POST` | `/api/tokens/{id}/complete` |
+| `POST` | `/api/tokens/{id}/cancel` |
+| `POST` | `/api/public-access-tokens` |
+| `POST` | `/api/v1/tokens/{id}/complete` |
+| `POST` | `/api/v1/tokens/{id}/callback/{secret}` |
+| `POST` | `/api/v1/sessions/{id}/inputs/{stream}` |
+| `GET` | `/api/v1/sessions/{id}/outputs/{stream}/read` |
 | `POST` | `/api/workspaces` |
 | `GET` | `/api/workspaces` |
 | `GET` | `/api/workspaces/{workspace_id}` |
@@ -96,9 +102,11 @@ Common user/API-key routes:
 
 Auth routes include GitHub OAuth, magic links, device auth, logout, API keys, members, invitations, projects, and environments.
 
-`POST /api/waitpoints/tokens/{id}/complete` accepts a Helmr API key or session bearer with `waitpoint_tokens.complete` permission for the token's project environment, or the waitpoint token's `publicAccessToken` bearer. Public tokens use the `hlmr_wpt_` prefix and authorize only completion of their own token. The callback route is a pre-signed server-to-server alternative; callback secrets use the `hlmr_wpc_` prefix and are embedded in the callback URL path. Creation responses include `public_access_token` and `callback_url`; retrieve and list responses do not return completion secrets.
+`POST /api/tokens/{id}/complete` accepts a Helmr API key or session bearer with `tokens.complete` permission for the token's project environment. Browser completion uses `POST /api/v1/tokens/{id}/complete` with the token's scoped `public_access_token`; provider callbacks use `POST /api/v1/tokens/{id}/callback/{secret}` and do not use CORS. Token id knowledge is not authorization.
 
-Worker routes include registration, activation, drain/status, execution lease/start/renew/release, log/event append, waitpoints, waitpoint token creation, channel output append, metadata updates, and checkpoint ready/failed notifications. Worker registration and status responses include `worker_group_id`. Worker run leases and worker run payloads include `attempt_number`; this is the task attempt number, not the queue dispatch attempt.
+`POST /api/public-access-tokens` creates narrow browser capabilities bound to one stream scope. `session.input.send` tokens can call `POST /api/v1/sessions/{id}/inputs/{stream}`. `session.output.read` tokens can call `GET /api/v1/sessions/{id}/outputs/{stream}/read`. The public token's scope row, stream direction, and optional `correlation_id` are checked before the token is consumed.
+
+Worker routes include registration, activation, drain/status, execution lease/start/renew/release, log/event append, internal wait suspension, token creation, stream output append, metadata updates, and checkpoint ready/failed notifications. Worker registration and status responses include `worker_group_id`. Worker run leases and worker run payloads include `attempt_number`; this is the task attempt number, not the queue dispatch attempt.
 
 `GET /api/runs/{id}/events` returns JSON pages by default and streams SSE when `follow=1` or `Accept: text/event-stream` is present. The SSE `id` is the run event cursor.
 

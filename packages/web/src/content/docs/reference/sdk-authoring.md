@@ -11,7 +11,7 @@ order: 910
 Import task-authoring APIs from `@helmr/sdk`:
 
 ```ts
-import { channel, defineConfig, image, logger, metadata, sandbox, schedules, source, task, wait } from "@helmr/sdk"
+import { defineConfig, image, logger, metadata, sandbox, schedules, source, streams, task, timers, tokens } from "@helmr/sdk"
 ```
 
 `defineConfig({ project, dirs, ignorePatterns? })` declares the deploy target project and task directories. `project` must be a non-empty string, and `dirs` must be a non-empty string array. `ignorePatterns` overrides deploy archive defaults.
@@ -56,4 +56,4 @@ Image builders support `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, and 
 
 Sandbox builders support `image`, `workspace`, and `resources`. The default workspace mount is `/workspace`.
 
-At runtime, `ctx` is intentionally small: `ctx.signal`, `ctx.run`, `ctx.task`, `ctx.workspace`, and `ctx.session`. The `channel` helper declares typed session input and output lanes. Use `ctx.session.input(channel.input(...)).wait()` for durable session input, `ctx.session.output(channel.output(...)).append(...)` for durable session output, and module-level operations for other side effects: `wait.createToken(...)`, `wait.forToken(...)`, `wait.completeToken(...)`, `metadata.set(...)`, `wait.for(...)`, `wait.until(...)`, and `logger.info(...)`.
+At runtime, `ctx` is intentionally small: `ctx.signal`, `ctx.run`, `ctx.task`, `ctx.workspace`, and `ctx.session`. Stream helpers declare typed session input and output lanes. Use module-level stream handles for durable session input/output, `tokens.create(...)` and token handles for externally completed waits, `timers.waitFor(...)` / `timers.waitUntil(...)` for time waits, and `logger.info(...)` for logs.

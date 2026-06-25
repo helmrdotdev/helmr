@@ -75,6 +75,64 @@ func TestCreateRunReturnsExistingRunForActiveIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestTaskStartMaterializesDeploymentStreamsForSession(t *testing.T) {
+	progressID := pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000401"))
+	reportID := pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000402"))
+	store := &fakeStore{
+		deploymentStreams: []db.DeploymentStream{
+			{
+				ID:                progressID,
+				OrgID:             pgvalue.UUID(dbtest.DefaultOrgID),
+				ProjectID:         testProjectID(),
+				EnvironmentID:     testEnvironmentID(),
+				DeploymentID:      testDeploymentID(),
+				TaskID:            "deploy",
+				Name:              "runtime-smoke.progress",
+				Direction:         db.StreamDirectionOutput,
+				SchemaFingerprint: "sha256:progress",
+				SchemaJson:        []byte(`{"kind":"test"}`),
+				Metadata:          []byte(`{}`),
+			},
+			{
+				ID:                reportID,
+				OrgID:             pgvalue.UUID(dbtest.DefaultOrgID),
+				ProjectID:         testProjectID(),
+				EnvironmentID:     testEnvironmentID(),
+				DeploymentID:      testDeploymentID(),
+				TaskID:            "deploy",
+				Name:              "runtime-smoke.report",
+				Direction:         db.StreamDirectionOutput,
+				SchemaFingerprint: "sha256:report",
+				SchemaJson:        []byte(`{"kind":"test"}`),
+				Metadata:          []byte(`{}`),
+			},
+		},
+	}
+	runEnqueuer := &fakeRunEnqueuer{}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", strings.NewReader(`{"payload":{"env":"prod"}}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.ensuredSessionStreams) != 2 {
+		t.Fatalf("ensured session streams = %d, want 2", len(store.ensuredSessionStreams))
+	}
+	got := []pgtype.UUID{store.ensuredSessionStreams[0].DeploymentStreamID, store.ensuredSessionStreams[1].DeploymentStreamID}
+	want := []pgtype.UUID{progressID, reportID}
+	if got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("deployment streams = %+v, want %+v", got, want)
+	}
+	for _, ensured := range store.ensuredSessionStreams {
+		if ensured.SessionID != store.taskSession.ID {
+			t.Fatalf("session stream session_id = %v, want %v", ensured.SessionID, store.taskSession.ID)
+		}
+	}
+}
+
 func TestCreateRunRequiresCoordinationForIdempotencyKey(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}

@@ -34,7 +34,7 @@ func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logge
 		return false, err
 	}
 	if start.attach != nil {
-		if err := registry.attach(start.attach.WaitpointId, start.attach.CheckpointId, conn); err != nil {
+		if err := registry.attach(start.attach.RunWaitId, start.attach.CheckpointId, conn); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -92,7 +92,7 @@ func readConnectionStart(conn io.Reader) (connectionStart, error) {
 }
 
 func validateResumeAttach(attach *runv0.ResumeAttach) (connectionStart, error) {
-	if strings.TrimSpace(attach.CheckpointId) == "" || strings.TrimSpace(attach.WaitpointId) == "" || strings.TrimSpace(attach.RunLeaseId) == "" {
+	if strings.TrimSpace(attach.CheckpointId) == "" || strings.TrimSpace(attach.RunWaitId) == "" || strings.TrimSpace(attach.RunLeaseId) == "" {
 		return connectionStart{}, errors.New("resume attach is missing required fields")
 	}
 	return connectionStart{attach: attach}, nil

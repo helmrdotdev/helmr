@@ -19,7 +19,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicaccess"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -30,12 +29,7 @@ const (
 	maxTaskSessionWaitTimeout     = 5 * time.Minute
 	defaultTaskSessionListLimit   = int32(100)
 	maxTaskSessionListLimit       = int32(200)
-	defaultSessionChannelLimit    = int32(100)
-	maxSessionChannelLimit        = int32(500)
-	maxSessionInputsPerChannel    = int64(10000)
-	sessionChannelStreamBatchSize = int32(100)
-	sessionChannelStreamPollEvery = 250 * time.Millisecond
-	sessionChannelStreamMax       = 5 * time.Minute
+	taskSessionWaitPollEvery      = 250 * time.Millisecond
 	maxTaskSessionExternalIDBytes = 512
 )
 
@@ -48,9 +42,6 @@ var (
 	errTaskSessionTerminated           = codedError{code: "session_terminal", message: "task session is terminal"}
 	errTaskSessionNoCurrentRun         = codedError{code: "session_has_no_current_run"}
 	errCloseRunActive                  = codedError{code: "close_run_active"}
-	errChannelFingerprintMismatch      = codedError{code: "channel_fingerprint_mismatch", message: "channel identity was already used with different input data"}
-	errChannelInputLimitExceeded       = codedError{code: "channel_input_limit_exceeded", message: "channel input limit exceeded"}
-	errSessionInputClosed              = codedError{code: "session_input_closed", message: "session current run is not accepting input"}
 	errTaskSessionExpiresAtPatch       = codedError{code: "session_expires_at_not_extendable", message: "session expires_at can only extend an existing future expiry"}
 	errSandboxNotDeployed              = codedError{code: "sandbox_not_deployed", message: "task sandbox is not deployed"}
 	errWorkspaceSandboxIncompatible    = codedError{code: "workspace_sandbox_incompatible", message: "workspace sandbox is incompatible with this task"}
@@ -132,12 +123,7 @@ func (s *Server) startTask(w http.ResponseWriter, r *http.Request) {
 		s.writeTaskStartError(w, err)
 		return
 	}
-	runResponse, err := s.runResponse(r.Context(), result.run)
-	if err != nil {
-		s.log.Error("build task start run response failed", "error", err)
-		writeError(w, errors.New("build task start response"))
-		return
-	}
+	runResponse := runResponse(result.run)
 	status := http.StatusCreated
 	if result.idempotencyHit || result.sessionReused {
 		status = http.StatusOK
@@ -291,7 +277,7 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 			return taskStartResult{}, err
 		}
 	}
-	maxDurationSeconds, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, deploymentTask.MaxDurationSeconds)
+	maxDurationSeconds, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, deploymentTask.MaxActiveDurationMs)
 	if err != nil {
 		return taskStartResult{}, err
 	}
@@ -447,6 +433,9 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 		}
 		return taskStartResult{}, err
 	}
+	if err := s.ensureTaskSessionStreams(ctx, store, pgvalue.UUID(actor.OrgID), projectID, environmentID, deploymentTask.DeploymentID, taskID, session.ID); err != nil {
+		return taskStartResult{}, err
+	}
 	run, err := store.CreateScopedRun(ctx, db.CreateScopedRunParams{
 		ID:                    pgvalue.UUID(runID),
 		OrgID:                 pgvalue.UUID(actor.OrgID),
@@ -472,7 +461,7 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 		QueueTimestamp:        scheduling.queueTimestamp,
 		Ttl:                   scheduling.ttl,
 		QueuedExpiresAt:       scheduling.queuedExpiresAt,
-		MaxDurationSeconds:    maxDurationSeconds,
+		MaxActiveDurationMs:   int64(maxDurationSeconds) * 1000,
 		TraceID:               traceID,
 		RootSpanID:            rootSpanID,
 		EventPayload:          createdPayload,
@@ -569,6 +558,33 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 		}
 	}
 	return taskStartResult{session: session, run: createScopedRunSummary(run)}, nil
+}
+
+func (s *Server) ensureTaskSessionStreams(ctx context.Context, store db.Querier, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, taskID string, sessionID pgtype.UUID) error {
+	streams, err := store.ListDeploymentStreamsForTask(ctx, db.ListDeploymentStreamsForTaskParams{
+		OrgID:         orgID,
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		DeploymentID:  deploymentID,
+		TaskID:        taskID,
+	})
+	if err != nil {
+		return err
+	}
+	for _, stream := range streams {
+		if _, err := store.EnsureSessionStream(ctx, db.EnsureSessionStreamParams{
+			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			Metadata:           []byte("{}"),
+			DeploymentStreamID: stream.ID,
+			OrgID:              orgID,
+			ProjectID:          projectID,
+			EnvironmentID:      environmentID,
+			SessionID:          sessionID,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateTaskSessionExternalID(value string) error {
@@ -1249,7 +1265,7 @@ func (s *Server) waitForTaskSession(ctx context.Context, actor auth.Actor, proje
 		if time.Now().After(deadline) {
 			return session, true, nil
 		}
-		timer := time.NewTimer(sessionChannelStreamPollEvery)
+		timer := time.NewTimer(taskSessionWaitPollEvery)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -1463,768 +1479,6 @@ func (s *Server) listTaskSessionRuns(w http.ResponseWriter, r *http.Request) {
 		response = append(response, item)
 	}
 	writeJSON(w, http.StatusOK, api.ListTaskSessionRunsResponse{Runs: response})
-}
-
-func (s *Server) listTaskSessionChannels(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.loadTaskSessionForRequest(w, r, auth.PermissionRunsRead)
-	if !ok {
-		return
-	}
-	channels, err := s.db.ListTaskSessionChannels(r.Context(), db.ListTaskSessionChannelsParams{
-		OrgID:         session.OrgID,
-		ProjectID:     session.ProjectID,
-		EnvironmentID: session.EnvironmentID,
-		TaskSessionID: session.ID,
-	})
-	if err != nil {
-		writeError(w, errors.New("list session channels"))
-		return
-	}
-	response := make([]api.TaskSessionChannelResponse, 0, len(channels))
-	for _, channel := range channels {
-		response = append(response, api.TaskSessionChannelResponse{
-			ID:            pgvalue.MustUUIDValue(channel.ID).String(),
-			TaskSessionID: pgvalue.MustUUIDValue(channel.TaskSessionID).String(),
-			Name:          channel.Name,
-			Direction:     string(channel.Direction),
-			NextSequence:  channel.NextSequence,
-			CreatedAt:     pgvalue.Time(channel.CreatedAt),
-		})
-	}
-	writeJSON(w, http.StatusOK, api.ListTaskSessionChannelsResponse{Channels: response})
-}
-
-func (s *Server) appendTaskSessionChannelInputEntry(w http.ResponseWriter, r *http.Request) {
-	if rawToken, ok := publicBearerToken(r); ok {
-		s.appendTaskSessionChannelInputWithPublicToken(w, r, rawToken)
-		return
-	}
-	s.requireActor(http.HandlerFunc(s.appendTaskSessionChannelInput)).ServeHTTP(w, r)
-}
-
-func (s *Server) listTaskSessionChannelInputsEntry(w http.ResponseWriter, r *http.Request) {
-	s.requireActor(http.HandlerFunc(s.listTaskSessionChannelInputs)).ServeHTTP(w, r)
-}
-
-func (s *Server) listTaskSessionChannelOutputsEntry(w http.ResponseWriter, r *http.Request) {
-	if rawToken, ok := publicBearerToken(r); ok {
-		s.listTaskSessionChannelOutputsWithPublicToken(w, r, rawToken)
-		return
-	}
-	s.requireActor(http.HandlerFunc(s.listTaskSessionChannelOutputs)).ServeHTTP(w, r)
-}
-
-func (s *Server) streamTaskSessionChannelOutputsEntry(w http.ResponseWriter, r *http.Request) {
-	if rawToken, ok := publicBearerToken(r); ok {
-		s.streamTaskSessionChannelOutputsWithPublicToken(w, r, rawToken)
-		return
-	}
-	s.requireActor(http.HandlerFunc(s.streamTaskSessionChannelOutputs)).ServeHTTP(w, r)
-}
-
-func (s *Server) optionsTaskSessionChannelRecords(w http.ResponseWriter, r *http.Request) {
-	writeChannelRecordsCORS(w)
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func publicBearerToken(r *http.Request) (string, bool) {
-	rawToken, ok := bearerToken(r.Header.Get("authorization"))
-	return rawToken, ok && publicaccess.IsToken(rawToken)
-}
-
-func (s *Server) createPublicAccessToken(w http.ResponseWriter, r *http.Request) {
-	actor := actorFromContext(r.Context())
-	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
-	var request api.CreatePublicAccessTokenRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid public access token JSON: %w", err)))
-		return
-	}
-	sessionID, err := uuid.Parse(strings.TrimSpace(request.Scope.SessionID))
-	if err != nil {
-		writeError(w, badRequest(errors.New("scope.session_id must be a UUID")))
-		return
-	}
-	channelName := strings.TrimSpace(request.Scope.Channel)
-	if err := validateChannelName(channelName); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	permission, direction, err := publicAccessTokenScopePermission(request.Scope.Type)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	session, err := s.loadTaskSessionByActor(r.Context(), actor, sessionID)
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("session not found")))
-		return
-	}
-	if err != nil {
-		if isScopeRequestError(err) || strings.Contains(err.Error(), "API key is not bound") {
-			writeError(w, badRequest(err))
-			return
-		}
-		writeError(w, errors.New("get session"))
-		return
-	}
-	scope := auth.Scope{
-		OrgID:         actor.OrgID,
-		ProjectID:     pgvalue.MustUUIDValue(session.ProjectID).String(),
-		EnvironmentID: pgvalue.MustUUIDValue(session.EnvironmentID).String(),
-	}
-	if !actor.HasPermission(permission, scope) {
-		writeError(w, forbidden(errPermissionRequired))
-		return
-	}
-	channel, err := s.db.GetTaskSessionChannelByName(r.Context(), db.GetTaskSessionChannelByNameParams{
-		OrgID:         session.OrgID,
-		ProjectID:     session.ProjectID,
-		EnvironmentID: session.EnvironmentID,
-		TaskSessionID: session.ID,
-		Name:          channelName,
-		Direction:     direction,
-	})
-	channelMissing := isNoRows(err)
-	if channelMissing && request.Scope.Type != "session.output.read" {
-		writeError(w, notFound(errors.New("session channel not found")))
-		return
-	}
-	if err != nil && !channelMissing {
-		writeError(w, errors.New("get session channel"))
-		return
-	}
-	if request.MaxUses != nil && *request.MaxUses <= 0 {
-		writeError(w, badRequest(errors.New("max_uses must be positive")))
-		return
-	}
-	expiresAt := time.Time{}
-	if request.ExpiresAt != nil {
-		expiresAt = request.ExpiresAt.UTC()
-	}
-	createdBy, err := publicAccessTokenCreatedBy(actor)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	maxUses := pgtype.Int4{}
-	if request.MaxUses != nil {
-		maxUses = pgtype.Int4{Int32: *request.MaxUses, Valid: true}
-	}
-	grant := sessionChannelPublicAccessTokenGrant{
-		Channel:       channel,
-		ScopeType:     request.Scope.Type,
-		CorrelationID: strings.TrimSpace(request.Scope.CorrelationID),
-		ExpiresAt:     expiresAt,
-		MaxUses:       maxUses,
-		CreatedBy:     createdBy,
-	}
-	if channelMissing {
-		grant.Session = session
-		grant.ChannelName = channelName
-		grant.Direction = direction
-	}
-	rawToken, row, err := createSessionChannelPublicAccessToken(r.Context(), s.db, s.authSecret, grant)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	response := api.PublicAccessTokenResponse{
-		ID:                pgvalue.MustUUIDValue(row.ID).String(),
-		PublicAccessToken: rawToken,
-		Scope: api.PublicAccessTokenScopeRequest{
-			Type:          request.Scope.Type,
-			SessionID:     pgvalue.MustUUIDValue(session.ID).String(),
-			Channel:       channelName,
-			CorrelationID: strings.TrimSpace(request.Scope.CorrelationID),
-		},
-		ExpiresAt: pgvalue.Time(row.ExpiresAt),
-		CreatedAt: pgvalue.Time(row.CreatedAt),
-	}
-	if row.MaxUses.Valid {
-		value := row.MaxUses.Int32
-		response.MaxUses = &value
-	}
-	writeJSON(w, http.StatusCreated, response)
-}
-
-func publicAccessTokenScopePermission(scopeType string) (auth.Permission, db.ChannelDirection, error) {
-	switch strings.TrimSpace(scopeType) {
-	case "session.input.append":
-		return auth.PermissionChannelsWrite, db.ChannelDirectionInput, nil
-	case "session.output.read":
-		return auth.PermissionRunsRead, db.ChannelDirectionOutput, nil
-	default:
-		return "", "", errors.New("unsupported public access token scope")
-	}
-}
-
-func publicAccessTokenCreatedBy(actor auth.Actor) (json.RawMessage, error) {
-	subjectType, subjectID := channelInputAuthSubject(actor)
-	createdBy, err := json.Marshal(struct {
-		Type string `json:"type"`
-		ID   string `json:"id,omitempty"`
-	}{
-		Type: subjectType,
-		ID:   subjectID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return createdBy, nil
-}
-
-func (s *Server) appendTaskSessionChannelInput(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.loadTaskSessionForRequest(w, r, auth.PermissionChannelsWrite)
-	if !ok {
-		return
-	}
-	channel := strings.TrimSpace(chi.URLParam(r, "channel"))
-	if err := validateChannelName(channel); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	var request api.AppendChannelRecordRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid channel input JSON: %w", err)))
-		return
-	}
-	data := request.Data
-	if len(data) == 0 {
-		data = json.RawMessage(`null`)
-	}
-	if !json.Valid(data) {
-		writeError(w, badRequest(errors.New("data must be valid JSON")))
-		return
-	}
-	idempotencyKey := strings.TrimSpace(r.Header.Get("idempotency-key"))
-	if len([]byte(idempotencyKey)) > idempotencyKeyMaxBytes {
-		writeError(w, badRequest(fmt.Errorf("Idempotency-Key is %d bytes, exceeds max %d", len([]byte(idempotencyKey)), idempotencyKeyMaxBytes)))
-		return
-	}
-	contentType := "application/json"
-	authSubjectType, authSubjectID := channelInputAuthSubject(actorFromContext(r.Context()))
-	correlationID := strings.TrimSpace(request.CorrelationID)
-	externalEventID := strings.TrimSpace(request.ExternalEventID)
-	fingerprint, err := channelInputFingerprint(session, channel, data, correlationID, contentType, authSubjectType, authSubjectID, externalEventID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	if idempotencyKey != "" || externalEventID != "" {
-		existing, err := s.db.GetExistingSessionChannelInputRecord(r.Context(), db.GetExistingSessionChannelInputRecordParams{
-			OrgID:                  session.OrgID,
-			TaskSessionID:          session.ID,
-			Channel:                channel,
-			IdempotencyKey:         idempotencyKey,
-			IdempotencyFingerprint: fingerprint,
-			ExternalEventID:        externalEventID,
-		})
-		if err == nil {
-			writeJSON(w, http.StatusCreated, api.AppendChannelRecordResponse{
-				Record:            existingSessionChannelInputResponse(existing),
-				IdempotencyStatus: "duplicate",
-			})
-			return
-		}
-		if err != nil && !isNoRows(err) {
-			writeError(w, errors.New("append session channel input"))
-			return
-		}
-	}
-	if !session.CurrentRunID.Valid {
-		writeError(w, conflict(errSessionInputClosed))
-		return
-	}
-	store, tx, err := s.beginControlTransaction(r.Context())
-	if err != nil {
-		writeError(w, errors.New("append session channel input"))
-		return
-	}
-	defer tx.Rollback(r.Context())
-	record, err := store.AppendSessionChannelInput(r.Context(), db.AppendSessionChannelInputParams{
-		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:                  session.OrgID,
-		RunID:                  session.CurrentRunID,
-		Channel:                channel,
-		Data:                   data,
-		CorrelationID:          correlationID,
-		ContentType:            contentType,
-		IdempotencyKey:         idempotencyKey,
-		IdempotencyFingerprint: fingerprint,
-		ExternalEventID:        externalEventID,
-		AuthSubjectType:        db.ChannelRecordAuthSubjectType(authSubjectType),
-		AuthSubjectID:          authSubjectID,
-		MaxInputsPerChannel:    maxSessionInputsPerChannel,
-	})
-	if isNoRows(err) {
-		writeError(w, s.sessionChannelInputAppendConflict(r.Context(), store, session.OrgID, session.CurrentRunID, channel, idempotencyKey, externalEventID, fingerprint))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("append session channel input"))
-		return
-	}
-	resumeRunIDs := []pgtype.UUID(nil)
-	if record.Inserted {
-		resumeRunIDs, err = resolveRunChannelWaitpointsWithQueries(r.Context(), store, session.OrgID, session.CurrentRunID)
-		if err != nil {
-			writeError(w, errors.New("append session channel input"))
-			return
-		}
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, errors.New("append session channel input"))
-		return
-	}
-	if record.Inserted && s.runEnqueuer != nil {
-		enqueueCtx := context.WithoutCancel(r.Context())
-		if _, err := s.runEnqueuer.EnqueueRun(enqueueCtx, session.OrgID, session.CurrentRunID); err != nil {
-			s.log.Error("enqueue session after channel input failed", "session_id", pgvalue.MustUUIDValue(session.ID).String(), "error", err)
-		}
-		for _, runID := range resumeRunIDs {
-			if _, err := s.runEnqueuer.EnqueueRun(enqueueCtx, session.OrgID, runID); err != nil {
-				s.log.Error("enqueue dependent run after session channel input failed", "session_id", pgvalue.MustUUIDValue(session.ID).String(), "run_id", pgvalue.MustUUIDValue(runID).String(), "error", err)
-			}
-		}
-	}
-	idempotencyStatus := "duplicate"
-	if record.Inserted {
-		idempotencyStatus = "created"
-	}
-	writeJSON(w, http.StatusCreated, api.AppendChannelRecordResponse{
-		Record:            appendSessionChannelInputResponse(record),
-		IdempotencyStatus: idempotencyStatus,
-	})
-}
-
-func (s *Server) appendTaskSessionChannelInputWithPublicToken(w http.ResponseWriter, r *http.Request, rawToken string) {
-	writeChannelRecordsCORS(w)
-	sessionID, err := parseUUIDParam(r, "sessionID")
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	channel := strings.TrimSpace(chi.URLParam(r, "channel"))
-	if err := validateChannelName(channel); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, channelRecordRequestJSONMaxBytes)
-	var request api.AppendChannelRecordRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid channel input JSON: %w", err)))
-		return
-	}
-	data := request.Data
-	if len(data) == 0 {
-		data = json.RawMessage(`null`)
-	}
-	if len(data) > channelRecordContentJSONMaxBytes {
-		writeError(w, badRequest(fmt.Errorf("data is %d bytes, exceeds max %d", len(data), channelRecordContentJSONMaxBytes)))
-		return
-	}
-	if !json.Valid(data) {
-		writeError(w, badRequest(errors.New("data must be valid JSON")))
-		return
-	}
-	idempotencyKey := strings.TrimSpace(r.Header.Get("idempotency-key"))
-	if len([]byte(idempotencyKey)) > idempotencyKeyMaxBytes {
-		writeError(w, badRequest(fmt.Errorf("Idempotency-Key is %d bytes, exceeds max %d", len([]byte(idempotencyKey)), idempotencyKeyMaxBytes)))
-		return
-	}
-	tokenHash, err := publicaccess.HashToken(s.authSecret, rawToken)
-	if err != nil {
-		writeError(w, unauthorized(errors.New("invalid token")))
-		return
-	}
-	record, status, err := s.appendSessionChannelInputWithPublicToken(r.Context(), sessionID, channel, tokenHash, data, strings.TrimSpace(request.CorrelationID), idempotencyKey, strings.TrimSpace(request.ExternalEventID))
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("session channel not found or token not authorized")))
-		return
-	}
-	var apiErr apiError
-	if errors.As(err, &apiErr) {
-		writeError(w, err)
-		return
-	}
-	if err != nil {
-		s.log.Error("append session channel input with public token failed", "session_id", sessionID.String(), "channel", channel, "error", err)
-		writeError(w, errors.New("append session channel input"))
-		return
-	}
-	writeJSON(w, http.StatusCreated, api.AppendChannelRecordResponse{
-		Record:            record,
-		IdempotencyStatus: status,
-	})
-}
-
-func (s *Server) sessionChannelInputAppendConflict(ctx context.Context, store db.Querier, orgID pgtype.UUID, runID pgtype.UUID, channel string, idempotencyKey string, externalEventID string, fingerprint string) error {
-	reason, err := store.GetSessionChannelInputAppendConflictReason(ctx, db.GetSessionChannelInputAppendConflictReasonParams{
-		OrgID:                  orgID,
-		RunID:                  runID,
-		Channel:                channel,
-		IdempotencyKey:         idempotencyKey,
-		IdempotencyFingerprint: fingerprint,
-		ExternalEventID:        externalEventID,
-		MaxInputsPerChannel:    maxSessionInputsPerChannel,
-	})
-	if err != nil {
-		return errors.New("session channel input was not accepted")
-	}
-	switch reason {
-	case "idempotency_conflict":
-		return conflict(errChannelFingerprintMismatch)
-	case "input_limit_exceeded":
-		return conflict(errChannelInputLimitExceeded)
-	default:
-		return conflict(errSessionInputClosed)
-	}
-}
-
-func appendSessionChannelInputResponse(row db.AppendSessionChannelInputRow) api.ChannelRecordResponse {
-	return api.ChannelRecordResponse{
-		ID:            pgvalue.MustUUIDValue(row.ID).String(),
-		ChannelID:     pgvalue.MustUUIDValue(row.ChannelID).String(),
-		Sequence:      row.Sequence,
-		Data:          json.RawMessage(row.Data),
-		CorrelationID: row.CorrelationID,
-		ContentType:   row.ContentType,
-		CreatedAt:     pgvalue.Time(row.CreatedAt),
-	}
-}
-
-func existingSessionChannelInputResponse(row db.GetExistingSessionChannelInputRecordRow) api.ChannelRecordResponse {
-	return api.ChannelRecordResponse{
-		ID:            pgvalue.MustUUIDValue(row.ID).String(),
-		ChannelID:     pgvalue.MustUUIDValue(row.ChannelID).String(),
-		Sequence:      row.Sequence,
-		Data:          json.RawMessage(row.Data),
-		CorrelationID: row.CorrelationID,
-		ContentType:   row.ContentType,
-		CreatedAt:     pgvalue.Time(row.CreatedAt),
-	}
-}
-
-func channelInputAuthSubject(actor auth.Actor) (string, string) {
-	switch actor.Kind {
-	case auth.ActorKindAPIKey:
-		return "api_key", actor.APIKeyID.String()
-	case auth.ActorKindSession:
-		if actor.SessionID != uuid.Nil {
-			return "session", actor.SessionID.String()
-		}
-		return "session", actor.UserID.String()
-	default:
-		return "system", ""
-	}
-}
-
-func channelInputFingerprint(session db.TaskSession, channel string, data []byte, correlationID string, contentType string, authSubjectType string, authSubjectID string, externalEventID string) (string, error) {
-	canonical, err := canonicalJSON(data)
-	if err != nil {
-		return "", err
-	}
-	return channelRecordFingerprint(channelRecordFingerprintInput{
-		SessionID:       pgvalue.MustUUIDValue(session.ID).String(),
-		Channel:         strings.TrimSpace(channel),
-		Direction:       string(db.ChannelDirectionInput),
-		ContentType:     strings.TrimSpace(contentType),
-		CorrelationID:   strings.TrimSpace(correlationID),
-		Source:          "control",
-		AuthSubjectType: authSubjectType,
-		AuthSubjectID:   authSubjectID,
-		ExternalEventID: strings.TrimSpace(externalEventID),
-		Actor:           json.RawMessage(`{}`),
-		Data:            canonical,
-	})
-}
-
-func (s *Server) listTaskSessionChannelRecords(w http.ResponseWriter, r *http.Request, direction db.ChannelDirection) {
-	session, ok := s.loadTaskSessionForRequest(w, r, auth.PermissionRunsRead)
-	if !ok {
-		return
-	}
-	channelName := strings.TrimSpace(chi.URLParam(r, "channel"))
-	channel, err := s.db.GetTaskSessionChannelByName(r.Context(), db.GetTaskSessionChannelByNameParams{
-		OrgID:         session.OrgID,
-		ProjectID:     session.ProjectID,
-		EnvironmentID: session.EnvironmentID,
-		TaskSessionID: session.ID,
-		Name:          channelName,
-		Direction:     direction,
-	})
-	if isNoRows(err) {
-		writeJSON(w, http.StatusOK, api.ListChannelRecordsResponse{Records: []api.ChannelRecordResponse{}})
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("get session channel"))
-		return
-	}
-	afterSequence := int64(0)
-	if raw := strings.TrimSpace(r.URL.Query().Get("after_sequence")); raw != "" {
-		parsed, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || parsed < 0 {
-			writeError(w, badRequest(errors.New("after_sequence must be a non-negative integer")))
-			return
-		}
-		afterSequence = parsed
-	}
-	limit := defaultSessionChannelLimit
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		parsed, err := strconv.ParseInt(raw, 10, 32)
-		if err != nil || parsed <= 0 || parsed > int64(maxSessionChannelLimit) {
-			writeError(w, badRequest(fmt.Errorf("limit must be an integer between 1 and %d", maxSessionChannelLimit)))
-			return
-		}
-		limit = int32(parsed)
-	}
-	correlationID := strings.TrimSpace(r.URL.Query().Get("correlation_id"))
-	rows, err := s.db.ListChannelRecords(r.Context(), db.ListChannelRecordsParams{
-		OrgID:         session.OrgID,
-		ProjectID:     session.ProjectID,
-		EnvironmentID: session.EnvironmentID,
-		ChannelID:     channel.ID,
-		Direction:     direction,
-		AfterSequence: afterSequence,
-		CorrelationID: optionalText(correlationID),
-		LimitCount:    limit,
-	})
-	if err != nil {
-		writeError(w, errors.New("list session channel records"))
-		return
-	}
-	writeJSON(w, http.StatusOK, api.ListChannelRecordsResponse{Records: channelRecordResponses(rows)})
-}
-
-func (s *Server) listTaskSessionChannelInputs(w http.ResponseWriter, r *http.Request) {
-	s.listTaskSessionChannelRecords(w, r, db.ChannelDirectionInput)
-}
-
-func (s *Server) listTaskSessionChannelOutputs(w http.ResponseWriter, r *http.Request) {
-	s.listTaskSessionChannelRecords(w, r, db.ChannelDirectionOutput)
-}
-
-func (s *Server) listTaskSessionChannelOutputsWithPublicToken(w http.ResponseWriter, r *http.Request, rawToken string) {
-	writeChannelRecordsCORS(w)
-	sessionID, err := parseUUIDParam(r, "sessionID")
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	channel := strings.TrimSpace(chi.URLParam(r, "channel"))
-	if err := validateChannelName(channel); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	afterSequence := int64(0)
-	if raw := strings.TrimSpace(r.URL.Query().Get("after_sequence")); raw != "" {
-		afterSequence, err = strconv.ParseInt(raw, 10, 64)
-		if err != nil || afterSequence < 0 {
-			writeError(w, badRequest(errors.New("after_sequence must be a non-negative integer")))
-			return
-		}
-	}
-	limit, err := optionalLimitQuery(r, defaultControlPageSize)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	correlationID := strings.TrimSpace(r.URL.Query().Get("correlation_id"))
-	tokenHash, err := publicaccess.HashToken(s.authSecret, rawToken)
-	if err != nil {
-		writeError(w, unauthorized(errors.New("invalid token")))
-		return
-	}
-	records, err := s.listSessionChannelOutputsWithPublicToken(r.Context(), sessionID, channel, tokenHash, afterSequence, limit, correlationID)
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("session channel not found or token not authorized")))
-		return
-	}
-	if err != nil {
-		s.log.Error("list session channel outputs with public token failed", "session_id", sessionID.String(), "channel", channel, "error", err)
-		writeError(w, errors.New("list session channel outputs"))
-		return
-	}
-	writeJSON(w, http.StatusOK, api.ListChannelRecordsResponse{Records: channelRecordResponses(records)})
-}
-
-func (s *Server) streamTaskSessionChannelOutputs(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.loadTaskSessionForRequest(w, r, auth.PermissionRunsRead)
-	if !ok {
-		return
-	}
-	channelName := strings.TrimSpace(chi.URLParam(r, "channel"))
-	afterSequence := int64(0)
-	if raw := strings.TrimSpace(r.URL.Query().Get("after_sequence")); raw != "" {
-		parsed, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || parsed < 0 {
-			writeError(w, badRequest(errors.New("after_sequence must be a non-negative integer")))
-			return
-		}
-		afterSequence = parsed
-	}
-	correlationID := strings.TrimSpace(r.URL.Query().Get("correlation_id"))
-	s.streamTaskSessionChannelOutputsAuthorized(w, r, session, channelName, afterSequence, correlationID)
-}
-
-func (s *Server) streamTaskSessionChannelOutputsWithPublicToken(w http.ResponseWriter, r *http.Request, rawToken string) {
-	writeChannelRecordsCORS(w)
-	sessionID, err := parseUUIDParam(r, "sessionID")
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	channelName := strings.TrimSpace(chi.URLParam(r, "channel"))
-	if err := validateChannelName(channelName); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	afterSequence := int64(0)
-	if raw := strings.TrimSpace(r.URL.Query().Get("after_sequence")); raw != "" {
-		afterSequence, err = strconv.ParseInt(raw, 10, 64)
-		if err != nil || afterSequence < 0 {
-			writeError(w, badRequest(errors.New("after_sequence must be a non-negative integer")))
-			return
-		}
-	}
-	correlationID := strings.TrimSpace(r.URL.Query().Get("correlation_id"))
-	tokenHash, err := publicaccess.HashToken(s.authSecret, rawToken)
-	if err != nil {
-		writeError(w, unauthorized(errors.New("invalid token")))
-		return
-	}
-	session, channel, err := s.openSessionChannelOutputStreamWithPublicToken(r.Context(), sessionID, channelName, tokenHash, correlationID)
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("session channel not found or token not authorized")))
-		return
-	}
-	if err != nil {
-		s.log.Error("open session channel output stream with public token failed", "session_id", sessionID.String(), "channel", channelName, "error", err)
-		writeError(w, errors.New("open session channel output stream"))
-		return
-	}
-	s.streamTaskSessionChannelOutputsAuthorized(w, r, session, channel, afterSequence, correlationID)
-}
-
-func (s *Server) streamTaskSessionChannelOutputsAuthorized(w http.ResponseWriter, r *http.Request, session db.TaskSession, channelName string, afterSequence int64, correlationID string) {
-	flusher, _ := w.(http.Flusher)
-	w.Header().Set("content-type", "text/event-stream")
-	w.Header().Set("cache-control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	encoder := json.NewEncoder(w)
-	ctx, cancel := context.WithTimeout(r.Context(), sessionChannelStreamMax)
-	defer cancel()
-	ticker := time.NewTicker(sessionChannelStreamPollEvery)
-	defer ticker.Stop()
-	cursor := afterSequence
-	channelID := pgtype.UUID{}
-	for {
-		rowCount := 0
-		if !channelID.Valid {
-			channel, err := s.db.GetTaskSessionChannelByName(ctx, db.GetTaskSessionChannelByNameParams{
-				OrgID:         session.OrgID,
-				ProjectID:     session.ProjectID,
-				EnvironmentID: session.EnvironmentID,
-				TaskSessionID: session.ID,
-				Name:          channelName,
-				Direction:     db.ChannelDirectionOutput,
-			})
-			if err == nil {
-				channelID = channel.ID
-			} else if !isNoRows(err) {
-				if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-					s.log.Warn("stream session channel outputs failed", "session_id", pgvalue.MustUUIDValue(session.ID).String(), "channel", channelName, "error", err)
-				}
-				return
-			}
-		}
-		if channelID.Valid {
-			nextCursor, count, err := s.writeTaskSessionChannelOutputEvents(ctx, w, flusher, encoder, session, channelID, cursor, correlationID)
-			if err != nil {
-				if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-					s.log.Warn("stream session channel outputs failed", "session_id", pgvalue.MustUUIDValue(session.ID).String(), "channel", channelName, "error", err)
-				}
-				return
-			}
-			cursor = nextCursor
-			rowCount = count
-			if rowCount == int(sessionChannelStreamBatchSize) {
-				continue
-			}
-		}
-		latest, err := s.db.GetTaskSession(ctx, db.GetTaskSessionParams{
-			OrgID:         session.OrgID,
-			ProjectID:     session.ProjectID,
-			EnvironmentID: session.EnvironmentID,
-			ID:            session.ID,
-		})
-		if isNoRows(err) || (err == nil && taskSessionTerminal(latest.Status)) {
-			if channelID.Valid {
-				for {
-					nextCursor, rowCount, err := s.writeTaskSessionChannelOutputEvents(ctx, w, flusher, encoder, session, channelID, cursor, correlationID)
-					if err != nil || rowCount < int(sessionChannelStreamBatchSize) {
-						return
-					}
-					cursor = nextCursor
-				}
-			}
-			return
-		}
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			s.log.Warn("read session while streaming channel outputs failed", "session_id", pgvalue.MustUUIDValue(session.ID).String(), "error", err)
-			return
-		}
-		_, _ = fmt.Fprint(w, ": keep-alive\n\n")
-		if flusher != nil {
-			flusher.Flush()
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
-}
-
-func (s *Server) writeTaskSessionChannelOutputEvents(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, session db.TaskSession, channelID pgtype.UUID, cursor int64, correlationID string) (int64, int, error) {
-	rows, err := s.db.ListChannelRecords(ctx, db.ListChannelRecordsParams{
-		OrgID:         session.OrgID,
-		ProjectID:     session.ProjectID,
-		EnvironmentID: session.EnvironmentID,
-		ChannelID:     channelID,
-		Direction:     db.ChannelDirectionOutput,
-		AfterSequence: cursor,
-		CorrelationID: optionalText(correlationID),
-		LimitCount:    sessionChannelStreamBatchSize,
-	})
-	if err != nil {
-		return cursor, 0, err
-	}
-	for _, row := range rows {
-		response := channelRecordResponse(row)
-		_, _ = fmt.Fprintf(w, "id: %d\n", row.Sequence)
-		_, _ = fmt.Fprint(w, "event: channel_output\n")
-		_, _ = fmt.Fprint(w, "data: ")
-		if err := encoder.Encode(response); err != nil {
-			return cursor, 0, err
-		}
-		_, _ = fmt.Fprint(w, "\n")
-		cursor = row.Sequence
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
-	return cursor, len(rows), nil
-}
-
-func channelRecordResponses(records []db.ChannelRecord) []api.ChannelRecordResponse {
-	response := make([]api.ChannelRecordResponse, 0, len(records))
-	for _, record := range records {
-		response = append(response, channelRecordResponse(record))
-	}
-	return response
 }
 
 func (s *Server) loadTaskSessionForRequest(w http.ResponseWriter, r *http.Request, permission auth.Permission) (db.TaskSession, bool) {

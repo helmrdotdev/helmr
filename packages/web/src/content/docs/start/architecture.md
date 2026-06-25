@@ -12,12 +12,12 @@ Helmr is split between authoring tools, a control plane, and workers.
 
 | Component | Role |
 | --- | --- |
-| TypeScript SDK | Declares task projects, tasks, schedules, images, sandboxes, secrets, resources, session channels, metadata, waits, waitpoint tokens, and logs. The runtime client starts task sessions and opens workspaces. |
-| CLI | Logs in, deploys task source, starts tasks, manages sessions and run attempts, operates workspaces, manages secrets, and resolves waitpoints. |
-| Control plane | Stores projects, environments, deployments, schedules, task sessions, runs, workspaces, materializations, execs, PTYs, events, logs, channel records, metadata, secrets, API keys, workers, and waitpoints. |
+| TypeScript SDK | Declares task projects, tasks, schedules, images, sandboxes, secrets, resources, session streams, metadata, waits, tokens, and logs. The runtime client starts task sessions and opens workspaces. |
+| CLI | Logs in, deploys task source, starts tasks, manages sessions and run attempts, operates workspaces, manages secrets, and inspects session/run state. |
+| Control plane | Stores projects, environments, deployments, schedules, task sessions, runs, workspaces, materializations, execs, PTYs, events, logs, stream records, metadata, secrets, API keys, workers, and waits. |
 | Dispatcher | Reconciles queued runs, repairs schedule next-fire entries into Redis, starts scheduled task sessions, and sweeps expired executions. |
 | Worker | Leases queued runs, materializes workspaces, starts isolated guests, runs task code, serves direct workspace exec and PTY requests, streams logs, and releases results. |
-| Guest runtime | Loads the deployment task module inside the guest and bridges task output, logs, session channel output, metadata updates, waits, waitpoints, exec streams, and PTY streams. |
+| Guest runtime | Loads the deployment task module inside the guest and bridges task output, logs, session stream output, metadata updates, waits, exec streams, and PTY streams. |
 
 Workers register into a worker group. The initial control plane creates a `default` worker group and routes deployments, build leases, and run session leases through that group.
 
@@ -41,7 +41,7 @@ execution model.
 4. If no workspace is supplied, Helmr creates one from the deployed task's sandbox. If a workspace is supplied, Helmr validates that it matches the task's sandbox.
 5. A worker in the matching worker group leases the run and receives the resolved task source, workspace mount metadata, secrets, and duration limit.
 6. The worker starts an isolated Linux guest, materializes the workspace, injects task-declared secrets, and runs the TypeScript task.
-7. Logs, events, output, channel records, metadata updates, failures, and waitpoints stream back to the control plane.
+7. Logs, events, output, stream records, metadata updates, failures, and waits stream back to the control plane.
 8. Terminal runs finish as `succeeded`, `failed`, or `cancelled`. The attached workspace can outlive the run.
 
 ## Workspace Flow
@@ -63,6 +63,6 @@ are encrypted before leaving the worker staging directory.
 
 The task image supplies user tools and dependencies. Helmr supplies the runtime
 substrate around that image, including guest boot, runtime filesystems, DNS
-setup, hostname setup, logs, session channels, workspace streams, waitpoints,
+setup, hostname setup, logs, session streams, workspace streams, waits,
 and timeout enforcement. See [Runtime environment](/docs/concepts/runtime-environment/)
 for the task-visible contract.

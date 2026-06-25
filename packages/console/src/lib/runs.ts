@@ -13,7 +13,7 @@ export type RunFilter = RunStatus | "live" | "all";
 
 export type TaskOutput = unknown;
 
-export type PendingWaitpoint = {
+export type PendingWait = {
   id: string;
   kind?: string;
   status?: string;
@@ -41,7 +41,7 @@ export type Run = {
   output?: TaskOutput;
   created_at: string;
   updated_at: string;
-  pending_waitpoint?: PendingWaitpoint;
+  pending_wait?: PendingWait;
 };
 
 export type ListRunsResponse = {

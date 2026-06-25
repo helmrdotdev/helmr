@@ -40,11 +40,11 @@ func newRootCommand() *cobra.Command {
 		taskCommand(),
 		runCommand(),
 		sessionCommand(),
+		tokenCommand(),
 		workspaceCommand(),
 		projectCommand(),
 		envCommand(),
 		secretCommand(),
-		waitpointCommand(),
 	)
 	return root
 }

@@ -618,6 +618,118 @@ func TestRunOnceLogsFailedDeploymentBuildStatus(t *testing.T) {
 	}
 }
 
+func TestRunOnceDeploymentBuildUsesLeaseDeadline(t *testing.T) {
+	lease := api.WorkerDeploymentBuildLease{
+		ID:               "lease-1",
+		DeploymentID:     "deployment-1",
+		WorkerInstanceID: "worker-1",
+		ExpiresAt:        time.Now().Add(10 * time.Minute),
+	}
+	client := &fakeClient{
+		deploymentClaimResponse: api.WorkerDeploymentBuildLeaseResponse{
+			Lease:      &lease,
+			Deployment: &api.WorkerDeploymentBuild{ID: lease.DeploymentID},
+		},
+	}
+	var observedDeadline time.Time
+	runner, err := NewRunner(
+		client,
+		executorFunc(func(context.Context, api.WorkerRunLeaseProvider, api.WorkerRun) api.WorkerReleaseResult {
+			t.Fatal("executor should not run while a deployment build is available")
+			return api.WorkerReleaseResult{}
+		}),
+		testCapabilities(),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+		WithDeploymentBuilder(deploymentBuilderFunc(func(ctx context.Context, _ api.WorkerDeploymentBuildLease, _ api.WorkerDeploymentBuild) api.WorkerDeploymentBuildResult {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("expected deployment build context deadline")
+			}
+			observedDeadline = deadline
+			return api.WorkerDeploymentBuildResult{}
+		})),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.deploymentBuildCompletionGrace = time.Minute
+
+	worked, err := runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !worked || client.deploymentCompletions != 1 {
+		t.Fatalf("worked=%v deploymentCompletions=%d", worked, client.deploymentCompletions)
+	}
+	wantDeadline := lease.ExpiresAt.Add(-runner.deploymentBuildCompletionGrace)
+	if delta := observedDeadline.Sub(wantDeadline); delta > time.Second || delta < -time.Second {
+		t.Fatalf("deadline = %s, want about %s", observedDeadline, wantDeadline)
+	}
+}
+
+func TestRunOnceDeploymentBuildTimeoutFailsBuild(t *testing.T) {
+	lease := api.WorkerDeploymentBuildLease{
+		ID:               "lease-1",
+		DeploymentID:     "deployment-1",
+		WorkerInstanceID: "worker-1",
+		ExpiresAt:        time.Now().Add(120 * time.Millisecond),
+	}
+	client := &fakeClient{
+		deploymentClaimResponse: api.WorkerDeploymentBuildLeaseResponse{
+			Lease:      &lease,
+			Deployment: &api.WorkerDeploymentBuild{ID: lease.DeploymentID},
+		},
+	}
+	releaseBuilder := make(chan struct{})
+	builderReturned := make(chan struct{})
+	runner, err := NewRunner(
+		client,
+		executorFunc(func(context.Context, api.WorkerRunLeaseProvider, api.WorkerRun) api.WorkerReleaseResult {
+			t.Fatal("executor should not run while a deployment build is available")
+			return api.WorkerReleaseResult{}
+		}),
+		testCapabilities(),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+		WithDeploymentBuilder(deploymentBuilderFunc(func(ctx context.Context, _ api.WorkerDeploymentBuildLease, _ api.WorkerDeploymentBuild) api.WorkerDeploymentBuildResult {
+			<-ctx.Done()
+			<-releaseBuilder
+			close(builderReturned)
+			return api.WorkerDeploymentBuildResult{}
+		})),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.deploymentBuildCompletionGrace = 50 * time.Millisecond
+
+	worked, err := runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !worked || client.deploymentCompletions != 1 {
+		t.Fatalf("worked=%v deploymentCompletions=%d", worked, client.deploymentCompletions)
+	}
+	if client.deploymentResult.Error == nil || !strings.Contains(*client.deploymentResult.Error, "timed out") {
+		t.Fatalf("deploymentResult = %#v", client.deploymentResult)
+	}
+	if !runner.hasActiveDeploymentBuild() {
+		t.Fatal("expected deployment build to remain active until the builder returns")
+	}
+	close(releaseBuilder)
+	select {
+	case <-builderReturned:
+	case <-time.After(time.Second):
+		t.Fatal("builder did not return")
+	}
+	deadline := time.Now().Add(time.Second)
+	for runner.hasActiveDeploymentBuild() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if runner.hasActiveDeploymentBuild() {
+		t.Fatal("deployment build active flag was not released")
+	}
+}
+
 func newTestRunner(t *testing.T, client ControlClient, executor Executor) *Runner {
 	t.Helper()
 	runner, err := NewRunner(

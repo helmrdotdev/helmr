@@ -22,7 +22,7 @@ profile, vCPU, memory, and execution slots.
 
 Secrets are stored encrypted and scoped to a project environment. API keys are stored by hash, can expire or be revoked, and are bound to one project environment. API key grants describe allowed actions inside that environment.
 
-Supported API key permissions are `runs:create`, `runs:read`, `runs:manage`, `run-waitpoints:read`, `channels:write`, `waitpoint-tokens:create`, `waitpoint-tokens:read`, `waitpoint-tokens:complete`, `secrets:write`, and `tasks:deploy`. The `channels:write` permission appends session channel records for the key's project environment. The `secrets:write` permission manages secret metadata and values for the key's project environment, but API responses never return secret values.
+Supported API key permissions include `runs:create`, `runs:read`, `runs:manage`, `session-streams:read`, `session-input:send`, `session-output:append`, `tokens:create`, `tokens:read`, `tokens:complete`, `tokens:cancel`, `secrets:write`, and `tasks:deploy`. Stream permissions are scoped to the key's project environment. The `secrets:write` permission manages secret metadata and values for the key's project environment, but API responses never return secret values.
 
 ## Payloads Are Plaintext
 

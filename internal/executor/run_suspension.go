@@ -7,50 +7,50 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
-type WaitpointClient interface {
-	CreateWaitpoint(context.Context, api.WorkerCreateWaitpointRequest) (api.WorkerCreateWaitpointResponse, error)
+type RunWaitClient interface {
+	CreateRunWait(context.Context, api.WorkerCreateRunWaitRequest) (api.WorkerCreateRunWaitResponse, error)
+	CaptureRunWaitWorkspace(context.Context, api.WorkerRunWaitWorkspaceCaptureRequest) (api.WorkerRunWaitWorkspaceCaptureResponse, error)
 	AcknowledgeRestore(context.Context, api.WorkerAcknowledgeRestoreRequest) (api.WorkerAcknowledgeRestoreResponse, error)
-	MarkCheckpointReady(context.Context, api.WorkerCheckpointReadyRequest) (api.WorkerCreateWaitpointResponse, error)
-	MarkCheckpointFailed(context.Context, api.WorkerCheckpointFailedRequest) (api.WorkerCreateWaitpointResponse, error)
+	MarkCheckpointReady(context.Context, api.WorkerCheckpointReadyRequest) (api.WorkerCreateRunWaitResponse, error)
+	MarkCheckpointFailed(context.Context, api.WorkerCheckpointFailedRequest) (api.WorkerCreateRunWaitResponse, error)
 }
 
-type ControlWaitpoints struct {
-	Client WaitpointClient
+type ControlRunWaits struct {
+	Client RunWaitClient
 }
 
 type RestoreAcknowledgement struct {
-	Lease           api.WorkerRunLease
-	RunSuspensionID string
-	WaitpointID     string
-	CheckpointID    string
+	Lease        api.WorkerRunLease
+	RunWaitID    string
+	CheckpointID string
 }
 
 type RestoreAcknowledger interface {
 	AcknowledgeRestore(context.Context, RestoreAcknowledgement) error
 }
 
-func (w ControlWaitpoints) AcknowledgeRestore(ctx context.Context, request RestoreAcknowledgement) error {
+func (w ControlRunWaits) AcknowledgeRestore(ctx context.Context, request RestoreAcknowledgement) error {
 	if w.Client == nil {
-		return errors.New("waitpoint control client is required")
+		return errors.New("run wait control client is required")
 	}
 	_, err := w.Client.AcknowledgeRestore(ctx, api.WorkerAcknowledgeRestoreRequest{
-		Lease:           request.Lease,
-		RunSuspensionID: request.RunSuspensionID,
-		WaitpointID:     request.WaitpointID,
-		CheckpointID:    request.CheckpointID,
+		Lease:        request.Lease,
+		RunWaitID:    request.RunWaitID,
+		CheckpointID: request.CheckpointID,
 	})
 	return err
 }
 
-func (w ControlWaitpoints) Wait(ctx context.Context, request WaitRequest) error {
+func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 	if w.Client == nil {
-		return errors.New("waitpoint control client is required")
+		return errors.New("run wait control client is required")
 	}
-	opened, err := w.AddWaitpoint(ctx, request)
+	opened, err := w.AddRunWait(ctx, request)
 	if err != nil {
-		return fmt.Errorf("create waitpoint: %w", err)
+		return fmt.Errorf("create run wait: %w", err)
 	}
 	if opened.ResolutionKind != "" {
 		if request.Resume == nil {
@@ -61,66 +61,92 @@ func (w ControlWaitpoints) Wait(ctx context.Context, request WaitRequest) error 
 			Data: opened.Resolution,
 		})
 	}
+	failCheckpoint := func(err error) {
+		_, _ = w.Client.MarkCheckpointFailed(ctx, api.WorkerCheckpointFailedRequest{
+			Lease:        request.currentLease(),
+			RunWaitID:    opened.RunWaitID,
+			CheckpointID: opened.CheckpointID,
+			Error:        err.Error(),
+		})
+	}
 	if request.Checkpointer == nil {
 		err := errors.New("runtime checkpoint support is required")
-		_, _ = w.Client.MarkCheckpointFailed(ctx, api.WorkerCheckpointFailedRequest{
-			Lease:           request.Lease,
-			RunSuspensionID: opened.RunSuspensionID,
-			WaitpointID:     opened.WaitpointID,
-			CheckpointID:    opened.CheckpointID,
-			Error:           err.Error(),
-		})
+		failCheckpoint(err)
 		return err
 	}
-	manifest, err := request.Checkpointer.CreateCheckpoint(ctx, CheckpointRequest{
-		RunID:        request.Lease.RunID,
-		WaitpointID:  opened.WaitpointID,
-		CheckpointID: opened.CheckpointID,
+	checkpoint, err := request.Checkpointer.CreateCheckpoint(ctx, CheckpointRequest{
+		RunID:            request.currentLease().RunID,
+		RunWaitID:        opened.RunWaitID,
+		CheckpointID:     opened.CheckpointID,
+		CaptureWorkspace: opened.CaptureWorkspace,
 	})
 	if err != nil {
-		_, _ = w.Client.MarkCheckpointFailed(ctx, api.WorkerCheckpointFailedRequest{
-			Lease:           request.Lease,
-			RunSuspensionID: opened.RunSuspensionID,
-			WaitpointID:     opened.WaitpointID,
-			CheckpointID:    opened.CheckpointID,
-			Error:           err.Error(),
-		})
+		failCheckpoint(err)
 		return fmt.Errorf("create checkpoint: %w", err)
 	}
+	if opened.CaptureWorkspace {
+		if checkpoint.WorkspaceCapture == nil {
+			err := errors.New("workspace capture is required before parking")
+			failCheckpoint(err)
+			return err
+		}
+		if _, err := w.Client.CaptureRunWaitWorkspace(ctx, api.WorkerRunWaitWorkspaceCaptureRequest{
+			Lease:            request.currentLease(),
+			RunWaitID:        opened.RunWaitID,
+			CheckpointID:     opened.CheckpointID,
+			WorkspaceCapture: *workerCheckpointWorkspaceCapture(checkpoint.WorkspaceCapture),
+		}); err != nil {
+			failCheckpoint(err)
+			return fmt.Errorf("capture workspace before checkpoint ready: %w", err)
+		}
+	}
 	if _, err := w.Client.MarkCheckpointReady(ctx, api.WorkerCheckpointReadyRequest{
-		Lease:            request.Lease,
-		RunSuspensionID:  opened.RunSuspensionID,
-		WaitpointID:      opened.WaitpointID,
+		Lease:            request.currentLease(),
+		RunWaitID:        opened.RunWaitID,
 		CheckpointID:     opened.CheckpointID,
 		ActiveDurationMs: durationMilliseconds(request.ActiveDuration),
-		Manifest:         manifest,
+		Manifest:         checkpoint.Manifest,
 	}); err != nil {
-		_, _ = w.Client.MarkCheckpointFailed(ctx, api.WorkerCheckpointFailedRequest{
-			Lease:           request.Lease,
-			RunSuspensionID: opened.RunSuspensionID,
-			WaitpointID:     opened.WaitpointID,
-			CheckpointID:    opened.CheckpointID,
-			Error:           err.Error(),
-		})
+		failCheckpoint(err)
 		return fmt.Errorf("mark checkpoint ready: %w", err)
 	}
 	return ErrDetached
 }
 
-func (w ControlWaitpoints) AddWaitpoint(ctx context.Context, request WaitRequest) (api.WorkerCreateWaitpointResponse, error) {
-	if w.Client == nil {
-		return api.WorkerCreateWaitpointResponse{}, errors.New("waitpoint control client is required")
+func workerCheckpointWorkspaceCapture(capture *workspace.WorkspaceArtifact) *api.WorkerWorkspaceArtifact {
+	if capture == nil {
+		return nil
 	}
-	return w.Client.CreateWaitpoint(ctx, api.WorkerCreateWaitpointRequest{
-		Lease:          request.Lease,
-		CorrelationID:  request.CorrelationID,
-		Kind:           request.Kind,
-		Params:         request.Params,
-		Metadata:       request.Metadata,
-		Tags:           request.Tags,
-		TimeoutSeconds: request.TimeoutSeconds,
-		Ordinal:        request.Ordinal,
+	return &api.WorkerWorkspaceArtifact{
+		Digest:     capture.Digest,
+		MediaType:  capture.MediaType,
+		Encoding:   capture.Encoding,
+		SizeBytes:  capture.SizeBytes,
+		EntryCount: int32(capture.EntryCount),
+	}
+}
+
+func (w ControlRunWaits) AddRunWait(ctx context.Context, request WaitRequest) (api.WorkerCreateRunWaitResponse, error) {
+	if w.Client == nil {
+		return api.WorkerCreateRunWaitResponse{}, errors.New("run wait control client is required")
+	}
+	return w.Client.CreateRunWait(ctx, api.WorkerCreateRunWaitRequest{
+		Lease:              request.currentLease(),
+		CorrelationID:      request.CorrelationID,
+		Kind:               request.Kind,
+		Params:             request.Params,
+		Metadata:           request.Metadata,
+		Tags:               request.Tags,
+		TimeoutSeconds:     request.TimeoutSeconds,
+		IdleTimeoutSeconds: request.IdleTimeoutSeconds,
 	})
+}
+
+func (request WaitRequest) currentLease() api.WorkerRunLease {
+	if request.Leases != nil {
+		return request.Leases.CurrentWorkerRunLease()
+	}
+	return request.Lease
 }
 
 func durationMilliseconds(value time.Duration) int64 {
@@ -130,4 +156,4 @@ func durationMilliseconds(value time.Duration) int64 {
 	return value.Milliseconds()
 }
 
-var _ WaitHandler = ControlWaitpoints{}
+var _ WaitHandler = ControlRunWaits{}

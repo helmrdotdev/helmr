@@ -92,12 +92,7 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if operation.Status != db.RunOperationStatusRequested {
-		response, err := s.runResponse(r.Context(), summary)
-		if err != nil {
-			s.log.Error("build idempotent cancel response failed", "run_id", runID.String(), "error", err)
-			writeError(w, errors.New("cancel run"))
-			return
-		}
+		response := runResponse(summary)
 		writeJSON(w, http.StatusOK, api.CancelRunResponse{Run: response, Operation: runOperationResponse(operation)})
 		return
 	}
@@ -124,12 +119,7 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 					writeError(w, errors.New("cancel run"))
 					return
 				}
-				response, err := s.runResponse(r.Context(), getRunSummary(runRow))
-				if err != nil {
-					s.log.Error("build idempotent cancel response failed", "run_id", runID.String(), "operation_id", pgvalue.MustUUIDValue(operationID).String(), "error", err)
-					writeError(w, errors.New("cancel run"))
-					return
-				}
+				response := runResponse(getRunSummary(runRow))
 				writeJSON(w, http.StatusOK, api.CancelRunResponse{Run: response, Operation: runOperationResponse(operation)})
 				return
 			}
@@ -144,12 +134,7 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("cancel run"))
 		return
 	}
-	response, err := s.runResponse(r.Context(), cancelRunSummary(cancelled))
-	if err != nil {
-		s.log.Error("build cancel response failed", "run_id", runID.String(), "error", err)
-		writeError(w, errors.New("cancel run"))
-		return
-	}
+	response := runResponse(cancelRunSummary(cancelled))
 	writeJSON(w, http.StatusOK, api.CancelRunResponse{Run: response, Operation: runOperationResponse(operation)})
 }
 

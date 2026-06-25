@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -34,6 +35,7 @@ const (
 	readinessTimeout          = 2 * time.Second
 	apiRequestBodyLimit       = int64(128 << 20)
 	workerLogRequestBodyLimit = int64(256 << 10)
+	maxControlPageSize        = int32(500)
 )
 
 type SecretManager interface {
@@ -250,10 +252,15 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 func (s *Server) mountAPIRoutes(r chi.Router) {
 	r.Use(limitRequestBody(apiRequestBodyLimit))
 	r.Use(s.requireCurrentAPIVersion)
+	r.Options("/v1/tokens/{tokenID}/complete", s.completeTokenPublicAccessTokenPreflight)
+	r.Post("/v1/tokens/{tokenID}/complete", s.completeTokenWithPublicAccessToken)
+	r.Post("/v1/tokens/{tokenID}/callback/{callbackSecret}", s.completeTokenWithCallbackSecret)
+	r.Options("/v1/sessions/{sessionID}/inputs/{stream}", s.publicSessionInputStreamPreflight)
+	r.Post("/v1/sessions/{sessionID}/inputs/{stream}", s.appendSessionInputStreamWithPublicAccessToken)
+	r.Options("/v1/sessions/{sessionID}/outputs/{stream}/read", s.publicSessionOutputStreamReadPreflight)
+	r.Get("/v1/sessions/{sessionID}/outputs/{stream}/read", s.readSessionOutputStreamWithPublicAccessToken)
 	s.mountAuthRoutes(r)
-	s.mountWaitpointTokenRoutes(r)
 	s.mountOwnerRoutes(r)
-	s.mountPublicRootTaskSessionChannelRoutes(r)
 	s.mountRunRoutes(r)
 	s.mountScheduleRoutes(r)
 	s.mountWorkerRoutes(r)
@@ -353,9 +360,13 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/counts", s.countRuns)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}", s.getRun)
 		r.Post("/projects/{projectID}/environments/{environmentID}/runs/{id}/cancel", s.cancelRun)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}/waitpoints", s.listRunWaitpoints)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}/events", s.getRunEvents)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}/logs", s.getRunLogs)
+		r.Post("/projects/{projectID}/environments/{environmentID}/tokens", s.createToken)
+		r.Get("/projects/{projectID}/environments/{environmentID}/tokens", s.listTokens)
+		r.Get("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}", s.getToken)
+		r.Post("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/complete", s.completeToken)
+		r.Post("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/cancel", s.cancelToken)
 		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces", s.createWorkspace)
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces", s.listWorkspaces)
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.getWorkspace)
@@ -379,9 +390,6 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/resize", s.resizeWorkspacePty)
 		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/close", s.closeWorkspacePty)
 		s.mountTaskSessionRoutes(r, "/projects/{projectID}/environments/{environmentID}")
-		r.Post("/projects/{projectID}/environments/{environmentID}/waitpoints/tokens", s.createWaitpointToken)
-		r.Get("/projects/{projectID}/environments/{environmentID}/waitpoints/tokens", s.listWaitpointTokens)
-		r.Get("/projects/{projectID}/environments/{environmentID}/waitpoints/tokens/{tokenID}", s.getWaitpointToken)
 		r.Get("/projects/{projectID}/environments/{environmentID}/schedules", s.listSchedules)
 		r.Post("/projects/{projectID}/environments/{environmentID}/schedules", s.createSchedule)
 		r.Get("/projects/{projectID}/environments/{environmentID}/schedules/{id}", s.getSchedule)
@@ -431,17 +439,19 @@ func (s *Server) mountRunRoutes(r chi.Router) {
 		r.Get("/runs/counts", s.countRuns)
 		r.Get("/runs/{id}", s.getRun)
 		r.Post("/runs/{id}/cancel", s.cancelRun)
-		r.Get("/runs/{id}/waitpoints", s.listRunWaitpoints)
 		r.Get("/runs/{id}/events", s.getRunEvents)
 		r.Get("/runs/{id}/logs", s.getRunLogs)
+		r.Post("/tokens", s.createToken)
+		r.Get("/tokens", s.listTokens)
+		r.Get("/tokens/{tokenID}", s.getToken)
+		r.Post("/tokens/{tokenID}/complete", s.completeToken)
+		r.Post("/tokens/{tokenID}/cancel", s.cancelToken)
+		r.Post("/public-access-tokens", s.createPublicAccessToken)
 		r.Post("/workspaces", s.createWorkspace)
 		r.Get("/workspaces", s.listWorkspaces)
 		r.Get("/workspaces/{workspaceID}", s.getWorkspace)
 		r.Patch("/workspaces/{workspaceID}", s.patchWorkspace)
 		r.Delete("/workspaces/{workspaceID}", s.deleteWorkspace)
-		r.Post("/waitpoints/tokens", s.createWaitpointToken)
-		r.Get("/waitpoints/tokens", s.listWaitpointTokens)
-		r.Get("/waitpoints/tokens/{tokenID}", s.getWaitpointToken)
 		r.Post("/workspaces/{workspaceID}/materialize", s.requestWorkspaceMaterialization)
 		r.Post("/workspaces/{workspaceID}/connect", s.connectWorkspace)
 		r.Post("/workspaces/{workspaceID}/stop", s.stopWorkspace)
@@ -461,7 +471,6 @@ func (s *Server) mountRunRoutes(r chi.Router) {
 		r.Post("/workspaces/{workspaceID}/pty/{ptyID}/close", s.closeWorkspacePty)
 		r.Get("/sandboxes", s.listSandboxes)
 		r.Get("/sandboxes/{sandboxID}", s.getSandbox)
-		r.Post("/public-access-tokens", s.createPublicAccessToken)
 	})
 }
 
@@ -477,30 +486,12 @@ func (s *Server) mountTaskSessionRoutes(r chi.Router, prefix string) {
 	r.Post(prefix+"/sessions/{sessionID}/close", s.closeTaskSession)
 	r.Post(prefix+"/sessions/{sessionID}/cancel", s.cancelTaskSession)
 	r.Get(prefix+"/sessions/{sessionID}/runs", s.listTaskSessionRuns)
-	r.Get(prefix+"/sessions/{sessionID}/channels", s.listTaskSessionChannels)
-	if prefix == "" {
-		return
-	}
-	r.Post(prefix+"/sessions/{sessionID}/channels/{channel}/inputs", s.appendTaskSessionChannelInput)
-	r.Get(prefix+"/sessions/{sessionID}/channels/{channel}/inputs", s.listTaskSessionChannelInputs)
-	r.Get(prefix+"/sessions/{sessionID}/channels/{channel}/outputs", s.listTaskSessionChannelOutputs)
-	r.Get(prefix+"/sessions/{sessionID}/channels/{channel}/outputs/stream", s.streamTaskSessionChannelOutputs)
-}
-
-func (s *Server) mountPublicRootTaskSessionChannelRoutes(r chi.Router) {
-	r.Options("/sessions/{sessionID}/channels/{channel}/inputs", s.optionsTaskSessionChannelRecords)
-	r.Options("/sessions/{sessionID}/channels/{channel}/outputs", s.optionsTaskSessionChannelRecords)
-	r.Options("/sessions/{sessionID}/channels/{channel}/outputs/stream", s.optionsTaskSessionChannelRecords)
-	r.Post("/sessions/{sessionID}/channels/{channel}/inputs", s.appendTaskSessionChannelInputEntry)
-	r.Get("/sessions/{sessionID}/channels/{channel}/inputs", s.listTaskSessionChannelInputsEntry)
-	r.Get("/sessions/{sessionID}/channels/{channel}/outputs", s.listTaskSessionChannelOutputsEntry)
-	r.Get("/sessions/{sessionID}/channels/{channel}/outputs/stream", s.streamTaskSessionChannelOutputsEntry)
-}
-
-func (s *Server) mountWaitpointTokenRoutes(r chi.Router) {
-	r.Options("/waitpoints/tokens/{tokenID}/complete", s.optionsCompleteWaitpointToken)
-	r.Post("/waitpoints/tokens/{tokenID}/complete", s.completeWaitpointToken)
-	r.Post("/waitpoints/tokens/{tokenID}/callback/{callbackSecret}", s.callbackWaitpointToken)
+	r.Get(prefix+"/sessions/{sessionID}/streams", s.listSessionStreams)
+	r.Post(prefix+"/sessions/{sessionID}/inputs/{stream}", s.appendSessionInputStream)
+	r.Get(prefix+"/sessions/{sessionID}/inputs/{stream}", s.listSessionInputStreamRecords)
+	r.Post(prefix+"/sessions/{sessionID}/outputs/{stream}", s.appendSessionOutputStream)
+	r.Get(prefix+"/sessions/{sessionID}/outputs/{stream}", s.listSessionOutputStreamRecords)
+	r.Get(prefix+"/sessions/{sessionID}/outputs/{stream}/read", s.readSessionOutputStreamRecord)
 }
 
 func (s *Server) mountWorkerRoutes(r chi.Router) {
@@ -516,17 +507,19 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Post("/deployments/complete", s.workerCompleteDeploymentBuild)
 			r.Post("/leases/lease", s.workerLease)
 			r.Post("/leases/start", s.workerStart)
-			r.Post("/leases/restores/ack", s.workerAcknowledgeRestore)
 			r.Post("/leases/renew", s.workerRenew)
 			r.Post("/leases/release", s.workerRelease)
+			r.Post("/leases/tokens", s.workerCreateToken)
+			r.Post("/leases/run-waits", s.workerCreateRunWait)
+			r.Post("/leases/run-waits/workspace-capture", s.workerCaptureRunWaitWorkspace)
+			r.Post("/leases/streams/input/read", s.workerReadInputStream)
+			r.Post("/leases/streams/output", s.workerAppendOutputStream)
+			r.Post("/leases/metadata", s.workerUpdateRunMetadata)
+			r.Post("/leases/checkpoints/ready", s.workerMarkCheckpointReady)
+			r.Post("/leases/checkpoints/failed", s.workerMarkCheckpointFailed)
+			r.Post("/leases/restores/ack", s.workerAcknowledgeRestore)
 			r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/logs", s.workerAppendLogs)
 			r.Post("/leases/log-entries", s.workerRecordLogEntry)
-			r.Post("/leases/channels", s.workerWriteOutput)
-			r.Post("/leases/metadata", s.workerUpdateRunMetadata)
-			r.Post("/leases/waitpoints", s.workerCreateWaitpoint)
-			r.Post("/leases/waitpoint-tokens", s.workerCreateWaitpointToken)
-			r.Post("/leases/checkpoints/ready", s.workerCheckpointReady)
-			r.Post("/leases/checkpoints/failed", s.workerCheckpointFailed)
 			r.Post("/workspaces/materializations/claim", s.workerClaimWorkspaceMaterialization)
 			r.Post("/workspaces/materializations/renew", s.workerRenewWorkspaceMaterialization)
 			r.Post("/workspaces/materializations/running", s.workerMarkWorkspaceMaterializationRunning)
@@ -606,6 +599,49 @@ func decodeJSON(r *http.Request, out any) error {
 		return fmt.Errorf("request body must contain a single JSON value")
 	}
 	return nil
+}
+
+func decodeOptionalJSON(r io.Reader, out any) error {
+	decoder := json.NewDecoder(r)
+	decoder.DisallowUnknownFields()
+	err := decoder.Decode(out)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("request body must contain a single JSON value")
+	}
+	return nil
+}
+
+func optionalText(value string) pgtype.Text {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: value, Valid: true}
+}
+
+func optionalLimitQuery(r *http.Request, defaultLimit int32) (int32, error) {
+	limit := defaultLimit
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 32)
+		if err != nil || parsed <= 0 || parsed > int64(maxControlPageSize) {
+			return 0, fmt.Errorf("limit must be an integer between 1 and %d", maxControlPageSize)
+		}
+		limit = int32(parsed)
+	}
+	return limit, nil
+}
+
+func optionalUUIDString(value pgtype.UUID) string {
+	if !value.Valid {
+		return ""
+	}
+	return uuid.UUID(value.Bytes).String()
 }
 
 func limitRequestBody(limit int64) func(http.Handler) http.Handler {

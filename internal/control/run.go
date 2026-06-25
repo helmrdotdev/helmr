@@ -224,7 +224,7 @@ func deploymentTaskRowFromCurrent(task db.GetCurrentDeploymentTaskRow) db.GetDep
 		QueueName:                         task.QueueName,
 		QueueConcurrencyLimit:             task.QueueConcurrencyLimit,
 		Ttl:                               task.Ttl,
-		MaxDurationSeconds:                task.MaxDurationSeconds,
+		MaxActiveDurationMs:               task.MaxActiveDurationMs,
 		RetryPolicy:                       task.RetryPolicy,
 		CreatedAt:                         task.CreatedAt,
 		DeploymentSourceDigest:            task.DeploymentSourceDigest,
@@ -339,13 +339,7 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	response, err := s.runResponse(r.Context(), summary)
-	if err != nil {
-		s.log.Error("get pending waitpoint failed", "run_id", runID.String(), "error", err)
-		writeError(w, errors.New("get run"))
-		return
-	}
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, runResponse(summary))
 }
 
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
@@ -373,13 +367,7 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("list runs"))
 		return
 	}
-	runs, err := s.runResponses(r.Context(), pgvalue.UUID(actor.OrgID), summaries)
-	if err != nil {
-		s.log.Error("list pending waitpoints failed", "error", err)
-		writeError(w, errors.New("list runs"))
-		return
-	}
-	writeJSON(w, http.StatusOK, api.ListRunsResponse{Runs: runs})
+	writeJSON(w, http.StatusOK, api.ListRunsResponse{Runs: runResponses(summaries)})
 }
 
 func (s *Server) countRuns(w http.ResponseWriter, r *http.Request) {
@@ -505,9 +493,9 @@ func listRunsQuery(r *http.Request) (string, int32, error) {
 	return status, limit, nil
 }
 
-func runMaxDurationSeconds(value int32, defaultValue int32) (int32, error) {
+func runMaxDurationSeconds(value int32, defaultActiveDurationMs int64) (int32, error) {
 	if value == 0 {
-		value = defaultValue
+		value = activeDurationMsToSeconds(defaultActiveDurationMs)
 	}
 	if value == 0 {
 		value = defaultRunMaxDurationSeconds
@@ -519,6 +507,17 @@ func runMaxDurationSeconds(value int32, defaultValue int32) (int32, error) {
 		return 0, fmt.Errorf("max_duration_seconds must be <= %d", maxRunDurationSeconds)
 	}
 	return value, nil
+}
+
+func activeDurationMsToSeconds(value int64) int32 {
+	if value <= 0 {
+		return 0
+	}
+	seconds := (value + 999) / 1000
+	if seconds > int64(maxRunDurationSeconds) {
+		return maxRunDurationSeconds
+	}
+	return int32(seconds)
 }
 
 func normalizedJSONObject(raw json.RawMessage, label string) ([]byte, error) {

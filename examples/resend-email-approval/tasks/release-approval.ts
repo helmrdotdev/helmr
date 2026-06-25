@@ -1,4 +1,4 @@
-import { cache, image, sandbox, source, task, wait, type PayloadSchema } from "@helmr/sdk"
+import { cache, image, sandbox, source, task, tokens, type PayloadSchema } from "@helmr/sdk"
 
 interface ReleaseApprovalPayload {
   readonly release: string
@@ -85,14 +85,12 @@ const sbx = sandbox("resend-email-approval")
 export const releaseApproval = task({
   id: "resend-email-approval",
   sandbox: sbx,
-  maxDuration: 86400,
+  maxDuration: 15 * 60,
   payload: releasePayload,
   run: async (payload, ctx) => {
-    const token = await wait.createToken({ timeout: 86400 })
-    const decision = await wait.forToken(token, {
-      schema: approvalDecision,
-      timeout: 86400,
-      tags: ["approval", "channel:email"],
+    const token = await tokens.create({
+      timeout: "1d",
+      tags: ["approval", "bridge:resend-email-approval", "medium:email"],
       metadata: {
         release: payload.release,
         summary: payload.summary,
@@ -100,6 +98,10 @@ export const releaseApproval = task({
         stagingUrl: payload.stagingUrl ?? null,
         productionUrl: payload.productionUrl ?? null,
       },
+    })
+    const decision = await tokens.wait(token, {
+      schema: approvalDecision,
+      timeout: "1d",
     }).unwrap()
 
     return {

@@ -1,15 +1,15 @@
-import type { ChannelRecord, PublicAccessToken, TaskSessionSnapshot, TaskStartResult, HelmrClient, WaitpointToken } from "./client"
-import type { PendingWaitpoint, RunEventRecord, RunHandle, RunSnapshot } from "./run"
-import type { Task } from "../internal"
-import { idempotencyKeys, image, sandbox, schedules, source, task, wait } from "../index"
+import type { PublicAccessToken, TaskSessionSnapshot, TaskStartResult, HelmrClient, Token } from "./client"
+import type { RunEventRecord, RunHandle, RunSnapshot } from "./run"
+import type { StreamRecord, Task } from "../internal"
+import { idempotencyKeys, image, sandbox, schedules, source, streams, task, tokens, type PayloadSchema } from "../index"
 
 declare const client: HelmrClient
 declare const handle: RunHandle
-declare const snapshot: RunSnapshot
-declare const pendingWaitpoint: PendingWaitpoint
 declare const startTask: Task<{ issue: number }, { issue: number }, readonly []>
 declare const schemaStartTask: Task<{ issue: number }, { parsed: number }, readonly [], { issue: string }>
 declare const signal: AbortSignal
+declare const approvalSchema: PayloadSchema<{ approved: boolean }, { approved: boolean }>
+declare const reportSchema: PayloadSchema<{ text: string }, { text: string }>
 
 if (false) {
   const started: Promise<TaskStartResult<{ issue: number }>> = client.tasks.start<typeof startTask>(
@@ -57,25 +57,27 @@ if (false) {
   const session = client.sessions.open<{ ok: boolean }>("session-1")
   const sessionSnapshot: Promise<TaskSessionSnapshot<{ ok: boolean }>> = session.retrieve()
   const waitedSession: Promise<TaskSessionSnapshot<{ ok: boolean }>> = client.sessions.wait("session-1", { timeoutSeconds: 30 })
-  const inputRecord: Promise<ChannelRecord<{ approved: boolean }>> = session.input("approval").send({ approved: true }, {
+  const approvalStream = streams.input("approval", { schema: approvalSchema })
+  const reportStream = streams.output("agent.report", { schema: reportSchema })
+  const inputRecord: Promise<StreamRecord<{ approved: boolean }>> = session.input(approvalStream).send({ approved: true }, {
     correlationId: "thread-1",
   })
-  const outputRecords: Promise<ChannelRecord<{ text: string }>[]> = session.output("agent.report").list({ cursor: 1 })
-  const outputStream: Promise<AsyncIterable<ChannelRecord<{ text: string }>>> = session.output("agent.report").stream()
+  const outputRecords: Promise<StreamRecord<{ text: string }>[]> = session.output(reportStream).list({ cursor: 1 })
+  const outputRecord: Promise<StreamRecord<{ text: string }> | null> = session.output(reportStream).read({ cursor: 1 })
   const outputToken: Promise<PublicAccessToken> = client.auth.createPublicToken({
     scope: {
       type: "session.output.read",
       sessionId: "session-1",
-      channel: "agent.report",
+      stream: "agent.report",
       correlationId: "thread-1",
     },
     maxUses: 10,
   })
   const inputToken: Promise<PublicAccessToken> = client.auth.createPublicToken({
     scope: {
-      type: "session.input.append",
+      type: "session.input.send",
       sessionId: session.id,
-      channel: "approval",
+      stream: "approval",
     },
   })
   const retrievedFromHandle: Promise<RunSnapshot> = client.runs.retrieve(handle)
@@ -114,23 +116,23 @@ if (false) {
     cron: { pattern: "0 9 * * *", timezone: "Asia/Tokyo" },
     run: async (payload, ctx) => `${payload.scheduleId}:${ctx.run.id}`,
   })
-  client.runs.waitpoints.list(handle)
-  client.runs.waitpoints.listPage(handle, { status: "pending" })
-  const delegatedToken: Promise<WaitpointToken> = wait.createToken({
-    timeoutInSeconds: 3600,
+  const delegatedToken: Promise<Token> = tokens.create({
+    timeout: "1h",
     metadata: { recipient: "reviewer@example.com" },
   })
-  const clientToken: Promise<WaitpointToken> = client.waitpoints.tokens.create({ timeoutInSeconds: 3600 })
-  const delegatedById = wait.createToken({ timeoutAt: "2026-04-20T00:00:00Z" })
-  wait.completeToken({
+  const clientToken: Promise<Token> = client.tokens.create({ timeout: "1h" })
+  const retrievedClientToken = null as unknown as Token
+  // @ts-expect-error client tokens are data records; task-runtime token handles expose wait().
+  retrievedClientToken.wait()
+  const delegatedById = tokens.create({ timeout: { hours: 1 } })
+  client.tokens.complete({
     id: "token-1",
-    callbackUrl: "https://api.example.test/api/waitpoints/tokens/token-1/callback/raw-token",
+    callbackUrl: "https://api.example.test/api/v1/tokens/token-1/callback/raw-token",
     publicAccessToken: "raw-token",
     timeoutAt: "2026-04-20T00:00:00Z",
   }, { approved: true })
-  wait.completeToken("token-1", { approved: false })
-  wait.completeToken("token-1", { approved: true }, { publicAccessToken: "raw-token" })
-  snapshot.pendingWaitpoint?.kind
+  client.tokens.complete("token-1", { approved: false })
+  client.tokens.complete("token-1", { approved: true }, { publicAccessToken: "raw-token" })
 
   // Keep the declared promises live without executing this block.
   startedAgain.then
@@ -149,7 +151,7 @@ if (false) {
   waitedSession.then
   inputRecord.then
   outputRecords.then
-  outputStream.then
+  outputRecord.then
   outputToken.then
   inputToken.then
   rawLeaseEventRecord.id
@@ -159,7 +161,7 @@ if (false) {
   // @ts-expect-error runs.retrieve does not accept arbitrary id-only objects.
   client.runs.retrieve({ id: "run-1" })
   // @ts-expect-error completion metadata belongs in the completion data payload.
-  wait.completeToken("token-1", { approved: true }, { metadata: { actor: "alice@example.com" } })
+  client.tokens.complete("token-1", { approved: true }, { metadata: { actor: "alice@example.com" } })
   // @ts-expect-error runs.wait accepts a run id string or RunHandle only.
   client.runs.wait({ taskId: "inspect" })
   // @ts-expect-error runs.wait does not accept arbitrary id-only objects.
@@ -189,14 +191,11 @@ if (false) {
   }
   rawEventRecord.id
   // @ts-expect-error token create options do not accept response actions.
-  wait.createToken({ actions: ["skip"] })
-  wait.createToken({
-    timeoutInSeconds: 3600,
-    // @ts-expect-error token creation accepts timeoutInSeconds or timeoutAt, not both.
-    timeoutAt: "2026-04-20T00:00:00Z",
-  })
+  tokens.create({ actions: ["skip"] })
+  // @ts-expect-error token creation accepts DurationInput timeout, not timeoutInSeconds.
+  tokens.create({ timeoutInSeconds: 3600 })
   // @ts-expect-error token complete options do not accept action-specific fields.
-  wait.completeToken("token-1", { approved: true }, { reason: "ok" })
+  client.tokens.complete("token-1", { approved: true }, { reason: "ok" })
   client.tasks.start<typeof startTask>("inspect", { issue: 123 }, {
     // @ts-expect-error start options do not accept source inputs.
     source: source.file("README.md"),
@@ -212,14 +211,13 @@ if (false) {
     {},
   )
   session.input("approval").send({ approved: true })
-  // @ts-expect-error session input appends do not accept task start idempotency keys.
   session.input("approval").send({ approved: true }, { idempotencyKey: "start-key" })
   client.auth.createPublicToken({
     scope: {
       // @ts-expect-error public token scopes are closed.
       type: "sessions:*",
       sessionId: "session-1",
-      channel: "approval",
+      stream: "approval",
     },
   })
   // @ts-expect-error sessions.open requires a session id string or session handle.

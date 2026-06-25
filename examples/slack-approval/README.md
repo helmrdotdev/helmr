@@ -1,34 +1,28 @@
 # Slack Approval
 
-This example shows a Slack-owned approval surface backed by Helmr session input.
-Helmr owns the durable task session; the trusted Slack bridge owns Slack app
-configuration, channel routing, and actor identity.
+This example shows a Slack approval backed by a Helmr external completion token.
+The trusted Slack bridge creates one token, posts Slack buttons, starts the
+Helmr task with that token id, and completes the token when a signed Slack
+action arrives.
 
-## Deploy and Start a Session
+## Deploy and Start the Bridge
 
 ```sh
 helmr deploy examples/slack-approval
-helmr task start slack-approval \
-  --payload-json '{
-    "release": "helmr-web-2026-06-14",
-    "summary": "Promote the validated staging build to production.",
-    "risk": "Touches run input delivery.",
-    "stagingUrl": "https://staging.example.com",
-    "productionUrl": "https://example.com"
-  }'
-```
 
-Copy the printed session id and start the bridge:
-
-```sh
 export HELMR_API_URL="https://dev.helmr.dev"
 export HELMR_API_KEY="..."
-export HELMR_SESSION_ID="session_..."
+export HELMR_TASK_ID="slack-approval"
 export SLACK_BOT_TOKEN="xoxb-..."
 export SLACK_SIGNING_SECRET="..."
 export SLACK_CHANNEL_ID="C0123456789"
+export APPROVAL_RELEASE="helmr-web-2026-06-14"
 export APPROVAL_TITLE="Approve helmr-web-2026-06-14?"
 export APPROVAL_SUMMARY="Promote the validated staging build to production."
+export APPROVAL_RISK="Touches run input delivery."
+export APPROVAL_STAGING_URL="https://staging.example.com"
+export APPROVAL_PRODUCTION_URL="https://example.com"
+
 bun run --cwd examples/slack-approval bridge
 ```
 
@@ -44,15 +38,26 @@ accepting button clicks.
 
 ## Flow
 
-1. The task opens an `approval` session input channel and waits for a record.
-2. The trusted bridge posts Slack buttons for `HELMR_SESSION_ID`.
-3. A button click verifies the Slack signature.
-4. The bridge appends the approval record with its Helmr API key.
+1. The trusted bridge creates a Helmr token with `timeout: "7d"`.
+2. The bridge posts Slack buttons whose value contains the token id.
+3. The bridge starts the `slack-approval` task with the token id in its payload.
+4. The task waits on `tokens.wait(tokenId, { timeout: "7d" })`.
+5. A signed Slack button click completes the token with the bridge API key.
+6. Repeated clicks are deterministic: the same completion remains accepted, and
+   conflicting completions return a stable "already recorded" response.
 
-The task contains no Slack-specific SDK code. Slack is just one delivery surface
-for the generic Helmr session input channel.
+The bridge posts Slack before starting the task. If Slack posting fails, it
+cancels the token and does not create a parked run that cannot be approved from
+Slack. By default the bridge derives Helmr idempotency keys from the task,
+channel, and release; set `HELMR_TOKEN_IDEMPOTENCY_KEY` and
+`HELMR_START_IDEMPOTENCY_KEY` when you need a different retry boundary.
 
-The bridge is a trusted endpoint. Keep its Helmr API key server-side and verify
-Slack signatures before appending session input. This example posts one message
-on startup for clarity; a production bridge should persist Slack message ids so
-restarts do not repost the same request.
+The long approval timeout belongs to the token wait, not to active task compute.
+The task's `maxDuration` remains a short active budget because parked token
+waits release compute.
+
+Use session streams for session-scoped timelines such as chat steering,
+multiple messages, or progress records. Use tokens for one-shot external
+completion that does not need to be bound to a session stream, such as Slack,
+email, or browser-link approvals. Use timers for wall-clock waits without
+active compute budget.

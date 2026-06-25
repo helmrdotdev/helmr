@@ -50,9 +50,28 @@ git -C "$repo" checkout '${source_ref}'
 
 cd "$repo"
 nix develop .#smoke-linux -c bash -euo pipefail <<'EOF'
+retry() {
+  local attempts=$1
+  shift
+  local delay=5
+  local attempt=1
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    if [ "$attempt" -ge "$attempts" ]; then
+      return 1
+    fi
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+  done
+}
+
 install -d -m 0755 /usr/local/bin /opt/cni/bin /etc/cni/conf.d
 bun install --frozen-lockfile --ignore-scripts
 make console-build
+retry 4 go mod download
 go build -tags embed_console -o /usr/local/bin/helmr-worker ./cmd/helmr-worker
 go build -tags embed_console -o /usr/local/bin/helmr ./cmd/helmr
 go build -tags embed_console -o /usr/local/bin/helmr-control ./cmd/helmr-control

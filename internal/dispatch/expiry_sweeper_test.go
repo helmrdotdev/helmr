@@ -21,13 +21,13 @@ func TestSweepOnce(t *testing.T) {
 	if err := sweepOnce(context.Background(), store, DefaultExpirySweepOrgLimit); err != nil {
 		t.Fatal(err)
 	}
-	if got := store.calls; got != "requeue,fail,expire-runs,expire-waits,requeue,fail,expire-runs,expire-waits" {
+	if got := store.calls; got != "requeue,fail,expire-runs,expire-tokens,resolve-timers,expire-waits,fail-stale-waits,requeue-waits,requeue,fail,expire-runs,expire-tokens,resolve-timers,expire-waits,fail-stale-waits,requeue-waits" {
 		t.Fatalf("calls = %s", got)
 	}
-	if len(store.sweptOrgIDs) != 8 {
+	if len(store.sweptOrgIDs) != 16 {
 		t.Fatalf("swept org IDs = %+v", store.sweptOrgIDs)
 	}
-	if store.sweptOrgIDs[0] != orgA || store.sweptOrgIDs[4] != orgB {
+	if store.sweptOrgIDs[0] != orgA || store.sweptOrgIDs[8] != orgB {
 		t.Fatalf("swept org IDs = %+v", store.sweptOrgIDs)
 	}
 }
@@ -55,10 +55,10 @@ func TestSweepOnceContinuesAfterOrgError(t *testing.T) {
 	if err := sweepOnce(context.Background(), store, DefaultExpirySweepOrgLimit); err == nil {
 		t.Fatal("expected error")
 	}
-	if got := store.calls; got != "requeue,requeue,fail,expire-runs,expire-waits" {
+	if got := store.calls; got != "requeue,requeue,fail,expire-runs,expire-tokens,resolve-timers,expire-waits,fail-stale-waits,requeue-waits" {
 		t.Fatalf("calls = %s", got)
 	}
-	if len(store.sweptOrgIDs) != 5 || store.sweptOrgIDs[0] != orgA || store.sweptOrgIDs[1] != orgB {
+	if len(store.sweptOrgIDs) != 9 || store.sweptOrgIDs[0] != orgA || store.sweptOrgIDs[1] != orgB {
 		t.Fatalf("swept org IDs = %+v", store.sweptOrgIDs)
 	}
 }
@@ -75,7 +75,7 @@ func TestSweeperPaginatesOrganizations(t *testing.T) {
 	if err := sweeper.sweep(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.sweptOrgIDs) != 12 || store.sweptOrgIDs[0] != orgA || store.sweptOrgIDs[4] != orgB || store.sweptOrgIDs[8] != orgC {
+	if len(store.sweptOrgIDs) != 24 || store.sweptOrgIDs[0] != orgA || store.sweptOrgIDs[8] != orgB || store.sweptOrgIDs[16] != orgC {
 		t.Fatalf("swept org IDs = %+v", store.sweptOrgIDs)
 	}
 	if len(store.args) != 2 || store.args[0].RowLimit != 2 || store.args[1].AfterID != orgB {
@@ -89,10 +89,10 @@ func TestSweepExpiredForOrgUsesProvidedOrg(t *testing.T) {
 	if err := SweepExpiredForOrg(context.Background(), store, orgID); err != nil {
 		t.Fatal(err)
 	}
-	if got := store.calls; got != "requeue,fail,expire-runs,expire-waits" {
+	if got := store.calls; got != "requeue,fail,expire-runs,expire-tokens,resolve-timers,expire-waits,fail-stale-waits,requeue-waits" {
 		t.Fatalf("calls = %s", got)
 	}
-	if len(store.sweptOrgIDs) != 4 || store.sweptOrgIDs[0] != orgID {
+	if len(store.sweptOrgIDs) != 8 || store.sweptOrgIDs[0] != orgID {
 		t.Fatalf("swept org IDs = %+v", store.sweptOrgIDs)
 	}
 }
@@ -253,7 +253,9 @@ type fakeSweeperOrgStore struct {
 	sweptOrgIDs []pgtype.UUID
 	requeueErr  error
 	failErr     error
-	expireErr   error
+	tokenErr    error
+	timerErr    error
+	waitErr     error
 	requeueErrs map[pgtype.UUID]error
 }
 
@@ -278,10 +280,34 @@ func (f *fakeSweeperOrgStore) ExpireQueuedRuns(_ context.Context, orgID pgtype.U
 	return nil
 }
 
-func (f *fakeSweeperOrgStore) ExpireDuePendingWaitpoints(_ context.Context, orgID pgtype.UUID) error {
+func (f *fakeSweeperOrgStore) ExpireDueTokens(_ context.Context, orgID pgtype.UUID) ([]db.ExpireDueTokensRow, error) {
+	f.sweptOrgIDs = append(f.sweptOrgIDs, orgID)
+	f.calls = appendCall(f.calls, "expire-tokens")
+	return nil, f.tokenErr
+}
+
+func (f *fakeSweeperOrgStore) ResolveDueTimerWaits(_ context.Context, arg db.ResolveDueTimerWaitsParams) ([]db.ResolveDueTimerWaitsRow, error) {
+	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
+	f.calls = appendCall(f.calls, "resolve-timers")
+	return nil, f.timerErr
+}
+
+func (f *fakeSweeperOrgStore) ExpireDueRunWaits(_ context.Context, orgID pgtype.UUID) ([]db.RunWait, error) {
 	f.sweptOrgIDs = append(f.sweptOrgIDs, orgID)
 	f.calls = appendCall(f.calls, "expire-waits")
-	return f.expireErr
+	return nil, f.waitErr
+}
+
+func (f *fakeSweeperOrgStore) FailStaleResolvedRunWaits(_ context.Context, arg db.FailStaleResolvedRunWaitsParams) ([]db.FailStaleResolvedRunWaitsRow, error) {
+	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
+	f.calls = appendCall(f.calls, "fail-stale-waits")
+	return nil, nil
+}
+
+func (f *fakeSweeperOrgStore) RequeueResolvedRunWaits(_ context.Context, arg db.RequeueResolvedRunWaitsParams) ([]db.RequeueResolvedRunWaitsRow, error) {
+	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
+	f.calls = appendCall(f.calls, "requeue-waits")
+	return nil, nil
 }
 
 func appendCall(calls string, call string) string {

@@ -166,26 +166,73 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	}
 }
 
-func TestGuestRunnerRejectsInvalidStreamObjectRefJSON(t *testing.T) {
-	events := &capturingEventSink{}
-	invalidObjectRef := "{"
-	err := (GuestRunner{Events: events}).writeChannelOutput(context.Background(), api.WorkerRunLease{RunID: "run-1"}, &runv0.ChannelOutputAppended{
-		Channel:       "diagnostics",
-		PayloadJson:   `{"ok":true}`,
-		ObjectRefJson: &invalidObjectRef,
+func TestGuestRunnerUsesLiveWorkspaceMaterializationSession(t *testing.T) {
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "main.ts"), []byte("export default {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	imagePath := filepath.Join(t.TempDir(), "image.oci.tar")
+	if err := os.WriteFile(imagePath, []byte("oci"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stream := newScriptedCheckpointGuestStream(t, &runv0.RunEvent{
+		Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{ExitCode: 0}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "object_ref_json") {
-		t.Fatalf("error = %v, want object_ref_json validation", err)
+	sessions := NewWorkspaceMaterializationSessions()
+	unregister := sessions.RegisterWorkspaceMaterializationSession("mat-1", fakeGuestSession{stream: stream})
+	defer unregister()
+	connector := &fakeGuestConnector{}
+	result, err := GuestRunner{
+		Connector:        connector,
+		Materializations: sessions,
+		TempDir:          t.TempDir(),
+	}.Run(context.Background(), Request{
+		Leases: staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"}),
+		Run: ResolvedRun{
+			RunID:         "run-1",
+			TaskSessionID: "session-1",
+			TaskID:        "deploy",
+			Bundle:        runtimeBundle(),
+			Payload:       []byte(`{"ok":true}`),
+			Workspace: api.WorkerWorkspace{
+				ID:                "workspace-1",
+				MaterializationID: "mat-1",
+				MountPath:         "/workspace",
+			},
+		},
+		Artifact:         builder.Artifact{ImageTarPath: imagePath},
+		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
+		Workspace:        testWorkspaceArtifact(t, sourceRoot, sourceRoot),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("exit code = %d", result.ExitCode)
+	}
+	if connector.connectCalls != 0 {
+		t.Fatalf("connector Connect calls = %d, want 0", connector.connectCalls)
+	}
+}
+
+func TestGuestRunnerRejectsInvalidOutputStreamJSON(t *testing.T) {
+	events := &capturingEventSink{}
+	err := (GuestRunner{Events: events}).appendOutputStream(context.Background(), api.WorkerRunLease{RunID: "run-1"}, &runv0.OutputStreamAppended{
+		Stream:      "diagnostics",
+		PayloadJson: "{",
+	})
+	if err == nil || !strings.Contains(err.Error(), "payload_json") {
+		t.Fatalf("error = %v, want payload_json validation", err)
 	}
 	if len(events.outputs) != 0 {
 		t.Fatalf("outputs = %+v, want none", events.outputs)
 	}
 }
 
-func TestGuestRunnerCreatesWaitpointToken(t *testing.T) {
+func TestGuestRunnerCreatesToken(t *testing.T) {
 	events := &capturingEventSink{}
 	timeout := "2026-06-15T12:00:00Z"
-	result := (GuestRunner{Events: events}).createWaitpointToken(context.Background(), api.WorkerRunLease{ID: "session-1", RunID: "run-1"}, &runv0.WaitpointTokenCreateRequested{
+	result := (GuestRunner{Events: events}).createToken(context.Background(), api.WorkerRunLease{ID: "session-1", RunID: "run-1"}, &runv0.TokenCreateRequested{
 		TimeoutAt:    &timeout,
 		Tags:         []string{"approval"},
 		MetadataJson: ptrString(`{"bridge":"slack"}`),
@@ -256,16 +303,16 @@ func TestGuestRunnerProvidesCheckpointableWaitHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	stream := newScriptedCheckpointGuestStream(t, &runv0.RunEvent{
-		Event: &runv0.RunEvent_WaitpointRequested{WaitpointRequested: &runv0.WaitpointRequested{
+		Event: &runv0.RunEvent_RunWaitRequested{RunWaitRequested: &runv0.RunWaitRequested{
 			CorrelationId: "approval-1",
 			Kind:          "token",
 			ParamsJson:    `{}`,
 		}},
 	}, &runv0.CheckpointPauseReady{
-		WaitpointId:  "waitpoint-1",
+		RunWaitId:    "run-wait-id-1",
 		CheckpointId: "checkpoint-1",
 	})
-	waiter := &capturingWaitHandler{}
+	waiter := &capturingRunWaitHandler{}
 	store := &fakeCAS{}
 	result, err := GuestRunner{
 		Connector:           &fakeGuestConnector{stream: stream, checkpointable: true},
@@ -305,73 +352,8 @@ func TestGuestRunnerProvidesCheckpointableWaitHandler(t *testing.T) {
 	}
 }
 
-func TestGuestRunnerAddsAggregateWaitpointsDuringCheckpoint(t *testing.T) {
-	imagePath := filepath.Join(t.TempDir(), "image.oci.tar")
-	if err := os.WriteFile(imagePath, []byte("oci"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	sourceRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(sourceRoot, "main.ts"), []byte("export default {}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	stream := newScriptedCheckpointGuestStream(t, &runv0.RunEvent{
-		Event: &runv0.RunEvent_WaitpointRequested{WaitpointRequested: &runv0.WaitpointRequested{
-			CorrelationId: "approval-1",
-			Kind:          "token",
-			ParamsJson:    `{"token_id":"token-1"}`,
-			Ordinal:       0,
-		}},
-	}, &runv0.RunEvent{
-		Event: &runv0.RunEvent_WaitpointRequested{WaitpointRequested: &runv0.WaitpointRequested{
-			CorrelationId: "aggregate-1",
-			Kind:          "token",
-			ParamsJson:    `{"token_id":"token-2"}`,
-			Ordinal:       1,
-		}},
-	}, &runv0.CheckpointPauseReady{
-		WaitpointId:  "waitpoint-1",
-		CheckpointId: "checkpoint-1",
-	})
-	waiter := &capturingWaitHandler{}
-	result, err := GuestRunner{
-		Connector:           &fakeGuestConnector{stream: stream, checkpointable: true},
-		CAS:                 &fakeCAS{},
-		CheckpointEncryptor: testCheckpointEncryptor(t),
-		TempDir:             t.TempDir(),
-	}.Run(context.Background(), Request{
-		Leases: staticLease(api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"}),
-		Run: ResolvedRun{
-			RunID:         "run-1",
-			TaskSessionID: "session-1",
-			TaskID:        "deploy",
-			Bundle:        runtimeBundle(),
-			Payload:       []byte(`{}`),
-			Secrets:       api.ResolvedSecrets{},
-		},
-		Artifact:         builder.Artifact{ImageTarPath: imagePath},
-		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
-		Workspace:        testWorkspaceArtifact(t, sourceRoot, sourceRoot),
-		WaitHandler:      waiter,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.Detached {
-		t.Fatalf("result = %+v, want detached", result)
-	}
-	if waiter.request.CorrelationID != "approval-1" || waiter.request.Ordinal != 0 {
-		t.Fatalf("initial wait request = %+v", waiter.request)
-	}
-	if len(waiter.added) != 1 {
-		t.Fatalf("added waitpoints = %d, want 1", len(waiter.added))
-	}
-	if waiter.added[0].CorrelationID != "aggregate-1" || waiter.added[0].Ordinal != 1 {
-		t.Fatalf("added waitpoint = %+v", waiter.added[0])
-	}
-}
-
 func TestRuntimeWaitRequestRejectsInvalidMetadataJSON(t *testing.T) {
-	_, err := runtimeWaitRequest(Request{}, &runv0.WaitpointRequested{
+	_, err := runtimeWaitRequest(Request{}, &runv0.RunWaitRequested{
 		CorrelationId: "approval-1",
 		Kind:          "token",
 		ParamsJson:    `{}`,
@@ -382,8 +364,31 @@ func TestRuntimeWaitRequestRejectsInvalidMetadataJSON(t *testing.T) {
 	}
 }
 
+func TestRuntimeWaitRequestPreservesIdleTimeout(t *testing.T) {
+	timeout := uint32(60)
+	idleTimeout := uint32(10)
+	request, err := runtimeWaitRequest(Request{
+		Leases: staticLease(api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"}),
+	}, &runv0.RunWaitRequested{
+		CorrelationId: "approval-1",
+		Kind:          "token",
+		ParamsJson:    `{}`,
+		Timeout:       &timeout,
+		IdleTimeout:   &idleTimeout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.TimeoutSeconds == nil || *request.TimeoutSeconds != 60 {
+		t.Fatalf("timeout = %v, want 60", request.TimeoutSeconds)
+	}
+	if request.IdleTimeoutSeconds == nil || *request.IdleTimeoutSeconds != 10 {
+		t.Fatalf("idle timeout = %v, want 10", request.IdleTimeoutSeconds)
+	}
+}
+
 func TestRuntimeWaitRequestRejectsOversizedMetadataJSON(t *testing.T) {
-	_, err := runtimeWaitRequest(Request{}, &runv0.WaitpointRequested{
+	_, err := runtimeWaitRequest(Request{}, &runv0.RunWaitRequested{
 		CorrelationId: "approval-1",
 		Kind:          "token",
 		ParamsJson:    `{}`,
@@ -399,7 +404,7 @@ func TestRuntimeWaitRequestRejectsTooManyTags(t *testing.T) {
 	for i := range tags {
 		tags[i] = "approval"
 	}
-	_, err := runtimeWaitRequest(Request{}, &runv0.WaitpointRequested{
+	_, err := runtimeWaitRequest(Request{}, &runv0.RunWaitRequested{
 		CorrelationId: "approval-1",
 		Kind:          "token",
 		ParamsJson:    `{}`,
@@ -411,7 +416,7 @@ func TestRuntimeWaitRequestRejectsTooManyTags(t *testing.T) {
 }
 
 func TestRuntimeWaitRequestRejectsOversizedTag(t *testing.T) {
-	_, err := runtimeWaitRequest(Request{}, &runv0.WaitpointRequested{
+	_, err := runtimeWaitRequest(Request{}, &runv0.RunWaitRequested{
 		CorrelationId: "approval-1",
 		Kind:          "token",
 		ParamsJson:    `{}`,
@@ -436,7 +441,7 @@ func TestGuestRunnerProcessesRunEventsBeforeCheckpointPauseReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	stream := newScriptedCheckpointGuestStream(t, &runv0.RunEvent{
-		Event: &runv0.RunEvent_WaitpointRequested{WaitpointRequested: &runv0.WaitpointRequested{
+		Event: &runv0.RunEvent_RunWaitRequested{RunWaitRequested: &runv0.RunWaitRequested{
 			CorrelationId: "approval-1",
 			Kind:          "token",
 			ParamsJson:    `{}`,
@@ -446,10 +451,10 @@ func TestGuestRunnerProcessesRunEventsBeforeCheckpointPauseReady(t *testing.T) {
 	}, &runv0.RunEvent{
 		Event: &runv0.RunEvent_LogEntry{LogEntry: "checkpoint flush"},
 	}, &runv0.CheckpointPauseReady{
-		WaitpointId:  "waitpoint-1",
+		RunWaitId:    "run-wait-id-1",
 		CheckpointId: "checkpoint-1",
 	})
-	waiter := &capturingWaitHandler{}
+	waiter := &capturingRunWaitHandler{}
 	store := &fakeCAS{}
 	events := &capturingEventSink{}
 	var stdout bytes.Buffer
@@ -495,7 +500,7 @@ func TestGuestRunnerProcessesRunEventsBeforeCheckpointPauseReady(t *testing.T) {
 	}
 }
 
-func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
+func TestGuestRunnerRestoresCheckpointAndAttachesRunWait(t *testing.T) {
 	state := []byte("state")
 	scratch := []byte("scratch")
 	memory := []byte("memory")
@@ -506,12 +511,12 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	scratchObject := encryptedCheckpointObject(t, encryptor, scratch, "scratch-disk")
 	memoryObject := encryptedCheckpointObject(t, encryptor, memory, "memory")
 	stream := newScriptedCheckpointGuestStream(t, &runv0.ResumeAck{
-		WaitpointId: "waitpoint-1",
+		RunWaitId: "run-wait-id-1",
 	}, &runv0.RunEvent{
 		Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{ExitCode: 0}},
 	})
 	connector := &fakeGuestConnector{stream: stream}
-	waiter := &capturingWaitHandler{}
+	waiter := &capturingRunWaitHandler{}
 	result, err := GuestRunner{
 		Connector:           connector,
 		CAS:                 &fakeCAS{objects: map[string][]byte{manifestObject.digest: manifestObject.body, stateObject.digest: stateObject.body, scratchObject.digest: scratchObject.body, memoryObject.digest: memoryObject.body}},
@@ -525,9 +530,8 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 			Restore: &api.WorkerRestore{
 				CheckpointID: "checkpoint-1",
 				Checkpoint:   testRestoreCheckpointManifest(manifest, manifestObject, stateObject, scratchObject, memoryObject, testCheckpointWorkspaceBase()),
-				Waitpoint: api.WorkerRestoreWaitpoint{
-					ID:                "waitpoint-1",
-					RunSuspensionID:   "run-wait-1",
+				RunWait: api.WorkerRestoreRunWait{
+					ID:                "run-wait-id-1",
 					ResumeKind:        "completed",
 					ResumePayloadJSON: json.RawMessage(`{"approved":true}`),
 				},
@@ -548,23 +552,23 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	if err := transport.ReadProtoFrame(written, &attach); err != nil {
 		t.Fatal(err)
 	}
-	if attach.CheckpointId != "checkpoint-1" || attach.WaitpointId != "waitpoint-1" || attach.RunLeaseId != "execution-1" {
+	if attach.CheckpointId != "checkpoint-1" || attach.RunWaitId != "run-wait-id-1" || attach.RunLeaseId != "execution-1" {
 		t.Fatalf("attach = %+v", &attach)
 	}
 	var decision runv0.ResumeDecision
 	if err := transport.ReadProtoFrame(written, &decision); err != nil {
 		t.Fatal(err)
 	}
-	if decision.WaitpointId != "waitpoint-1" || decision.Kind != "completed" || decision.DataJson != `{"approved":true}` {
+	if decision.RunWaitId != "run-wait-id-1" || decision.Kind != "completed" || decision.DataJson != `{"approved":true}` {
 		t.Fatalf("decision = %+v", &decision)
 	}
-	if waiter.acknowledged.RunSuspensionID != "run-wait-1" || waiter.acknowledged.WaitpointID != "waitpoint-1" || waiter.acknowledged.CheckpointID != "checkpoint-1" {
+	if waiter.acknowledged.RunWaitID != "run-wait-id-1" || waiter.acknowledged.CheckpointID != "checkpoint-1" {
 		t.Fatalf("acknowledged = %+v", waiter.acknowledged)
 	}
 }
 
 func TestGuestRunnerRequiresRestoreAcknowledgerBeforeResumeAttach(t *testing.T) {
-	stream := newScriptedCheckpointGuestStream(t, &runv0.ResumeAck{WaitpointId: "waitpoint-1"})
+	stream := newScriptedCheckpointGuestStream(t, &runv0.ResumeAck{RunWaitId: "run-wait-id-1"})
 	session := fakeGuestSession{stream: stream}
 	err := GuestRunner{}.attachAndAcknowledgeRestore(context.Background(), session, Request{
 		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"}),
@@ -572,9 +576,8 @@ func TestGuestRunnerRequiresRestoreAcknowledgerBeforeResumeAttach(t *testing.T) 
 		Run: ResolvedRun{
 			Restore: &api.WorkerRestore{
 				CheckpointID: "checkpoint-1",
-				Waitpoint: api.WorkerRestoreWaitpoint{
-					ID:                "waitpoint-1",
-					RunSuspensionID:   "run-wait-1",
+				RunWait: api.WorkerRestoreRunWait{
+					ID:                "run-wait-id-1",
 					ResumeKind:        "completed",
 					ResumePayloadJSON: json.RawMessage(`{"approved":true}`),
 				},
@@ -607,19 +610,19 @@ func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *
 	memoryObject := encryptedCheckpointObject(t, encryptor, memory, "memory")
 	workspaceBase := testCheckpointWorkspaceBase()
 	stream := newScriptedCheckpointGuestStream(t, &runv0.ResumeAck{
-		WaitpointId: "waitpoint-1",
+		RunWaitId: "run-wait-id-1",
 	}, &runv0.RunEvent{
-		Event: &runv0.RunEvent_WaitpointRequested{WaitpointRequested: &runv0.WaitpointRequested{
-			CorrelationId: "next-waitpoint",
+		Event: &runv0.RunEvent_RunWaitRequested{RunWaitRequested: &runv0.RunWaitRequested{
+			CorrelationId: "next-run wait",
 			Kind:          "token",
 			ParamsJson:    `{}`,
 		}},
 	}, &runv0.CheckpointPauseReady{
-		WaitpointId:  "waitpoint-1",
+		RunWaitId:    "run-wait-id-1",
 		CheckpointId: "checkpoint-1",
 	})
 	connector := &fakeGuestConnector{stream: stream, checkpointable: true}
-	waiter := &capturingWaitHandler{}
+	waiter := &capturingRunWaitHandler{}
 	result, err := GuestRunner{
 		Connector:           connector,
 		CAS:                 &fakeCAS{objects: map[string][]byte{manifestObject.digest: manifestObject.body, stateObject.digest: stateObject.body, scratchObject.digest: scratchObject.body, memoryObject.digest: memoryObject.body}},
@@ -633,9 +636,8 @@ func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *
 			Restore: &api.WorkerRestore{
 				CheckpointID: "checkpoint-1",
 				Checkpoint:   testRestoreCheckpointManifest(manifest, manifestObject, stateObject, scratchObject, memoryObject, workspaceBase),
-				Waitpoint: api.WorkerRestoreWaitpoint{
-					ID:                "waitpoint-1",
-					RunSuspensionID:   "run-wait-1",
+				RunWait: api.WorkerRestoreRunWait{
+					ID:                "run-wait-id-1",
 					ResumeKind:        "completed",
 					ResumePayloadJSON: json.RawMessage(`{"approved":true}`),
 				},
@@ -748,6 +750,50 @@ func TestGuestRunnerEnforcesMaxDuration(t *testing.T) {
 	}
 	if !stream.isClosed() {
 		t.Fatal("expected timeout to close guest stream")
+	}
+}
+
+func TestGuestRunnerEnforcesMaxDurationDuringActiveStreamRead(t *testing.T) {
+	imagePath := filepath.Join(t.TempDir(), "image.oci.tar")
+	if err := os.WriteFile(imagePath, []byte("oci"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "main.ts"), []byte("export default {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stream := newScriptedGuestStream(t, &runv0.RunEvent{
+		Event: &runv0.RunEvent_ActiveStreamReadRequested{ActiveStreamReadRequested: &runv0.ActiveStreamReadRequested{
+			CorrelationId: "read-1",
+			Stream:        "approval",
+			Block:         true,
+		}},
+	})
+	events := &blockingInputEventSink{capturingEventSink: &capturingEventSink{}}
+	_, err := GuestRunner{
+		Connector: &fakeGuestConnector{stream: stream},
+		Events:    events,
+		TempDir:   t.TempDir(),
+	}.Run(context.Background(), Request{
+		Leases: staticLease(api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"}),
+		Run: ResolvedRun{
+			RunID:         "run-1",
+			TaskSessionID: "session-1",
+			TaskID:        "deploy",
+			Bundle:        runtimeBundle(),
+			Payload:       []byte(`{}`),
+			Secrets:       api.ResolvedSecrets{},
+			MaxDuration:   10 * time.Millisecond,
+		},
+		Artifact:         builder.Artifact{ImageTarPath: imagePath},
+		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
+		Workspace:        testWorkspaceArtifact(t, sourceRoot, sourceRoot),
+	})
+	if err == nil || !strings.Contains(err.Error(), "max_duration") {
+		t.Fatalf("err = %v, want max_duration", err)
+	}
+	if len(events.reads) != 1 || events.reads[0].Stream != "approval" || !events.reads[0].Block {
+		t.Fatalf("active reads = %+v", events.reads)
 	}
 }
 
@@ -977,9 +1023,11 @@ type fakeGuestConnector struct {
 	checkpointable bool
 	network        compute.NetworkPolicy
 	restoreRequest vm.RestoreRequest
+	connectCalls   int
 }
 
 func (c *fakeGuestConnector) Connect(_ context.Context, network compute.NetworkPolicy) (vm.Session, error) {
+	c.connectCalls++
 	c.network = network
 	if c.checkpointable {
 		return fakeCheckpointableGuestSession{fakeGuestSession{stream: c.stream}}, nil
@@ -1060,40 +1108,39 @@ func (s fakeCheckpointableGuestSession) Resume(context.Context) error {
 	return nil
 }
 
-type capturingWaitHandler struct {
+type capturingRunWaitHandler struct {
 	request      WaitRequest
 	added        []WaitRequest
 	manifest     api.WorkerCheckpointManifest
 	acknowledged RestoreAcknowledgement
 }
 
-func (h *capturingWaitHandler) Wait(_ context.Context, request WaitRequest) error {
+func (h *capturingRunWaitHandler) Wait(_ context.Context, request WaitRequest) error {
 	h.request = request
 	if request.Checkpointer != nil {
-		manifest, err := request.Checkpointer.CreateCheckpoint(context.Background(), CheckpointRequest{
+		checkpoint, err := request.Checkpointer.CreateCheckpoint(context.Background(), CheckpointRequest{
 			RunID:        request.Lease.RunID,
-			WaitpointID:  "waitpoint-1",
+			RunWaitID:    "run-wait-id-1",
 			CheckpointID: "checkpoint-1",
 		})
 		if err != nil {
 			return err
 		}
-		h.manifest = manifest
+		h.manifest = checkpoint.Manifest
 	}
 	return ErrDetached
 }
 
-func (h *capturingWaitHandler) AddWaitpoint(_ context.Context, request WaitRequest) (api.WorkerCreateWaitpointResponse, error) {
+func (h *capturingRunWaitHandler) AddRunWait(_ context.Context, request WaitRequest) (api.WorkerCreateRunWaitResponse, error) {
 	h.added = append(h.added, request)
-	return api.WorkerCreateWaitpointResponse{
-		RunID:           request.Lease.RunID,
-		RunSuspensionID: "run-wait-1",
-		WaitpointID:     fmt.Sprintf("waitpoint-%d", len(h.added)+1),
-		CheckpointID:    "checkpoint-1",
+	return api.WorkerCreateRunWaitResponse{
+		RunID:        request.Lease.RunID,
+		RunWaitID:    fmt.Sprintf("run-wait-id-%d", len(h.added)+1),
+		CheckpointID: "checkpoint-1",
 	}, nil
 }
 
-func (h *capturingWaitHandler) AcknowledgeRestore(_ context.Context, request RestoreAcknowledgement) error {
+func (h *capturingRunWaitHandler) AcknowledgeRestore(_ context.Context, request RestoreAcknowledgement) error {
 	h.acknowledged = request
 	return nil
 }
@@ -1106,7 +1153,7 @@ type capturedLogEvent struct {
 }
 
 type capturedOutputEvent struct {
-	request api.WorkerWriteOutputRequest
+	request api.WorkerOutputStreamAppendRequest
 }
 
 type capturedMetadataEvent struct {
@@ -1117,8 +1164,9 @@ type capturingEventSink struct {
 	logs     []capturedLogEvent
 	entries  []string
 	outputs  []capturedOutputEvent
+	reads    []api.WorkerActiveStreamReadRequest
 	metadata []capturedMetadataEvent
-	tokens   []api.WorkerCreateWaitpointTokenRequest
+	tokens   []api.WorkerCreateTokenRequest
 }
 
 func (s *capturingEventSink) AppendLog(_ context.Context, claim api.WorkerRunLease, stream api.WorkerLogStream, observedSeq uint64, content []byte) (api.WorkerEventResponse, error) {
@@ -1136,10 +1184,46 @@ func (s *capturingEventSink) RecordLogEntry(_ context.Context, claim api.WorkerR
 	return api.WorkerEventResponse{RunID: claim.RunID}, nil
 }
 
-func (s *capturingEventSink) WriteOutput(_ context.Context, request api.WorkerWriteOutputRequest) (api.WorkerEventResponse, error) {
-	request.Payload = append(json.RawMessage(nil), request.Payload...)
+func (s *capturingEventSink) AppendOutputStream(_ context.Context, request api.WorkerOutputStreamAppendRequest) (api.AppendStreamRecordResponse, error) {
+	request.Data = append(json.RawMessage(nil), request.Data...)
 	s.outputs = append(s.outputs, capturedOutputEvent{request: request})
-	return api.WorkerEventResponse{RunID: request.Lease.RunID}, nil
+	contentType := request.ContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	return api.AppendStreamRecordResponse{
+		Record: api.StreamRecordResponse{
+			ID:          "output-record-1",
+			StreamID:    "stream-1",
+			Sequence:    1,
+			Data:        append(json.RawMessage(nil), request.Data...),
+			ContentType: contentType,
+			CreatedAt:   time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC),
+		},
+	}, nil
+}
+
+func (s *capturingEventSink) ReadInputStream(_ context.Context, request api.WorkerActiveStreamReadRequest) (api.WorkerActiveStreamReadResponse, error) {
+	s.reads = append(s.reads, request)
+	record := api.StreamRecordResponse{
+		ID:          "stream-record-1",
+		StreamID:    "stream-1",
+		Sequence:    request.AfterSequence + 1,
+		Data:        json.RawMessage(`{"ok":true}`),
+		ContentType: "application/json",
+		CreatedAt:   time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC),
+	}
+	return api.WorkerActiveStreamReadResponse{Record: &record}, nil
+}
+
+type blockingInputEventSink struct {
+	*capturingEventSink
+}
+
+func (s *blockingInputEventSink) ReadInputStream(ctx context.Context, request api.WorkerActiveStreamReadRequest) (api.WorkerActiveStreamReadResponse, error) {
+	s.reads = append(s.reads, request)
+	<-ctx.Done()
+	return api.WorkerActiveStreamReadResponse{}, ctx.Err()
 }
 
 func (s *capturingEventSink) UpdateRunMetadata(_ context.Context, request api.WorkerUpdateRunMetadataRequest) (api.WorkerEventResponse, error) {
@@ -1149,14 +1233,14 @@ func (s *capturingEventSink) UpdateRunMetadata(_ context.Context, request api.Wo
 	return api.WorkerEventResponse{RunID: request.Lease.RunID}, nil
 }
 
-func (s *capturingEventSink) CreateRuntimeWaitpointToken(_ context.Context, request api.WorkerCreateWaitpointTokenRequest) (api.WaitpointTokenResponse, error) {
+func (s *capturingEventSink) CreateRuntimeToken(_ context.Context, request api.WorkerCreateTokenRequest) (api.TokenResponse, error) {
 	request.Metadata = append(json.RawMessage(nil), request.Metadata...)
 	s.tokens = append(s.tokens, request)
 	timeout := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
-	return api.WaitpointTokenResponse{
+	return api.TokenResponse{
 		ID:                "token-1",
 		Status:            "waiting",
-		CallbackURL:       "https://api.example.test/api/waitpoints/tokens/token-1/callback/secret",
+		CallbackURL:       "https://api.example.test/api/v1/tokens/token-1/callback/secret",
 		PublicAccessToken: "public-token",
 		TimeoutAt:         &timeout,
 		Tags:              []string{"approval"},
@@ -1176,7 +1260,7 @@ func newScriptedGuestStream(t *testing.T, messages ...proto.Message) *scriptedGu
 		if ready, ok := message.(*runv0.CheckpointPauseReady); ok {
 			if err := transport.WriteStreamFrameHeader(&read, transport.StreamHeader{
 				Type:         transport.StreamTypeCheckpointPauseReady,
-				WaitpointID:  ready.WaitpointId,
+				RunWaitID:    ready.RunWaitId,
 				CheckpointID: ready.CheckpointId,
 			}, 0); err != nil {
 				t.Fatal(err)
@@ -1201,7 +1285,7 @@ func newScriptedCheckpointGuestStream(t *testing.T, messages ...proto.Message) *
 		if ready, ok := message.(*runv0.CheckpointPauseReady); ok {
 			if err := transport.WriteStreamFrameHeader(&read, transport.StreamHeader{
 				Type:         transport.StreamTypeCheckpointPauseReady,
-				WaitpointID:  ready.WaitpointId,
+				RunWaitID:    ready.RunWaitId,
 				CheckpointID: ready.CheckpointId,
 			}, 0); err != nil {
 				t.Fatal(err)

@@ -31,12 +31,12 @@ func DefaultWorkDir() string {
 }
 
 type Executor struct {
-	WorkDir    string
-	GitPath    string
-	CAS        cas.Store
-	Builder    builder.Engine
-	Runner     Runner
-	Waitpoints WaitHandler
+	WorkDir  string
+	GitPath  string
+	CAS      cas.Store
+	Builder  builder.Engine
+	Runner   Runner
+	RunWaits WaitHandler
 }
 
 type Runner interface {
@@ -64,22 +64,23 @@ type WaitHandler interface {
 	Wait(context.Context, WaitRequest) error
 }
 
-type WaitpointAppender interface {
-	AddWaitpoint(context.Context, WaitRequest) (api.WorkerCreateWaitpointResponse, error)
+type RunWaitAppender interface {
+	AddRunWait(context.Context, WaitRequest) (api.WorkerCreateRunWaitResponse, error)
 }
 
 type WaitRequest struct {
-	Lease          api.WorkerRunLease
-	CorrelationID  string
-	Kind           api.WorkerWaitpointKind
-	Params         json.RawMessage
-	Metadata       json.RawMessage
-	Tags           []string
-	TimeoutSeconds *int32
-	Ordinal        int32
-	ActiveDuration time.Duration
-	Checkpointer   Checkpointer
-	Resume         func(context.Context, WaitResumeDecision) error
+	Leases             api.WorkerRunLeaseProvider
+	Lease              api.WorkerRunLease
+	CorrelationID      string
+	Kind               api.WorkerRunWaitKind
+	Params             json.RawMessage
+	Metadata           json.RawMessage
+	Tags               []string
+	TimeoutSeconds     *int32
+	IdleTimeoutSeconds *int32
+	ActiveDuration     time.Duration
+	Checkpointer       Checkpointer
+	Resume             func(context.Context, WaitResumeDecision) error
 }
 
 type WaitResumeDecision struct {
@@ -88,13 +89,19 @@ type WaitResumeDecision struct {
 }
 
 type Checkpointer interface {
-	CreateCheckpoint(context.Context, CheckpointRequest) (api.WorkerCheckpointManifest, error)
+	CreateCheckpoint(context.Context, CheckpointRequest) (CheckpointResult, error)
 }
 
 type CheckpointRequest struct {
-	RunID        string
-	WaitpointID  string
-	CheckpointID string
+	RunID            string
+	RunWaitID        string
+	CheckpointID     string
+	CaptureWorkspace bool
+}
+
+type CheckpointResult struct {
+	Manifest         api.WorkerCheckpointManifest
+	WorkspaceCapture *workspace.WorkspaceArtifact
 }
 
 func (e Executor) Execute(ctx context.Context, leases api.WorkerRunLeaseProvider, run api.WorkerRun) api.WorkerReleaseResult {
@@ -212,15 +219,15 @@ func (e Executor) runRuntime(ctx context.Context, leases api.WorkerRunLeaseProvi
 		Artifact:         artifact,
 		DeploymentSource: deploymentSource,
 		Workspace:        ws,
-		WaitHandler:      e.Waitpoints,
+		WaitHandler:      e.RunWaits,
 	})
 	if err != nil {
 		return failedResult(fmt.Errorf("run artifact: %w", err))
 	}
 	if result.Detached {
-		return api.WorkerReleaseResult{Kind: "detached", Usage: api.WorkerUsage{ActiveDurationMs: durationMilliseconds(result.ActiveDuration)}}
+		return api.WorkerReleaseResult{Kind: "detached"}
 	}
-	release := api.WorkerReleaseResult{Kind: "completed", ExitCode: &result.ExitCode, Usage: api.WorkerUsage{ActiveDurationMs: durationMilliseconds(result.ActiveDuration)}}
+	release := api.WorkerReleaseResult{Kind: "completed", ExitCode: &result.ExitCode}
 	if result.ExitCode == 0 && len(result.Output) > 0 {
 		release.Output = append(json.RawMessage(nil), result.Output...)
 	}

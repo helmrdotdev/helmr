@@ -393,7 +393,7 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 	started := true
 	defer func() {
 		if !started {
-			_ = stopMachine(context.Background(), machine)
+			_ = stopSessionMachine(context.Background(), machine, machineExit)
 			machineCancel()
 			_ = c.cleanupNetworkPolicy(context.Background(), instanceID)
 			cleanup()
@@ -686,10 +686,11 @@ func (s *guestSession) Wait(ctx context.Context) error {
 
 func (s *guestSession) Close(ctx context.Context) error {
 	s.once.Do(func() {
+		// Keep the machine context alive until StopVMM/Wait lets the SDK finish CNI cleanup.
+		stopErr := stopSessionMachine(ctx, s.machine, s.machineExit)
 		if s.machineCancel != nil {
 			s.machineCancel()
 		}
-		stopErr := stopSessionMachine(ctx, s.machine, s.machineExit)
 		streamErr := closeGuestStream(ctx, s.stream)
 		if errors.Is(streamErr, net.ErrClosed) || errors.Is(streamErr, os.ErrClosed) {
 			streamErr = nil

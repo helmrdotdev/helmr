@@ -209,14 +209,14 @@ func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
 func TestWorkerLogsAndEvents(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
-			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
-			TaskID:             "deploy",
-			Status:             db.RunStatusQueued,
-			Payload:            []byte(`{}`),
-			MaxDurationSeconds: 3600,
-			CreatedAt:          testTime(),
-			UpdatedAt:          testTime(),
+			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			TaskID:              "deploy",
+			Status:              db.RunStatusQueued,
+			Payload:             []byte(`{}`),
+			MaxActiveDurationMs: 3600_000,
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
 		},
 	}
 	redisServer := miniredis.RunT(t)

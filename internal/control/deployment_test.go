@@ -723,7 +723,7 @@ func (f *fakeStore) GetCurrentDeploymentTask(_ context.Context, arg db.GetCurren
 		RequestedDiskMib:                  1024,
 		NetworkPolicy:                     []byte(`{"internet":"egress"}`),
 		SecretDeclarations:                f.currentDeploymentTaskSecretDeclarations,
-		MaxDurationSeconds:                300,
+		MaxActiveDurationMs:               300_000,
 		CreatedAt:                         testTime(),
 		BundleDigest:                      "sha256:" + strings.Repeat("b", 64),
 		DeploymentSourceDigest:            "sha256:" + strings.Repeat("a", 64),
@@ -1104,7 +1104,7 @@ func (f *fakeStore) GetDeploymentTask(_ context.Context, arg db.GetDeploymentTas
 			RequestedMemoryMib:                512,
 			RequestedDiskMib:                  1024,
 			NetworkPolicy:                     []byte(`{"internet":"egress"}`),
-			MaxDurationSeconds:                300,
+			MaxActiveDurationMs:               300_000,
 			CreatedAt:                         testTime(),
 			DeploymentSourceDigest:            "sha256:" + strings.Repeat("a", 64),
 		}, nil
@@ -1145,7 +1145,7 @@ func (f *fakeStore) GetDeploymentTask(_ context.Context, arg db.GetDeploymentTas
 				QueueName:                         task.QueueName,
 				QueueConcurrencyLimit:             task.QueueConcurrencyLimit,
 				Ttl:                               task.Ttl,
-				MaxDurationSeconds:                task.MaxDurationSeconds,
+				MaxActiveDurationMs:               task.MaxActiveDurationMs,
 				CreatedAt:                         task.CreatedAt,
 				DeploymentSourceDigest:            "sha256:" + strings.Repeat("a", 64),
 			}, nil
@@ -1164,6 +1164,42 @@ func (f *fakeStore) GetDeploymentQueueConfig(_ context.Context, arg db.GetDeploy
 		}
 	}
 	return db.GetDeploymentQueueConfigRow{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ListDeploymentStreamsForTask(_ context.Context, arg db.ListDeploymentStreamsForTaskParams) ([]db.DeploymentStream, error) {
+	streams := make([]db.DeploymentStream, 0, len(f.deploymentStreams))
+	for _, stream := range f.deploymentStreams {
+		if stream.OrgID == arg.OrgID &&
+			stream.ProjectID == arg.ProjectID &&
+			stream.EnvironmentID == arg.EnvironmentID &&
+			stream.DeploymentID == arg.DeploymentID &&
+			stream.TaskID == arg.TaskID {
+			streams = append(streams, stream)
+		}
+	}
+	return streams, nil
+}
+
+func (f *fakeStore) EnsureSessionStream(_ context.Context, arg db.EnsureSessionStreamParams) (db.Stream, error) {
+	f.ensuredSessionStreams = append(f.ensuredSessionStreams, arg)
+	for _, stream := range f.deploymentStreams {
+		if stream.ID == arg.DeploymentStreamID {
+			return db.Stream{
+				ID:                 arg.ID,
+				OrgID:              arg.OrgID,
+				ProjectID:          arg.ProjectID,
+				EnvironmentID:      arg.EnvironmentID,
+				SessionID:          arg.SessionID,
+				DeploymentStreamID: arg.DeploymentStreamID,
+				Name:               stream.Name,
+				Direction:          stream.Direction,
+				SchemaFingerprint:  stream.SchemaFingerprint,
+				Metadata:           arg.Metadata,
+				CreatedAt:          testTime(),
+			}, nil
+		}
+	}
+	return db.Stream{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) CreateDeploymentTask(_ context.Context, arg db.CreateDeploymentTaskParams) (db.DeploymentTask, error) {
@@ -1186,7 +1222,7 @@ func (f *fakeStore) CreateDeploymentTask(_ context.Context, arg db.CreateDeploym
 		QueueName:             arg.QueueName,
 		QueueConcurrencyLimit: arg.QueueConcurrencyLimit,
 		Ttl:                   arg.Ttl,
-		MaxDurationSeconds:    arg.MaxDurationSeconds,
+		MaxActiveDurationMs:   arg.MaxActiveDurationMs,
 		CreatedAt:             testTime(),
 	}
 	f.deploymentTasks = append(f.deploymentTasks, task)

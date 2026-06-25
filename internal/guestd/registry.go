@@ -21,32 +21,32 @@ type waitingRunSlot struct {
 }
 
 type waitingRunRegistration struct {
-	registry    *waitingRunRegistry
-	waitpointID string
-	slot        *waitingRunSlot
+	registry  *waitingRunRegistry
+	runWaitID string
+	slot      *waitingRunSlot
 }
 
 func newWaitingRunRegistry() *waitingRunRegistry {
 	return &waitingRunRegistry{slots: map[string]*waitingRunSlot{}}
 }
 
-func (r *waitingRunRegistry) register(waitpointID string, checkpointID string) waitingRunRegistration {
+func (r *waitingRunRegistry) register(runWaitID string, checkpointID string) waitingRunRegistration {
 	slot := &waitingRunSlot{
 		checkpointID: checkpointID,
 		attached:     make(chan io.ReadWriter, 1),
 	}
 	r.mu.Lock()
-	r.slots[waitpointID] = slot
+	r.slots[runWaitID] = slot
 	r.mu.Unlock()
-	return waitingRunRegistration{registry: r, waitpointID: waitpointID, slot: slot}
+	return waitingRunRegistration{registry: r, runWaitID: runWaitID, slot: slot}
 }
 
-func (r *waitingRunRegistry) attach(waitpointID string, checkpointID string, stream io.ReadWriter) error {
+func (r *waitingRunRegistry) attach(runWaitID string, checkpointID string, stream io.ReadWriter) error {
 	r.mu.Lock()
-	slot := r.slots[waitpointID]
+	slot := r.slots[runWaitID]
 	r.mu.Unlock()
 	if slot == nil {
-		return fmt.Errorf("no waiting run slot matched waitpoint %s checkpoint %s", waitpointID, checkpointID)
+		return fmt.Errorf("no waiting run slot matched run wait %s checkpoint %s", runWaitID, checkpointID)
 	}
 	if slot.checkpointID != checkpointID {
 		return fmt.Errorf("resume attach checkpoint %s did not match expected %s", checkpointID, slot.checkpointID)
@@ -55,7 +55,7 @@ func (r *waitingRunRegistry) attach(waitpointID string, checkpointID string, str
 	case slot.attached <- stream:
 		return nil
 	default:
-		return fmt.Errorf("waitpoint %s already has an attached resume stream", waitpointID)
+		return fmt.Errorf("run wait %s already has an attached resume stream", runWaitID)
 	}
 }
 
@@ -70,8 +70,8 @@ func (r waitingRunRegistration) wait(ctx context.Context) (io.ReadWriter, error)
 
 func (r waitingRunRegistration) unregister() {
 	r.registry.mu.Lock()
-	if r.registry.slots[r.waitpointID] == r.slot {
-		delete(r.registry.slots, r.waitpointID)
+	if r.registry.slots[r.runWaitID] == r.slot {
+		delete(r.registry.slots, r.runWaitID)
 	}
 	r.registry.mu.Unlock()
 }

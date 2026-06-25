@@ -8,17 +8,17 @@ order: 330
 
 # Human input
 
-Use waitpoint tokens before side effects such as posting to GitHub, deploying,
-or changing infrastructure. Helmr creates the durable waitpoint; your Slack,
-email, Linear, or app-server bridge delivers the token and completes it.
+Use tokens before side effects such as posting to GitHub, deploying, or
+changing infrastructure. Helmr parks the run durably; your Slack, email,
+Linear, or app-server bridge delivers the token and completes it.
 
 ```ts
-import { task, wait } from "@helmr/sdk"
+import { task, tokens } from "@helmr/sdk"
 
 export const publishReview = task({
   id: "publish-review",
   run: async () => {
-    const token = await wait.createToken({
+    const token = await tokens.create({
       timeout: "30m",
       tags: ["approval", "github"],
       metadata: { action: "publish-review" },
@@ -28,7 +28,7 @@ export const publishReview = task({
       tokenId: token.id,
     })
 
-    const decision = await wait.forToken(token, {
+    const decision = await token.wait({
       schema: approvalDecisionSchema,
     }).unwrap()
 
@@ -42,7 +42,7 @@ export const publishReview = task({
 Complete the token from a userland bridge:
 
 ```ts
-await wait.completeToken(token.id, {
+await client.tokens.complete(token.id, {
   approved: true,
   actor: "slack:U123",
 })
@@ -50,18 +50,15 @@ await wait.completeToken(token.id, {
 
 Browser or raw HTTP action handlers can complete the same token with
 `Authorization: Bearer ${token.publicAccessToken}` on
-`/api/waitpoints/tokens/{tokenId}/complete`. Server-to-server webhook handlers
+`/api/v1/tokens/{tokenId}/complete`. Server-to-server webhook handlers
 can use `token.callbackUrl` when a pre-signed completion URL is a better fit.
 
-The CLI exposes the same primitive:
+Operators can inspect the relevant session and run attempts from the CLI:
 
 ```sh
-helmr waitpoint list \
-  --project PROJECT_ID \
-  --env ENV_ID
-helmr waitpoint token complete TOKEN_ID \
-  --data '{"approved":true}'
+helmr session get SESSION_ID
+helmr run list --session SESSION_ID
 ```
 
-Only one blocking waitpoint or time wait can be active at a time in a task.
+Only one blocking token, stream, or timer wait can be active at a time in a task.
 Await each wait before starting the next one.

@@ -173,6 +173,10 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			return failedDeploymentBuild(fmt.Errorf("task %q max duration: %w", taskID, err))
 		}
 		schedules := deploymentTaskSchedules(bundle)
+		streams, err := deploymentTaskStreams(bundle)
+		if err != nil {
+			return failedDeploymentBuild(fmt.Errorf("task %q streams: %w", taskID, err))
+		}
 		imageObject, ok := sandboxImages[sandbox.id]
 		if !ok {
 			imageArtifact, err := e.ImageBuilder.Build(ctx, builder.Request{
@@ -241,6 +245,7 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			RetryPolicy:                deploymentTaskRetryPolicy(bundle),
 			Secrets:                    deploymentTaskSecrets(bundle),
 			Schedules:                  schedules,
+			Streams:                    streams,
 		})
 	}
 
@@ -291,6 +296,38 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		Tasks:                    tasks,
 		CASObjects:               casObjects,
 	}
+}
+
+func deploymentTaskStreams(bundle *bundlev0.Bundle) ([]api.WorkerDeploymentTaskStream, error) {
+	if bundle == nil || bundle.Task == nil {
+		return nil, nil
+	}
+	streams := make([]api.WorkerDeploymentTaskStream, 0, len(bundle.Task.Streams))
+	for i, stream := range bundle.Task.Streams {
+		if stream == nil {
+			return nil, fmt.Errorf("stream %d is nil", i)
+		}
+		direction := strings.TrimSpace(stream.Direction)
+		switch direction {
+		case "input", "output":
+		default:
+			return nil, fmt.Errorf("stream %q has unsupported direction %q", strings.TrimSpace(stream.Name), direction)
+		}
+		schemaJSON := json.RawMessage("null")
+		if raw := strings.TrimSpace(stream.SchemaJson); raw != "" {
+			if !json.Valid([]byte(raw)) {
+				return nil, fmt.Errorf("stream %q schema_json must be valid JSON", strings.TrimSpace(stream.Name))
+			}
+			schemaJSON = json.RawMessage(raw)
+		}
+		streams = append(streams, api.WorkerDeploymentTaskStream{
+			Name:              strings.TrimSpace(stream.Name),
+			Direction:         direction,
+			SchemaFingerprint: strings.TrimSpace(stream.SchemaFingerprint),
+			SchemaJSON:        schemaJSON,
+		})
+	}
+	return streams, nil
 }
 
 func failedDeploymentBuild(err error) api.WorkerDeploymentBuildResult {

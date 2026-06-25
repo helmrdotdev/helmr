@@ -1,20 +1,20 @@
-import { task, wait } from "@helmr/sdk"
+import { task, tokens } from "@helmr/sdk"
 
 import { contractSandbox } from "../shared/sandboxes"
 import { assert, assertVisibleFile } from "./_assert"
-import { approvalDecision } from "./_waitpoint_schemas"
+import { approvalDecision } from "./_token_schemas"
 
 export const approval = task({
   id: "approval",
   sandbox: contractSandbox,
   maxDuration: 900,
   run: async (ctx) => {
-    const token = await wait.createToken({
+    const token = await tokens.create({
       timeout: 60,
       tags: ["fixture", "approval"],
       metadata: { prompt: "full-rootfs approval relay" },
     })
-    const decision = await wait.forToken(token, {
+    const decision = await tokens.wait(token, {
       schema: approvalDecision,
       timeout: 60,
       tags: ["fixture", "approval"],

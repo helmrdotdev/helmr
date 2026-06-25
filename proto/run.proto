@@ -86,10 +86,11 @@ message RunEvent {
     bytes stderr_chunk = 2;
     string log_entry = 3;
     TaskResult task_result = 4;
-    WaitpointRequested waitpoint_requested = 5;
+    RunWaitRequested run_wait_requested = 5;
     MetadataUpdated metadata_updated = 7;
-    WaitpointTokenCreateRequested waitpoint_token_create_requested = 8;
-    ChannelOutputAppended channel_output_appended = 9;
+    TokenCreateRequested token_create_requested = 8;
+    OutputStreamAppended output_stream_appended = 9;
+    ActiveStreamReadRequested active_stream_read_requested = 10;
     ResumeConsumed resume_consumed = 6;
   }
 }
@@ -109,25 +110,26 @@ message TaskError {
   string details_json = 5;
 }
 
-message WaitpointRequested {
+message RunWaitRequested {
+  reserved 7, 8;
+
   string correlation_id = 1;
   string kind = 2;
   string params_json = 3;
   optional string metadata_json = 4;
   optional uint32 timeout = 5;
   repeated string tags = 6;
-  uint32 ordinal = 7;
-  uint32 aggregate_count = 8;
+  optional uint32 idle_timeout = 9;
 }
 
-message WaitpointTokenCreateRequested {
+message TokenCreateRequested {
   optional string timeout_at = 1;
   optional uint32 timeout_in_seconds = 2;
   repeated string tags = 4;
   optional string metadata_json = 5;
 }
 
-message WaitpointTokenCreateResult {
+message TokenCreateResult {
   string id = 1;
   string callback_url = 2;
   optional string public_access_token = 3;
@@ -138,42 +140,68 @@ message WaitpointTokenCreateResult {
   optional string error_message = 9;
 }
 
+message ActiveStreamReadRequested {
+  string correlation_id = 1;
+  string stream = 2;
+  int64 after_sequence = 3;
+  optional string record_correlation_id = 4;
+  optional uint32 timeout = 5;
+  bool block = 6;
+}
+
+message StreamRecord {
+  string id = 1;
+  string stream_id = 2;
+  int64 sequence = 3;
+  string data_json = 4;
+  optional string correlation_id = 5;
+  string content_type = 6;
+  string created_at = 7;
+}
+
+message ActiveStreamReadResult {
+  string correlation_id = 1;
+  optional StreamRecord record = 2;
+  bool timed_out = 3;
+  optional string error_message = 4;
+}
+
 message CheckpointPauseRequest {
-  string waitpoint_id = 1;
+  string run_wait_id = 1;
   string checkpoint_id = 2;
+  bool capture_workspace = 3;
 }
 
 message CheckpointPauseReady {
-  string waitpoint_id = 1;
+  string run_wait_id = 1;
   string checkpoint_id = 2;
 }
 
 message ResumeAttach {
   string checkpoint_id = 1;
-  string waitpoint_id = 2;
+  string run_wait_id = 2;
   string run_lease_id = 3;
 }
 
 message ResumeDecision {
-  string waitpoint_id = 1;
+  string run_wait_id = 1;
   string kind = 2;
   string data_json = 3;
   bool require_consumed_ack = 4;
 }
 
 message ResumeAck {
-  string waitpoint_id = 1;
+  string run_wait_id = 1;
 }
 
 message ResumeConsumed {
-  string waitpoint_id = 1;
+  string run_wait_id = 1;
 }
 
-message ChannelOutputAppended {
-  string channel = 1;
+message OutputStreamAppended {
+  string stream = 1;
   string payload_json = 2;
   optional string content_type = 3;
-  optional string object_ref_json = 4;
 }
 
 message MetadataUpdated {

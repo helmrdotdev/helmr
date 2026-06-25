@@ -29,18 +29,18 @@ import (
 func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
-			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:          testProjectID(),
-			EnvironmentID:      testEnvironmentID(),
-			DeploymentID:       testDeploymentID(),
-			DeploymentTaskID:   testDeploymentTaskID(),
-			TaskID:             "deploy",
-			Status:             db.RunStatusQueued,
-			Output:             []byte(`{"env":"prod"}`),
-			MaxDurationSeconds: 3600,
-			CreatedAt:          testTime(),
-			UpdatedAt:          testTime(),
+			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			DeploymentID:        testDeploymentID(),
+			DeploymentTaskID:    testDeploymentTaskID(),
+			TaskID:              "deploy",
+			Status:              db.RunStatusQueued,
+			Output:              []byte(`{"env":"prod"}`),
+			MaxActiveDurationMs: 3600_000,
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
 		},
 		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
 	}
@@ -189,6 +189,33 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	}
 }
 
+func TestWorkerRestoreRunWaitDecisionRejectsInvalidStreamPayload(t *testing.T) {
+	_, _, err := workerRestoreRunWaitDecision(db.GetRunRestorePayloadRow{
+		RunWaitKind:          db.RunWaitKindStream,
+		StreamName:           pgtype.Text{String: "reply", Valid: true},
+		StreamRecordSequence: pgtype.Int8{Int64: 1, Valid: true},
+		StreamRecordData:     []byte(`{`),
+	})
+	if err == nil {
+		t.Fatal("expected invalid stream resume payload to fail")
+	}
+}
+
+func TestWorkerRestoreRunWaitUsesUUIDAuthority(t *testing.T) {
+	runWaitID := uuid.Must(uuid.NewV7())
+	runWait, err := workerRestoreRunWait(db.GetRunRestorePayloadRow{
+		RunWaitID:            pgvalue.UUID(runWaitID),
+		RunWaitCorrelationID: "1",
+		RunWaitKind:          db.RunWaitKindTimer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runWait.ID != runWaitID.String() {
+		t.Fatalf("restore run wait id = %q, want UUID %s", runWait.ID, runWaitID)
+	}
+}
+
 func TestWorkerRunLeaseRejectsUnsupportedProtocol(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
@@ -214,50 +241,17 @@ func TestWorkerRunLeaseRejectsUnsupportedProtocol(t *testing.T) {
 	}
 }
 
-func TestWorkerWriteOutputRejectsUnsafeChannelName(t *testing.T) {
-	store := &fakeStore{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
-	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
-	body, err := json.Marshal(api.WorkerWriteOutputRequest{
-		Lease: api.WorkerRunLease{
-			ID:               uuid.NewString(),
-			OrgID:            dbtest.DefaultOrgID.String(),
-			RunID:            uuid.NewString(),
-			WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
-			ProtocolVersion:  api.CurrentWorkerProtocolVersion,
-			ExpiresAt:        time.Now().Add(time.Minute),
-		},
-		Channel: "foo/bar",
-		Payload: json.RawMessage(`{"ok":true}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/channels", bytes.NewReader(body))
-	req.Header.Set("authorization", "Bearer "+workerBearer)
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "channel must start with a letter or number") {
-		t.Fatalf("body = %s", rec.Body.String())
-	}
-}
-
 func TestWorkerReleaseRejectsUnknownFields(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
-			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
-			TaskID:             "deploy",
-			Status:             db.RunStatusQueued,
-			Output:             []byte(`{}`),
-			MaxDurationSeconds: 3600,
-			CreatedAt:          testTime(),
-			UpdatedAt:          testTime(),
+			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			TaskID:              "deploy",
+			Status:              db.RunStatusQueued,
+			Output:              []byte(`{}`),
+			MaxActiveDurationMs: 3600_000,
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
 		},
 	}
 	redisServer := miniredis.RunT(t)
@@ -495,70 +489,6 @@ func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
 	}
 }
 
-func TestWorkerRestoreClaimDoesNotRequireWorkspaceSourceBinding(t *testing.T) {
-	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	waitpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &fakeStore{
-		run: db.Run{
-			ID:                 runID,
-			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
-			TaskID:             "deploy",
-			Status:             db.RunStatusQueued,
-			Output:             []byte(`{}`),
-			MaxDurationSeconds: 3600,
-			LatestCheckpointID: checkpointID,
-			CreatedAt:          testTime(),
-			UpdatedAt:          testTime(),
-		},
-		checkpoint: db.Checkpoint{
-			ID:       checkpointID,
-			OrgID:    pgvalue.UUID(dbtest.DefaultOrgID),
-			RunID:    runID,
-			Status:   db.CheckpointStatusReady,
-			Manifest: []byte(`{}`),
-		},
-		waitpoint: fakeWaitpoint{
-			ID:             waitpointID,
-			OrgID:          pgvalue.UUID(dbtest.DefaultOrgID),
-			RunID:          runID,
-			CheckpointID:   checkpointID,
-			Kind:           db.WaitpointKindToken,
-			Status:         db.RunSuspensionStatusResuming,
-			ResolutionKind: pgtype.Text{String: "completed", Valid: true},
-			Resolution:     []byte(`{"approved":true}`),
-		},
-	}
-	redisServer := miniredis.RunT(t)
-	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
-	t.Cleanup(func() { _ = redisClient.Close() })
-	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour, EventStream: eventStream})
-	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
-
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
-	req.Header.Set("authorization", "Bearer "+workerBearer)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	var claimResponse api.WorkerRunLeaseResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &claimResponse); err != nil {
-		t.Fatal(err)
-	}
-	if claimResponse.Lease == nil || claimResponse.Run == nil {
-		t.Fatalf("claim response = %+v", claimResponse)
-	}
-	if claimResponse.Run.Restore == nil || claimResponse.Run.Restore.CheckpointID != pgvalue.MustUUIDValue(checkpointID).String() {
-		t.Fatalf("restore payload = %+v", claimResponse.Run.Restore)
-	}
-	if got := string(claimResponse.Run.Restore.Waitpoint.ResumePayloadJSON); got != `{"approved":true}` {
-		t.Fatalf("resume payload = %s", got)
-	}
-}
-
 func TestWorkerRoutesRejectUserAPIKey(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
@@ -709,14 +639,14 @@ func TestWorkerRunLeaseRejectsMismatchedProtocolVersion(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		run: db.Run{
-			ID:                 pgvalue.UUID(runID),
-			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
-			TaskID:             "deploy",
-			Status:             db.RunStatusRunning,
-			Output:             []byte(`{}`),
-			MaxDurationSeconds: 3600,
-			CreatedAt:          testTime(),
-			UpdatedAt:          testTime(),
+			ID:                  pgvalue.UUID(runID),
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			TaskID:              "deploy",
+			Status:              db.RunStatusRunning,
+			Output:              []byte(`{}`),
+			MaxActiveDurationMs: 3600_000,
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
 		},
 		sessionID:                 pgvalue.UUID(sessionID),
 		executionWorkerInstanceID: pgvalue.UUID(workerID),
@@ -789,14 +719,14 @@ func TestWorkerRunLeaseRejectsMismatchedAttemptNumber(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		run: db.Run{
-			ID:                 pgvalue.UUID(runID),
-			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
-			TaskID:             "deploy",
-			Status:             db.RunStatusRunning,
-			Output:             []byte(`{}`),
-			MaxDurationSeconds: 3600,
-			CreatedAt:          testTime(),
-			UpdatedAt:          testTime(),
+			ID:                  pgvalue.UUID(runID),
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			TaskID:              "deploy",
+			Status:              db.RunStatusRunning,
+			Output:              []byte(`{}`),
+			MaxActiveDurationMs: 3600_000,
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
 		},
 		sessionID:                 pgvalue.UUID(sessionID),
 		executionWorkerInstanceID: pgvalue.UUID(workerID),
@@ -824,6 +754,60 @@ func TestWorkerRunLeaseRejectsMismatchedAttemptNumber(t *testing.T) {
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkerUpdateRunMetadataUsesRunLeaseAuthority(t *testing.T) {
+	runID := uuid.Must(uuid.NewV7())
+	runLeaseID := uuid.Must(uuid.NewV7())
+	workerID := uuid.Must(uuid.NewV7())
+	store := &fakeStore{
+		run: db.Run{
+			ID:                  pgvalue.UUID(runID),
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			TaskID:              "metadata-smoke",
+			Status:              db.RunStatusRunning,
+			Output:              []byte(`{}`),
+			MaxActiveDurationMs: 3600_000,
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
+		},
+		sessionID:                 pgvalue.UUID(runLeaseID),
+		executionWorkerInstanceID: pgvalue.UUID(workerID),
+		executionLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour})
+	workerBearer := mintTestWorkerToken(t, server, workerID.String())
+	body, err := json.Marshal(api.WorkerUpdateRunMetadataRequest{
+		Lease: api.WorkerRunLease{
+			ID:                runLeaseID.String(),
+			OrgID:             dbtest.DefaultOrgID.String(),
+			RunID:             runID.String(),
+			WorkerInstanceID:  workerID.String(),
+			ProtocolVersion:   api.CurrentWorkerProtocolVersion,
+			AttemptNumber:     1,
+			DispatchMessageID: "message-1",
+			DispatchLeaseID:   "lease-1",
+			ExpiresAt:         time.Now().Add(time.Minute),
+		},
+		Operation: "set",
+		Key:       "runtimeSmoke",
+		Value:     json.RawMessage(`{"ok":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/metadata", bytes.NewReader(body))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.updateRunMetadata.Operation != "set" || store.updateRunMetadata.Key != "runtimeSmoke" || string(store.updateRunMetadata.Value) != `{"ok":true}` {
+		t.Fatalf("metadata update = %+v", store.updateRunMetadata)
 	}
 }
 
@@ -1150,8 +1134,8 @@ func (f *fakeStore) LeaseRunLease(_ context.Context, arg db.LeaseRunLeaseParams)
 	f.run.CurrentRunLeaseID = f.sessionID
 	f.run.StateVersion++
 	restoreCheckpointID := pgtype.UUID{}
-	if f.run.LatestCheckpointID.Valid && f.run.LatestCheckpointID == f.checkpoint.ID && f.checkpoint.Status == db.CheckpointStatusReady && f.waitpoint.Status == db.RunSuspensionStatusResuming {
-		f.checkpoint.Status = db.CheckpointStatusRestoring
+	if f.run.LatestRuntimeCheckpointID.Valid && f.run.LatestRuntimeCheckpointID == f.checkpoint.ID && f.checkpoint.State == db.RuntimeCheckpointStateReady {
+		f.checkpoint.State = db.RuntimeCheckpointStateRestoring
 		restoreCheckpointID = f.checkpoint.ID
 	}
 	projectID := f.run.ProjectID
@@ -1165,56 +1149,76 @@ func (f *fakeStore) LeaseRunLease(_ context.Context, arg db.LeaseRunLeaseParams)
 	requirements := testRunRuntimeRequirements()
 	networkPolicy, _ := json.Marshal(requirements.Network)
 	return db.LeaseRunLeaseRow{
-		ID:                               f.run.ID,
-		OrgID:                            f.run.OrgID,
-		ProjectID:                        projectID,
-		EnvironmentID:                    environmentID,
-		TaskSessionID:                    fakeRunTaskSessionID(f.run),
-		TaskID:                           f.run.TaskID,
-		Status:                           f.run.Status,
-		Payload:                          f.run.Output,
-		CurrentAttemptID:                 f.run.CurrentAttemptID,
-		StateVersion:                     f.run.StateVersion,
-		DeploymentTaskID:                 testDeploymentTaskID(),
-		DeploymentTaskFilePath:           "src/task.ts",
-		DeploymentTaskExportName:         "deploy",
-		DeploymentTaskSecretDeclarations: f.currentDeploymentTaskSecretDeclarations,
-		DeploymentWorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
-		DeploymentSourceDigest:           "sha256:" + strings.Repeat("a", 64),
-		MaxDurationSeconds:               f.run.MaxDurationSeconds,
-		ExitCode:                         f.run.ExitCode,
-		ErrorMessage:                     f.run.ErrorMessage,
-		CreatedAt:                        f.run.CreatedAt,
-		UpdatedAt:                        f.run.UpdatedAt,
-		StartedAt:                        f.run.StartedAt,
-		FinishedAt:                       f.run.FinishedAt,
-		RequestedMilliCpu:                requirements.Resources.MilliCPU,
-		RequestedMemoryMib:               requirements.Resources.MemoryMiB,
-		RequestedDiskMib:                 requirements.Resources.DiskMiB,
-		RequestedExecutionSlots:          requirements.Resources.Slots,
-		RequirementsRuntimeID:            requirements.Runtime.ID,
-		RequirementsRuntimeArch:          requirements.Runtime.Arch,
-		RequirementsRuntimeAbi:           requirements.Runtime.ABI,
-		RequirementsKernelDigest:         requirements.Runtime.KernelDigest,
-		RequirementsInitramfsDigest:      requirements.Runtime.InitramfsDigest,
-		RequirementsRootfsDigest:         requirements.Runtime.RootfsDigest,
-		RequirementsCniProfile:           requirements.Runtime.CNIProfile,
-		RequirementsNetworkPolicy:        networkPolicy,
-		RunLeaseID:                       f.sessionID,
-		RunLeaseWorkerInstanceID:         f.executionWorkerInstanceID,
-		RunLeaseDispatchMessageID:        arg.DispatchMessageID.String,
-		RunLeaseDispatchLeaseID:          arg.DispatchLeaseID,
-		RunLeaseDispatchAttempt:          arg.DispatchAttempt,
-		RunLeaseAttemptNumber:            1,
-		RunLeaseExpiresAt:                f.executionLeaseExpiresAt,
-		RunLeaseWorkerProtocolVersion:    api.CurrentWorkerProtocolVersion,
-		RunLeaseRestoreCheckpointID:      restoreCheckpointID,
-		WorkspaceFencingToken:            pgvalue.Text("workspace-fence-1"),
+		ID:                                 f.run.ID,
+		OrgID:                              f.run.OrgID,
+		ProjectID:                          projectID,
+		EnvironmentID:                      environmentID,
+		TaskSessionID:                      fakeRunTaskSessionID(f.run),
+		TaskID:                             f.run.TaskID,
+		Status:                             f.run.Status,
+		Payload:                            f.run.Output,
+		CurrentAttemptID:                   f.run.CurrentAttemptID,
+		StateVersion:                       f.run.StateVersion,
+		DeploymentTaskID:                   testDeploymentTaskID(),
+		DeploymentTaskFilePath:             "src/task.ts",
+		DeploymentTaskExportName:           "deploy",
+		DeploymentTaskSecretDeclarations:   f.currentDeploymentTaskSecretDeclarations,
+		DeploymentWorkerProtocolVersion:    api.CurrentWorkerProtocolVersion,
+		DeploymentSourceDigest:             "sha256:" + strings.Repeat("a", 64),
+		MaxActiveDurationMs:                f.run.MaxActiveDurationMs,
+		ExitCode:                           f.run.ExitCode,
+		ErrorMessage:                       f.run.ErrorMessage,
+		CreatedAt:                          f.run.CreatedAt,
+		UpdatedAt:                          f.run.UpdatedAt,
+		StartedAt:                          f.run.StartedAt,
+		FinishedAt:                         f.run.FinishedAt,
+		RequestedMilliCpu:                  requirements.Resources.MilliCPU,
+		RequestedMemoryMib:                 requirements.Resources.MemoryMiB,
+		RequestedDiskMib:                   requirements.Resources.DiskMiB,
+		RequestedExecutionSlots:            requirements.Resources.Slots,
+		RequirementsRuntimeID:              requirements.Runtime.ID,
+		RequirementsRuntimeArch:            requirements.Runtime.Arch,
+		RequirementsRuntimeAbi:             requirements.Runtime.ABI,
+		RequirementsKernelDigest:           requirements.Runtime.KernelDigest,
+		RequirementsInitramfsDigest:        requirements.Runtime.InitramfsDigest,
+		RequirementsRootfsDigest:           requirements.Runtime.RootfsDigest,
+		RequirementsCniProfile:             requirements.Runtime.CNIProfile,
+		RequirementsNetworkPolicy:          networkPolicy,
+		RunLeaseID:                         f.sessionID,
+		RunLeaseWorkerInstanceID:           f.executionWorkerInstanceID,
+		RunLeaseDispatchMessageID:          arg.DispatchMessageID.String,
+		RunLeaseDispatchLeaseID:            arg.DispatchLeaseID,
+		RunLeaseDispatchAttempt:            arg.DispatchAttempt,
+		RunLeaseAttemptNumber:              1,
+		RunLeaseExpiresAt:                  f.executionLeaseExpiresAt,
+		RunLeaseWorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
+		RunLeaseRestoreRuntimeCheckpointID: restoreCheckpointID,
+		WorkspaceFencingToken:              pgvalue.Text("workspace-fence-1"),
 	}, nil
 }
 
 func (f *fakeStore) RequeueExpiredLeasedRunLeases(context.Context, pgtype.UUID) error {
 	return nil
+}
+
+func (f *fakeStore) ExpireDueTokens(context.Context, pgtype.UUID) ([]db.ExpireDueTokensRow, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) ResolveDueTimerWaits(context.Context, db.ResolveDueTimerWaitsParams) ([]db.ResolveDueTimerWaitsRow, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) ExpireDueRunWaits(context.Context, pgtype.UUID) ([]db.RunWait, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) FailStaleResolvedRunWaits(context.Context, db.FailStaleResolvedRunWaitsParams) ([]db.FailStaleResolvedRunWaitsRow, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) RequeueResolvedRunWaits(context.Context, db.RequeueResolvedRunWaitsParams) ([]db.RequeueResolvedRunWaitsRow, error) {
+	return nil, nil
 }
 
 func (f *fakeStore) AbandonLeasedRunLease(_ context.Context, arg db.AbandonLeasedRunLeaseParams) error {
@@ -1224,8 +1228,8 @@ func (f *fakeStore) AbandonLeasedRunLease(_ context.Context, arg db.AbandonLease
 	f.abandonedClaim = true
 	f.run.Status = db.RunStatusQueued
 	f.run.CurrentRunLeaseID = pgtype.UUID{}
-	if f.checkpoint.Status == db.CheckpointStatusRestoring && f.run.LatestCheckpointID == f.checkpoint.ID {
-		f.checkpoint.Status = db.CheckpointStatusReady
+	if f.checkpoint.State == db.RuntimeCheckpointStateRestoring && f.run.LatestRuntimeCheckpointID == f.checkpoint.ID {
+		f.checkpoint.State = db.RuntimeCheckpointStateReady
 	}
 	return nil
 }
@@ -1234,28 +1238,16 @@ func (f *fakeStore) GetRunRestorePayload(_ context.Context, arg db.GetRunRestore
 	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
 	}
-	if !f.run.LatestCheckpointID.Valid || f.checkpoint.ID != f.run.LatestCheckpointID || f.checkpoint.Status != db.CheckpointStatusRestoring {
-		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
-	}
-	if f.waitpoint.Status != db.RunSuspensionStatusResuming || f.waitpoint.ResolutionKind.String == "" {
+	if !f.run.LatestRuntimeCheckpointID.Valid || f.checkpoint.ID != f.run.LatestRuntimeCheckpointID || f.checkpoint.State != db.RuntimeCheckpointStateRestoring {
 		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
 	}
 	return db.GetRunRestorePayloadRow{
-		CheckpointID:    f.checkpoint.ID,
-		Manifest:        f.checkpoint.Manifest,
-		RunSuspensionID: runSuspensionID(f.waitpoint),
-		WaitpointID:     f.waitpoint.ID,
-		WaitpointKind:   f.waitpoint.Kind,
-		ResolutionKind:  f.waitpoint.ResolutionKind,
-		Resolution:      f.waitpoint.Resolution,
+		RuntimeCheckpointID: f.checkpoint.ID,
+		Manifest:            f.checkpoint.Manifest,
 	}, nil
 }
 
 func (f *fakeStore) ExpireQueuedRuns(context.Context, pgtype.UUID) error {
-	return nil
-}
-
-func (f *fakeStore) ExpireDuePendingWaitpoints(context.Context, pgtype.UUID) error {
 	return nil
 }
 
@@ -1267,34 +1259,6 @@ func (f *fakeStore) StartRunLease(_ context.Context, arg db.StartRunLeaseParams)
 	f.run.StartedAt = testTime()
 	f.run.UpdatedAt = testTime()
 	return f.run.Status, nil
-}
-
-func (f *fakeStore) AcknowledgeRestore(_ context.Context, arg db.AcknowledgeRestoreParams) (db.AcknowledgeRestoreRow, error) {
-	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
-		return db.AcknowledgeRestoreRow{}, pgx.ErrNoRows
-	}
-	if f.checkpoint.ID != arg.CheckpointID || f.waitpoint.ID != arg.WaitpointID {
-		return db.AcknowledgeRestoreRow{}, pgx.ErrNoRows
-	}
-	if runSuspensionID(f.waitpoint) != arg.RunSuspensionID {
-		return db.AcknowledgeRestoreRow{}, pgx.ErrNoRows
-	}
-	if f.checkpoint.Status == db.CheckpointStatusRestoring && f.waitpoint.Status == db.RunSuspensionStatusResuming {
-		f.checkpoint.Status = db.CheckpointStatusReady
-		f.waitpoint.Status = db.RunSuspensionStatusRestored
-	}
-	if f.checkpoint.Status != db.CheckpointStatusReady || f.waitpoint.Status != db.RunSuspensionStatusRestored {
-		return db.AcknowledgeRestoreRow{}, pgx.ErrNoRows
-	}
-	return db.AcknowledgeRestoreRow{
-		ID:              f.waitpoint.ID,
-		RunSuspensionID: runSuspensionID(f.waitpoint),
-		OrgID:           f.waitpoint.OrgID,
-		RunID:           f.waitpoint.RunID,
-		RunLeaseID:      f.waitpoint.RunLeaseID,
-		CheckpointID:    f.waitpoint.CheckpointID,
-		Status:          f.waitpoint.Status,
-	}, nil
 }
 
 func (f *fakeStore) RenewRunLease(_ context.Context, arg db.RenewRunLeaseParams) (db.RenewRunLeaseRow, error) {
@@ -1319,18 +1283,18 @@ func (f *fakeStore) ReleaseRunLease(_ context.Context, arg db.ReleaseRunLeasePar
 	}
 	releaseRow := func() db.ReleaseRunLeaseRow {
 		return db.ReleaseRunLeaseRow{
-			ID:                 f.run.ID,
-			OrgID:              f.run.OrgID,
-			TaskID:             f.run.TaskID,
-			Status:             f.run.Status,
-			Payload:            f.run.Output,
-			MaxDurationSeconds: f.run.MaxDurationSeconds,
-			ExitCode:           f.run.ExitCode,
-			ErrorMessage:       f.run.ErrorMessage,
-			CreatedAt:          f.run.CreatedAt,
-			UpdatedAt:          f.run.UpdatedAt,
-			StartedAt:          f.run.StartedAt,
-			FinishedAt:         f.run.FinishedAt,
+			ID:                  f.run.ID,
+			OrgID:               f.run.OrgID,
+			TaskID:              f.run.TaskID,
+			Status:              f.run.Status,
+			Payload:             f.run.Output,
+			MaxActiveDurationMs: f.run.MaxActiveDurationMs,
+			ExitCode:            f.run.ExitCode,
+			ErrorMessage:        f.run.ErrorMessage,
+			CreatedAt:           f.run.CreatedAt,
+			UpdatedAt:           f.run.UpdatedAt,
+			StartedAt:           f.run.StartedAt,
+			FinishedAt:          f.run.FinishedAt,
 		}
 	}
 	if f.run.Status == arg.RunStatus && !f.run.CurrentRunLeaseID.Valid && f.run.ExitCode == arg.ExitCode && f.run.ErrorMessage == arg.ErrorMessage && bytes.Equal(f.run.Output, arg.Output) {
@@ -1354,13 +1318,13 @@ func (f *fakeStore) ReleaseRunLease(_ context.Context, arg db.ReleaseRunLeasePar
 		Payload:   arg.TerminalEventPayload,
 		CreatedAt: testTime(),
 	})
-	if f.checkpoint.Status == db.CheckpointStatusRestoring && f.run.LatestCheckpointID == f.checkpoint.ID {
+	if f.checkpoint.State == db.RuntimeCheckpointStateRestoring && f.run.LatestRuntimeCheckpointID == f.checkpoint.ID {
 		if arg.ErrorMessage.Valid {
-			f.checkpoint.Status = db.CheckpointStatusInvalid
+			f.checkpoint.State = db.RuntimeCheckpointStateInvalid
 			f.checkpoint.ErrorMessage = arg.ErrorMessage
 			f.checkpoint.InvalidatedAt = testTime()
 		} else {
-			f.checkpoint.Status = db.CheckpointStatusReady
+			f.checkpoint.State = db.RuntimeCheckpointStateReady
 			f.checkpoint.ErrorMessage = pgtype.Text{}
 			f.checkpoint.InvalidatedAt = pgtype.Timestamptz{}
 		}

@@ -21,7 +21,7 @@ import {
 } from "../../../runtime/typescript/src/main"
 import { compile } from "./compile"
 import { validateSecretName } from "./internal"
-import { image, queue, sandbox, schedules, source, task, type PayloadSchema } from "./index"
+import { image, queue, sandbox, schedules, source, streams, task, type PayloadSchema } from "./index"
 
 describe("compile", () => {
   test("emits a stable bundle from the compile fixture", async () => {
@@ -73,6 +73,47 @@ describe("compile", () => {
       }),
     ).toThrow('sandbox "test" must declare image(...)')
 
+  })
+
+  test("emits task stream catalog definitions", () => {
+    const inputSchema: PayloadSchema<unknown, { approved: boolean }> = {
+      "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value: value as { approved: boolean } }) },
+    }
+    const outputSchema: PayloadSchema<{ ok: boolean }, { ok: boolean }> = {
+      "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value: value as { ok: boolean } }) },
+    }
+    const approval = streams.input("approval", { schema: inputSchema })
+    const events = streams.output("events", { schema: outputSchema })
+
+    const bundle = compile({
+      task: task({
+        id: "stream-catalog",
+        sandbox: sandbox("stream-catalog").image(image("stream-catalog").from("debian:trixie-slim")),
+        streams: [approval, events],
+        run: async () => null,
+      }),
+      modulePath: "tasks/stream-catalog.ts",
+    })
+
+    expect(bundle.task?.streams.map((stream) => ({
+      name: stream.name,
+      direction: stream.direction,
+      schemaFingerprintPrefix: stream.schemaFingerprint.slice(0, 7),
+      schemaJson: JSON.parse(stream.schemaJson),
+    }))).toEqual([
+      {
+        name: "approval",
+        direction: "input",
+        schemaFingerprintPrefix: "sha256:",
+        schemaJson: { kind: "standard-schema-v1", vendor: "test", direction: "input", name: "approval" },
+      },
+      {
+        name: "events",
+        direction: "output",
+        schemaFingerprintPrefix: "sha256:",
+        schemaJson: { kind: "standard-schema-v1", vendor: "test", direction: "output", name: "events" },
+      },
+    ])
   })
 
   test("rejects empty image chains", () => {
@@ -795,26 +836,27 @@ export default task({
     expect(decoded.task?.modulePath).toBe("tasks/mts-task.mts")
   })
 
-  test("adapter run emits waitpoints and fails on closed response stream", async () => {
+  test("adapter run emits run waits and fails on closed response stream", async () => {
     const cwd = await taskFixture(
       "needs-token",
       `(() => {
-        return wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, metadata: { repo: "helmr" }, tags: ["release", "channel:slack"] }).unwrap()
+        return tokens.wait("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, idleTimeout: "30s", metadata: { repo: "helmr" }, tags: ["release", "medium:slack"] }).unwrap()
       })()`,
-      `import { wait } from "@helmr/sdk"\n`,
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "needs-token")
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
     expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitpointRequested",
+      case: "runWaitRequested",
       value: {
         correlationId: "1",
         kind: "token",
         paramsJson: JSON.stringify({ token_id: "token-1" }),
         metadataJson: JSON.stringify({ repo: "helmr" }),
-        tags: ["release", "channel:slack"],
+        tags: ["release", "medium:slack"],
+        idleTimeout: 30,
       },
     })
     const error = JSON.parse(result.stderr.trim())
@@ -828,7 +870,7 @@ export default task({
     const cwd = await taskFixture(
       "token-timeout",
       `(async () => {
-        const result = await wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, timeout: 1 })
+        const result = await tokens.wait("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, timeout: 1 })
         try {
           result.unwrap()
           return { ok: false }
@@ -836,15 +878,15 @@ export default task({
           return { name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) }
         }
       })()`,
-      `import { wait } from "@helmr/sdk"\n`,
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
       "token-timeout",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitpointRequested")
+        await waitForControlEvent("runWaitRequested")
         stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
+          runWaitId: "run-wait-id-1",
           kind: "timed_out",
           dataJson: "null",
         }))
@@ -855,15 +897,50 @@ export default task({
     expect(result.status, result.stderr).toBe(0)
     expect(taskOutput(result)).toMatchObject({
       name: "WaitTimeoutError",
-      message: "waitpoint timed out after 1",
+      message: "token wait timed out after 1",
+    })
+  })
+
+  test("adapter run surfaces token cancellation as WaitCancelledError", async () => {
+    const cwd = await taskFixture(
+      "token-cancelled",
+      `(async () => {
+        const result = await tokens.wait("token-1")
+        try {
+          result.unwrap()
+          return { ok: false }
+        } catch (error) {
+          return { name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) }
+        }
+      })()`,
+      `import { tokens } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "token-cancelled",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("runWaitRequested")
+        stdin.write(resumeDecisionFrame({
+          runWaitId: "run-wait-id-1",
+          kind: "cancelled",
+          dataJson: "null",
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(taskOutput(result)).toMatchObject({
+      name: "WaitCancelledError",
+      message: "token cancelled",
     })
   })
 
   test("adapter run emits wait.for requests", async () => {
     const cwd = await taskFixture(
       "needs-wait-for",
-      "wait.for({ seconds: 10 })",
-      `import { wait } from "@helmr/sdk"\n`,
+      "timers.waitFor({ seconds: 10 })",
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "needs-wait-for")
 
@@ -871,7 +948,7 @@ export default task({
     expect(taskExitCode(result)).toBe(1)
     const event = result.controlEvents[0]?.event
     expect(event).toMatchObject({
-      case: "waitpointRequested",
+      case: "runWaitRequested",
       value: {
         correlationId: "1",
         kind: "timer",
@@ -879,17 +956,17 @@ export default task({
         timeout: 10,
       },
     })
-    if (event?.case !== "waitpointRequested") throw new Error("expected waitpointRequested")
+    if (event?.case !== "runWaitRequested") throw new Error("expected runWaitRequested")
   })
 
   test("adapter run rounds millisecond wait.for requests up to seconds", async () => {
-    const cwd = await taskFixture("needs-wait-for-ms", "wait.for({ milliseconds: 1500 })", `import { wait } from "@helmr/sdk"\n`)
+    const cwd = await taskFixture("needs-wait-for-ms", "timers.waitFor({ milliseconds: 1500 })", `import { tokens, timers } from "@helmr/sdk"\n`)
     const result = await runAdapterTask(cwd, "needs-wait-for-ms")
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
     expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitpointRequested",
+      case: "runWaitRequested",
       value: {
         correlationId: "1",
         kind: "timer",
@@ -900,13 +977,13 @@ export default task({
   })
 
   test("adapter run accepts duration wait.for requests", async () => {
-    const cwd = await taskFixture("needs-wait-for-duration", "wait.for('1.5s')", `import { wait } from "@helmr/sdk"\n`)
+    const cwd = await taskFixture("needs-wait-for-duration", "timers.waitFor('1.5s')", `import { tokens, timers } from "@helmr/sdk"\n`)
     const result = await runAdapterTask(cwd, "needs-wait-for-duration")
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
     expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitpointRequested",
+      case: "runWaitRequested",
       value: {
         correlationId: "1",
         kind: "timer",
@@ -916,42 +993,34 @@ export default task({
     })
   })
 
-  test("adapter run emits wait.until requests", async () => {
+  test("adapter run resolves past wait.until without parking", async () => {
     const cwd = await taskFixture(
       "needs-wait-until",
-      "wait.until({ date: new Date('2026-04-23T00:00:00Z') })",
-      `import { wait } from "@helmr/sdk"\n`,
+      "timers.waitUntil({ date: new Date('2026-04-23T00:00:00Z') })",
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "needs-wait-until")
 
     expect(result.status).toBe(0)
-    expect(taskExitCode(result)).toBe(1)
-    expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitpointRequested",
-      value: {
-        correlationId: "1",
-        kind: "timer",
-        paramsJson: JSON.stringify({ date: "2026-04-23T00:00:00.000Z" }),
-        timeout: 1,
-      },
-    })
+    expect(taskExitCode(result)).toBe(0)
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("runWaitRequested")
   })
 
-  test("adapter run resolves waitpoint completions", async () => {
+  test("adapter run resolves run wait completions", async () => {
     const cwd = await taskFixture(
       "wait-human",
       `(() => {
-        return wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }).unwrap()
+        return tokens.wait("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, timeout: 30, idleTimeout: "3s" }).unwrap()
       })()`,
-      `import { wait } from "@helmr/sdk"\n`,
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
       "wait-human",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitpointRequested")
+        await waitForControlEvent("runWaitRequested")
         stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
+          runWaitId: "run-wait-id-1",
           kind: "completed",
           dataJson: JSON.stringify({ ok: true }),
         }))
@@ -961,34 +1030,36 @@ export default task({
 
     expect(result.status, result.stderr).toBe(0)
     expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitpointRequested",
+      case: "runWaitRequested",
       value: {
         correlationId: "1",
         kind: "token",
         paramsJson: JSON.stringify({ token_id: "token-1" }),
+        timeout: 30,
+        idleTimeout: 3,
       },
     })
     expect(taskOutput(result)).toEqual({ ok: true })
   })
 
-  test("adapter run resolves channel waits as direct channel data", async () => {
+  test("adapter run resolves stream waits as direct stream data", async () => {
     const cwd = await taskFixture(
-      "wait-session-channel",
+      "wait-session-stream",
       `(() => {
-        const approval = ctx.session.input(channel.input("approval", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
-        return approval.wait({ timeout: 5, tags: ["approval"] }).unwrap()
+        const approval = streams.input("approval", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } })
+        return approval.wait({ timeout: 5, idleTimeout: "2s", tags: ["approval"] }).unwrap()
       })()`,
-      `import { channel } from "@helmr/sdk"\n`,
+      `import { streams } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
-      "wait-session-channel",
+      "wait-session-stream",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitpointRequested")
+        await waitForControlEvent("runWaitRequested")
         stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
+          runWaitId: "run-wait-id-1",
           kind: "completed",
-          dataJson: JSON.stringify({ channel: "approval", sequence: 1, data: { approved: true } }),
+          dataJson: JSON.stringify({ stream: "approval", sequence: 1, data: { approved: true } }),
         }))
         stdin.end()
       },
@@ -996,96 +1067,224 @@ export default task({
 
     expect(result.status, result.stderr).toBe(0)
     expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitpointRequested",
+      case: "runWaitRequested",
       value: {
         correlationId: "1",
-        kind: "channel",
-        paramsJson: JSON.stringify({ channel: "approval" }),
+        kind: "stream",
+        paramsJson: JSON.stringify({ stream: "approval" }),
         tags: ["approval"],
         timeout: 5,
+        idleTimeout: 2,
       },
     })
     expect(taskOutput(result)).toEqual({ approved: true })
   })
 
-  test("adapter run emits wait.all as one ordered aggregate wait", async () => {
+  test("adapter run reads input stream once over active transport", async () => {
     const cwd = await taskFixture(
-      "wait-all",
-      `(() => {
-        const approval = ctx.session.input(channel.input("approval", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
-        return wait.all([
-          wait.for({ seconds: 1 }),
-          approval.wait({ correlationId: "thread-1" }),
-        ])
-      })()`,
-      `import { channel, wait } from "@helmr/sdk"\n`,
+      "once-session-stream",
+      `(() => streams.input("inbox").once({ afterSequence: 4, timeout: "30s" }).unwrap())()`,
+      `import { streams } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
-      "wait-all",
-      async ({ stdin, waitForControlEventCount }) => {
-        await waitForControlEventCount("waitpointRequested", 2)
-        stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
-          kind: "waitpoints",
-          dataJson: JSON.stringify({
-            waitpoints: [
-              null,
-              { channel: "approval", sequence: 1, data: { approved: true } },
-            ],
-          }),
+      "once-session-stream",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("activeStreamReadRequested")
+        stdin.write(activeStreamReadResultFrame({
+          correlationId: "1",
+          record: {
+            id: "record-5",
+            streamId: "stream-1",
+            sequence: 5,
+            dataJson: JSON.stringify({ text: "ready" }),
+            contentType: "application/json",
+            createdAt: "2026-06-15T12:00:00Z",
+          },
         }))
         stdin.end()
       },
     )
 
     expect(result.status, result.stderr).toBe(0)
-    const waitpointEvents = result.controlEvents
-      .map((event) => event.event)
-      .filter((event): event is { case: "waitpointRequested"; value: runProto.WaitpointRequested } => event.case === "waitpointRequested")
-    expect(waitpointEvents).toHaveLength(2)
-    expect(waitpointEvents[0]?.value).toMatchObject({
-      correlationId: "1",
-      kind: "timer",
-      paramsJson: JSON.stringify({ seconds: 1 }),
-      timeout: 1,
-      ordinal: 0,
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("runWaitRequested")
+    expect(result.controlEvents[0]?.event).toMatchObject({
+      case: "activeStreamReadRequested",
+      value: {
+        correlationId: "1",
+        stream: "inbox",
+        afterSequence: 4n,
+        timeout: 30,
+        block: true,
+      },
     })
-    expect(waitpointEvents[1]?.value).toMatchObject({
-      correlationId: "1",
-      kind: "channel",
-      paramsJson: JSON.stringify({ channel: "approval", correlation_id: "thread-1" }),
-      ordinal: 1,
-    })
-    expect(taskOutput(result)).toEqual([null, { approved: true }])
+    expect(taskOutput(result)).toEqual({ text: "ready" })
   })
 
-  test("adapter run leaves channel wait cursors to the control plane", async () => {
+  test("adapter run peeks input streams without parking", async () => {
     const cwd = await taskFixture(
-      "wait-session-channel-twice",
+      "peek-session-stream",
       `(async () => {
-        const numbers = ctx.session.input(channel.input("numbers", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
+        const record = await streams.input("inbox").peek({ afterSequence: 2, correlationId: "thread-1" })
+        return record?.data
+      })()`,
+      `import { streams } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "peek-session-stream",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("activeStreamReadRequested")
+        stdin.write(activeStreamReadResultFrame({
+          correlationId: "1",
+          record: {
+            id: "record-3",
+            streamId: "stream-1",
+            sequence: 3,
+            dataJson: JSON.stringify({ text: "peeked" }),
+            correlationId: "thread-1",
+            contentType: "application/json",
+            createdAt: "2026-06-15T12:00:00Z",
+          },
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("runWaitRequested")
+    expect(result.controlEvents[0]?.event).toMatchObject({
+      case: "activeStreamReadRequested",
+      value: {
+        stream: "inbox",
+        afterSequence: 2n,
+        recordCorrelationId: "thread-1",
+        block: false,
+      },
+    })
+    expect(taskOutput(result)).toEqual({ text: "peeked" })
+  })
+
+  test("adapter run returns null for input stream peek miss", async () => {
+    const cwd = await taskFixture(
+      "peek-miss-session-stream",
+      `(async () => {
+        const record = await streams.input("inbox").peek({ afterSequence: 2, correlationId: "thread-1" })
+        return record === null ? "empty" : record.data
+      })()`,
+      `import { streams } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "peek-miss-session-stream",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("activeStreamReadRequested")
+        stdin.write(activeStreamReadResultFrame({
+          correlationId: "1",
+          timedOut: true,
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("runWaitRequested")
+    expect(result.controlEvents[0]?.event).toMatchObject({
+      case: "activeStreamReadRequested",
+      value: {
+        stream: "inbox",
+        afterSequence: 2n,
+        recordCorrelationId: "thread-1",
+        block: false,
+      },
+    })
+    expect(taskOutput(result)).toEqual("empty")
+  })
+
+  test("adapter run keeps input stream on position runtime-local", async () => {
+    const cwd = await taskFixture(
+      "on-session-stream",
+      `(async () => {
+        const values: unknown[] = []
+        await streams.input("numbers").on(async (payload) => {
+          values.push(payload)
+          if (values.length === 2) throw new Error("done")
+        }, { afterSequence: 10 })
+        return values
+      })().catch((error) => error instanceof Error && error.message === "done" ? [1, 2] : Promise.reject(error))`,
+      `import { streams } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "on-session-stream",
+      async ({ stdin, waitForControlEventCount }) => {
+        await waitForControlEventCount("activeStreamReadRequested", 1)
+        stdin.write(activeStreamReadResultFrame({
+          correlationId: "1",
+          record: {
+            id: "record-11",
+            streamId: "stream-1",
+            sequence: 11,
+            dataJson: "1",
+            contentType: "application/json",
+            createdAt: "2026-06-15T12:00:00Z",
+          },
+        }))
+        await waitForControlEventCount("activeStreamReadRequested", 2)
+        stdin.write(activeStreamReadResultFrame({
+          correlationId: "2",
+          record: {
+            id: "record-12",
+            streamId: "stream-1",
+            sequence: 12,
+            dataJson: "2",
+            contentType: "application/json",
+            createdAt: "2026-06-15T12:00:00Z",
+          },
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("runWaitRequested")
+    expect(result.controlEvents[0]?.event).toMatchObject({
+      case: "activeStreamReadRequested",
+      value: { stream: "numbers", afterSequence: 10n, block: true },
+    })
+    expect(result.controlEvents[1]?.event).toMatchObject({
+      case: "activeStreamReadRequested",
+      value: { stream: "numbers", afterSequence: 11n, block: true },
+    })
+    expect(taskOutput(result)).toEqual([1, 2])
+  })
+
+  test("adapter run keeps input stream wait position runtime-local", async () => {
+    const cwd = await taskFixture(
+      "wait-session-stream-twice",
+      `(async () => {
+        const numbers = streams.input("numbers", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } })
         const first = await numbers.wait().unwrap()
         const second = await numbers.wait().unwrap()
         return [first, second]
       })()`,
-      `import { channel } from "@helmr/sdk"\n`,
+      `import { streams } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
-      "wait-session-channel-twice",
+      "wait-session-stream-twice",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitpointRequested")
+        await waitForControlEvent("runWaitRequested")
         stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
+          runWaitId: "run-wait-id-1",
           kind: "completed",
-          dataJson: JSON.stringify({ channel: "numbers", sequence: 1, data: 10 }),
+          dataJson: JSON.stringify({ stream: "numbers", sequence: 1, data: 10 }),
         }))
-        await waitForControlEvent("waitpointRequested")
+        await waitForControlEvent("runWaitRequested")
         stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-2",
+          runWaitId: "run-wait-id-2",
           kind: "completed",
-          dataJson: JSON.stringify({ channel: "numbers", sequence: 2, data: 20 }),
+          dataJson: JSON.stringify({ stream: "numbers", sequence: 2, data: 20 }),
         }))
         stdin.end()
       },
@@ -1093,57 +1292,57 @@ export default task({
 
     expect(result.status, result.stderr).toBe(0)
     expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitpointRequested",
+      case: "runWaitRequested",
       value: {
         correlationId: "1",
-        kind: "channel",
-        paramsJson: JSON.stringify({ channel: "numbers" }),
+        kind: "stream",
+        paramsJson: JSON.stringify({ stream: "numbers" }),
       },
     })
     expect(result.controlEvents[1]?.event).toMatchObject({
-      case: "waitpointRequested",
+      case: "runWaitRequested",
       value: {
         correlationId: "2",
-        kind: "channel",
-        paramsJson: JSON.stringify({ channel: "numbers" }),
+        kind: "stream",
+        paramsJson: JSON.stringify({ stream: "numbers", after_sequence: 1 }),
       },
     })
     expect(taskOutput(result)).toEqual([10, 20])
   })
 
-  test("adapter run preserves correlation ids without local channel cursors", async () => {
+  test("adapter run keeps correlation-specific input stream wait positions runtime-local", async () => {
     const cwd = await taskFixture(
-      "wait-session-channel-correlated",
+      "wait-session-stream-correlated",
       `(async () => {
-        const replies = ctx.session.input(channel.input("replies", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }))
+        const replies = streams.input("replies", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } })
         const firstA = await replies.wait({ correlationId: "thread-a" }).unwrap()
         const firstB = await replies.wait({ correlationId: "thread-b" }).unwrap()
         const secondA = await replies.wait({ correlationId: " thread-a " }).unwrap()
         return [firstA, firstB, secondA]
       })()`,
-      `import { channel } from "@helmr/sdk"\n`,
+      `import { streams } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
-      "wait-session-channel-correlated",
+      "wait-session-stream-correlated",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitpointRequested")
+        await waitForControlEvent("runWaitRequested")
         stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
+          runWaitId: "run-wait-id-1",
           kind: "completed",
-          dataJson: JSON.stringify({ channel: "replies", correlation_id: "thread-a", sequence: 10, data: "a1" }),
+          dataJson: JSON.stringify({ stream: "replies", correlation_id: "thread-a", sequence: 10, data: "a1" }),
         }))
-        await waitForControlEvent("waitpointRequested")
+        await waitForControlEvent("runWaitRequested")
         stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-2",
+          runWaitId: "run-wait-id-2",
           kind: "completed",
-          dataJson: JSON.stringify({ channel: "replies", correlation_id: "thread-b", sequence: 3, data: "b1" }),
+          dataJson: JSON.stringify({ stream: "replies", correlation_id: "thread-b", sequence: 3, data: "b1" }),
         }))
-        await waitForControlEvent("waitpointRequested")
+        await waitForControlEvent("runWaitRequested")
         stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-3",
+          runWaitId: "run-wait-id-3",
           kind: "completed",
-          dataJson: JSON.stringify({ channel: "replies", correlation_id: "thread-a", sequence: 11, data: "a2" }),
+          dataJson: JSON.stringify({ stream: "replies", correlation_id: "thread-a", sequence: 11, data: "a2" }),
         }))
         stdin.end()
       },
@@ -1151,33 +1350,33 @@ export default task({
 
     expect(result.status, result.stderr).toBe(0)
     expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitpointRequested",
+      case: "runWaitRequested",
       value: {
         correlationId: "1",
-        kind: "channel",
-        paramsJson: JSON.stringify({ channel: "replies", correlation_id: "thread-a" }),
+        kind: "stream",
+        paramsJson: JSON.stringify({ stream: "replies", correlation_id: "thread-a" }),
       },
     })
     expect(result.controlEvents[1]?.event).toMatchObject({
-      case: "waitpointRequested",
+      case: "runWaitRequested",
       value: {
         correlationId: "2",
-        kind: "channel",
-        paramsJson: JSON.stringify({ channel: "replies", correlation_id: "thread-b" }),
+        kind: "stream",
+        paramsJson: JSON.stringify({ stream: "replies", correlation_id: "thread-b" }),
       },
     })
     expect(result.controlEvents[2]?.event).toMatchObject({
-      case: "waitpointRequested",
+      case: "runWaitRequested",
       value: {
         correlationId: "3",
-        kind: "channel",
-        paramsJson: JSON.stringify({ channel: "replies", correlation_id: "thread-a" }),
+        kind: "stream",
+        paramsJson: JSON.stringify({ stream: "replies", correlation_id: "thread-a", after_sequence: 10 }),
       },
     })
     expect(taskOutput(result)).toEqual(["a1", "b1", "a2"])
   })
 
-  test("adapter run parses waitpoint completions with validation-only schemas", async () => {
+  test("adapter run parses run wait completions with validation-only schemas", async () => {
     const cwd = await taskFixture(
       "wait-human-validation-schema",
       `(async () => {
@@ -1197,17 +1396,17 @@ export default task({
             },
           },
         }
-        return await wait.forToken("token-1", { schema }).unwrap()
+        return await tokens.wait("token-1", { schema }).unwrap()
       })()`,
-      `import { wait, type PayloadSchema } from "@helmr/sdk"\n`,
+      `import { tokens, type PayloadSchema } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
       "wait-human-validation-schema",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitpointRequested")
+        await waitForControlEvent("runWaitRequested")
         stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
+          runWaitId: "run-wait-id-1",
           kind: "completed",
           dataJson: JSON.stringify({ approved: true }),
         }))
@@ -1219,23 +1418,23 @@ export default task({
     expect(taskOutput(result)).toEqual({ approved: true })
   })
 
-  test("adapter run rejects invalid waitpoint completion data", async () => {
+  test("adapter run rejects invalid run wait completion data", async () => {
     const cwd = await taskFixture(
       "token-invalid-json",
       `(async () => {
         try {
-          return await wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }).unwrap()
+          return await tokens.wait("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }).unwrap()
         } catch (error) { return { message: error instanceof Error ? error.message : String(error) } }
       })()`,
-      `import { wait } from "@helmr/sdk"\n`,
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
       "token-invalid-json",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitpointRequested")
+        await waitForControlEvent("runWaitRequested")
         stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
+          runWaitId: "run-wait-id-1",
           kind: "completed",
           dataJson: "{",
         }))
@@ -1244,22 +1443,22 @@ export default task({
     )
 
     expect(result.status, result.stderr).toBe(0)
-    expect(taskOutput(result).message).toContain("waitpoint data must be valid JSON")
+    expect(taskOutput(result).message).toContain("run wait data must be valid JSON")
   })
 
-  test("adapter run returns null waitpoint completion data", async () => {
+  test("adapter run returns null run wait completion data", async () => {
     const cwd = await taskFixture(
       "token-null-data",
-      `(() => wait.forToken("token-1").unwrap())()`,
-      `import { wait } from "@helmr/sdk"\n`,
+      `(() => tokens.wait("token-1").unwrap())()`,
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
       "token-null-data",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitpointRequested")
+        await waitForControlEvent("runWaitRequested")
         stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
+          runWaitId: "run-wait-id-1",
           kind: "completed",
           dataJson: "null",
         }))
@@ -1271,12 +1470,12 @@ export default task({
     expect(taskOutput(result)).toBeNull()
   })
 
-  test("adapter run validates null waitpoint completion data as direct data", async () => {
+  test("adapter run validates null run wait completion data as direct data", async () => {
     const cwd = await taskFixture(
       "token-null-data-schema",
       `(async () => {
         try {
-          return await wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate(value: unknown) {
+          return await tokens.wait("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate(value: unknown) {
             if (value === null || typeof value !== "object") {
               return { issues: [{ message: "expected object" }] }
             }
@@ -1284,15 +1483,15 @@ export default task({
           } } } }).unwrap()
         } catch (error) { return { message: error instanceof Error ? error.message : String(error) } }
       })()`,
-      `import { wait } from "@helmr/sdk"\n`,
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
       "token-null-data-schema",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitpointRequested")
+        await waitForControlEvent("runWaitRequested")
         stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
+          runWaitId: "run-wait-id-1",
           kind: "completed",
           dataJson: "null",
         }))
@@ -1301,15 +1500,15 @@ export default task({
     )
 
     expect(result.status, result.stderr).toBe(0)
-    expect(taskOutput(result).message).toContain("waitpoint data failed validation: expected object")
+    expect(taskOutput(result).message).toContain("token data failed validation: expected object")
   })
 
-  test("adapter run rejects old waitpoint completion wrappers", async () => {
+  test("adapter run rejects old run wait completion wrappers", async () => {
     const cwd = await taskFixture(
       "token-old-wrapper",
       `(async () => {
         try {
-          return await wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate(value: unknown) {
+          return await tokens.wait("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate(value: unknown) {
             if (value === null || typeof value !== "object" || typeof (value as Record<string, unknown>).approved !== "boolean") {
               return { issues: [{ message: "expected approval object", path: ["approved"] }] }
             }
@@ -1317,15 +1516,15 @@ export default task({
           } } } }).unwrap()
         } catch (error) { return { message: error instanceof Error ? error.message : String(error) } }
       })()`,
-      `import { wait } from "@helmr/sdk"\n`,
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
       "token-old-wrapper",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitpointRequested")
+        await waitForControlEvent("runWaitRequested")
         stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
+          runWaitId: "run-wait-id-1",
           kind: "completed",
           dataJson: JSON.stringify({
             payload: { approved: true },
@@ -1337,24 +1536,24 @@ export default task({
     )
 
     expect(result.status, result.stderr).toBe(0)
-    expect(taskOutput(result).message).toContain("waitpoint data failed validation: payload.approved: expected approval object")
+    expect(taskOutput(result).message).toContain("token data failed validation: payload.approved: expected approval object")
   })
 
-  test("adapter run rejects resume decisions with the wrong kind for waitpoints", async () => {
+  test("adapter run rejects resume decisions with the wrong kind for run waits", async () => {
     const cwd = await taskFixture(
       "token-wrong-kind",
       `(() => {
-        return wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }).unwrap()
+        return tokens.wait("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }).unwrap()
       })()`,
-      `import { wait } from "@helmr/sdk"\n`,
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
       "token-wrong-kind",
       async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitpointRequested")
+        await waitForControlEvent("runWaitRequested")
         stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
+          runWaitId: "run-wait-id-1",
           kind: "unexpected",
           dataJson: JSON.stringify({ principal: "alice" }),
         }))
@@ -1364,27 +1563,27 @@ export default task({
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
-    expect(JSON.parse(result.stderr.trim()).message).toBe('unexpected waitpoint resume decision kind "unexpected"')
+    expect(JSON.parse(result.stderr.trim()).message).toBe('unexpected token wait resume decision kind "unexpected"')
   })
 
   test("adapter run rejects concurrent waits with ConcurrentWaitError", async () => {
     const cwd = await taskFixture(
       "concurrent-wait",
       `(async () => {
-        const first = wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }).unwrap().catch(() => undefined)
+        const first = tokens.wait("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }).unwrap().catch(() => undefined)
         try {
-          await wait.forToken("token-2", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }).unwrap()
+          await tokens.wait("token-2", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } }).unwrap()
           return { ok: false }
         } catch (error) {
           return { concurrent: error instanceof ConcurrentWaitError, name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) }
         } finally { await first }
       })()`,
-      "import { ConcurrentWaitError, wait } from \"@helmr/sdk\"\n",
+      "import { ConcurrentWaitError, tokens } from \"@helmr/sdk\"\n",
     )
     const result = await runAdapterTask(cwd, "concurrent-wait")
 
     expect(result.status, result.stderr).toBe(0)
-    expect(result.controlEvents[0]?.event.case).toBe("waitpointRequested")
+    expect(result.controlEvents[0]?.event.case).toBe("runWaitRequested")
     expect(taskOutput(result)).toMatchObject({
       concurrent: true,
       name: "ConcurrentWaitError",
@@ -1392,101 +1591,100 @@ export default task({
     })
   })
 
-  test("adapter run rejects empty waitpoint tags before emitting control events", async () => {
+  test("adapter run rejects empty run wait tags before emitting control events", async () => {
     const cwd = await taskFixture(
       "oversized-wait",
-      `wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, tags: [""] }).unwrap()`,
-      `import { wait } from "@helmr/sdk"\n`,
+      `tokens.wait("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, tags: [""] }).unwrap()`,
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "oversized-wait")
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
-    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("waitpointRequested")
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("runWaitRequested")
     const error = JSON.parse(result.stderr.trim())
     expect(error.message).toContain("wait tag")
     expect(error.message).toContain("must be non-empty")
   })
 
-  test("adapter run rejects too many waitpoint tags before emitting control events", async () => {
+  test("adapter run rejects too many run wait tags before emitting control events", async () => {
     const cwd = await taskFixture(
       "too-many-wait-tags",
-      `wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, tags: Array.from({ length: 33 }, (_, index) => "tag-" + index) }).unwrap()`,
-      `import { wait } from "@helmr/sdk"\n`,
+      `tokens.wait("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, tags: Array.from({ length: 33 }, (_, index) => "tag-" + index) }).unwrap()`,
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "too-many-wait-tags")
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
-    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("waitpointRequested")
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("runWaitRequested")
     const error = JSON.parse(result.stderr.trim())
     expect(error.message).toContain("wait tags")
     expect(error.message).toContain("exceeds max")
   })
 
-  test("adapter run rejects oversized waitpoint tags before emitting control events", async () => {
+  test("adapter run rejects oversized run wait tags before emitting control events", async () => {
     const cwd = await taskFixture(
       "oversized-wait-tag",
-      `wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, tags: ["${"x".repeat(129)}"] }).unwrap()`,
-      `import { wait } from "@helmr/sdk"\n`,
+      `tokens.wait("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, tags: ["${"x".repeat(129)}"] }).unwrap()`,
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "oversized-wait-tag")
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
-    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("waitpointRequested")
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("runWaitRequested")
     const error = JSON.parse(result.stderr.trim())
     expect(error.message).toContain("wait tag")
     expect(error.message).toContain("exceeds max")
   })
 
-  test("adapter run rejects non-object waitpoint metadata before emitting control events", async () => {
+  test("adapter run rejects non-object run wait metadata before emitting control events", async () => {
     const cwd = await taskFixture(
       "invalid-input-metadata",
-      `wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, metadata: [] } as any).unwrap()`,
-      `import { wait } from "@helmr/sdk"\n`,
+      `tokens.wait("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, metadata: [] } as any).unwrap()`,
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "invalid-input-metadata")
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
-    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("waitpointRequested")
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("runWaitRequested")
     const error = JSON.parse(result.stderr.trim())
     expect(error.message).toBe("wait metadata must be a JSON object")
   })
 
-  test("adapter run rejects oversized waitpoint metadata before emitting control events", async () => {
+  test("adapter run rejects oversized run wait metadata before emitting control events", async () => {
     const cwd = await taskFixture(
       "oversized-input-metadata",
-      `wait.forToken("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, metadata: { value: "x".repeat(70 * 1024) } }).unwrap()`,
-      `import { wait } from "@helmr/sdk"\n`,
+      `tokens.wait("token-1", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } }, metadata: { value: "x".repeat(70 * 1024) } }).unwrap()`,
+      `import { tokens, timers } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "oversized-input-metadata")
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
-    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("waitpointRequested")
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("runWaitRequested")
     const error = JSON.parse(result.stderr.trim())
     expect(error.message).toContain("wait metadata_json")
     expect(error.message).toContain("exceeds max")
   })
 
-  test("adapter run emits durable channel output appends", async () => {
+  test("adapter run emits durable output stream appends", async () => {
     const cwd = await taskFixture(
       "writes-channel-output",
-      "(() => { ctx.session.output(channel.output('agent.report', { schema: { '~standard': { version: 1, vendor: 'test', validate: (value: unknown) => ({ value }) } } })).append({ ok: true }, { contentType: 'application/json', objectRef: { path: 'report.json' } }); return { ok: true } })()",
-      `import { channel } from "@helmr/sdk"\n`,
+      "(async () => { await streams.output('agent.report', { schema: { '~standard': { version: 1, vendor: 'test', validate: (value: unknown) => ({ value }) } } }).append({ ok: true }, { contentType: 'application/json' }); return { ok: true } })()",
+      `import { streams } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "writes-channel-output")
 
     expect(result.status, result.stderr).toBe(0)
     expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "channelOutputAppended",
+      case: "outputStreamAppended",
       value: {
-        channel: "agent.report",
+        stream: "agent.report",
         payloadJson: JSON.stringify({ ok: true }),
         contentType: "application/json",
-        objectRefJson: JSON.stringify({ path: "report.json" }),
       },
     })
   })
@@ -1494,7 +1692,7 @@ export default task({
   test("adapter run emits metadata updates", async () => {
     const cwd = await taskFixture(
       "writes-metadata",
-      "(() => { metadata.set('status', 'reviewing'); metadata.patch({ currentFile: 'src/app.ts' }); metadata.increment('filesReviewed', 1); return { ok: true } })()",
+      "(async () => { await metadata.set('status', 'reviewing'); await metadata.patch({ currentFile: 'src/app.ts' }); await metadata.increment('filesReviewed', 1); return { ok: true } })()",
       `import { metadata } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTask(cwd, "writes-metadata")
@@ -1810,7 +2008,7 @@ async function linkLocalSdk(cwd: string, sdkRoot: string): Promise<void> {
 }
 
 function resumeDecisionFrame(decision: {
-  readonly waitpointId?: string
+  readonly runWaitId?: string
   readonly kind?: string
   readonly dataJson?: string
 }): Buffer {
@@ -1819,6 +2017,52 @@ function resumeDecisionFrame(decision: {
     create(runProto.ResumeDecisionSchema, decision),
   ))
   return frame(body)
+}
+
+function activeStreamReadResultFrame(result: {
+  readonly correlationId: string
+  readonly record?: {
+    readonly id: string
+    readonly streamId: string
+    readonly sequence: number
+    readonly dataJson: string
+    readonly correlationId?: string
+    readonly contentType: string
+    readonly createdAt: string
+  }
+  readonly timedOut?: boolean
+  readonly errorMessage?: string
+}): Buffer {
+  const body = Buffer.from(toBinary(
+    runProto.ActiveStreamReadResultSchema,
+    create(runProto.ActiveStreamReadResultSchema, {
+      correlationId: result.correlationId,
+      ...(result.record === undefined ? {} : { record: protoStreamRecord(result.record) }),
+      ...(result.timedOut === undefined ? {} : { timedOut: result.timedOut }),
+      ...(result.errorMessage === undefined ? {} : { errorMessage: result.errorMessage }),
+    }),
+  ))
+  return frame(body)
+}
+
+function protoStreamRecord(record: {
+  readonly id: string
+  readonly streamId: string
+  readonly sequence: number
+  readonly dataJson: string
+  readonly correlationId?: string
+  readonly contentType: string
+  readonly createdAt: string
+}): runProto.StreamRecord {
+  return create(runProto.StreamRecordSchema, {
+    id: record.id,
+    streamId: record.streamId,
+    sequence: BigInt(record.sequence),
+    dataJson: record.dataJson,
+    ...(record.correlationId === undefined ? {} : { correlationId: record.correlationId }),
+    contentType: record.contentType,
+    createdAt: record.createdAt,
+  })
 }
 
 function decodeRunEvents(bytes: Uint8Array): runProto.RunEvent[] {

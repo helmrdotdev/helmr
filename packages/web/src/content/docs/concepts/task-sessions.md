@@ -1,6 +1,6 @@
 ---
 title: Task sessions
-description: Task invocation history, channels, runs, and workspace attachment.
+description: Task invocation history, streams, runs, and workspace attachment.
 section: Concepts
 sidebarLabel: Task sessions
 order: 156
@@ -9,7 +9,7 @@ order: 156
 # Task Sessions
 
 A task session is one task invocation and its durable interaction history. It
-records the selected task, session status, channel records, related runs, and
+records the selected task, session status, stream records, related runs, and
 the workspace the task uses.
 
 A task session does not own the workspace. It references a workspace.
@@ -19,7 +19,7 @@ A task session does not own the workspace. It references a workspace.
 Task sessions own task-specific history:
 
 - session status
-- channel input and output records
+- stream input and output records
 - the ordered runs for this task invocation
 - task output and failure state
 - wait behavior tied to the task invocation
@@ -41,19 +41,19 @@ The workspace owns filesystem and live workspace state:
 Use workspaces when you need to answer "what work state exists now?" or "what
 can I run against this workspace next?"
 
-## Channels
+## Streams
 
-Session channels are named durable input and output lanes. They are useful for
+Session streams are named durable input and output lanes. They are useful for
 follow-up messages, webhook replies, operator responses, and structured task
 output that belongs to the task invocation.
 
-Channels are not project-level resources. A channel name only has meaning
+Streams are not project-level resources. A stream name only has meaning
 inside its task session.
 
-Use input channels when something outside the task should continue the workflow,
-such as a product UI, webhook handler, or approval bridge. Use output channels
+Use input streams when something outside the task should continue the workflow,
+such as a product UI, webhook handler, or approval bridge. Use output streams
 when the task should publish structured records that another service can read or
 stream without parsing logs.
 
-Channel input and output are session-scoped. Direct workspace exec and PTY
+Stream input and output are session-scoped. Direct workspace exec and PTY
 streams are workspace-scoped and use their own APIs.

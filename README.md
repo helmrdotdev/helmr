@@ -15,10 +15,12 @@ for contributors, early adopters, and self-hosted evaluation.
 
 ## What Helmr provides
 
-- TypeScript tasks that declare images, sandboxes, resources, secrets, waitpoints,
+- TypeScript tasks that declare images, sandboxes, resources, secrets, streams,
+  tokens, timers,
   and run logic
 - Durable writable workspaces mounted inside isolated Linux guests
-- Operator waitpoints before reviews, patches, or other side effects
+- Durable stream input, external completion tokens, and long timers before
+  reviews, patches, or other side effects
 - Run status, logs, events, payloads, and history in the control plane
 - Task-declared secrets injected only at run time
 - A runtime boundary you own: your AWS account, your integrations, your workers
@@ -74,13 +76,13 @@ Use that URL to create a local owner session and inspect seeded runs.
 ## Define a task
 
 A task binds a sandbox, TypeScript run logic, declared secrets, and optional
-operator waitpoints. The code inside the task can call any agent SDK or tool;
-Helmr owns the adapter protocol around it.
+streams, tokens, and timers. The code inside the task can call any agent SDK or
+tool; Helmr owns the adapter protocol around it.
 
 Create a task project with `helmr.config.ts` and one or more task modules:
 
 ```ts
-import { cache, image, sandbox, source, task, wait } from "@helmr/sdk"
+import { cache, image, sandbox, source, task, tokens } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -120,8 +122,8 @@ export const reviewPr = task({
       token: process.env.OPENAI_API_KEY ?? "",
     })
 
-    const decisionToken = await wait.createToken({ timeout: 900 })
-    const decision = await wait.forToken(decisionToken, {
+    const decisionToken = await tokens.create({ timeout: "15m" })
+    const decision = await decisionToken.wait({
       schema: z.object({ approved: z.boolean() }),
       metadata: {
         summary,
@@ -148,7 +150,7 @@ Tasks start in the mounted workspace directory. Use relative paths for workspace
 files; absolute paths keep normal Linux container semantics.
 
 See [examples/](examples/) for deployable task projects, including dependency
-caching, CLI tooling, operator waitpoints, task secrets, and GitHub PR review
+caching, CLI tooling, stream/token/timer waits, task secrets, and GitHub PR review
 flows.
 
 ## Run A Task

@@ -10,7 +10,7 @@ import {
 	getRunEvents,
 	getRunLogs,
 	type LogSnapshot,
-	type PendingWaitpoint,
+	type PendingWait,
 	type RunEventPage,
 	type RunEventRecord,
 } from "../lib/runs";
@@ -94,14 +94,14 @@ function eventLabel(event: RunEventRecord): string {
   if (kind === "log.stdout" || kind === "log.stderr") {
     return kind === "log.stdout" ? "stdout" : "stderr";
   }
-  if (kind === "waitpoint.created") {
-    return `waitpoint:${stringValue(attrs["kind"]) ?? "created"}`;
+  if (kind === "run_wait.created") {
+    return `run_wait:${stringValue(attrs["kind"]) ?? "created"}`;
   }
-  if (kind === "waitpoint.completed") {
-    return "waitpoint:completed";
+  if (kind === "run_wait.completed") {
+    return "run_wait:completed";
   }
-  if (kind === "waitpoint.timed_out") {
-    return "waitpoint:timed_out";
+  if (kind === "run_wait.timed_out") {
+    return "run_wait:timed_out";
   }
   if (kind === "run.created") return "run:created";
   if (kind === "run.completed") return "run:completed";
@@ -134,16 +134,16 @@ function eventSummary(event: RunEventRecord): string {
     return stringValue(detail?.["message"]) ?? stringValue(attrs["message"]) ?? "Run failed";
   }
   if (kind === "run.cancelled") return stringValue(attrs["reason"]) ?? "Run cancelled";
-  if (kind === "waitpoint.created") {
-    return [stringValue(attrs["kind"])]
+  if (kind === "run_wait.created") {
+    return [stringValue(attrs["run_wait_id"]), stringValue(attrs["kind"])]
       .filter(Boolean)
-      .join(" · ") || "Waitpoint created";
+      .join(" · ") || "Parked wait created";
   }
-  if (kind === "waitpoint.completed") {
+  if (kind === "run_wait.completed") {
     const payload = attrs["payload"];
     return stringValue(payload) ?? (payload === undefined ? null : formatJSON(payload)) ?? "Completed";
   }
-  if (kind === "waitpoint.timed_out") return "Timed out";
+  if (kind === "run_wait.timed_out") return "Timed out";
   if (kind === "checkpoint.ready") return "Checkpoint ready";
   return formatJSON(attrs);
 }
@@ -151,7 +151,7 @@ function eventSummary(event: RunEventRecord): string {
 function eventTone(kind: string): string {
   if (kind === "run.failed" || kind === "run.cancelled") return "bg-console-danger";
   if (kind === "run.completed") return "bg-console-success";
-  if (kind === "waitpoint.created") return "bg-console-warning";
+  if (kind === "run_wait.created") return "bg-console-warning";
   if (kind === "log") return "bg-console-info";
   return "bg-console-faint";
 }
@@ -362,41 +362,41 @@ function EventTimeline(props: {
   );
 }
 
-function PendingWaitpointPanel(props: {
-  waitpoint: PendingWaitpoint;
+function PendingWaitPanel(props: {
+  wait: PendingWait;
 }) {
   return (
     <section class={"mb-3 border border-[#e5c26e] bg-[#fffaf0] p-4"}>
       <div class={"mb-3 flex items-center justify-between gap-3"}>
-        <h2 class={ui.h2}>Pending waitpoint</h2>
-        <span class={statusBadgeClass("waiting")}>{props.waitpoint.kind}</span>
+        <h2 class={ui.h2}>Parked wait</h2>
+        <span class={statusBadgeClass("waiting")}>{props.wait.kind}</span>
       </div>
       <p class="text-[12.5px] leading-normal">
-        {props.waitpoint.kind}
+        {props.wait.kind}
       </p>
       <p class="mt-1.5 text-[12.5px] text-console-muted">
-        Created {formatRelative(props.waitpoint.created_at)}
+        Created {formatRelative(props.wait.created_at)}
       </p>
       <div class="mt-3 grid gap-2.5">
         <div>
           <h3 class={ui.h3}>Params</h3>
           <pre class="m-0 mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words border border-console-border bg-white px-3 py-2 font-mono text-[12px] leading-normal text-console-text">
-            {formatJSON(props.waitpoint.params ?? {})}
+            {formatJSON(props.wait.params ?? {})}
           </pre>
         </div>
-        <Show when={props.waitpoint.metadata !== undefined}>
+        <Show when={props.wait.metadata !== undefined}>
           <div>
             <h3 class={ui.h3}>Metadata</h3>
             <pre class="m-0 mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words border border-console-border bg-white px-3 py-2 font-mono text-[12px] leading-normal text-console-text">
-              {formatJSON(props.waitpoint.metadata)}
+              {formatJSON(props.wait.metadata)}
             </pre>
           </div>
         </Show>
-        <Show when={(props.waitpoint.tags?.length ?? 0) > 0}>
+        <Show when={(props.wait.tags?.length ?? 0) > 0}>
           <div>
             <h3 class={ui.h3}>Tags</h3>
             <pre class="m-0 mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words border border-console-border bg-white px-3 py-2 font-mono text-[12px] leading-normal text-console-text">
-              {formatJSON(props.waitpoint.tags ?? [])}
+              {formatJSON(props.wait.tags ?? [])}
             </pre>
           </div>
         </Show>
@@ -510,10 +510,10 @@ export function RunDetail() {
             {(current) => (
               <div class={"grid grid-cols-[minmax(0,1fr)_300px] items-start gap-3.5 max-[960px]:grid-cols-1"}>
                 <div class={"flex min-w-0 flex-col gap-3"}>
-                  <Show when={current().pending_waitpoint}>
-                    {(waitpoint) => (
-                      <PendingWaitpointPanel
-                        waitpoint={waitpoint()}
+                  <Show when={current().pending_wait}>
+                    {(wait) => (
+                      <PendingWaitPanel
+                        wait={wait()}
                       />
                     )}
                   </Show>

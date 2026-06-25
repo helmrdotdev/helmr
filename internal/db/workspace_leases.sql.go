@@ -545,10 +545,24 @@ promoted_workspace AS (
        AND workspaces.id = created_version.workspace_id
        AND workspaces.current_version_id IS NOT DISTINCT FROM created_version.parent_version_id
     RETURNING workspaces.id
+),
+cleaned_materialization AS (
+    UPDATE workspace_materializations
+       SET dirty_generation = 0,
+           updated_at = now()
+      FROM created_version
+     WHERE workspace_materializations.org_id = created_version.org_id
+       AND workspace_materializations.project_id = created_version.project_id
+       AND workspace_materializations.environment_id = created_version.environment_id
+       AND workspace_materializations.workspace_id = created_version.workspace_id
+       AND workspace_materializations.id = created_version.source_materialization_id
+       AND workspace_materializations.dirty_generation = $4
+    RETURNING workspace_materializations.id
 )
 SELECT created_version.id, created_version.org_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_materialization_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_exec_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
   FROM created_version
   JOIN promoted_workspace ON promoted_workspace.id = created_version.workspace_id
+  JOIN cleaned_materialization ON cleaned_materialization.id = created_version.source_materialization_id
 `
 
 type PromoteWorkspaceCaptureParams struct {

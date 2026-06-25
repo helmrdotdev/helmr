@@ -15,7 +15,7 @@ import (
 func TestDeleteScheduleKeepsParentUntilLastInstance(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
-	ids := seedWaitpointTokenIntegration(t, ctx, pool)
+	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 
 	secondEnvironmentID := uuid.Must(uuid.NewV7())
