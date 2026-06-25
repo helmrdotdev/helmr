@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 
 import { HelmrClient, WorkspaceStreamError, WorkspaceStreamTerminalError, tokenClientMethod } from "./client"
 import { runStateBooleans } from "./run"
-import { PayloadSchemaValidationError, idempotencyKeys, image, sandbox, sessions, source, task, workspaces, type PayloadSchema } from "../index"
+import { PayloadSchemaValidationError, auth, idempotencyKeys, image, sandbox, schedules, sessions, source, streams, task, tokens, workspaces, type PayloadSchema } from "../index"
 import { resetDefaultClientForTest } from "../start"
 import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER, HELMR_SDK_VERSION, HELMR_SDK_VERSION_HEADER } from "../version"
 
@@ -208,6 +208,50 @@ test("schedules map next fire response fields", async () => {
   expect(schedule.lastFireAt).toBe("2026-01-01T00:00:00Z")
 })
 
+test("schedules namespace uses the default client and accepts schedule refs", async () => {
+  process.env["HELMR_API_URL"] = "https://api.example.test"
+  process.env["HELMR_API_KEY"] = "token"
+  const requests: Array<{ url: string; method: string; body: unknown }> = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    const method = init?.method ?? "GET"
+    const body = init?.body === undefined ? undefined : JSON.parse(String(init.body))
+    requests.push({ url, method, body })
+    if (method === "DELETE") {
+      return new Response(null, { status: 204 })
+    }
+    return Response.json({
+      id: "schedule-1",
+      type: "imperative",
+      project_id: "00000000-0000-0000-0000-000000000101",
+      environment_id: "00000000-0000-0000-0000-000000000102",
+      task: "inspect",
+      deduplication_key: "inspect-main",
+      cron: "0 * * * *",
+      timezone: "UTC",
+      active: true,
+      status: "active",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    })
+  }) as typeof fetch
+
+  const schedule = await schedules.retrieve("schedule-1")
+  await schedules.update(schedule, {
+    task: "inspect",
+    cron: "15 * * * *",
+  })
+  await schedules.deactivate(schedule)
+  await schedules.delete(schedule)
+
+  expect(requests.map((request) => [request.method, request.url, request.body])).toEqual([
+    ["GET", "https://api.example.test/api/schedules/schedule-1", undefined],
+    ["PUT", "https://api.example.test/api/schedules/schedule-1", { task: "inspect", cron: "15 * * * *" }],
+    ["POST", "https://api.example.test/api/schedules/schedule-1/deactivate", undefined],
+    ["DELETE", "https://api.example.test/api/schedules/schedule-1", undefined],
+  ])
+})
+
 test("workspaces.open is lazy and does not call materialize or connect", () => {
   let calls = 0
   globalThis.fetch = (async () => {
@@ -299,6 +343,24 @@ test("workspaces namespace uses the default client", async () => {
   expect(requestedUrl).toBe("https://api.example.test/api/workspaces/workspace-1")
   expect(authorization).toBe("Bearer token")
   expect(workspace.id).toBe("workspace-1")
+})
+
+test("sessions namespace exposes the default client session methods", async () => {
+  process.env["HELMR_API_URL"] = "https://api.example.test"
+  process.env["HELMR_API_KEY"] = "token"
+  let requestedUrl: string | undefined
+  let authorization: string | null | undefined
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input)
+    authorization = new Headers(init?.headers).get("authorization")
+    return Response.json(taskSessionFixture({ id: "session-1" }))
+  }) as typeof fetch
+
+  const session = await sessions.retrieve("session-1")
+
+  expect(requestedUrl).toBe("https://api.example.test/api/sessions/session-1")
+  expect(authorization).toBe("Bearer token")
+  expect(session.id).toBe("session-1")
 })
 
 test("workspace exec handle uses direct workspace exec routes", async () => {
@@ -888,11 +950,77 @@ test("auth.createPublicToken posts a scoped public access token request", async 
   })
 })
 
-test("tokens namespace exposes create and complete", async () => {
+test("auth namespace uses the default client and accepts stream definitions", async () => {
+  process.env["HELMR_API_URL"] = "https://api.example.test"
+  process.env["HELMR_API_KEY"] = "token"
+  let requestedUrl: string | undefined
+  let authorization: string | null | undefined
+  let body: unknown
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input)
+    authorization = new Headers(init?.headers).get("authorization")
+    body = JSON.parse(String(init?.body))
+    return Response.json({
+      id: "public-token-id",
+      public_access_token: "hlmr_pat_secret",
+      scope: {
+        type: "session.output.read",
+        session_id: "session-1",
+        stream: "agent.report",
+      },
+      expires_at: "2026-04-20T01:00:00Z",
+      created_at: "2026-04-20T00:00:00Z",
+    }, { status: 201 })
+  }) as typeof fetch
+
+  await auth.createPublicToken({
+    scope: {
+      type: "session.output.read",
+      sessionId: "session-1",
+      stream: streams.output("agent.report"),
+    },
+  })
+
+  expect(requestedUrl).toBe("https://api.example.test/api/public-access-tokens")
+  expect(authorization).toBe("Bearer token")
+  expect(body).toEqual({
+    scope: {
+      type: "session.output.read",
+      session_id: "session-1",
+      stream: "agent.report",
+    },
+  })
+})
+
+test("auth.createPublicToken rejects mismatched stream definition directions", async () => {
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+
+  await expect(client.auth.createPublicToken({
+    scope: {
+      type: "session.input.send",
+      sessionId: "session-1",
+      stream: streams.output("agent.report"),
+    },
+  } as never)).rejects.toThrow("requires an input stream")
+
+  await expect(client.auth.createPublicToken({
+    scope: {
+      type: "session.output.read",
+      sessionId: "session-1",
+      stream: streams.input("approval"),
+    },
+  } as never)).rejects.toThrow("requires an output stream")
+})
+
+test("tokens namespace exposes default client token methods", async () => {
+  process.env["HELMR_API_URL"] = "https://api.example.test"
+  process.env["HELMR_API_KEY"] = "token"
   const requestedUrls: string[] = []
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    requestedUrls.push(String(input))
-    if (init?.method === "POST" && String(input).endsWith("/api/tokens")) {
+    const url = String(input)
+    const method = init?.method ?? "GET"
+    requestedUrls.push(`${method} ${url}`)
+    if (method === "POST" && url.endsWith("/api/tokens")) {
       return Response.json({
         id: "token-id",
         callback_url: "https://api.example.test/api/v1/tokens/token-id/callback/callback-secret",
@@ -900,16 +1028,40 @@ test("tokens namespace exposes create and complete", async () => {
         timeout_at: null,
       }, { status: 201 })
     }
+    if (method === "GET" && url.endsWith("/api/tokens/token-id")) {
+      return Response.json({
+        id: "token-id",
+        timeout_at: null,
+      })
+    }
+    if (method === "GET" && url.endsWith("/api/tokens")) {
+      return Response.json({
+        tokens: [{ id: "token-id", timeout_at: null }],
+        next_cursor: null,
+      })
+    }
+    if (method === "POST" && url.endsWith("/api/tokens/token-id/cancel")) {
+      return Response.json({
+        id: "token-id",
+        status: "cancelled",
+        timeout_at: null,
+      })
+    }
     return new Response(null, { status: 204 })
   }) as typeof fetch
 
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const token = await client.tokens.create()
-  await client.tokens.complete(token, { approved: true })
+  const token = await tokens.create()
+  await tokens.retrieve(token.id)
+  await tokens.list()
+  await tokens.complete(token, { approved: true })
+  await tokens.cancel(token)
 
   expect(requestedUrls).toEqual([
-    "https://api.example.test/api/tokens",
-    "https://api.example.test/api/v1/tokens/token-id/complete",
+    "POST https://api.example.test/api/tokens",
+    "GET https://api.example.test/api/tokens/token-id",
+    "GET https://api.example.test/api/tokens",
+    "POST https://api.example.test/api/v1/tokens/token-id/complete",
+    "POST https://api.example.test/api/tokens/token-id/cancel",
   ])
 })
 

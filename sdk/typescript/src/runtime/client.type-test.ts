@@ -1,7 +1,7 @@
-import type { PublicAccessToken, TaskSessionSnapshot, SessionStartResult, SessionStartAndWaitResult, HelmrClient, Token, Workspace } from "./client"
+import type { PublicAccessToken, Schedule, TaskSessionSnapshot, SessionStartResult, SessionStartAndWaitResult, HelmrClient, Token, Workspace } from "./client"
 import type { RunEventRecord, RunHandle, RunSnapshot } from "./run"
 import type { StreamRecord, Task } from "../internal"
-import { idempotencyKeys, image, sandbox, schedules, sessions, source, streams, task, tokens, workspaces, type PayloadSchema } from "../index"
+import { auth, idempotencyKeys, image, sandbox, schedules, sessions, source, streams, task, tokens, workspaces, type PayloadSchema } from "../index"
 
 declare const client: HelmrClient
 declare const handle: RunHandle
@@ -79,7 +79,9 @@ if (false) {
   const noPayloadStartAndWait: Promise<SessionStartAndWaitResult<{ runId: string }>> = sessions.startAndWait(noPayloadTask, {})
   const clientNoPayloadStartAndWait: Promise<SessionStartAndWaitResult<{ runId: string }>> = client.sessions.startAndWait(noPayloadTask, {})
   const session = client.sessions.open<{ ok: boolean }>("session-1")
+  const topLevelSession = sessions.open<{ ok: boolean }>("session-1")
   const sessionSnapshot: Promise<TaskSessionSnapshot<{ ok: boolean }>> = session.retrieve()
+  const topLevelSessionSnapshot: Promise<TaskSessionSnapshot<{ ok: boolean }>> = sessions.retrieve("session-1")
   const approvalStream = streams.input("approval", { schema: approvalSchema })
   const reportStream = streams.output("agent.report", { schema: reportSchema })
   const inputRecord: Promise<StreamRecord<{ approved: boolean }>> = session.input(approvalStream).send({ approved: true }, {
@@ -101,6 +103,20 @@ if (false) {
       type: "session.input.send",
       sessionId: session.id,
       stream: "approval",
+    },
+  })
+  const topLevelOutputToken: Promise<PublicAccessToken> = auth.createPublicToken({
+    scope: {
+      type: "session.output.read",
+      sessionId: topLevelSession.id,
+      stream: reportStream,
+    },
+  })
+  const topLevelInputToken: Promise<PublicAccessToken> = auth.createPublicToken({
+    scope: {
+      type: "session.input.send",
+      sessionId: topLevelSession.id,
+      stream: approvalStream,
     },
   })
   const retrievedFromHandle: Promise<RunSnapshot> = client.runs.retrieve(handle)
@@ -136,6 +152,14 @@ if (false) {
     externalId: "customer-1",
     cron: "15 * * * *",
   })
+  const scheduleRecord = null as unknown as Schedule
+  const scheduleByTopLevel: Promise<Schedule> = schedules.retrieve(scheduleRecord)
+  const scheduleByClient: Promise<Schedule> = client.schedules.activate(scheduleRecord)
+  schedules.update(scheduleRecord, {
+    task: "inspect",
+    externalId: "customer-1",
+    cron: "30 * * * *",
+  })
   schedules.task({
     id: "scheduled-task",
     sandbox: sandbox("scheduled-task").image(image("scheduled-task").from("debian:trixie-slim")),
@@ -147,10 +171,14 @@ if (false) {
     metadata: { recipient: "reviewer@example.com" },
   })
   const clientToken: Promise<Token> = client.tokens.create({ timeout: "1h" })
+  const retrievedTopLevelToken: Promise<Token> = tokens.retrieve("token-1")
+  const listedTopLevelTokens: Promise<Token[]> = tokens.list()
   const retrievedClientToken = null as unknown as Token
   // @ts-expect-error client tokens are data records; task-runtime token handles expose wait().
   retrievedClientToken.wait()
   const delegatedById = tokens.create({ timeout: { hours: 1 } })
+  tokens.complete("token-1", { approved: true })
+  const cancelledTopLevelToken: Promise<Token> = tokens.cancel("token-1")
   client.tokens.complete({
     id: "token-1",
     callbackUrl: "https://api.example.test/api/v1/tokens/token-1/callback/raw-token",
@@ -162,12 +190,20 @@ if (false) {
 
   // Keep the declared promises live without executing this block.
   startedAgain.then
+  topLevelSessionSnapshot.then
+  topLevelOutputToken.then
+  topLevelInputToken.then
   retrievedFromHandle.then
   retrievedFromId.then
   waitedFromHandle.then
   waitedFromId.then
   delegatedToken.then
   delegatedById.then
+  retrievedTopLevelToken.then
+  listedTopLevelTokens.then
+  cancelledTopLevelToken.then
+  scheduleByTopLevel.then
+  scheduleByClient.then
   clientToken.then
   workspace.then
   workspaceExec.then
@@ -252,6 +288,22 @@ if (false) {
       type: "sessions:*",
       sessionId: "session-1",
       stream: "approval",
+    },
+  })
+  auth.createPublicToken({
+    // @ts-expect-error input grants require an input stream or string.
+    scope: {
+      type: "session.input.send",
+      sessionId: "session-1",
+      stream: reportStream,
+    },
+  })
+  auth.createPublicToken({
+    // @ts-expect-error output grants require an output stream or string.
+    scope: {
+      type: "session.output.read",
+      sessionId: "session-1",
+      stream: approvalStream,
     },
   })
   // @ts-expect-error sessions.open requires a session id string or session handle.

@@ -1,10 +1,8 @@
-import type { AnyTask, SecretDecls, TaskOutput } from "./internal"
+import type { AnyTask, SecretDecls } from "./internal"
 import {
   HelmrClient,
   type SessionStartAndWaitOptions,
-  type SessionStartAndWaitResult,
   type SessionStartOptions,
-  type SessionStartResult,
   type SessionsStartArgs,
   type SessionsStartAndWaitArgs,
 } from "./runtime/client"
@@ -20,21 +18,18 @@ export function resetDefaultClientForTest(): void {
   defaultClient = undefined
 }
 
+export function defaultClientNamespace<TKey extends keyof HelmrClient>(key: TKey): HelmrClient[TKey] {
+  return new Proxy({} as HelmrClient[TKey], {
+    get(_target, property, receiver) {
+      return Reflect.get(getDefaultClient()[key] as object, property, receiver)
+    },
+  })
+}
+
 export type StartOptions<TSecrets extends SecretDecls> = SessionStartOptions<TSecrets>
 export type StartAndWaitOptions<TSecrets extends SecretDecls> = SessionStartAndWaitOptions<TSecrets>
 
 export type StartArgs<TTask extends AnyTask> = SessionsStartArgs<TTask>
 export type StartAndWaitArgs<TTask extends AnyTask> = SessionsStartAndWaitArgs<TTask>
 
-export const sessions = {
-  start<TTask extends AnyTask>(
-    ...args: StartArgs<TTask>
-  ): Promise<SessionStartResult<TaskOutput<TTask>>> {
-    return getDefaultClient().sessions.start<TTask>(...args)
-  },
-  startAndWait<TTask extends AnyTask>(
-    ...args: StartAndWaitArgs<TTask>
-  ): Promise<SessionStartAndWaitResult<TaskOutput<TTask>>> {
-    return getDefaultClient().sessions.startAndWait<TTask>(...args)
-  },
-}
+export const sessions = defaultClientNamespace("sessions")

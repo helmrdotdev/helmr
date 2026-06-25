@@ -70,6 +70,7 @@ export type {
   RetrieveScheduleOptions,
   Schedule,
   ScheduleCreateOptions,
+  ScheduleRef,
   ScheduleUpdateOptions,
   SchedulesApi,
   SessionInputSendOptions,
@@ -142,7 +143,7 @@ import {
   type ScheduledTaskConfig,
   type ScheduledTaskPayload,
 } from "./schedules"
-import { getDefaultClient, sessions } from "./start"
+import { defaultClientNamespace, getDefaultClient, sessions } from "./start"
 
 type SchemaInput<TSchema> = TSchema extends PayloadSchema<infer TInput, any> ? TInput : never
 type SchemaOutput<TSchema> = TSchema extends PayloadSchema<any, infer TOutput> ? TOutput : never
@@ -223,24 +224,23 @@ export const source: SourceCapabilities = {
 
 export { HelmrClient }
 export { validateSecretName }
-export const runs = new Proxy({} as HelmrClient["runs"], {
-  get(_target, property, receiver) {
-    return Reflect.get(getDefaultClient().runs, property, receiver)
-  },
-})
+export const runs = defaultClientNamespace("runs")
 
-export const workspaces = new Proxy({} as HelmrClient["workspaces"], {
-  get(_target, property, receiver) {
-    return Reflect.get(getDefaultClient().workspaces, property, receiver)
-  },
-})
+export const workspaces = defaultClientNamespace("workspaces")
+
+export const auth = defaultClientNamespace("auth")
 
 export const streams = Object.freeze({
   input: createInputStream,
   output: createOutputStream,
 })
 
-export const tokens = Object.freeze({
+type TokensNamespace = Omit<HelmrClient["tokens"], "create"> & {
+  create(opts?: TokenCreateOptions & { readonly timeout?: DurationInput }): Promise<Token>
+  wait: typeof tokenWaitHandle
+}
+
+const runtimeTokens = {
   async create(opts: TokenCreateOptions & { readonly timeout?: DurationInput } = {}): Promise<Token> {
     const token = runRuntimeIsActive()
       ? await getRunRuntime().createToken(normalizeRuntimeTokenCreateOptions(opts))
@@ -248,6 +248,15 @@ export const tokens = Object.freeze({
     return tokenHandle(token)
   },
   wait: tokenWaitHandle,
+}
+
+export const tokens = new Proxy({} as TokensNamespace, {
+  get(_target, property, receiver) {
+    if (Object.prototype.hasOwnProperty.call(runtimeTokens, property)) {
+      return Reflect.get(runtimeTokens, property, receiver)
+    }
+    return Reflect.get(getDefaultClient().tokens, property, receiver)
+  },
 })
 
 export const timers = Object.freeze({
@@ -283,15 +292,17 @@ export const logger = Object.freeze({
   },
 })
 
-export const schedules = Object.freeze({
-  task: scheduledTask,
-  create: (...args: Parameters<HelmrClient["schedules"]["create"]>) => getDefaultClient().schedules.create(...args),
-  update: (...args: Parameters<HelmrClient["schedules"]["update"]>) => getDefaultClient().schedules.update(...args),
-  list: (...args: Parameters<HelmrClient["schedules"]["list"]>) => getDefaultClient().schedules.list(...args),
-  retrieve: (...args: Parameters<HelmrClient["schedules"]["retrieve"]>) => getDefaultClient().schedules.retrieve(...args),
-  activate: (...args: Parameters<HelmrClient["schedules"]["activate"]>) => getDefaultClient().schedules.activate(...args),
-  deactivate: (...args: Parameters<HelmrClient["schedules"]["deactivate"]>) => getDefaultClient().schedules.deactivate(...args),
-  delete: (...args: Parameters<HelmrClient["schedules"]["delete"]>) => getDefaultClient().schedules.delete(...args),
+type SchedulesNamespace = {
+  readonly task: typeof scheduledTask
+} & HelmrClient["schedules"]
+
+export const schedules = new Proxy({} as SchedulesNamespace, {
+  get(_target, property, receiver) {
+    if (property === "task") {
+      return scheduledTask
+    }
+    return Reflect.get(getDefaultClient().schedules, property, receiver)
+  },
 })
 
 export type {

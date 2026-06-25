@@ -5182,7 +5182,8 @@ class HelmrClient {
       const response = await this.#json("/api/schedules", {
         method: "POST",
         body: JSON.stringify(scheduleCreateBody(opts)),
-        headers: { "content-type": "application/json" }
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal)
       });
       return scheduleFromResponse(response);
     },
@@ -5190,8 +5191,8 @@ class HelmrClient {
       const response = await this.#json("/api/schedules", requestSignal(opts.signal));
       return response.schedules.map(scheduleFromResponse);
     },
-    update: async (id, opts) => {
-      const response = await this.#json(`/api/schedules/${encodeURIComponent(id)}`, {
+    update: async (idOrSchedule, opts) => {
+      const response = await this.#json(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}`, {
         method: "PUT",
         body: JSON.stringify(scheduleCreateBody(opts)),
         headers: { "content-type": "application/json" },
@@ -5199,23 +5200,23 @@ class HelmrClient {
       });
       return scheduleFromResponse(response);
     },
-    retrieve: async (id, opts = {}) => {
-      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(id)}`, requestSignal(opts.signal)));
+    retrieve: async (idOrSchedule, opts = {}) => {
+      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}`, requestSignal(opts.signal)));
     },
-    activate: async (id, opts = {}) => {
-      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(id)}/activate`, {
+    activate: async (idOrSchedule, opts = {}) => {
+      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}/activate`, {
         method: "POST",
         ...requestSignal(opts.signal)
       }));
     },
-    deactivate: async (id, opts = {}) => {
-      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(id)}/deactivate`, {
+    deactivate: async (idOrSchedule, opts = {}) => {
+      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}/deactivate`, {
         method: "POST",
         ...requestSignal(opts.signal)
       }));
     },
-    delete: async (id, opts = {}) => {
-      await this.#fetch(`/api/schedules/${encodeURIComponent(id)}`, {
+    delete: async (idOrSchedule, opts = {}) => {
+      await this.#fetch(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}`, {
         method: "DELETE",
         ...requestSignal(opts.signal)
       });
@@ -5637,12 +5638,24 @@ function publicAccessTokenCreateBody(opts) {
     scope: {
       type: opts.scope.type,
       session_id: sessionId(opts.scope.sessionId),
-      stream: validateStreamName(opts.scope.stream),
+      stream: publicAccessTokenStreamName(opts.scope),
       ...opts.scope.correlationId === undefined ? {} : { correlation_id: opts.scope.correlationId }
     },
     ...opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") },
     ...opts.maxUses === undefined ? {} : { max_uses: opts.maxUses }
   };
+}
+function publicAccessTokenStreamName(scope) {
+  if (typeof scope.stream === "string") {
+    return streamTargetName(scope.stream);
+  }
+  if (scope.type === "session.input.send" && scope.stream.direction !== "input") {
+    throw new Error("session.input.send public token scope requires an input stream");
+  }
+  if (scope.type === "session.output.read" && scope.stream.direction !== "output") {
+    throw new Error("session.output.read public token scope requires an output stream");
+  }
+  return streamTargetName(scope.stream);
 }
 function publicAccessTokenFromResponse(response) {
   return {
@@ -5938,6 +5951,9 @@ function scheduleFromResponse(response) {
     createdAt: response.created_at,
     updatedAt: response.updated_at
   };
+}
+function scheduleId(idOrSchedule) {
+  return typeof idOrSchedule === "string" ? idOrSchedule : idOrSchedule.id;
 }
 function tokenCreateBody(opts) {
   return {
@@ -6557,7 +6573,7 @@ var scheduledTaskPayloadSchema = {
       const timestamp = parseDateField(input["timestamp"], "timestamp");
       const lastTimestamp = parseOptionalDateField(input["lastTimestamp"], "lastTimestamp");
       const timezone = input["timezone"];
-      const scheduleId = input["scheduleId"];
+      const scheduleId2 = input["scheduleId"];
       const scheduleType = input["scheduleType"];
       const externalId = input["externalId"];
       const upcoming = input["upcoming"];
@@ -6565,7 +6581,7 @@ var scheduledTaskPayloadSchema = {
         ...timestamp.issues,
         ...lastTimestamp.issues,
         ...typeof timezone === "string" && timezone.trim() !== "" ? [] : [{ message: "expected string", path: ["timezone"] }],
-        ...typeof scheduleId === "string" && scheduleId.trim() !== "" ? [] : [{ message: "expected string", path: ["scheduleId"] }],
+        ...typeof scheduleId2 === "string" && scheduleId2.trim() !== "" ? [] : [{ message: "expected string", path: ["scheduleId"] }],
         ...scheduleType === "declarative" || scheduleType === "imperative" ? [] : [{ message: "expected declarative or imperative", path: ["scheduleType"] }],
         ...externalId === undefined || typeof externalId === "string" ? [] : [{ message: "expected string", path: ["externalId"] }],
         ...Array.isArray(upcoming) ? [] : [{ message: "expected array", path: ["upcoming"] }]
@@ -6580,7 +6596,7 @@ var scheduledTaskPayloadSchema = {
           timestamp: timestamp.value,
           ...lastTimestamp.value === undefined ? {} : { lastTimestamp: lastTimestamp.value },
           timezone,
-          scheduleId,
+          scheduleId: scheduleId2,
           scheduleType,
           ...externalId === undefined ? {} : { externalId },
           upcoming: upcomingDates.map((item) => item.value)
@@ -6612,27 +6628,36 @@ function getDefaultClient() {
   defaultClient ??= new HelmrClient;
   return defaultClient;
 }
+function defaultClientNamespace(key) {
+  return new Proxy({}, {
+    get(_target, property, receiver) {
+      return Reflect.get(getDefaultClient()[key], property, receiver);
+    }
+  });
+}
+var sessions = defaultClientNamespace("sessions");
 // sdk/typescript/src/index.ts
-var runs = new Proxy({}, {
-  get(_target, property, receiver) {
-    return Reflect.get(getDefaultClient().runs, property, receiver);
-  }
-});
-var workspaces = new Proxy({}, {
-  get(_target, property, receiver) {
-    return Reflect.get(getDefaultClient().workspaces, property, receiver);
-  }
-});
+var runs = defaultClientNamespace("runs");
+var workspaces = defaultClientNamespace("workspaces");
+var auth = defaultClientNamespace("auth");
 var streams = Object.freeze({
   input: createInputStream,
   output: createOutputStream
 });
-var tokens = Object.freeze({
+var runtimeTokens = {
   async create(opts = {}) {
     const token = runRuntimeIsActive() ? await getRunRuntime().createToken(normalizeRuntimeTokenCreateOptions(opts)) : await getDefaultClient().tokens.create(normalizeTokenCreateOptions(opts));
     return tokenHandle(token);
   },
   wait: tokenWaitHandle
+};
+var tokens = new Proxy({}, {
+  get(_target, property, receiver) {
+    if (Object.prototype.hasOwnProperty.call(runtimeTokens, property)) {
+      return Reflect.get(runtimeTokens, property, receiver);
+    }
+    return Reflect.get(getDefaultClient().tokens, property, receiver);
+  }
 });
 var timers = Object.freeze({
   waitFor(input) {
@@ -6664,15 +6689,13 @@ var logger = Object.freeze({
     getRunRuntime().log("error", values);
   }
 });
-var schedules = Object.freeze({
-  task,
-  create: (...args) => getDefaultClient().schedules.create(...args),
-  update: (...args) => getDefaultClient().schedules.update(...args),
-  list: (...args) => getDefaultClient().schedules.list(...args),
-  retrieve: (...args) => getDefaultClient().schedules.retrieve(...args),
-  activate: (...args) => getDefaultClient().schedules.activate(...args),
-  deactivate: (...args) => getDefaultClient().schedules.deactivate(...args),
-  delete: (...args) => getDefaultClient().schedules.delete(...args)
+var schedules = new Proxy({}, {
+  get(_target, property, receiver) {
+    if (property === "task") {
+      return task;
+    }
+    return Reflect.get(getDefaultClient().schedules, property, receiver);
+  }
 });
 function createInputStream(id, opts) {
   return inputStreamHandle(validateStreamName(id), opts?.schema);

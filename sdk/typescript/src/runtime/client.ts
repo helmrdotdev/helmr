@@ -207,13 +207,13 @@ export type PublicAccessTokenScope =
   | {
       readonly type: "session.input.send"
       readonly sessionId: string | TaskSessionHandle
-      readonly stream: string
+      readonly stream: string | InputStreamDefinition<any, any>
       readonly correlationId?: string
     }
   | {
       readonly type: "session.output.read"
       readonly sessionId: string | TaskSessionHandle
-      readonly stream: string
+      readonly stream: string | OutputStreamDefinition<any, any>
       readonly correlationId?: string
     }
 
@@ -569,12 +569,12 @@ export class WorkspaceStreamError extends Error {
 
 export interface SchedulesApi {
   readonly create: (opts: ScheduleCreateOptions) => Promise<Schedule>
-  readonly update: (id: string, opts: ScheduleUpdateOptions & RetrieveScheduleOptions) => Promise<Schedule>
+  readonly update: (idOrSchedule: ScheduleRef, opts: ScheduleUpdateOptions & RetrieveScheduleOptions) => Promise<Schedule>
   readonly list: (opts?: ListSchedulesOptions) => Promise<Schedule[]>
-  readonly retrieve: (id: string, opts?: RetrieveScheduleOptions) => Promise<Schedule>
-  readonly activate: (id: string, opts?: RetrieveScheduleOptions) => Promise<Schedule>
-  readonly deactivate: (id: string, opts?: RetrieveScheduleOptions) => Promise<Schedule>
-  readonly delete: (id: string, opts?: RetrieveScheduleOptions) => Promise<void>
+  readonly retrieve: (idOrSchedule: ScheduleRef, opts?: RetrieveScheduleOptions) => Promise<Schedule>
+  readonly activate: (idOrSchedule: ScheduleRef, opts?: RetrieveScheduleOptions) => Promise<Schedule>
+  readonly deactivate: (idOrSchedule: ScheduleRef, opts?: RetrieveScheduleOptions) => Promise<Schedule>
+  readonly delete: (idOrSchedule: ScheduleRef, opts?: RetrieveScheduleOptions) => Promise<void>
 }
 
 export interface ScheduleCreateOptions {
@@ -585,6 +585,7 @@ export interface ScheduleCreateOptions {
   readonly timezone?: string
   readonly active?: boolean
   readonly options?: ScheduleRunOptions
+  readonly signal?: AbortSignal
 }
 
 export type ScheduleUpdateOptions = Omit<ScheduleCreateOptions, "deduplicationKey"> & {
@@ -625,6 +626,8 @@ export interface Schedule {
   readonly createdAt: string
   readonly updatedAt: string
 }
+
+export type ScheduleRef = string | Schedule
 
 type TokenExpirationOptions =
   | {
@@ -1642,6 +1645,7 @@ export class HelmrClient {
         method: "POST",
         body: JSON.stringify(scheduleCreateBody(opts)),
         headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal),
       })
       return scheduleFromResponse(response)
     },
@@ -1649,8 +1653,8 @@ export class HelmrClient {
       const response = await this.#json<ListSchedulesResponse>("/api/schedules", requestSignal(opts.signal))
       return response.schedules.map(scheduleFromResponse)
     },
-    update: async (id: string, opts: ScheduleUpdateOptions & RetrieveScheduleOptions): Promise<Schedule> => {
-      const response = await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}`, {
+    update: async (idOrSchedule: ScheduleRef, opts: ScheduleUpdateOptions & RetrieveScheduleOptions): Promise<Schedule> => {
+      const response = await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}`, {
         method: "PUT",
         body: JSON.stringify(scheduleCreateBody(opts)),
         headers: { "content-type": "application/json" },
@@ -1658,29 +1662,29 @@ export class HelmrClient {
       })
       return scheduleFromResponse(response)
     },
-    retrieve: async (id: string, opts: RetrieveScheduleOptions = {}): Promise<Schedule> => {
+    retrieve: async (idOrSchedule: ScheduleRef, opts: RetrieveScheduleOptions = {}): Promise<Schedule> => {
       return scheduleFromResponse(
-        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}`, requestSignal(opts.signal)),
+        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}`, requestSignal(opts.signal)),
       )
     },
-    activate: async (id: string, opts: RetrieveScheduleOptions = {}): Promise<Schedule> => {
+    activate: async (idOrSchedule: ScheduleRef, opts: RetrieveScheduleOptions = {}): Promise<Schedule> => {
       return scheduleFromResponse(
-        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}/activate`, {
+        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}/activate`, {
           method: "POST",
           ...requestSignal(opts.signal),
         }),
       )
     },
-    deactivate: async (id: string, opts: RetrieveScheduleOptions = {}): Promise<Schedule> => {
+    deactivate: async (idOrSchedule: ScheduleRef, opts: RetrieveScheduleOptions = {}): Promise<Schedule> => {
       return scheduleFromResponse(
-        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}/deactivate`, {
+        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}/deactivate`, {
           method: "POST",
           ...requestSignal(opts.signal),
         }),
       )
     },
-    delete: async (id: string, opts: RetrieveScheduleOptions = {}): Promise<void> => {
-      await this.#fetch(`/api/schedules/${encodeURIComponent(id)}`, {
+    delete: async (idOrSchedule: ScheduleRef, opts: RetrieveScheduleOptions = {}): Promise<void> => {
+      await this.#fetch(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}`, {
         method: "DELETE",
         ...requestSignal(opts.signal),
       })
@@ -2508,12 +2512,25 @@ function publicAccessTokenCreateBody(opts: PublicAccessTokenCreateOptions): Reco
     scope: {
       type: opts.scope.type,
       session_id: sessionId(opts.scope.sessionId),
-      stream: validateStreamName(opts.scope.stream),
+      stream: publicAccessTokenStreamName(opts.scope),
       ...(opts.scope.correlationId === undefined ? {} : { correlation_id: opts.scope.correlationId }),
     },
     ...(opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") }),
     ...(opts.maxUses === undefined ? {} : { max_uses: opts.maxUses }),
   }
+}
+
+function publicAccessTokenStreamName(scope: PublicAccessTokenScope): string {
+  if (typeof scope.stream === "string") {
+    return streamTargetName(scope.stream)
+  }
+  if (scope.type === "session.input.send" && scope.stream.direction !== "input") {
+    throw new Error("session.input.send public token scope requires an input stream")
+  }
+  if (scope.type === "session.output.read" && scope.stream.direction !== "output") {
+    throw new Error("session.output.read public token scope requires an output stream")
+  }
+  return streamTargetName(scope.stream)
 }
 
 function publicAccessTokenFromResponse(response: PublicAccessTokenResponse): PublicAccessToken {
@@ -2829,6 +2846,10 @@ function scheduleFromResponse(response: ScheduleResponse): Schedule {
     createdAt: response.created_at,
     updatedAt: response.updated_at,
   }
+}
+
+function scheduleId(idOrSchedule: ScheduleRef): string {
+  return typeof idOrSchedule === "string" ? idOrSchedule : idOrSchedule.id
 }
 
 function tokenCreateBody(
