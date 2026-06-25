@@ -8,7 +8,7 @@ order: 370
 
 # TypeScript session starts
 
-Use the SDK from external TypeScript code when another service should start a Helmr task session. The task id must already exist in a deployment task source.
+Use the SDK from external TypeScript code when another service should start a Helmr task session. The selected task, whether passed as an imported task definition or a string id, must already exist in a deployment task source.
 
 ```ts
 import { HelmrClient } from "@helmr/sdk"
@@ -30,7 +30,7 @@ const started = await client.sessions.start(
 )
 ```
 
-`client.sessions.start()` and `sessions.start()` are the canonical APIs for starting or reusing a task session. `task(...)` returns a definition object only; pass that task object to the sessions namespace for payload input, output, and secrets type inference plus local payload schema validation. Pass a string task id when the caller is at an external boundary or the task id is dynamic. `externalId` identifies the durable session; `idempotencyKey` identifies one retry-safe start request. Use `startAndWait()` when the caller needs the first run's terminal output; use the returned run handle for compute/debug views:
+`client.sessions.start()` / `sessions.start()` and `client.sessions.startAndWait()` / `sessions.startAndWait()` are the canonical APIs for starting or reusing a task session. `task(...)` returns a definition object only; pass that task object to the sessions namespace for payload input, output, and secrets type inference plus local payload schema validation. Pass a string task id when the caller is at an external boundary or the task id is dynamic. `externalId` identifies the durable session; `idempotencyKey` identifies one retry-safe start request. Use `startAndWait()` when the caller needs the first run's terminal output; use the returned run handle for compute/debug views:
 
 ```ts
 const completed = await client.sessions.startAndWait(

@@ -27,8 +27,8 @@ Main surfaces:
 
 | API | Purpose |
 | --- | --- |
-| `client.sessions.start<typeof task>(id, payload, opts)` | Start or reuse a task session by task id and return the session plus first/current run handle. |
-| `client.sessions.startAndWait<typeof task>(id, payload, opts)` | Start or reuse a task session, then wait for the first run to become terminal or time out. The session remains open unless explicitly closed or cancelled. |
+| `client.sessions.start(taskObject, payload, opts)` / `client.sessions.start<typeof task>(id, payload, opts)` | Start or reuse a task session and return the session plus first/current run handle. Pass a task object for local payload validation and type inference; pass a string id for external boundaries or dynamic task ids. |
+| `client.sessions.startAndWait(taskObject, payload, opts)` / `client.sessions.startAndWait<typeof task>(id, payload, opts)` | Start or reuse a task session, then wait for the first run to become terminal or time out. The session remains open unless explicitly closed or cancelled. Pass a task object for local payload validation and type inference; pass a string id for external boundaries or dynamic task ids. |
 | `client.sessions.retrieve(session)` | Fetch current task session state. |
 | `client.sessions.open(session).input(stream).send(data)` | Append durable input to a session stream. |
 | `client.sessions.open(session).output(stream).list(opts)` | Read durable session output records from a cursor. |
