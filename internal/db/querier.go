@@ -184,6 +184,7 @@ type Querier interface {
 	GetSessionByExternalID(ctx context.Context, arg GetSessionByExternalIDParams) (Session, error)
 	GetSessionByOrgID(ctx context.Context, arg GetSessionByOrgIDParams) (Session, error)
 	GetSessionRunByRunID(ctx context.Context, arg GetSessionRunByRunIDParams) (SessionRun, error)
+	GetSessionRunRequest(ctx context.Context, arg GetSessionRunRequestParams) (SessionRunRequest, error)
 	GetSessionStartIdempotency(ctx context.Context, arg GetSessionStartIdempotencyParams) (GetSessionStartIdempotencyRow, error)
 	GetSessionStreamByName(ctx context.Context, arg GetSessionStreamByNameParams) (Stream, error)
 	GetStream(ctx context.Context, arg GetStreamParams) (Stream, error)

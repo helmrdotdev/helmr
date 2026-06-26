@@ -182,7 +182,148 @@ func (q *Queries) EnsureSessionRunRequestForStreamRecord(ctx context.Context, ar
 	return i, err
 }
 
+const getSessionRunRequest = `-- name: GetSessionRunRequest :one
+SELECT id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
+  FROM session_run_requests
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND id = $4
+`
+
+type GetSessionRunRequestParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetSessionRunRequest(ctx context.Context, arg GetSessionRunRequestParams) (SessionRunRequest, error) {
+	row := q.db.QueryRow(ctx, getSessionRunRequest,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ID,
+	)
+	var i SessionRunRequest
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.SessionID,
+		&i.StreamRecordID,
+		&i.StreamID,
+		&i.CauseKind,
+		&i.Status,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LastError,
+		&i.ClaimedAt,
+		&i.ClaimExpiresAt,
+		&i.ClaimOwner,
+		&i.RunID,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const markSessionRunRequestConsumedByActiveRun = `-- name: MarkSessionRunRequestConsumedByActiveRun :one
+WITH target AS MATERIALIZED (
+    SELECT id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
+      FROM session_run_requests
+     WHERE session_run_requests.org_id = $1
+       AND session_run_requests.project_id = $2
+       AND session_run_requests.environment_id = $3
+       AND session_run_requests.stream_record_id = $4
+       AND session_run_requests.status IN ('accepted', 'claimed', 'created')
+     FOR UPDATE
+),
+cancelled_runs AS (
+    UPDATE runs
+       SET status = 'cancelled',
+           execution_status = CASE
+             WHEN runs.execution_status = 'executing' THEN 'pending_cancel'::run_execution_status
+             ELSE 'finished'::run_execution_status
+           END,
+           terminal_outcome = 'cancelled',
+           current_run_lease_id = CASE
+             WHEN runs.execution_status = 'executing' THEN runs.current_run_lease_id
+             ELSE NULL
+           END,
+           error_message = 'stream record consumed by active run',
+           state_version = runs.state_version + 1,
+           finished_at = CASE
+             WHEN runs.execution_status = 'executing' THEN runs.finished_at
+             ELSE COALESCE(runs.finished_at, now())
+           END,
+           updated_at = now()
+      FROM target
+     WHERE target.status = 'created'
+       AND target.run_id IS NOT NULL
+       AND runs.org_id = target.org_id
+       AND runs.project_id = target.project_id
+       AND runs.environment_id = target.environment_id
+       AND runs.id = target.run_id
+       AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_materialization_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+),
+cancelled_attempts AS (
+    UPDATE run_attempts
+       SET status = 'cancelled',
+           error_message = 'stream record consumed by active run',
+           finished_at = CASE
+             WHEN cancelled_runs.execution_status = 'pending_cancel' THEN run_attempts.finished_at
+             ELSE COALESCE(run_attempts.finished_at, now())
+           END,
+           updated_at = now()
+      FROM cancelled_runs
+     WHERE run_attempts.org_id = cancelled_runs.org_id
+       AND run_attempts.run_id = cancelled_runs.id
+       AND run_attempts.id = cancelled_runs.current_attempt_id
+    RETURNING run_attempts.id
+),
+cancelled_queue AS (
+    UPDATE run_queue_items
+       SET status = 'cancelled',
+           dispatch_generation = dispatch_generation + 1,
+           last_error = 'stream record consumed by active run',
+           updated_at = now(),
+           finished_at = now()
+      FROM cancelled_runs
+     WHERE run_queue_items.org_id = cancelled_runs.org_id
+       AND run_queue_items.run_id = cancelled_runs.id
+       AND run_queue_items.status IN ('queued', 'published', 'reserved', 'parked')
+       AND cancelled_runs.execution_status <> 'pending_cancel'
+    RETURNING run_queue_items.run_id
+),
+ended_session_runs AS (
+    UPDATE session_runs
+       SET ended_at = COALESCE(session_runs.ended_at, now())
+      FROM cancelled_runs
+     WHERE session_runs.org_id = cancelled_runs.org_id
+       AND session_runs.project_id = cancelled_runs.project_id
+       AND session_runs.environment_id = cancelled_runs.environment_id
+       AND session_runs.session_id = cancelled_runs.session_id
+       AND session_runs.run_id = cancelled_runs.id
+       AND cancelled_runs.execution_status <> 'pending_cancel'
+    RETURNING session_runs.id
+),
+restored_session_current AS (
+    UPDATE sessions
+       SET current_run_id = $5,
+           updated_at = now()
+      FROM target
+     WHERE sessions.org_id = target.org_id
+       AND sessions.project_id = target.project_id
+       AND sessions.environment_id = target.environment_id
+       AND sessions.id = target.session_id
+       AND sessions.current_run_id = target.run_id
+       AND target.status = 'created'
+    RETURNING sessions.id
+)
 UPDATE session_run_requests
    SET status = 'skipped',
        last_error = 'consumed_by_active_run',
@@ -191,12 +332,12 @@ UPDATE session_run_requests
        claim_expires_at = NULL,
        claim_owner = '',
        updated_at = now()
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND stream_record_id = $4
-   AND status IN ('accepted', 'claimed')
-RETURNING id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
+  FROM target
+ WHERE session_run_requests.org_id = target.org_id
+   AND session_run_requests.project_id = target.project_id
+   AND session_run_requests.environment_id = target.environment_id
+   AND session_run_requests.id = target.id
+RETURNING session_run_requests.id, session_run_requests.org_id, session_run_requests.project_id, session_run_requests.environment_id, session_run_requests.session_id, session_run_requests.stream_record_id, session_run_requests.stream_id, session_run_requests.cause_kind, session_run_requests.status, session_run_requests.attempts, session_run_requests.next_attempt_at, session_run_requests.last_error, session_run_requests.claimed_at, session_run_requests.claim_expires_at, session_run_requests.claim_owner, session_run_requests.run_id, session_run_requests.error_message, session_run_requests.created_at, session_run_requests.updated_at
 `
 
 type MarkSessionRunRequestConsumedByActiveRunParams struct {
@@ -204,6 +345,7 @@ type MarkSessionRunRequestConsumedByActiveRunParams struct {
 	ProjectID      pgtype.UUID `json:"project_id"`
 	EnvironmentID  pgtype.UUID `json:"environment_id"`
 	StreamRecordID pgtype.UUID `json:"stream_record_id"`
+	ActiveRunID    pgtype.UUID `json:"active_run_id"`
 }
 
 func (q *Queries) MarkSessionRunRequestConsumedByActiveRun(ctx context.Context, arg MarkSessionRunRequestConsumedByActiveRunParams) (SessionRunRequest, error) {
@@ -212,6 +354,7 @@ func (q *Queries) MarkSessionRunRequestConsumedByActiveRun(ctx context.Context, 
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.StreamRecordID,
+		arg.ActiveRunID,
 	)
 	var i SessionRunRequest
 	err := row.Scan(

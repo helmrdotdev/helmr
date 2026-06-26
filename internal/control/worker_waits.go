@@ -215,6 +215,7 @@ func (s *Server) matchBufferedWorkerStreamWait(ctx context.Context, scope db.Get
 		OrgID:          scope.OrgID,
 		ProjectID:      scope.ProjectID,
 		EnvironmentID:  scope.EnvironmentID,
+		ActiveRunID:    scope.RunID,
 		StreamRecordID: record.ID,
 	}); err != nil && !isNoRows(err) {
 		return nil, false, err

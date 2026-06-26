@@ -22,6 +22,14 @@ ON CONFLICT (org_id, project_id, environment_id, stream_record_id)
 DO UPDATE SET updated_at = session_run_requests.updated_at
 RETURNING *;
 
+-- name: GetSessionRunRequest :one
+SELECT *
+  FROM session_run_requests
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id);
+
 -- name: ClaimDueSessionRunRequests :many
 WITH eligible AS (
     SELECT id
@@ -118,6 +126,99 @@ UPDATE session_run_requests
 	RETURNING *;
 
 -- name: MarkSessionRunRequestConsumedByActiveRun :one
+WITH target AS MATERIALIZED (
+    SELECT *
+      FROM session_run_requests
+     WHERE session_run_requests.org_id = sqlc.arg(org_id)
+       AND session_run_requests.project_id = sqlc.arg(project_id)
+       AND session_run_requests.environment_id = sqlc.arg(environment_id)
+       AND session_run_requests.stream_record_id = sqlc.arg(stream_record_id)
+       AND session_run_requests.status IN ('accepted', 'claimed', 'created')
+     FOR UPDATE
+),
+cancelled_runs AS (
+    UPDATE runs
+       SET status = 'cancelled',
+           execution_status = CASE
+             WHEN runs.execution_status = 'executing' THEN 'pending_cancel'::run_execution_status
+             ELSE 'finished'::run_execution_status
+           END,
+           terminal_outcome = 'cancelled',
+           current_run_lease_id = CASE
+             WHEN runs.execution_status = 'executing' THEN runs.current_run_lease_id
+             ELSE NULL
+           END,
+           error_message = 'stream record consumed by active run',
+           state_version = runs.state_version + 1,
+           finished_at = CASE
+             WHEN runs.execution_status = 'executing' THEN runs.finished_at
+             ELSE COALESCE(runs.finished_at, now())
+           END,
+           updated_at = now()
+      FROM target
+     WHERE target.status = 'created'
+       AND target.run_id IS NOT NULL
+       AND runs.org_id = target.org_id
+       AND runs.project_id = target.project_id
+       AND runs.environment_id = target.environment_id
+       AND runs.id = target.run_id
+       AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+    RETURNING runs.*
+),
+cancelled_attempts AS (
+    UPDATE run_attempts
+       SET status = 'cancelled',
+           error_message = 'stream record consumed by active run',
+           finished_at = CASE
+             WHEN cancelled_runs.execution_status = 'pending_cancel' THEN run_attempts.finished_at
+             ELSE COALESCE(run_attempts.finished_at, now())
+           END,
+           updated_at = now()
+      FROM cancelled_runs
+     WHERE run_attempts.org_id = cancelled_runs.org_id
+       AND run_attempts.run_id = cancelled_runs.id
+       AND run_attempts.id = cancelled_runs.current_attempt_id
+    RETURNING run_attempts.id
+),
+cancelled_queue AS (
+    UPDATE run_queue_items
+       SET status = 'cancelled',
+           dispatch_generation = dispatch_generation + 1,
+           last_error = 'stream record consumed by active run',
+           updated_at = now(),
+           finished_at = now()
+      FROM cancelled_runs
+     WHERE run_queue_items.org_id = cancelled_runs.org_id
+       AND run_queue_items.run_id = cancelled_runs.id
+       AND run_queue_items.status IN ('queued', 'published', 'reserved', 'parked')
+       AND cancelled_runs.execution_status <> 'pending_cancel'
+    RETURNING run_queue_items.run_id
+),
+ended_session_runs AS (
+    UPDATE session_runs
+       SET ended_at = COALESCE(session_runs.ended_at, now())
+      FROM cancelled_runs
+     WHERE session_runs.org_id = cancelled_runs.org_id
+       AND session_runs.project_id = cancelled_runs.project_id
+       AND session_runs.environment_id = cancelled_runs.environment_id
+       AND session_runs.session_id = cancelled_runs.session_id
+       AND session_runs.run_id = cancelled_runs.id
+       AND cancelled_runs.execution_status <> 'pending_cancel'
+    RETURNING session_runs.id
+),
+restored_session_current AS (
+    UPDATE sessions
+       SET current_run_id = sqlc.arg(active_run_id),
+           updated_at = now()
+      FROM target
+     WHERE sessions.org_id = target.org_id
+       AND sessions.project_id = target.project_id
+       AND sessions.environment_id = target.environment_id
+       AND sessions.id = target.session_id
+       AND sessions.current_run_id = target.run_id
+       AND target.status = 'created'
+    RETURNING sessions.id
+)
 UPDATE session_run_requests
    SET status = 'skipped',
        last_error = 'consumed_by_active_run',
@@ -126,12 +227,12 @@ UPDATE session_run_requests
        claim_expires_at = NULL,
        claim_owner = '',
        updated_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND stream_record_id = sqlc.arg(stream_record_id)
-   AND status IN ('accepted', 'claimed')
-RETURNING *;
+  FROM target
+ WHERE session_run_requests.org_id = target.org_id
+   AND session_run_requests.project_id = target.project_id
+   AND session_run_requests.environment_id = target.environment_id
+   AND session_run_requests.id = target.id
+RETURNING session_run_requests.*;
 
 -- name: MarkSessionRunRequestFailed :one
 UPDATE session_run_requests
