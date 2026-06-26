@@ -345,8 +345,8 @@ RETURNING *;
 UPDATE sessions
    SET status = 'closed',
        closed_at = now(),
-       closed_reason = sqlc.arg(reason),
-       terminal_reason = jsonb_build_object('reason', sqlc.arg(reason), 'origin', 'api'),
+       closed_reason = sqlc.arg(reason)::text,
+       terminal_reason = jsonb_build_object('reason', sqlc.arg(reason)::text, 'origin', 'api'),
        updated_at = now()
  WHERE sessions.org_id = sqlc.arg(org_id)
    AND sessions.project_id = sqlc.arg(project_id)

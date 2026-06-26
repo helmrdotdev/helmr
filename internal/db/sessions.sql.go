@@ -110,8 +110,8 @@ const closeSession = `-- name: CloseSession :one
 UPDATE sessions
    SET status = 'closed',
        closed_at = now(),
-       closed_reason = $1,
-       terminal_reason = jsonb_build_object('reason', $1, 'origin', 'api'),
+       closed_reason = $1::text,
+       terminal_reason = jsonb_build_object('reason', $1::text, 'origin', 'api'),
        updated_at = now()
  WHERE sessions.org_id = $2
    AND sessions.project_id = $3

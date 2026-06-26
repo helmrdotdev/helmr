@@ -93,6 +93,12 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
+		INSERT INTO deployment_queues (org_id, project_id, environment_id, deployment_id, name)
+		VALUES ($1, $2, $3, $4, 'default')
+	`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployment_sandboxes (
 			id, org_id, project_id, environment_id, deployment_id, sandbox_id,
 			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,

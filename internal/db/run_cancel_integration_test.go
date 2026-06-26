@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestCancelRunTerminalizesQueuedSession(t *testing.T) {
+func TestCancelRunTerminalizesQueuedRunAndLeavesSessionOpen(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -44,11 +44,11 @@ func TestCancelRunTerminalizesQueuedSession(t *testing.T) {
 	`, sessionID).Scan(&sessionStatus, &currentRunID, &endedAt); err != nil {
 		t.Fatal(err)
 	}
-	if sessionStatus != db.SessionStatusCancelled {
-		t.Fatalf("session status = %s, want cancelled", sessionStatus)
+	if sessionStatus != db.SessionStatusOpen {
+		t.Fatalf("session status = %s, want open", sessionStatus)
 	}
-	if currentRunID.Valid {
-		t.Fatalf("current_run_id should be cleared, got %v", currentRunID)
+	if currentRunID != pgvalue.UUID(ids.runID) {
+		t.Fatalf("current_run_id = %v, want %v", currentRunID, ids.runID)
 	}
 	if !endedAt.Valid {
 		t.Fatal("session_runs.ended_at was not set")
@@ -146,8 +146,8 @@ func TestCancelSessionLeavesPendingCancelRunForRelease(t *testing.T) {
 	`, sessionID, ids.runID).Scan(&sessionStatus, &currentRunID, &endedAt, &runExecutionStatus); err != nil {
 		t.Fatal(err)
 	}
-	if sessionStatus != db.SessionStatusCancelled || currentRunID.Valid || !endedAt.Valid {
-		t.Fatalf("session after cancel = status %s current %v ended %v, want cancelled/no-current/ended", sessionStatus, currentRunID, endedAt)
+	if sessionStatus != db.SessionStatusCancelled || currentRunID != pgvalue.UUID(ids.runID) || !endedAt.Valid {
+		t.Fatalf("session after cancel = status %s current %v ended %v, want cancelled/current-run/ended", sessionStatus, currentRunID, endedAt)
 	}
 	if runExecutionStatus != db.RunExecutionStatusPendingCancel {
 		t.Fatalf("run execution status = %s, want pending_cancel", runExecutionStatus)
@@ -265,9 +265,9 @@ func seedSessionRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids i
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO session_runs (
-			id, org_id, project_id, environment_id, session_id, run_id, deployment_id, turn_index
+			id, org_id, project_id, environment_id, session_id, run_id, deployment_id, turn_index, reason
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 1)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 1, 'initial')
 	`, uuid.Must(uuid.NewV7()), ids.orgID, ids.projectID, ids.environmentID, sessionID, ids.runID, ids.deploymentID); err != nil {
 		t.Fatal(err)
 	}

@@ -401,17 +401,20 @@ func TestFailStaleResolvedRunWaitsRejectsExpiredRuntimeCheckpoint(t *testing.T) 
 	if pgvalue.MustUUIDValue(storedWait.WorkspaceVersionID) != currentVersion {
 		t.Fatalf("workspace current version changed from parked truth: wait=%s current=%s", pgvalue.MustUUIDValue(storedWait.WorkspaceVersionID), currentVersion)
 	}
-	var sessionReason []byte
+	var snapshotReason []byte
 	if err := pool.QueryRow(ctx, `
-		SELECT terminal_reason
-		  FROM sessions
+		SELECT reason
+		  FROM run_snapshots
 		 WHERE org_id = $1
-		   AND id = $2
-	`, ids.orgID, pgvalue.MustUUIDValue(run.SessionID)).Scan(&sessionReason); err != nil {
+		   AND run_id = $2
+		   AND transition = 'run.failed'
+		 ORDER BY version DESC
+		 LIMIT 1
+	`, ids.orgID, ids.runID).Scan(&snapshotReason); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(sessionReason), "runtime_checkpoint_expired") || !strings.Contains(string(sessionReason), checkpointID.String()) {
-		t.Fatalf("session terminal reason = %s, want expired checkpoint audit details", string(sessionReason))
+	if !strings.Contains(string(snapshotReason), "runtime_checkpoint_expired") || !strings.Contains(string(snapshotReason), checkpointID.String()) {
+		t.Fatalf("run snapshot reason = %s, want expired checkpoint audit details", string(snapshotReason))
 	}
 }
 

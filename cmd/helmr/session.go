@@ -321,15 +321,6 @@ func writeSessionSummary(cmd *cobra.Command, session api.SessionResponse) {
 	fmt.Fprintf(cmd.OutOrStdout(), "Workspace: %s\n", session.WorkspaceID)
 }
 
-func sessionStatusTerminal(status string) bool {
-	switch strings.TrimSpace(status) {
-	case "closed", "cancelled", "expired":
-		return true
-	default:
-		return false
-	}
-}
-
 func addScopeFlags(cmd *cobra.Command, projectID *string, environmentID *string) {
 	cmd.Flags().StringVarP(projectID, "project", "p", "", "Project slug or ID.")
 	cmd.Flags().StringVarP(environmentID, "env", "e", "", "Environment slug or ID.")
