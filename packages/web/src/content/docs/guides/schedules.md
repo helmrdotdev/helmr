@@ -56,17 +56,12 @@ When the deployment is promoted, Helmr reconciles declarative schedules for the 
 
 ## Create a schedule from TypeScript
 
-Use the runtime client when a trusted service should create or manage schedules:
+Use `schedules.*` with the default client, or `client.schedules.*` when a trusted service needs explicit credentials or multiple control-plane targets:
 
 ```ts
-import { HelmrClient } from "@helmr/sdk"
+import { schedules } from "@helmr/sdk"
 
-const client = new HelmrClient({
-  url: process.env.HELMR_API_URL,
-  apiKey: process.env.HELMR_API_KEY,
-})
-
-const schedule = await client.schedules.create({
+const schedule = await schedules.create({
   deduplicationKey: "daily-report-main",
   task: "daily-report",
   externalId: "main",
@@ -83,7 +78,7 @@ The task must already exist in the selected deployment. Any task secrets must al
 Manage imperative schedules through the same client:
 
 ```ts
-await client.schedules.update(schedule.id, {
+await schedules.update(schedule, {
   task: "daily-report",
   externalId: "main",
   cron: "30 9 * * *",
@@ -93,12 +88,12 @@ await client.schedules.update(schedule.id, {
   },
 })
 
-await client.schedules.deactivate(schedule.id)
-await client.schedules.activate(schedule.id)
-await client.schedules.delete(schedule.id)
+await schedules.deactivate(schedule)
+await schedules.activate(schedule)
+await schedules.delete(schedule)
 ```
 
-`client.schedules.update()` replaces the imperative schedule definition and selected environment instance settings, and does not accept `deduplicationKey`. Send the task, cron, and run options that should remain on future scheduled runs.
+`schedules.update()` / `client.schedules.update()` replaces the imperative schedule definition and selected environment instance settings, and does not accept `deduplicationKey`. Send the task, cron, and run options that should remain on future scheduled runs.
 
 ## Scheduled payload
 

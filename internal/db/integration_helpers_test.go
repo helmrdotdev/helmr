@@ -93,6 +93,12 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
+		INSERT INTO deployment_queues (org_id, project_id, environment_id, deployment_id, name)
+		VALUES ($1, $2, $3, $4, 'default')
+	`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployment_sandboxes (
 			id, org_id, project_id, environment_id, deployment_id, sandbox_id,
 			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
@@ -153,54 +159,54 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 	`, initialVersionID, ids.orgID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
-	taskSessionID := uuid.Must(uuid.NewV7())
+	sessionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO task_sessions (
+		INSERT INTO sessions (
 			id, org_id, project_id, environment_id, task_id,
 			initial_deployment_id, active_deployment_id, workspace_id
 		)
 		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5, $6)
-	`, taskSessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID); err != nil {
+	`, sessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
 			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
-			task_session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
+			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'waiting', 'waiting', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, ids.runID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, taskSessionID); err != nil {
+	`, ids.runID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		UPDATE task_sessions
+		UPDATE sessions
 		   SET current_run_id = $1
 		 WHERE org_id = $2
 		   AND id = $3
-	`, ids.runID, ids.orgID, taskSessionID); err != nil {
+	`, ids.runID, ids.orgID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	return ids
 }
 
-func seedTaskSessionForRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) uuid.UUID {
+func seedSessionForRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) uuid.UUID {
 	t.Helper()
-	var taskSessionID uuid.UUID
+	var sessionID uuid.UUID
 	if err := pool.QueryRow(ctx, `
-		SELECT task_session_id
+		SELECT session_id
 		  FROM runs
 		 WHERE org_id = $1
 		   AND id = $2
-	`, ids.orgID, ids.runID).Scan(&taskSessionID); err != nil {
+	`, ids.orgID, ids.runID).Scan(&sessionID); err != nil {
 		t.Fatal(err)
 	}
-	return taskSessionID
+	return sessionID
 }
 
-func seedRunningTaskSessionLease(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) (taskSessionID uuid.UUID, runLeaseID uuid.UUID, workerID uuid.UUID) {
+func seedRunningSessionLease(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) (sessionID uuid.UUID, runLeaseID uuid.UUID, workerID uuid.UUID) {
 	t.Helper()
-	taskSessionID = seedTaskSessionForRun(t, ctx, pool, ids)
+	sessionID = seedSessionForRun(t, ctx, pool, ids)
 	runLeaseID = uuid.Must(uuid.NewV7())
 	attemptID := uuid.Must(uuid.NewV7())
 	workerID = uuid.Must(uuid.NewV7())
@@ -252,7 +258,7 @@ func seedRunningTaskSessionLease(t *testing.T, ctx context.Context, pool *pgxpoo
 	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE runs
-		   SET task_session_id = $1,
+		   SET session_id = $1,
 		       workspace_id = $6,
 		       current_run_lease_id = $2,
 		       current_attempt_id = $3,
@@ -262,7 +268,7 @@ func seedRunningTaskSessionLease(t *testing.T, ctx context.Context, pool *pgxpoo
 		       active_started_at = now()
 		 WHERE org_id = $4
 		   AND id = $5
-	`, taskSessionID, runLeaseID, attemptID, ids.orgID, ids.runID, ids.workspaceID); err != nil {
+	`, sessionID, runLeaseID, attemptID, ids.orgID, ids.runID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -285,7 +291,7 @@ func seedRunningTaskSessionLease(t *testing.T, ctx context.Context, pool *pgxpoo
 	`, ids.runID, ids.orgID, dispatchMessageID, workerID); err != nil {
 		t.Fatal(err)
 	}
-	return taskSessionID, runLeaseID, workerID
+	return sessionID, runLeaseID, workerID
 }
 
 func requestWorkspaceMaterializationForTest(ctx context.Context, queries *db.Queries, arg db.EnsureWorkspaceMaterializationRequestedParams) (db.EnsureWorkspaceMaterializationRequestedRow, error) {

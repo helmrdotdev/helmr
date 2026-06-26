@@ -100,7 +100,7 @@ async function runWorkspacePtySmoke(): Promise<PtySmokeEvidence> {
 
     const sessionsAfter = await client.sessions.list({ ...scope, taskId: config.taskId, limit: 100 })
     const createdSessions = sessionsAfter.filter((after) => !sessionsBefore.some((before) => before.id === after.id))
-    assert(!createdSessions.some((session) => session.workspaceId === workspace.id), "direct workspace pty created a task session")
+    assert(!createdSessions.some((session) => session.workspaceId === workspace.id), "direct workspace pty created a session")
 
     return {
       marker: config.marker,

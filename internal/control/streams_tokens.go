@@ -22,15 +22,19 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
-	defaultStreamListLimit = int32(100)
-	defaultTokenListLimit  = int32(100)
-	defaultTokenTimeout    = 7 * 24 * time.Hour
-	tokenCallbackKeyID     = "default"
-	publicAccessTokenTTL   = 30 * 24 * time.Hour
+	defaultStreamListLimit          = int32(100)
+	defaultTokenListLimit           = int32(100)
+	defaultTokenTimeout             = 7 * 24 * time.Hour
+	tokenCallbackKeyID              = "default"
+	publicAccessTokenTTL            = 30 * 24 * time.Hour
+	sessionRunRequestClaimTTL       = 30 * time.Second
+	sessionRunRequestReconcileEvery = time.Second
+	sessionRunRequestClaimLimit     = int32(10)
 )
 
 var (
@@ -49,11 +53,15 @@ func (s *Server) listSessionStreams(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := s.db.ListTaskSessionStreams(r.Context(), db.ListTaskSessionStreamsParams{
+	if err := s.materializeSessionStreamCatalog(r.Context(), session); err != nil {
+		writeError(w, errors.New("list session streams"))
+		return
+	}
+	rows, err := s.db.ListSessionStreams(r.Context(), db.ListSessionStreamsParams{
 		OrgID:         session.OrgID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
-		TaskSessionID: session.ID,
+		SessionID:     session.ID,
 	})
 	if err != nil {
 		writeError(w, errors.New("list session streams"))
@@ -64,6 +72,35 @@ func (s *Server) listSessionStreams(w http.ResponseWriter, r *http.Request) {
 		streams = append(streams, streamResponse(row))
 	}
 	writeJSON(w, http.StatusOK, api.ListSessionStreamsResponse{Streams: streams})
+}
+
+func (s *Server) materializeSessionStreamCatalog(ctx context.Context, session db.Session) error {
+	if !session.ActiveDeploymentID.Valid {
+		return nil
+	}
+	deploymentStreams, err := s.db.ListDeploymentStreamsForDeployment(ctx, db.ListDeploymentStreamsForDeploymentParams{
+		OrgID:         session.OrgID,
+		ProjectID:     session.ProjectID,
+		EnvironmentID: session.EnvironmentID,
+		DeploymentID:  session.ActiveDeploymentID,
+	})
+	if err != nil {
+		return err
+	}
+	for _, deploymentStream := range deploymentStreams {
+		if _, err := s.db.EnsureSessionStream(ctx, db.EnsureSessionStreamParams{
+			ID:                 pgvalue.UUID(uuid.New()),
+			OrgID:              session.OrgID,
+			ProjectID:          session.ProjectID,
+			EnvironmentID:      session.EnvironmentID,
+			SessionID:          session.ID,
+			DeploymentStreamID: deploymentStream.ID,
+			Metadata:           []byte("{}"),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) appendSessionInputStream(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +156,7 @@ func (s *Server) appendSessionInputStreamWithPublicAccessToken(w http.ResponseWr
 		return
 	}
 	tokenID := pgvalue.MustUUIDValue(consumedToken.ID).String()
-	record, err := s.appendStreamRecord(r.Context(), store, session, stream, db.StreamDirectionInput, db.StreamRecordSourceTypePublicAccessToken, tokenID, consumedToken.ID, request)
+	appended, err := s.appendStreamRecord(r.Context(), store, session, stream, db.StreamDirectionInput, db.StreamRecordSourceTypePublicAccessToken, tokenID, consumedToken.ID, request)
 	if err != nil {
 		s.writeStreamTokenError(w, err)
 		return
@@ -128,9 +165,15 @@ func (s *Server) appendSessionInputStreamWithPublicAccessToken(w http.ResponseWr
 		writeError(w, errors.New("commit public stream input transaction"))
 		return
 	}
-	s.publishSessionInputStreamWakeup(r.Context(), session.OrgID, stream.ID, record.Sequence)
-	s.requeueResolvedRunWaits(r.Context(), session.OrgID)
-	writeJSON(w, http.StatusCreated, appendStreamRecordResponse(record))
+	s.publishSessionInputStreamWakeup(r.Context(), session.OrgID, stream.ID, appended.record.Sequence)
+	if appended.resolvedWaitCount > 0 {
+		s.requeueResolvedRunWaits(r.Context(), session.OrgID)
+	}
+	for _, runID := range s.reconcileAcceptedSessionRunRequests(r.Context(), session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
+		appended.continuationRunID = runID
+		appended.continuationStatus = "created"
+	}
+	writeJSON(w, http.StatusCreated, appendStreamRecordResponse(appended.record, appended.continuationStatus))
 }
 
 func (s *Server) readSessionOutputStreamWithPublicAccessToken(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +215,7 @@ func (s *Server) publicSessionOutputStreamReadPreflight(w http.ResponseWriter, r
 	s.writeBrowserPublicAccessPreflight(w, r, "GET")
 }
 
-func (s *Server) readOutputStreamRecord(ctx context.Context, store db.Querier, session db.TaskSession, stream db.Stream, correlationID pgtype.Text, r *http.Request) (api.ReadStreamRecordResponse, error) {
+func (s *Server) readOutputStreamRecord(ctx context.Context, store db.Querier, session db.Session, stream db.Stream, correlationID pgtype.Text, r *http.Request) (api.ReadStreamRecordResponse, error) {
 	after, err := streamAfterSequence(r)
 	if err != nil {
 		return api.ReadStreamRecordResponse{}, badRequest(err)
@@ -218,7 +261,7 @@ func (s *Server) appendSessionStreamRecord(w http.ResponseWriter, r *http.Reques
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
 	}
-	record, err := s.appendStreamRecord(r.Context(), store, session, stream, direction, sourceType, string(sourceType), publicAccessTokenID, request)
+	appended, err := s.appendStreamRecord(r.Context(), store, session, stream, direction, sourceType, string(sourceType), publicAccessTokenID, request)
 	if err != nil {
 		s.writeStreamTokenError(w, err)
 		return
@@ -230,29 +273,63 @@ func (s *Server) appendSessionStreamRecord(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if direction == db.StreamDirectionInput {
-		s.publishSessionInputStreamWakeup(r.Context(), session.OrgID, stream.ID, record.Sequence)
-		s.requeueResolvedRunWaits(r.Context(), session.OrgID)
+		s.publishSessionInputStreamWakeup(r.Context(), session.OrgID, stream.ID, appended.record.Sequence)
+		if appended.resolvedWaitCount > 0 {
+			s.requeueResolvedRunWaits(r.Context(), session.OrgID)
+		}
+		for _, runID := range s.reconcileAcceptedSessionRunRequests(r.Context(), session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
+			appended.continuationRunID = runID
+			appended.continuationStatus = "created"
+		}
 	}
-	writeJSON(w, http.StatusCreated, appendStreamRecordResponse(record))
+	writeJSON(w, http.StatusCreated, appendStreamRecordResponse(appended.record, appended.continuationStatus))
 }
 
-func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, session db.TaskSession, stream db.Stream, direction db.StreamDirection, sourceType db.StreamRecordSourceType, sourceID string, publicAccessTokenID pgtype.UUID, request api.AppendStreamRecordRequest) (db.AppendStreamRecordRow, error) {
+type appendedStreamRecord struct {
+	record             db.AppendStreamRecordRow
+	resolvedWaitCount  int
+	continuationRunID  pgtype.UUID
+	continuationStatus string
+}
+
+func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, session db.Session, stream db.Stream, direction db.StreamDirection, sourceType db.StreamRecordSourceType, sourceID string, publicAccessTokenID pgtype.UUID, request api.AppendStreamRecordRequest) (appendedStreamRecord, error) {
+	if direction == db.StreamDirectionInput {
+		locked, err := store.LockSession(ctx, db.LockSessionParams{
+			OrgID:         session.OrgID,
+			ProjectID:     session.ProjectID,
+			EnvironmentID: session.EnvironmentID,
+			ID:            session.ID,
+		})
+		if err != nil {
+			return appendedStreamRecord{}, err
+		}
+		if locked.Status == db.SessionStatusExpired {
+			return appendedStreamRecord{}, gone(errSessionExpired)
+		}
+		if locked.Status != db.SessionStatusOpen {
+			return appendedStreamRecord{}, conflict(errSessionTerminated)
+		}
+		if locked.ExpiresAt.Valid && !locked.ExpiresAt.Time.After(time.Now()) {
+			return appendedStreamRecord{}, gone(errSessionExpired)
+		}
+		session = locked
+	}
 	data := request.Data
 	if len(data) == 0 {
 		data = json.RawMessage(`null`)
 	}
 	if !json.Valid(data) {
-		return db.AppendStreamRecordRow{}, badRequest(errors.New("data must be valid JSON"))
+		return appendedStreamRecord{}, badRequest(errors.New("data must be valid JSON"))
 	}
 	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
 	if err != nil {
-		return db.AppendStreamRecordRow{}, badRequest(err)
+		return appendedStreamRecord{}, badRequest(err)
 	}
 	correlationID := strings.TrimSpace(request.CorrelationID)
 	contentType := firstNonEmptyString(strings.TrimSpace(request.ContentType), "application/json")
 	fingerprint, err := streamRecordFingerprint(data, correlationID, contentType)
 	if err != nil {
-		return db.AppendStreamRecordRow{}, err
+		return appendedStreamRecord{}, err
 	}
 	sourceID = strings.TrimSpace(sourceID)
 	if sourceID == "" {
@@ -275,25 +352,436 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 		PublicAccessTokenID:    publicAccessTokenID,
 	})
 	if isNoRows(err) {
-		return db.AppendStreamRecordRow{}, errStreamDirectionMismatch
+		return appendedStreamRecord{}, errStreamDirectionMismatch
 	}
 	if err != nil {
-		return db.AppendStreamRecordRow{}, err
+		return appendedStreamRecord{}, err
 	}
 	if row.IdempotencyFingerprintMismatch {
-		return row, conflict(errIdempotencyFingerprint)
+		return appendedStreamRecord{record: row}, conflict(errIdempotencyFingerprint)
 	}
+	appended := appendedStreamRecord{record: row}
 	if direction == db.StreamDirectionInput {
-		if _, err := store.ResolveStreamWaitsForStream(ctx, db.ResolveStreamWaitsForStreamParams{
+		resolved, err := store.ResolveStreamWaitsForStream(ctx, db.ResolveStreamWaitsForStreamParams{
 			OrgID:         session.OrgID,
 			ProjectID:     session.ProjectID,
 			EnvironmentID: session.EnvironmentID,
 			StreamID:      stream.ID,
-		}); err != nil {
-			return db.AppendStreamRecordRow{}, err
+		})
+		if err != nil {
+			return appendedStreamRecord{}, err
+		}
+		appended.resolvedWaitCount = len(resolved)
+		if !row.IsCached && appended.resolvedWaitCount == 0 {
+			if _, err := store.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
+				ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				OrgID:          session.OrgID,
+				ProjectID:      session.ProjectID,
+				EnvironmentID:  session.EnvironmentID,
+				SessionID:      session.ID,
+				StreamRecordID: row.ID,
+				StreamID:       stream.ID,
+			}); err != nil {
+				return appendedStreamRecord{}, err
+			}
+			appended.continuationStatus = "accepted_run_pending"
+		} else if row.IsCached {
+			appended.continuationStatus = "duplicate"
 		}
 	}
-	return row, nil
+	return appended, nil
+}
+
+func (s *Server) reconcileAcceptedSessionRunRequests(ctx context.Context, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, sessionID pgtype.UUID) []pgtype.UUID {
+	if s.db == nil {
+		return nil
+	}
+	return s.reconcileDueSessionRunRequests(ctx, orgID, projectID, environmentID, sessionID, sessionRunRequestClaimLimit)
+}
+
+func (s *Server) RunSessionRunRequestReconciler(ctx context.Context) {
+	ticker := time.NewTicker(sessionRunRequestReconcileEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.reconcileDueSessionRunRequests(ctx, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, sessionRunRequestClaimLimit)
+		}
+	}
+}
+
+func (s *Server) reconcileDueSessionRunRequests(ctx context.Context, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, sessionID pgtype.UUID, limit int32) []pgtype.UUID {
+	claimOwner := "control:" + uuid.Must(uuid.NewV7()).String()
+	requests, err := s.db.ClaimDueSessionRunRequests(ctx, db.ClaimDueSessionRunRequestsParams{
+		ClaimTtl:      pgvalue.Interval(sessionRunRequestClaimTTL),
+		ClaimOwner:    claimOwner,
+		OrgID:         orgID,
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		SessionID:     sessionID,
+		LimitCount:    limit,
+	})
+	if err != nil {
+		s.log.Error("claim due session run requests failed", "session_id", pgvalue.UUIDString(sessionID), "error", err)
+		return nil
+	}
+	runIDs := make([]pgtype.UUID, 0, len(requests))
+	for _, request := range requests {
+		runID, err := s.reconcileClaimedSessionRunRequest(ctx, request)
+		if err != nil {
+			s.log.Error("reconcile session run request failed", "request_id", pgvalue.MustUUIDValue(request.ID).String(), "error", err)
+			continue
+		}
+		if runID.Valid {
+			runIDs = append(runIDs, runID)
+			s.enqueueContinuationRun(ctx, request.OrgID, runID)
+		}
+	}
+	return runIDs
+}
+
+func (s *Server) reconcileClaimedSessionRunRequest(ctx context.Context, request db.SessionRunRequest) (pgtype.UUID, error) {
+	store, tx, err := s.beginControlTransaction(ctx)
+	if err != nil {
+		return pgtype.UUID{}, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	session := db.Session{
+		ID:            request.SessionID,
+		OrgID:         request.OrgID,
+		ProjectID:     request.ProjectID,
+		EnvironmentID: request.EnvironmentID,
+	}
+	record, err := store.GetStreamRecord(ctx, db.GetStreamRecordParams{
+		OrgID:         request.OrgID,
+		ProjectID:     request.ProjectID,
+		EnvironmentID: request.EnvironmentID,
+		ID:            request.StreamRecordID,
+	})
+	if isNoRows(err) {
+		if _, markErr := store.MarkSessionRunRequestFailed(ctx, db.MarkSessionRunRequestFailedParams{
+			OrgID:         request.OrgID,
+			ProjectID:     request.ProjectID,
+			EnvironmentID: request.EnvironmentID,
+			ID:            request.ID,
+			ClaimOwner:    request.ClaimOwner,
+			Reason:        "stream_record_not_found",
+		}); markErr != nil {
+			return pgtype.UUID{}, markErr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return pgtype.UUID{}, err
+		}
+		tx = nil
+		return pgtype.UUID{}, nil
+	}
+	if err != nil {
+		if retryErr := s.releaseSessionRunRequestForRetry(ctx, store, request, err.Error(), sessionRunRequestRetryAfter(request, "")); retryErr != nil {
+			return pgtype.UUID{}, retryErr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return pgtype.UUID{}, err
+		}
+		tx = nil
+		return pgtype.UUID{}, nil
+	}
+	runID, status, err := s.tryCreateContinuationRunForRequest(ctx, store, session, request, record)
+	if err != nil {
+		if retryErr := s.releaseSessionRunRequestForRetry(ctx, store, request, err.Error(), sessionRunRequestRetryAfter(request, status)); retryErr != nil {
+			return pgtype.UUID{}, retryErr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return pgtype.UUID{}, err
+		}
+		tx = nil
+		return pgtype.UUID{}, nil
+	}
+	if status == "accepted_run_pending" {
+		if err := s.releaseSessionRunRequestForRetry(ctx, store, request, "current_run_not_terminal", sessionRunRequestRetryAfter(request, status)); err != nil {
+			return pgtype.UUID{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return pgtype.UUID{}, err
+	}
+	tx = nil
+	return runID, nil
+}
+
+func (s *Server) releaseSessionRunRequestForRetry(ctx context.Context, store db.Querier, request db.SessionRunRequest, lastError string, retryAfter time.Duration) error {
+	_, err := store.ReleaseSessionRunRequestForRetry(ctx, db.ReleaseSessionRunRequestForRetryParams{
+		RetryAfter:    pgvalue.Interval(retryAfter),
+		LastError:     lastError,
+		OrgID:         request.OrgID,
+		ProjectID:     request.ProjectID,
+		EnvironmentID: request.EnvironmentID,
+		ID:            request.ID,
+		ClaimOwner:    request.ClaimOwner,
+	})
+	return err
+}
+
+func sessionRunRequestRetryAfter(request db.SessionRunRequest, status string) time.Duration {
+	if status == "accepted_run_pending" {
+		return time.Second
+	}
+	switch {
+	case request.Attempts <= 1:
+		return 250 * time.Millisecond
+	case request.Attempts == 2:
+		return time.Second
+	case request.Attempts == 3:
+		return 5 * time.Second
+	default:
+		return 30 * time.Second
+	}
+}
+
+func (s *Server) tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, session db.Session, request db.SessionRunRequest, record db.StreamRecord) (pgtype.UUID, string, error) {
+	if request.Status == "created" && request.RunID.Valid {
+		return request.RunID, "duplicate", nil
+	}
+	if request.Status != "accepted" && request.Status != "claimed" {
+		return pgtype.UUID{}, string(request.Status), nil
+	}
+	locked, err := store.LockSession(ctx, db.LockSessionParams{
+		OrgID:         session.OrgID,
+		ProjectID:     session.ProjectID,
+		EnvironmentID: session.EnvironmentID,
+		ID:            session.ID,
+	})
+	if err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	if locked.Status != db.SessionStatusOpen {
+		reason := "session_not_open"
+		if locked.Status == db.SessionStatusExpired {
+			reason = "session_expired"
+		}
+		if _, err := store.MarkSessionRunRequestSkipped(ctx, db.MarkSessionRunRequestSkippedParams{
+			OrgID:         request.OrgID,
+			ProjectID:     request.ProjectID,
+			EnvironmentID: request.EnvironmentID,
+			ID:            request.ID,
+			ClaimOwner:    request.ClaimOwner,
+			Reason:        reason,
+		}); err != nil {
+			return pgtype.UUID{}, "", err
+		}
+		return pgtype.UUID{}, "skipped", nil
+	}
+	if locked.ExpiresAt.Valid && !locked.ExpiresAt.Time.After(time.Now()) {
+		if _, err := store.MarkSessionRunRequestSkipped(ctx, db.MarkSessionRunRequestSkippedParams{
+			OrgID:         request.OrgID,
+			ProjectID:     request.ProjectID,
+			EnvironmentID: request.EnvironmentID,
+			ID:            request.ID,
+			ClaimOwner:    request.ClaimOwner,
+			Reason:        "session_expired",
+		}); err != nil {
+			return pgtype.UUID{}, "", err
+		}
+		return pgtype.UUID{}, "skipped", nil
+	}
+	if !locked.CurrentRunID.Valid {
+		if _, err := store.MarkSessionRunRequestFailed(ctx, db.MarkSessionRunRequestFailedParams{
+			OrgID:         request.OrgID,
+			ProjectID:     request.ProjectID,
+			EnvironmentID: request.EnvironmentID,
+			ID:            request.ID,
+			ClaimOwner:    request.ClaimOwner,
+			Reason:        "session_has_no_current_run",
+		}); err != nil {
+			return pgtype.UUID{}, "", err
+		}
+		return pgtype.UUID{}, "failed", nil
+	}
+	previousRun, err := store.GetRun(ctx, db.GetRunParams{OrgID: locked.OrgID, ID: locked.CurrentRunID})
+	if err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	if !runStatusTerminal(previousRun.Status) {
+		return pgtype.UUID{}, "accepted_run_pending", nil
+	}
+	previousSessionRun, err := store.GetSessionRunByRunID(ctx, db.GetSessionRunByRunIDParams{
+		OrgID:         locked.OrgID,
+		ProjectID:     locked.ProjectID,
+		EnvironmentID: locked.EnvironmentID,
+		SessionID:     locked.ID,
+		RunID:         locked.CurrentRunID,
+	})
+	if err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	deploymentTask, err := store.GetDeploymentTask(ctx, db.GetDeploymentTaskParams{
+		OrgID:         locked.OrgID,
+		ProjectID:     locked.ProjectID,
+		EnvironmentID: locked.EnvironmentID,
+		DeploymentID:  locked.ActiveDeploymentID,
+		TaskID:        locked.TaskID,
+	})
+	if err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	maxDurationSeconds, err := runMaxDurationSeconds(0, deploymentTask.MaxActiveDurationMs)
+	if err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	lockedRetryPolicy, err := resolvedRetryPolicy(nil, deploymentTask.RetryPolicy)
+	if err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	scheduling, err := s.resolveRunScheduling(api.CreateRunOptions{}, deploymentTask)
+	if err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	traceID, err := tracing.NewTraceID()
+	if err != nil {
+		return pgtype.UUID{}, "", fmt.Errorf("generate continuation run trace id: %w", err)
+	}
+	rootSpanID, err := tracing.NewSpanID()
+	if err != nil {
+		return pgtype.UUID{}, "", fmt.Errorf("generate continuation run root span id: %w", err)
+	}
+	cause, err := json.Marshal(map[string]any{
+		"kind":      "stream_record",
+		"record_id": pgvalue.MustUUIDValue(record.ID).String(),
+		"stream_id": pgvalue.MustUUIDValue(record.StreamID).String(),
+		"sequence":  record.Sequence,
+	})
+	if err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	secretNames, err := deploymentTaskSecretNames(deploymentTask.SecretDeclarations)
+	if err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	createdPayload, err := runCreatedEventPayload(locked.TaskID, previousRun.Payload, maxDurationSeconds, secretNames, lockedRetryPolicy, locked.Metadata, locked.Tags, "input", cause)
+	if err != nil {
+		return pgtype.UUID{}, "", fmt.Errorf("encode continuation run created event: %w", err)
+	}
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	run, err := store.CreateScopedRun(ctx, db.CreateScopedRunParams{
+		ID:                    runID,
+		OrgID:                 locked.OrgID,
+		ProjectID:             locked.ProjectID,
+		EnvironmentID:         locked.EnvironmentID,
+		DeploymentID:          deploymentTask.DeploymentID,
+		DeploymentTaskID:      deploymentTask.ID,
+		WorkspaceID:           locked.WorkspaceID,
+		DeploymentVersion:     deploymentTask.DeploymentVersion,
+		ApiVersion:            deploymentTask.ApiVersion,
+		SdkVersion:            deploymentTask.SdkVersion,
+		CliVersion:            deploymentTask.CliVersion,
+		TaskID:                locked.TaskID,
+		SessionID:             locked.ID,
+		Payload:               previousRun.Payload,
+		Metadata:              locked.Metadata,
+		Tags:                  locked.Tags,
+		LockedRetryPolicy:     lockedRetryPolicy,
+		QueueName:             scheduling.queueName,
+		QueueConcurrencyLimit: scheduling.queueConcurrencyLimit,
+		ConcurrencyKey:        scheduling.concurrencyKey,
+		Priority:              scheduling.priority,
+		QueueTimestamp:        scheduling.queueTimestamp,
+		Ttl:                   scheduling.ttl,
+		QueuedExpiresAt:       scheduling.queuedExpiresAt,
+		MaxActiveDurationMs:   int64(maxDurationSeconds) * 1000,
+		TraceID:               traceID,
+		RootSpanID:            rootSpanID,
+		EventPayload:          createdPayload,
+	})
+	if err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	materializationRequest, err := json.Marshal(map[string]string{
+		"source": "session_input",
+		"run_id": pgvalue.MustUUIDValue(run.ID).String(),
+	})
+	if err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	materialization, err := store.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         locked.OrgID,
+		ProjectID:     locked.ProjectID,
+		EnvironmentID: locked.EnvironmentID,
+		WorkspaceID:   locked.WorkspaceID,
+		Priority:      scheduling.priority,
+		Request:       materializationRequest,
+	})
+	if err != nil {
+		if isNoRows(err) {
+			return pgtype.UUID{}, "", s.workspaceMaterializationPrerequisiteErrorWithStore(ctx, store, locked.OrgID, locked.ProjectID, locked.EnvironmentID, locked.WorkspaceID)
+		}
+		return pgtype.UUID{}, "", err
+	}
+	if err := store.SetQueuedRunWorkspaceMaterialization(ctx, db.SetQueuedRunWorkspaceMaterializationParams{
+		OrgID:                      locked.OrgID,
+		RunID:                      run.ID,
+		WorkspaceID:                locked.WorkspaceID,
+		WorkspaceMaterializationID: materialization.ID,
+	}); err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	if _, err := store.CreateSessionRun(ctx, db.CreateSessionRunParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         locked.OrgID,
+		ProjectID:     locked.ProjectID,
+		EnvironmentID: locked.EnvironmentID,
+		SessionID:     locked.ID,
+		RunID:         run.ID,
+		DeploymentID:  deploymentTask.DeploymentID,
+		PreviousRunID: locked.CurrentRunID,
+		TurnIndex:     previousSessionRun.TurnIndex + 1,
+		Reason:        "input",
+	}); err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	if _, err := store.SetSessionCurrentRun(ctx, db.SetSessionCurrentRunParams{
+		OrgID:         locked.OrgID,
+		ProjectID:     locked.ProjectID,
+		EnvironmentID: locked.EnvironmentID,
+		SessionID:     locked.ID,
+		RunID:         run.ID,
+	}); err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	if _, err := store.MarkSessionRunRequestCreated(ctx, db.MarkSessionRunRequestCreatedParams{
+		OrgID:         request.OrgID,
+		ProjectID:     request.ProjectID,
+		EnvironmentID: request.EnvironmentID,
+		ID:            request.ID,
+		ClaimOwner:    request.ClaimOwner,
+		RunID:         run.ID,
+	}); err != nil {
+		return pgtype.UUID{}, "", err
+	}
+	return run.ID, "created", nil
+}
+
+func runStatusTerminal(status db.RunStatus) bool {
+	switch status {
+	case db.RunStatusSucceeded, db.RunStatusFailed, db.RunStatusCancelled, db.RunStatusExpired:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) enqueueContinuationRun(ctx context.Context, orgID pgtype.UUID, runID pgtype.UUID) {
+	if s.runEnqueuer == nil {
+		return
+	}
+	if _, err := s.runEnqueuer.EnqueueRun(ctx, orgID, runID); err != nil {
+		s.log.Error("enqueue continuation run failed", "run_id", pgvalue.MustUUIDValue(runID).String(), "error", err)
+	}
 }
 
 func (s *Server) listSessionStreamRecords(w http.ResponseWriter, r *http.Request, direction db.StreamDirection) {
@@ -332,81 +820,55 @@ func (s *Server) listSessionStreamRecords(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, api.ListStreamRecordsResponse{Records: out})
 }
 
-func (s *Server) authorizeSessionStreamRequest(w http.ResponseWriter, r *http.Request, permission auth.Permission) (db.TaskSession, bool) {
+func (s *Server) authorizeSessionStreamRequest(w http.ResponseWriter, r *http.Request, permission auth.Permission) (db.Session, bool) {
 	sessionID, err := parseUUIDParam(r, "sessionID")
 	if err != nil {
 		writeError(w, badRequest(err))
-		return db.TaskSession{}, false
+		return db.Session{}, false
 	}
 	actor := actorFromContext(r.Context())
-	session, err := s.db.GetTaskSessionByOrgID(r.Context(), db.GetTaskSessionByOrgIDParams{
+	session, err := s.db.GetSessionByOrgID(r.Context(), db.GetSessionByOrgIDParams{
 		OrgID: pgvalue.UUID(actor.OrgID),
 		ID:    pgvalue.UUID(sessionID),
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errStreamNotFound))
-		return db.TaskSession{}, false
+		return db.Session{}, false
 	}
 	if err != nil {
-		writeError(w, errors.New("load task session"))
-		return db.TaskSession{}, false
+		writeError(w, errors.New("load session"))
+		return db.Session{}, false
 	}
 	if err := s.requireActorScopeForRecord(r, actor, session.ProjectID, session.EnvironmentID); err != nil {
 		if isNoRows(err) {
 			writeError(w, notFound(errStreamNotFound))
-			return db.TaskSession{}, false
+			return db.Session{}, false
 		}
 		writeError(w, badRequest(err))
-		return db.TaskSession{}, false
+		return db.Session{}, false
 	}
 	scope := auth.Scope{OrgID: actor.OrgID, ProjectID: pgvalue.MustUUIDValue(session.ProjectID).String(), EnvironmentID: pgvalue.MustUUIDValue(session.EnvironmentID).String()}
 	if !actor.HasPermission(permission, scope) {
 		writeError(w, forbidden(errPermissionRequired))
-		return db.TaskSession{}, false
+		return db.Session{}, false
 	}
 	return session, true
 }
 
-func (s *Server) authorizeSessionStreamResource(w http.ResponseWriter, r *http.Request, permission auth.Permission, direction db.StreamDirection) (db.TaskSession, db.Stream, bool) {
+func (s *Server) authorizeSessionStreamResource(w http.ResponseWriter, r *http.Request, permission auth.Permission, direction db.StreamDirection) (db.Session, db.Stream, bool) {
 	session, ok := s.authorizeSessionStreamRequest(w, r, permission)
 	if !ok {
-		return db.TaskSession{}, db.Stream{}, false
+		return db.Session{}, db.Stream{}, false
 	}
 	streamName := strings.TrimSpace(chi.URLParam(r, "stream"))
 	if err := validateSessionStreamName(streamName); err != nil {
 		writeError(w, badRequest(err))
-		return db.TaskSession{}, db.Stream{}, false
+		return db.Session{}, db.Stream{}, false
 	}
-	stream, err := s.db.GetTaskSessionStreamByName(r.Context(), db.GetTaskSessionStreamByNameParams{
-		OrgID:         session.OrgID,
-		ProjectID:     session.ProjectID,
-		EnvironmentID: session.EnvironmentID,
-		TaskSessionID: session.ID,
-		Name:          streamName,
-		Direction:     direction,
-	})
-	if isNoRows(err) {
-		opposite := db.StreamDirectionOutput
-		if direction == db.StreamDirectionOutput {
-			opposite = db.StreamDirectionInput
-		}
-		if _, oppositeErr := s.db.GetTaskSessionStreamByName(r.Context(), db.GetTaskSessionStreamByNameParams{
-			OrgID:         session.OrgID,
-			ProjectID:     session.ProjectID,
-			EnvironmentID: session.EnvironmentID,
-			TaskSessionID: session.ID,
-			Name:          streamName,
-			Direction:     opposite,
-		}); oppositeErr == nil {
-			writeError(w, conflict(errStreamDirectionMismatch))
-			return db.TaskSession{}, db.Stream{}, false
-		}
-		writeError(w, notFound(errStreamNotFound))
-		return db.TaskSession{}, db.Stream{}, false
-	}
+	stream, err := s.ensureSessionStream(r.Context(), s.db, session, session.ActiveDeploymentID, streamName, direction)
 	if err != nil {
-		writeError(w, errors.New("load stream"))
-		return db.TaskSession{}, db.Stream{}, false
+		s.writeStreamTokenError(w, err)
+		return db.Session{}, db.Stream{}, false
 	}
 	return session, stream, true
 }
@@ -511,52 +973,42 @@ func (s *Server) createPublicAccessToken(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-func (s *Server) resolvePublicAccessTokenScopeRequest(ctx context.Context, r *http.Request, actor auth.Actor, request api.PublicAccessTokenScopeRequest) (db.TaskSession, db.Stream, db.PublicAccessTokenScopeType, pgtype.Text, error) {
+func (s *Server) resolvePublicAccessTokenScopeRequest(ctx context.Context, r *http.Request, actor auth.Actor, request api.PublicAccessTokenScopeRequest) (db.Session, db.Stream, db.PublicAccessTokenScopeType, pgtype.Text, error) {
 	sessionID, err := uuid.Parse(strings.TrimSpace(request.SessionID))
 	if err != nil {
-		return db.TaskSession{}, db.Stream{}, "", pgtype.Text{}, badRequest(errors.New("scope.session_id must be a UUID"))
+		return db.Session{}, db.Stream{}, "", pgtype.Text{}, badRequest(errors.New("scope.session_id must be a UUID"))
 	}
 	direction, permission, scopeType, err := publicAccessTokenScopeContract(request.Type)
 	if err != nil {
-		return db.TaskSession{}, db.Stream{}, "", pgtype.Text{}, badRequest(err)
+		return db.Session{}, db.Stream{}, "", pgtype.Text{}, badRequest(err)
 	}
 	streamName := strings.TrimSpace(request.Stream)
 	if err := validateSessionStreamName(streamName); err != nil {
-		return db.TaskSession{}, db.Stream{}, "", pgtype.Text{}, badRequest(err)
+		return db.Session{}, db.Stream{}, "", pgtype.Text{}, badRequest(err)
 	}
-	session, err := s.db.GetTaskSessionByOrgID(ctx, db.GetTaskSessionByOrgIDParams{
+	session, err := s.db.GetSessionByOrgID(ctx, db.GetSessionByOrgIDParams{
 		OrgID: pgvalue.UUID(actor.OrgID),
 		ID:    pgvalue.UUID(sessionID),
 	})
 	if isNoRows(err) {
-		return db.TaskSession{}, db.Stream{}, "", pgtype.Text{}, notFound(errStreamNotFound)
+		return db.Session{}, db.Stream{}, "", pgtype.Text{}, notFound(errStreamNotFound)
 	}
 	if err != nil {
-		return db.TaskSession{}, db.Stream{}, "", pgtype.Text{}, err
+		return db.Session{}, db.Stream{}, "", pgtype.Text{}, err
 	}
 	if err := s.requireActorScopeForRecord(r, actor, session.ProjectID, session.EnvironmentID); err != nil {
 		if isNoRows(err) {
-			return db.TaskSession{}, db.Stream{}, "", pgtype.Text{}, notFound(errStreamNotFound)
+			return db.Session{}, db.Stream{}, "", pgtype.Text{}, notFound(errStreamNotFound)
 		}
-		return db.TaskSession{}, db.Stream{}, "", pgtype.Text{}, badRequest(err)
+		return db.Session{}, db.Stream{}, "", pgtype.Text{}, badRequest(err)
 	}
 	scope := auth.Scope{OrgID: actor.OrgID, ProjectID: pgvalue.MustUUIDValue(session.ProjectID).String(), EnvironmentID: pgvalue.MustUUIDValue(session.EnvironmentID).String()}
 	if !actor.HasPermission(permission, scope) {
-		return db.TaskSession{}, db.Stream{}, "", pgtype.Text{}, forbidden(errPermissionRequired)
+		return db.Session{}, db.Stream{}, "", pgtype.Text{}, forbidden(errPermissionRequired)
 	}
-	stream, err := s.db.GetTaskSessionStreamByName(ctx, db.GetTaskSessionStreamByNameParams{
-		OrgID:         session.OrgID,
-		ProjectID:     session.ProjectID,
-		EnvironmentID: session.EnvironmentID,
-		TaskSessionID: session.ID,
-		Name:          streamName,
-		Direction:     direction,
-	})
-	if isNoRows(err) {
-		return db.TaskSession{}, db.Stream{}, "", pgtype.Text{}, notFound(errStreamNotFound)
-	}
+	stream, err := s.ensureSessionStream(ctx, s.db, session, session.ActiveDeploymentID, streamName, direction)
 	if err != nil {
-		return db.TaskSession{}, db.Stream{}, "", pgtype.Text{}, err
+		return db.Session{}, db.Stream{}, "", pgtype.Text{}, err
 	}
 	correlationID := strings.TrimSpace(request.CorrelationID)
 	return session, stream, scopeType, pgtype.Text{String: correlationID, Valid: correlationID != ""}, nil
@@ -1013,42 +1465,42 @@ func (s *Server) consumePublicAccessTokenScope(ctx context.Context, store db.Que
 	return consumed, nil
 }
 
-func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, store db.Querier, raw string, scopeType db.PublicAccessTokenScopeType, direction db.StreamDirection, correlationID pgtype.Text) (db.TaskSession, db.Stream, db.PublicAccessToken, error) {
+func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, store db.Querier, raw string, scopeType db.PublicAccessTokenScopeType, direction db.StreamDirection, correlationID pgtype.Text) (db.Session, db.Stream, db.PublicAccessToken, error) {
 	sessionID, err := parseUUIDString(strings.TrimSpace(chi.URLParamFromCtx(ctx, "sessionID")), "sessionID")
 	if err != nil {
-		return db.TaskSession{}, db.Stream{}, db.PublicAccessToken{}, badRequest(err)
+		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, badRequest(err)
 	}
 	streamName := strings.TrimSpace(chi.URLParamFromCtx(ctx, "stream"))
 	if err := validateSessionStreamName(streamName); err != nil {
-		return db.TaskSession{}, db.Stream{}, db.PublicAccessToken{}, badRequest(err)
+		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, badRequest(err)
 	}
 	publicToken, err := s.lockActivePublicAccessToken(ctx, store, raw)
 	if err != nil {
-		return db.TaskSession{}, db.Stream{}, db.PublicAccessToken{}, err
+		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
-	session, err := store.GetTaskSessionByOrgID(ctx, db.GetTaskSessionByOrgIDParams{
+	session, err := store.GetSessionByOrgID(ctx, db.GetSessionByOrgIDParams{
 		OrgID: publicToken.OrgID,
 		ID:    pgvalue.UUID(sessionID),
 	})
 	if isNoRows(err) {
-		return db.TaskSession{}, db.Stream{}, db.PublicAccessToken{}, notFound(errStreamNotFound)
+		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, notFound(errStreamNotFound)
 	}
 	if err != nil {
-		return db.TaskSession{}, db.Stream{}, db.PublicAccessToken{}, err
+		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
-	stream, err := store.GetTaskSessionStreamByName(ctx, db.GetTaskSessionStreamByNameParams{
+	stream, err := store.GetSessionStreamByName(ctx, db.GetSessionStreamByNameParams{
 		OrgID:         publicToken.OrgID,
 		ProjectID:     publicToken.ProjectID,
 		EnvironmentID: publicToken.EnvironmentID,
-		TaskSessionID: session.ID,
+		SessionID:     session.ID,
 		Name:          streamName,
 		Direction:     direction,
 	})
 	if isNoRows(err) {
-		return db.TaskSession{}, db.Stream{}, db.PublicAccessToken{}, notFound(errStreamNotFound)
+		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, notFound(errStreamNotFound)
 	}
 	if err != nil {
-		return db.TaskSession{}, db.Stream{}, db.PublicAccessToken{}, err
+		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
 	if _, err := store.GetPublicAccessTokenStreamScope(ctx, db.GetPublicAccessTokenStreamScopeParams{
 		OrgID:               publicToken.OrgID,
@@ -1059,19 +1511,19 @@ func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, store db.
 		StreamID:            stream.ID,
 		CorrelationID:       correlationID,
 	}); isNoRows(err) {
-		return db.TaskSession{}, db.Stream{}, db.PublicAccessToken{}, forbidden(errTokenScopeDenied)
+		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, forbidden(errTokenScopeDenied)
 	} else if err != nil {
-		return db.TaskSession{}, db.Stream{}, db.PublicAccessToken{}, err
+		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
 	consumed, err := store.ConsumePublicAccessToken(ctx, db.ConsumePublicAccessTokenParams{
 		OrgID: publicToken.OrgID,
 		ID:    publicToken.ID,
 	})
 	if isNoRows(err) {
-		return db.TaskSession{}, db.Stream{}, db.PublicAccessToken{}, forbidden(errTokenScopeDenied)
+		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, forbidden(errTokenScopeDenied)
 	}
 	if err != nil {
-		return db.TaskSession{}, db.Stream{}, db.PublicAccessToken{}, err
+		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
 	return session, stream, consumed, nil
 }
@@ -1109,14 +1561,15 @@ func streamResponse(row db.Stream) api.StreamResponse {
 	}
 }
 
-func appendStreamRecordResponse(row db.AppendStreamRecordRow) api.AppendStreamRecordResponse {
+func appendStreamRecordResponse(row db.AppendStreamRecordRow, continuationStatus string) api.AppendStreamRecordResponse {
 	status := "created"
 	if row.IsCached {
 		status = "duplicate"
 	}
 	return api.AppendStreamRecordResponse{
-		Record:            streamRecordResponseFields(row.ID, row.StreamID, row.Sequence, row.Data, row.CorrelationID, row.ContentType, row.CreatedAt),
-		IdempotencyStatus: status,
+		Record:             streamRecordResponseFields(row.ID, row.StreamID, row.Sequence, row.Data, row.CorrelationID, row.ContentType, row.CreatedAt),
+		IdempotencyStatus:  status,
+		ContinuationStatus: continuationStatus,
 	}
 }
 

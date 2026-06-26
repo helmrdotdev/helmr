@@ -1,19 +1,20 @@
 import {
   markTask,
+  markQueueDefinition,
   type AnyTask,
   type NoPayload,
+  type QueueConfig,
+  type QueueDefinition,
   type SecretDecls,
   type Task,
   type TaskConfig,
-  type TaskQueueConfig,
   type TaskConfigWithPayload,
   type TaskConfigWithoutPayload,
   type TaskRunOptions,
   type TaskOutput,
   type TaskPayload,
-  type TaskStartPayload,
+  type SessionStartPayload,
 } from "./internal"
-import { startTask } from "./start"
 import type {
   PayloadSchema,
   PayloadSchemaInput,
@@ -35,15 +36,11 @@ export function task<TOutput = unknown, TSecrets extends SecretDecls = readonly 
 export function task(
   config: TaskConfigWithPayload<PayloadSchema<any, any>, any, SecretDecls> | TaskConfigWithoutPayload<any, SecretDecls>,
 ): AnyTask {
-  const marked = markTask(config)
-  Object.defineProperty(marked, "start", {
-    value: (...args: readonly unknown[]) => (startTask as (...values: readonly unknown[]) => unknown)(marked, ...args),
-  })
-  return marked
+  return markTask(config)
 }
 
-export function queue(config: TaskQueueConfig): TaskQueueConfig {
-  return Object.freeze({ ...config })
+export function queue(config: QueueConfig): QueueDefinition {
+  return markQueueDefinition(config)
 }
 
-export type { NoPayload, Task, TaskConfig, TaskOutput, TaskPayload, TaskQueueConfig, TaskRunOptions, TaskStartPayload }
+export type { NoPayload, QueueConfig, QueueDefinition, Task, TaskConfig, TaskOutput, TaskPayload, TaskRunOptions, SessionStartPayload }

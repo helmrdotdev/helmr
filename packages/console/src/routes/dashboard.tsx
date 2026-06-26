@@ -3,19 +3,19 @@ import { createQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show, type JSX } from "solid-js";
 import { formatRelative, StatusBadge } from "../features/runs/display";
 import { runHref } from "../features/runs/navigation";
-import { TaskSessionStatusBadge } from "../features/sessions/display";
+import { SessionActivityBadge, SessionStatusBadge } from "../features/sessions/display";
 import { sessionHref } from "../features/sessions/navigation";
 import { listRuns } from "../lib/runs";
 import { listSchedules } from "../lib/schedules";
 import { useScope } from "../lib/scope";
-import { listTaskSessions, type TaskSession } from "../lib/task-sessions";
+import { listSessions, type Session } from "../lib/sessions";
 import { ui } from "../ui/styles";
 
 function shortID(id: string | undefined): string {
   return id ? id.slice(0, 8) : "—";
 }
 
-function DashboardSessionRow(props: { session: TaskSession }) {
+function DashboardSessionRow(props: { session: Session }) {
   return (
     <tr>
       <td>
@@ -23,7 +23,8 @@ function DashboardSessionRow(props: { session: TaskSession }) {
           {props.session.task_id}
         </A>
       </td>
-      <td><TaskSessionStatusBadge status={props.session.status} /></td>
+      <td><SessionStatusBadge status={props.session.status} /></td>
+      <td><SessionActivityBadge activity={props.session.activity} /></td>
       <td><code>{shortID(props.session.workspace_id)}</code></td>
       <td><code>{shortID(props.session.current_run_id)}</code></td>
       <td><span class={ui.muted}>{formatRelative(props.session.updated_at)}</span></td>
@@ -58,14 +59,14 @@ export function Dashboard() {
     environmentID: scope.selectedEnvironmentID(),
   });
   const openSessions = createQuery(() => ({
-    queryKey: ["task-sessions", "dashboard", "open", scope.selectedProjectID(), scope.selectedEnvironmentID()],
-    queryFn: () => listTaskSessions({ ...runtimeScope(), status: "open", limit: 8 }),
+    queryKey: ["sessions", "dashboard", "open", scope.selectedProjectID(), scope.selectedEnvironmentID()],
+    queryFn: () => listSessions({ ...runtimeScope(), status: "open", limit: 8 }),
     enabled: !!scope.selectedProjectID() && !!scope.selectedEnvironmentID(),
     retry: false,
   }));
   const recentSessions = createQuery(() => ({
-    queryKey: ["task-sessions", "dashboard", "recent", scope.selectedProjectID(), scope.selectedEnvironmentID()],
-    queryFn: () => listTaskSessions({ ...runtimeScope(), status: "all", limit: 8 }),
+    queryKey: ["sessions", "dashboard", "recent", scope.selectedProjectID(), scope.selectedEnvironmentID()],
+    queryFn: () => listSessions({ ...runtimeScope(), status: "all", limit: 8 }),
     enabled: !!scope.selectedProjectID() && !!scope.selectedEnvironmentID(),
     retry: false,
   }));
@@ -92,7 +93,7 @@ export function Dashboard() {
         <div>
           <h1 class={ui.h1}>Dashboard</h1>
           <p class={ui.pageSubtitle}>
-            Current environment activity across task sessions, schedules, deployment state, and failed attempts.
+            Current environment activity across sessions, schedules, deployment state, and failed attempts.
           </p>
         </div>
       </div>
@@ -105,7 +106,7 @@ export function Dashboard() {
               fallback={
                 <DashboardPlaceholder>
                   <strong class="text-console-text">No open sessions.</strong>
-                  <span>Active task sessions will appear here.</span>
+                  <span>Active sessions will appear here.</span>
                 </DashboardPlaceholder>
               }
             >
@@ -115,6 +116,7 @@ export function Dashboard() {
                     <tr>
                       <th>Task</th>
                       <th>Status</th>
+                      <th>Activity</th>
                       <th>Workspace</th>
                       <th>Current run</th>
                       <th>Updated</th>
@@ -138,7 +140,7 @@ export function Dashboard() {
               fallback={
                 <DashboardPlaceholder>
                   <strong class="text-console-text">No sessions yet.</strong>
-                  <span>Started task sessions will appear here.</span>
+                  <span>Started sessions will appear here.</span>
                 </DashboardPlaceholder>
               }
             >
@@ -190,14 +192,14 @@ export function Dashboard() {
                       {(run) => (
                         <tr>
                           <td>
-                            <A href={runHref(run.id, run.task_session_id, run.project_id, run.environment_id)} class={"font-medium text-console-text hover:text-console-accent"}>
+                            <A href={runHref(run.id, run.session_id, run.project_id, run.environment_id)} class={"font-medium text-console-text hover:text-console-accent"}>
                               {run.task_id}
                             </A>
                           </td>
                           <td><StatusBadge status={run.status} /></td>
                           <td>
-                            <A href={sessionHref(run.task_session_id, run.project_id, run.environment_id)} class={"font-mono text-[11.5px] text-console-accent hover:text-console-accent-hover"}>
-                              {shortID(run.task_session_id)}
+                            <A href={sessionHref(run.session_id, run.project_id, run.environment_id)} class={"font-mono text-[11.5px] text-console-accent hover:text-console-accent-hover"}>
+                              {shortID(run.session_id)}
                             </A>
                           </td>
                           <td><span class={ui.muted}>{formatRelative(run.updated_at)}</span></td>
@@ -218,7 +220,7 @@ export function Dashboard() {
               fallback={
                 <DashboardPlaceholder>
                   <strong class="text-console-text">No schedules configured.</strong>
-                  <span>Scheduled task sessions will appear here.</span>
+                  <span>Scheduled sessions will appear here.</span>
                 </DashboardPlaceholder>
               }
             >

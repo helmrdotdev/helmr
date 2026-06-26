@@ -198,8 +198,8 @@ func (s *Server) matchBufferedWorkerStreamWait(ctx context.Context, scope db.Get
 	if err != nil {
 		return nil, false, err
 	}
-	session := db.TaskSession{
-		ID:            scope.TaskSessionID,
+	session := db.Session{
+		ID:            scope.SessionID,
 		OrgID:         scope.OrgID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
@@ -210,6 +210,15 @@ func (s *Server) matchBufferedWorkerStreamWait(ctx context.Context, scope db.Get
 	}
 	if !found {
 		return nil, false, nil
+	}
+	if _, err := s.db.MarkSessionRunRequestConsumedByActiveRun(ctx, db.MarkSessionRunRequestConsumedByActiveRunParams{
+		OrgID:          scope.OrgID,
+		ProjectID:      scope.ProjectID,
+		EnvironmentID:  scope.EnvironmentID,
+		ActiveRunID:    scope.RunID,
+		StreamRecordID: record.ID,
+	}); err != nil && !isNoRows(err) {
+		return nil, false, err
 	}
 	payload, err := json.Marshal(map[string]any{
 		"stream":   stream.Name,
@@ -234,17 +243,14 @@ func (s *Server) workerInputStreamWaitTarget(ctx context.Context, store db.Queri
 	if streamName == "" {
 		return workerStreamWaitParams{}, db.Stream{}, badRequest(errors.New("stream wait params.stream is required"))
 	}
-	stream, err := store.GetTaskSessionStreamByName(ctx, db.GetTaskSessionStreamByNameParams{
-		OrgID:         scope.OrgID,
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		TaskSessionID: scope.TaskSessionID,
-		Name:          streamName,
-		Direction:     db.StreamDirectionInput,
-	})
-	if isNoRows(err) {
-		return workerStreamWaitParams{}, db.Stream{}, errStreamNotFound
-	}
+	stream, err := s.ensureSessionStream(ctx, store, db.Session{
+		ID:                 scope.SessionID,
+		OrgID:              scope.OrgID,
+		ProjectID:          scope.ProjectID,
+		EnvironmentID:      scope.EnvironmentID,
+		ActiveDeploymentID: scope.DeploymentID,
+		TaskID:             scope.TaskID,
+	}, scope.DeploymentID, streamName, db.StreamDirectionInput)
 	if err != nil {
 		return workerStreamWaitParams{}, db.Stream{}, err
 	}

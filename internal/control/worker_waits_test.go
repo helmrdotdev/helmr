@@ -291,7 +291,7 @@ func newRunWaitControlStore() *runWaitControlStore {
 			ProjectID:                 pgvalue.UUID(projectID),
 			EnvironmentID:             pgvalue.UUID(environmentID),
 			RunID:                     pgvalue.UUID(runID),
-			TaskSessionID:             pgvalue.UUID(sessionID),
+			SessionID:                 pgvalue.UUID(sessionID),
 			WorkspaceID:               pgvalue.UUID(workspaceID),
 			CurrentRunLeaseID:         pgvalue.UUID(leaseID),
 			WorkspaceCurrentVersionID: pgvalue.UUID(workspaceVersionID),
@@ -342,7 +342,7 @@ func (s *runWaitControlStore) GetToken(context.Context, db.GetTokenParams) (db.T
 	return s.token, nil
 }
 
-func (s *runWaitControlStore) GetTaskSessionStreamByName(context.Context, db.GetTaskSessionStreamByNameParams) (db.Stream, error) {
+func (s *runWaitControlStore) GetSessionStreamByName(context.Context, db.GetSessionStreamByNameParams) (db.Stream, error) {
 	if s.streamErr != nil {
 		return db.Stream{}, s.streamErr
 	}

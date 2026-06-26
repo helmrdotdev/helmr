@@ -31,6 +31,7 @@ func TestValidateWorkerDeploymentBuildResultRequiresReportedArtifacts(t *testing
 			QueueName:                  "task/deploy",
 			MaxDurationSeconds:         300,
 		}},
+		Queues: []api.WorkerDeploymentQueue{{Name: "task/deploy"}},
 		CASObjects: []api.CASObject{{
 			Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			SizeBytes: 1,
@@ -69,29 +70,6 @@ func TestDeploymentTaskMaxDurationSecondsRequiresBundleTaskValue(t *testing.T) {
 		Task: &bundlev0.TaskSpec{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "max_duration_seconds is required") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestDeploymentTaskConcurrencyLimitUsesBundleQueue(t *testing.T) {
-	limit := uint32(12)
-	value, err := deploymentTaskConcurrencyLimit(&bundlev0.Bundle{
-		Task: &bundlev0.TaskSpec{Queue: &bundlev0.QueueSpec{ConcurrencyLimit: &limit}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if value == nil || *value != 12 {
-		t.Fatalf("concurrency limit = %v, want 12", value)
-	}
-}
-
-func TestDeploymentTaskConcurrencyLimitRejectsOverflow(t *testing.T) {
-	limit := uint32(1 << 31)
-	_, err := deploymentTaskConcurrencyLimit(&bundlev0.Bundle{
-		Task: &bundlev0.TaskSpec{Queue: &bundlev0.QueueSpec{ConcurrencyLimit: &limit}},
-	})
-	if err == nil || !strings.Contains(err.Error(), "concurrency_limit 2147483648 exceeds int32") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -271,6 +249,7 @@ func TestValidateWorkerDeploymentBuildResultAcceptsDefaultQueueFromDottedTaskID(
 	result := validBuildResult()
 	result.Tasks[0].TaskID = "build.test"
 	result.Tasks[0].QueueName = "task/build.test"
+	result.Queues[0].Name = "task/build.test"
 	if _, err := ValidateBuildResult(result); err != nil {
 		t.Fatal(err)
 	}
@@ -284,6 +263,7 @@ func TestValidateWorkerDeploymentBuildResultAcceptsSharedSandboxDefinition(t *te
 	second.HandlerEntrypoint = "src/more.ts#deploy"
 	second.QueueName = "task/deploy.more"
 	result.Tasks = append(result.Tasks, second)
+	result.Queues = append(result.Queues, api.WorkerDeploymentQueue{Name: "task/deploy.more"})
 
 	if _, err := ValidateBuildResult(result); err != nil {
 		t.Fatal(err)
@@ -299,6 +279,7 @@ func TestValidateWorkerDeploymentBuildResultRejectsConflictingSandboxDefinition(
 	second.QueueName = "task/deploy.more"
 	second.SandboxFingerprint = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 	result.Tasks = append(result.Tasks, second)
+	result.Queues = append(result.Queues, api.WorkerDeploymentQueue{Name: "task/deploy.more"})
 
 	_, err := ValidateBuildResult(result)
 	if err == nil || !strings.Contains(err.Error(), `sandbox_id "default" has conflicting definitions`) {
@@ -318,9 +299,36 @@ func TestValidateWorkerDeploymentBuildResultRejectsUnsupportedBundleFormat(t *te
 func TestValidateWorkerDeploymentBuildResultRejectsZeroConcurrencyLimit(t *testing.T) {
 	result := validBuildResult()
 	limit := int32(0)
-	result.Tasks[0].ConcurrencyLimit = &limit
+	result.Queues[0].ConcurrencyLimit = &limit
 	_, err := ValidateBuildResult(result)
 	if err == nil || !strings.Contains(err.Error(), "concurrency_limit must be positive") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestValidateWorkerDeploymentBuildResultRejectsDuplicateQueue(t *testing.T) {
+	result := validBuildResult()
+	result.Queues = append(result.Queues, result.Queues[0])
+	_, err := ValidateBuildResult(result)
+	if err == nil || !strings.Contains(err.Error(), `duplicate queue "task/deploy"`) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestValidateWorkerDeploymentBuildResultRequiresQueueCatalog(t *testing.T) {
+	result := validBuildResult()
+	result.Queues = nil
+	_, err := ValidateBuildResult(result)
+	if err == nil || !strings.Contains(err.Error(), "deployment build must include queue catalog") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestValidateWorkerDeploymentBuildResultRejectsUndefinedTaskQueue(t *testing.T) {
+	result := validBuildResult()
+	result.Tasks[0].QueueName = "review/pr"
+	_, err := ValidateBuildResult(result)
+	if err == nil || !strings.Contains(err.Error(), `task "deploy" references undefined queue "review/pr"`) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -442,10 +450,10 @@ func TestDeploymentTaskSecretsMapsBundlePlacements(t *testing.T) {
 	}
 }
 
-func TestValidateWorkerDeploymentBuildResultValidatesTaskStreams(t *testing.T) {
+func TestValidateWorkerDeploymentBuildResultValidatesDeploymentStreams(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
 		result := validBuildResult()
-		result.Tasks[0].Streams = []api.WorkerDeploymentTaskStream{
+		result.Streams = []api.WorkerDeploymentStream{
 			{Name: "approval", Direction: "input", SchemaFingerprint: "sha256:schema", SchemaJSON: []byte(`{"kind":"standard-schema-v1"}`)},
 			{Name: "events", Direction: "output", SchemaJSON: []byte(`null`)},
 		}
@@ -456,7 +464,7 @@ func TestValidateWorkerDeploymentBuildResultValidatesTaskStreams(t *testing.T) {
 
 	t.Run("invalid direction", func(t *testing.T) {
 		result := validBuildResult()
-		result.Tasks[0].Streams = []api.WorkerDeploymentTaskStream{{Name: "approval", Direction: "sideways", SchemaJSON: []byte(`null`)}}
+		result.Streams = []api.WorkerDeploymentStream{{Name: "approval", Direction: "sideways", SchemaJSON: []byte(`null`)}}
 		_, err := ValidateBuildResult(result)
 		if err == nil || !strings.Contains(err.Error(), "direction must be input or output") {
 			t.Fatalf("ValidateBuildResult() error = %v", err)
@@ -465,7 +473,7 @@ func TestValidateWorkerDeploymentBuildResultValidatesTaskStreams(t *testing.T) {
 
 	t.Run("duplicate", func(t *testing.T) {
 		result := validBuildResult()
-		result.Tasks[0].Streams = []api.WorkerDeploymentTaskStream{
+		result.Streams = []api.WorkerDeploymentStream{
 			{Name: "approval", Direction: "input", SchemaJSON: []byte(`null`)},
 			{Name: "approval", Direction: "input", SchemaJSON: []byte(`null`)},
 		}
@@ -477,7 +485,7 @@ func TestValidateWorkerDeploymentBuildResultValidatesTaskStreams(t *testing.T) {
 
 	t.Run("invalid schema json", func(t *testing.T) {
 		result := validBuildResult()
-		result.Tasks[0].Streams = []api.WorkerDeploymentTaskStream{{Name: "approval", Direction: "input", SchemaJSON: []byte(`{`)}}
+		result.Streams = []api.WorkerDeploymentStream{{Name: "approval", Direction: "input", SchemaJSON: []byte(`{`)}}
 		_, err := ValidateBuildResult(result)
 		if err == nil || !strings.Contains(err.Error(), "schema_json must be valid JSON") {
 			t.Fatalf("ValidateBuildResult() error = %v", err)
@@ -520,6 +528,7 @@ func TestValidateWorkerDeploymentBuildResultChecksMediaTypes(t *testing.T) {
 			QueueName:                  "task/deploy",
 			MaxDurationSeconds:         300,
 		}},
+		Queues: []api.WorkerDeploymentQueue{{Name: "task/deploy"}},
 		CASObjects: []api.CASObject{{
 			Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			SizeBytes: 1,
@@ -588,6 +597,7 @@ func validBuildResult() api.WorkerDeploymentBuildResult {
 			QueueName:                  "task/deploy",
 			MaxDurationSeconds:         300,
 		}},
+		Queues:     []api.WorkerDeploymentQueue{{Name: "task/deploy"}},
 		CASObjects: validBuildResultCASObjects(),
 	}
 }

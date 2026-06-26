@@ -1629,7 +1629,6 @@ type TaskSpec struct {
 	Ttl                string                 `protobuf:"bytes,8,opt,name=ttl,proto3" json:"ttl,omitempty"`
 	Schedules          []*TaskScheduleSpec    `protobuf:"bytes,9,rep,name=schedules,proto3" json:"schedules,omitempty"`
 	RetryPolicyJson    string                 `protobuf:"bytes,10,opt,name=retry_policy_json,json=retryPolicyJson,proto3" json:"retry_policy_json,omitempty"`
-	Streams            []*StreamSpec          `protobuf:"bytes,11,rep,name=streams,proto3" json:"streams,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1734,92 +1733,16 @@ func (x *TaskSpec) GetRetryPolicyJson() string {
 	return ""
 }
 
-func (x *TaskSpec) GetStreams() []*StreamSpec {
-	if x != nil {
-		return x.Streams
-	}
-	return nil
-}
-
-type StreamSpec struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	Name              string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Direction         string                 `protobuf:"bytes,2,opt,name=direction,proto3" json:"direction,omitempty"`
-	SchemaFingerprint string                 `protobuf:"bytes,3,opt,name=schema_fingerprint,json=schemaFingerprint,proto3" json:"schema_fingerprint,omitempty"`
-	SchemaJson        string                 `protobuf:"bytes,4,opt,name=schema_json,json=schemaJson,proto3" json:"schema_json,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
-}
-
-func (x *StreamSpec) Reset() {
-	*x = StreamSpec{}
-	mi := &file_bundle_proto_msgTypes[27]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *StreamSpec) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*StreamSpec) ProtoMessage() {}
-
-func (x *StreamSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_bundle_proto_msgTypes[27]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use StreamSpec.ProtoReflect.Descriptor instead.
-func (*StreamSpec) Descriptor() ([]byte, []int) {
-	return file_bundle_proto_rawDescGZIP(), []int{27}
-}
-
-func (x *StreamSpec) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
-func (x *StreamSpec) GetDirection() string {
-	if x != nil {
-		return x.Direction
-	}
-	return ""
-}
-
-func (x *StreamSpec) GetSchemaFingerprint() string {
-	if x != nil {
-		return x.SchemaFingerprint
-	}
-	return ""
-}
-
-func (x *StreamSpec) GetSchemaJson() string {
-	if x != nil {
-		return x.SchemaJson
-	}
-	return ""
-}
-
 type QueueSpec struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Name             string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	ConcurrencyLimit *uint32                `protobuf:"varint,2,opt,name=concurrency_limit,json=concurrencyLimit,proto3,oneof" json:"concurrency_limit,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *QueueSpec) Reset() {
 	*x = QueueSpec{}
-	mi := &file_bundle_proto_msgTypes[28]
+	mi := &file_bundle_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1831,7 +1754,7 @@ func (x *QueueSpec) String() string {
 func (*QueueSpec) ProtoMessage() {}
 
 func (x *QueueSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_bundle_proto_msgTypes[28]
+	mi := &file_bundle_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1844,7 +1767,7 @@ func (x *QueueSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueueSpec.ProtoReflect.Descriptor instead.
 func (*QueueSpec) Descriptor() ([]byte, []int) {
-	return file_bundle_proto_rawDescGZIP(), []int{28}
+	return file_bundle_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *QueueSpec) GetName() string {
@@ -1852,13 +1775,6 @@ func (x *QueueSpec) GetName() string {
 		return x.Name
 	}
 	return ""
-}
-
-func (x *QueueSpec) GetConcurrencyLimit() uint32 {
-	if x != nil && x.ConcurrencyLimit != nil {
-		return *x.ConcurrencyLimit
-	}
-	return 0
 }
 
 type TaskScheduleSpec struct {
@@ -1873,7 +1789,7 @@ type TaskScheduleSpec struct {
 
 func (x *TaskScheduleSpec) Reset() {
 	*x = TaskScheduleSpec{}
-	mi := &file_bundle_proto_msgTypes[29]
+	mi := &file_bundle_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1885,7 +1801,7 @@ func (x *TaskScheduleSpec) String() string {
 func (*TaskScheduleSpec) ProtoMessage() {}
 
 func (x *TaskScheduleSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_bundle_proto_msgTypes[29]
+	mi := &file_bundle_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1898,7 +1814,7 @@ func (x *TaskScheduleSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskScheduleSpec.ProtoReflect.Descriptor instead.
 func (*TaskScheduleSpec) Descriptor() ([]byte, []int) {
-	return file_bundle_proto_rawDescGZIP(), []int{29}
+	return file_bundle_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *TaskScheduleSpec) GetId() string {
@@ -2040,7 +1956,7 @@ const file_bundle_proto_rawDesc = "" +
 	"\x04mode\x18\x02 \x01(\tH\x00R\x04mode\x88\x01\x01\x12\x19\n" +
 	"\x05owner\x18\x03 \x01(\tH\x01R\x05owner\x88\x01\x01B\a\n" +
 	"\x05_modeB\b\n" +
-	"\x06_owner\"\xd1\x03\n" +
+	"\x06_owner\"\x9a\x03\n" +
 	"\bTaskSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -2055,19 +1971,9 @@ const file_bundle_proto_rawDesc = "" +
 	"\x03ttl\x18\b \x01(\tR\x03ttl\x12?\n" +
 	"\tschedules\x18\t \x03(\v2!.helmr.bundle.v0.TaskScheduleSpecR\tschedules\x12*\n" +
 	"\x11retry_policy_json\x18\n" +
-	" \x01(\tR\x0fretryPolicyJson\x125\n" +
-	"\astreams\x18\v \x03(\v2\x1b.helmr.bundle.v0.StreamSpecR\astreams\"\x8e\x01\n" +
-	"\n" +
-	"StreamSpec\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
-	"\tdirection\x18\x02 \x01(\tR\tdirection\x12-\n" +
-	"\x12schema_fingerprint\x18\x03 \x01(\tR\x11schemaFingerprint\x12\x1f\n" +
-	"\vschema_json\x18\x04 \x01(\tR\n" +
-	"schemaJson\"g\n" +
+	" \x01(\tR\x0fretryPolicyJson\"\x1f\n" +
 	"\tQueueSpec\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x120\n" +
-	"\x11concurrency_limit\x18\x02 \x01(\rH\x00R\x10concurrencyLimit\x88\x01\x01B\x14\n" +
-	"\x12_concurrency_limit\"z\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"z\n" +
 	"\x10TaskScheduleSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04cron\x18\x02 \x01(\tR\x04cron\x12\x1a\n" +
@@ -2087,7 +1993,7 @@ func file_bundle_proto_rawDescGZIP() []byte {
 	return file_bundle_proto_rawDescData
 }
 
-var file_bundle_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_bundle_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_bundle_proto_goTypes = []any{
 	(*Bundle)(nil),                  // 0: helmr.bundle.v0.Bundle
 	(*Platform)(nil),                // 1: helmr.bundle.v0.Platform
@@ -2116,16 +2022,15 @@ var file_bundle_proto_goTypes = []any{
 	(*FilePlacement)(nil),           // 24: helmr.bundle.v0.FilePlacement
 	(*DirPlacement)(nil),            // 25: helmr.bundle.v0.DirPlacement
 	(*TaskSpec)(nil),                // 26: helmr.bundle.v0.TaskSpec
-	(*StreamSpec)(nil),              // 27: helmr.bundle.v0.StreamSpec
-	(*QueueSpec)(nil),               // 28: helmr.bundle.v0.QueueSpec
-	(*TaskScheduleSpec)(nil),        // 29: helmr.bundle.v0.TaskScheduleSpec
-	nil,                             // 30: helmr.bundle.v0.Bundle.SubImagesEntry
+	(*QueueSpec)(nil),               // 27: helmr.bundle.v0.QueueSpec
+	(*TaskScheduleSpec)(nil),        // 28: helmr.bundle.v0.TaskScheduleSpec
+	nil,                             // 29: helmr.bundle.v0.Bundle.SubImagesEntry
 }
 var file_bundle_proto_depIdxs = []int32{
 	2,  // 0: helmr.bundle.v0.Bundle.image:type_name -> helmr.bundle.v0.ImageSpec
 	17, // 1: helmr.bundle.v0.Bundle.sandbox:type_name -> helmr.bundle.v0.SandboxSpec
 	26, // 2: helmr.bundle.v0.Bundle.task:type_name -> helmr.bundle.v0.TaskSpec
-	30, // 3: helmr.bundle.v0.Bundle.sub_images:type_name -> helmr.bundle.v0.Bundle.SubImagesEntry
+	29, // 3: helmr.bundle.v0.Bundle.sub_images:type_name -> helmr.bundle.v0.Bundle.SubImagesEntry
 	1,  // 4: helmr.bundle.v0.ImageSpec.platform:type_name -> helmr.bundle.v0.Platform
 	3,  // 5: helmr.bundle.v0.ImageSpec.steps:type_name -> helmr.bundle.v0.ImageStep
 	4,  // 6: helmr.bundle.v0.ImageStep.from:type_name -> helmr.bundle.v0.From
@@ -2149,15 +2054,14 @@ var file_bundle_proto_depIdxs = []int32{
 	24, // 24: helmr.bundle.v0.Placement.file:type_name -> helmr.bundle.v0.FilePlacement
 	25, // 25: helmr.bundle.v0.Placement.dir:type_name -> helmr.bundle.v0.DirPlacement
 	21, // 26: helmr.bundle.v0.TaskSpec.secrets:type_name -> helmr.bundle.v0.SecretPlacement
-	28, // 27: helmr.bundle.v0.TaskSpec.queue:type_name -> helmr.bundle.v0.QueueSpec
-	29, // 28: helmr.bundle.v0.TaskSpec.schedules:type_name -> helmr.bundle.v0.TaskScheduleSpec
-	27, // 29: helmr.bundle.v0.TaskSpec.streams:type_name -> helmr.bundle.v0.StreamSpec
-	2,  // 30: helmr.bundle.v0.Bundle.SubImagesEntry.value:type_name -> helmr.bundle.v0.ImageSpec
-	31, // [31:31] is the sub-list for method output_type
-	31, // [31:31] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	27, // 27: helmr.bundle.v0.TaskSpec.queue:type_name -> helmr.bundle.v0.QueueSpec
+	28, // 28: helmr.bundle.v0.TaskSpec.schedules:type_name -> helmr.bundle.v0.TaskScheduleSpec
+	2,  // 29: helmr.bundle.v0.Bundle.SubImagesEntry.value:type_name -> helmr.bundle.v0.ImageSpec
+	30, // [30:30] is the sub-list for method output_type
+	30, // [30:30] is the sub-list for method input_type
+	30, // [30:30] is the sub-list for extension type_name
+	30, // [30:30] is the sub-list for extension extendee
+	0,  // [0:30] is the sub-list for field type_name
 }
 
 func init() { file_bundle_proto_init() }
@@ -2183,14 +2087,13 @@ func file_bundle_proto_init() {
 	file_bundle_proto_msgTypes[24].OneofWrappers = []any{}
 	file_bundle_proto_msgTypes[25].OneofWrappers = []any{}
 	file_bundle_proto_msgTypes[28].OneofWrappers = []any{}
-	file_bundle_proto_msgTypes[29].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bundle_proto_rawDesc), len(file_bundle_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   31,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

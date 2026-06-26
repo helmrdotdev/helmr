@@ -104,7 +104,7 @@ func TestBearerActorAcceptsSessionToken(t *testing.T) {
 	userID := uuid.Must(uuid.NewV7())
 	store := &deviceTokenStore{
 		sessionHash: sessionHash,
-		session: db.GetSessionByTokenHashRow{
+		session: db.GetAuthSessionByTokenHashRow{
 			ID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:       pgvalue.UUID(dbtest.DefaultOrgID),
 			UserID:      pgvalue.UUID(userID),
@@ -144,7 +144,7 @@ func TestRequireActorAcceptsBearerSessionWithoutAPIKeyAuthenticator(t *testing.T
 	}
 	store := &deviceTokenStore{
 		sessionHash: sessionHash,
-		session: db.GetSessionByTokenHashRow{
+		session: db.GetAuthSessionByTokenHashRow{
 			ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			UserID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -186,7 +186,7 @@ func TestRequireSessionAcceptsBearerSession(t *testing.T) {
 	}
 	store := &deviceTokenStore{
 		sessionHash: sessionHash,
-		session: db.GetSessionByTokenHashRow{
+		session: db.GetAuthSessionByTokenHashRow{
 			ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			UserID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -244,7 +244,7 @@ func TestLogoutRevokesBearerSession(t *testing.T) {
 	}
 	store := &deviceTokenStore{
 		sessionHash: sessionHash,
-		session: db.GetSessionByTokenHashRow{
+		session: db.GetAuthSessionByTokenHashRow{
 			ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			UserID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -292,10 +292,10 @@ type deviceTokenStore struct {
 	deviceHash        []byte
 	device            db.DeviceCode
 	createdDeviceCode db.CreateDeviceCodeParams
-	createdSession    db.CreateSessionParams
+	createdSession    db.CreateAuthSessionParams
 	issuedAPIKeys     []db.IssueAPIKeyParams
 	sessionHash       []byte
-	session           db.GetSessionByTokenHashRow
+	session           db.GetAuthSessionByTokenHashRow
 	refreshedSession  pgtype.UUID
 	revokedSession    bool
 }
@@ -326,9 +326,9 @@ func (s *deviceTokenStore) ConsumeDeviceCode(_ context.Context, hash []byte) (db
 	return s.device, nil
 }
 
-func (s *deviceTokenStore) CreateSession(_ context.Context, arg db.CreateSessionParams) (db.Session, error) {
+func (s *deviceTokenStore) CreateAuthSession(_ context.Context, arg db.CreateAuthSessionParams) (db.AuthSession, error) {
 	s.createdSession = arg
-	return db.Session{
+	return db.AuthSession{
 		ID:        arg.ID,
 		OrgID:     arg.OrgID,
 		UserID:    arg.UserID,
@@ -342,19 +342,19 @@ func (s *deviceTokenStore) IssueAPIKey(_ context.Context, arg db.IssueAPIKeyPara
 	return db.APIKey{}, nil
 }
 
-func (s *deviceTokenStore) GetSessionByTokenHash(_ context.Context, hash []byte) (db.GetSessionByTokenHashRow, error) {
+func (s *deviceTokenStore) GetAuthSessionByTokenHash(_ context.Context, hash []byte) (db.GetAuthSessionByTokenHashRow, error) {
 	if !bytes.Equal(hash, s.sessionHash) || s.revokedSession {
-		return db.GetSessionByTokenHashRow{}, pgx.ErrNoRows
+		return db.GetAuthSessionByTokenHashRow{}, pgx.ErrNoRows
 	}
 	return s.session, nil
 }
 
-func (s *deviceTokenStore) RefreshSession(_ context.Context, arg db.RefreshSessionParams) error {
+func (s *deviceTokenStore) RefreshAuthSession(_ context.Context, arg db.RefreshAuthSessionParams) error {
 	s.refreshedSession = arg.ID
 	return nil
 }
 
-func (s *deviceTokenStore) RevokeSessionByTokenHash(_ context.Context, hash []byte) (int64, error) {
+func (s *deviceTokenStore) RevokeAuthSessionByTokenHash(_ context.Context, hash []byte) (int64, error) {
 	if !bytes.Equal(hash, s.sessionHash) || s.revokedSession {
 		return 0, nil
 	}

@@ -32,22 +32,22 @@ func TestCreateRunReturnsExistingRunForActiveIdempotencyKey(t *testing.T) {
 	runEnqueuer := &fakeRunEnqueuer{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
 
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "24h"},
+		Options: api.SessionStartOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "24h"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var first api.TaskStartResponse
+	var first api.SessionStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
 		t.Fatal(err)
 	}
@@ -56,14 +56,14 @@ func TestCreateRunReturnsExistingRunForActiveIdempotencyKey(t *testing.T) {
 	}
 
 	store.currentDeploymentMissing = true
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var second api.TaskStartResponse
+	var second api.SessionStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
@@ -75,18 +75,15 @@ func TestCreateRunReturnsExistingRunForActiveIdempotencyKey(t *testing.T) {
 	}
 }
 
-func TestTaskStartMaterializesDeploymentStreamsForSession(t *testing.T) {
-	progressID := pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000401"))
-	reportID := pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000402"))
+func TestSessionStartDoesNotMaterializeDeploymentStreamsForSession(t *testing.T) {
 	store := &fakeStore{
 		deploymentStreams: []db.DeploymentStream{
 			{
-				ID:                progressID,
+				ID:                pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000401")),
 				OrgID:             pgvalue.UUID(dbtest.DefaultOrgID),
 				ProjectID:         testProjectID(),
 				EnvironmentID:     testEnvironmentID(),
 				DeploymentID:      testDeploymentID(),
-				TaskID:            "deploy",
 				Name:              "runtime-smoke.progress",
 				Direction:         db.StreamDirectionOutput,
 				SchemaFingerprint: "sha256:progress",
@@ -94,12 +91,11 @@ func TestTaskStartMaterializesDeploymentStreamsForSession(t *testing.T) {
 				Metadata:          []byte(`{}`),
 			},
 			{
-				ID:                reportID,
+				ID:                pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000402")),
 				OrgID:             pgvalue.UUID(dbtest.DefaultOrgID),
 				ProjectID:         testProjectID(),
 				EnvironmentID:     testEnvironmentID(),
 				DeploymentID:      testDeploymentID(),
-				TaskID:            "deploy",
 				Name:              "runtime-smoke.report",
 				Direction:         db.StreamDirectionOutput,
 				SchemaFingerprint: "sha256:report",
@@ -111,25 +107,15 @@ func TestTaskStartMaterializesDeploymentStreamsForSession(t *testing.T) {
 	runEnqueuer := &fakeRunEnqueuer{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", strings.NewReader(`{"payload":{"env":"prod"}}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"task_id":"deploy","payload":{"env":"prod"}}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.ensuredSessionStreams) != 2 {
-		t.Fatalf("ensured session streams = %d, want 2", len(store.ensuredSessionStreams))
-	}
-	got := []pgtype.UUID{store.ensuredSessionStreams[0].DeploymentStreamID, store.ensuredSessionStreams[1].DeploymentStreamID}
-	want := []pgtype.UUID{progressID, reportID}
-	if got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("deployment streams = %+v, want %+v", got, want)
-	}
-	for _, ensured := range store.ensuredSessionStreams {
-		if ensured.SessionID != store.taskSession.ID {
-			t.Fatalf("session stream session_id = %v, want %v", ensured.SessionID, store.taskSession.ID)
-		}
+	if len(store.ensuredSessionStreams) != 0 {
+		t.Fatalf("ensured session streams = %d, want 0", len(store.ensuredSessionStreams))
 	}
 }
 
@@ -138,14 +124,14 @@ func TestCreateRunRequiresCoordinationForIdempotencyKey(t *testing.T) {
 	runEnqueuer := &fakeRunEnqueuer{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer})
 
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod"},
+		Options: api.SessionStartOptions{IdempotencyKey: "deploy-prod"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -156,21 +142,21 @@ func TestCreateRunRequiresCoordinationForIdempotencyKey(t *testing.T) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 	requireErrorCode(t, rec.Body.Bytes(), "coordination_unavailable")
-	if store.run.ID.Valid || store.taskSession.ID.Valid || len(store.events) != 0 || runEnqueuer.count != 0 {
-		t.Fatalf("side effects: run=%v session=%v events=%d enqueues=%d", store.run.ID.Valid, store.taskSession.ID.Valid, len(store.events), runEnqueuer.count)
+	if store.run.ID.Valid || store.session.ID.Valid || len(store.events) != 0 || runEnqueuer.count != 0 {
+		t.Fatalf("side effects: run=%v session=%v events=%d enqueues=%d", store.run.ID.Valid, store.session.ID.Valid, len(store.events), runEnqueuer.count)
 	}
 }
 
 func TestCreateRunRequiresCoordinationBeforeBindingExistingExternalIDToIdempotencyKey(t *testing.T) {
 	payload := json.RawMessage(`{"env":"prod"}`)
-	options := taskStartFingerprintTestOptions(t, api.CreateRunOptions{IdempotencyKey: "durable-key"})
-	startFingerprint, err := taskStartRequestFingerprint("deploy", payload, options, []byte(`{}`), nil, "durable-1", nil)
+	options := sessionStartFingerprintTestOptions(t, api.CreateRunOptions{IdempotencyKey: "durable-key"})
+	startFingerprint, err := sessionStartRequestFingerprint("deploy", payload, options, "durable-1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -180,7 +166,7 @@ func TestCreateRunRequiresCoordinationBeforeBindingExistingExternalIDToIdempoten
 			ActiveDeploymentID:  testDeploymentID(),
 			ExternalID:          "durable-1",
 			StartFingerprint:    startFingerprint.String,
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			CurrentRunID:        runID,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
@@ -204,15 +190,15 @@ func TestCreateRunRequiresCoordinationBeforeBindingExistingExternalIDToIdempoten
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}})
 
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		ExternalID: "durable-1",
 		Payload:    payload,
-		Options:    api.TaskStartOptions{IdempotencyKey: "durable-key"},
+		Options:    api.SessionStartOptions{IdempotencyKey: "durable-key"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -225,38 +211,38 @@ func TestCreateRunRequiresCoordinationBeforeBindingExistingExternalIDToIdempoten
 	}
 }
 
-func TestTaskStartExternalIDDoesNotRequireCoordination(t *testing.T) {
+func TestSessionStartExternalIDDoesNotRequireCoordination(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}})
 
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		ExternalID: "durable-1",
 		Payload:    json.RawMessage(`{"env":"prod"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !store.taskSession.ID.Valid || !store.run.ID.Valid {
-		t.Fatalf("expected task session and run to be created, got session=%v run=%v", store.taskSession.ID.Valid, store.run.ID.Valid)
+	if !store.session.ID.Valid || !store.run.ID.Valid {
+		t.Fatalf("expected session and run to be created, got session=%v run=%v", store.session.ID.Valid, store.run.ID.Valid)
 	}
 }
 
-func TestTaskStartFingerprintIncludesExpiresAt(t *testing.T) {
+func TestSessionStartFingerprintIncludesExpiresAt(t *testing.T) {
 	payload := json.RawMessage(`{"env":"prod"}`)
 	firstExpiresAt := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
 	secondExpiresAt := firstExpiresAt.Add(time.Hour)
-	first, err := taskStartRequestFingerprint("deploy", payload, taskStartFingerprintTestOptions(t, api.CreateRunOptions{}), []byte(`{}`), nil, "durable-1", &firstExpiresAt)
+	first, err := sessionStartRequestFingerprint("deploy", payload, sessionStartFingerprintTestOptions(t, api.CreateRunOptions{}), "durable-1", &firstExpiresAt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := taskStartRequestFingerprint("deploy", payload, taskStartFingerprintTestOptions(t, api.CreateRunOptions{}), []byte(`{}`), nil, "durable-1", &secondExpiresAt)
+	second, err := sessionStartRequestFingerprint("deploy", payload, sessionStartFingerprintTestOptions(t, api.CreateRunOptions{}), "durable-1", &secondExpiresAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,15 +251,15 @@ func TestTaskStartFingerprintIncludesExpiresAt(t *testing.T) {
 	}
 }
 
-func TestTaskStartFingerprintCanonicalizesRetryPolicy(t *testing.T) {
+func TestSessionStartFingerprintCanonicalizesRetryPolicy(t *testing.T) {
 	payload := json.RawMessage(`{"env":"prod"}`)
-	firstOptions := taskStartFingerprintTestOptions(t, api.CreateRunOptions{Retry: json.RawMessage(`{"maxAttempts":3,"backoff":{"minMs":1000,"maxMs":60000}}`)})
-	first, err := taskStartRequestFingerprint("deploy", payload, firstOptions, []byte(`{}`), nil, "durable-1", nil)
+	firstOptions := sessionStartFingerprintTestOptions(t, api.CreateRunOptions{Retry: json.RawMessage(`{"maxAttempts":3,"backoff":{"minMs":1000,"maxMs":60000}}`)})
+	first, err := sessionStartRequestFingerprint("deploy", payload, firstOptions, "durable-1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondOptions := taskStartFingerprintTestOptions(t, api.CreateRunOptions{Retry: json.RawMessage(`{"backoff":{"maxMs":60000,"minMs":1000},"maxAttempts":3}`)})
-	second, err := taskStartRequestFingerprint("deploy", payload, secondOptions, []byte(`{}`), nil, "durable-1", nil)
+	secondOptions := sessionStartFingerprintTestOptions(t, api.CreateRunOptions{Retry: json.RawMessage(`{"backoff":{"maxMs":60000,"minMs":1000},"maxAttempts":3}`)})
+	second, err := sessionStartRequestFingerprint("deploy", payload, secondOptions, "durable-1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,45 +268,45 @@ func TestTaskStartFingerprintCanonicalizesRetryPolicy(t *testing.T) {
 	}
 }
 
-func TestCreateRunReturnsIdempotencyHitForTerminalTaskSession(t *testing.T) {
+func TestCreateRunReturnsIdempotencyHitForTerminalSession(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
 
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod"},
+		Options: api.SessionStartOptions{IdempotencyKey: "deploy-prod"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var first api.TaskStartResponse
+	var first api.SessionStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
 		t.Fatal(err)
 	}
-	store.taskSession.Status = db.TaskSessionStatusFailed
-	store.startIdempotency.SessionStatus = db.TaskSessionStatusFailed
+	store.session.Status = db.SessionStatusOpen
+	store.startIdempotency.SessionStatus = db.SessionStatusOpen
 
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var second api.TaskStartResponse
+	var second api.SessionStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.Run.ID != first.Run.ID || !second.IsCached || second.Session.Status != string(db.TaskSessionStatusFailed) {
+	if second.Run.ID != first.Run.ID || !second.IsCached || second.Session.Status != string(db.SessionStatusOpen) {
 		t.Fatalf("second response = %+v first=%+v", second, first)
 	}
 	if len(store.events) != 1 || runEnqueuer.count != 1 {
@@ -366,7 +352,7 @@ func TestCreateScheduleRunRejectsStaleTriggerIdempotencyHit(t *testing.T) {
 	}
 }
 
-func TestCreateScheduleRunDefersTaskStartCoordinationFailures(t *testing.T) {
+func TestCreateScheduleRunDefersSessionStartCoordinationFailures(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
 	server := &Server{
@@ -391,7 +377,7 @@ func TestCreateScheduleRunDefersTaskStartCoordinationFailures(t *testing.T) {
 	}
 
 	_, err := server.CreateScheduleRun(context.Background(), row)
-	if !errors.Is(err, schedule.ErrTriggerDeferred) || !errors.Is(err, errTaskStartCoordinationUnavailable) {
+	if !errors.Is(err, schedule.ErrTriggerDeferred) || !errors.Is(err, errSessionStartCoordinationUnavailable) {
 		t.Fatalf("schedule run err = %v, want deferred coordination error", err)
 	}
 	if len(store.events) != 0 || runEnqueuer.count != 0 {
@@ -413,18 +399,18 @@ func TestCreateRunDoesNotDuplicateWhenResolvedClaimHasNoVisibleIdempotencyRow(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := taskStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idempotency", idempotency.key.String)
-	if err := redisClient.Set(context.Background(), key, "resolved:owner", taskStartClaimResolvedTTL).Err(); err != nil {
+	key := sessionStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idempotency", idempotency.key.String)
+	if err := redisClient.Set(context.Background(), key, "resolved:owner", sessionStartClaimResolvedTTL).Err(); err != nil {
 		t.Fatal(err)
 	}
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod"},
+		Options: api.SessionStartOptions{IdempotencyKey: "deploy-prod"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -458,18 +444,18 @@ func TestCreateRunPendingStartReturnsAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := taskStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idempotency", idempotency.key.String)
-	if err := redisClient.Set(context.Background(), key, "pending:owner", taskStartClaimTTL).Err(); err != nil {
+	key := sessionStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "idempotency", idempotency.key.String)
+	if err := redisClient.Set(context.Background(), key, "pending:owner", sessionStartClaimTTL).Err(); err != nil {
 		t.Fatal(err)
 	}
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod"},
+		Options: api.SessionStartOptions{IdempotencyKey: "deploy-prod"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -480,7 +466,7 @@ func TestCreateRunPendingStartReturnsAccepted(t *testing.T) {
 	if rec.Header().Get("Retry-After") != "1" {
 		t.Fatalf("Retry-After = %q", rec.Header().Get("Retry-After"))
 	}
-	if !strings.Contains(rec.Body.String(), "task_start_pending") {
+	if !strings.Contains(rec.Body.String(), "session_start_pending") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 	requireErrorCode(t, rec.Body.Bytes(), "idempotency_pending")
@@ -498,14 +484,14 @@ func TestCreateRunReleasesStartClaimAfterCreationFailure(t *testing.T) {
 	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), redis: redisClient}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: eventStream})
 
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod"},
+		Options: api.SessionStartOptions{IdempotencyKey: "deploy-prod"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -514,7 +500,7 @@ func TestCreateRunReleasesStartClaimAfterCreationFailure(t *testing.T) {
 	}
 
 	store.createRunErr = nil
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -530,14 +516,14 @@ func TestCreateRunRejectsIdempotencyKeyReuseWithDifferentRequest(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 
-	firstBody, err := json.Marshal(api.TaskStartRequest{
+	firstBody, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.TaskStartOptions{IdempotencyKey: "deploy"},
+		Options: api.SessionStartOptions{IdempotencyKey: "deploy"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(firstBody))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(firstBody))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -545,14 +531,14 @@ func TestCreateRunRejectsIdempotencyKeyReuseWithDifferentRequest(t *testing.T) {
 		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	secondBody, err := json.Marshal(api.TaskStartRequest{
+	secondBody, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Payload: json.RawMessage(`{"env":"staging"}`),
-		Options: api.TaskStartOptions{IdempotencyKey: "deploy"},
+		Options: api.SessionStartOptions{IdempotencyKey: "deploy"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(secondBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(secondBody))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -570,14 +556,14 @@ func TestCreateRunBindsIdempotencyKeyWhenExternalIDReusesSession(t *testing.T) {
 	runEnqueuer := &fakeRunEnqueuer{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
 
-	firstBody, err := json.Marshal(api.TaskStartRequest{
+	firstBody, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		ExternalID: "durable-1",
 		Payload:    json.RawMessage(`{"env":"prod"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(firstBody))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(firstBody))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -586,40 +572,40 @@ func TestCreateRunBindsIdempotencyKeyWhenExternalIDReusesSession(t *testing.T) {
 	}
 	firstRunID := store.run.ID
 
-	secondBody, err := json.Marshal(api.TaskStartRequest{
+	secondBody, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		ExternalID: "durable-1",
 		Payload:    json.RawMessage(`{"env":"prod"}`),
-		Options:    api.TaskStartOptions{IdempotencyKey: "durable-key"},
+		Options:    api.SessionStartOptions{IdempotencyKey: "durable-key"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(secondBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(secondBody))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var second api.TaskStartResponse
+	var second api.SessionStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
 	if second.Run.ID != pgvalue.MustUUIDValue(firstRunID).String() || !second.IsCached {
 		t.Fatalf("second response = %+v, want cached run %s", second, pgvalue.MustUUIDValue(firstRunID))
 	}
-	if !store.startIdempotency.ID.Valid || store.startIdempotency.TaskSessionID != store.taskSession.ID || store.startIdempotency.FirstRunID != firstRunID {
-		t.Fatalf("stored idempotency = %+v session=%s run=%s", store.startIdempotency, pgvalue.MustUUIDValue(store.taskSession.ID), pgvalue.MustUUIDValue(firstRunID))
+	if !store.startIdempotency.ID.Valid || store.startIdempotency.SessionID != store.session.ID || store.startIdempotency.FirstRunID != firstRunID {
+		t.Fatalf("stored idempotency = %+v session=%s run=%s", store.startIdempotency, pgvalue.MustUUIDValue(store.session.ID), pgvalue.MustUUIDValue(firstRunID))
 	}
 
-	thirdBody, err := json.Marshal(api.TaskStartRequest{
+	thirdBody, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.TaskStartOptions{IdempotencyKey: "durable-key"},
+		Options: api.SessionStartOptions{IdempotencyKey: "durable-key"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(thirdBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(thirdBody))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -633,16 +619,16 @@ func TestCreateRunBindsIdempotencyKeyWhenExternalIDReusesSession(t *testing.T) {
 
 func TestCreateRunBindsIdempotencyKeyAfterExternalIDUniqueRace(t *testing.T) {
 	payload := json.RawMessage(`{"env":"prod"}`)
-	startFingerprint, err := taskStartRequestFingerprint("deploy", payload, taskStartFingerprintTestOptions(t, api.CreateRunOptions{IdempotencyKey: "durable-key"}), []byte(`{}`), nil, "durable-1", nil)
+	startFingerprint, err := sessionStartRequestFingerprint("deploy", payload, sessionStartFingerprintTestOptions(t, api.CreateRunOptions{IdempotencyKey: "durable-key"}), "durable-1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		createTaskSessionErr:             &pgconn.PgError{Code: "23505"},
-		getTaskSessionByExternalIDMisses: 1,
-		taskSession: db.TaskSession{
+		createSessionErr:             &pgconn.PgError{Code: "23505"},
+		getSessionByExternalIDMisses: 1,
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -652,7 +638,7 @@ func TestCreateRunBindsIdempotencyKeyAfterExternalIDUniqueRace(t *testing.T) {
 			ActiveDeploymentID:  testDeploymentID(),
 			ExternalID:          "durable-1",
 			StartFingerprint:    startFingerprint.String,
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			CurrentRunID:        runID,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
@@ -675,22 +661,22 @@ func TestCreateRunBindsIdempotencyKeyAfterExternalIDUniqueRace(t *testing.T) {
 		},
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		ExternalID: "durable-1",
 		Payload:    payload,
-		Options:    api.TaskStartOptions{IdempotencyKey: "durable-key"},
+		Options:    api.SessionStartOptions{IdempotencyKey: "durable-key"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !store.startIdempotency.ID.Valid || store.startIdempotency.TaskSessionID != sessionID || store.startIdempotency.FirstRunID != runID {
+	if !store.startIdempotency.ID.Valid || store.startIdempotency.SessionID != sessionID || store.startIdempotency.FirstRunID != runID {
 		t.Fatalf("idempotency binding = %+v, want session %s run %s", store.startIdempotency, pgvalue.MustUUIDValue(sessionID), pgvalue.MustUUIDValue(runID))
 	}
 }
@@ -700,21 +686,21 @@ func TestCreateRunReclaimsExpiredStartIdempotency(t *testing.T) {
 	runEnqueuer := &fakeRunEnqueuer{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
 
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "1s"},
+		Options: api.SessionStartOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "1s"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var first api.TaskStartResponse
+	var first api.SessionStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
 		t.Fatal(err)
 	}
@@ -722,14 +708,14 @@ func TestCreateRunReclaimsExpiredStartIdempotency(t *testing.T) {
 	store.run.Status = db.RunStatusExpired
 	store.startIdempotency.ExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var second api.TaskStartResponse
+	var second api.SessionStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
@@ -746,14 +732,14 @@ func TestCreateRunClearsExpiredRunIdempotencyKey(t *testing.T) {
 	runEnqueuer := &fakeRunEnqueuer{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
 
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.TaskStartOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "24h", TTL: "1s"},
+		Options: api.SessionStartOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "24h", TTL: "1s"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -764,7 +750,7 @@ func TestCreateRunClearsExpiredRunIdempotencyKey(t *testing.T) {
 	store.run.Status = db.RunStatusExpired
 	store.startIdempotency.ExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -784,14 +770,14 @@ func TestCreateRunHashesLiteralHexIdempotencyKeys(t *testing.T) {
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 
 	rawKey := strings.Repeat("a", sha256.Size*2)
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.TaskStartOptions{IdempotencyKey: rawKey},
+		Options: api.SessionStartOptions{IdempotencyKey: rawKey},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -804,9 +790,9 @@ func TestCreateRunHashesLiteralHexIdempotencyKeys(t *testing.T) {
 	}
 }
 
-func taskStartFingerprintTestOptions(t *testing.T, options api.CreateRunOptions) api.TaskStartOptions {
+func sessionStartFingerprintTestOptions(t *testing.T, options api.CreateRunOptions) api.SessionStartOptions {
 	t.Helper()
-	return api.TaskStartOptions{
+	return api.SessionStartOptions{
 		Queue:              options.Queue,
 		ConcurrencyKey:     options.ConcurrencyKey,
 		Priority:           options.Priority,

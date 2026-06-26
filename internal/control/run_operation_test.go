@@ -129,9 +129,9 @@ func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) 
 	runEnqueuer := &fakeRunEnqueuer{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
 
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Options: api.TaskStartOptions{
+		Options: api.SessionStartOptions{
 			Queue:          &api.RunQueueOption{Name: "reports"},
 			IdempotencyKey: "deploy-prod",
 		},
@@ -139,27 +139,27 @@ func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var first api.TaskStartResponse
+	var first api.SessionStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
 		t.Fatal(err)
 	}
 	store.deploymentTasks[0].QueueName = "default"
 
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var second api.TaskStartResponse
+	var second api.SessionStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func (f *fakeStore) CancelRun(_ context.Context, arg db.CancelRunParams) (db.Can
 		EnvironmentID:        f.run.EnvironmentID,
 		DeploymentID:         fakeRunDeploymentID(f.run),
 		DeploymentTaskID:     fakeRunDeploymentTaskID(f.run),
-		TaskSessionID:        fakeRunTaskSessionID(f.run),
+		SessionID:            fakeRunSessionID(f.run),
 		DeploymentVersion:    f.run.DeploymentVersion,
 		ApiVersion:           f.run.ApiVersion,
 		SdkVersion:           f.run.SdkVersion,

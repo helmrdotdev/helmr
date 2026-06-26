@@ -262,6 +262,23 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		failBuild("record deployment manifest artifact: " + err.Error())
 		return
 	}
+	queueConcurrencyLimits := map[string]*int32{}
+	for _, queue := range request.Result.Queues {
+		queueName := strings.TrimSpace(queue.Name)
+		queueConcurrencyLimits[queueName] = queue.ConcurrencyLimit
+		if _, err := queries.CreateDeploymentQueue(r.Context(), db.CreateDeploymentQueueParams{
+			ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:            orgID,
+			ProjectID:        projectID,
+			EnvironmentID:    environmentID,
+			DeploymentID:     deploymentID,
+			Name:             queueName,
+			ConcurrencyLimit: pgvalue.Int4Ptr(queue.ConcurrencyLimit),
+		}); err != nil {
+			failBuild("record deployment queue: " + err.Error())
+			return
+		}
+	}
 	deploymentSandboxIDs := map[string]pgtype.UUID{}
 	for _, task := range request.Result.Tasks {
 		bundleArtifact, err := createDeploymentBuildArtifact(r.Context(), queries, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.BundleDigest), db.ArtifactKindTaskBundle, casObjectByDigest)
@@ -348,6 +365,12 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			deploymentSandboxID = row.ID
 			deploymentSandboxIDs[sandboxID] = deploymentSandboxID
 		}
+		queueName := strings.TrimSpace(task.QueueName)
+		queueConcurrencyLimit, ok := queueConcurrencyLimits[queueName]
+		if !ok {
+			failBuild("deployment task references undefined queue")
+			return
+		}
 		retryPolicy, err := normalizedRetryPolicy(task.RetryPolicy)
 		if err != nil {
 			failBuild("validate deployment task retry policy: " + err.Error())
@@ -373,8 +396,8 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			ResourceRequirements:  []byte("{}"),
 			NetworkPolicy:         networkPolicy,
 			ScheduleDeclarations:  scheduleDeclarations,
-			QueueName:             strings.TrimSpace(task.QueueName),
-			QueueConcurrencyLimit: pgvalue.Int4Ptr(task.ConcurrencyLimit),
+			QueueName:             queueName,
+			QueueConcurrencyLimit: pgvalue.Int4Ptr(queueConcurrencyLimit),
 			Ttl:                   strings.TrimSpace(task.TTL),
 			MaxActiveDurationMs:   int64(task.MaxDurationSeconds) * 1000,
 			RetryPolicy:           retryPolicy,
@@ -382,29 +405,26 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			failBuild("record deployment task: " + err.Error())
 			return
 		}
-		for _, stream := range task.Streams {
-			name := strings.TrimSpace(stream.Name)
-			direction := strings.TrimSpace(stream.Direction)
-			schemaJSON := stream.SchemaJSON
-			if len(schemaJSON) == 0 {
-				schemaJSON = []byte("null")
-			}
-			if _, err := queries.UpsertDeploymentStream(r.Context(), db.UpsertDeploymentStreamParams{
-				ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				OrgID:             orgID,
-				ProjectID:         projectID,
-				EnvironmentID:     environmentID,
-				DeploymentID:      deploymentID,
-				TaskID:            strings.TrimSpace(task.TaskID),
-				Name:              name,
-				Direction:         db.StreamDirection(direction),
-				SchemaFingerprint: strings.TrimSpace(stream.SchemaFingerprint),
-				SchemaJson:        schemaJSON,
-				Metadata:          []byte("{}"),
-			}); err != nil {
-				failBuild("record deployment stream: " + err.Error())
-				return
-			}
+	}
+	for _, stream := range request.Result.Streams {
+		schemaJSON := stream.SchemaJSON
+		if len(schemaJSON) == 0 {
+			schemaJSON = []byte("null")
+		}
+		if _, err := queries.UpsertDeploymentStream(r.Context(), db.UpsertDeploymentStreamParams{
+			ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:             orgID,
+			ProjectID:         projectID,
+			EnvironmentID:     environmentID,
+			DeploymentID:      deploymentID,
+			Name:              strings.TrimSpace(stream.Name),
+			Direction:         db.StreamDirection(strings.TrimSpace(stream.Direction)),
+			SchemaFingerprint: strings.TrimSpace(stream.SchemaFingerprint),
+			SchemaJson:        schemaJSON,
+			Metadata:          []byte("{}"),
+		}); err != nil {
+			failBuild("record deployment stream: " + err.Error())
+			return
 		}
 	}
 	row, err := queries.CompleteDeploymentBuild(r.Context(), db.CompleteDeploymentBuildParams{

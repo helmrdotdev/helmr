@@ -1,4 +1,4 @@
-import { HelmrClient, type TaskStartResult } from "../../../../sdk/typescript/src/index"
+import { HelmrClient, type SessionStartResult } from "../../../../sdk/typescript/src/index"
 import { assert, assertEqual } from "../assert"
 import { readConfig, requestScope } from "../config"
 import { currentDeployment, waitForRunningMaterialization } from "./common"
@@ -40,11 +40,11 @@ interface RuntimeSmokeStartOptions {
 const config = readConfig()
 const client = new HelmrClient({ url: config.apiUrl, apiKey: config.apiKey })
 const scope = requestScope(config)
-const startRuntimeSmoke = client.tasks.start as unknown as (
+const startRuntimeSmoke = client.sessions.start as unknown as (
   id: "runtime-smoke",
   payload: RuntimeSmokePayload,
   opts: RuntimeSmokeStartOptions,
-) => Promise<TaskStartResult<unknown>>
+) => Promise<SessionStartResult<unknown>>
 
 const evidence = await runWorkspaceLifecycleSmoke()
 console.log(JSON.stringify(evidence, null, 2))
@@ -98,7 +98,7 @@ async function runWorkspaceLifecycleSmoke(): Promise<SmokeEvidence> {
     assertEqual(running.id, materialized.id, "running materialization id changed")
 
     const sessionsBeforeAttach = await sessionsForTask(config.taskId)
-    assert(!sessionsBeforeAttach.some((session) => session.workspaceId === directWorkspace.id), "direct materialization created a task session")
+    assert(!sessionsBeforeAttach.some((session) => session.workspaceId === directWorkspace.id), "direct materialization created a session")
 
     const first = await startAndWaitRuntime(`${config.marker}-first`, directWorkspace.id)
     const firstSession = await client.sessions.retrieve(first.sessionId, scope)

@@ -1163,6 +1163,50 @@ func (ns NullRuntimeCheckpointState) Value() (driver.Value, error) {
 	return string(ns.RuntimeCheckpointState), nil
 }
 
+type SessionStatus string
+
+const (
+	SessionStatusOpen      SessionStatus = "open"
+	SessionStatusClosed    SessionStatus = "closed"
+	SessionStatusCancelled SessionStatus = "cancelled"
+	SessionStatusExpired   SessionStatus = "expired"
+)
+
+func (e *SessionStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = SessionStatus(s)
+	case string:
+		*e = SessionStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for SessionStatus: %T", src)
+	}
+	return nil
+}
+
+type NullSessionStatus struct {
+	SessionStatus SessionStatus `json:"session_status"`
+	Valid         bool          `json:"valid"` // Valid is true if SessionStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullSessionStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.SessionStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.SessionStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullSessionStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.SessionStatus), nil
+}
+
 type StreamDirection string
 
 const (
@@ -1290,52 +1334,6 @@ func (ns NullTaskScheduleType) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.TaskScheduleType), nil
-}
-
-type TaskSessionStatus string
-
-const (
-	TaskSessionStatusOpen      TaskSessionStatus = "open"
-	TaskSessionStatusCompleted TaskSessionStatus = "completed"
-	TaskSessionStatusFailed    TaskSessionStatus = "failed"
-	TaskSessionStatusClosed    TaskSessionStatus = "closed"
-	TaskSessionStatusCancelled TaskSessionStatus = "cancelled"
-	TaskSessionStatusExpired   TaskSessionStatus = "expired"
-)
-
-func (e *TaskSessionStatus) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = TaskSessionStatus(s)
-	case string:
-		*e = TaskSessionStatus(s)
-	default:
-		return fmt.Errorf("unsupported scan type for TaskSessionStatus: %T", src)
-	}
-	return nil
-}
-
-type NullTaskSessionStatus struct {
-	TaskSessionStatus TaskSessionStatus `json:"task_session_status"`
-	Valid             bool              `json:"valid"` // Valid is true if TaskSessionStatus is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullTaskSessionStatus) Scan(value interface{}) error {
-	if value == nil {
-		ns.TaskSessionStatus, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.TaskSessionStatus.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullTaskSessionStatus) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.TaskSessionStatus), nil
 }
 
 type TokenState string
@@ -2405,6 +2403,17 @@ type AuthIdentity struct {
 	LastLoginAt pgtype.Timestamptz `json:"last_login_at"`
 }
 
+type AuthSession struct {
+	ID         pgtype.UUID        `json:"id"`
+	OrgID      pgtype.UUID        `json:"org_id"`
+	UserID     pgtype.UUID        `json:"user_id"`
+	TokenHash  []byte             `json:"token_hash"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+}
+
 type CasObject struct {
 	Digest    string             `json:"digest"`
 	SizeBytes int64              `json:"size_bytes"`
@@ -2472,6 +2481,17 @@ type DeploymentPromotion struct {
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 }
 
+type DeploymentQueue struct {
+	ID               pgtype.UUID        `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	DeploymentID     pgtype.UUID        `json:"deployment_id"`
+	Name             string             `json:"name"`
+	ConcurrencyLimit pgtype.Int4        `json:"concurrency_limit"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type DeploymentSandbox struct {
 	ID                  pgtype.UUID        `json:"id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
@@ -2506,7 +2526,6 @@ type DeploymentStream struct {
 	ProjectID         pgtype.UUID        `json:"project_id"`
 	EnvironmentID     pgtype.UUID        `json:"environment_id"`
 	DeploymentID      pgtype.UUID        `json:"deployment_id"`
-	TaskID            string             `json:"task_id"`
 	Name              string             `json:"name"`
 	Direction         StreamDirection    `json:"direction"`
 	SchemaFingerprint string             `json:"schema_fingerprint"`
@@ -2735,7 +2754,7 @@ type Run struct {
 	SdkVersion                 string                 `json:"sdk_version"`
 	CliVersion                 string                 `json:"cli_version"`
 	TaskID                     string                 `json:"task_id"`
-	TaskSessionID              pgtype.UUID            `json:"task_session_id"`
+	SessionID                  pgtype.UUID            `json:"session_id"`
 	ScheduleID                 pgtype.UUID            `json:"schedule_id"`
 	ScheduleInstanceID         pgtype.UUID            `json:"schedule_instance_id"`
 	ScheduledAt                pgtype.Timestamptz     `json:"scheduled_at"`
@@ -3063,14 +3082,91 @@ type Secret struct {
 }
 
 type Session struct {
-	ID         pgtype.UUID        `json:"id"`
-	OrgID      pgtype.UUID        `json:"org_id"`
-	UserID     pgtype.UUID        `json:"user_id"`
-	TokenHash  []byte             `json:"token_hash"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
-	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
-	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	EnvironmentID       pgtype.UUID        `json:"environment_id"`
+	TaskID              string             `json:"task_id"`
+	InitialDeploymentID pgtype.UUID        `json:"initial_deployment_id"`
+	ActiveDeploymentID  pgtype.UUID        `json:"active_deployment_id"`
+	ExternalID          string             `json:"external_id"`
+	StartFingerprint    string             `json:"start_fingerprint"`
+	Status              SessionStatus      `json:"status"`
+	CurrentRunID        pgtype.UUID        `json:"current_run_id"`
+	CurrentRunVersion   int64              `json:"current_run_version"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	Metadata            []byte             `json:"metadata"`
+	Tags                []string           `json:"tags"`
+	ClosedAt            pgtype.Timestamptz `json:"closed_at"`
+	ClosedReason        string             `json:"closed_reason"`
+	CancelledAt         pgtype.Timestamptz `json:"cancelled_at"`
+	ExpiredAt           pgtype.Timestamptz `json:"expired_at"`
+	TerminalReason      []byte             `json:"terminal_reason"`
+	Result              []byte             `json:"result"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SessionActivity struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+	Activity      string      `json:"activity"`
+	CanClose      bool        `json:"can_close"`
+}
+
+type SessionRun struct {
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         pgtype.UUID        `json:"org_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	SessionID     pgtype.UUID        `json:"session_id"`
+	RunID         pgtype.UUID        `json:"run_id"`
+	DeploymentID  pgtype.UUID        `json:"deployment_id"`
+	PreviousRunID pgtype.UUID        `json:"previous_run_id"`
+	TurnIndex     int32              `json:"turn_index"`
+	Reason        string             `json:"reason"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	EndedAt       pgtype.Timestamptz `json:"ended_at"`
+}
+
+type SessionRunRequest struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	SessionID      pgtype.UUID        `json:"session_id"`
+	StreamRecordID pgtype.UUID        `json:"stream_record_id"`
+	StreamID       pgtype.UUID        `json:"stream_id"`
+	CauseKind      string             `json:"cause_kind"`
+	Status         string             `json:"status"`
+	Attempts       int32              `json:"attempts"`
+	NextAttemptAt  pgtype.Timestamptz `json:"next_attempt_at"`
+	LastError      string             `json:"last_error"`
+	ClaimedAt      pgtype.Timestamptz `json:"claimed_at"`
+	ClaimExpiresAt pgtype.Timestamptz `json:"claim_expires_at"`
+	ClaimOwner     string             `json:"claim_owner"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	ErrorMessage   string             `json:"error_message"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SessionStartIdempotency struct {
+	ID                 pgtype.UUID        `json:"id"`
+	OrgID              pgtype.UUID        `json:"org_id"`
+	ProjectID          pgtype.UUID        `json:"project_id"`
+	EnvironmentID      pgtype.UUID        `json:"environment_id"`
+	TaskID             string             `json:"task_id"`
+	IdempotencyKey     string             `json:"idempotency_key"`
+	RequestFingerprint string             `json:"request_fingerprint"`
+	SessionID          pgtype.UUID        `json:"session_id"`
+	FirstRunID         pgtype.UUID        `json:"first_run_id"`
+	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt         pgtype.Timestamptz `json:"last_used_at"`
 }
 
 type Stream struct {
@@ -3169,63 +3265,6 @@ type TaskScheduleInstance struct {
 	LastTriggerRunID    pgtype.UUID        `json:"last_trigger_run_id"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
-}
-
-type TaskSession struct {
-	ID                  pgtype.UUID        `json:"id"`
-	OrgID               pgtype.UUID        `json:"org_id"`
-	ProjectID           pgtype.UUID        `json:"project_id"`
-	EnvironmentID       pgtype.UUID        `json:"environment_id"`
-	TaskID              string             `json:"task_id"`
-	InitialDeploymentID pgtype.UUID        `json:"initial_deployment_id"`
-	ActiveDeploymentID  pgtype.UUID        `json:"active_deployment_id"`
-	ExternalID          string             `json:"external_id"`
-	StartFingerprint    string             `json:"start_fingerprint"`
-	Status              TaskSessionStatus  `json:"status"`
-	CurrentRunID        pgtype.UUID        `json:"current_run_id"`
-	CurrentRunVersion   int64              `json:"current_run_version"`
-	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
-	Metadata            []byte             `json:"metadata"`
-	Tags                []string           `json:"tags"`
-	CompletedAt         pgtype.Timestamptz `json:"completed_at"`
-	FailedAt            pgtype.Timestamptz `json:"failed_at"`
-	ClosedAt            pgtype.Timestamptz `json:"closed_at"`
-	ClosedReason        string             `json:"closed_reason"`
-	CancelledAt         pgtype.Timestamptz `json:"cancelled_at"`
-	TerminalReason      []byte             `json:"terminal_reason"`
-	Result              []byte             `json:"result"`
-	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
-}
-
-type TaskSessionRun struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	TaskSessionID pgtype.UUID        `json:"task_session_id"`
-	RunID         pgtype.UUID        `json:"run_id"`
-	DeploymentID  pgtype.UUID        `json:"deployment_id"`
-	PreviousRunID pgtype.UUID        `json:"previous_run_id"`
-	TurnIndex     int32              `json:"turn_index"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	EndedAt       pgtype.Timestamptz `json:"ended_at"`
-}
-
-type TaskStartIdempotency struct {
-	ID                 pgtype.UUID        `json:"id"`
-	OrgID              pgtype.UUID        `json:"org_id"`
-	ProjectID          pgtype.UUID        `json:"project_id"`
-	EnvironmentID      pgtype.UUID        `json:"environment_id"`
-	TaskID             string             `json:"task_id"`
-	IdempotencyKey     string             `json:"idempotency_key"`
-	RequestFingerprint string             `json:"request_fingerprint"`
-	TaskSessionID      pgtype.UUID        `json:"task_session_id"`
-	FirstRunID         pgtype.UUID        `json:"first_run_id"`
-	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	LastUsedAt         pgtype.Timestamptz `json:"last_used_at"`
 }
 
 type TimerWait struct {

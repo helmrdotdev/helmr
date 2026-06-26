@@ -32,7 +32,7 @@ func TestClientErrorUsesServerMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.StartTask(context.Background(), "deploy", api.TaskStartRequest{})
+	_, err = client.StartSession(context.Background(), "deploy", api.SessionStartRequest{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -41,10 +41,10 @@ func TestClientErrorUsesServerMessage(t *testing.T) {
 	}
 }
 
-func TestTaskStartPendingRetryDelayClampsPastHTTPDate(t *testing.T) {
+func TestSessionStartPendingRetryDelayClampsPastHTTPDate(t *testing.T) {
 	raw := time.Now().Add(-time.Second).UTC().Format(http.TimeFormat)
-	if got := taskStartPendingRetryDelay(raw); got != taskStartPendingDefaultDelay {
-		t.Fatalf("delay = %v, want %v", got, taskStartPendingDefaultDelay)
+	if got := sessionStartPendingRetryDelay(raw); got != sessionStartPendingDefaultDelay {
+		t.Fatalf("delay = %v, want %v", got, sessionStartPendingDefaultDelay)
 	}
 }
 
@@ -85,7 +85,7 @@ func TestClientSendsPinnedVersionHeaders(t *testing.T) {
 		if got := r.Header.Get(api.SDKVersionHeader); got != "" {
 			t.Fatalf("%s = %q", api.SDKVersionHeader, got)
 		}
-		_ = json.NewEncoder(w).Encode(api.TaskStartResponse{Run: api.RunResponse{
+		_ = json.NewEncoder(w).Encode(api.SessionStartResponse{Run: api.RunResponse{
 			ID:     "run-1",
 			TaskID: "deploy",
 			Status: "queued",
@@ -97,7 +97,7 @@ func TestClientSendsPinnedVersionHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.StartTask(context.Background(), "deploy", api.TaskStartRequest{}); err != nil {
+	if _, err := client.StartSession(context.Background(), "deploy", api.SessionStartRequest{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -113,7 +113,7 @@ func TestClientSendsSDKVersionHeaderForSDKIdentity(t *testing.T) {
 		if got := r.Header.Get(api.CLIVersionHeader); got != "" {
 			t.Fatalf("%s = %q", api.CLIVersionHeader, got)
 		}
-		_ = json.NewEncoder(w).Encode(api.TaskStartResponse{Run: api.RunResponse{
+		_ = json.NewEncoder(w).Encode(api.SessionStartResponse{Run: api.RunResponse{
 			ID:     "run-1",
 			TaskID: "deploy",
 			Status: "queued",
@@ -125,14 +125,14 @@ func TestClientSendsSDKVersionHeaderForSDKIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.StartTask(context.Background(), "deploy", api.TaskStartRequest{}); err != nil {
+	if _, err := client.StartSession(context.Background(), "deploy", api.SessionStartRequest{}); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://helmr.example/api/tasks/deploy/start", http.StatusTemporaryRedirect)
+		http.Redirect(w, r, "http://helmr.example/api/sessions", http.StatusTemporaryRedirect)
 	}))
 	defer server.Close()
 
@@ -140,16 +140,16 @@ func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.StartTask(context.Background(), "deploy", api.TaskStartRequest{})
+	_, err = client.StartSession(context.Background(), "deploy", api.SessionStartRequest{})
 	if err == nil || !strings.Contains(err.Error(), "plaintext non-loopback") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestStartTask(t *testing.T) {
+func TestStartSession(t *testing.T) {
 	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		body, err := io.ReadAll(r.Body)
@@ -163,11 +163,11 @@ func TestStartTask(t *testing.T) {
 		if _, ok := raw["source"]; ok {
 			t.Fatalf("request JSON included source: %s", body)
 		}
-		var request api.TaskStartRequest
+		var request api.SessionStartRequest
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(api.TaskStartResponse{Run: api.RunResponse{
+		_ = json.NewEncoder(w).Encode(api.SessionStartResponse{Run: api.RunResponse{
 			ID:        "run-1",
 			TaskID:    "deploy",
 			Status:    "queued",
@@ -181,7 +181,7 @@ func TestStartTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	started, err := client.StartTask(context.Background(), "deploy", api.TaskStartRequest{
+	started, err := client.StartSession(context.Background(), "deploy", api.SessionStartRequest{
 		Payload: json.RawMessage(`{"env":"prod"}`),
 	})
 	if err != nil {
@@ -192,14 +192,14 @@ func TestStartTask(t *testing.T) {
 	}
 }
 
-func TestStartTaskReturnsAcceptedAsPendingError(t *testing.T) {
+func TestStartSessionReturnsAcceptedAsPendingError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		w.Header().Set("Retry-After", "11")
 		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"code":"idempotency_pending","error":"task_start_pending"}`))
+		_, _ = w.Write([]byte(`{"code":"idempotency_pending","error":"session_start_pending"}`))
 	}))
 	defer server.Close()
 
@@ -207,18 +207,18 @@ func TestStartTaskReturnsAcceptedAsPendingError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.StartTask(context.Background(), "deploy", api.TaskStartRequest{})
+	_, err = client.StartSession(context.Background(), "deploy", api.SessionStartRequest{})
 	var httpErr *HTTPError
-	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusAccepted || !strings.Contains(httpErr.Message, "task_start_pending") {
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusAccepted || !strings.Contains(httpErr.Message, "session_start_pending") {
 		t.Fatalf("err = %#v, want 202 pending HTTPError", err)
 	}
 }
 
-func TestStartTaskDoesNotRetryNonPendingAccepted(t *testing.T) {
+func TestStartSessionDoesNotRetryNonPendingAccepted(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusAccepted)
@@ -230,7 +230,7 @@ func TestStartTaskDoesNotRetryNonPendingAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.StartTask(context.Background(), "deploy", api.TaskStartRequest{})
+	_, err = client.StartSession(context.Background(), "deploy", api.SessionStartRequest{})
 	var httpErr *HTTPError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusAccepted || !strings.Contains(httpErr.Message, "accepted elsewhere") {
 		t.Fatalf("err = %#v, want non-pending 202 HTTPError", err)
@@ -240,20 +240,20 @@ func TestStartTaskDoesNotRetryNonPendingAccepted(t *testing.T) {
 	}
 }
 
-func TestStartTaskUsesSessionScopedRoute(t *testing.T) {
+func TestStartSessionUsesSessionScopedRoute(t *testing.T) {
 	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-1/environments/env-1/tasks/deploy/start" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-1/environments/env-1/sessions" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		var request api.TaskStartRequest
+		var request api.SessionStartRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
 		if request.ProjectID != "" || request.EnvironmentID != "" {
 			t.Fatalf("scoped route leaked body scope: %+v", request)
 		}
-		_ = json.NewEncoder(w).Encode(api.TaskStartResponse{Run: api.RunResponse{
+		_ = json.NewEncoder(w).Encode(api.SessionStartResponse{Run: api.RunResponse{
 			ID:        "run-1",
 			TaskID:    "deploy",
 			Status:    "queued",
@@ -267,7 +267,7 @@ func TestStartTaskUsesSessionScopedRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	started, err := client.StartTask(context.Background(), "deploy", api.TaskStartRequest{
+	started, err := client.StartSession(context.Background(), "deploy", api.SessionStartRequest{
 		ProjectID:     "project-1",
 		EnvironmentID: "env-1",
 		Payload:       json.RawMessage(`{"env":"prod"}`),

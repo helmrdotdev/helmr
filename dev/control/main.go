@@ -336,7 +336,7 @@ ON CONFLICT (id) DO UPDATE
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if _, err := queries.CreateSession(ctx, db.CreateSessionParams{
+	if _, err := queries.CreateAuthSession(ctx, db.CreateAuthSessionParams{
 		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		UserID:    pgvalue.UUID(userID),
 		TokenHash: hash,

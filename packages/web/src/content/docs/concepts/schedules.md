@@ -8,7 +8,7 @@ order: 165
 
 # Schedules
 
-A schedule starts task sessions for a deployed task from a 5-field cron expression. The logical schedule is scoped to a project. Each environment gets its own schedule instance, which stores run options, active state, and next-fire cursor state.
+A schedule starts sessions for a deployed task from a 5-field cron expression. The logical schedule is scoped to a project. Each environment gets its own schedule instance, which stores run options, active state, and next-fire cursor state.
 
 Schedules are not arbitrary payload templates. Helmr generates the scheduled task payload at fire time so every scheduled run receives consistent schedule metadata:
 
@@ -56,14 +56,13 @@ Declarative schedules are owned by task source. They cannot be edited, activated
 
 ## Imperative Schedules
 
-Imperative schedules are created through the runtime client or web UI. Use them when a service or operator needs to register schedules outside task source.
+Imperative schedules are created through the runtime client, the top-level `schedules` facade, or web UI. Use them when a service or operator needs to register schedules outside task source.
 
 ```ts
-import { HelmrClient } from "@helmr/sdk"
+import { schedules } from "@helmr/sdk"
 
-const client = new HelmrClient()
-
-await client.schedules.create({
+await schedules.create({
+  deduplicationKey: "nightly-maintenance-main",
   task: "nightly-maintenance",
   externalId: "main",
   cron: "0 2 * * *",

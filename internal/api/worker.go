@@ -149,7 +149,7 @@ type WorkerRun struct {
 	AttemptID             string                         `json:"attempt_id"`
 	RunLeaseID            string                         `json:"run_lease_id"`
 	SnapshotVersion       int64                          `json:"snapshot_version"`
-	TaskSessionID         string                         `json:"task_session_id"`
+	SessionID             string                         `json:"session_id"`
 	TaskID                string                         `json:"task_id"`
 	Payload               json.RawMessage                `json:"payload"`
 	Secrets               ResolvedSecrets                `json:"secrets,omitempty"`
@@ -280,14 +280,18 @@ type WorkerDeploymentBuildTask struct {
 	RetryPolicy                json.RawMessage                `json:"retry_policy,omitempty"`
 	Secrets                    []SecretDeclaration            `json:"secrets,omitempty"`
 	Schedules                  []WorkerDeploymentTaskSchedule `json:"schedules,omitempty"`
-	Streams                    []WorkerDeploymentTaskStream   `json:"streams,omitempty"`
 }
 
-type WorkerDeploymentTaskStream struct {
+type WorkerDeploymentStream struct {
 	Name              string          `json:"name"`
 	Direction         string          `json:"direction"`
 	SchemaFingerprint string          `json:"schema_fingerprint,omitempty"`
 	SchemaJSON        json.RawMessage `json:"schema_json,omitempty"`
+}
+
+type WorkerDeploymentQueue struct {
+	Name             string `json:"name"`
+	ConcurrencyLimit *int32 `json:"concurrency_limit,omitempty"`
 }
 
 type SecretDeclaration struct {
@@ -310,6 +314,8 @@ type WorkerDeploymentBuildResult struct {
 	BuildManifestDigest      string                      `json:"build_manifest_digest"`
 	DeploymentManifestDigest string                      `json:"deployment_manifest_digest"`
 	Tasks                    []WorkerDeploymentBuildTask `json:"tasks"`
+	Queues                   []WorkerDeploymentQueue     `json:"queues"`
+	Streams                  []WorkerDeploymentStream    `json:"streams,omitempty"`
 	CASObjects               []CASObject                 `json:"cas_objects,omitempty"`
 	Error                    *string                     `json:"error,omitempty"`
 }

@@ -120,5 +120,5 @@ func (s *Server) revokeSessionToken(r *http.Request, raw string) {
 	if err != nil {
 		return
 	}
-	_, _ = s.db.RevokeSessionByTokenHash(r.Context(), tokenHash)
+	_, _ = s.db.RevokeAuthSessionByTokenHash(r.Context(), tokenHash)
 }

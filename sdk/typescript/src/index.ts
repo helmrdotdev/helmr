@@ -1,6 +1,7 @@
 import {
   ConcurrentWaitError,
   getRunRuntime,
+  registerStreamDefinition,
   validateStreamName,
   WaitCancelledError,
   WaitTimeoutError,
@@ -39,11 +40,11 @@ import {
   type InputStreamHandle,
   type OutputStreamHandle,
   type TaskContext,
-  type TaskSessionContext,
+  type SessionContext,
   type TaskWorkspace,
   type TaskOutput,
   type TaskPayload,
-  type TaskStartPayload,
+  type SessionStartPayload,
   type RuntimeTokenCreateOptions,
   type RuntimeTokenWaitOptions,
   type TokenWaitOptions,
@@ -63,13 +64,14 @@ import {
 } from "./runtime/client"
 export type {
   ListSchedulesOptions,
-  OpenTaskSessionApi,
+  OpenSessionApi,
   PublicAccessToken,
   PublicAccessTokenCreateOptions,
   PublicAccessTokenScope,
   RetrieveScheduleOptions,
   Schedule,
   ScheduleCreateOptions,
+  ScheduleRef,
   ScheduleUpdateOptions,
   SchedulesApi,
   SessionInputSendOptions,
@@ -79,17 +81,18 @@ export type {
   SessionOutputStreamApi,
   SessionStreamListOptions,
   SessionStreamReadOptions,
-  TaskSessionCancelOptions,
-  TaskSessionCloseOptions,
-  TaskSessionHandle,
-  TaskSessionListOptions,
-  TaskSessionRun,
-  TaskSessionSnapshot,
-  TaskSessionStatus,
-  TaskSessionWaitOptions,
-  TaskStartAndWaitOptions,
-  TaskStartOptions,
-  TaskStartResult,
+  SessionCancelOptions,
+  SessionCloseOptions,
+  SessionHandle,
+  SessionListOptions,
+  SessionRun,
+  SessionSnapshot,
+  SessionActivity,
+  SessionStatus,
+  SessionStartAndWaitOptions,
+  SessionStartOptions,
+  SessionStartAndWaitResult,
+  SessionStartResult,
   TokenRef,
   TokenCompleteOptions,
   TokenCreateOptions,
@@ -135,14 +138,14 @@ export type {
 } from "./runtime/client"
 import { sandbox } from "./sandbox"
 import { defineConfig, type HelmrConfig, type HelmrConfigInput } from "./config"
-import { queue, task, type Task, type TaskConfig, type TaskQueueConfig } from "./task"
+import { queue, task, type QueueConfig, type QueueDefinition, type Task, type TaskConfig } from "./task"
 import {
   task as scheduledTask,
   type ScheduleCron,
   type ScheduledTaskConfig,
   type ScheduledTaskPayload,
 } from "./schedules"
-import { getDefaultClient, tasks } from "./start"
+import { defaultClientNamespace, getDefaultClient, sessions } from "./start"
 
 type SchemaInput<TSchema> = TSchema extends PayloadSchema<infer TInput, any> ? TInput : never
 type SchemaOutput<TSchema> = TSchema extends PayloadSchema<any, infer TOutput> ? TOutput : never
@@ -171,7 +174,7 @@ export {
   type RunSummary,
   type SubscribeRunEventsOptions,
 } from "./runtime/run"
-export { defineConfig, idempotencyKeys, queue, sandbox, task, tasks }
+export { defineConfig, idempotencyKeys, queue, sandbox, task, sessions }
 export type {
   HelmrConfig,
   HelmrConfigInput,
@@ -180,10 +183,11 @@ export type {
   SecretDecls,
   Task,
   TaskConfig,
-  TaskQueueConfig,
+  QueueConfig,
+  QueueDefinition,
   TaskOutput,
   TaskPayload,
-  TaskStartPayload,
+  SessionStartPayload,
   WaitHandle,
   WaitDelayHandle,
   WaitResult,
@@ -223,18 +227,23 @@ export const source: SourceCapabilities = {
 
 export { HelmrClient }
 export { validateSecretName }
-export const runs = new Proxy({} as HelmrClient["runs"], {
-  get(_target, property, receiver) {
-    return Reflect.get(getDefaultClient().runs, property, receiver)
-  },
-})
+export const runs = defaultClientNamespace("runs")
+
+export const workspaces = defaultClientNamespace("workspaces")
+
+export const auth = defaultClientNamespace("auth")
 
 export const streams = Object.freeze({
   input: createInputStream,
   output: createOutputStream,
 })
 
-export const tokens = Object.freeze({
+type TokensNamespace = Omit<HelmrClient["tokens"], "create"> & {
+  create(opts?: TokenCreateOptions & { readonly timeout?: DurationInput }): Promise<Token>
+  wait: typeof tokenWaitHandle
+}
+
+const runtimeTokens = {
   async create(opts: TokenCreateOptions & { readonly timeout?: DurationInput } = {}): Promise<Token> {
     const token = runRuntimeIsActive()
       ? await getRunRuntime().createToken(normalizeRuntimeTokenCreateOptions(opts))
@@ -242,6 +251,15 @@ export const tokens = Object.freeze({
     return tokenHandle(token)
   },
   wait: tokenWaitHandle,
+}
+
+export const tokens = new Proxy({} as TokensNamespace, {
+  get(_target, property, receiver) {
+    if (Object.prototype.hasOwnProperty.call(runtimeTokens, property)) {
+      return Reflect.get(runtimeTokens, property, receiver)
+    }
+    return Reflect.get(getDefaultClient().tokens, property, receiver)
+  },
 })
 
 export const timers = Object.freeze({
@@ -277,15 +295,17 @@ export const logger = Object.freeze({
   },
 })
 
-export const schedules = Object.freeze({
-  task: scheduledTask,
-  create: (...args: Parameters<HelmrClient["schedules"]["create"]>) => getDefaultClient().schedules.create(...args),
-  update: (...args: Parameters<HelmrClient["schedules"]["update"]>) => getDefaultClient().schedules.update(...args),
-  list: (...args: Parameters<HelmrClient["schedules"]["list"]>) => getDefaultClient().schedules.list(...args),
-  retrieve: (...args: Parameters<HelmrClient["schedules"]["retrieve"]>) => getDefaultClient().schedules.retrieve(...args),
-  activate: (...args: Parameters<HelmrClient["schedules"]["activate"]>) => getDefaultClient().schedules.activate(...args),
-  deactivate: (...args: Parameters<HelmrClient["schedules"]["deactivate"]>) => getDefaultClient().schedules.deactivate(...args),
-  delete: (...args: Parameters<HelmrClient["schedules"]["delete"]>) => getDefaultClient().schedules.delete(...args),
+type SchedulesNamespace = {
+  readonly task: typeof scheduledTask
+} & HelmrClient["schedules"]
+
+export const schedules = new Proxy({} as SchedulesNamespace, {
+  get(_target, property, receiver) {
+    if (property === "task") {
+      return scheduledTask
+    }
+    return Reflect.get(getDefaultClient().schedules, property, receiver)
+  },
 })
 
 export type {
@@ -307,7 +327,7 @@ export type {
   SourceDirectoryOptions,
   SourceFileRef,
   TaskContext,
-  TaskSessionContext,
+  SessionContext,
   TaskWorkspace,
   RuntimeTokenCreateOptions,
 }
@@ -316,30 +336,42 @@ function createInputStream<TSchema extends PayloadSchema<any, any>>(
   id: string,
   opts: { readonly schema: TSchema },
 ): InputStreamHandle<SchemaOutput<TSchema>, SchemaInput<TSchema>> & InputStreamDefinition<SchemaOutput<TSchema>, SchemaInput<TSchema>>
-function createInputStream(id: string): InputStreamHandle<unknown, unknown>
+function createInputStream(id: string): InputStreamHandle<unknown, unknown> & InputStreamDefinition<unknown, unknown>
 function createInputStream(
   id: string,
   opts?: { readonly schema?: PayloadSchema<any, any> },
-): InputStreamHandle<unknown, unknown> & Partial<InputStreamDefinition<unknown, unknown>> {
-  return inputStreamHandle(validateStreamName(id), opts?.schema)
+): InputStreamHandle<unknown, unknown> & InputStreamDefinition<unknown, unknown> {
+  const name = validateStreamName(id)
+  registerStreamDefinition({
+    id: name,
+    direction: "input",
+    ...(opts?.schema === undefined ? {} : { schema: opts.schema }),
+  })
+  return inputStreamHandle(name, opts?.schema)
 }
 
 function createOutputStream<TSchema extends PayloadSchema<any, any>>(
   id: string,
   opts: { readonly schema: TSchema },
 ): OutputStreamHandle<SchemaOutput<TSchema>, SchemaInput<TSchema>> & OutputStreamDefinition<SchemaOutput<TSchema>, SchemaInput<TSchema>>
-function createOutputStream(id: string): OutputStreamHandle<unknown, unknown>
+function createOutputStream(id: string): OutputStreamHandle<unknown, unknown> & OutputStreamDefinition<unknown, unknown>
 function createOutputStream(
   id: string,
   opts?: { readonly schema?: PayloadSchema<any, any> },
-): OutputStreamHandle<unknown, unknown> & Partial<OutputStreamDefinition<unknown, unknown>> {
-  return outputStreamHandle(validateStreamName(id), opts?.schema)
+): OutputStreamHandle<unknown, unknown> & OutputStreamDefinition<unknown, unknown> {
+  const name = validateStreamName(id)
+  registerStreamDefinition({
+    id: name,
+    direction: "output",
+    ...(opts?.schema === undefined ? {} : { schema: opts.schema }),
+  })
+  return outputStreamHandle(name, opts?.schema)
 }
 
 function inputStreamHandle(
   id: string,
   schema: PayloadSchema<any, any> | undefined,
-): InputStreamHandle<unknown, unknown> & Partial<InputStreamDefinition<unknown, unknown>> {
+): InputStreamHandle<unknown, unknown> & InputStreamDefinition<unknown, unknown> {
   const wait = (opts: InputStreamWaitOptions = {}) => {
     return waitHandle(() => getRunRuntime().inputStreamWait(id, schema, opts))
   }
@@ -379,7 +411,7 @@ function inputStreamHandle(
 function outputStreamHandle(
   id: string,
   schema: PayloadSchema<any, any> | undefined,
-): OutputStreamHandle<unknown, unknown> & Partial<OutputStreamDefinition<unknown, unknown>> {
+): OutputStreamHandle<unknown, unknown> & OutputStreamDefinition<unknown, unknown> {
   return Object.freeze({
     id,
     direction: "output",

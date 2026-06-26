@@ -37,8 +37,9 @@ type StreamRecordResponse struct {
 }
 
 type AppendStreamRecordResponse struct {
-	Record            StreamRecordResponse `json:"record"`
-	IdempotencyStatus string               `json:"idempotency_status"`
+	Record             StreamRecordResponse `json:"record"`
+	IdempotencyStatus  string               `json:"idempotency_status"`
+	ContinuationStatus string               `json:"continuation_status,omitempty"`
 }
 
 type ListStreamRecordsResponse struct {

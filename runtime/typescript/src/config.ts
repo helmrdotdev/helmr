@@ -1,9 +1,15 @@
-import { compile } from "@helmr/sdk/internal/compile"
+import { compile, compileQueueCatalog, compileStreamCatalog, type CompiledQueueCatalogItem, type CompiledStreamCatalogItem } from "@helmr/sdk/internal/compile"
 import {
+  clearStreamDefinitionContext,
   isConfigDefinition,
   isTaskDefinition,
+  readQueueDefinitions,
+  readStreamDefinitions,
+  setStreamDefinitionContext,
   type AnyTask,
   type HelmrConfig,
+  type InternalQueueDefinition,
+  type InternalStreamDefinition,
 } from "@helmr/sdk/internal"
 import type { Bundle } from "@helmr/proto"
 import { readdir, stat } from "node:fs/promises"
@@ -16,6 +22,18 @@ interface ConfigTaskRef {
   readonly modulePath: string
   readonly exportName: string
   readonly task: AnyTask
+}
+
+interface LoadedConfigTaskRefs {
+  readonly refs: readonly ConfigTaskRef[]
+  readonly streams: readonly InternalStreamDefinition[]
+  readonly queues: readonly InternalQueueDefinition[]
+}
+
+export interface DeploymentRegistry {
+  readonly tasks: ReadonlyMap<string, RegisteredTask>
+  readonly streams: readonly CompiledStreamCatalogItem[]
+  readonly queues: readonly CompiledQueueCatalogItem[]
 }
 
 export interface RegisteredTask {
@@ -51,10 +69,15 @@ const HARD_IGNORE_PATTERNS = [
   "**/.next/**",
 ] as const
 
-async function loadConfigTaskRefs(cwd: string): Promise<readonly ConfigTaskRef[]> {
+async function loadConfigTaskRefs(cwd: string): Promise<LoadedConfigTaskRefs> {
   const config = await loadConfig(cwd)
   const taskFiles = await discoverTaskFiles(cwd, config)
-  return collectTaskRefs(cwd, await importDiscoveredTaskModules(taskFiles))
+  const modules = await importDiscoveredTaskModules(taskFiles)
+  return {
+    refs: collectTaskRefs(cwd, modules),
+    streams: readStreamDefinitions().filter((stream) => isInsideProjectRoot(cwd, stream.originFile)),
+    queues: readQueueDefinitions().filter((queue) => isInsideProjectRoot(cwd, queue.originFile)),
+  }
 }
 
 export async function loadConfig(cwd: string): Promise<HelmrConfig> {
@@ -75,7 +98,17 @@ export async function loadConfig(cwd: string): Promise<HelmrConfig> {
 }
 
 export async function loadTaskRegistry(cwd: string): Promise<ReadonlyMap<string, RegisteredTask>> {
-  return buildTaskRegistry(await loadConfigTaskRefs(cwd))
+  return (await loadDeploymentRegistry(cwd)).tasks
+}
+
+export async function loadDeploymentRegistry(cwd: string): Promise<DeploymentRegistry> {
+  const loaded = await loadConfigTaskRefs(cwd)
+  const tasks = buildTaskRegistry(loaded.refs)
+  return {
+    tasks,
+    streams: compileStreamCatalog(loaded.streams),
+    queues: compileQueueCatalog([...tasks.values()].map((item) => item.task), loaded.queues),
+  }
 }
 
 function buildTaskRegistry(
@@ -235,12 +268,19 @@ interface ImportedTaskModule {
 }
 
 async function importDiscoveredTaskModules(files: readonly string[]): Promise<readonly ImportedTaskModule[]> {
-  return Promise.all(
-    files.map(async (file) => ({
-      path: file,
-      exports: await importProjectModule(file, `task module ${file}`),
-    })),
-  )
+  const modules: ImportedTaskModule[] = []
+  for (const file of files) {
+    setStreamDefinitionContext(file)
+    try {
+      modules.push({
+        path: file,
+        exports: await importProjectModule(file, `task module ${file}`),
+      })
+    } finally {
+      clearStreamDefinitionContext()
+    }
+  }
+  return modules
 }
 
 async function importProjectModule(path: string, label: string): Promise<Record<string, unknown>> {
@@ -313,6 +353,16 @@ function projectRelativePath(cwd: string, path: string): string {
     }
   }
   return path
+}
+
+function isInsideProjectRoot(cwd: string, path: string): boolean {
+  if (path === "unknown") {
+    return false
+  }
+  return equivalentRoots(cwd).some((root) => {
+    const rel = relative(root, path)
+    return rel === "" || (!rel.startsWith("..") && !rel.startsWith(`..${sep}`))
+  })
 }
 
 function equivalentRoots(path: string): readonly string[] {

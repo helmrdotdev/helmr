@@ -26,7 +26,7 @@ The deployment has these runtime components:
 
 AWS infrastructure provides the shared dependencies:
 
-- Amazon RDS for PostgreSQL stores orgs, auth state, projects, task sessions, runs, workers, waits, stream records, tokens, metadata, checkpoints, and events.
+- Amazon RDS for PostgreSQL stores orgs, auth state, projects, sessions, runs, workers, waits, stream records, tokens, metadata, checkpoints, and events.
 - Cluster-mode disabled ElastiCache Valkey/Redis backs the dispatch queue used by
   `HELMR_REDIS_URL`.
 - S3 stores source bundles, runtime artifacts, and encrypted checkpoint objects.

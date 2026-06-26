@@ -26,7 +26,7 @@ var (
 	runTerminalSnapshotConvergeLimit = 5 * time.Second
 )
 
-func taskStartCommand() *cobra.Command {
+func sessionStartCommand() *cobra.Command {
 	var payloadFile string
 	var payloadJSON string
 	var payloadPairs []string
@@ -51,7 +51,7 @@ func taskStartCommand() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "start TASK",
-		Short: "Start a task session.",
+		Short: "Start a session.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			payload, err := parsePayload(payloadFile, payloadJSON, payloadPairs)
@@ -93,7 +93,7 @@ func taskStartCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			options := api.TaskStartOptions{
+			options := api.SessionStartOptions{
 				ConcurrencyKey:     strings.TrimSpace(concurrencyKey),
 				Priority:           priority,
 				TTL:                strings.TrimSpace(ttl),
@@ -108,7 +108,7 @@ func taskStartCommand() *cobra.Command {
 			if queueName = strings.TrimSpace(queueName); queueName != "" {
 				options.Queue = &api.RunQueueOption{Name: queueName}
 			}
-			started, err := control.StartTask(cmd.Context(), args[0], api.TaskStartRequest{
+			started, err := control.StartSession(cmd.Context(), args[0], api.SessionStartRequest{
 				ProjectID:     scope.ProjectID,
 				EnvironmentID: scope.EnvironmentID,
 				Payload:       payload,
@@ -121,21 +121,31 @@ func taskStartCommand() *cobra.Command {
 			if timeoutSeconds > 0 {
 				deadline = time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
 			}
-			sessionScope := client.TaskSessionScopeOptions(scope)
+			sessionScope := client.SessionScopeOptions(scope)
 			if jsonOutput {
 				if wait {
-					session, err := waitTaskSessionUntilTerminal(cmd.Context(), control, started.Session.ID, deadline, timeoutSeconds, sessionScope)
+					waitCtx := cmd.Context()
+					if timeoutSeconds > 0 {
+						var cancel func()
+						waitCtx, cancel = context.WithDeadline(waitCtx, deadline)
+						defer cancel()
+					}
+					run, err := waitForRun(waitCtx, control, started.Run.ID, client.RunScopeOptions{
+						ProjectID:     scope.ProjectID,
+						EnvironmentID: scope.EnvironmentID,
+					})
 					if err != nil {
 						return err
 					}
-					return format.JSON(cmd.OutOrStdout(), session)
+					started.Run = run
+					return format.JSON(cmd.OutOrStdout(), started)
 				}
 				return format.JSON(cmd.OutOrStdout(), started)
 			}
-			writeTaskStartHandle(cmd, control, started)
+			writeSessionStartHandle(cmd, control, started)
 			if follow {
 				if started.Run.ID == "" {
-					return errors.New("task start response did not include a run id to follow")
+					return errors.New("session start response did not include a run id to follow")
 				}
 				followCtx := cmd.Context()
 				if timeoutSeconds > 0 {
@@ -148,7 +158,7 @@ func taskStartCommand() *cobra.Command {
 					EnvironmentID: scope.EnvironmentID,
 				}); err != nil {
 					if errors.Is(err, context.DeadlineExceeded) {
-						session, snapshotErr := control.GetTaskSession(cmd.Context(), started.Session.ID, sessionScope)
+						session, snapshotErr := control.GetSession(cmd.Context(), started.Session.ID, sessionScope)
 						if snapshotErr == nil {
 							fmt.Fprintf(cmd.OutOrStdout(), "session_status: %s\n", session.Status)
 						}
@@ -158,11 +168,20 @@ func taskStartCommand() *cobra.Command {
 				wait = true
 			}
 			if wait {
-				session, err := waitTaskSessionUntilTerminal(cmd.Context(), control, started.Session.ID, deadline, timeoutSeconds, sessionScope)
+				waitCtx := cmd.Context()
+				if timeoutSeconds > 0 {
+					var cancel func()
+					waitCtx, cancel = context.WithDeadline(waitCtx, deadline)
+					defer cancel()
+				}
+				run, err := waitForRun(waitCtx, control, started.Run.ID, client.RunScopeOptions{
+					ProjectID:     scope.ProjectID,
+					EnvironmentID: scope.EnvironmentID,
+				})
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "session_status: %s\n", session.Status)
+				fmt.Fprintf(cmd.OutOrStdout(), "run_status: %s\n", run.Status)
 			}
 			return nil
 		},
@@ -184,8 +203,8 @@ func taskStartCommand() *cobra.Command {
 	cmd.Flags().StringVar(&retryJSON, "retry-json", "", "Inline retry policy JSON literal.")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
 	cmd.Flags().StringVar(&idempotencyKeyTTL, "idempotency-key-ttl", "", "Duration to retain the idempotency key, for example 30d or 24h.")
-	cmd.Flags().StringVar(&workspaceID, "workspace", "", "Existing workspace ID to attach this task session to.")
-	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for the task session to finish.")
+	cmd.Flags().StringVar(&workspaceID, "workspace", "", "Existing workspace ID to attach this session to.")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for the session to finish.")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Stream the initial run logs while waiting.")
 	cmd.Flags().StringVar(&timeout, "timeout", "", "Maximum wait duration, for example 10m or 1h.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
@@ -199,11 +218,11 @@ func taskCommand() *cobra.Command {
 		Use:   "task",
 		Short: "Work with deployed tasks.",
 	}
-	cmd.AddCommand(taskListCommand(), taskGetCommand(), taskStartCommand())
+	cmd.AddCommand(taskListCommand(), taskGetCommand())
 	return cmd
 }
 
-func writeTaskStartHandle(cmd *cobra.Command, control *client.Client, started api.TaskStartResponse) {
+func writeSessionStartHandle(cmd *cobra.Command, control *client.Client, started api.SessionStartResponse) {
 	fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", started.Session.ID)
 	if started.Run.ID != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", started.Run.ID)
@@ -213,53 +232,6 @@ func writeTaskStartHandle(cmd *cobra.Command, control *client.Client, started ap
 	}
 	if url := consoleURL(cmd, control, "/sessions/"+started.Session.ID); url != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "console_url: %s\n", url)
-	}
-}
-
-func remainingTaskWaitSeconds(deadline time.Time, configured int32) (int32, bool) {
-	if configured <= 0 || deadline.IsZero() {
-		return configured, false
-	}
-	remaining := time.Until(deadline)
-	if remaining <= 0 {
-		return 0, true
-	}
-	return int32((remaining + time.Second - 1) / time.Second), false
-}
-
-func waitTaskSessionUntilTerminal(ctx context.Context, control *client.Client, sessionID string, deadline time.Time, timeoutSeconds int32, scope client.TaskSessionScopeOptions) (api.TaskSessionResponse, error) {
-	for {
-		waitSeconds, expired := remainingTaskWaitSeconds(deadline, timeoutSeconds)
-		if expired {
-			session, err := control.GetTaskSession(ctx, sessionID, scope)
-			if err != nil {
-				return api.TaskSessionResponse{}, err
-			}
-			session.TimedOut = true
-			return session, context.DeadlineExceeded
-		}
-		waitCtx := ctx
-		var cancel func()
-		if timeoutSeconds > 0 && !deadline.IsZero() {
-			waitCtx, cancel = context.WithDeadline(ctx, deadline)
-		}
-		session, err := control.WaitTaskSession(waitCtx, sessionID, api.TaskWaitRequest{TimeoutSeconds: waitSeconds}, scope)
-		if cancel != nil {
-			cancel()
-		}
-		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) && timeoutSeconds > 0 {
-				session, snapshotErr := control.GetTaskSession(ctx, sessionID, scope)
-				if snapshotErr == nil {
-					session.TimedOut = true
-					return session, err
-				}
-			}
-			return api.TaskSessionResponse{}, err
-		}
-		if !session.TimedOut || taskSessionStatusTerminal(session.Status) {
-			return session, nil
-		}
 	}
 }
 
@@ -409,7 +381,7 @@ func runListCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	cmd.Flags().BoolVar(&jsonLines, "jsonl", false, "Emit one JSON run per line.")
 	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().StringVar(&sessionID, "session", "", "Filter by task session ID.")
+	cmd.Flags().StringVar(&sessionID, "session", "", "Filter by session ID.")
 	return cmd
 }
 
@@ -620,9 +592,9 @@ func workspaceScopeForClient(control *client.Client, projectID string, environme
 	return client.WorkspaceScopeOptions(environmentScope), err
 }
 
-func taskSessionScopeForClient(control *client.Client, projectID string, environmentID string) (client.TaskSessionScopeOptions, error) {
+func sessionScopeForClient(control *client.Client, projectID string, environmentID string) (client.SessionScopeOptions, error) {
 	environmentScope, err := environmentScopeForClient(control, projectID, environmentID)
-	return client.TaskSessionScopeOptions(environmentScope), err
+	return client.SessionScopeOptions(environmentScope), err
 }
 
 func resolveRunScope(ctx context.Context, control *client.Client, runID string) (client.RunScopeOptions, error) {

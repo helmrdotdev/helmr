@@ -472,7 +472,7 @@ type magicLinkFinishTx struct {
 	consumed           bool
 	committed          bool
 	ensuredMember      db.EnsureOrgMemberParams
-	createdSession     db.CreateSessionParams
+	createdSession     db.CreateAuthSessionParams
 }
 
 func (tx *magicLinkFinishTx) Begin(context.Context) (pgx.Tx, error) {
@@ -509,7 +509,7 @@ func (tx *magicLinkFinishTx) Exec(_ context.Context, sql string, _ ...any) (pgco
 	case strings.Contains(sql, "UPDATE invitations"):
 		tx.acceptedInvitation = true
 		return pgconn.NewCommandTag("UPDATE 1"), nil
-	case strings.Contains(sql, "UPDATE sessions"):
+	case strings.Contains(sql, "UPDATE auth_sessions"):
 		return pgconn.NewCommandTag("UPDATE 0"), nil
 	default:
 		panic("unexpected Exec: " + sql)
@@ -575,8 +575,8 @@ func (tx *magicLinkFinishTx) QueryRow(_ context.Context, sql string, args ...any
 			pgtype.Timestamptz{},
 			pgtype.Timestamptz{},
 		}}
-	case strings.Contains(sql, "INSERT INTO sessions"):
-		tx.createdSession = db.CreateSessionParams{
+	case strings.Contains(sql, "INSERT INTO auth_sessions"):
+		tx.createdSession = db.CreateAuthSessionParams{
 			ID:        args[0].(pgtype.UUID),
 			OrgID:     args[1].(pgtype.UUID),
 			UserID:    args[2].(pgtype.UUID),

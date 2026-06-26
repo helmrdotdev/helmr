@@ -19,7 +19,7 @@ type ResolvedRun struct {
 	AttemptNumber    int32
 	RunLeaseID       string
 	SnapshotVersion  int64
-	TaskSessionID    string
+	SessionID        string
 	TaskID           string
 	Bundle           *bundlev0.Bundle
 	Payload          json.RawMessage
@@ -55,8 +55,8 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 	if run.SnapshotVersion <= 0 {
 		return ResolvedRun{}, errors.New("worker run snapshot_version must be positive")
 	}
-	if strings.TrimSpace(run.TaskSessionID) == "" {
-		return ResolvedRun{}, errors.New("worker run task_session_id is required")
+	if strings.TrimSpace(run.SessionID) == "" {
+		return ResolvedRun{}, errors.New("worker run session_id is required")
 	}
 	payload := defaultJSON(run.Payload)
 	if !json.Valid(payload) {
@@ -84,7 +84,7 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 		AttemptNumber:    run.AttemptNumber,
 		RunLeaseID:       run.RunLeaseID,
 		SnapshotVersion:  run.SnapshotVersion,
-		TaskSessionID:    run.TaskSessionID,
+		SessionID:        run.SessionID,
 		TaskID:           run.TaskID,
 		Payload:          payload,
 		Secrets:          cloneSecrets(run.Secrets),

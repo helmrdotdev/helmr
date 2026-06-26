@@ -23,7 +23,7 @@ func TestCurrentRunningRunLeaseAcceptsExecutingRun(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 
 	row, err := queries.GetCurrentRunningRunLease(ctx, db.GetCurrentRunningRunLeaseParams{
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -44,7 +44,7 @@ func TestMarkRunWaitResumedAcceptsExecutingRun(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, _ := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, _ := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait := seedRunWait(t, ctx, queries, ids, db.RunWaitKindTimer)
 	markRunWaitWaiting(t, ctx, pool, ids, runWait)
 	storedWait, err := queries.GetRunWait(ctx, db.GetRunWaitParams{
@@ -100,7 +100,7 @@ func TestFailStaleResolvedRunWaitsTerminalizesWorkspaceVersionMismatch(t *testin
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait := seedRunWait(t, ctx, queries, ids, db.RunWaitKindTimer)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	setRunWaitCurrentWorkspaceVersion(t, ctx, pool, ids, runWait)
@@ -192,17 +192,17 @@ func TestFailStaleResolvedRunWaitsTerminalizesWorkspaceVersionMismatch(t *testin
 	if run.ErrorMessage.String != "workspace advanced while run was parked" {
 		t.Fatalf("run error = %q", run.ErrorMessage.String)
 	}
-	var sessionStatus db.TaskSessionStatus
+	var sessionStatus db.SessionStatus
 	var sessionReason []byte
 	if err := pool.QueryRow(ctx, `
 		SELECT status, terminal_reason
-		  FROM task_sessions
+		  FROM sessions
 		 WHERE org_id = $1
 		   AND id = $2
-	`, ids.orgID, pgvalue.MustUUIDValue(run.TaskSessionID)).Scan(&sessionStatus, &sessionReason); err != nil {
+	`, ids.orgID, pgvalue.MustUUIDValue(run.SessionID)).Scan(&sessionStatus, &sessionReason); err != nil {
 		t.Fatal(err)
 	}
-	if sessionStatus != db.TaskSessionStatusFailed || !strings.Contains(string(sessionReason), "workspace_version_mismatch") {
+	if sessionStatus != db.SessionStatusOpen || string(sessionReason) != "{}" {
 		t.Fatalf("session status=%s reason=%s", sessionStatus, string(sessionReason))
 	}
 	var queueStatus db.RunQueueStatus
@@ -224,7 +224,7 @@ func TestFailStaleResolvedRunWaitsTerminalizesQueuedWorkspaceVersionMismatch(t *
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait := seedRunWait(t, ctx, queries, ids, db.RunWaitKindTimer)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	setRunWaitCurrentWorkspaceVersion(t, ctx, pool, ids, runWait)
@@ -296,7 +296,7 @@ func TestFailStaleResolvedRunWaitsRejectsExpiredRuntimeCheckpoint(t *testing.T) 
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait := seedRunWait(t, ctx, queries, ids, db.RunWaitKindTimer)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	setRunWaitCurrentWorkspaceVersion(t, ctx, pool, ids, runWait)
@@ -401,17 +401,20 @@ func TestFailStaleResolvedRunWaitsRejectsExpiredRuntimeCheckpoint(t *testing.T) 
 	if pgvalue.MustUUIDValue(storedWait.WorkspaceVersionID) != currentVersion {
 		t.Fatalf("workspace current version changed from parked truth: wait=%s current=%s", pgvalue.MustUUIDValue(storedWait.WorkspaceVersionID), currentVersion)
 	}
-	var sessionReason []byte
+	var snapshotReason []byte
 	if err := pool.QueryRow(ctx, `
-		SELECT terminal_reason
-		  FROM task_sessions
+		SELECT reason
+		  FROM run_snapshots
 		 WHERE org_id = $1
-		   AND id = $2
-	`, ids.orgID, pgvalue.MustUUIDValue(run.TaskSessionID)).Scan(&sessionReason); err != nil {
+		   AND run_id = $2
+		   AND transition = 'run.failed'
+		 ORDER BY version DESC
+		 LIMIT 1
+	`, ids.orgID, ids.runID).Scan(&snapshotReason); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(sessionReason), "runtime_checkpoint_expired") || !strings.Contains(string(sessionReason), checkpointID.String()) {
-		t.Fatalf("session terminal reason = %s, want expired checkpoint audit details", string(sessionReason))
+	if !strings.Contains(string(snapshotReason), "runtime_checkpoint_expired") || !strings.Contains(string(snapshotReason), checkpointID.String()) {
+		t.Fatalf("run snapshot reason = %s, want expired checkpoint audit details", string(snapshotReason))
 	}
 }
 
@@ -420,7 +423,7 @@ func TestExpiredRunningLeaseCancelsParkingRunWait(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, _ := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, _ := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait := seedRunWait(t, ctx, queries, ids, db.RunWaitKindTimer)
 	if runWait.State != db.RunWaitStateParking {
 		t.Fatalf("run wait state = %s, want parking", runWait.State)
@@ -494,7 +497,7 @@ func TestExpiredParkingLeaseMarksDirtyWorkspaceRecoveryRequired(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, _ := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, _ := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait := seedRunWait(t, ctx, queries, ids, db.RunWaitKindTimer)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	if _, err := pool.Exec(ctx, `
@@ -583,7 +586,7 @@ func TestExpiredParkingLeaseAfterWorkspaceCaptureKeepsVersionAndInvalidatesCheck
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, _ := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, _ := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait := seedRunWait(t, ctx, queries, ids, db.RunWaitKindTimer)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	setRunWaitCurrentWorkspaceVersion(t, ctx, pool, ids, runWait)
@@ -672,7 +675,7 @@ func TestCreateReadyRuntimeCheckpointForRunWaitDetachesCurrentRunLease(t *testin
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait := seedRunWait(t, ctx, queries, ids, db.RunWaitKindTimer)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	setRunWaitCurrentWorkspaceVersion(t, ctx, pool, ids, runWait)
@@ -756,7 +759,7 @@ func TestCreateReadyRuntimeCheckpointRejectsSharedActiveMaterialization(t *testi
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait := seedRunWait(t, ctx, queries, ids, db.RunWaitKindTimer)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	setRunWaitCurrentWorkspaceVersion(t, ctx, pool, ids, runWait)
@@ -829,7 +832,7 @@ func TestCreateReadyRuntimeCheckpointForRunWaitRejectsDirtyCleanPath(t *testing.
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait := seedRunWait(t, ctx, queries, ids, db.RunWaitKindTimer)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	setRunWaitCurrentWorkspaceVersion(t, ctx, pool, ids, runWait)
@@ -885,7 +888,7 @@ func TestDirtyRunWaitCapturePromotesSystemVersionBeforeCheckpointReady(t *testin
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait := seedRunWait(t, ctx, queries, ids, db.RunWaitKindTimer)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	if _, err := pool.Exec(ctx, `
@@ -1021,7 +1024,7 @@ func TestCreateReadyRuntimeCheckpointDoesNotRegressActiveTimeWhenClockMovesBackw
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait := seedRunWait(t, ctx, queries, ids, db.RunWaitKindTimer)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	setRunWaitCurrentWorkspaceVersion(t, ctx, pool, ids, runWait)
@@ -1362,16 +1365,16 @@ func TestResolveStreamWaitsBroadcastsRecordToMatchingWaiters(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	taskSessionID := seedTaskSessionForRun(t, ctx, pool, ids)
+	sessionID := seedSessionForRun(t, ctx, pool, ids)
 	secondRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
 			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
-			task_session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
+			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'waiting', 'waiting', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, secondRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, taskSessionID); err != nil {
+	`, secondRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	secondIDs := ids
@@ -1447,16 +1450,16 @@ func TestResolveStreamWaitForRunWaitDoesNotFanOutToOtherWaiters(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	taskSessionID := seedTaskSessionForRun(t, ctx, pool, ids)
+	sessionID := seedSessionForRun(t, ctx, pool, ids)
 	secondRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
 			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
-			task_session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
+			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'waiting', 'waiting', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, secondRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, taskSessionID); err != nil {
+	`, secondRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	secondIDs := ids
@@ -1809,7 +1812,6 @@ func TestDeploymentStreamNameResolutionAndSessionEnsure(t *testing.T) {
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		DeploymentID:  pgvalue.UUID(ids.deploymentID),
-		TaskID:        "approval-task",
 		Name:          "progress",
 		Direction:     db.StreamDirectionOutput,
 	})
@@ -2091,16 +2093,16 @@ func TestResolveDueTimerWaitForRunWaitDoesNotFanOutToOtherTimers(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	taskSessionID := seedTaskSessionForRun(t, ctx, pool, ids)
+	sessionID := seedSessionForRun(t, ctx, pool, ids)
 	secondRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
 			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
-			task_session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
+			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'waiting', 'waiting', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, secondRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, taskSessionID); err != nil {
+	`, secondRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	secondIDs := ids
@@ -2262,7 +2264,6 @@ func seedSessionStream(t *testing.T, ctx context.Context, queries *db.Queries, i
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		DeploymentID:      pgvalue.UUID(ids.deploymentID),
-		TaskID:            "approval-task",
 		Name:              name,
 		Direction:         direction,
 		SchemaFingerprint: "schema-" + name,
@@ -2284,7 +2285,7 @@ func seedSessionStream(t *testing.T, ctx context.Context, queries *db.Queries, i
 		OrgID:              pgvalue.UUID(ids.orgID),
 		ProjectID:          pgvalue.UUID(ids.projectID),
 		EnvironmentID:      pgvalue.UUID(ids.environmentID),
-		SessionID:          run.TaskSessionID,
+		SessionID:          run.SessionID,
 		DeploymentStreamID: deploymentStream.ID,
 		Metadata:           []byte(`{}`),
 	})

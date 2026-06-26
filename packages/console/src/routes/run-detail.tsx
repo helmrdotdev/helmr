@@ -554,8 +554,8 @@ export function RunDetail() {
                       <div>
                         <dt>Session</dt>
                         <dd>
-                          <A class={"font-mono text-console-accent hover:text-console-accent-hover"} href={sessionHref(current().task_session_id, current().project_id, current().environment_id)}>
-                            {current().task_session_id}
+                          <A class={"font-mono text-console-accent hover:text-console-accent-hover"} href={sessionHref(current().session_id, current().project_id, current().environment_id)}>
+                            {current().session_id}
                           </A>
                         </dd>
                       </div>

@@ -12,15 +12,14 @@ import (
 )
 
 const getDeploymentStreamByName = `-- name: GetDeploymentStreamByName :one
-SELECT id, org_id, project_id, environment_id, deployment_id, task_id, name, direction, schema_fingerprint, schema_json, metadata, created_at
+SELECT id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json, metadata, created_at
   FROM deployment_streams
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
    AND deployment_id = $4
-   AND task_id = $5
-   AND name = $6
-   AND direction = $7::stream_direction
+   AND name = $5
+   AND direction = $6::stream_direction
 `
 
 type GetDeploymentStreamByNameParams struct {
@@ -28,7 +27,6 @@ type GetDeploymentStreamByNameParams struct {
 	ProjectID     pgtype.UUID     `json:"project_id"`
 	EnvironmentID pgtype.UUID     `json:"environment_id"`
 	DeploymentID  pgtype.UUID     `json:"deployment_id"`
-	TaskID        string          `json:"task_id"`
 	Name          string          `json:"name"`
 	Direction     StreamDirection `json:"direction"`
 }
@@ -39,7 +37,6 @@ func (q *Queries) GetDeploymentStreamByName(ctx context.Context, arg GetDeployme
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentID,
-		arg.TaskID,
 		arg.Name,
 		arg.Direction,
 	)
@@ -50,7 +47,6 @@ func (q *Queries) GetDeploymentStreamByName(ctx context.Context, arg GetDeployme
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
-		&i.TaskID,
 		&i.Name,
 		&i.Direction,
 		&i.SchemaFingerprint,
@@ -62,13 +58,13 @@ func (q *Queries) GetDeploymentStreamByName(ctx context.Context, arg GetDeployme
 }
 
 const listDeploymentStreamsForDeployment = `-- name: ListDeploymentStreamsForDeployment :many
-SELECT id, org_id, project_id, environment_id, deployment_id, task_id, name, direction, schema_fingerprint, schema_json, metadata, created_at
+SELECT id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json, metadata, created_at
   FROM deployment_streams
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
    AND deployment_id = $4
- ORDER BY task_id ASC, name ASC, direction ASC
+ ORDER BY name ASC, direction ASC
 `
 
 type ListDeploymentStreamsForDeploymentParams struct {
@@ -98,65 +94,6 @@ func (q *Queries) ListDeploymentStreamsForDeployment(ctx context.Context, arg Li
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.DeploymentID,
-			&i.TaskID,
-			&i.Name,
-			&i.Direction,
-			&i.SchemaFingerprint,
-			&i.SchemaJson,
-			&i.Metadata,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listDeploymentStreamsForTask = `-- name: ListDeploymentStreamsForTask :many
-SELECT id, org_id, project_id, environment_id, deployment_id, task_id, name, direction, schema_fingerprint, schema_json, metadata, created_at
-  FROM deployment_streams
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND deployment_id = $4
-   AND task_id = $5
- ORDER BY name ASC, direction ASC
-`
-
-type ListDeploymentStreamsForTaskParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	DeploymentID  pgtype.UUID `json:"deployment_id"`
-	TaskID        string      `json:"task_id"`
-}
-
-func (q *Queries) ListDeploymentStreamsForTask(ctx context.Context, arg ListDeploymentStreamsForTaskParams) ([]DeploymentStream, error) {
-	rows, err := q.db.Query(ctx, listDeploymentStreamsForTask,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.DeploymentID,
-		arg.TaskID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []DeploymentStream
-	for rows.Next() {
-		var i DeploymentStream
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.DeploymentID,
-			&i.TaskID,
 			&i.Name,
 			&i.Direction,
 			&i.SchemaFingerprint,
@@ -181,7 +118,6 @@ INSERT INTO deployment_streams (
     project_id,
     environment_id,
     deployment_id,
-    task_id,
     name,
     direction,
     schema_fingerprint,
@@ -195,18 +131,17 @@ VALUES (
     $4,
     $5,
     $6,
-    $7,
-    $8::stream_direction,
-    COALESCE($9::text, ''),
-    COALESCE($10::jsonb, 'null'::jsonb),
-    COALESCE($11::jsonb, '{}'::jsonb)
+    $7::stream_direction,
+    COALESCE($8::text, ''),
+    COALESCE($9::jsonb, 'null'::jsonb),
+    COALESCE($10::jsonb, '{}'::jsonb)
 )
-ON CONFLICT (org_id, deployment_id, task_id, name, direction)
+ON CONFLICT (org_id, deployment_id, name, direction)
 DO UPDATE SET
     schema_fingerprint = EXCLUDED.schema_fingerprint,
     schema_json = EXCLUDED.schema_json,
     metadata = EXCLUDED.metadata
-RETURNING id, org_id, project_id, environment_id, deployment_id, task_id, name, direction, schema_fingerprint, schema_json, metadata, created_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json, metadata, created_at
 `
 
 type UpsertDeploymentStreamParams struct {
@@ -215,7 +150,6 @@ type UpsertDeploymentStreamParams struct {
 	ProjectID         pgtype.UUID     `json:"project_id"`
 	EnvironmentID     pgtype.UUID     `json:"environment_id"`
 	DeploymentID      pgtype.UUID     `json:"deployment_id"`
-	TaskID            string          `json:"task_id"`
 	Name              string          `json:"name"`
 	Direction         StreamDirection `json:"direction"`
 	SchemaFingerprint string          `json:"schema_fingerprint"`
@@ -230,7 +164,6 @@ func (q *Queries) UpsertDeploymentStream(ctx context.Context, arg UpsertDeployme
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentID,
-		arg.TaskID,
 		arg.Name,
 		arg.Direction,
 		arg.SchemaFingerprint,
@@ -244,7 +177,6 @@ func (q *Queries) UpsertDeploymentStream(ctx context.Context, arg UpsertDeployme
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
-		&i.TaskID,
 		&i.Name,
 		&i.Direction,
 		&i.SchemaFingerprint,

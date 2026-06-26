@@ -77,11 +77,11 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 	if err != nil {
 		return pgtype.UUID{}, err
 	}
-	startRequest := api.TaskStartRequest{
+	startRequest := api.SessionStartRequest{
 		ProjectID:     request.ProjectID,
 		EnvironmentID: request.EnvironmentID,
 		Payload:       request.Payload,
-		Options: api.TaskStartOptions{
+		Options: api.SessionStartOptions{
 			Queue:              request.Options.Queue,
 			ConcurrencyKey:     request.Options.ConcurrencyKey,
 			Priority:           request.Options.Priority,
@@ -98,11 +98,11 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 	if err != nil {
 		return pgtype.UUID{}, fmt.Errorf("schedule trigger org id is invalid: %v", err)
 	}
-	started, err := s.startTaskSessionFromRequest(ctx, auth.Actor{
+	started, err := s.startSessionFromRequest(ctx, auth.Actor{
 		OrgID: orgID,
 		Kind:  auth.ActorKindSystem,
 		Role:  auth.RoleOwner,
-	}, request.TaskID, startRequest, taskStartSource{
+	}, request.TaskID, startRequest, sessionStartSource{
 		scheduleID:            row.ScheduleID,
 		scheduleInstanceID:    row.InstanceID,
 		scheduleGeneration:    row.Generation,
@@ -112,7 +112,7 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 		scheduledAt:           row.NextFireAt,
 	})
 	if err != nil {
-		if errors.Is(err, errTaskStartPending) || errors.Is(err, errTaskStartCoordinationUnavailable) {
+		if errors.Is(err, errSessionStartPending) || errors.Is(err, errSessionStartCoordinationUnavailable) {
 			return pgtype.UUID{}, fmt.Errorf("%w: %w", schedule.ErrTriggerDeferred, err)
 		}
 		return pgtype.UUID{}, err
@@ -247,10 +247,13 @@ func (s *Server) deploymentTask(ctx context.Context, orgID uuid.UUID, projectID 
 	})
 }
 
-func runCreatedEventPayload(taskID string, payload json.RawMessage, maxDurationSeconds int32, secretNames []string, retryPolicy []byte, metadata []byte, tags []string) ([]byte, error) {
+func runCreatedEventPayload(taskID string, payload json.RawMessage, maxDurationSeconds int32, secretNames []string, retryPolicy []byte, metadata []byte, tags []string, reason string, cause json.RawMessage) ([]byte, error) {
 	secretNames = append([]string{}, secretNames...)
 	sort.Strings(secretNames)
 	tags = append([]string{}, tags...)
+	if len(cause) == 0 {
+		cause = json.RawMessage(`{}`)
+	}
 	return json.Marshal(runCreatedPayload{
 		TaskID:             taskID,
 		Payload:            payload,
@@ -259,13 +262,17 @@ func runCreatedEventPayload(taskID string, payload json.RawMessage, maxDurationS
 		RetryPolicy:        json.RawMessage(retryPolicy),
 		Metadata:           json.RawMessage(metadata),
 		Tags:               tags,
+		Reason:             reason,
+		Cause:              cause,
 	})
 }
 
 type runCreatedPayload struct {
+	Cause              json.RawMessage `json:"cause"`
 	MaxDurationSeconds int32           `json:"max_duration_seconds"`
 	Metadata           json.RawMessage `json:"metadata"`
 	Payload            json.RawMessage `json:"payload"`
+	Reason             string          `json:"reason"`
 	RetryPolicy        json.RawMessage `json:"retry_policy"`
 	SecretNames        []string        `json:"secret_names"`
 	Tags               []string        `json:"tags"`
@@ -405,7 +412,7 @@ func (s *Server) listRunSummaries(r *http.Request, actor auth.Actor, statusFilte
 	if err != nil {
 		return nil, err
 	}
-	taskSessionID, err := optionalRunSessionIDFilter(r)
+	sessionID, err := optionalRunSessionIDFilter(r)
 	if err != nil {
 		return nil, err
 	}
@@ -414,7 +421,7 @@ func (s *Server) listRunSummaries(r *http.Request, actor auth.Actor, statusFilte
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		StatusFilter:  statusFilter,
-		TaskSessionID: taskSessionID,
+		SessionID:     sessionID,
 		RowLimit:      limit,
 	})
 	if err != nil {

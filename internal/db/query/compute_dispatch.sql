@@ -375,13 +375,13 @@ WITH target_run AS (
        AND runs.current_run_lease_id IS NULL
        AND EXISTS (
            SELECT 1
-             FROM task_sessions
-            WHERE task_sessions.org_id = runs.org_id
-              AND task_sessions.project_id = runs.project_id
-              AND task_sessions.environment_id = runs.environment_id
-              AND task_sessions.id = runs.task_session_id
-              AND task_sessions.current_run_id = runs.id
-              AND task_sessions.status = 'open'
+             FROM sessions
+            WHERE sessions.org_id = runs.org_id
+              AND sessions.project_id = runs.project_id
+              AND sessions.environment_id = runs.environment_id
+              AND sessions.id = runs.session_id
+              AND sessions.current_run_id = runs.id
+              AND sessions.status = 'open'
        )
 ),
 existing_requirements AS (
@@ -559,13 +559,13 @@ WITH candidate_scopes AS (
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
        AND EXISTS (
            SELECT 1
-             FROM task_sessions
-            WHERE task_sessions.org_id = runs.org_id
-              AND task_sessions.project_id = runs.project_id
-              AND task_sessions.environment_id = runs.environment_id
-              AND task_sessions.id = runs.task_session_id
-              AND task_sessions.current_run_id = runs.id
-              AND task_sessions.status = 'open'
+             FROM sessions
+            WHERE sessions.org_id = runs.org_id
+              AND sessions.project_id = runs.project_id
+              AND sessions.environment_id = runs.environment_id
+              AND sessions.id = runs.session_id
+              AND sessions.current_run_id = runs.id
+              AND sessions.status = 'open'
        )
        AND (
            run_queue_items.run_id IS NULL
@@ -623,13 +623,13 @@ SELECT runs.org_id,
    AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
    AND EXISTS (
        SELECT 1
-         FROM task_sessions
-        WHERE task_sessions.org_id = runs.org_id
-          AND task_sessions.project_id = runs.project_id
-          AND task_sessions.environment_id = runs.environment_id
-          AND task_sessions.id = runs.task_session_id
-          AND task_sessions.current_run_id = runs.id
-          AND task_sessions.status = 'open'
+         FROM sessions
+        WHERE sessions.org_id = runs.org_id
+          AND sessions.project_id = runs.project_id
+          AND sessions.environment_id = runs.environment_id
+          AND sessions.id = runs.session_id
+          AND sessions.current_run_id = runs.id
+          AND sessions.status = 'open'
    )
    AND (
        run_queue_items.run_id IS NULL
@@ -706,13 +706,13 @@ UPDATE run_queue_items
           AND runs.current_run_lease_id IS NULL
        AND EXISTS (
            SELECT 1
-             FROM task_sessions
-            WHERE task_sessions.org_id = runs.org_id
-              AND task_sessions.project_id = runs.project_id
-              AND task_sessions.environment_id = runs.environment_id
-              AND task_sessions.id = runs.task_session_id
-              AND task_sessions.current_run_id = runs.id
-              AND task_sessions.status = 'open'
+             FROM sessions
+            WHERE sessions.org_id = runs.org_id
+              AND sessions.project_id = runs.project_id
+              AND sessions.environment_id = runs.environment_id
+              AND sessions.id = runs.session_id
+              AND sessions.current_run_id = runs.id
+              AND sessions.status = 'open'
        )
    )
 RETURNING *;
@@ -781,17 +781,17 @@ UPDATE run_queue_items
 RETURNING *;
 
 -- name: DeadLetterRunQueueItem :one
-WITH locked_task_session AS MATERIALIZED (
-    SELECT task_sessions.id
+WITH locked_session AS MATERIALIZED (
+    SELECT sessions.id
       FROM runs
-      JOIN task_sessions
-        ON task_sessions.org_id = runs.org_id
-       AND task_sessions.project_id = runs.project_id
-       AND task_sessions.environment_id = runs.environment_id
-       AND task_sessions.id = runs.task_session_id
+      JOIN sessions
+        ON sessions.org_id = runs.org_id
+       AND sessions.project_id = runs.project_id
+       AND sessions.environment_id = runs.environment_id
+       AND sessions.id = runs.session_id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-     FOR UPDATE OF task_sessions
+     FOR UPDATE OF sessions
 ),
 queue_entry AS (
     UPDATE run_queue_items
@@ -813,7 +813,7 @@ queue_entry AS (
                 WHERE runs.org_id = sqlc.arg(org_id)
                   AND runs.id = sqlc.arg(run_id)
            )
-           OR EXISTS (SELECT 1 FROM locked_task_session)
+           OR EXISTS (SELECT 1 FROM locked_session)
        )
     RETURNING *
 ),
@@ -832,7 +832,7 @@ queue_entry AS (
 	       AND runs.id = queue_entry.run_id
 	       AND runs.status = 'queued'
 	       AND runs.current_run_lease_id IS NULL
-	    RETURNING runs.org_id, runs.project_id, runs.environment_id, runs.id, runs.task_session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version
+	    RETURNING runs.org_id, runs.project_id, runs.environment_id, runs.id, runs.session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version
 	),
 	failed_attempt AS (
 	    UPDATE run_attempts
@@ -862,40 +862,19 @@ queue_entry AS (
 	    RETURNING run_snapshots.run_id
 	),
 	failed_session_runs AS (
-	    UPDATE task_session_runs
+	    UPDATE session_runs
 	       SET ended_at = now()
       FROM failed_run
-     WHERE task_session_runs.org_id = failed_run.org_id
-	       AND task_session_runs.project_id = failed_run.project_id
-	       AND task_session_runs.environment_id = failed_run.environment_id
-	       AND task_session_runs.task_session_id = failed_run.task_session_id
-	       AND task_session_runs.run_id = failed_run.id
-	    RETURNING task_session_runs.id
+     WHERE session_runs.org_id = failed_run.org_id
+	       AND session_runs.project_id = failed_run.project_id
+	       AND session_runs.environment_id = failed_run.environment_id
+	       AND session_runs.session_id = failed_run.session_id
+	       AND session_runs.run_id = failed_run.id
+	    RETURNING session_runs.id
 	),
-	failed_task_sessions AS (
-	    UPDATE task_sessions
-	       SET status = 'failed',
-	           failed_at = now(),
-	           result = jsonb_build_object(
-	               'ok', false,
-	               'error', jsonb_build_object(
-	                   'name', 'TaskFailed',
-	                   'message', COALESCE(NULLIF(sqlc.arg(last_error)::text, ''), 'run dead-lettered before execution'),
-	                   'details', jsonb_build_object('origin', 'dead_letter')
-	               )
-	           ),
-	           terminal_reason = jsonb_build_object('origin', 'dead_letter', 'message', COALESCE(NULLIF(sqlc.arg(last_error)::text, ''), 'run dead-lettered before execution')),
-	           current_run_id = NULL,
-	           current_run_version = task_sessions.current_run_version + 1,
-	           updated_at = now()
-      FROM failed_run
-     WHERE task_sessions.org_id = failed_run.org_id
-	       AND task_sessions.project_id = failed_run.project_id
-	       AND task_sessions.environment_id = failed_run.environment_id
-	       AND task_sessions.id = failed_run.task_session_id
-	       AND task_sessions.current_run_id = failed_run.id
-	       AND task_sessions.status = 'open'
-	    RETURNING task_sessions.id
+	failed_sessions AS (
+	    SELECT failed_run.session_id AS id
+	      FROM failed_run
 	),
 	run_event_seq AS (
 	    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
@@ -952,7 +931,7 @@ SELECT queue_entry.*
   FROM queue_entry
   JOIN run_event_outbox ON true
  WHERE (SELECT count(*) FROM failed_session_runs) >= 0
-   AND (SELECT count(*) FROM failed_task_sessions) >= 0
+   AND (SELECT count(*) FROM failed_sessions) >= 0
 UNION ALL
 SELECT existing_dead_letter.*
   FROM existing_dead_letter

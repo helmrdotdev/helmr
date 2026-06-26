@@ -7,6 +7,6 @@ only after a dashboard approval.
 helmr secret set GITHUB_TOKEN "ghp_..."
 helmr deploy PATH/TO/github-pr-review
 
-helmr task start github-pr-review \
+helmr session start github-pr-review \
   --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":123}'
 ```

@@ -112,7 +112,7 @@ type RunResponse struct {
 	EnvironmentID     string          `json:"environment_id"`
 	DeploymentID      string          `json:"deployment_id"`
 	DeploymentTaskID  string          `json:"deployment_task_id"`
-	TaskSessionID     string          `json:"task_session_id"`
+	SessionID         string          `json:"session_id"`
 	Version           string          `json:"version"`
 	DeploymentVersion string          `json:"deployment_version"`
 	APIVersion        string          `json:"api_version"`

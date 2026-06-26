@@ -14,7 +14,7 @@ export interface IdempotencyKey {
 
 export type IdempotencyKeyInput = IdempotencyKeyMaterial | IdempotencyKey
 
-export interface TaskStartIdempotencyRequestFields {
+export interface SessionStartIdempotencyRequestFields {
   readonly idempotency_key?: string
   readonly idempotency_key_ttl?: string
 }
@@ -30,10 +30,10 @@ export const idempotencyKeys = {
   },
 }
 
-export function taskStartIdempotencyRequestFields(
+export function sessionStartIdempotencyRequestFields(
   input: IdempotencyKeyInput | undefined,
   ttl: string | undefined,
-): TaskStartIdempotencyRequestFields {
+): SessionStartIdempotencyRequestFields {
   if (input === undefined) {
     return {}
   }

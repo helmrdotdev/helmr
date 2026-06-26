@@ -117,7 +117,7 @@ async function runWorkspaceExecSmoke(): Promise<ExecSmokeEvidence> {
 
     const sessionsAfter = await client.sessions.list({ ...scope, taskId: config.taskId, limit: 100 })
     const createdSessions = sessionsAfter.filter((after) => !sessionsBefore.some((before) => before.id === after.id))
-    assert(!createdSessions.some((session) => session.workspaceId === workspace.id), "direct workspace exec created a task session")
+    assert(!createdSessions.some((session) => session.workspaceId === workspace.id), "direct workspace exec created a session")
 
     const stdoutChunks = await exec.stdout.list({ ...scope, cursor: 0, limit: 100 })
     const stderrChunks = await exec.stderr.list({ ...scope, cursor: 0, limit: 100 })

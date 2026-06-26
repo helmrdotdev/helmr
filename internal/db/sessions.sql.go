@@ -11,163 +11,1705 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelSession = `-- name: CancelSession :one
+WITH target_session AS (
+    SELECT id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+      FROM sessions
+     WHERE sessions.org_id = $1
+       AND sessions.project_id = $2
+       AND sessions.environment_id = $3
+       AND sessions.id = $4
+     FOR UPDATE
+),
+cancelled_session AS (
+    UPDATE sessions
+       SET status = 'cancelled',
+           cancelled_at = now(),
+           result = jsonb_build_object(
+               'ok', false,
+               'error', jsonb_build_object(
+                   'name', 'TaskCancelled',
+                   'message', $5::text,
+                   'details', jsonb_build_object('origin', 'api')
+               )
+           ),
+           terminal_reason = jsonb_build_object('reason', $5::text, 'origin', 'api'),
+           updated_at = now()
+      FROM target_session
+     WHERE sessions.org_id = target_session.org_id
+       AND sessions.id = target_session.id
+       AND sessions.status = 'open'
+    RETURNING sessions.id, sessions.org_id, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
+),
+ended_session_run AS (
+    UPDATE session_runs
+       SET ended_at = now()
+      FROM target_session
+      JOIN cancelled_session ON true
+     WHERE target_session.current_run_id IS NOT NULL
+       AND session_runs.org_id = target_session.org_id
+       AND session_runs.project_id = target_session.project_id
+       AND session_runs.environment_id = target_session.environment_id
+       AND session_runs.session_id = target_session.id
+       AND session_runs.run_id = target_session.current_run_id
+    RETURNING session_runs.id
+)
+SELECT sessions.id, sessions.org_id, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
+  FROM sessions
+  JOIN cancelled_session ON cancelled_session.org_id = sessions.org_id
+                        AND cancelled_session.id = sessions.id
+`
+
+type CancelSessionParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+	Reason        string      `json:"reason"`
+}
+
+func (q *Queries) CancelSession(ctx context.Context, arg CancelSessionParams) (Session, error) {
+	row := q.db.QueryRow(ctx, cancelSession,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ID,
+		arg.Reason,
+	)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.TaskID,
+		&i.InitialDeploymentID,
+		&i.ActiveDeploymentID,
+		&i.ExternalID,
+		&i.StartFingerprint,
+		&i.Status,
+		&i.CurrentRunID,
+		&i.CurrentRunVersion,
+		&i.WorkspaceID,
+		&i.Metadata,
+		&i.Tags,
+		&i.ClosedAt,
+		&i.ClosedReason,
+		&i.CancelledAt,
+		&i.ExpiredAt,
+		&i.TerminalReason,
+		&i.Result,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const closeSession = `-- name: CloseSession :one
+UPDATE sessions
+   SET status = 'closed',
+       closed_at = now(),
+       closed_reason = $1::text,
+       terminal_reason = jsonb_build_object('reason', $1::text, 'origin', 'api'),
+       updated_at = now()
+ WHERE sessions.org_id = $2
+   AND sessions.project_id = $3
+   AND sessions.environment_id = $4
+   AND sessions.id = $5
+   AND sessions.status = 'open'
+   AND (sessions.expires_at IS NULL OR sessions.expires_at > now())
+   AND NOT EXISTS (
+       SELECT 1
+         FROM runs
+        WHERE runs.org_id = sessions.org_id
+          AND runs.project_id = sessions.project_id
+          AND runs.environment_id = sessions.environment_id
+          AND runs.id = sessions.current_run_id
+          AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM session_run_requests
+        WHERE session_run_requests.org_id = sessions.org_id
+          AND session_run_requests.project_id = sessions.project_id
+          AND session_run_requests.environment_id = sessions.environment_id
+          AND session_run_requests.session_id = sessions.id
+          AND session_run_requests.status IN ('accepted', 'claimed')
+   )
+RETURNING id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+`
+
+type CloseSessionParams struct {
+	Reason        string      `json:"reason"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) CloseSession(ctx context.Context, arg CloseSessionParams) (Session, error) {
+	row := q.db.QueryRow(ctx, closeSession,
+		arg.Reason,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ID,
+	)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.TaskID,
+		&i.InitialDeploymentID,
+		&i.ActiveDeploymentID,
+		&i.ExternalID,
+		&i.StartFingerprint,
+		&i.Status,
+		&i.CurrentRunID,
+		&i.CurrentRunVersion,
+		&i.WorkspaceID,
+		&i.Metadata,
+		&i.Tags,
+		&i.ClosedAt,
+		&i.ClosedReason,
+		&i.CancelledAt,
+		&i.ExpiredAt,
+		&i.TerminalReason,
+		&i.Result,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createSession = `-- name: CreateSession :one
-INSERT INTO sessions (id, org_id, user_id, token_hash, expires_at)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, user_id, token_hash, created_at, last_seen_at, expires_at, revoked_at
+INSERT INTO sessions (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    task_id,
+    initial_deployment_id,
+    active_deployment_id,
+    workspace_id,
+    external_id,
+    start_fingerprint,
+    metadata,
+    tags,
+    expires_at
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    coalesce($11::jsonb, '{}'::jsonb),
+    coalesce($12::text[], '{}'::text[]),
+    $13
+)
+RETURNING id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
 type CreateSessionParams struct {
-	ID        pgtype.UUID        `json:"id"`
-	OrgID     pgtype.UUID        `json:"org_id"`
-	UserID    pgtype.UUID        `json:"user_id"`
-	TokenHash []byte             `json:"token_hash"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	EnvironmentID       pgtype.UUID        `json:"environment_id"`
+	TaskID              string             `json:"task_id"`
+	InitialDeploymentID pgtype.UUID        `json:"initial_deployment_id"`
+	ActiveDeploymentID  pgtype.UUID        `json:"active_deployment_id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	ExternalID          string             `json:"external_id"`
+	StartFingerprint    string             `json:"start_fingerprint"`
+	Metadata            []byte             `json:"metadata"`
+	Tags                []string           `json:"tags"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
 	row := q.db.QueryRow(ctx, createSession,
 		arg.ID,
 		arg.OrgID,
-		arg.UserID,
-		arg.TokenHash,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.TaskID,
+		arg.InitialDeploymentID,
+		arg.ActiveDeploymentID,
+		arg.WorkspaceID,
+		arg.ExternalID,
+		arg.StartFingerprint,
+		arg.Metadata,
+		arg.Tags,
 		arg.ExpiresAt,
 	)
 	var i Session
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.UserID,
-		&i.TokenHash,
-		&i.CreatedAt,
-		&i.LastSeenAt,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.TaskID,
+		&i.InitialDeploymentID,
+		&i.ActiveDeploymentID,
+		&i.ExternalID,
+		&i.StartFingerprint,
+		&i.Status,
+		&i.CurrentRunID,
+		&i.CurrentRunVersion,
+		&i.WorkspaceID,
+		&i.Metadata,
+		&i.Tags,
+		&i.ClosedAt,
+		&i.ClosedReason,
+		&i.CancelledAt,
+		&i.ExpiredAt,
+		&i.TerminalReason,
+		&i.Result,
 		&i.ExpiresAt,
-		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
-const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
-SELECT
-    sessions.id,
-    sessions.user_id,
-    users.display_name,
-    users.profile_image_url,
-    selected_member.org_id,
-    COALESCE(selected_member.role::text, '')::text AS role,
-    COALESCE(selected_member.display_name, users.display_name) AS member_display_name,
-    sessions.expires_at
-  FROM sessions
-  JOIN users ON users.id = sessions.user_id
-  LEFT JOIN LATERAL (
-      SELECT org_members.org_id,
-             org_members.role,
-             org_members.display_name
-        FROM org_members
-       WHERE org_members.user_id = sessions.user_id
-         AND (sessions.org_id IS NULL OR org_members.org_id = sessions.org_id)
-         AND org_members.disabled_at IS NULL
-       ORDER BY (org_members.org_id = sessions.org_id) DESC, org_members.created_at ASC
-       LIMIT 1
-  ) AS selected_member ON true
- WHERE sessions.token_hash = $1
-   AND sessions.revoked_at IS NULL
-   AND sessions.expires_at > now()
-   AND users.disabled_at IS NULL
+const createSessionRun = `-- name: CreateSessionRun :one
+INSERT INTO session_runs (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    session_id,
+    run_id,
+    deployment_id,
+    previous_run_id,
+    turn_index,
+    reason
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10
+)
+RETURNING id, org_id, project_id, environment_id, session_id, run_id, deployment_id, previous_run_id, turn_index, reason, created_at, ended_at
 `
 
-type GetSessionByTokenHashRow struct {
-	ID                pgtype.UUID        `json:"id"`
-	UserID            pgtype.UUID        `json:"user_id"`
-	DisplayName       string             `json:"display_name"`
-	ProfileImageUrl   pgtype.Text        `json:"profile_image_url"`
-	OrgID             pgtype.UUID        `json:"org_id"`
-	Role              string             `json:"role"`
-	MemberDisplayName string             `json:"member_display_name"`
-	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+type CreateSessionRunParams struct {
+	ID            pgtype.UUID `json:"id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	DeploymentID  pgtype.UUID `json:"deployment_id"`
+	PreviousRunID pgtype.UUID `json:"previous_run_id"`
+	TurnIndex     int32       `json:"turn_index"`
+	Reason        string      `json:"reason"`
 }
 
-func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (GetSessionByTokenHashRow, error) {
-	row := q.db.QueryRow(ctx, getSessionByTokenHash, tokenHash)
-	var i GetSessionByTokenHashRow
+func (q *Queries) CreateSessionRun(ctx context.Context, arg CreateSessionRunParams) (SessionRun, error) {
+	row := q.db.QueryRow(ctx, createSessionRun,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.SessionID,
+		arg.RunID,
+		arg.DeploymentID,
+		arg.PreviousRunID,
+		arg.TurnIndex,
+		arg.Reason,
+	)
+	var i SessionRun
 	err := row.Scan(
 		&i.ID,
-		&i.UserID,
-		&i.DisplayName,
-		&i.ProfileImageUrl,
 		&i.OrgID,
-		&i.Role,
-		&i.MemberDisplayName,
-		&i.ExpiresAt,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.SessionID,
+		&i.RunID,
+		&i.DeploymentID,
+		&i.PreviousRunID,
+		&i.TurnIndex,
+		&i.Reason,
+		&i.CreatedAt,
+		&i.EndedAt,
 	)
 	return i, err
 }
 
-const refreshSession = `-- name: RefreshSession :exec
-UPDATE sessions
-   SET last_seen_at = now(),
-       expires_at = $1
- WHERE id = $2
-   AND revoked_at IS NULL
+const createSessionStartIdempotency = `-- name: CreateSessionStartIdempotency :one
+INSERT INTO session_start_idempotencies (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    task_id,
+    idempotency_key,
+    request_fingerprint,
+    session_id,
+    first_run_id,
+    expires_at
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10
+)
+ON CONFLICT (org_id, project_id, environment_id, task_id, idempotency_key) DO NOTHING
+RETURNING id, org_id, project_id, environment_id, task_id, idempotency_key, request_fingerprint, session_id, first_run_id, expires_at, created_at, last_used_at
 `
 
-type RefreshSessionParams struct {
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
-	ID        pgtype.UUID        `json:"id"`
+type CreateSessionStartIdempotencyParams struct {
+	ID                 pgtype.UUID        `json:"id"`
+	OrgID              pgtype.UUID        `json:"org_id"`
+	ProjectID          pgtype.UUID        `json:"project_id"`
+	EnvironmentID      pgtype.UUID        `json:"environment_id"`
+	TaskID             string             `json:"task_id"`
+	IdempotencyKey     string             `json:"idempotency_key"`
+	RequestFingerprint string             `json:"request_fingerprint"`
+	SessionID          pgtype.UUID        `json:"session_id"`
+	FirstRunID         pgtype.UUID        `json:"first_run_id"`
+	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
 }
 
-func (q *Queries) RefreshSession(ctx context.Context, arg RefreshSessionParams) error {
-	_, err := q.db.Exec(ctx, refreshSession, arg.ExpiresAt, arg.ID)
+func (q *Queries) CreateSessionStartIdempotency(ctx context.Context, arg CreateSessionStartIdempotencyParams) (SessionStartIdempotency, error) {
+	row := q.db.QueryRow(ctx, createSessionStartIdempotency,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.TaskID,
+		arg.IdempotencyKey,
+		arg.RequestFingerprint,
+		arg.SessionID,
+		arg.FirstRunID,
+		arg.ExpiresAt,
+	)
+	var i SessionStartIdempotency
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.TaskID,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.SessionID,
+		&i.FirstRunID,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+	)
+	return i, err
+}
+
+const createWorkspace = `-- name: CreateWorkspace :one
+INSERT INTO workspaces (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    deployment_sandbox_id,
+    sandbox_id,
+    sandbox_fingerprint,
+    external_id,
+    metadata,
+    tags,
+    retention_policy
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    coalesce($8::text, ''),
+    coalesce($9::jsonb, '{}'::jsonb),
+    coalesce($10::text[], '{}'::text[]),
+    coalesce($11::jsonb, '{}'::jsonb)
+)
+RETURNING id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_materialization_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+`
+
+type CreateWorkspaceParams struct {
+	ID                  pgtype.UUID `json:"id"`
+	OrgID               pgtype.UUID `json:"org_id"`
+	ProjectID           pgtype.UUID `json:"project_id"`
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	DeploymentSandboxID pgtype.UUID `json:"deployment_sandbox_id"`
+	SandboxID           string      `json:"sandbox_id"`
+	SandboxFingerprint  string      `json:"sandbox_fingerprint"`
+	ExternalID          string      `json:"external_id"`
+	Metadata            []byte      `json:"metadata"`
+	Tags                []string    `json:"tags"`
+	RetentionPolicy     []byte      `json:"retention_policy"`
+}
+
+func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, createWorkspace,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DeploymentSandboxID,
+		arg.SandboxID,
+		arg.SandboxFingerprint,
+		arg.ExternalID,
+		arg.Metadata,
+		arg.Tags,
+		arg.RetentionPolicy,
+	)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentSandboxID,
+		&i.SandboxID,
+		&i.SandboxFingerprint,
+		&i.ExternalID,
+		&i.CurrentVersionID,
+		&i.CurrentVersionRequiredState,
+		&i.State,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.LastMaterializationID,
+		&i.Metadata,
+		&i.Tags,
+		&i.RetentionPolicy,
+		&i.AutoStopAt,
+		&i.AutoArchiveAt,
+		&i.AutoDeleteAt,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const deleteExpiredSessionStartIdempotency = `-- name: DeleteExpiredSessionStartIdempotency :exec
+DELETE FROM session_start_idempotencies
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND task_id = $4
+   AND idempotency_key = $5
+   AND expires_at <= now()
+`
+
+type DeleteExpiredSessionStartIdempotencyParams struct {
+	OrgID          pgtype.UUID `json:"org_id"`
+	ProjectID      pgtype.UUID `json:"project_id"`
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+	TaskID         string      `json:"task_id"`
+	IdempotencyKey string      `json:"idempotency_key"`
+}
+
+func (q *Queries) DeleteExpiredSessionStartIdempotency(ctx context.Context, arg DeleteExpiredSessionStartIdempotencyParams) error {
+	_, err := q.db.Exec(ctx, deleteExpiredSessionStartIdempotency,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.TaskID,
+		arg.IdempotencyKey,
+	)
 	return err
 }
 
-const revokeOrgSessionsForUser = `-- name: RevokeOrgSessionsForUser :execrows
+const expireDueSessions = `-- name: ExpireDueSessions :many
 UPDATE sessions
-   SET revoked_at = now()
- WHERE user_id = $1
-   AND (org_id = $2 OR org_id IS NULL)
-   AND revoked_at IS NULL
+   SET status = 'expired',
+       expired_at = now(),
+       terminal_reason = jsonb_build_object('reason', 'session_expired', 'origin', 'sweeper'),
+       result = jsonb_build_object(
+           'ok', false,
+           'error', jsonb_build_object(
+               'name', 'SessionExpired',
+               'message', 'session expired',
+               'details', jsonb_build_object('origin', 'sweeper')
+           )
+       ),
+       updated_at = now()
+ WHERE sessions.org_id = $1
+   AND sessions.status = 'open'
+   AND sessions.expires_at IS NOT NULL
+   AND sessions.expires_at <= now()
+   AND NOT EXISTS (
+       SELECT 1
+         FROM runs
+        WHERE runs.org_id = sessions.org_id
+          AND runs.project_id = sessions.project_id
+          AND runs.environment_id = sessions.environment_id
+          AND runs.id = sessions.current_run_id
+          AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM session_run_requests
+        WHERE session_run_requests.org_id = sessions.org_id
+          AND session_run_requests.project_id = sessions.project_id
+          AND session_run_requests.environment_id = sessions.environment_id
+          AND session_run_requests.session_id = sessions.id
+          AND session_run_requests.status IN ('accepted', 'claimed')
+   )
+RETURNING id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
-type RevokeOrgSessionsForUserParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	OrgID  pgtype.UUID `json:"org_id"`
-}
-
-func (q *Queries) RevokeOrgSessionsForUser(ctx context.Context, arg RevokeOrgSessionsForUserParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeOrgSessionsForUser, arg.UserID, arg.OrgID)
+func (q *Queries) ExpireDueSessions(ctx context.Context, orgID pgtype.UUID) ([]Session, error) {
+	rows, err := q.db.Query(ctx, expireDueSessions, orgID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	var items []Session
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.TaskID,
+			&i.InitialDeploymentID,
+			&i.ActiveDeploymentID,
+			&i.ExternalID,
+			&i.StartFingerprint,
+			&i.Status,
+			&i.CurrentRunID,
+			&i.CurrentRunVersion,
+			&i.WorkspaceID,
+			&i.Metadata,
+			&i.Tags,
+			&i.ClosedAt,
+			&i.ClosedReason,
+			&i.CancelledAt,
+			&i.ExpiredAt,
+			&i.TerminalReason,
+			&i.Result,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
-const revokeSessionByTokenHash = `-- name: RevokeSessionByTokenHash :execrows
+const expireSessionIfDue = `-- name: ExpireSessionIfDue :one
 UPDATE sessions
-   SET revoked_at = now()
- WHERE token_hash = $1
-   AND revoked_at IS NULL
+   SET status = 'expired',
+       expired_at = now(),
+       terminal_reason = jsonb_build_object('reason', 'session_expired', 'origin', 'api'),
+       result = jsonb_build_object(
+           'ok', false,
+           'error', jsonb_build_object(
+               'name', 'SessionExpired',
+               'message', 'session expired',
+               'details', jsonb_build_object('origin', 'api')
+           )
+       ),
+       updated_at = now()
+ WHERE sessions.org_id = $1
+   AND sessions.project_id = $2
+   AND sessions.environment_id = $3
+   AND sessions.id = $4
+   AND sessions.status = 'open'
+   AND sessions.expires_at IS NOT NULL
+   AND sessions.expires_at <= now()
+   AND NOT EXISTS (
+       SELECT 1
+         FROM runs
+        WHERE runs.org_id = sessions.org_id
+          AND runs.project_id = sessions.project_id
+          AND runs.environment_id = sessions.environment_id
+          AND runs.id = sessions.current_run_id
+          AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM session_run_requests
+        WHERE session_run_requests.org_id = sessions.org_id
+          AND session_run_requests.project_id = sessions.project_id
+          AND session_run_requests.environment_id = sessions.environment_id
+          AND session_run_requests.session_id = sessions.id
+          AND session_run_requests.status IN ('accepted', 'claimed')
+   )
+RETURNING id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
-func (q *Queries) RevokeSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeSessionByTokenHash, tokenHash)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+type ExpireSessionIfDueParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
 }
 
-const revokeSessionsForUser = `-- name: RevokeSessionsForUser :execrows
-UPDATE sessions
-   SET revoked_at = now()
- WHERE user_id = $1
-   AND revoked_at IS NULL
+func (q *Queries) ExpireSessionIfDue(ctx context.Context, arg ExpireSessionIfDueParams) (Session, error) {
+	row := q.db.QueryRow(ctx, expireSessionIfDue,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ID,
+	)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.TaskID,
+		&i.InitialDeploymentID,
+		&i.ActiveDeploymentID,
+		&i.ExternalID,
+		&i.StartFingerprint,
+		&i.Status,
+		&i.CurrentRunID,
+		&i.CurrentRunVersion,
+		&i.WorkspaceID,
+		&i.Metadata,
+		&i.Tags,
+		&i.ClosedAt,
+		&i.ClosedReason,
+		&i.CancelledAt,
+		&i.ExpiredAt,
+		&i.TerminalReason,
+		&i.Result,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSession = `-- name: GetSession :one
+SELECT id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+  FROM sessions
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND id = $4
 `
 
-func (q *Queries) RevokeSessionsForUser(ctx context.Context, userID pgtype.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeSessionsForUser, userID)
+type GetSessionParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (Session, error) {
+	row := q.db.QueryRow(ctx, getSession,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ID,
+	)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.TaskID,
+		&i.InitialDeploymentID,
+		&i.ActiveDeploymentID,
+		&i.ExternalID,
+		&i.StartFingerprint,
+		&i.Status,
+		&i.CurrentRunID,
+		&i.CurrentRunVersion,
+		&i.WorkspaceID,
+		&i.Metadata,
+		&i.Tags,
+		&i.ClosedAt,
+		&i.ClosedReason,
+		&i.CancelledAt,
+		&i.ExpiredAt,
+		&i.TerminalReason,
+		&i.Result,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSessionActivity = `-- name: GetSessionActivity :one
+SELECT id, activity, can_close
+  FROM session_activity
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND id = $4
+`
+
+type GetSessionActivityParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+type GetSessionActivityRow struct {
+	ID       pgtype.UUID `json:"id"`
+	Activity string      `json:"activity"`
+	CanClose bool        `json:"can_close"`
+}
+
+func (q *Queries) GetSessionActivity(ctx context.Context, arg GetSessionActivityParams) (GetSessionActivityRow, error) {
+	row := q.db.QueryRow(ctx, getSessionActivity,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ID,
+	)
+	var i GetSessionActivityRow
+	err := row.Scan(&i.ID, &i.Activity, &i.CanClose)
+	return i, err
+}
+
+const getSessionByExternalID = `-- name: GetSessionByExternalID :one
+SELECT id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+  FROM sessions
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND external_id = $4
+   AND external_id <> ''
+`
+
+type GetSessionByExternalIDParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ExternalID    string      `json:"external_id"`
+}
+
+func (q *Queries) GetSessionByExternalID(ctx context.Context, arg GetSessionByExternalIDParams) (Session, error) {
+	row := q.db.QueryRow(ctx, getSessionByExternalID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ExternalID,
+	)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.TaskID,
+		&i.InitialDeploymentID,
+		&i.ActiveDeploymentID,
+		&i.ExternalID,
+		&i.StartFingerprint,
+		&i.Status,
+		&i.CurrentRunID,
+		&i.CurrentRunVersion,
+		&i.WorkspaceID,
+		&i.Metadata,
+		&i.Tags,
+		&i.ClosedAt,
+		&i.ClosedReason,
+		&i.CancelledAt,
+		&i.ExpiredAt,
+		&i.TerminalReason,
+		&i.Result,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSessionByOrgID = `-- name: GetSessionByOrgID :one
+SELECT id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+  FROM sessions
+ WHERE org_id = $1
+   AND id = $2
+`
+
+type GetSessionByOrgIDParams struct {
+	OrgID pgtype.UUID `json:"org_id"`
+	ID    pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetSessionByOrgID(ctx context.Context, arg GetSessionByOrgIDParams) (Session, error) {
+	row := q.db.QueryRow(ctx, getSessionByOrgID, arg.OrgID, arg.ID)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.TaskID,
+		&i.InitialDeploymentID,
+		&i.ActiveDeploymentID,
+		&i.ExternalID,
+		&i.StartFingerprint,
+		&i.Status,
+		&i.CurrentRunID,
+		&i.CurrentRunVersion,
+		&i.WorkspaceID,
+		&i.Metadata,
+		&i.Tags,
+		&i.ClosedAt,
+		&i.ClosedReason,
+		&i.CancelledAt,
+		&i.ExpiredAt,
+		&i.TerminalReason,
+		&i.Result,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSessionRunByRunID = `-- name: GetSessionRunByRunID :one
+SELECT id, org_id, project_id, environment_id, session_id, run_id, deployment_id, previous_run_id, turn_index, reason, created_at, ended_at
+  FROM session_runs
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND session_id = $4
+   AND run_id = $5
+`
+
+type GetSessionRunByRunIDParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) GetSessionRunByRunID(ctx context.Context, arg GetSessionRunByRunIDParams) (SessionRun, error) {
+	row := q.db.QueryRow(ctx, getSessionRunByRunID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.SessionID,
+		arg.RunID,
+	)
+	var i SessionRun
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.SessionID,
+		&i.RunID,
+		&i.DeploymentID,
+		&i.PreviousRunID,
+		&i.TurnIndex,
+		&i.Reason,
+		&i.CreatedAt,
+		&i.EndedAt,
+	)
+	return i, err
+}
+
+const getSessionStartIdempotency = `-- name: GetSessionStartIdempotency :one
+SELECT session_start_idempotencies.id, session_start_idempotencies.org_id, session_start_idempotencies.project_id, session_start_idempotencies.environment_id, session_start_idempotencies.task_id, session_start_idempotencies.idempotency_key, session_start_idempotencies.request_fingerprint, session_start_idempotencies.session_id, session_start_idempotencies.first_run_id, session_start_idempotencies.expires_at, session_start_idempotencies.created_at, session_start_idempotencies.last_used_at,
+       sessions.id AS session_id,
+       sessions.org_id AS session_org_id,
+       sessions.project_id AS session_project_id,
+       sessions.environment_id AS session_environment_id,
+       sessions.task_id AS session_task_id,
+       sessions.initial_deployment_id AS session_initial_deployment_id,
+       sessions.active_deployment_id AS session_active_deployment_id,
+       sessions.external_id AS session_external_id,
+       sessions.start_fingerprint AS session_start_fingerprint,
+       sessions.status AS session_status,
+       sessions.current_run_id AS session_current_run_id,
+       sessions.current_run_version AS session_current_run_version,
+       sessions.workspace_id AS session_workspace_id,
+       sessions.metadata AS session_metadata,
+       sessions.tags AS session_tags,
+       sessions.result AS session_result,
+       sessions.terminal_reason AS session_terminal_reason,
+       sessions.expires_at AS session_expires_at,
+       sessions.cancelled_at AS session_cancelled_at,
+       sessions.created_at AS session_created_at,
+       sessions.updated_at AS session_updated_at,
+       runs.id AS run_id,
+       runs.org_id AS run_org_id,
+       runs.project_id AS run_project_id,
+       runs.environment_id AS run_environment_id,
+       runs.deployment_id AS run_deployment_id,
+       runs.deployment_task_id AS run_deployment_task_id,
+       runs.deployment_version AS run_deployment_version,
+       runs.api_version AS run_api_version,
+       runs.sdk_version AS run_sdk_version,
+       runs.cli_version AS run_cli_version,
+       runs.task_id AS run_task_id,
+       runs.current_attempt_number AS run_attempt_number,
+       runs.status AS run_status,
+       runs.execution_status AS run_execution_status,
+       runs.terminal_outcome AS run_terminal_outcome,
+       runs.payload AS run_payload,
+       runs.output AS run_output,
+       runs.metadata AS run_metadata,
+       runs.tags AS run_tags,
+       runs.error_message AS run_error_message,
+       runs.exit_code AS run_exit_code,
+       runs.created_at AS run_created_at,
+       runs.updated_at AS run_updated_at
+  FROM session_start_idempotencies
+  JOIN sessions ON sessions.org_id = session_start_idempotencies.org_id
+                    AND sessions.project_id = session_start_idempotencies.project_id
+                    AND sessions.environment_id = session_start_idempotencies.environment_id
+                    AND sessions.id = session_start_idempotencies.session_id
+  JOIN runs ON runs.org_id = session_start_idempotencies.org_id
+           AND runs.project_id = session_start_idempotencies.project_id
+           AND runs.environment_id = session_start_idempotencies.environment_id
+           AND runs.id = session_start_idempotencies.first_run_id
+ WHERE session_start_idempotencies.org_id = $1
+   AND session_start_idempotencies.project_id = $2
+   AND session_start_idempotencies.environment_id = $3
+   AND session_start_idempotencies.task_id = $4
+   AND session_start_idempotencies.idempotency_key = $5
+   AND session_start_idempotencies.expires_at > now()
+`
+
+type GetSessionStartIdempotencyParams struct {
+	OrgID          pgtype.UUID `json:"org_id"`
+	ProjectID      pgtype.UUID `json:"project_id"`
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+	TaskID         string      `json:"task_id"`
+	IdempotencyKey string      `json:"idempotency_key"`
+}
+
+type GetSessionStartIdempotencyRow struct {
+	ID                         pgtype.UUID            `json:"id"`
+	OrgID                      pgtype.UUID            `json:"org_id"`
+	ProjectID                  pgtype.UUID            `json:"project_id"`
+	EnvironmentID              pgtype.UUID            `json:"environment_id"`
+	TaskID                     string                 `json:"task_id"`
+	IdempotencyKey             string                 `json:"idempotency_key"`
+	RequestFingerprint         string                 `json:"request_fingerprint"`
+	SessionID                  pgtype.UUID            `json:"session_id"`
+	FirstRunID                 pgtype.UUID            `json:"first_run_id"`
+	ExpiresAt                  pgtype.Timestamptz     `json:"expires_at"`
+	CreatedAt                  pgtype.Timestamptz     `json:"created_at"`
+	LastUsedAt                 pgtype.Timestamptz     `json:"last_used_at"`
+	SessionID_2                pgtype.UUID            `json:"session_id_2"`
+	SessionOrgID               pgtype.UUID            `json:"session_org_id"`
+	SessionProjectID           pgtype.UUID            `json:"session_project_id"`
+	SessionEnvironmentID       pgtype.UUID            `json:"session_environment_id"`
+	SessionTaskID              string                 `json:"session_task_id"`
+	SessionInitialDeploymentID pgtype.UUID            `json:"session_initial_deployment_id"`
+	SessionActiveDeploymentID  pgtype.UUID            `json:"session_active_deployment_id"`
+	SessionExternalID          string                 `json:"session_external_id"`
+	SessionStartFingerprint    string                 `json:"session_start_fingerprint"`
+	SessionStatus              SessionStatus          `json:"session_status"`
+	SessionCurrentRunID        pgtype.UUID            `json:"session_current_run_id"`
+	SessionCurrentRunVersion   int64                  `json:"session_current_run_version"`
+	SessionWorkspaceID         pgtype.UUID            `json:"session_workspace_id"`
+	SessionMetadata            []byte                 `json:"session_metadata"`
+	SessionTags                []string               `json:"session_tags"`
+	SessionResult              []byte                 `json:"session_result"`
+	SessionTerminalReason      []byte                 `json:"session_terminal_reason"`
+	SessionExpiresAt           pgtype.Timestamptz     `json:"session_expires_at"`
+	SessionCancelledAt         pgtype.Timestamptz     `json:"session_cancelled_at"`
+	SessionCreatedAt           pgtype.Timestamptz     `json:"session_created_at"`
+	SessionUpdatedAt           pgtype.Timestamptz     `json:"session_updated_at"`
+	RunID                      pgtype.UUID            `json:"run_id"`
+	RunOrgID                   pgtype.UUID            `json:"run_org_id"`
+	RunProjectID               pgtype.UUID            `json:"run_project_id"`
+	RunEnvironmentID           pgtype.UUID            `json:"run_environment_id"`
+	RunDeploymentID            pgtype.UUID            `json:"run_deployment_id"`
+	RunDeploymentTaskID        pgtype.UUID            `json:"run_deployment_task_id"`
+	RunDeploymentVersion       string                 `json:"run_deployment_version"`
+	RunApiVersion              string                 `json:"run_api_version"`
+	RunSdkVersion              string                 `json:"run_sdk_version"`
+	RunCliVersion              string                 `json:"run_cli_version"`
+	RunTaskID                  string                 `json:"run_task_id"`
+	RunAttemptNumber           pgtype.Int4            `json:"run_attempt_number"`
+	RunStatus                  RunStatus              `json:"run_status"`
+	RunExecutionStatus         RunExecutionStatus     `json:"run_execution_status"`
+	RunTerminalOutcome         NullRunTerminalOutcome `json:"run_terminal_outcome"`
+	RunPayload                 []byte                 `json:"run_payload"`
+	RunOutput                  []byte                 `json:"run_output"`
+	RunMetadata                []byte                 `json:"run_metadata"`
+	RunTags                    []string               `json:"run_tags"`
+	RunErrorMessage            pgtype.Text            `json:"run_error_message"`
+	RunExitCode                pgtype.Int4            `json:"run_exit_code"`
+	RunCreatedAt               pgtype.Timestamptz     `json:"run_created_at"`
+	RunUpdatedAt               pgtype.Timestamptz     `json:"run_updated_at"`
+}
+
+func (q *Queries) GetSessionStartIdempotency(ctx context.Context, arg GetSessionStartIdempotencyParams) (GetSessionStartIdempotencyRow, error) {
+	row := q.db.QueryRow(ctx, getSessionStartIdempotency,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.TaskID,
+		arg.IdempotencyKey,
+	)
+	var i GetSessionStartIdempotencyRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.TaskID,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.SessionID,
+		&i.FirstRunID,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.SessionID_2,
+		&i.SessionOrgID,
+		&i.SessionProjectID,
+		&i.SessionEnvironmentID,
+		&i.SessionTaskID,
+		&i.SessionInitialDeploymentID,
+		&i.SessionActiveDeploymentID,
+		&i.SessionExternalID,
+		&i.SessionStartFingerprint,
+		&i.SessionStatus,
+		&i.SessionCurrentRunID,
+		&i.SessionCurrentRunVersion,
+		&i.SessionWorkspaceID,
+		&i.SessionMetadata,
+		&i.SessionTags,
+		&i.SessionResult,
+		&i.SessionTerminalReason,
+		&i.SessionExpiresAt,
+		&i.SessionCancelledAt,
+		&i.SessionCreatedAt,
+		&i.SessionUpdatedAt,
+		&i.RunID,
+		&i.RunOrgID,
+		&i.RunProjectID,
+		&i.RunEnvironmentID,
+		&i.RunDeploymentID,
+		&i.RunDeploymentTaskID,
+		&i.RunDeploymentVersion,
+		&i.RunApiVersion,
+		&i.RunSdkVersion,
+		&i.RunCliVersion,
+		&i.RunTaskID,
+		&i.RunAttemptNumber,
+		&i.RunStatus,
+		&i.RunExecutionStatus,
+		&i.RunTerminalOutcome,
+		&i.RunPayload,
+		&i.RunOutput,
+		&i.RunMetadata,
+		&i.RunTags,
+		&i.RunErrorMessage,
+		&i.RunExitCode,
+		&i.RunCreatedAt,
+		&i.RunUpdatedAt,
+	)
+	return i, err
+}
+
+const getTaskForStart = `-- name: GetTaskForStart :one
+SELECT id, org_id, project_id, environment_id, task_id, metadata, created_at, updated_at, archived_at
+  FROM tasks
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND task_id = $4
+`
+
+type GetTaskForStartParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	TaskID        string      `json:"task_id"`
+}
+
+func (q *Queries) GetTaskForStart(ctx context.Context, arg GetTaskForStartParams) (Task, error) {
+	row := q.db.QueryRow(ctx, getTaskForStart,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.TaskID,
+	)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.TaskID,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
+const getWorkspaceForSessionStart = `-- name: GetWorkspaceForSessionStart :one
+SELECT workspaces.id,
+       workspaces.org_id,
+       workspaces.project_id,
+       workspaces.environment_id,
+       workspaces.deployment_sandbox_id,
+       workspaces.sandbox_id,
+       workspaces.sandbox_fingerprint,
+       workspaces.state,
+       workspaces.archived_at,
+       workspaces.deleted_at,
+       deployment_sandboxes.workspace_mount_path,
+       deployment_sandboxes.resource_floor AS deployment_sandbox_resource_floor,
+       deployment_sandboxes.disk_floor_mib AS deployment_sandbox_disk_floor_mib,
+       deployment_sandboxes.network_policy AS deployment_sandbox_network_policy,
+       deployment_sandboxes.rootfs_digest AS deployment_sandbox_rootfs_digest,
+       deployment_sandboxes.runtime_abi AS deployment_sandbox_runtime_abi,
+       deployment_sandboxes.guestd_abi AS deployment_sandbox_guestd_abi,
+       deployment_sandboxes.adapter_abi AS deployment_sandbox_adapter_abi,
+       deployment_sandboxes.filesystem_format AS deployment_sandbox_filesystem_format,
+       deployment_sandboxes.contract_version AS deployment_sandbox_contract_version,
+       deployment_sandboxes.fingerprint AS deployment_sandbox_fingerprint
+  FROM workspaces
+  JOIN deployment_sandboxes
+    ON deployment_sandboxes.org_id = workspaces.org_id
+   AND deployment_sandboxes.project_id = workspaces.project_id
+   AND deployment_sandboxes.environment_id = workspaces.environment_id
+   AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
+ WHERE workspaces.org_id = $1
+   AND workspaces.project_id = $2
+   AND workspaces.environment_id = $3
+   AND workspaces.id = $4
+   AND workspaces.deleted_at IS NULL
+ LIMIT 1
+`
+
+type GetWorkspaceForSessionStartParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+type GetWorkspaceForSessionStartRow struct {
+	ID                                pgtype.UUID        `json:"id"`
+	OrgID                             pgtype.UUID        `json:"org_id"`
+	ProjectID                         pgtype.UUID        `json:"project_id"`
+	EnvironmentID                     pgtype.UUID        `json:"environment_id"`
+	DeploymentSandboxID               pgtype.UUID        `json:"deployment_sandbox_id"`
+	SandboxID                         string             `json:"sandbox_id"`
+	SandboxFingerprint                string             `json:"sandbox_fingerprint"`
+	State                             WorkspaceState     `json:"state"`
+	ArchivedAt                        pgtype.Timestamptz `json:"archived_at"`
+	DeletedAt                         pgtype.Timestamptz `json:"deleted_at"`
+	WorkspaceMountPath                string             `json:"workspace_mount_path"`
+	DeploymentSandboxResourceFloor    []byte             `json:"deployment_sandbox_resource_floor"`
+	DeploymentSandboxDiskFloorMib     int64              `json:"deployment_sandbox_disk_floor_mib"`
+	DeploymentSandboxNetworkPolicy    []byte             `json:"deployment_sandbox_network_policy"`
+	DeploymentSandboxRootfsDigest     string             `json:"deployment_sandbox_rootfs_digest"`
+	DeploymentSandboxRuntimeAbi       string             `json:"deployment_sandbox_runtime_abi"`
+	DeploymentSandboxGuestdAbi        string             `json:"deployment_sandbox_guestd_abi"`
+	DeploymentSandboxAdapterAbi       string             `json:"deployment_sandbox_adapter_abi"`
+	DeploymentSandboxFilesystemFormat string             `json:"deployment_sandbox_filesystem_format"`
+	DeploymentSandboxContractVersion  int32              `json:"deployment_sandbox_contract_version"`
+	DeploymentSandboxFingerprint      string             `json:"deployment_sandbox_fingerprint"`
+}
+
+func (q *Queries) GetWorkspaceForSessionStart(ctx context.Context, arg GetWorkspaceForSessionStartParams) (GetWorkspaceForSessionStartRow, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceForSessionStart,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+	)
+	var i GetWorkspaceForSessionStartRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentSandboxID,
+		&i.SandboxID,
+		&i.SandboxFingerprint,
+		&i.State,
+		&i.ArchivedAt,
+		&i.DeletedAt,
+		&i.WorkspaceMountPath,
+		&i.DeploymentSandboxResourceFloor,
+		&i.DeploymentSandboxDiskFloorMib,
+		&i.DeploymentSandboxNetworkPolicy,
+		&i.DeploymentSandboxRootfsDigest,
+		&i.DeploymentSandboxRuntimeAbi,
+		&i.DeploymentSandboxGuestdAbi,
+		&i.DeploymentSandboxAdapterAbi,
+		&i.DeploymentSandboxFilesystemFormat,
+		&i.DeploymentSandboxContractVersion,
+		&i.DeploymentSandboxFingerprint,
+	)
+	return i, err
+}
+
+const listSessionActivities = `-- name: ListSessionActivities :many
+SELECT session_activity.id,
+       session_activity.activity,
+       session_activity.can_close
+  FROM session_activity
+  JOIN unnest($1::uuid[]) AS target(id)
+    ON target.id = session_activity.id
+ WHERE session_activity.org_id = $2
+   AND session_activity.project_id = $3
+   AND session_activity.environment_id = $4
+`
+
+type ListSessionActivitiesParams struct {
+	SessionIds    []pgtype.UUID `json:"session_ids"`
+	OrgID         pgtype.UUID   `json:"org_id"`
+	ProjectID     pgtype.UUID   `json:"project_id"`
+	EnvironmentID pgtype.UUID   `json:"environment_id"`
+}
+
+type ListSessionActivitiesRow struct {
+	ID       pgtype.UUID `json:"id"`
+	Activity string      `json:"activity"`
+	CanClose bool        `json:"can_close"`
+}
+
+func (q *Queries) ListSessionActivities(ctx context.Context, arg ListSessionActivitiesParams) ([]ListSessionActivitiesRow, error) {
+	rows, err := q.db.Query(ctx, listSessionActivities,
+		arg.SessionIds,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+	)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	var items []ListSessionActivitiesRow
+	for rows.Next() {
+		var i ListSessionActivitiesRow
+		if err := rows.Scan(&i.ID, &i.Activity, &i.CanClose); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSessionRuns = `-- name: ListSessionRuns :many
+SELECT session_runs.id, session_runs.org_id, session_runs.project_id, session_runs.environment_id, session_runs.session_id, session_runs.run_id, session_runs.deployment_id, session_runs.previous_run_id, session_runs.turn_index, session_runs.reason, session_runs.created_at, session_runs.ended_at,
+       runs.status,
+       runs.execution_status,
+       runs.terminal_outcome,
+       runs.created_at AS run_created_at,
+       runs.updated_at AS run_updated_at
+  FROM session_runs
+  JOIN runs ON runs.org_id = session_runs.org_id
+           AND runs.project_id = session_runs.project_id
+           AND runs.environment_id = session_runs.environment_id
+           AND runs.id = session_runs.run_id
+ WHERE session_runs.org_id = $1
+   AND session_runs.project_id = $2
+   AND session_runs.environment_id = $3
+   AND session_runs.session_id = $4
+ ORDER BY session_runs.turn_index ASC, session_runs.created_at ASC
+`
+
+type ListSessionRunsParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
+}
+
+type ListSessionRunsRow struct {
+	ID              pgtype.UUID            `json:"id"`
+	OrgID           pgtype.UUID            `json:"org_id"`
+	ProjectID       pgtype.UUID            `json:"project_id"`
+	EnvironmentID   pgtype.UUID            `json:"environment_id"`
+	SessionID       pgtype.UUID            `json:"session_id"`
+	RunID           pgtype.UUID            `json:"run_id"`
+	DeploymentID    pgtype.UUID            `json:"deployment_id"`
+	PreviousRunID   pgtype.UUID            `json:"previous_run_id"`
+	TurnIndex       int32                  `json:"turn_index"`
+	Reason          string                 `json:"reason"`
+	CreatedAt       pgtype.Timestamptz     `json:"created_at"`
+	EndedAt         pgtype.Timestamptz     `json:"ended_at"`
+	Status          RunStatus              `json:"status"`
+	ExecutionStatus RunExecutionStatus     `json:"execution_status"`
+	TerminalOutcome NullRunTerminalOutcome `json:"terminal_outcome"`
+	RunCreatedAt    pgtype.Timestamptz     `json:"run_created_at"`
+	RunUpdatedAt    pgtype.Timestamptz     `json:"run_updated_at"`
+}
+
+func (q *Queries) ListSessionRuns(ctx context.Context, arg ListSessionRunsParams) ([]ListSessionRunsRow, error) {
+	rows, err := q.db.Query(ctx, listSessionRuns,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.SessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSessionRunsRow
+	for rows.Next() {
+		var i ListSessionRunsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.SessionID,
+			&i.RunID,
+			&i.DeploymentID,
+			&i.PreviousRunID,
+			&i.TurnIndex,
+			&i.Reason,
+			&i.CreatedAt,
+			&i.EndedAt,
+			&i.Status,
+			&i.ExecutionStatus,
+			&i.TerminalOutcome,
+			&i.RunCreatedAt,
+			&i.RunUpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSessions = `-- name: ListSessions :many
+SELECT id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+  FROM sessions
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND (
+       $4::text = ''
+       OR status::text = $4::text
+   )
+   AND (
+       $5::text = ''
+       OR task_id = $5
+   )
+ ORDER BY updated_at DESC, id DESC
+ LIMIT $6
+`
+
+type ListSessionsParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	StatusFilter  string      `json:"status_filter"`
+	TaskIDFilter  string      `json:"task_id_filter"`
+	RowLimit      int32       `json:"row_limit"`
+}
+
+func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]Session, error) {
+	rows, err := q.db.Query(ctx, listSessions,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.StatusFilter,
+		arg.TaskIDFilter,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Session
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.TaskID,
+			&i.InitialDeploymentID,
+			&i.ActiveDeploymentID,
+			&i.ExternalID,
+			&i.StartFingerprint,
+			&i.Status,
+			&i.CurrentRunID,
+			&i.CurrentRunVersion,
+			&i.WorkspaceID,
+			&i.Metadata,
+			&i.Tags,
+			&i.ClosedAt,
+			&i.ClosedReason,
+			&i.CancelledAt,
+			&i.ExpiredAt,
+			&i.TerminalReason,
+			&i.Result,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockSession = `-- name: LockSession :one
+SELECT id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+  FROM sessions
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND id = $4
+ FOR UPDATE
+`
+
+type LockSessionParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) LockSession(ctx context.Context, arg LockSessionParams) (Session, error) {
+	row := q.db.QueryRow(ctx, lockSession,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ID,
+	)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.TaskID,
+		&i.InitialDeploymentID,
+		&i.ActiveDeploymentID,
+		&i.ExternalID,
+		&i.StartFingerprint,
+		&i.Status,
+		&i.CurrentRunID,
+		&i.CurrentRunVersion,
+		&i.WorkspaceID,
+		&i.Metadata,
+		&i.Tags,
+		&i.ClosedAt,
+		&i.ClosedReason,
+		&i.CancelledAt,
+		&i.ExpiredAt,
+		&i.TerminalReason,
+		&i.Result,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const patchSession = `-- name: PatchSession :one
+UPDATE sessions
+   SET metadata = coalesce($1::jsonb, sessions.metadata),
+       tags = coalesce($2::text[], sessions.tags),
+       expires_at = CASE
+           WHEN $3::timestamptz IS NULL THEN sessions.expires_at
+           ELSE $3::timestamptz
+       END,
+       updated_at = now()
+ WHERE sessions.org_id = $4
+   AND sessions.project_id = $5
+   AND sessions.environment_id = $6
+   AND sessions.id = $7
+   AND sessions.status = 'open'
+   AND (
+       $3::timestamptz IS NULL
+       OR (
+           sessions.expires_at IS NOT NULL
+           AND sessions.expires_at > now()
+           AND $3::timestamptz > sessions.expires_at
+       )
+   )
+RETURNING id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+`
+
+type PatchSessionParams struct {
+	Metadata      []byte             `json:"metadata"`
+	Tags          []string           `json:"tags"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	OrgID         pgtype.UUID        `json:"org_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	ID            pgtype.UUID        `json:"id"`
+}
+
+func (q *Queries) PatchSession(ctx context.Context, arg PatchSessionParams) (Session, error) {
+	row := q.db.QueryRow(ctx, patchSession,
+		arg.Metadata,
+		arg.Tags,
+		arg.ExpiresAt,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ID,
+	)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.TaskID,
+		&i.InitialDeploymentID,
+		&i.ActiveDeploymentID,
+		&i.ExternalID,
+		&i.StartFingerprint,
+		&i.Status,
+		&i.CurrentRunID,
+		&i.CurrentRunVersion,
+		&i.WorkspaceID,
+		&i.Metadata,
+		&i.Tags,
+		&i.ClosedAt,
+		&i.ClosedReason,
+		&i.CancelledAt,
+		&i.ExpiredAt,
+		&i.TerminalReason,
+		&i.Result,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setSessionCurrentRun = `-- name: SetSessionCurrentRun :one
+UPDATE sessions
+   SET current_run_id = $1,
+       current_run_version = current_run_version + 1,
+       updated_at = now()
+ WHERE sessions.org_id = $2
+   AND sessions.project_id = $3
+   AND sessions.environment_id = $4
+   AND sessions.id = $5
+   AND sessions.status = 'open'
+   AND (
+       current_run_id IS NULL
+       OR NOT EXISTS (
+           SELECT 1
+             FROM runs
+            WHERE runs.org_id = sessions.org_id
+              AND runs.project_id = sessions.project_id
+              AND runs.environment_id = sessions.environment_id
+              AND runs.id = sessions.current_run_id
+              AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+       )
+   )
+RETURNING id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+`
+
+type SetSessionCurrentRunParams struct {
+	RunID         pgtype.UUID `json:"run_id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
+}
+
+func (q *Queries) SetSessionCurrentRun(ctx context.Context, arg SetSessionCurrentRunParams) (Session, error) {
+	row := q.db.QueryRow(ctx, setSessionCurrentRun,
+		arg.RunID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.SessionID,
+	)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.TaskID,
+		&i.InitialDeploymentID,
+		&i.ActiveDeploymentID,
+		&i.ExternalID,
+		&i.StartFingerprint,
+		&i.Status,
+		&i.CurrentRunID,
+		&i.CurrentRunVersion,
+		&i.WorkspaceID,
+		&i.Metadata,
+		&i.Tags,
+		&i.ClosedAt,
+		&i.ClosedReason,
+		&i.CancelledAt,
+		&i.ExpiredAt,
+		&i.TerminalReason,
+		&i.Result,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const touchSessionStartIdempotency = `-- name: TouchSessionStartIdempotency :exec
+UPDATE session_start_idempotencies
+   SET last_used_at = now()
+ WHERE org_id = $1
+   AND id = $2
+`
+
+type TouchSessionStartIdempotencyParams struct {
+	OrgID pgtype.UUID `json:"org_id"`
+	ID    pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) TouchSessionStartIdempotency(ctx context.Context, arg TouchSessionStartIdempotencyParams) error {
+	_, err := q.db.Exec(ctx, touchSessionStartIdempotency, arg.OrgID, arg.ID)
+	return err
 }

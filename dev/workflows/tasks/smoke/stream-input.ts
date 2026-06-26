@@ -53,7 +53,6 @@ export const streamInputSmoke = task({
   id: "stream-input-smoke",
   sandbox: sbx,
   maxDuration: 900,
-  streams: [input, reportStream],
   payload,
   run: async (payload: Payload, ctx) => {
     const marker = payload.marker?.trim() || `stream-input-smoke-${ctx.run.id}`

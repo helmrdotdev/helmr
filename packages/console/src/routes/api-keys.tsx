@@ -68,7 +68,7 @@ const API_KEY_SCOPE_OPTIONS: {
   {
     value: "runs:manage",
     label: "Manage runs",
-    description: "Allow automation to cancel runs and task sessions.",
+    description: "Allow automation to cancel runs and sessions.",
   },
   {
     value: "session-streams:read",

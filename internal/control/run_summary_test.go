@@ -28,13 +28,13 @@ func TestCreateGetAndListRun(t *testing.T) {
 	runEnqueuer := &fakeRunEnqueuer{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}, RunEnqueuer: runEnqueuer})
 
-	bodyBytes, err := json.Marshal(api.TaskStartRequest{
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/deploy/start", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -80,7 +80,7 @@ func TestCreateGetAndListRun(t *testing.T) {
 		t.Fatalf("enqueued org=%+v run=%+v, want org=%+v run=%+v", runEnqueuer.orgID, runEnqueuer.runID, store.run.OrgID, store.run.ID)
 	}
 
-	var startResponse api.TaskStartResponse
+	var startResponse api.SessionStartResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &startResponse); err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestListRunsQuery(t *testing.T) {
 		EnvironmentID:    testEnvironmentID(),
 		DeploymentID:     testDeploymentID(),
 		DeploymentTaskID: testDeploymentTaskID(),
-		TaskSessionID:    pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000602")),
+		SessionID:        pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000602")),
 		TaskID:           "deploy",
 		Status:           db.RunStatusSucceeded,
 		CreatedAt:        testTime(),
@@ -184,7 +184,7 @@ func TestAPIKeyListRunsUsesActorEnvironmentScope(t *testing.T) {
 		EnvironmentID:    testEnvironmentID(),
 		DeploymentID:     testDeploymentID(),
 		DeploymentTaskID: testDeploymentTaskID(),
-		TaskSessionID:    pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000602")),
+		SessionID:        pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000602")),
 		TaskID:           "deploy",
 		Status:           db.RunStatusSucceeded,
 		CreatedAt:        testTime(),
@@ -267,7 +267,7 @@ func TestRunResponseMapsLeasedToRunning(t *testing.T) {
 		EnvironmentID:    testEnvironmentID(),
 		DeploymentID:     testDeploymentID(),
 		DeploymentTaskID: testDeploymentTaskID(),
-		TaskSessionID:    pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000602")),
+		SessionID:        pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000602")),
 		TaskID:           "deploy",
 		Status:           db.RunStatusRunning,
 		CreatedAt:        testTime(),
@@ -309,9 +309,9 @@ func fakeRunEnvironmentID(run db.Run) pgtype.UUID {
 	return testEnvironmentID()
 }
 
-func fakeRunTaskSessionID(run db.Run) pgtype.UUID {
-	if run.TaskSessionID.Valid {
-		return run.TaskSessionID
+func fakeRunSessionID(run db.Run) pgtype.UUID {
+	if run.SessionID.Valid {
+		return run.SessionID
 	}
 	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000601"))
 }
@@ -327,7 +327,7 @@ func (f *fakeStore) GetRunSummary(_ context.Context, arg db.GetRunSummaryParams)
 		EnvironmentID:    fakeRunEnvironmentID(f.run),
 		DeploymentID:     fakeRunDeploymentID(f.run),
 		DeploymentTaskID: fakeRunDeploymentTaskID(f.run),
-		TaskSessionID:    fakeRunTaskSessionID(f.run),
+		SessionID:        fakeRunSessionID(f.run),
 		TaskID:           f.run.TaskID,
 		Status:           f.run.Status,
 		ExitCode:         f.run.ExitCode,
@@ -353,7 +353,7 @@ func (f *fakeStore) ListScopedRunSummaries(_ context.Context, arg db.ListScopedR
 		EnvironmentID:    f.run.EnvironmentID,
 		DeploymentID:     fakeRunDeploymentID(f.run),
 		DeploymentTaskID: fakeRunDeploymentTaskID(f.run),
-		TaskSessionID:    fakeRunTaskSessionID(f.run),
+		SessionID:        fakeRunSessionID(f.run),
 		TaskID:           f.run.TaskID,
 		Status:           f.run.Status,
 		ExitCode:         f.run.ExitCode,

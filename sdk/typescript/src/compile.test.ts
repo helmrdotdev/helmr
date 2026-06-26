@@ -19,7 +19,7 @@ import {
   runAdapterCli,
   type AdapterIo,
 } from "../../../runtime/typescript/src/main"
-import { compile } from "./compile"
+import { compile, compileQueueCatalog } from "./compile"
 import { validateSecretName } from "./internal"
 import { image, queue, sandbox, schedules, source, streams, task, type PayloadSchema } from "./index"
 
@@ -73,47 +73,6 @@ describe("compile", () => {
       }),
     ).toThrow('sandbox "test" must declare image(...)')
 
-  })
-
-  test("emits task stream catalog definitions", () => {
-    const inputSchema: PayloadSchema<unknown, { approved: boolean }> = {
-      "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value: value as { approved: boolean } }) },
-    }
-    const outputSchema: PayloadSchema<{ ok: boolean }, { ok: boolean }> = {
-      "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value: value as { ok: boolean } }) },
-    }
-    const approval = streams.input("approval", { schema: inputSchema })
-    const events = streams.output("events", { schema: outputSchema })
-
-    const bundle = compile({
-      task: task({
-        id: "stream-catalog",
-        sandbox: sandbox("stream-catalog").image(image("stream-catalog").from("debian:trixie-slim")),
-        streams: [approval, events],
-        run: async () => null,
-      }),
-      modulePath: "tasks/stream-catalog.ts",
-    })
-
-    expect(bundle.task?.streams.map((stream) => ({
-      name: stream.name,
-      direction: stream.direction,
-      schemaFingerprintPrefix: stream.schemaFingerprint.slice(0, 7),
-      schemaJson: JSON.parse(stream.schemaJson),
-    }))).toEqual([
-      {
-        name: "approval",
-        direction: "input",
-        schemaFingerprintPrefix: "sha256:",
-        schemaJson: { kind: "standard-schema-v1", vendor: "test", direction: "input", name: "approval" },
-      },
-      {
-        name: "events",
-        direction: "output",
-        schemaFingerprintPrefix: "sha256:",
-        schemaJson: { kind: "standard-schema-v1", vendor: "test", direction: "output", name: "events" },
-      },
-    ])
   })
 
   test("rejects empty image chains", () => {
@@ -187,8 +146,8 @@ describe("compile", () => {
     ])
   })
 
-  test("emits task queue and ttl metadata", () => {
-    const serialQueue = queue({ name: "review/pr", concurrencyLimit: 1 })
+  test("emits task queue reference and ttl metadata", () => {
+    const serialQueue = queue({ id: "review/pr", concurrencyLimit: 1 })
     const bundle = compile({
       task: task({
         id: "queued-task",
@@ -200,8 +159,44 @@ describe("compile", () => {
       modulePath: "tasks/queued-task.ts",
     })
     expect(bundle.task?.queue?.name).toBe("review/pr")
-    expect(bundle.task?.queue?.concurrencyLimit).toBe(1)
     expect(bundle.task?.ttl).toBe("10m")
+  })
+
+  test("queue catalog rejects undefined string queue references", () => {
+    const queued = task({
+      id: "queued-task",
+      sandbox: sandbox("queued-task").image(image("queued-task").from("debian:trixie-slim")),
+      queue: "review/pr",
+      run: async () => null,
+    })
+    expect(() => compileQueueCatalog([queued], [])).toThrow('task "queued-task" references undefined queue "review/pr"')
+  })
+
+  test("queue catalog includes declared queues and implicit task queues", () => {
+    const catalog = compileQueueCatalog([
+      task({
+        id: "defaulted",
+        sandbox: sandbox("defaulted").image(image("defaulted").from("debian:trixie-slim")),
+        run: async () => null,
+      }),
+      task({
+        id: "queued-task",
+        sandbox: sandbox("queued-task").image(image("queued-task").from("debian:trixie-slim")),
+        queue: "review/pr",
+        run: async () => null,
+      }),
+    ], [{ id: "review/pr", concurrencyLimit: 1, originFile: "tasks/review.ts" }])
+    expect(catalog).toEqual([
+      { name: "review/pr", concurrencyLimit: 1 },
+      { name: "task/defaulted" },
+    ])
+  })
+
+  test("queue catalog rejects conflicting queue definitions", () => {
+    expect(() => compileQueueCatalog([], [
+      { id: "review/pr", concurrencyLimit: 1, originFile: "tasks/review.ts" },
+      { id: "review/pr", concurrencyLimit: 5, originFile: "tasks/review.ts" },
+    ])).toThrow('queue "review/pr" has conflicting deployment catalog settings')
   })
 
   test("emits task retry policy metadata", () => {
@@ -800,6 +795,177 @@ export default task({
     })
     expect(error.message).toContain('default-exports task "default-task"')
     expect(error.message).toContain("use a named export")
+  })
+
+  test("adapter parse rejects task stream config", async () => {
+    const cwd = await parseTaskFixture(
+      "stream-config",
+      `
+import { image, sandbox, streams, task } from "@helmr/sdk"
+
+const sb = sandbox("stream-config")
+  .image(image("stream-config").from("debian:trixie-slim"))
+  .workspace("/app")
+const report = streams.output("report", { schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } })
+
+export const streamConfig = task({
+  id: "stream-config",
+  sandbox: sb,
+  streams: [report],
+  run: async () => ({ ok: true }),
+} as never)
+`,
+    )
+    const result = await parseAdapterTask(cwd, "stream-config")
+
+    expect(result.status).toBe(1)
+    const error = JSON.parse(result.stderr.trim())
+    expect(error).toMatchObject({
+      level: "error",
+      kind: "bad_request",
+    })
+    expect(error.message).toContain("task streams are defined with the module-level streams primitive")
+  })
+
+  test("adapter parse emits module-level stream catalog definitions", async () => {
+    const cwd = await parseTaskFixture(
+      "module-stream-catalog",
+      `
+import { image, sandbox, streams, task } from "@helmr/sdk"
+
+const sb = sandbox("module-stream-catalog")
+  .image(image("module-stream-catalog").from("debian:trixie-slim"))
+  .workspace("/app")
+
+streams.input("module-approval", {
+  schema: { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } },
+})
+streams.output("module-events")
+
+export const moduleStreamCatalog = task({
+  id: "module-stream-catalog",
+  sandbox: sb,
+  run: async () => ({ ok: true }),
+})
+`,
+    )
+    const result = await parseAdapterRegistry(cwd)
+
+    expect(result.status, result.stderr).toBe(0)
+    const registry = JSON.parse(result.stdout) as {
+      readonly streams: readonly {
+        readonly name: string
+        readonly direction: string
+        readonly schema_fingerprint?: string
+        readonly schema_json: unknown
+      }[]
+    }
+    const catalog = registry.streams.map((stream) => ({
+      name: stream.name,
+      direction: stream.direction,
+      schemaFingerprintPrefix: stream.schema_fingerprint?.slice(0, 7) ?? "",
+      schemaJson: stream.schema_json,
+    }))
+    expect(catalog).toEqual([
+      {
+        name: "module-approval",
+        direction: "input",
+        schemaFingerprintPrefix: "sha256:",
+        schemaJson: { kind: "standard-schema-v1", vendor: "test", direction: "input", name: "module-approval" },
+      },
+      {
+        name: "module-events",
+        direction: "output",
+        schemaFingerprintPrefix: "",
+        schemaJson: null,
+      },
+    ])
+  })
+
+  test("adapter parse captures stream catalog definitions from imported modules", async () => {
+    const cwd = await parseTaskFixture(
+      "imported-stream-catalog",
+      `
+import { image, sandbox, task } from "@helmr/sdk"
+import "../shared/stream-catalog"
+
+const sb = sandbox("imported-stream-catalog")
+  .image(image("imported-stream-catalog").from("debian:trixie-slim"))
+  .workspace("/app")
+
+export const importedStreamCatalog = task({
+  id: "imported-stream-catalog",
+  sandbox: sb,
+  run: async () => ({ ok: true }),
+})
+`,
+      {
+        "shared/stream-catalog.ts": `
+import { streams } from "@helmr/sdk"
+
+streams.input("shared-approval", {
+  schema: { "~standard": { version: 1, vendor: "shared", validate: (value: unknown) => ({ value }) } },
+})
+`,
+      },
+    )
+    const result = await parseAdapterRegistry(cwd)
+
+    expect(result.status, result.stderr).toBe(0)
+    const registry = JSON.parse(result.stdout) as {
+      readonly streams: readonly {
+        readonly name: string
+        readonly direction: string
+        readonly schema_json: unknown
+      }[]
+    }
+    expect(registry.streams.map((stream) => ({
+      name: stream.name,
+      direction: stream.direction,
+      schemaJson: stream.schema_json,
+    }))).toEqual([
+      {
+        name: "shared-approval",
+        direction: "input",
+        schemaJson: { kind: "standard-schema-v1", vendor: "shared", direction: "input", name: "shared-approval" },
+      },
+    ])
+  })
+
+  test("bundled adapter shares module-level definition registry with project sdk copies", async () => {
+    const cwd = await parseTaskFixture(
+      "bundled-definition-registry",
+      `
+import { image, queue, sandbox, streams, task } from "@helmr/sdk"
+
+const serial = queue({ id: "critical/reviews", concurrencyLimit: 1 })
+streams.input("bundled-approval")
+streams.output("bundled-events")
+
+const sb = sandbox("bundled-definition-registry")
+  .image(image("bundled-definition-registry").from("debian:trixie-slim"))
+  .workspace("/app")
+
+export const bundledDefinitionRegistry = task({
+  id: "bundled-definition-registry",
+  queue: serial,
+  sandbox: sb,
+  run: async () => ({ ok: true }),
+})
+`,
+    )
+    const result = await parseBundledAdapterRegistry(cwd)
+
+    expect(result.status, result.stderr).toBe(0)
+    const registry = JSON.parse(result.stdout) as {
+      readonly streams: readonly { readonly name: string; readonly direction: string }[]
+      readonly queues: readonly { readonly name: string; readonly concurrency_limit?: number }[]
+    }
+    expect(registry.streams.map((stream) => `${stream.direction}:${stream.name}`)).toEqual([
+      "input:bundled-approval",
+      "output:bundled-events",
+    ])
+    expect(registry.queues).toContainEqual({ name: "critical/reviews", concurrency_limit: 1 })
   })
 
   test("adapter parse emits duplicate task id kind", async () => {
@@ -1773,7 +1939,11 @@ function compileFixtureTask() {
   })
 }
 
-async function parseTaskFixture(taskId: string, taskSource: string): Promise<string> {
+async function parseTaskFixture(
+  taskId: string,
+  taskSource: string,
+  extraFiles: Record<string, string> = {},
+): Promise<string> {
   const cwd = await mkdtemp(resolve(tmpdir(), "helmr-adapter-parse-test-"))
   await mkdir(resolve(cwd, "tasks"))
   const sandboxSource = `import { image, sandbox } from "@helmr/sdk"
@@ -1788,6 +1958,11 @@ const smokeSandbox = sandbox(${JSON.stringify(taskId)})
     resolve(cwd, "tasks", `${taskId}.ts`),
     taskSource.replace('import { smokeSandbox } from "../fixture/sandbox"', sandboxSource),
   )
+  for (const [path, source] of Object.entries(extraFiles)) {
+    const fullPath = resolve(cwd, path)
+    await mkdir(dirname(fullPath), { recursive: true })
+    await writeFile(fullPath, source)
+  }
   await writeFile(
     resolve(cwd, "helmr.config.ts"),
     'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"] })\n',
@@ -1837,6 +2012,44 @@ async function parseAdapterTask(
   taskId: string,
 ): Promise<{ readonly stdout: Uint8Array; readonly stderr: string; readonly status: number }> {
   return invokeAdapter(["parse", "--cwd", cwd, "--task", taskId, "--output", "binary"])
+}
+
+async function parseAdapterRegistry(
+  cwd: string,
+): Promise<{ readonly stdout: string; readonly stderr: string; readonly status: number }> {
+  const result = await invokeAdapter(["parse", "--cwd", cwd, "--output", "json"])
+  return {
+    stdout: result.stdout.toString(),
+    stderr: result.stderr,
+    status: result.status,
+  }
+}
+
+async function parseBundledAdapterRegistry(
+  cwd: string,
+): Promise<{ readonly stdout: string; readonly stderr: string; readonly status: number }> {
+  const bundleDir = await mkdtemp(resolve(tmpdir(), "helmr-bundled-adapter-test-"))
+  const adapterPath = resolve(bundleDir, "main.js")
+  const build = await Bun.build({
+    entrypoints: [fileURLToPath(new URL("../../../runtime/typescript/src/main.ts", import.meta.url))],
+    target: "node",
+    format: "esm",
+  })
+  expect(build.success).toBe(true)
+  expect(build.outputs.length).toBe(1)
+  await Bun.write(adapterPath, build.outputs[0])
+  const sdkRoot = fileURLToPath(new URL("..", import.meta.url))
+  await linkLocalSdk(cwd, sdkRoot)
+  const proc = Bun.spawn([process.execPath, adapterPath, "parse", "--cwd", cwd, "--output", "json"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const [stdout, stderr, status] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+  return { stdout, stderr, status }
 }
 
 async function runAdapterTask(

@@ -27,6 +27,7 @@ type ExpirySweepOrgStore interface {
 	RequeueExpiredLeasedRunLeases(ctx context.Context, orgID pgtype.UUID) error
 	FailExpiredRunningRunLeases(ctx context.Context, orgID pgtype.UUID) error
 	ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
+	ExpireDueSessions(ctx context.Context, orgID pgtype.UUID) ([]db.Session, error)
 	ExpireDueTokens(ctx context.Context, orgID pgtype.UUID) ([]db.ExpireDueTokensRow, error)
 	ResolveDueTimerWaits(ctx context.Context, arg db.ResolveDueTimerWaitsParams) ([]db.ResolveDueTimerWaitsRow, error)
 	ExpireDueRunWaits(ctx context.Context, orgID pgtype.UUID) ([]db.RunWait, error)
@@ -197,6 +198,9 @@ func SweepExpiredForOrg(ctx context.Context, store ExpirySweepOrgStore, orgID pg
 		return err
 	}
 	if err := store.ExpireQueuedRuns(ctx, orgID); err != nil {
+		return err
+	}
+	if _, err := store.ExpireDueSessions(ctx, orgID); err != nil {
 		return err
 	}
 	if _, err := store.ExpireDueTokens(ctx, orgID); err != nil {

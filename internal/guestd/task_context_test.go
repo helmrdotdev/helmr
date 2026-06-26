@@ -9,9 +9,9 @@ import (
 
 func TestAdapterTaskContextJSON(t *testing.T) {
 	request := &runv0.RunTaskRequest{
-		RunId:         "run-1",
-		TaskId:        "deploy",
-		TaskSessionId: "session-1",
+		RunId:     "run-1",
+		TaskId:    "deploy",
+		SessionId: "session-1",
 		Workspace: &runv0.RunTaskWorkspace{
 			Path:        "/workspace",
 			ProjectPath: "/workspace/sdk",

@@ -1,14 +1,14 @@
 # Resend Email Approval
 
 This example shows an email approval surface backed by a Helmr token
-and Resend. Helmr owns the durable task session, run, and token; the
+and Resend. Helmr owns the durable session, run, and token; the
 app owns email delivery, sender identity, and recipient routing.
 
 ## Deploy and Start a Session
 
 ```sh
 helmr deploy examples/resend-email-approval
-helmr task start resend-email-approval --json \
+helmr session start resend-email-approval --json \
   --payload-json '{
     "release": "helmr-web-2026-06-14",
     "summary": "Promote the validated staging build to production.",

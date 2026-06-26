@@ -79,11 +79,49 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"approved":true`) {
 		t.Fatalf("input list wrong correlation status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rec = routeRequest(t, handler, http.MethodPost, "/api/sessions/"+ids.sessionID.String()+"/inputs/updates", inputBody, "Bearer machine-key")
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("direction mismatch status=%d body=%s", rec.Code, rec.Body.String())
+	seedControlDeploymentStream(t, ctx, pool, ids, ids.deploymentID, "updates", "input", "schema-updates-input", `{"kind":"input-updates"}`)
+	rec = routeRequest(t, handler, http.MethodGet, "/api/sessions/"+ids.sessionID.String()+"/streams", "", "Bearer machine-key")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stream list status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	requireErrorCode(t, rec.Body.Bytes(), "stream_direction_mismatch")
+	var listedStreams api.ListSessionStreamsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &listedStreams); err != nil {
+		t.Fatal(err)
+	}
+	if !hasListedStream(listedStreams.Streams, "updates", "input") {
+		t.Fatalf("stream list did not materialize deployment-only input stream: %+v", listedStreams.Streams)
+	}
+	rec = routeRequest(t, handler, http.MethodPost, "/api/sessions/"+ids.sessionID.String()+"/inputs/updates", inputBody, "Bearer machine-key")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("same-name input append status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var sameNameInput api.AppendStreamRecordResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &sameNameInput); err != nil {
+		t.Fatal(err)
+	}
+	if sameNameInput.Record.StreamID == ids.outputStreamID.String() {
+		t.Fatalf("same-name input used output stream id %s", ids.outputStreamID)
+	}
+	var deploymentSchemaJSON []byte
+	if err := pool.QueryRow(ctx, `
+		SELECT schema_json
+		  FROM deployment_streams
+		 WHERE org_id = $1
+		   AND deployment_id = $2
+		   AND name = 'updates'
+		   AND direction = 'input'
+	`, ids.orgID, ids.deploymentID).Scan(&deploymentSchemaJSON); err != nil {
+		t.Fatal(err)
+	}
+	if string(deploymentSchemaJSON) != `{"kind": "input-updates"}` && string(deploymentSchemaJSON) != `{"kind":"input-updates"}` {
+		t.Fatalf("deployment stream schema_json = %s", deploymentSchemaJSON)
+	}
+
+	rec = routeRequest(t, handler, http.MethodPost, "/api/sessions/"+ids.sessionID.String()+"/inputs/undeclared", inputBody, "Bearer machine-key")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("undeclared input append status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	requireErrorCode(t, rec.Body.Bytes(), "stream_not_found")
 
 	outputBody := `{"data":{"text":"ready"}}`
 	rec = routeRequest(t, handler, http.MethodPost, "/api/sessions/"+ids.sessionID.String()+"/outputs/updates", outputBody, "Bearer machine-key")
@@ -304,6 +342,261 @@ func TestWorkerActiveInputReadDoesNotRequireWakeupTransportForBufferedRecord(t *
 	}
 }
 
+func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
+	ctx := context.Background()
+	pool := newControlIntegrationDB(t, ctx)
+	ids := seedControlStreamTokenFixture(t, ctx, pool)
+	queries := db.New(pool)
+	worker, leaseIDs := seedControlRunningRunLease(t, ctx, pool, ids)
+	recordID := uuid.Must(uuid.NewV7())
+	if _, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		ID:                     pgvalue.UUID(recordID),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		ProjectID:              pgvalue.UUID(ids.projectID),
+		EnvironmentID:          pgvalue.UUID(ids.environmentID),
+		StreamID:               pgvalue.UUID(ids.inputStreamID),
+		Direction:              db.StreamDirectionInput,
+		Data:                   []byte(`{"ready":true}`),
+		ContentType:            "application/json",
+		IdempotencyFingerprint: "accepted-request-record",
+		SourceType:             db.StreamRecordSourceTypeApiKey,
+		SourceID:               "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request, err := queries.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
+		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:          pgvalue.UUID(ids.orgID),
+		ProjectID:      pgvalue.UUID(ids.projectID),
+		EnvironmentID:  pgvalue.UUID(ids.environmentID),
+		SessionID:      pgvalue.UUID(ids.sessionID),
+		StreamRecordID: pgvalue.UUID(recordID),
+		StreamID:       pgvalue.UUID(ids.inputStreamID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+
+	response, err := server.readWorkerInputStream(ctx, worker, leaseIDs, api.WorkerActiveStreamReadRequest{
+		Stream:        "approval",
+		AfterSequence: 0,
+		Block:         false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Record == nil || response.Record.ID != recordID.String() {
+		t.Fatalf("read response = %+v", response)
+	}
+	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		ID:            request.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "skipped" || stored.LastError != "consumed_by_active_run" {
+		t.Fatalf("request status=%q last_error=%q, want skipped consumed_by_active_run", stored.Status, stored.LastError)
+	}
+}
+
+func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
+	ctx := context.Background()
+	pool := newControlIntegrationDB(t, ctx)
+	ids := seedControlStreamTokenFixture(t, ctx, pool)
+	queries := db.New(pool)
+	worker, leaseIDs := seedControlRunningRunLease(t, ctx, pool, ids)
+	recordID := uuid.Must(uuid.NewV7())
+	if _, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		ID:                     pgvalue.UUID(recordID),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		ProjectID:              pgvalue.UUID(ids.projectID),
+		EnvironmentID:          pgvalue.UUID(ids.environmentID),
+		StreamID:               pgvalue.UUID(ids.inputStreamID),
+		Direction:              db.StreamDirectionInput,
+		Data:                   []byte(`{"ready":true}`),
+		ContentType:            "application/json",
+		IdempotencyFingerprint: "created-request-record",
+		SourceType:             db.StreamRecordSourceTypeApiKey,
+		SourceID:               "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request, err := queries.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
+		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:          pgvalue.UUID(ids.orgID),
+		ProjectID:      pgvalue.UUID(ids.projectID),
+		EnvironmentID:  pgvalue.UUID(ids.environmentID),
+		SessionID:      pgvalue.UUID(ids.sessionID),
+		StreamRecordID: pgvalue.UUID(recordID),
+		StreamID:       pgvalue.UUID(ids.inputStreamID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	continuationRunID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runs (
+			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'queued', 'queued', '{}', 'default', 300000,
+			'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb')
+	`, continuationRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentTaskID, ids.workspaceID, ids.sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO session_runs (id, org_id, project_id, environment_id, session_id, run_id, deployment_id, previous_run_id, turn_index, reason)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, 'input')
+	`, uuid.Must(uuid.NewV7()), ids.orgID, ids.projectID, ids.environmentID, ids.sessionID, continuationRunID, ids.deploymentID, leaseIDs.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE session_run_requests
+		   SET status = 'created',
+		       run_id = $1
+		 WHERE org_id = $2
+		   AND project_id = $3
+		   AND environment_id = $4
+		   AND id = $5
+	`, continuationRunID, ids.orgID, ids.projectID, ids.environmentID, request.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE sessions
+		   SET current_run_id = $1
+		 WHERE org_id = $2
+		   AND project_id = $3
+		   AND environment_id = $4
+		   AND id = $5
+	`, continuationRunID, ids.orgID, ids.projectID, ids.environmentID, ids.sessionID); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+
+	response, err := server.readWorkerInputStream(ctx, worker, leaseIDs, api.WorkerActiveStreamReadRequest{
+		Stream:        "approval",
+		AfterSequence: 0,
+		Block:         false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Record == nil || response.Record.ID != recordID.String() {
+		t.Fatalf("read response = %+v", response)
+	}
+	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		ID:            request.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "skipped" || stored.LastError != "consumed_by_active_run" {
+		t.Fatalf("request status=%q last_error=%q, want skipped consumed_by_active_run", stored.Status, stored.LastError)
+	}
+	var runStatus db.RunStatus
+	var executionStatus db.RunExecutionStatus
+	if err := pool.QueryRow(ctx, `SELECT status, execution_status FROM runs WHERE org_id = $1 AND id = $2`, ids.orgID, continuationRunID).Scan(&runStatus, &executionStatus); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus != db.RunStatusCancelled || executionStatus != db.RunExecutionStatusFinished {
+		t.Fatalf("continuation run status=%s execution_status=%s, want cancelled finished", runStatus, executionStatus)
+	}
+	var currentRunID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT current_run_id FROM sessions WHERE org_id = $1 AND id = $2`, ids.orgID, ids.sessionID).Scan(&currentRunID); err != nil {
+		t.Fatal(err)
+	}
+	if currentRunID != leaseIDs.runID {
+		t.Fatalf("current_run_id=%s, want active run %s", currentRunID, leaseIDs.runID)
+	}
+}
+
+func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T) {
+	ctx := context.Background()
+	pool := newControlIntegrationDB(t, ctx)
+	ids := seedControlStreamTokenFixture(t, ctx, pool)
+	queries := db.New(pool)
+	worker, leaseIDs := seedControlRunningRunLease(t, ctx, pool, ids)
+	recordID := uuid.Must(uuid.NewV7())
+	if _, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		ID:                     pgvalue.UUID(recordID),
+		OrgID:                  pgvalue.UUID(ids.orgID),
+		ProjectID:              pgvalue.UUID(ids.projectID),
+		EnvironmentID:          pgvalue.UUID(ids.environmentID),
+		StreamID:               pgvalue.UUID(ids.inputStreamID),
+		Direction:              db.StreamDirectionInput,
+		Data:                   []byte(`{"ready":true}`),
+		ContentType:            "application/json",
+		IdempotencyFingerprint: "created-active-request-record",
+		SourceType:             db.StreamRecordSourceTypeApiKey,
+		SourceID:               "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request, err := queries.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
+		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:          pgvalue.UUID(ids.orgID),
+		ProjectID:      pgvalue.UUID(ids.projectID),
+		EnvironmentID:  pgvalue.UUID(ids.environmentID),
+		SessionID:      pgvalue.UUID(ids.sessionID),
+		StreamRecordID: pgvalue.UUID(recordID),
+		StreamID:       pgvalue.UUID(ids.inputStreamID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE session_run_requests
+		   SET status = 'created',
+		       run_id = $1
+		 WHERE org_id = $2
+		   AND project_id = $3
+		   AND environment_id = $4
+		   AND id = $5
+	`, leaseIDs.runID, ids.orgID, ids.projectID, ids.environmentID, request.ID); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+
+	response, err := server.readWorkerInputStream(ctx, worker, leaseIDs, api.WorkerActiveStreamReadRequest{
+		Stream:        "approval",
+		AfterSequence: 0,
+		Block:         false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Record == nil || response.Record.ID != recordID.String() {
+		t.Fatalf("read response = %+v", response)
+	}
+	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		ID:            request.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "created" || pgvalue.MustUUIDValue(stored.RunID) != leaseIDs.runID {
+		t.Fatalf("request status=%q run_id=%s, want created active run %s", stored.Status, pgvalue.UUIDString(stored.RunID), leaseIDs.runID)
+	}
+	var runStatus db.RunStatus
+	var executionStatus db.RunExecutionStatus
+	if err := pool.QueryRow(ctx, `SELECT status, execution_status FROM runs WHERE org_id = $1 AND id = $2`, ids.orgID, leaseIDs.runID).Scan(&runStatus, &executionStatus); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus != db.RunStatusRunning || executionStatus != db.RunExecutionStatusExecuting {
+		t.Fatalf("active run status=%s execution_status=%s, want running executing", runStatus, executionStatus)
+	}
+}
+
 func TestWorkerActiveInputReadRequiresWakeupTransportOnlyWhenBlockingAfterMiss(t *testing.T) {
 	ctx := context.Background()
 	pool := newControlIntegrationDB(t, ctx)
@@ -416,6 +709,15 @@ func routeRequest(t *testing.T, handler http.Handler, method string, path string
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec
+}
+
+func hasListedStream(streams []api.StreamResponse, name string, direction string) bool {
+	for _, stream := range streams {
+		if stream.Name == name && stream.Direction == direction {
+			return true
+		}
+	}
+	return false
 }
 
 func createRouteToken(t *testing.T, handler http.Handler) api.TokenResponse {
@@ -572,6 +874,9 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	if _, err := pool.Exec(ctx, `INSERT INTO deployments (id, org_id, project_id, environment_id, worker_group_id, version, content_hash, deployment_source_artifact_id, status) VALUES ($1, $2, $3, $4, $5, 'v1', $6, $7, 'deployed')`, ids.deploymentID, ids.orgID, ids.projectID, ids.environmentID, ids.workerGroupID, digest, artifactID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `INSERT INTO deployment_queues (org_id, project_id, environment_id, deployment_id, name) VALUES ($1, $2, $3, $4, 'default')`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `INSERT INTO tasks (org_id, project_id, environment_id, task_id) VALUES ($1, $2, $3, $4)`, ids.orgID, ids.projectID, ids.environmentID, taskID); err != nil {
 		t.Fatal(err)
 	}
@@ -584,11 +889,11 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint) VALUES ($1, $2, $3, $4, $5, 'default', 'sandbox-fingerprint')`, ids.workspaceID, ids.orgID, ids.projectID, ids.environmentID, sandboxID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO task_sessions (id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, workspace_id) VALUES ($1, $2, $3, $4, $5, $6, $6, $7)`, ids.sessionID, ids.orgID, ids.projectID, ids.environmentID, taskID, ids.deploymentID, ids.workspaceID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, workspace_id) VALUES ($1, $2, $3, $4, $5, $6, $6, $7)`, ids.sessionID, ids.orgID, ids.projectID, ids.environmentID, taskID, ids.deploymentID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
-	seedControlStream(t, ctx, pool, ids, ids.deploymentID, taskID, ids.inputStreamID, "approval", "input")
-	seedControlStream(t, ctx, pool, ids, ids.deploymentID, taskID, ids.outputStreamID, "updates", "output")
+	seedControlStream(t, ctx, pool, ids, ids.deploymentID, ids.inputStreamID, "approval", "input")
+	seedControlStream(t, ctx, pool, ids, ids.deploymentID, ids.outputStreamID, "updates", "output")
 	return ids
 }
 
@@ -623,7 +928,7 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
 			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
-			task_session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
+			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'running', 'executing', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
@@ -671,7 +976,7 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		UPDATE task_sessions
+		UPDATE sessions
 		   SET current_run_id = $1
 		 WHERE org_id = $2
 		   AND id = $3
@@ -702,15 +1007,24 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 		}
 }
 
-func seedControlStream(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids streamTokenRouteFixture, deploymentID uuid.UUID, taskID string, streamID uuid.UUID, name string, direction string) {
+func seedControlStream(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids streamTokenRouteFixture, deploymentID uuid.UUID, streamID uuid.UUID, name string, direction string) {
 	t.Helper()
 	deploymentStreamID := uuid.Must(uuid.NewV7())
-	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, project_id, environment_id, deployment_id, task_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}')`, deploymentStreamID, ids.orgID, ids.projectID, ids.environmentID, deploymentID, taskID, name, direction, "schema-"+name); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}')`, deploymentStreamID, ids.orgID, ids.projectID, ids.environmentID, deploymentID, name, direction, "schema-"+name); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO streams (id, org_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, streamID, ids.orgID, ids.projectID, ids.environmentID, ids.sessionID, deploymentStreamID, name, direction, "schema-"+name); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func seedControlDeploymentStream(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids streamTokenRouteFixture, deploymentID uuid.UUID, name string, direction string, schemaFingerprint string, schemaJSON string) uuid.UUID {
+	t.Helper()
+	deploymentStreamID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, deploymentStreamID, ids.orgID, ids.projectID, ids.environmentID, deploymentID, name, direction, schemaFingerprint, schemaJSON); err != nil {
+		t.Fatal(err)
+	}
+	return deploymentStreamID
 }
 
 func testProjectIDStringUUID() uuid.UUID {

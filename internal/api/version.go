@@ -8,6 +8,6 @@ const (
 	SDKVersionHeader    = "Helmr-SDK-Version"
 	CLIVersionHeader    = "Helmr-CLI-Version"
 
-	CurrentWorkerProtocolVersion = "helmr.worker.v0"
-	CurrentBundleFormatVersion   = 1
+	CurrentWorkerProtocolVersion = "helmr.worker.v1"
+	CurrentBundleFormatVersion   = 2
 )

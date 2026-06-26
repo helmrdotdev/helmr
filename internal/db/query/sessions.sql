@@ -1,58 +1,535 @@
+-- name: GetTaskForStart :one
+SELECT *
+  FROM tasks
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND task_id = sqlc.arg(task_id);
+
 -- name: CreateSession :one
-INSERT INTO sessions (id, org_id, user_id, token_hash, expires_at)
-VALUES (sqlc.arg(id), sqlc.narg(org_id), sqlc.arg(user_id), sqlc.arg(token_hash), sqlc.arg(expires_at))
+INSERT INTO sessions (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    task_id,
+    initial_deployment_id,
+    active_deployment_id,
+    workspace_id,
+    external_id,
+    start_fingerprint,
+    metadata,
+    tags,
+    expires_at
+) VALUES (
+    sqlc.arg(id),
+    sqlc.arg(org_id),
+    sqlc.arg(project_id),
+    sqlc.arg(environment_id),
+    sqlc.arg(task_id),
+    sqlc.arg(initial_deployment_id),
+    sqlc.arg(active_deployment_id),
+    sqlc.arg(workspace_id),
+    sqlc.arg(external_id),
+    sqlc.arg(start_fingerprint),
+    coalesce(sqlc.arg(metadata)::jsonb, '{}'::jsonb),
+    coalesce(sqlc.arg(tags)::text[], '{}'::text[]),
+    sqlc.narg(expires_at)
+)
 RETURNING *;
 
--- name: GetSessionByTokenHash :one
-SELECT
-    sessions.id,
-    sessions.user_id,
-    users.display_name,
-    users.profile_image_url,
-    selected_member.org_id,
-    COALESCE(selected_member.role::text, '')::text AS role,
-    COALESCE(selected_member.display_name, users.display_name) AS member_display_name,
-    sessions.expires_at
+-- name: CreateWorkspace :one
+INSERT INTO workspaces (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    deployment_sandbox_id,
+    sandbox_id,
+    sandbox_fingerprint,
+    external_id,
+    metadata,
+    tags,
+    retention_policy
+) VALUES (
+    sqlc.arg(id),
+    sqlc.arg(org_id),
+    sqlc.arg(project_id),
+    sqlc.arg(environment_id),
+    sqlc.arg(deployment_sandbox_id),
+    sqlc.arg(sandbox_id),
+    sqlc.arg(sandbox_fingerprint),
+    coalesce(sqlc.arg(external_id)::text, ''),
+    coalesce(sqlc.arg(metadata)::jsonb, '{}'::jsonb),
+    coalesce(sqlc.arg(tags)::text[], '{}'::text[]),
+    coalesce(sqlc.arg(retention_policy)::jsonb, '{}'::jsonb)
+)
+RETURNING *;
+
+-- name: GetWorkspaceForSessionStart :one
+SELECT workspaces.id,
+       workspaces.org_id,
+       workspaces.project_id,
+       workspaces.environment_id,
+       workspaces.deployment_sandbox_id,
+       workspaces.sandbox_id,
+       workspaces.sandbox_fingerprint,
+       workspaces.state,
+       workspaces.archived_at,
+       workspaces.deleted_at,
+       deployment_sandboxes.workspace_mount_path,
+       deployment_sandboxes.resource_floor AS deployment_sandbox_resource_floor,
+       deployment_sandboxes.disk_floor_mib AS deployment_sandbox_disk_floor_mib,
+       deployment_sandboxes.network_policy AS deployment_sandbox_network_policy,
+       deployment_sandboxes.rootfs_digest AS deployment_sandbox_rootfs_digest,
+       deployment_sandboxes.runtime_abi AS deployment_sandbox_runtime_abi,
+       deployment_sandboxes.guestd_abi AS deployment_sandbox_guestd_abi,
+       deployment_sandboxes.adapter_abi AS deployment_sandbox_adapter_abi,
+       deployment_sandboxes.filesystem_format AS deployment_sandbox_filesystem_format,
+       deployment_sandboxes.contract_version AS deployment_sandbox_contract_version,
+       deployment_sandboxes.fingerprint AS deployment_sandbox_fingerprint
+  FROM workspaces
+  JOIN deployment_sandboxes
+    ON deployment_sandboxes.org_id = workspaces.org_id
+   AND deployment_sandboxes.project_id = workspaces.project_id
+   AND deployment_sandboxes.environment_id = workspaces.environment_id
+   AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
+ WHERE workspaces.org_id = sqlc.arg(org_id)
+   AND workspaces.project_id = sqlc.arg(project_id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.id = sqlc.arg(workspace_id)
+   AND workspaces.deleted_at IS NULL
+ LIMIT 1;
+
+-- name: SetSessionCurrentRun :one
+UPDATE sessions
+   SET current_run_id = sqlc.arg(run_id),
+       current_run_version = current_run_version + 1,
+       updated_at = now()
+ WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.project_id = sqlc.arg(project_id)
+   AND sessions.environment_id = sqlc.arg(environment_id)
+   AND sessions.id = sqlc.arg(session_id)
+   AND sessions.status = 'open'
+   AND (
+       current_run_id IS NULL
+       OR NOT EXISTS (
+           SELECT 1
+             FROM runs
+            WHERE runs.org_id = sessions.org_id
+              AND runs.project_id = sessions.project_id
+              AND runs.environment_id = sessions.environment_id
+              AND runs.id = sessions.current_run_id
+              AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+       )
+   )
+RETURNING *;
+
+-- name: CreateSessionRun :one
+INSERT INTO session_runs (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    session_id,
+    run_id,
+    deployment_id,
+    previous_run_id,
+    turn_index,
+    reason
+) VALUES (
+    sqlc.arg(id),
+    sqlc.arg(org_id),
+    sqlc.arg(project_id),
+    sqlc.arg(environment_id),
+    sqlc.arg(session_id),
+    sqlc.arg(run_id),
+    sqlc.arg(deployment_id),
+    sqlc.narg(previous_run_id),
+    sqlc.arg(turn_index),
+    sqlc.arg(reason)
+)
+RETURNING *;
+
+-- name: GetSessionStartIdempotency :one
+SELECT session_start_idempotencies.*,
+       sessions.id AS session_id,
+       sessions.org_id AS session_org_id,
+       sessions.project_id AS session_project_id,
+       sessions.environment_id AS session_environment_id,
+       sessions.task_id AS session_task_id,
+       sessions.initial_deployment_id AS session_initial_deployment_id,
+       sessions.active_deployment_id AS session_active_deployment_id,
+       sessions.external_id AS session_external_id,
+       sessions.start_fingerprint AS session_start_fingerprint,
+       sessions.status AS session_status,
+       sessions.current_run_id AS session_current_run_id,
+       sessions.current_run_version AS session_current_run_version,
+       sessions.workspace_id AS session_workspace_id,
+       sessions.metadata AS session_metadata,
+       sessions.tags AS session_tags,
+       sessions.result AS session_result,
+       sessions.terminal_reason AS session_terminal_reason,
+       sessions.expires_at AS session_expires_at,
+       sessions.cancelled_at AS session_cancelled_at,
+       sessions.created_at AS session_created_at,
+       sessions.updated_at AS session_updated_at,
+       runs.id AS run_id,
+       runs.org_id AS run_org_id,
+       runs.project_id AS run_project_id,
+       runs.environment_id AS run_environment_id,
+       runs.deployment_id AS run_deployment_id,
+       runs.deployment_task_id AS run_deployment_task_id,
+       runs.deployment_version AS run_deployment_version,
+       runs.api_version AS run_api_version,
+       runs.sdk_version AS run_sdk_version,
+       runs.cli_version AS run_cli_version,
+       runs.task_id AS run_task_id,
+       runs.current_attempt_number AS run_attempt_number,
+       runs.status AS run_status,
+       runs.execution_status AS run_execution_status,
+       runs.terminal_outcome AS run_terminal_outcome,
+       runs.payload AS run_payload,
+       runs.output AS run_output,
+       runs.metadata AS run_metadata,
+       runs.tags AS run_tags,
+       runs.error_message AS run_error_message,
+       runs.exit_code AS run_exit_code,
+       runs.created_at AS run_created_at,
+       runs.updated_at AS run_updated_at
+  FROM session_start_idempotencies
+  JOIN sessions ON sessions.org_id = session_start_idempotencies.org_id
+                    AND sessions.project_id = session_start_idempotencies.project_id
+                    AND sessions.environment_id = session_start_idempotencies.environment_id
+                    AND sessions.id = session_start_idempotencies.session_id
+  JOIN runs ON runs.org_id = session_start_idempotencies.org_id
+           AND runs.project_id = session_start_idempotencies.project_id
+           AND runs.environment_id = session_start_idempotencies.environment_id
+           AND runs.id = session_start_idempotencies.first_run_id
+ WHERE session_start_idempotencies.org_id = sqlc.arg(org_id)
+   AND session_start_idempotencies.project_id = sqlc.arg(project_id)
+   AND session_start_idempotencies.environment_id = sqlc.arg(environment_id)
+   AND session_start_idempotencies.task_id = sqlc.arg(task_id)
+   AND session_start_idempotencies.idempotency_key = sqlc.arg(idempotency_key)
+   AND session_start_idempotencies.expires_at > now();
+
+-- name: DeleteExpiredSessionStartIdempotency :exec
+DELETE FROM session_start_idempotencies
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND task_id = sqlc.arg(task_id)
+   AND idempotency_key = sqlc.arg(idempotency_key)
+   AND expires_at <= now();
+
+-- name: CreateSessionStartIdempotency :one
+INSERT INTO session_start_idempotencies (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    task_id,
+    idempotency_key,
+    request_fingerprint,
+    session_id,
+    first_run_id,
+    expires_at
+) VALUES (
+    sqlc.arg(id),
+    sqlc.arg(org_id),
+    sqlc.arg(project_id),
+    sqlc.arg(environment_id),
+    sqlc.arg(task_id),
+    sqlc.arg(idempotency_key),
+    sqlc.arg(request_fingerprint),
+    sqlc.arg(session_id),
+    sqlc.arg(first_run_id),
+    sqlc.arg(expires_at)
+)
+ON CONFLICT (org_id, project_id, environment_id, task_id, idempotency_key) DO NOTHING
+RETURNING *;
+
+-- name: TouchSessionStartIdempotency :exec
+UPDATE session_start_idempotencies
+   SET last_used_at = now()
+ WHERE org_id = sqlc.arg(org_id)
+   AND id = sqlc.arg(id);
+
+-- name: GetSession :one
+SELECT *
   FROM sessions
-  JOIN users ON users.id = sessions.user_id
-  LEFT JOIN LATERAL (
-      SELECT org_members.org_id,
-             org_members.role,
-             org_members.display_name
-        FROM org_members
-       WHERE org_members.user_id = sessions.user_id
-         AND (sessions.org_id IS NULL OR org_members.org_id = sessions.org_id)
-         AND org_members.disabled_at IS NULL
-       ORDER BY (org_members.org_id = sessions.org_id) DESC, org_members.created_at ASC
-       LIMIT 1
-  ) AS selected_member ON true
- WHERE sessions.token_hash = sqlc.arg(token_hash)
-   AND sessions.revoked_at IS NULL
-   AND sessions.expires_at > now()
-   AND users.disabled_at IS NULL;
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id);
 
--- name: RefreshSession :exec
-UPDATE sessions
-   SET last_seen_at = now(),
-       expires_at = sqlc.arg(expires_at)
- WHERE id = sqlc.arg(id)
-   AND revoked_at IS NULL;
+-- name: GetSessionActivity :one
+SELECT id, activity, can_close
+  FROM session_activity
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id);
 
--- name: RevokeSessionByTokenHash :execrows
-UPDATE sessions
-   SET revoked_at = now()
- WHERE token_hash = sqlc.arg(token_hash)
-   AND revoked_at IS NULL;
+-- name: ListSessionActivities :many
+SELECT session_activity.id,
+       session_activity.activity,
+       session_activity.can_close
+  FROM session_activity
+  JOIN unnest(sqlc.arg(session_ids)::uuid[]) AS target(id)
+    ON target.id = session_activity.id
+ WHERE session_activity.org_id = sqlc.arg(org_id)
+   AND session_activity.project_id = sqlc.arg(project_id)
+   AND session_activity.environment_id = sqlc.arg(environment_id);
 
--- name: RevokeSessionsForUser :execrows
-UPDATE sessions
-   SET revoked_at = now()
- WHERE user_id = sqlc.arg(user_id)
-   AND revoked_at IS NULL;
+-- name: LockSession :one
+SELECT *
+  FROM sessions
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id)
+ FOR UPDATE;
 
--- name: RevokeOrgSessionsForUser :execrows
+-- name: GetSessionByExternalID :one
+SELECT *
+  FROM sessions
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND external_id = sqlc.arg(external_id)
+   AND external_id <> '';
+
+-- name: ListSessions :many
+SELECT *
+  FROM sessions
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND (
+       sqlc.arg(status_filter)::text = ''
+       OR status::text = sqlc.arg(status_filter)::text
+   )
+   AND (
+       sqlc.arg(task_id_filter)::text = ''
+       OR task_id = sqlc.arg(task_id_filter)
+   )
+ ORDER BY updated_at DESC, id DESC
+ LIMIT sqlc.arg(row_limit);
+
+-- name: PatchSession :one
 UPDATE sessions
-   SET revoked_at = now()
- WHERE user_id = sqlc.arg(user_id)
-   AND (org_id = sqlc.arg(org_id) OR org_id IS NULL)
-   AND revoked_at IS NULL;
+   SET metadata = coalesce(sqlc.arg(metadata)::jsonb, sessions.metadata),
+       tags = coalesce(sqlc.arg(tags)::text[], sessions.tags),
+       expires_at = CASE
+           WHEN sqlc.narg(expires_at)::timestamptz IS NULL THEN sessions.expires_at
+           ELSE sqlc.narg(expires_at)::timestamptz
+       END,
+       updated_at = now()
+ WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.project_id = sqlc.arg(project_id)
+   AND sessions.environment_id = sqlc.arg(environment_id)
+   AND sessions.id = sqlc.arg(id)
+   AND sessions.status = 'open'
+   AND (
+       sqlc.narg(expires_at)::timestamptz IS NULL
+       OR (
+           sessions.expires_at IS NOT NULL
+           AND sessions.expires_at > now()
+           AND sqlc.narg(expires_at)::timestamptz > sessions.expires_at
+       )
+   )
+RETURNING *;
+
+-- name: CloseSession :one
+UPDATE sessions
+   SET status = 'closed',
+       closed_at = now(),
+       closed_reason = sqlc.arg(reason)::text,
+       terminal_reason = jsonb_build_object('reason', sqlc.arg(reason)::text, 'origin', 'api'),
+       updated_at = now()
+ WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.project_id = sqlc.arg(project_id)
+   AND sessions.environment_id = sqlc.arg(environment_id)
+   AND sessions.id = sqlc.arg(id)
+   AND sessions.status = 'open'
+   AND (sessions.expires_at IS NULL OR sessions.expires_at > now())
+   AND NOT EXISTS (
+       SELECT 1
+         FROM runs
+        WHERE runs.org_id = sessions.org_id
+          AND runs.project_id = sessions.project_id
+          AND runs.environment_id = sessions.environment_id
+          AND runs.id = sessions.current_run_id
+          AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM session_run_requests
+        WHERE session_run_requests.org_id = sessions.org_id
+          AND session_run_requests.project_id = sessions.project_id
+          AND session_run_requests.environment_id = sessions.environment_id
+          AND session_run_requests.session_id = sessions.id
+          AND session_run_requests.status IN ('accepted', 'claimed')
+   )
+RETURNING *;
+
+-- name: ExpireSessionIfDue :one
+UPDATE sessions
+   SET status = 'expired',
+       expired_at = now(),
+       terminal_reason = jsonb_build_object('reason', 'session_expired', 'origin', 'api'),
+       result = jsonb_build_object(
+           'ok', false,
+           'error', jsonb_build_object(
+               'name', 'SessionExpired',
+               'message', 'session expired',
+               'details', jsonb_build_object('origin', 'api')
+           )
+       ),
+       updated_at = now()
+ WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.project_id = sqlc.arg(project_id)
+   AND sessions.environment_id = sqlc.arg(environment_id)
+   AND sessions.id = sqlc.arg(id)
+   AND sessions.status = 'open'
+   AND sessions.expires_at IS NOT NULL
+   AND sessions.expires_at <= now()
+   AND NOT EXISTS (
+       SELECT 1
+         FROM runs
+        WHERE runs.org_id = sessions.org_id
+          AND runs.project_id = sessions.project_id
+          AND runs.environment_id = sessions.environment_id
+          AND runs.id = sessions.current_run_id
+          AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM session_run_requests
+        WHERE session_run_requests.org_id = sessions.org_id
+          AND session_run_requests.project_id = sessions.project_id
+          AND session_run_requests.environment_id = sessions.environment_id
+          AND session_run_requests.session_id = sessions.id
+          AND session_run_requests.status IN ('accepted', 'claimed')
+   )
+RETURNING *;
+
+-- name: ExpireDueSessions :many
+UPDATE sessions
+   SET status = 'expired',
+       expired_at = now(),
+       terminal_reason = jsonb_build_object('reason', 'session_expired', 'origin', 'sweeper'),
+       result = jsonb_build_object(
+           'ok', false,
+           'error', jsonb_build_object(
+               'name', 'SessionExpired',
+               'message', 'session expired',
+               'details', jsonb_build_object('origin', 'sweeper')
+           )
+       ),
+       updated_at = now()
+ WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.status = 'open'
+   AND sessions.expires_at IS NOT NULL
+   AND sessions.expires_at <= now()
+   AND NOT EXISTS (
+       SELECT 1
+         FROM runs
+        WHERE runs.org_id = sessions.org_id
+          AND runs.project_id = sessions.project_id
+          AND runs.environment_id = sessions.environment_id
+          AND runs.id = sessions.current_run_id
+          AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM session_run_requests
+        WHERE session_run_requests.org_id = sessions.org_id
+          AND session_run_requests.project_id = sessions.project_id
+          AND session_run_requests.environment_id = sessions.environment_id
+          AND session_run_requests.session_id = sessions.id
+          AND session_run_requests.status IN ('accepted', 'claimed')
+   )
+RETURNING *;
+
+-- name: GetSessionByOrgID :one
+SELECT *
+  FROM sessions
+ WHERE org_id = sqlc.arg(org_id)
+   AND id = sqlc.arg(id);
+
+-- name: CancelSession :one
+WITH target_session AS (
+    SELECT *
+      FROM sessions
+     WHERE sessions.org_id = sqlc.arg(org_id)
+       AND sessions.project_id = sqlc.arg(project_id)
+       AND sessions.environment_id = sqlc.arg(environment_id)
+       AND sessions.id = sqlc.arg(id)
+     FOR UPDATE
+),
+cancelled_session AS (
+    UPDATE sessions
+       SET status = 'cancelled',
+           cancelled_at = now(),
+           result = jsonb_build_object(
+               'ok', false,
+               'error', jsonb_build_object(
+                   'name', 'TaskCancelled',
+                   'message', sqlc.arg(reason)::text,
+                   'details', jsonb_build_object('origin', 'api')
+               )
+           ),
+           terminal_reason = jsonb_build_object('reason', sqlc.arg(reason)::text, 'origin', 'api'),
+           updated_at = now()
+      FROM target_session
+     WHERE sessions.org_id = target_session.org_id
+       AND sessions.id = target_session.id
+       AND sessions.status = 'open'
+    RETURNING sessions.*
+),
+ended_session_run AS (
+    UPDATE session_runs
+       SET ended_at = now()
+      FROM target_session
+      JOIN cancelled_session ON true
+     WHERE target_session.current_run_id IS NOT NULL
+       AND session_runs.org_id = target_session.org_id
+       AND session_runs.project_id = target_session.project_id
+       AND session_runs.environment_id = target_session.environment_id
+       AND session_runs.session_id = target_session.id
+       AND session_runs.run_id = target_session.current_run_id
+    RETURNING session_runs.id
+)
+SELECT sessions.*
+  FROM sessions
+  JOIN cancelled_session ON cancelled_session.org_id = sessions.org_id
+                        AND cancelled_session.id = sessions.id;
+
+-- name: ListSessionRuns :many
+SELECT session_runs.*,
+       runs.status,
+       runs.execution_status,
+       runs.terminal_outcome,
+       runs.created_at AS run_created_at,
+       runs.updated_at AS run_updated_at
+  FROM session_runs
+  JOIN runs ON runs.org_id = session_runs.org_id
+           AND runs.project_id = session_runs.project_id
+           AND runs.environment_id = session_runs.environment_id
+           AND runs.id = session_runs.run_id
+ WHERE session_runs.org_id = sqlc.arg(org_id)
+   AND session_runs.project_id = sqlc.arg(project_id)
+   AND session_runs.environment_id = sqlc.arg(environment_id)
+   AND session_runs.session_id = sqlc.arg(session_id)
+ ORDER BY session_runs.turn_index ASC, session_runs.created_at ASC;
+
+-- name: GetSessionRunByRunID :one
+SELECT *
+  FROM session_runs
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND session_id = sqlc.arg(session_id)
+   AND run_id = sqlc.arg(run_id);

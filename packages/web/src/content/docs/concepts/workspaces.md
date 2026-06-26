@@ -9,10 +9,10 @@ order: 150
 # Workspaces
 
 A workspace is a durable filesystem and work-state object. It is not owned by a
-single run or task session.
+single run or session.
 
-Task sessions attach to workspaces. Direct workspace operations also attach to
-workspaces without creating task sessions. This lets a task finish while the
+Sessions attach to workspaces. Direct workspace operations also attach to
+workspaces without creating sessions. This lets a task finish while the
 workspace remains available for later inspection, another task invocation, or a
 direct command or terminal operation.
 
@@ -48,7 +48,9 @@ before dispatching the operation.
 Workspace exec creates a durable command handle on a workspace:
 
 ```ts
-const workspace = client.workspaces.open("workspace-id")
+import { workspaces } from "@helmr/sdk"
+
+const workspace = workspaces.open("workspace-id")
 const exec = await workspace.exec(["bash", "-lc", "echo ok"], {
   cwd: "/workspace",
 })
@@ -66,7 +68,7 @@ of the current documented contract.
 Workspace PTY creates a durable interactive terminal handle:
 
 ```ts
-const pty = await client.workspaces.open("workspace-id").pty.create({
+const pty = await workspaces.open("workspace-id").pty.create({
   cwd: "/workspace",
   cols: 100,
   rows: 32,

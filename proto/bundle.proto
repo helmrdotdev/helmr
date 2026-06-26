@@ -172,19 +172,10 @@ message TaskSpec {
   string ttl = 8;
   repeated TaskScheduleSpec schedules = 9;
   string retry_policy_json = 10;
-  repeated StreamSpec streams = 11;
-}
-
-message StreamSpec {
-  string name = 1;
-  string direction = 2;
-  string schema_fingerprint = 3;
-  string schema_json = 4;
 }
 
 message QueueSpec {
   string name = 1;
-  optional uint32 concurrency_limit = 2;
 }
 
 message TaskScheduleSpec {

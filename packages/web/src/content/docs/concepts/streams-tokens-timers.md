@@ -9,7 +9,7 @@ order: 170
 # Streams, Tokens, And Timers
 
 Streams, tokens, and timers are the public primitives for pausing or interacting
-with task sessions. When a task uses a `.wait()` API and the condition is not
+with sessions. When a task uses a `.wait()` API and the condition is not
 already satisfied, Helmr parks the current run with an internal `run_waits`
 record and resumes it when the matching stream input, token completion, or
 timer is ready.

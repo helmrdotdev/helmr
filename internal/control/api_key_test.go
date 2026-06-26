@@ -270,8 +270,8 @@ func TestIssueAPIKeyRejectsLegacyBroadWorkspaceScopes(t *testing.T) {
 	}
 }
 
-func TestIssueAPIKeyRejectsLegacyWaitpointAndChannelScopes(t *testing.T) {
-	for _, scope := range []string{"run-waitpoints:read", "channels:write", "waitpoint-tokens:create", "waitpoint-tokens:read", "waitpoint-tokens:complete"} {
+func TestIssueAPIKeyRejectsLegacyChannelScopes(t *testing.T) {
+	for _, scope := range []string{"channels:write"} {
 		t.Run(scope, func(t *testing.T) {
 			store := &apiKeyStore{role: db.OrgMemberRoleOwner}
 			server := testAPIKeyServer(store)
@@ -339,8 +339,8 @@ type apiKeyStore struct {
 	revokeRows   int64
 }
 
-func (s *apiKeyStore) GetSessionByTokenHash(context.Context, []byte) (db.GetSessionByTokenHashRow, error) {
-	return db.GetSessionByTokenHashRow{
+func (s *apiKeyStore) GetAuthSessionByTokenHash(context.Context, []byte) (db.GetAuthSessionByTokenHashRow, error) {
+	return db.GetAuthSessionByTokenHashRow{
 		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 		UserID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -349,7 +349,7 @@ func (s *apiKeyStore) GetSessionByTokenHash(context.Context, []byte) (db.GetSess
 	}, nil
 }
 
-func (s *apiKeyStore) RefreshSession(context.Context, db.RefreshSessionParams) error {
+func (s *apiKeyStore) RefreshAuthSession(context.Context, db.RefreshAuthSessionParams) error {
 	return nil
 }
 

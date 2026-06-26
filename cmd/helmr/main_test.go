@@ -251,7 +251,6 @@ func TestGreenfieldCommandSurface(t *testing.T) {
 		{"tasks"},
 		{"sessions"},
 		{"runs"},
-		{"waitpoint"},
 		{"ps"},
 		{"show"},
 		{"logs"},

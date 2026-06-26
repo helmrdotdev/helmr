@@ -60,13 +60,13 @@ Deployment indexes the configured task files, uploads a content-hashed deploymen
 ## Start A Task
 
 ```sh
-helmr task start hello \
+helmr session start hello \
   --payload name=Ada
 ```
 
-Remote task starts require a configured control plane and a worker capable of
+Remote session starts require a configured control plane and a worker capable of
 executing the task. If no workspace is supplied, Helmr creates a durable
-workspace using the deployed task's sandbox and attaches the new task session to
+workspace using the deployed task's sandbox and attaches the new session to
 it.
 
 ## Inspect The Run

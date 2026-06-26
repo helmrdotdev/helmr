@@ -8,12 +8,12 @@ order: 100
 
 # Product Model
 
-Helmr is organized around durable workspaces and task sessions that attach to
+Helmr is organized around durable workspaces and sessions that attach to
 them.
 
 The workspace is the lasting product object: it holds filesystem identity,
 current persisted state, live materialization state, and direct operations such
-as exec and PTY. A task session is a task invocation history attached to a
+as exec and PTY. A session is a task invocation history attached to a
 workspace. A run is one execution attempt for that session.
 
 ```text
@@ -21,14 +21,14 @@ workspace
   -> materialization
   -> exec handles
   -> pty sessions
-  -> related task sessions
+  -> related sessions
 
 task
   -> sandbox definition
   -> payload schema
   -> run function
 
-task session
+session
   -> task invocation history
   -> stream records
   -> runs
@@ -45,7 +45,7 @@ run
 | Object | Meaning |
 | --- | --- |
 | Organization | The top-level account boundary for users, API keys, projects, environments, workers, and workspaces. |
-| Project | A product or work area. Projects own environments, deployments, secrets, schedules, workspaces, task sessions, and runs. |
+| Project | A product or work area. Projects own environments, deployments, secrets, schedules, workspaces, sessions, and runs. |
 | Environment | A project scope such as production, staging, or preview. Deployments, secrets, workspaces, sessions, and runs are environment-scoped. |
 | Worker group | A compute pool. Deployments, build leases, materializations, and run leases are routed through a worker group; new installations start with `default`. |
 | Worker instance | A registered worker host that advertises runtime capacity, labels, and protocol support. |
@@ -53,25 +53,25 @@ run
 | Deployment | An immutable uploaded snapshot of indexed task and sandbox definitions for a project environment. |
 | Task | A TypeScript work harness identified by task ID. It declares a sandbox, optional secrets, optional payload schema, and run logic. |
 | Sandbox | A low-level execution environment definition: image, workspace mount path, resources, and network policy. |
-| Workspace | A durable filesystem/work-state object. It can outlive a task session and be used by direct workspace operations. |
+| Workspace | A durable filesystem/work-state object. It can outlive a session and be used by direct workspace operations. |
 | Materialization | A live worker/VM instance for a workspace. Direct exec, PTY, and task runs use materializations when they need live execution. |
 | Exec | A durable command handle created directly on a workspace. It records command state and stream cursors. |
 | PTY session | A durable interactive terminal handle created directly on a workspace. It records terminal state and stream cursors. |
 | Task session | One task invocation and its interaction history. It has stream records and ordered runs, and it references a workspace. |
-| Run | One execution attempt for a task session. It records pinned deployment metadata, logs, events, waits, and output. |
-| Schedule | A cron definition that starts task sessions for a deployed task. |
+| Run | One execution attempt for a session. It records pinned deployment metadata, logs, events, waits, and output. |
+| Schedule | A cron definition that starts sessions for a deployed task. |
 | Run wait | A durable internal pause in a run for stream input, token completion, or time. |
 | Token | A scoped external completion primitive for browser, provider, or server-to-server workflows. |
-| Session stream | A named durable input or output lane owned by a task session. |
+| Session stream | A named durable input or output lane owned by a session. |
 | Secret | An encrypted value stored by name and bound to a declared task secret at run time. |
 
 ## Workspace First
 
 Starting a task without a workspace creates a workspace and attaches the new
-task session to it. Starting with an existing workspace attaches the new task
+session to it. Starting with an existing workspace attaches the new task
 session to that workspace after sandbox compatibility is checked.
 
-Direct workspace operations do not create task sessions:
+Direct workspace operations do not create sessions:
 
 - opening or retrieving a workspace
 - materializing, connecting, or stopping a workspace

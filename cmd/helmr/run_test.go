@@ -18,9 +18,9 @@ import (
 )
 
 func TestRunCommandCreatesGitHubRun(t *testing.T) {
-	var request api.TaskStartRequest
+	var request api.SessionStartRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
@@ -43,7 +43,7 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(taskStartResponseFixture())
+		_ = json.NewEncoder(w).Encode(sessionStartResponseFixture())
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -54,7 +54,7 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
-		"task", "start", "deploy",
+		"session", "start", "deploy",
 		"--payload", "env=prod",
 		"--max-duration-seconds", "60",
 		"--metadata-json", `{"source":"cli"}`,
@@ -167,15 +167,15 @@ func TestRunListFiltersBySession(t *testing.T) {
 }
 
 func TestRunCommandReadsPayloadFile(t *testing.T) {
-	var request api.TaskStartRequest
+	var request api.SessionStartRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(taskStartResponseFixture())
+		_ = json.NewEncoder(w).Encode(sessionStartResponseFixture())
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -188,7 +188,7 @@ func TestRunCommandReadsPayloadFile(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--payload-file", payloadPath})
+	cmd.SetArgs([]string{"session", "start", "deploy", "--payload-file", payloadPath})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -201,16 +201,16 @@ func TestRunCommandReadsPayloadFile(t *testing.T) {
 	}
 }
 
-func TestTaskStartAttachesExistingWorkspace(t *testing.T) {
-	var request api.TaskStartRequest
+func TestSessionStartAttachesExistingWorkspace(t *testing.T) {
+	var request api.SessionStartRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(taskStartResponseFixture())
+		_ = json.NewEncoder(w).Encode(sessionStartResponseFixture())
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -219,7 +219,7 @@ func TestTaskStartAttachesExistingWorkspace(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", "workspace-1"})
+	cmd.SetArgs([]string{"session", "start", "deploy", "--workspace", "workspace-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -228,17 +228,15 @@ func TestTaskStartAttachesExistingWorkspace(t *testing.T) {
 	}
 }
 
-func TestTaskStartWaitPassesTimeout(t *testing.T) {
-	var waitRequest api.TaskWaitRequest
+func TestSessionStartWaitWaitsForInitialRun(t *testing.T) {
+	getRunCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/tasks/deploy/start":
-			_ = json.NewEncoder(w).Encode(taskStartResponseFixture())
-		case r.Method == http.MethodPost && r.URL.Path == "/api/sessions/session-1/wait":
-			if err := json.NewDecoder(r.Body).Decode(&waitRequest); err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(api.TaskSessionResponse{ID: "session-1", Status: "completed"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/sessions":
+			_ = json.NewEncoder(w).Encode(sessionStartResponseFixture())
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1":
+			getRunCalls++
+			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", TaskID: "deploy", Status: api.RunStatusSucceeded})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
@@ -251,56 +249,19 @@ func TestTaskStartWaitPassesTimeout(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--wait", "--timeout", "1500ms"})
+	cmd.SetArgs([]string{"session", "start", "deploy", "--wait", "--timeout", "1500ms"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if waitRequest.TimeoutSeconds != 2 {
-		t.Fatalf("timeout seconds = %d", waitRequest.TimeoutSeconds)
+	if getRunCalls != 1 {
+		t.Fatalf("get run calls = %d", getRunCalls)
 	}
-	if !strings.Contains(out.String(), "session_status: completed") {
+	if !strings.Contains(out.String(), "run_status: succeeded") {
 		t.Fatalf("output = %q", out.String())
 	}
 }
 
-func TestTaskStartWaitContinuesAfterServerLongPollTimeout(t *testing.T) {
-	waitCalls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/tasks/deploy/start":
-			_ = json.NewEncoder(w).Encode(taskStartResponseFixture())
-		case r.Method == http.MethodPost && r.URL.Path == "/api/sessions/session-1/wait":
-			waitCalls++
-			if waitCalls == 1 {
-				_ = json.NewEncoder(w).Encode(api.TaskSessionResponse{ID: "session-1", Status: "open", TimedOut: true})
-				return
-			}
-			_ = json.NewEncoder(w).Encode(api.TaskSessionResponse{ID: "session-1", Status: "completed"})
-		default:
-			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
-		}
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--wait"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if waitCalls != 2 {
-		t.Fatalf("wait calls = %d", waitCalls)
-	}
-	if !strings.Contains(out.String(), "session_status: completed") {
-		t.Fatalf("output = %q", out.String())
-	}
-}
-
-func TestTaskStartRejectsJSONFollow(t *testing.T) {
+func TestSessionStartRejectsJSONFollow(t *testing.T) {
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -312,7 +273,7 @@ func TestTaskStartRejectsJSONFollow(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--json", "--follow"})
+	cmd.SetArgs([]string{"session", "start", "deploy", "--json", "--follow"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "--json cannot be combined with --follow") {
 		t.Fatalf("err = %v", err)
@@ -322,7 +283,7 @@ func TestTaskStartRejectsJSONFollow(t *testing.T) {
 	}
 }
 
-func TestTaskStartFollowTimeoutReturnsError(t *testing.T) {
+func TestSessionStartFollowTimeoutReturnsError(t *testing.T) {
 	oldReconnectDelay := runEventReconnectDelay
 	runEventReconnectDelay = time.Millisecond
 	t.Cleanup(func() {
@@ -330,8 +291,8 @@ func TestTaskStartFollowTimeoutReturnsError(t *testing.T) {
 	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/tasks/deploy/start":
-			_ = json.NewEncoder(w).Encode(taskStartResponseFixture())
+		case r.Method == http.MethodPost && r.URL.Path == "/api/sessions":
+			_ = json.NewEncoder(w).Encode(sessionStartResponseFixture())
 		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/logs" && r.URL.Query().Get("follow") == "1":
 			w.Header().Set("content-type", "text/event-stream")
 			flusher, _ := w.(http.Flusher)
@@ -340,7 +301,7 @@ func TestTaskStartFollowTimeoutReturnsError(t *testing.T) {
 			}
 			<-r.Context().Done()
 		case r.Method == http.MethodGet && r.URL.Path == "/api/sessions/session-1":
-			_ = json.NewEncoder(w).Encode(api.TaskSessionResponse{ID: "session-1", Status: "open"})
+			_ = json.NewEncoder(w).Encode(api.SessionResponse{ID: "session-1", Status: "open"})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
 		}
@@ -353,7 +314,7 @@ func TestTaskStartFollowTimeoutReturnsError(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--follow", "--timeout", "1s"})
+	cmd.SetArgs([]string{"session", "start", "deploy", "--follow", "--timeout", "1s"})
 	err := cmd.Execute()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v", err)
@@ -363,10 +324,10 @@ func TestTaskStartFollowTimeoutReturnsError(t *testing.T) {
 	}
 }
 
-func taskStartResponseFixture() api.TaskStartResponse {
+func sessionStartResponseFixture() api.SessionStartResponse {
 	now := time.Unix(0, 0).UTC()
-	return api.TaskStartResponse{
-		Session: api.TaskSessionResponse{
+	return api.SessionStartResponse{
+		Session: api.SessionResponse{
 			ID:                  "session-1",
 			ProjectID:           "project-1",
 			EnvironmentID:       "env-1",
@@ -403,8 +364,8 @@ func TestRunCommandRejectsPayloadFileCombinations(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
-		{"task", "start", "deploy", "--payload-file", payloadPath, "--payload-json", `{"env":"prod"}`},
-		{"task", "start", "deploy", "--payload-file", payloadPath, "--payload", "env=prod"},
+		{"session", "start", "deploy", "--payload-file", payloadPath, "--payload-json", `{"env":"prod"}`},
+		{"session", "start", "deploy", "--payload-file", payloadPath, "--payload", "env=prod"},
 	} {
 		cmd := newRootCommand()
 		cmd.SetOut(&bytes.Buffer{})
@@ -422,9 +383,9 @@ func TestRunCommandRejectsPayloadFileCombinations(t *testing.T) {
 
 func TestRunCommandDoesNotExposeInputFlagAliases(t *testing.T) {
 	for _, args := range [][]string{
-		{"task", "start", "deploy", "--input-json", `{"env":"prod"}`},
-		{"task", "start", "deploy", "--input-file", "payload.json"},
-		{"task", "start", "deploy", "--input", "env=prod"},
+		{"session", "start", "deploy", "--input-json", `{"env":"prod"}`},
+		{"session", "start", "deploy", "--input-file", "payload.json"},
+		{"session", "start", "deploy", "--input", "env=prod"},
 	} {
 		cmd := newRootCommand()
 		cmd.SetOut(&bytes.Buffer{})
@@ -449,7 +410,7 @@ func TestRunCommandRejectsProjectFlagThatLooksLikePayload(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "-p", "env=prod"})
+	cmd.SetArgs([]string{"session", "start", "deploy", "-p", "env=prod"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "--project must be a project slug or ID") {
 		t.Fatalf("err = %v", err)
@@ -471,7 +432,7 @@ func TestRunCommandRejectsInvalidTaskIDBeforeRequest(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "bad task"})
+	cmd.SetArgs([]string{"session", "start", "bad task"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "task_id") {
 		t.Fatalf("err = %v", err)

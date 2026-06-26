@@ -8,12 +8,12 @@ order: 160
 
 # Runs
 
-A run is one execution attempt for a task session. It records the pinned
+A run is one execution attempt for a session. It records the pinned
 deployment, pinned deployment task, task ID, payload, task-declared secret
 requirements, attached workspace, max duration, status, output, logs, stream
 output, events, metadata, and pending wait.
 
-A run does not own the workspace. The task session references a workspace, and
+A run does not own the workspace. The session references a workspace, and
 each run executes against that attached workspace.
 
 ## Statuses
@@ -30,7 +30,7 @@ each run executes against that attached workspace.
 
 ## Workspace Attachment
 
-Starting a task creates or reuses a task session, and that session is attached to
+Starting a task creates or reuses a session, and that session is attached to
 a workspace. The run receives the workspace mount metadata and executes the task
 inside the sandbox workspace path.
 

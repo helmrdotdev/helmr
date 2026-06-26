@@ -91,7 +91,7 @@ start_capture_ids() {
   local task=$1
   shift
   local output
-  if ! output="$(run_helmr task start "${task}" "$@" --json)"; then
+  if ! output="$(run_helmr session start "${task}" "$@" --json)"; then
     return 1
   fi
   printf '%s\n' "${output}" >&2
@@ -169,20 +169,6 @@ session_run_id() {
   run_helmr run list --session "${session_id}" "$@" --json | jq -er '.runs[0].id'
 }
 
-wait_for_session_status() {
-  local session_id=$1
-  local timeout_seconds="${2:-900}"
-  api_json POST "/sessions/${session_id}/wait" "$(jq -nc --argjson timeout "${timeout_seconds}" '{timeout_seconds:$timeout}')" |
-    jq -er '.status'
-}
-
-expect_session_still_waiting() {
-  local session_id=$1
-  local timeout_seconds="${2:-5}"
-  api_json POST "/sessions/${session_id}/wait" "$(jq -nc --argjson timeout "${timeout_seconds}" '{timeout_seconds:$timeout}')" |
-    jq -e '.status == "open" and .timed_out == true' >/dev/null
-}
-
 expect_workspace_version() {
   local name=$1
   local session_id=$2
@@ -216,7 +202,8 @@ expect_start_and_wait_success() {
   local run_id
   local status
   marker="release-smoke-${name}-$(date -u +%Y%m%d%H%M%S)"
-  response="$(api_json POST /tasks/runtime-smoke/start-and-wait "$(jq -nc --arg marker "${marker}" '{
+  response="$(api_json POST /sessions/start-and-wait "$(jq -nc --arg marker "${marker}" '{
+    task_id: "runtime-smoke",
     payload: {
       scenario: "start-and-wait",
       marker: $marker,
@@ -333,6 +320,107 @@ wait_for_stream_phase() {
   inspect_run "$(session_run_id "${session_id}" "$@")" >&2 || true
   printf 'FAIL stream phase: timed out waiting for %s on %s in session %s\n' "${phase}" "${stream}" "${session_id}" >&2
   return 1
+}
+
+wait_for_continuation_run() {
+  local session_id=$1
+  local initial_run_id=$2
+  shift 2
+  local timeout_seconds="${SESSION_CONTINUATION_TIMEOUT_SECONDS:-420}"
+  local output
+  local run_id
+  for _ in $(seq 1 "${timeout_seconds}"); do
+    output="$(run_helmr run list --session "${session_id}" "$@" --json)"
+    run_id="$(
+      printf '%s\n' "${output}" |
+        jq -er --arg initial "${initial_run_id}" '
+          .runs[]
+          | select(.id != $initial)
+          | .id
+        ' 2>/dev/null | head -n 1
+    )" || run_id=""
+    if [ -n "${run_id}" ]; then
+      printf '%s\n' "${run_id}"
+      return 0
+    fi
+    sleep 1
+  done
+  inspect_run "${initial_run_id}" >&2 || true
+  printf 'FAIL session-continuation: timed out waiting for continuation run in session %s\n' "${session_id}" >&2
+  return 1
+}
+
+expect_session_open_idle() {
+  local name=$1
+  local session_id=$2
+  shift 2
+  local session_json
+  session_json="$(run_helmr session get "${session_id}" "$@" --json)"
+  printf '%s\n' "${session_json}" >&2
+  if [ "$(printf '%s\n' "${session_json}" | jq -er '.status')" != "open" ]; then
+    printf 'FAIL %s: expected session to remain open after terminal run\n' "${name}" >&2
+    return 1
+  fi
+  if [ "$(printf '%s\n' "${session_json}" | jq -er '.activity')" != "idle" ]; then
+    printf 'FAIL %s: expected terminal current run to derive idle session activity\n' "${name}" >&2
+    return 1
+  fi
+  if [ "$(printf '%s\n' "${session_json}" | jq -er '.can_close')" != "true" ]; then
+    printf 'FAIL %s: expected idle open session to be closable\n' "${name}" >&2
+    return 1
+  fi
+  if [ -z "$(printf '%s\n' "${session_json}" | jq -r '.current_run_id // ""')" ]; then
+    printf 'FAIL %s: expected current_run_id to remain as last/current run pointer\n' "${name}" >&2
+    return 1
+  fi
+}
+
+expect_session_continuation_success() {
+  local name=$1
+  shift
+  local marker
+  local correlation_id
+  local ids
+  local session_id
+  local initial_run_id
+  local continuation_run_id
+  local status
+  marker="release-smoke-${name}-$(date -u +%Y%m%d%H%M%S)"
+  correlation_id="${marker}-corr"
+  ids="$(start_capture_ids session-continuation-smoke "$@" --payload-json "$(jq -nc --arg marker "${marker}" --arg correlationId "${correlation_id}" '{marker:$marker,correlationId:$correlationId}')")"
+  session_id="${ids%% *}"
+  initial_run_id="${ids##* }"
+  session_ids+=("${session_id}")
+  run_ids+=("${initial_run_id}")
+
+  status="$(wait_status "${initial_run_id}")"
+  if [ "${status}" != "succeeded" ]; then
+    inspect_run "${initial_run_id}" >&2
+    printf 'FAIL %s: expected initial run succeeded, got %s: %s\n' "${name}" "${status}" "${initial_run_id}" >&2
+    return 1
+  fi
+  expect_session_open_idle "${name}" "${session_id}" "$@"
+  wait_for_stream_phase "${session_id}" session-continuation-smoke.report "${marker}" initial-idle "$@"
+
+  run_helmr session stream input send "${session_id}" session-continuation-smoke.input "$@" \
+    --correlation-id "${correlation_id}" \
+    --idempotency-key "${marker}:continuation" \
+    --data-json "$(jq -nc --arg message "continue ${marker}" '{message:$message}')"
+
+  continuation_run_id="$(wait_for_continuation_run "${session_id}" "${initial_run_id}" "$@")"
+  run_ids+=("${continuation_run_id}")
+  status="$(wait_status "${continuation_run_id}")"
+  if [ "${status}" != "succeeded" ]; then
+    inspect_run "${continuation_run_id}" >&2
+    printf 'FAIL %s: expected continuation run succeeded, got %s: %s\n' "${name}" "${status}" "${continuation_run_id}" >&2
+    return 1
+  fi
+  wait_for_stream_phase "${session_id}" session-continuation-smoke.report "${marker}" continuation "$@"
+  inspect_run "${initial_run_id}"
+  inspect_run "${continuation_run_id}"
+  run_helmr session stream output list "${session_id}" session-continuation-smoke.report "$@" --json
+  stop_session_workspace "${session_id}" "$@"
+  printf 'PASS %s session_id=%s initial_run_id=%s continuation_run_id=%s\n' "${name}" "${session_id}" "${initial_run_id}" "${continuation_run_id}"
 }
 
 expect_active_stream_success() {
@@ -474,9 +562,19 @@ if [ "${SMOKE_ONLY_ACTIVE_STREAM:-0}" = "1" ]; then
   exit 0
 fi
 
+if [ "${SMOKE_ONLY_SESSION_CONTINUATION:-0}" = "1" ]; then
+  expect_session_continuation_success staging-session-continuation "${staging_scope_args[@]}"
+  printf 'release smoke session ids: %s\n' "${session_ids[*]}"
+  printf 'release smoke run ids: %s\n' "${run_ids[*]}"
+  printf 'release smoke stopped workspace ids: %s\n' "${stopped_workspace_ids[*]}"
+  exit 0
+fi
+
 expect_run_success staging-runtime runtime-smoke \
   "${staging_scope_args[@]}" \
   --payload-json '{"scenario":"staging-runtime","expectedEnvironment":"staging"}'
+
+expect_session_continuation_success staging-session-continuation "${staging_scope_args[@]}"
 
 expect_stream_input_success staging-stream-input "${staging_scope_args[@]}"
 

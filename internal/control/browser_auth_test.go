@@ -158,7 +158,7 @@ type browserAuthStore struct {
 	db.Querier
 	orgID            uuid.UUID
 	userID           uuid.UUID
-	createdSession   db.CreateSessionParams
+	createdSession   db.CreateAuthSessionParams
 	upsertedIdentity db.UpsertAuthIdentityParams
 }
 
@@ -172,9 +172,9 @@ func (s *browserAuthStore) UpsertAuthIdentity(_ context.Context, arg db.UpsertAu
 	}, nil
 }
 
-func (s *browserAuthStore) CreateSession(_ context.Context, arg db.CreateSessionParams) (db.Session, error) {
+func (s *browserAuthStore) CreateAuthSession(_ context.Context, arg db.CreateAuthSessionParams) (db.AuthSession, error) {
 	s.createdSession = arg
-	return db.Session{
+	return db.AuthSession{
 		ID:        arg.ID,
 		OrgID:     arg.OrgID,
 		UserID:    arg.UserID,

@@ -287,18 +287,18 @@ UPDATE run_leases
    AND (SELECT restored_runtime_checkpoint_count + released_concurrency_slot_count + released_workspace_lease_count + abandoned_snapshot_count FROM cleanup) >= 0;
 
 -- name: FailExpiredRunningRunLeases :exec
-WITH locked_task_sessions AS MATERIALIZED (
-    SELECT task_sessions.org_id,
-           task_sessions.id
+WITH locked_sessions AS MATERIALIZED (
+    SELECT sessions.org_id,
+           sessions.id
       FROM runs
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
                           AND run_leases.org_id = runs.org_id
                           AND run_leases.run_id = runs.id
-      JOIN task_sessions
-        ON task_sessions.org_id = runs.org_id
-       AND task_sessions.project_id = runs.project_id
-       AND task_sessions.environment_id = runs.environment_id
-       AND task_sessions.id = runs.task_session_id
+      JOIN sessions
+        ON sessions.org_id = runs.org_id
+       AND sessions.project_id = runs.project_id
+       AND sessions.environment_id = runs.environment_id
+       AND sessions.id = runs.session_id
      WHERE runs.org_id = $1
        AND (
            runs.status = 'running'
@@ -309,7 +309,7 @@ WITH locked_task_sessions AS MATERIALIZED (
        )
        AND run_leases.status = 'running'
        AND run_leases.lease_expires_at <= now()
-     FOR UPDATE OF task_sessions
+     FOR UPDATE OF sessions
 ),
 eligible AS (
     SELECT runs.org_id,
@@ -330,11 +330,11 @@ eligible AS (
       JOIN run_attempts ON run_attempts.org_id = run_leases.org_id
                        AND run_attempts.run_id = run_leases.run_id
                        AND run_attempts.id = run_leases.attempt_id
-      LEFT JOIN locked_task_sessions
-        ON locked_task_sessions.org_id = runs.org_id
-       AND locked_task_sessions.id = runs.task_session_id
+      LEFT JOIN locked_sessions
+        ON locked_sessions.org_id = runs.org_id
+       AND locked_sessions.id = runs.session_id
      WHERE runs.org_id = $1
-       AND locked_task_sessions.id = runs.task_session_id
+       AND locked_sessions.id = runs.session_id
        AND (
            runs.status = 'running'
            OR (
@@ -383,6 +383,7 @@ retry_candidate AS (
                  END AS delay_ms
       ) delay
          WHERE jsonb_typeof(eligible.locked_retry_policy) = 'object'
+           AND COALESCE((eligible.locked_retry_policy ->> 'enabled')::boolean, true)
            AND eligible.previous_status = 'running'
            AND eligible.previous_attempt_number < policy.max_attempts
     ),
@@ -527,7 +528,7 @@ updated_runs AS (
               eligible.restore_runtime_checkpoint_id,
               runs.project_id,
               runs.environment_id,
-              runs.task_session_id,
+              runs.session_id,
               runs.current_attempt_id,
               runs.current_attempt_number,
               runs.state_version,
@@ -538,45 +539,23 @@ updated_runs AS (
               runs.locked_retry_policy
 ),
 terminal_session_runs AS (
-    UPDATE task_session_runs
+    UPDATE session_runs
        SET ended_at = now()
       FROM updated_runs
       LEFT JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
      WHERE retry_plan.run_id IS NULL
-       AND task_session_runs.org_id = $1
-       AND task_session_runs.project_id = updated_runs.project_id
-       AND task_session_runs.environment_id = updated_runs.environment_id
-       AND task_session_runs.task_session_id = updated_runs.task_session_id
-       AND task_session_runs.run_id = updated_runs.run_id
-    RETURNING task_session_runs.id
+       AND session_runs.org_id = $1
+       AND session_runs.project_id = updated_runs.project_id
+       AND session_runs.environment_id = updated_runs.environment_id
+       AND session_runs.session_id = updated_runs.session_id
+       AND session_runs.run_id = updated_runs.run_id
+    RETURNING session_runs.id
 ),
-terminal_task_sessions AS (
-    UPDATE task_sessions
-       SET status = CASE WHEN updated_runs.status = 'cancelled' THEN 'cancelled'::task_session_status ELSE 'failed'::task_session_status END,
-           failed_at = CASE WHEN updated_runs.status = 'failed' THEN now() ELSE task_sessions.failed_at END,
-           cancelled_at = CASE WHEN updated_runs.status = 'cancelled' THEN now() ELSE task_sessions.cancelled_at END,
-           result = jsonb_build_object(
-               'ok', false,
-               'error', jsonb_build_object(
-                   'name', CASE WHEN updated_runs.status = 'cancelled' THEN 'TaskCancelled' ELSE 'TaskFailed' END,
-                   'message', COALESCE(updated_runs.error_message, 'worker lease expired'),
-                   'details', jsonb_build_object('origin', 'lease_sweeper')
-               )
-           ),
-           terminal_reason = jsonb_build_object('origin', 'lease_sweeper', 'message', COALESCE(updated_runs.error_message, 'worker lease expired')),
-           current_run_id = NULL,
-           current_run_version = task_sessions.current_run_version + 1,
-           updated_at = now()
+terminal_sessions AS (
+    SELECT updated_runs.session_id AS id
       FROM updated_runs
       LEFT JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
      WHERE retry_plan.run_id IS NULL
-       AND task_sessions.org_id = $1
-       AND task_sessions.project_id = updated_runs.project_id
-       AND task_sessions.environment_id = updated_runs.environment_id
-       AND task_sessions.id = updated_runs.task_session_id
-       AND task_sessions.current_run_id = updated_runs.run_id
-       AND task_sessions.status = 'open'
-    RETURNING task_sessions.id
 ),
 failed_attempts AS (
     UPDATE run_attempts
@@ -1050,7 +1029,7 @@ candidate AS (
            runs.trace_id,
            runs.root_span_id,
            runs.latest_runtime_checkpoint_id,
-           runs.task_session_id,
+           runs.session_id,
            runs.queue_name,
            runs.queue_concurrency_limit,
            runs.concurrency_key,
@@ -1076,13 +1055,13 @@ candidate AS (
        AND runs.current_run_lease_id IS NULL
        AND EXISTS (
            SELECT 1
-             FROM task_sessions
-            WHERE task_sessions.org_id = runs.org_id
-              AND task_sessions.project_id = runs.project_id
-              AND task_sessions.environment_id = runs.environment_id
-              AND task_sessions.id = runs.task_session_id
-              AND task_sessions.current_run_id = runs.id
-              AND task_sessions.status = 'open'
+             FROM sessions
+            WHERE sessions.org_id = runs.org_id
+              AND sessions.project_id = runs.project_id
+              AND sessions.environment_id = runs.environment_id
+              AND sessions.id = runs.session_id
+              AND sessions.current_run_id = runs.id
+              AND sessions.status = 'open'
        )
        AND deployments.worker_protocol_version = dispatch.protocol_version
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
@@ -1604,7 +1583,7 @@ SELECT
     updated.org_id,
     updated.project_id,
     updated.environment_id,
-    updated.task_session_id,
+    updated.session_id,
     updated.task_id,
     updated.deployment_version AS run_deployment_version,
     updated.api_version AS run_api_version,
@@ -1837,7 +1816,9 @@ SELECT run_leases.id,
        run_leases.run_id,
        runs.project_id,
        runs.environment_id,
-       runs.task_session_id,
+       runs.deployment_id,
+       runs.task_id,
+       runs.session_id,
        run_leases.worker_instance_id,
        run_leases.worker_protocol_version,
        run_leases.dispatch_message_id,
@@ -1870,7 +1851,9 @@ SELECT run_leases.id,
        run_leases.run_id,
        runs.project_id,
        runs.environment_id,
-       runs.task_session_id,
+       runs.deployment_id,
+       runs.task_id,
+       runs.session_id,
        run_leases.worker_instance_id,
        run_leases.worker_protocol_version,
        run_leases.dispatch_message_id,
@@ -1919,24 +1902,24 @@ SELECT run_leases.runtime_id,
    AND run_leases.lease_expires_at > now();
 
 -- name: ReleaseRunLease :one
-WITH locked_task_session AS MATERIALIZED (
-    SELECT task_sessions.id
+WITH locked_session AS MATERIALIZED (
+    SELECT sessions.id
       FROM runs
-      JOIN task_sessions
-        ON task_sessions.org_id = runs.org_id
-       AND task_sessions.project_id = runs.project_id
-       AND task_sessions.environment_id = runs.environment_id
-       AND task_sessions.id = runs.task_session_id
+      JOIN sessions
+        ON sessions.org_id = runs.org_id
+       AND sessions.project_id = runs.project_id
+       AND sessions.environment_id = runs.environment_id
+       AND sessions.id = runs.session_id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-     FOR UPDATE OF task_sessions
+     FOR UPDATE OF sessions
 ),
 eligible AS (
     SELECT runs.org_id,
            runs.id AS run_id,
            runs.project_id,
            runs.environment_id,
-           runs.task_session_id,
+           runs.session_id,
            runs.current_attempt_id AS previous_attempt_id,
            run_attempts.attempt_number AS previous_attempt_number,
            runs.status AS previous_status,
@@ -1962,12 +1945,12 @@ eligible AS (
       JOIN run_attempts ON run_attempts.org_id = runs.org_id
                        AND run_attempts.run_id = runs.id
                        AND run_attempts.id = runs.current_attempt_id
-      LEFT JOIN locked_task_session
-        ON locked_task_session.id = runs.task_session_id
+      LEFT JOIN locked_session
+        ON locked_session.id = runs.session_id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
        AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
-       AND locked_task_session.id = runs.task_session_id
+       AND locked_session.id = runs.session_id
        AND (
            runs.status = 'running'
            OR (
@@ -2000,12 +1983,12 @@ eligible AS (
                )
                AND EXISTS (
                    SELECT 1
-                     FROM task_sessions
+                     FROM sessions
                      JOIN workspaces
-                       ON workspaces.org_id = task_sessions.org_id
-                      AND workspaces.project_id = task_sessions.project_id
-                      AND workspaces.environment_id = task_sessions.environment_id
-                      AND workspaces.id = task_sessions.workspace_id
+                       ON workspaces.org_id = sessions.org_id
+                      AND workspaces.project_id = sessions.project_id
+                      AND workspaces.environment_id = sessions.environment_id
+                      AND workspaces.id = sessions.workspace_id
                      JOIN workspace_leases
                        ON workspace_leases.org_id = workspaces.org_id
                       AND workspace_leases.workspace_id = workspaces.id
@@ -2016,12 +1999,12 @@ eligible AS (
                       AND workspace_leases.base_version_id IS NOT DISTINCT FROM sqlc.narg(workspace_base_version_id)::uuid
                       AND workspace_leases.released_at IS NULL
                       AND workspace_leases.expires_at > now()
-                    WHERE task_sessions.org_id = runs.org_id
-                      AND task_sessions.project_id = runs.project_id
-                      AND task_sessions.environment_id = runs.environment_id
-                      AND task_sessions.id = runs.task_session_id
-                      AND task_sessions.status = 'open'
-                      AND task_sessions.current_run_id = runs.id
+                    WHERE sessions.org_id = runs.org_id
+                      AND sessions.project_id = runs.project_id
+                      AND sessions.environment_id = runs.environment_id
+                      AND sessions.id = runs.session_id
+                      AND sessions.status = 'open'
+                      AND sessions.current_run_id = runs.id
                       AND workspaces.state = 'active'
                       AND workspaces.current_version_id IS NOT DISTINCT FROM sqlc.narg(workspace_base_version_id)::uuid
                )
@@ -2116,6 +2099,7 @@ retry_plan AS (
      WHERE effective_release.run_id = eligible.run_id
        AND effective_release.run_status = 'failed'
        AND jsonb_typeof(eligible.locked_retry_policy) = 'object'
+       AND COALESCE((eligible.locked_retry_policy ->> 'enabled')::boolean, true)
        AND retry_failure.reason <> 'non_retryable'
        AND eligible.previous_attempt_number < policy.max_attempts
 ),
@@ -2192,17 +2176,17 @@ released AS (
     RETURNING runs.*
 ),
 released_session_run AS (
-    UPDATE task_session_runs
+    UPDATE session_runs
        SET ended_at = now()
       FROM released
       LEFT JOIN retry_plan ON retry_plan.run_id = released.id
      WHERE retry_plan.run_id IS NULL
-       AND task_session_runs.org_id = released.org_id
-       AND task_session_runs.project_id = released.project_id
-       AND task_session_runs.environment_id = released.environment_id
-       AND task_session_runs.task_session_id = released.task_session_id
-       AND task_session_runs.run_id = released.id
-    RETURNING task_session_runs.id
+       AND session_runs.org_id = released.org_id
+       AND session_runs.project_id = released.project_id
+       AND session_runs.environment_id = released.environment_id
+       AND session_runs.session_id = released.session_id
+       AND session_runs.run_id = released.id
+    RETURNING session_runs.id
 ),
 released_with_result_size AS (
     SELECT released.*,
@@ -2211,57 +2195,16 @@ released_with_result_size AS (
       LEFT JOIN retry_plan ON retry_plan.run_id = released.id
      WHERE retry_plan.run_id IS NULL
 ),
-released_task_session AS (
-    UPDATE task_sessions
-       SET status = CASE
-             WHEN released_with_result_size.status = 'succeeded' AND (released_with_result_size.output IS NULL OR released_with_result_size.output_json_bytes <= 1048576) THEN 'completed'::task_session_status
-             WHEN released_with_result_size.status = 'cancelled' THEN 'cancelled'::task_session_status
-             WHEN released_with_result_size.status = 'expired' THEN 'expired'::task_session_status
-             ELSE 'failed'::task_session_status
-           END,
-           completed_at = CASE WHEN released_with_result_size.status = 'succeeded' AND (released_with_result_size.output IS NULL OR released_with_result_size.output_json_bytes <= 1048576) THEN now() ELSE task_sessions.completed_at END,
-           failed_at = CASE WHEN released_with_result_size.status = 'failed' OR (released_with_result_size.status = 'succeeded' AND released_with_result_size.output IS NOT NULL AND released_with_result_size.output_json_bytes > 1048576) THEN now() ELSE task_sessions.failed_at END,
-           cancelled_at = CASE WHEN released_with_result_size.status = 'cancelled' THEN now() ELSE task_sessions.cancelled_at END,
-           result = CASE
-             WHEN released_with_result_size.status = 'succeeded' AND released_with_result_size.output IS NOT NULL AND released_with_result_size.output_json_bytes <= 1048576 THEN jsonb_build_object('ok', true, 'value', released_with_result_size.output)
-             WHEN released_with_result_size.status = 'succeeded' AND released_with_result_size.output IS NOT NULL THEN jsonb_build_object('ok', false, 'error', jsonb_build_object('name', 'ResultTooLarge', 'message', 'task result exceeds the session result limit', 'details', jsonb_build_object('max_bytes', 1048576)))
-             WHEN released_with_result_size.status = 'succeeded' THEN jsonb_build_object('ok', true, 'value', 'null'::jsonb)
-             ELSE jsonb_build_object(
-                 'ok', false,
-                 'error', jsonb_build_object(
-                     'name', CASE
-                       WHEN released_with_result_size.status = 'cancelled' THEN 'TaskCancelled'
-                       WHEN released_with_result_size.status = 'expired' THEN 'TaskExpired'
-                       ELSE 'TaskFailed'
-                     END,
-                     'message', COALESCE(released_with_result_size.error_message, released_with_result_size.status::text),
-                     'details', jsonb_build_object('origin', 'run_release')
-                 )
-             )
-           END,
-           terminal_reason = CASE
-             WHEN released_with_result_size.status = 'succeeded' AND released_with_result_size.output IS NOT NULL AND released_with_result_size.output_json_bytes > 1048576 THEN jsonb_build_object('origin', 'run_release', 'message', 'ResultTooLarge')
-             WHEN released_with_result_size.status = 'succeeded' THEN jsonb_build_object('origin', 'run_release')
-             ELSE jsonb_build_object('origin', 'run_release', 'message', COALESCE(released_with_result_size.error_message, released_with_result_size.status::text))
-           END,
-           current_run_id = NULL,
-           current_run_version = task_sessions.current_run_version + 1,
-           updated_at = now()
+released_session AS (
+    SELECT released_with_result_size.session_id AS id
       FROM released_with_result_size
-     WHERE task_sessions.org_id = released_with_result_size.org_id
-       AND task_sessions.project_id = released_with_result_size.project_id
-       AND task_sessions.environment_id = released_with_result_size.environment_id
-       AND task_sessions.id = released_with_result_size.task_session_id
-       AND task_sessions.current_run_id = released_with_result_size.id
-        AND task_sessions.status = 'open'
-    RETURNING task_sessions.id
 ),
 workspace_commit_input AS (
     SELECT released.org_id,
            released.project_id,
            released.environment_id,
            released.id AS run_id,
-           released.task_session_id,
+           released.session_id,
            workspaces.id AS workspace_id,
            workspace_leases.id AS workspace_lease_id,
            workspace_leases.base_version_id AS base_version_id,
@@ -2274,7 +2217,7 @@ workspace_commit_input AS (
            sqlc.narg(workspace_artifact_entry_count)::int AS artifact_entry_count
       FROM released
       JOIN effective_release ON effective_release.run_id = released.id
-      JOIN released_task_session ON released_task_session.id = released.task_session_id
+      JOIN released_session ON released_session.id = released.session_id
       JOIN released_with_result_size ON released_with_result_size.id = released.id
       JOIN workspaces
         ON workspaces.org_id = released.org_id

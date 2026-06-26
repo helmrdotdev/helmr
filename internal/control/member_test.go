@@ -300,8 +300,8 @@ func memberManagementRequest(method string, path string, body string) *http.Requ
 	return req
 }
 
-func (s *memberManagementStore) GetSessionByTokenHash(context.Context, []byte) (db.GetSessionByTokenHashRow, error) {
-	return db.GetSessionByTokenHashRow{
+func (s *memberManagementStore) GetAuthSessionByTokenHash(context.Context, []byte) (db.GetAuthSessionByTokenHashRow, error) {
+	return db.GetAuthSessionByTokenHashRow{
 		ID:        pgvalue.UUID(s.sessionID),
 		OrgID:     pgvalue.UUID(s.orgID),
 		UserID:    pgvalue.UUID(s.userID),
@@ -310,7 +310,7 @@ func (s *memberManagementStore) GetSessionByTokenHash(context.Context, []byte) (
 	}, nil
 }
 
-func (s *memberManagementStore) RefreshSession(context.Context, db.RefreshSessionParams) error {
+func (s *memberManagementStore) RefreshAuthSession(context.Context, db.RefreshAuthSessionParams) error {
 	return nil
 }
 
@@ -420,7 +420,7 @@ func (s *memberManagementStore) DisableOrgMemberAndRevokeOrgSessions(_ context.C
 	}, nil
 }
 
-func (s *memberManagementStore) RevokeSessionsForUser(_ context.Context, userID pgtype.UUID) (int64, error) {
+func (s *memberManagementStore) RevokeAuthSessionsForUser(_ context.Context, userID pgtype.UUID) (int64, error) {
 	s.revokedSessionUserID = userID
 	return 1, nil
 }

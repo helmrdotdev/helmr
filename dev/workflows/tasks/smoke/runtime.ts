@@ -65,7 +65,6 @@ export const runtimeSmoke = task({
   id: "runtime-smoke",
   sandbox: sbx,
   maxDuration: 1200,
-  streams: [progressStream, reportStream],
   payload,
   run: async (input: Payload, ctx) => {
     const marker = input.marker?.trim() || `runtime-smoke-${ctx.run.id}`

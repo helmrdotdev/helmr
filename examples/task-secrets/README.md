@@ -7,5 +7,5 @@ time and should not be passed through payload.
 helmr secret set API_TOKEN "secret-value"
 helmr deploy PATH/TO/task-secrets
 
-helmr task start use-secret
+helmr session start use-secret
 ```

@@ -23,6 +23,8 @@ export default defineConfig({
 
 `dirs` is required and must contain at least one directory inside the project root. Helmr discovers `.ts`, `.mts`, `.cts`, `.js`, `.mjs`, and `.cjs` files in those directories and indexes exported `task(...)` definitions.
 
+Task modules may also define deployment-level stream catalog entries with the module-level `streams.input(...)` and `streams.output(...)` primitives. Optional stream schemas validate runtime reads and writes; the catalog entry itself is the stream name and direction. `task(...)` is only the execution definition; do not redeclare streams inside task config.
+
 ## Deployment
 
 `helmr deploy PATH` validates `package.json`, installs missing task project dependencies locally with the declared `packageManager` for config inspection, indexes task IDs, module paths, and export names, creates a deployment-source archive, uploads it with its content hash, and activates the deployment for the selected project environment.

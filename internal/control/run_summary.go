@@ -16,7 +16,7 @@ type runSummary struct {
 	EnvironmentID        pgtype.UUID
 	DeploymentID         pgtype.UUID
 	DeploymentTaskID     pgtype.UUID
-	TaskSessionID        pgtype.UUID
+	SessionID            pgtype.UUID
 	DeploymentVersion    string
 	APIVersion           string
 	SDKVersion           string
@@ -43,7 +43,7 @@ func createScopedRunSummary(run db.CreateScopedRunRow) runSummary {
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
 		DeploymentTaskID:     run.DeploymentTaskID,
-		TaskSessionID:        run.TaskSessionID,
+		SessionID:            run.SessionID,
 		DeploymentVersion:    run.DeploymentVersion,
 		APIVersion:           run.ApiVersion,
 		SDKVersion:           run.SdkVersion,
@@ -71,7 +71,7 @@ func getRunSummary(run db.GetRunSummaryRow) runSummary {
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
 		DeploymentTaskID:     run.DeploymentTaskID,
-		TaskSessionID:        run.TaskSessionID,
+		SessionID:            run.SessionID,
 		DeploymentVersion:    run.DeploymentVersion,
 		APIVersion:           run.ApiVersion,
 		SDKVersion:           run.SdkVersion,
@@ -99,7 +99,7 @@ func listScopedRunSummary(run db.ListScopedRunSummariesRow) runSummary {
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
 		DeploymentTaskID:     run.DeploymentTaskID,
-		TaskSessionID:        run.TaskSessionID,
+		SessionID:            run.SessionID,
 		DeploymentVersion:    run.DeploymentVersion,
 		APIVersion:           run.ApiVersion,
 		SDKVersion:           run.SdkVersion,
@@ -127,7 +127,7 @@ func cancelRunSummary(run db.CancelRunRow) runSummary {
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
 		DeploymentTaskID:     run.DeploymentTaskID,
-		TaskSessionID:        run.TaskSessionID,
+		SessionID:            run.SessionID,
 		DeploymentVersion:    run.DeploymentVersion,
 		APIVersion:           run.ApiVersion,
 		SDKVersion:           run.SdkVersion,
@@ -183,7 +183,7 @@ func runResponse(run runSummary) api.RunResponse {
 		EnvironmentID:     pgvalue.MustUUIDValue(run.EnvironmentID).String(),
 		DeploymentID:      pgvalue.MustUUIDValue(run.DeploymentID).String(),
 		DeploymentTaskID:  pgvalue.MustUUIDValue(run.DeploymentTaskID).String(),
-		TaskSessionID:     pgvalue.MustUUIDValue(run.TaskSessionID).String(),
+		SessionID:         pgvalue.MustUUIDValue(run.SessionID).String(),
 		Version:           run.DeploymentVersion,
 		DeploymentVersion: run.DeploymentVersion,
 		APIVersion:        run.APIVersion,

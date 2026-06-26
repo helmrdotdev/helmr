@@ -179,7 +179,7 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 	if err != nil {
 		return auth.Actor{}, err
 	}
-	row, err := s.db.GetSessionByTokenHash(r.Context(), tokenHash)
+	row, err := s.db.GetAuthSessionByTokenHash(r.Context(), tokenHash)
 	if err != nil {
 		if isNoRows(err) {
 			return auth.Actor{}, auth.ErrUnauthenticated
@@ -194,7 +194,7 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 	if err != nil {
 		return auth.Actor{}, err
 	}
-	if err := s.db.RefreshSession(r.Context(), db.RefreshSessionParams{
+	if err := s.db.RefreshAuthSession(r.Context(), db.RefreshAuthSessionParams{
 		ID:        row.ID,
 		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(s.effectiveSessionTTL())),
 	}); err != nil {

@@ -1,7 +1,7 @@
 import { postJson, request } from "./api";
-import type { TaskSessionStatus } from "../features/sessions/display";
+import type { SessionActivity, SessionStatus } from "../features/sessions/display";
 
-export type TaskSession = {
+export type Session = {
   id: string;
   project_id: string;
   environment_id: string;
@@ -9,7 +9,9 @@ export type TaskSession = {
   initial_deployment_id: string;
   active_deployment_id: string;
   external_id?: string;
-  status: TaskSessionStatus;
+  status: SessionStatus;
+  activity: SessionActivity;
+  can_close: boolean;
   current_run_id?: string;
   workspace_id?: string;
   metadata?: unknown;
@@ -19,15 +21,16 @@ export type TaskSession = {
   timed_out?: boolean;
   terminal_reason?: unknown;
   expires_at?: string;
+  expired_at?: string;
   created_at: string;
   updated_at: string;
 };
 
-export type ListTaskSessionsResponse = {
-  sessions: TaskSession[];
+export type ListSessionsResponse = {
+  sessions: Session[];
 };
 
-export type TaskSessionRun = {
+export type SessionRun = {
   id: string;
   run_id: string;
   deployment_id: string;
@@ -40,13 +43,13 @@ export type TaskSessionRun = {
   ended_at?: string;
 };
 
-export type ListTaskSessionRunsResponse = {
-  runs: TaskSessionRun[];
+export type ListSessionRunsResponse = {
+  runs: SessionRun[];
 };
 
-export type TaskSessionStream = {
+export type SessionStream = {
   id: string;
-  task_session_id: string;
+  session_id: string;
   name: string;
   direction: "input" | "output" | string;
   backend?: string;
@@ -54,8 +57,8 @@ export type TaskSessionStream = {
   created_at: string;
 };
 
-export type ListTaskSessionStreamsResponse = {
-  streams: TaskSessionStream[];
+export type ListSessionStreamsResponse = {
+  streams: SessionStream[];
 };
 
 export type StreamRecord = {
@@ -72,58 +75,58 @@ export type ListStreamRecordsResponse = {
   records: StreamRecord[];
 };
 
-export type ListTaskSessionsOptions = {
+export type ListSessionsOptions = {
   projectID: string;
   environmentID: string;
-  status?: TaskSessionStatus | "all";
+  status?: SessionStatus | "all";
   taskID?: string;
   limit?: number;
 };
 
-export type TaskSessionScope = {
+export type SessionScope = {
   projectID: string;
   environmentID: string;
 };
 
-export async function listTaskSessions(options: ListTaskSessionsOptions): Promise<ListTaskSessionsResponse> {
+export async function listSessions(options: ListSessionsOptions): Promise<ListSessionsResponse> {
   const params = new URLSearchParams();
   if (options.status && options.status !== "all") params.set("status", options.status);
   if (options.taskID) params.set("task_id", options.taskID);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   const query = params.toString();
-  return request<ListTaskSessionsResponse>(`${sessionPath(options.projectID, options.environmentID)}${query ? `?${query}` : ""}`);
+  return request<ListSessionsResponse>(`${sessionPath(options.projectID, options.environmentID)}${query ? `?${query}` : ""}`);
 }
 
-export async function getTaskSession(id: string, scope: TaskSessionScope): Promise<TaskSession> {
-  return request<TaskSession>(`${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}`);
+export async function getSession(id: string, scope: SessionScope): Promise<Session> {
+  return request<Session>(`${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}`);
 }
 
-export async function closeTaskSession(id: string, scope: TaskSessionScope, reason = "closed from console"): Promise<TaskSession> {
-  return postJson<{ reason: string }, TaskSession>(
+export async function closeSession(id: string, scope: SessionScope, reason = "closed from console"): Promise<Session> {
+  return postJson<{ reason: string }, Session>(
     `${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/close`,
     { reason },
   );
 }
 
-export async function cancelTaskSession(id: string, scope: TaskSessionScope, reason = "cancelled from console"): Promise<TaskSession> {
-  return postJson<{ reason: string }, TaskSession>(
+export async function cancelSession(id: string, scope: SessionScope, reason = "cancelled from console"): Promise<Session> {
+  return postJson<{ reason: string }, Session>(
     `${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/cancel`,
     { reason },
   );
 }
 
-export async function listTaskSessionRuns(id: string, scope: TaskSessionScope): Promise<ListTaskSessionRunsResponse> {
-  return request<ListTaskSessionRunsResponse>(`${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/runs`);
+export async function listSessionRuns(id: string, scope: SessionScope): Promise<ListSessionRunsResponse> {
+  return request<ListSessionRunsResponse>(`${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/runs`);
 }
 
-export async function listTaskSessionStreams(id: string, scope: TaskSessionScope): Promise<ListTaskSessionStreamsResponse> {
-  return request<ListTaskSessionStreamsResponse>(`${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/streams`);
+export async function listSessionStreams(id: string, scope: SessionScope): Promise<ListSessionStreamsResponse> {
+  return request<ListSessionStreamsResponse>(`${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/streams`);
 }
 
-export async function listTaskSessionStreamRecords(
+export async function listSessionStreamRecords(
   id: string,
-  scope: TaskSessionScope,
-  stream: TaskSessionStream,
+  scope: SessionScope,
+  stream: SessionStream,
   options: { limit?: number } = {},
 ): Promise<ListStreamRecordsResponse> {
   const params = new URLSearchParams();

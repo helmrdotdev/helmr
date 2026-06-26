@@ -3694,7 +3694,7 @@ function timestampToJson(val) {
   return new Date(ms).toISOString().replace(".000Z", z);
 }
 // proto/typescript/src/gen/bundle_pb.ts
-var file_bundle = /* @__PURE__ */ fileDesc("CgxidW5kbGUucHJvdG8SD2hlbG1yLmJ1bmRsZS52MCKVAgoGQnVuZGxlEikKBWltYWdlGAEgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYxItCgdzYW5kYm94GAIgASgLMhwuaGVsbXIuYnVuZGxlLnYwLlNhbmRib3hTcGVjEicKBHRhc2sYAyABKAsyGS5oZWxtci5idW5kbGUudjAuVGFza1NwZWMSOgoKc3ViX2ltYWdlcxgEIAMoCzImLmhlbG1yLmJ1bmRsZS52MC5CdW5kbGUuU3ViSW1hZ2VzRW50cnkaTAoOU3ViSW1hZ2VzRW50cnkSCwoDa2V5GAEgASgJEikKBXZhbHVlGAIgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYzoCOAEiLAoIUGxhdGZvcm0SCgoCb3MYASABKAkSFAoMYXJjaGl0ZWN0dXJlGAIgASgJInsKCUltYWdlU3BlYxIWCg5mb3JtYXRfdmVyc2lvbhgBIAEoDRIrCghwbGF0Zm9ybRgCIAEoCzIZLmhlbG1yLmJ1bmRsZS52MC5QbGF0Zm9ybRIpCgVzdGVwcxgDIAMoCzIaLmhlbG1yLmJ1bmRsZS52MC5JbWFnZVN0ZXAiiwMKCUltYWdlU3RlcBIlCgRmcm9tGAEgASgLMhUuaGVsbXIuYnVuZGxlLnYwLkZyb21IABIjCgNydW4YAiABKAsyFC5oZWxtci5idW5kbGUudjAuUnVuSAASOwoQY29weV9zb3VyY2VfZmlsZRgFIAEoCzIfLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRmlsZUgAEjkKD2NvcHlfc291cmNlX2RpchgGIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRGlySAASOQoPY29weV9mcm9tX2ltYWdlGAcgASgLMh4uaGVsbXIuYnVuZGxlLnYwLkNvcHlGcm9tSW1hZ2VIABIrCgd3b3JrZGlyGAggASgLMhguaGVsbXIuYnVuZGxlLnYwLldvcmtkaXJIABIlCgR1c2VyGAkgASgLMhUuaGVsbXIuYnVuZGxlLnYwLlVzZXJIABIjCgNlbnYYCiABKAsyFC5oZWxtci5idW5kbGUudjAuRW52SABCBgoEa2luZCITCgRGcm9tEgsKA3JlZhgBIAEoCSKJAQoDUnVuEgwKBGFyZ3YYASADKAkSOAoMY2FjaGVfbW91bnRzGAIgAygLMiIuaGVsbXIuYnVuZGxlLnYwLkNhY2hlTW91bnRCaW5kaW5nEjoKDXNlY3JldF9tb3VudHMYAyADKAsyIy5oZWxtci5idW5kbGUudjAuU2VjcmV0TW91bnRCaW5kaW5nIh0KDVNvdXJjZUZpbGVSZWYSDAoEcGF0aBgBIAEoCSIsCgxTb3VyY2VEaXJSZWYSDAoEcGF0aBgBIAEoCRIOCgZpZ25vcmUYAiADKAkiXgoOQ29weVNvdXJjZUZpbGUSCwoDZHN0GAEgASgJEi8KB3NyY19yZWYYAiABKAsyHi5oZWxtci5idW5kbGUudjAuU291cmNlRmlsZVJlZhIOCgZkaWdlc3QYAyABKAkicQoNQ29weVNvdXJjZURpchILCgNkc3QYASABKAkSLgoHc3JjX3JlZhgCIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5Tb3VyY2VEaXJSZWYSEwoLdHJlZV9kaWdlc3QYAyABKAkSDgoGaWdub3JlGAQgAygJIkUKDUNvcHlGcm9tSW1hZ2USCwoDZHN0GAEgASgJEhUKDXNyY19pbWFnZV9rZXkYAiABKAkSEAoIc3JjX3BhdGgYAyABKAkiFwoHV29ya2RpchIMCgRwYXRoGAEgASgJIhQKBFVzZXISDAoEbmFtZRgBIAEoCSIhCgNFbnYSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJIkMKEUNhY2hlTW91bnRCaW5kaW5nEgsKA2RzdBgBIAEoCRIQCghjYWNoZV9pZBgCIAEoCRIPCgdzaGFyaW5nGAMgASgJIhkKCVNlY3JldFJlZhIMCgRuYW1lGAEgASgJIlEKElNlY3JldE1vdW50QmluZGluZxILCgNkc3QYASABKAkSLgoKc2VjcmV0X3JlZhgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRSZWYitgEKC1NhbmRib3hTcGVjEgoKAmlkGAEgASgJEjsKCXdvcmtzcGFjZRgCIAEoCzIoLmhlbG1yLmJ1bmRsZS52MC5Xb3Jrc3BhY2VSdW50aW1lQmluZGluZxItCglyZXNvdXJjZXMYAyABKAsyGi5oZWxtci5idW5kbGUudjAuUmVzb3VyY2VzEi8KB25ldHdvcmsYBCABKAsyHi5oZWxtci5idW5kbGUudjAuTmV0d29ya1BvbGljeSItChdXb3Jrc3BhY2VSdW50aW1lQmluZGluZxISCgptb3VudF9wYXRoGAEgASgJIjYKCVJlc291cmNlcxILCgNjcHUYASABKA0SDgoGbWVtb3J5GAIgASgJEgwKBGRpc2sYAyABKAkiPgoNTmV0d29ya1BvbGljeRIQCghpbnRlcm5ldBgBIAEoCBINCgVhbGxvdxgCIAMoCRIMCgRkZW55GAMgAygJIk4KD1NlY3JldFBsYWNlbWVudBIMCgRuYW1lGAEgASgJEi0KCXBsYWNlbWVudBgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5QbGFjZW1lbnQinwEKCVBsYWNlbWVudBIsCgNlbnYYASABKAsyHS5oZWxtci5idW5kbGUudjAuRW52UGxhY2VtZW50SAASLgoEZmlsZRgCIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5GaWxlUGxhY2VtZW50SAASLAoDZGlyGAMgASgLMh0uaGVsbXIuYnVuZGxlLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIi3AIKCFRhc2tTcGVjEgoKAmlkGAEgASgJEhIKCnNhbmRib3hfaWQYAiABKAkSEwoLbW9kdWxlX3BhdGgYAyABKAkSEwoLZXhwb3J0X25hbWUYBCABKAkSHAoUbWF4X2R1cmF0aW9uX3NlY29uZHMYBSABKA0SMQoHc2VjcmV0cxgGIAMoCzIgLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRQbGFjZW1lbnQSKQoFcXVldWUYByABKAsyGi5oZWxtci5idW5kbGUudjAuUXVldWVTcGVjEgsKA3R0bBgIIAEoCRI0CglzY2hlZHVsZXMYCSADKAsyIS5oZWxtci5idW5kbGUudjAuVGFza1NjaGVkdWxlU3BlYxIZChFyZXRyeV9wb2xpY3lfanNvbhgKIAEoCRIsCgdzdHJlYW1zGAsgAygLMhsuaGVsbXIuYnVuZGxlLnYwLlN0cmVhbVNwZWMiXgoKU3RyZWFtU3BlYxIMCgRuYW1lGAEgASgJEhEKCWRpcmVjdGlvbhgCIAEoCRIaChJzY2hlbWFfZmluZ2VycHJpbnQYAyABKAkSEwoLc2NoZW1hX2pzb24YBCABKAkiTwoJUXVldWVTcGVjEgwKBG5hbWUYASABKAkSHgoRY29uY3VycmVuY3lfbGltaXQYAiABKA1IAIgBAUIUChJfY29uY3VycmVuY3lfbGltaXQiXgoQVGFza1NjaGVkdWxlU3BlYxIKCgJpZBgBIAEoCRIMCgRjcm9uGAIgASgJEhAKCHRpbWV6b25lGAMgASgJEhMKBmFjdGl2ZRgEIAEoCEgAiAEBQgkKB19hY3RpdmVCQFo+Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9idW5kbGUvdjA7YnVuZGxldjBiBnByb3RvMw");
+var file_bundle = /* @__PURE__ */ fileDesc("CgxidW5kbGUucHJvdG8SD2hlbG1yLmJ1bmRsZS52MCKVAgoGQnVuZGxlEikKBWltYWdlGAEgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYxItCgdzYW5kYm94GAIgASgLMhwuaGVsbXIuYnVuZGxlLnYwLlNhbmRib3hTcGVjEicKBHRhc2sYAyABKAsyGS5oZWxtci5idW5kbGUudjAuVGFza1NwZWMSOgoKc3ViX2ltYWdlcxgEIAMoCzImLmhlbG1yLmJ1bmRsZS52MC5CdW5kbGUuU3ViSW1hZ2VzRW50cnkaTAoOU3ViSW1hZ2VzRW50cnkSCwoDa2V5GAEgASgJEikKBXZhbHVlGAIgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYzoCOAEiLAoIUGxhdGZvcm0SCgoCb3MYASABKAkSFAoMYXJjaGl0ZWN0dXJlGAIgASgJInsKCUltYWdlU3BlYxIWCg5mb3JtYXRfdmVyc2lvbhgBIAEoDRIrCghwbGF0Zm9ybRgCIAEoCzIZLmhlbG1yLmJ1bmRsZS52MC5QbGF0Zm9ybRIpCgVzdGVwcxgDIAMoCzIaLmhlbG1yLmJ1bmRsZS52MC5JbWFnZVN0ZXAiiwMKCUltYWdlU3RlcBIlCgRmcm9tGAEgASgLMhUuaGVsbXIuYnVuZGxlLnYwLkZyb21IABIjCgNydW4YAiABKAsyFC5oZWxtci5idW5kbGUudjAuUnVuSAASOwoQY29weV9zb3VyY2VfZmlsZRgFIAEoCzIfLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRmlsZUgAEjkKD2NvcHlfc291cmNlX2RpchgGIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRGlySAASOQoPY29weV9mcm9tX2ltYWdlGAcgASgLMh4uaGVsbXIuYnVuZGxlLnYwLkNvcHlGcm9tSW1hZ2VIABIrCgd3b3JrZGlyGAggASgLMhguaGVsbXIuYnVuZGxlLnYwLldvcmtkaXJIABIlCgR1c2VyGAkgASgLMhUuaGVsbXIuYnVuZGxlLnYwLlVzZXJIABIjCgNlbnYYCiABKAsyFC5oZWxtci5idW5kbGUudjAuRW52SABCBgoEa2luZCITCgRGcm9tEgsKA3JlZhgBIAEoCSKJAQoDUnVuEgwKBGFyZ3YYASADKAkSOAoMY2FjaGVfbW91bnRzGAIgAygLMiIuaGVsbXIuYnVuZGxlLnYwLkNhY2hlTW91bnRCaW5kaW5nEjoKDXNlY3JldF9tb3VudHMYAyADKAsyIy5oZWxtci5idW5kbGUudjAuU2VjcmV0TW91bnRCaW5kaW5nIh0KDVNvdXJjZUZpbGVSZWYSDAoEcGF0aBgBIAEoCSIsCgxTb3VyY2VEaXJSZWYSDAoEcGF0aBgBIAEoCRIOCgZpZ25vcmUYAiADKAkiXgoOQ29weVNvdXJjZUZpbGUSCwoDZHN0GAEgASgJEi8KB3NyY19yZWYYAiABKAsyHi5oZWxtci5idW5kbGUudjAuU291cmNlRmlsZVJlZhIOCgZkaWdlc3QYAyABKAkicQoNQ29weVNvdXJjZURpchILCgNkc3QYASABKAkSLgoHc3JjX3JlZhgCIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5Tb3VyY2VEaXJSZWYSEwoLdHJlZV9kaWdlc3QYAyABKAkSDgoGaWdub3JlGAQgAygJIkUKDUNvcHlGcm9tSW1hZ2USCwoDZHN0GAEgASgJEhUKDXNyY19pbWFnZV9rZXkYAiABKAkSEAoIc3JjX3BhdGgYAyABKAkiFwoHV29ya2RpchIMCgRwYXRoGAEgASgJIhQKBFVzZXISDAoEbmFtZRgBIAEoCSIhCgNFbnYSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJIkMKEUNhY2hlTW91bnRCaW5kaW5nEgsKA2RzdBgBIAEoCRIQCghjYWNoZV9pZBgCIAEoCRIPCgdzaGFyaW5nGAMgASgJIhkKCVNlY3JldFJlZhIMCgRuYW1lGAEgASgJIlEKElNlY3JldE1vdW50QmluZGluZxILCgNkc3QYASABKAkSLgoKc2VjcmV0X3JlZhgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRSZWYitgEKC1NhbmRib3hTcGVjEgoKAmlkGAEgASgJEjsKCXdvcmtzcGFjZRgCIAEoCzIoLmhlbG1yLmJ1bmRsZS52MC5Xb3Jrc3BhY2VSdW50aW1lQmluZGluZxItCglyZXNvdXJjZXMYAyABKAsyGi5oZWxtci5idW5kbGUudjAuUmVzb3VyY2VzEi8KB25ldHdvcmsYBCABKAsyHi5oZWxtci5idW5kbGUudjAuTmV0d29ya1BvbGljeSItChdXb3Jrc3BhY2VSdW50aW1lQmluZGluZxISCgptb3VudF9wYXRoGAEgASgJIjYKCVJlc291cmNlcxILCgNjcHUYASABKA0SDgoGbWVtb3J5GAIgASgJEgwKBGRpc2sYAyABKAkiPgoNTmV0d29ya1BvbGljeRIQCghpbnRlcm5ldBgBIAEoCBINCgVhbGxvdxgCIAMoCRIMCgRkZW55GAMgAygJIk4KD1NlY3JldFBsYWNlbWVudBIMCgRuYW1lGAEgASgJEi0KCXBsYWNlbWVudBgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5QbGFjZW1lbnQinwEKCVBsYWNlbWVudBIsCgNlbnYYASABKAsyHS5oZWxtci5idW5kbGUudjAuRW52UGxhY2VtZW50SAASLgoEZmlsZRgCIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5GaWxlUGxhY2VtZW50SAASLAoDZGlyGAMgASgLMh0uaGVsbXIuYnVuZGxlLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIirgIKCFRhc2tTcGVjEgoKAmlkGAEgASgJEhIKCnNhbmRib3hfaWQYAiABKAkSEwoLbW9kdWxlX3BhdGgYAyABKAkSEwoLZXhwb3J0X25hbWUYBCABKAkSHAoUbWF4X2R1cmF0aW9uX3NlY29uZHMYBSABKA0SMQoHc2VjcmV0cxgGIAMoCzIgLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRQbGFjZW1lbnQSKQoFcXVldWUYByABKAsyGi5oZWxtci5idW5kbGUudjAuUXVldWVTcGVjEgsKA3R0bBgIIAEoCRI0CglzY2hlZHVsZXMYCSADKAsyIS5oZWxtci5idW5kbGUudjAuVGFza1NjaGVkdWxlU3BlYxIZChFyZXRyeV9wb2xpY3lfanNvbhgKIAEoCSIZCglRdWV1ZVNwZWMSDAoEbmFtZRgBIAEoCSJeChBUYXNrU2NoZWR1bGVTcGVjEgoKAmlkGAEgASgJEgwKBGNyb24YAiABKAkSEAoIdGltZXpvbmUYAyABKAkSEwoGYWN0aXZlGAQgASgISACIAQFCCQoHX2FjdGl2ZUJAWj5naXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL2J1bmRsZS92MDtidW5kbGV2MGIGcHJvdG8z");
 var BundleSchema = /* @__PURE__ */ messageDesc(file_bundle, 0);
 var PlatformSchema = /* @__PURE__ */ messageDesc(file_bundle, 1);
 var ImageSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 2);
@@ -3722,9 +3722,8 @@ var EnvPlacementSchema = /* @__PURE__ */ messageDesc(file_bundle, 23);
 var FilePlacementSchema = /* @__PURE__ */ messageDesc(file_bundle, 24);
 var DirPlacementSchema = /* @__PURE__ */ messageDesc(file_bundle, 25);
 var TaskSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 26);
-var StreamSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 27);
-var QueueSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 28);
-var TaskScheduleSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 29);
+var QueueSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 27);
+var TaskScheduleSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 28);
 // proto/typescript/src/gen/run_pb.ts
 var exports_run_pb = {};
 __export(exports_run_pb, {
@@ -3756,7 +3755,7 @@ __export(exports_run_pb, {
   ActiveStreamReadResultSchema: () => ActiveStreamReadResultSchema,
   ActiveStreamReadRequestedSchema: () => ActiveStreamReadRequestedSchema
 });
-var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCJ7ChBSdW5UYXNrV29ya3NwYWNlEgwKBHBhdGgYASABKAkSFAoMcHJvamVjdF9wYXRoGAIgASgJEjEKCGFydGlmYWN0GAMgASgLMh8uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFydGlmYWN0EhAKCHdyaXRhYmxlGAUgASgIInIKEVdvcmtzcGFjZUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJEhAKCGVuY29kaW5nGAMgASgJEhIKCnNpemVfYnl0ZXMYBCABKAQSEwoLZW50cnlfY291bnQYBSABKA0i/wIKDlJ1blRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSEwoLbW9kdWxlX3BhdGgYAiABKAkSCwoDY3dkGAMgASgJEisKB3NlY3JldHMYBCADKAsyGi5oZWxtci5ydW4udjAuU2VjcmV0SW5qZWN0Eg4KBnJ1bl9pZBgFIAEoCRIUCgxwYXlsb2FkX2pzb24YBiABKAkSMQoJd29ya3NwYWNlGAcgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2USKQoFdHJhY2UYCCABKAsyGi5oZWxtci5ydW4udjAuVHJhY2VDb250ZXh0EhIKCmF0dGVtcHRfaWQYCSABKAkSFgoOYXR0ZW1wdF9udW1iZXIYCiABKA0SFAoMcnVuX2xlYXNlX2lkGAsgASgJEhgKEHNuYXBzaG90X3ZlcnNpb24YDCABKAQSFwoPdGFza19zZXNzaW9uX2lkGA0gASgJEhQKDHJldHJ5X3JlYXNvbhgOIAEoCSJGCgxUcmFjZUNvbnRleHQSEAoIdHJhY2VfaWQYASABKAkSDwoHc3Bhbl9pZBgCIAEoCRITCgt0cmFjZXBhcmVudBgDIAEoCSJdCgxTZWNyZXRJbmplY3QSDAoEbmFtZRgBIAEoCRIqCglwbGFjZW1lbnQYAiABKAsyFy5oZWxtci5ydW4udjAuUGxhY2VtZW50EhMKC3ZhbHVlX2J5dGVzGAMgASgMIpYBCglQbGFjZW1lbnQSKQoDZW52GAEgASgLMhouaGVsbXIucnVuLnYwLkVudlBsYWNlbWVudEgAEisKBGZpbGUYAiABKAsyGy5oZWxtci5ydW4udjAuRmlsZVBsYWNlbWVudEgAEikKA2RpchgDIAEoCzIaLmhlbG1yLnJ1bi52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIpgECghSdW5FdmVudBIWCgxzdGRvdXRfY2h1bmsYASABKAxIABIWCgxzdGRlcnJfY2h1bmsYAiABKAxIABITCglsb2dfZW50cnkYAyABKAlIABIvCgt0YXNrX3Jlc3VsdBgEIAEoCzIYLmhlbG1yLnJ1bi52MC5UYXNrUmVzdWx0SAASPAoScnVuX3dhaXRfcmVxdWVzdGVkGAUgASgLMh4uaGVsbXIucnVuLnYwLlJ1bldhaXRSZXF1ZXN0ZWRIABI5ChBtZXRhZGF0YV91cGRhdGVkGAcgASgLMh0uaGVsbXIucnVuLnYwLk1ldGFkYXRhVXBkYXRlZEgAEkQKFnRva2VuX2NyZWF0ZV9yZXF1ZXN0ZWQYCCABKAsyIi5oZWxtci5ydW4udjAuVG9rZW5DcmVhdGVSZXF1ZXN0ZWRIABJEChZvdXRwdXRfc3RyZWFtX2FwcGVuZGVkGAkgASgLMiIuaGVsbXIucnVuLnYwLk91dHB1dFN0cmVhbUFwcGVuZGVkSAASTwocYWN0aXZlX3N0cmVhbV9yZWFkX3JlcXVlc3RlZBgKIAEoCzInLmhlbG1yLnJ1bi52MC5BY3RpdmVTdHJlYW1SZWFkUmVxdWVzdGVkSAASNwoPcmVzdW1lX2NvbnN1bWVkGAYgASgLMhwuaGVsbXIucnVuLnYwLlJlc3VtZUNvbnN1bWVkSABCBwoFZXZlbnQirgEKClRhc2tSZXN1bHQSEQoJZXhpdF9jb2RlGAEgASgFEhoKDWVycm9yX21lc3NhZ2UYAiABKAlIAIgBARIYCgtvdXRwdXRfanNvbhgDIAEoCUgBiAEBEisKBWVycm9yGAQgASgLMhcuaGVsbXIucnVuLnYwLlRhc2tFcnJvckgCiAEBQhAKDl9lcnJvcl9tZXNzYWdlQg4KDF9vdXRwdXRfanNvbkIICgZfZXJyb3IiYQoJVGFza0Vycm9yEgwKBHR5cGUYASABKAkSDAoEY29kZRgCIAEoCRIPCgdtZXNzYWdlGAMgASgJEhEKCXJldHJ5YWJsZRgEIAEoCBIUCgxkZXRhaWxzX2pzb24YBSABKAki4wEKEFJ1bldhaXRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDAoEa2luZBgCIAEoCRITCgtwYXJhbXNfanNvbhgDIAEoCRIaCg1tZXRhZGF0YV9qc29uGAQgASgJSACIAQESFAoHdGltZW91dBgFIAEoDUgBiAEBEgwKBHRhZ3MYBiADKAkSGQoMaWRsZV90aW1lb3V0GAkgASgNSAKIAQFCEAoOX21ldGFkYXRhX2pzb25CCgoIX3RpbWVvdXRCDwoNX2lkbGVfdGltZW91dEoECAcQCEoECAgQCSKyAQoUVG9rZW5DcmVhdGVSZXF1ZXN0ZWQSFwoKdGltZW91dF9hdBgBIAEoCUgAiAEBEh8KEnRpbWVvdXRfaW5fc2Vjb25kcxgCIAEoDUgBiAEBEgwKBHRhZ3MYBCADKAkSGgoNbWV0YWRhdGFfanNvbhgFIAEoCUgCiAEBQg0KC190aW1lb3V0X2F0QhUKE190aW1lb3V0X2luX3NlY29uZHNCEAoOX21ldGFkYXRhX2pzb24ioQIKEVRva2VuQ3JlYXRlUmVzdWx0EgoKAmlkGAEgASgJEhQKDGNhbGxiYWNrX3VybBgCIAEoCRIgChNwdWJsaWNfYWNjZXNzX3Rva2VuGAMgASgJSACIAQESFwoKdGltZW91dF9hdBgEIAEoCUgBiAEBEhMKBnN0YXR1cxgFIAEoCUgCiAEBEgwKBHRhZ3MYBiADKAkSGgoNbWV0YWRhdGFfanNvbhgHIAEoCUgDiAEBEhoKDWVycm9yX21lc3NhZ2UYCSABKAlIBIgBAUIWChRfcHVibGljX2FjY2Vzc190b2tlbkINCgtfdGltZW91dF9hdEIJCgdfc3RhdHVzQhAKDl9tZXRhZGF0YV9qc29uQhAKDl9lcnJvcl9tZXNzYWdlIsoBChlBY3RpdmVTdHJlYW1SZWFkUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEg4KBnN0cmVhbRgCIAEoCRIWCg5hZnRlcl9zZXF1ZW5jZRgDIAEoAxIiChVyZWNvcmRfY29ycmVsYXRpb25faWQYBCABKAlIAIgBARIUCgd0aW1lb3V0GAUgASgNSAGIAQESDQoFYmxvY2sYBiABKAhCGAoWX3JlY29yZF9jb3JyZWxhdGlvbl9pZEIKCghfdGltZW91dCKsAQoMU3RyZWFtUmVjb3JkEgoKAmlkGAEgASgJEhEKCXN0cmVhbV9pZBgCIAEoCRIQCghzZXF1ZW5jZRgDIAEoAxIRCglkYXRhX2pzb24YBCABKAkSGwoOY29ycmVsYXRpb25faWQYBSABKAlIAIgBARIUCgxjb250ZW50X3R5cGUYBiABKAkSEgoKY3JlYXRlZF9hdBgHIAEoCUIRCg9fY29ycmVsYXRpb25faWQirQEKFkFjdGl2ZVN0cmVhbVJlYWRSZXN1bHQSFgoOY29ycmVsYXRpb25faWQYASABKAkSLwoGcmVjb3JkGAIgASgLMhouaGVsbXIucnVuLnYwLlN0cmVhbVJlY29yZEgAiAEBEhEKCXRpbWVkX291dBgDIAEoCBIaCg1lcnJvcl9tZXNzYWdlGAQgASgJSAGIAQFCCQoHX3JlY29yZEIQCg5fZXJyb3JfbWVzc2FnZSJfChZDaGVja3BvaW50UGF1c2VSZXF1ZXN0EhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGQoRY2FwdHVyZV93b3Jrc3BhY2UYAyABKAgiQgoUQ2hlY2twb2ludFBhdXNlUmVhZHkSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCSJQCgxSZXN1bWVBdHRhY2gSFQoNY2hlY2twb2ludF9pZBgBIAEoCRITCgtydW5fd2FpdF9pZBgCIAEoCRIUCgxydW5fbGVhc2VfaWQYAyABKAkiZAoOUmVzdW1lRGVjaXNpb24SEwoLcnVuX3dhaXRfaWQYASABKAkSDAoEa2luZBgCIAEoCRIRCglkYXRhX2pzb24YAyABKAkSHAoUcmVxdWlyZV9jb25zdW1lZF9hY2sYBCABKAgiIAoJUmVzdW1lQWNrEhMKC3J1bl93YWl0X2lkGAEgASgJIiUKDlJlc3VtZUNvbnN1bWVkEhMKC3J1bl93YWl0X2lkGAEgASgJImgKFE91dHB1dFN0cmVhbUFwcGVuZGVkEg4KBnN0cmVhbRgBIAEoCRIUCgxwYXlsb2FkX2pzb24YAiABKAkSGQoMY29udGVudF90eXBlGAMgASgJSACIAQFCDwoNX2NvbnRlbnRfdHlwZSKuAQoPTWV0YWRhdGFVcGRhdGVkEhEKCW9wZXJhdGlvbhgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIXCgp2YWx1ZV9qc29uGAMgASgJSAGIAQESFwoKcGF0Y2hfanNvbhgEIAEoCUgCiAEBEhMKBmFtb3VudBgFIAEoAUgDiAEBQgYKBF9rZXlCDQoLX3ZhbHVlX2pzb25CDQoLX3BhdGNoX2pzb25CCQoHX2Ftb3VudEI6WjhnaXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL3J1bi92MDtydW52MGIGcHJvdG8z");
+var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCJ7ChBSdW5UYXNrV29ya3NwYWNlEgwKBHBhdGgYASABKAkSFAoMcHJvamVjdF9wYXRoGAIgASgJEjEKCGFydGlmYWN0GAMgASgLMh8uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFydGlmYWN0EhAKCHdyaXRhYmxlGAUgASgIInIKEVdvcmtzcGFjZUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJEhAKCGVuY29kaW5nGAMgASgJEhIKCnNpemVfYnl0ZXMYBCABKAQSEwoLZW50cnlfY291bnQYBSABKA0i+gIKDlJ1blRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSEwoLbW9kdWxlX3BhdGgYAiABKAkSCwoDY3dkGAMgASgJEisKB3NlY3JldHMYBCADKAsyGi5oZWxtci5ydW4udjAuU2VjcmV0SW5qZWN0Eg4KBnJ1bl9pZBgFIAEoCRIUCgxwYXlsb2FkX2pzb24YBiABKAkSMQoJd29ya3NwYWNlGAcgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2USKQoFdHJhY2UYCCABKAsyGi5oZWxtci5ydW4udjAuVHJhY2VDb250ZXh0EhIKCmF0dGVtcHRfaWQYCSABKAkSFgoOYXR0ZW1wdF9udW1iZXIYCiABKA0SFAoMcnVuX2xlYXNlX2lkGAsgASgJEhgKEHNuYXBzaG90X3ZlcnNpb24YDCABKAQSEgoKc2Vzc2lvbl9pZBgNIAEoCRIUCgxyZXRyeV9yZWFzb24YDiABKAkiRgoMVHJhY2VDb250ZXh0EhAKCHRyYWNlX2lkGAEgASgJEg8KB3NwYW5faWQYAiABKAkSEwoLdHJhY2VwYXJlbnQYAyABKAkiXQoMU2VjcmV0SW5qZWN0EgwKBG5hbWUYASABKAkSKgoJcGxhY2VtZW50GAIgASgLMhcuaGVsbXIucnVuLnYwLlBsYWNlbWVudBITCgt2YWx1ZV9ieXRlcxgDIAEoDCKWAQoJUGxhY2VtZW50EikKA2VudhgBIAEoCzIaLmhlbG1yLnJ1bi52MC5FbnZQbGFjZW1lbnRIABIrCgRmaWxlGAIgASgLMhsuaGVsbXIucnVuLnYwLkZpbGVQbGFjZW1lbnRIABIpCgNkaXIYAyABKAsyGi5oZWxtci5ydW4udjAuRGlyUGxhY2VtZW50SABCBgoEa2luZCIcCgxFbnZQbGFjZW1lbnQSDAoEbmFtZRgBIAEoCSJXCg1GaWxlUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIlYKDERpclBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciKYBAoIUnVuRXZlbnQSFgoMc3Rkb3V0X2NodW5rGAEgASgMSAASFgoMc3RkZXJyX2NodW5rGAIgASgMSAASEwoJbG9nX2VudHJ5GAMgASgJSAASLwoLdGFza19yZXN1bHQYBCABKAsyGC5oZWxtci5ydW4udjAuVGFza1Jlc3VsdEgAEjwKEnJ1bl93YWl0X3JlcXVlc3RlZBgFIAEoCzIeLmhlbG1yLnJ1bi52MC5SdW5XYWl0UmVxdWVzdGVkSAASOQoQbWV0YWRhdGFfdXBkYXRlZBgHIAEoCzIdLmhlbG1yLnJ1bi52MC5NZXRhZGF0YVVwZGF0ZWRIABJEChZ0b2tlbl9jcmVhdGVfcmVxdWVzdGVkGAggASgLMiIuaGVsbXIucnVuLnYwLlRva2VuQ3JlYXRlUmVxdWVzdGVkSAASRAoWb3V0cHV0X3N0cmVhbV9hcHBlbmRlZBgJIAEoCzIiLmhlbG1yLnJ1bi52MC5PdXRwdXRTdHJlYW1BcHBlbmRlZEgAEk8KHGFjdGl2ZV9zdHJlYW1fcmVhZF9yZXF1ZXN0ZWQYCiABKAsyJy5oZWxtci5ydW4udjAuQWN0aXZlU3RyZWFtUmVhZFJlcXVlc3RlZEgAEjcKD3Jlc3VtZV9jb25zdW1lZBgGIAEoCzIcLmhlbG1yLnJ1bi52MC5SZXN1bWVDb25zdW1lZEgAQgcKBWV2ZW50Iq4BCgpUYXNrUmVzdWx0EhEKCWV4aXRfY29kZRgBIAEoBRIaCg1lcnJvcl9tZXNzYWdlGAIgASgJSACIAQESGAoLb3V0cHV0X2pzb24YAyABKAlIAYgBARIrCgVlcnJvchgEIAEoCzIXLmhlbG1yLnJ1bi52MC5UYXNrRXJyb3JIAogBAUIQCg5fZXJyb3JfbWVzc2FnZUIOCgxfb3V0cHV0X2pzb25CCAoGX2Vycm9yImEKCVRhc2tFcnJvchIMCgR0eXBlGAEgASgJEgwKBGNvZGUYAiABKAkSDwoHbWVzc2FnZRgDIAEoCRIRCglyZXRyeWFibGUYBCABKAgSFAoMZGV0YWlsc19qc29uGAUgASgJIuMBChBSdW5XYWl0UmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEwoLcGFyYW1zX2pzb24YAyABKAkSGgoNbWV0YWRhdGFfanNvbhgEIAEoCUgAiAEBEhQKB3RpbWVvdXQYBSABKA1IAYgBARIMCgR0YWdzGAYgAygJEhkKDGlkbGVfdGltZW91dBgJIAEoDUgCiAEBQhAKDl9tZXRhZGF0YV9qc29uQgoKCF90aW1lb3V0Qg8KDV9pZGxlX3RpbWVvdXRKBAgHEAhKBAgIEAkisgEKFFRva2VuQ3JlYXRlUmVxdWVzdGVkEhcKCnRpbWVvdXRfYXQYASABKAlIAIgBARIfChJ0aW1lb3V0X2luX3NlY29uZHMYAiABKA1IAYgBARIMCgR0YWdzGAQgAygJEhoKDW1ldGFkYXRhX2pzb24YBSABKAlIAogBAUINCgtfdGltZW91dF9hdEIVChNfdGltZW91dF9pbl9zZWNvbmRzQhAKDl9tZXRhZGF0YV9qc29uIqECChFUb2tlbkNyZWF0ZVJlc3VsdBIKCgJpZBgBIAEoCRIUCgxjYWxsYmFja191cmwYAiABKAkSIAoTcHVibGljX2FjY2Vzc190b2tlbhgDIAEoCUgAiAEBEhcKCnRpbWVvdXRfYXQYBCABKAlIAYgBARITCgZzdGF0dXMYBSABKAlIAogBARIMCgR0YWdzGAYgAygJEhoKDW1ldGFkYXRhX2pzb24YByABKAlIA4gBARIaCg1lcnJvcl9tZXNzYWdlGAkgASgJSASIAQFCFgoUX3B1YmxpY19hY2Nlc3NfdG9rZW5CDQoLX3RpbWVvdXRfYXRCCQoHX3N0YXR1c0IQCg5fbWV0YWRhdGFfanNvbkIQCg5fZXJyb3JfbWVzc2FnZSLKAQoZQWN0aXZlU3RyZWFtUmVhZFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIOCgZzdHJlYW0YAiABKAkSFgoOYWZ0ZXJfc2VxdWVuY2UYAyABKAMSIgoVcmVjb3JkX2NvcnJlbGF0aW9uX2lkGAQgASgJSACIAQESFAoHdGltZW91dBgFIAEoDUgBiAEBEg0KBWJsb2NrGAYgASgIQhgKFl9yZWNvcmRfY29ycmVsYXRpb25faWRCCgoIX3RpbWVvdXQirAEKDFN0cmVhbVJlY29yZBIKCgJpZBgBIAEoCRIRCglzdHJlYW1faWQYAiABKAkSEAoIc2VxdWVuY2UYAyABKAMSEQoJZGF0YV9qc29uGAQgASgJEhsKDmNvcnJlbGF0aW9uX2lkGAUgASgJSACIAQESFAoMY29udGVudF90eXBlGAYgASgJEhIKCmNyZWF0ZWRfYXQYByABKAlCEQoPX2NvcnJlbGF0aW9uX2lkIq0BChZBY3RpdmVTdHJlYW1SZWFkUmVzdWx0EhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEi8KBnJlY29yZBgCIAEoCzIaLmhlbG1yLnJ1bi52MC5TdHJlYW1SZWNvcmRIAIgBARIRCgl0aW1lZF9vdXQYAyABKAgSGgoNZXJyb3JfbWVzc2FnZRgEIAEoCUgBiAEBQgkKB19yZWNvcmRCEAoOX2Vycm9yX21lc3NhZ2UiXwoWQ2hlY2twb2ludFBhdXNlUmVxdWVzdBITCgtydW5fd2FpdF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJEhkKEWNhcHR1cmVfd29ya3NwYWNlGAMgASgIIkIKFENoZWNrcG9pbnRQYXVzZVJlYWR5EhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkiUAoMUmVzdW1lQXR0YWNoEhUKDWNoZWNrcG9pbnRfaWQYASABKAkSEwoLcnVuX3dhaXRfaWQYAiABKAkSFAoMcnVuX2xlYXNlX2lkGAMgASgJImQKDlJlc3VtZURlY2lzaW9uEhMKC3J1bl93YWl0X2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEQoJZGF0YV9qc29uGAMgASgJEhwKFHJlcXVpcmVfY29uc3VtZWRfYWNrGAQgASgIIiAKCVJlc3VtZUFjaxITCgtydW5fd2FpdF9pZBgBIAEoCSIlCg5SZXN1bWVDb25zdW1lZBITCgtydW5fd2FpdF9pZBgBIAEoCSJoChRPdXRwdXRTdHJlYW1BcHBlbmRlZBIOCgZzdHJlYW0YASABKAkSFAoMcGF5bG9hZF9qc29uGAIgASgJEhkKDGNvbnRlbnRfdHlwZRgDIAEoCUgAiAEBQg8KDV9jb250ZW50X3R5cGUirgEKD01ldGFkYXRhVXBkYXRlZBIRCglvcGVyYXRpb24YASABKAkSEAoDa2V5GAIgASgJSACIAQESFwoKdmFsdWVfanNvbhgDIAEoCUgBiAEBEhcKCnBhdGNoX2pzb24YBCABKAlIAogBARITCgZhbW91bnQYBSABKAFIA4gBAUIGCgRfa2V5Qg0KC192YWx1ZV9qc29uQg0KC19wYXRjaF9qc29uQgkKB19hbW91bnRCOlo4Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9ydW4vdjA7cnVudjBiBnByb3RvMw");
 var RunTaskWorkspaceSchema = /* @__PURE__ */ messageDesc(file_run, 0);
 var WorkspaceArtifactSchema = /* @__PURE__ */ messageDesc(file_run, 1);
 var RunTaskRequestSchema = /* @__PURE__ */ messageDesc(file_run, 2);
@@ -4080,12 +4079,12 @@ function validateSecretName(name, label = "secret name") {
   }
 }
 var taskBrand = Symbol.for("helmr.sdk.Task");
-var taskOriginBrand = Symbol.for("helmr.sdk.TaskOrigin");
 var configBrand = Symbol.for("helmr.sdk.Config");
 var imageBuilderBrand = Symbol.for("helmr.sdk.ImageBuilder");
 var sandboxBuilderBrand = Symbol.for("helmr.sdk.SandboxBuilder");
 var sourceFileRefBrand = Symbol.for("helmr.sdk.SourceFileRef");
 var sourceDirRefBrand = Symbol.for("helmr.sdk.SourceDirRef");
+var queueDefinitionBrand = Symbol.for("helmr.sdk.QueueDefinition");
 function markScheduledTask(config, schedule) {
   return markTaskInternal(config, schedule);
 }
@@ -4097,7 +4096,9 @@ function markTaskInternal(config, schedule) {
   validateOptionalTTL(config.ttl, `task ${JSON.stringify(config.id)} ttl`);
   validateRetryPolicy(config.retry, `task ${JSON.stringify(config.id)} retry`);
   assertPayloadSchema(config.payload, `task ${JSON.stringify(config.id)} payload`);
-  readStreamDefinitions(config.streams, `task ${JSON.stringify(config.id)} streams`);
+  if (Object.prototype.hasOwnProperty.call(config, "streams")) {
+    throw new Error("task streams are defined with the module-level streams primitive, not task config");
+  }
   if (schedule !== undefined) {
     Object.defineProperty(config, "schedule", {
       value: Object.freeze({ ...schedule }),
@@ -4105,52 +4106,29 @@ function markTaskInternal(config, schedule) {
     });
   }
   Object.defineProperty(config, taskBrand, { value: true });
-  Object.defineProperty(config, taskOriginBrand, { value: captureTaskOrigin() });
   return config;
 }
-function readStreamDefinitions(value, label = "streams") {
-  if (value === undefined) {
-    return [];
-  }
-  if (!Array.isArray(value)) {
-    throw new Error(`${label} must be an array`);
-  }
-  const seen = new Set;
-  return value.map((item, index) => {
-    if (item === null || typeof item !== "object" || Array.isArray(item)) {
-      throw new Error(`${label}.${index} must be a stream definition`);
-    }
-    const record = item;
-    const id = validateStreamName(record["id"], `${label}.${index}.id`);
-    const direction = record["direction"];
-    if (direction !== "input" && direction !== "output") {
-      throw new Error(`${label}.${index}.direction must be "input" or "output"`);
-    }
-    const schema = record["schema"];
-    if (schema === undefined) {
-      throw new Error(`${label}.${index}.schema is required`);
-    }
-    assertPayloadSchema(schema, `${label}.${index}.schema`);
-    const key = `${direction}:${id}`;
-    if (seen.has(key)) {
-      throw new Error(`${label} contains duplicate ${direction} stream ${JSON.stringify(id)}`);
-    }
-    seen.add(key);
-    return { id, direction, schema };
-  });
-}
 function validateRetryPolicy(value, label = "retry") {
-  if (value === undefined || value === false) {
+  if (value === undefined) {
     return;
   }
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label} must be false or a retry policy object`);
+    throw new Error(`${label} must be a retry policy object`);
   }
   const record = value;
   for (const key of Object.keys(record)) {
-    if (key !== "maxAttempts" && key !== "backoff") {
+    if (key !== "enabled" && key !== "maxAttempts" && key !== "backoff") {
       throw new Error(`${label}.${key} is not supported`);
     }
+  }
+  if (record["enabled"] === false) {
+    if (record["maxAttempts"] !== undefined || record["backoff"] !== undefined) {
+      throw new Error(`${label} disabled policy must not include retry settings`);
+    }
+    return;
+  }
+  if (record["enabled"] !== undefined && record["enabled"] !== true) {
+    throw new Error(`${label}.enabled must be true or false`);
   }
   if (typeof record["maxAttempts"] !== "number" || !Number.isInteger(record["maxAttempts"]) || record["maxAttempts"] < 1 || record["maxAttempts"] > 10) {
     throw new Error(`${label}.maxAttempts must be an integer between 1 and 10`);
@@ -4202,16 +4180,21 @@ function validateTaskQueue(taskId, value) {
   if (value === undefined) {
     return;
   }
-  if (value.name !== undefined) {
-    validateQueueName(value.name);
+  if (typeof value === "string") {
+    validateQueueName(value);
+    return;
   }
+  if (!isQueueDefinition(value)) {
+    throw new Error(`task ${JSON.stringify(taskId)} queue must use queue(...) or a queue id string`);
+  }
+  validateQueueName(value.id);
   validateOptionalQueueConcurrencyLimit(value.concurrencyLimit);
-  if (value.name === undefined && value.concurrencyLimit === undefined) {
-    throw new Error(`task ${JSON.stringify(taskId)} queue must include name or concurrencyLimit`);
-  }
 }
 function defaultTaskQueueName(taskId) {
   return `task/${taskId}`;
+}
+function isQueueDefinition(value) {
+  return hasBrand(value, queueDefinitionBrand);
 }
 function validateOptionalTTL(value, label = "ttl") {
   if (value === undefined) {
@@ -4284,30 +4267,49 @@ async function parseTaskPayload(task, payload) {
 function isTaskDefinition(value) {
   return hasBrand(value, taskBrand);
 }
+var definitionRegistryKey = Symbol.for("helmr.sdk.DefinitionRegistry");
+function definitionRegistry() {
+  const globalRegistry = globalThis;
+  globalRegistry[definitionRegistryKey] ??= {
+    streamDefinitions: [],
+    queueDefinitions: [],
+    definitionContext: undefined
+  };
+  return globalRegistry[definitionRegistryKey];
+}
+function registerStreamDefinition(value) {
+  const registry2 = definitionRegistry();
+  const originFile = registry2.definitionContext;
+  if (originFile === undefined) {
+    return;
+  }
+  const existing = registry2.streamDefinitions.find((item) => item.originFile === originFile && item.id === value.id && item.direction === value.direction);
+  if (existing) {
+    return;
+  }
+  registry2.streamDefinitions.push({ ...value, originFile });
+}
+function setStreamDefinitionContext(originFile) {
+  definitionRegistry().definitionContext = originFile;
+}
+function clearStreamDefinitionContext() {
+  definitionRegistry().definitionContext = undefined;
+}
+function readStreamDefinitions() {
+  const streams = [...definitionRegistry().streamDefinitions];
+  streams.sort((left, right) => {
+    const byDirection = left.direction.localeCompare(right.direction);
+    return byDirection === 0 ? left.id.localeCompare(right.id) : byDirection;
+  });
+  return streams;
+}
+function readQueueDefinitions() {
+  const queues = [...definitionRegistry().queueDefinitions];
+  queues.sort((left, right) => left.id.localeCompare(right.id));
+  return queues;
+}
 function isConfigDefinition(value) {
   return hasBrand(value, configBrand);
-}
-function captureTaskOrigin() {
-  const stack = new Error().stack ?? "";
-  for (const line of stack.split(`
-`).slice(1)) {
-    const file = stackFrameFile(line);
-    if (file === null || isSdkInternalFrame(file)) {
-      continue;
-    }
-    return file;
-  }
-  return "unknown";
-}
-function stackFrameFile(line) {
-  const match = /\(?((?:file:\/\/)?\/[^():]+):\d+:\d+\)?$/.exec(line.trim());
-  if (!match?.[1]) {
-    return null;
-  }
-  return match[1].startsWith("file://") ? decodeURIComponent(new URL(match[1]).pathname) : match[1];
-}
-function isSdkInternalFrame(file) {
-  return file.includes("/sdk/typescript/src/internal") || file.includes("/sdk/typescript/src/task") || file.includes("/sdk/typescript/src/index") || file.includes("/runtime/typescript/src/");
 }
 function isImageBuilder(value) {
   return hasBrand(value, imageBuilderBrand);
@@ -4337,7 +4339,7 @@ var idempotencyKeys = {
     };
   }
 };
-function taskStartIdempotencyRequestFields(input, ttl) {
+function sessionStartIdempotencyRequestFields(input, ttl) {
   if (input === undefined) {
     return {};
   }
@@ -4449,7 +4451,6 @@ var RUN_EVENT_RECONNECT_DELAY_MS = 1000;
 var RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS = 100;
 var TASK_START_PENDING_MAX_WAIT_MS = 1e4;
 var TASK_START_PENDING_DEFAULT_RETRY_MS = 250;
-var startTaskClientMethod = Symbol.for("helmr.sdk.client.startTask");
 var tokenClientMethod = Symbol.for("helmr.sdk.client.token");
 
 class WorkspaceStreamTerminalError extends Error {
@@ -4503,41 +4504,58 @@ class HelmrClient {
       throw new UnsupportedTransportError(`unsupported HelmrClient transport scheme ${parsedUrl.protocol.replace(/:$/, "")}`);
     }
   }
-  tasks = {
+  sessions = {
     start: async (...args) => {
-      const taskId = args[0];
+      const target = args[0];
       const hasPayload = args.length === 3;
       const payload = hasPayload ? args[1] : undefined;
       const opts = hasPayload ? args[2] : args[1];
-      if (hasPayload && payload === undefined) {
-        throw new Error(`task ${JSON.stringify(taskId)} requires payload`);
+      if (typeof target === "string") {
+        if (hasPayload && payload === undefined) {
+          throw new Error(`task ${JSON.stringify(target)} requires payload`);
+        }
+        return await this.#startSession(target, payload, opts);
       }
-      return await this.#startTask(taskId, payload, opts);
+      if (target.payload !== undefined) {
+        if (payload === undefined) {
+          throw new Error(`task ${JSON.stringify(target.id)} requires payload`);
+        }
+        await parseTaskPayload(target, payload);
+      } else if (hasPayload) {
+        throw new Error(`task ${JSON.stringify(target.id)} does not accept payload`);
+      }
+      return await this.#startSession(target.id, payload, opts, readOptionalMaxDurationSeconds(target.maxDuration));
     },
     startAndWait: async (...args) => {
-      const taskId = args[0];
+      const target = args[0];
       const hasPayload = args.length === 3;
       const payload = hasPayload ? args[1] : undefined;
       const opts = hasPayload ? args[2] : args[1];
-      if (hasPayload && payload === undefined) {
-        throw new Error(`task ${JSON.stringify(taskId)} requires payload`);
+      if (typeof target === "string") {
+        if (hasPayload && payload === undefined) {
+          throw new Error(`task ${JSON.stringify(target)} requires payload`);
+        }
+        return await this.#startSessionAndWait(target, payload, opts);
       }
-      return await this.#startTaskAndWait(taskId, payload, opts);
-    }
-  };
-  sessions = {
+      if (target.payload !== undefined) {
+        if (payload === undefined) {
+          throw new Error(`task ${JSON.stringify(target.id)} requires payload`);
+        }
+        await parseTaskPayload(target, payload);
+      } else if (hasPayload) {
+        throw new Error(`task ${JSON.stringify(target.id)} does not accept payload`);
+      }
+      return await this.#startSessionAndWait(target.id, payload, opts, readOptionalMaxDurationSeconds(target.maxDuration));
+    },
     open: (idOrHandle) => {
       return this.#openSession(sessionId(idOrHandle));
     },
     retrieve: async (idOrHandle, opts = {}) => {
       return await this.#openSession(sessionId(idOrHandle)).retrieve(opts);
     },
-    wait: async (idOrHandle, opts = {}) => {
-      return await this.#openSession(sessionId(idOrHandle)).wait(opts);
-    },
     list: async (opts = {}) => {
-      const response = await this.#json(`${taskSessionCollectionPath(opts)}${taskSessionListQuery(opts)}`, requestSignal(opts.signal));
-      return response.sessions.map(taskSessionFromResponse);
+      const response = await this.#json(`${sessionCollectionPath(opts)}${sessionListQuery(opts)}`, requestSignal(opts.signal));
+      return response.sessions.map(sessionFromResponse);
     }
   };
   workspaces = {
@@ -4607,20 +4625,6 @@ class HelmrClient {
       return publicAccessTokenFromResponse(response);
     }
   };
-  async[startTaskClientMethod](task, ...args) {
-    const hasPayload = task.payload !== undefined;
-    const payload = hasPayload ? args[0] : undefined;
-    const opts = hasPayload ? args[1] : args[0];
-    if (task.payload !== undefined) {
-      if (payload === undefined) {
-        throw new Error(`task ${JSON.stringify(task.id)} requires payload`);
-      }
-      await parseTaskPayload(task, payload);
-    } else if (args.length > 1) {
-      throw new Error(`task ${JSON.stringify(task.id)} does not accept payload`);
-    }
-    return await this.#startTask(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration));
-  }
   async[tokenClientMethod](request) {
     switch (request.operation) {
       case "create": {
@@ -4675,10 +4679,10 @@ class HelmrClient {
       }
     }
   }
-  async#startTask(taskId, payload, opts, maxDurationSeconds) {
+  async#startSession(taskId, payload, opts, maxDurationSeconds) {
     validateRetryPolicy(opts.retry, "retry");
-    const body = taskStartBody(payload, opts, maxDurationSeconds);
-    const path = taskStartPath(taskId, opts, "start");
+    const body = sessionStartBody(taskId, payload, opts, maxDurationSeconds);
+    const path = sessionStartPath(opts, "start");
     const startedAt = Date.now();
     for (;; ) {
       const response = await this.#fetch(path, {
@@ -4689,26 +4693,26 @@ class HelmrClient {
       });
       if (response.status !== 202) {
         const start = await response.json();
-        return taskStartFromResponse(start);
+        return sessionStartFromResponse(start);
       }
       const pendingBody = await response.text();
-      if (!taskStartPendingResponse(pendingBody)) {
+      if (!sessionStartPendingResponse(pendingBody)) {
         throw new HelmrApiError(response.status, pendingBody);
       }
-      const retryDelay = taskStartPendingRetryDelay(response);
+      const retryDelay = sessionStartPendingRetryDelay(response);
       if (Date.now() - startedAt + retryDelay > TASK_START_PENDING_MAX_WAIT_MS) {
         throw new HelmrApiError(response.status, pendingBody);
       }
       await delay(retryDelay, opts.signal);
     }
   }
-  async#startTaskAndWait(taskId, payload, opts, maxDurationSeconds) {
+  async#startSessionAndWait(taskId, payload, opts, maxDurationSeconds) {
     validateRetryPolicy(opts.retry, "retry");
     const body = {
-      ...taskStartBody(payload, opts, maxDurationSeconds),
+      ...sessionStartBody(taskId, payload, opts, maxDurationSeconds),
       ...opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }
     };
-    const path = taskStartPath(taskId, opts, "start-and-wait");
+    const path = sessionStartPath(opts, "start-and-wait");
     const startedAt = Date.now();
     for (;; ) {
       const response = await this.#fetch(path, {
@@ -4718,13 +4722,13 @@ class HelmrClient {
         ...requestSignal(opts.signal)
       });
       if (response.status !== 202) {
-        return taskSessionFromResponse(await response.json());
+        return sessionStartAndWaitFromResponse(await response.json());
       }
       const pendingBody = await response.text();
-      if (!taskStartPendingResponse(pendingBody)) {
+      if (!sessionStartPendingResponse(pendingBody)) {
         throw new HelmrApiError(response.status, pendingBody);
       }
-      const retryDelay = taskStartPendingRetryDelay(response);
+      const retryDelay = sessionStartPendingRetryDelay(response);
       if (Date.now() - startedAt + retryDelay > TASK_START_PENDING_MAX_WAIT_MS) {
         throw new HelmrApiError(response.status, pendingBody);
       }
@@ -4979,46 +4983,37 @@ class HelmrClient {
     return {
       id,
       retrieve: async (opts = {}) => {
-        const response = await this.#json(taskSessionResourcePath(id, opts, ""), requestSignal(opts.signal));
-        return taskSessionFromResponse(response);
-      },
-      wait: async (opts = {}) => {
-        const response = await this.#json(taskSessionResourcePath(id, opts, "/wait"), {
-          method: "POST",
-          body: JSON.stringify(taskSessionWaitBody(opts)),
-          headers: { "content-type": "application/json" },
-          ...requestSignal(opts.signal)
-        });
-        return taskSessionFromResponse(response);
+        const response = await this.#json(sessionResourcePath(id, opts, ""), requestSignal(opts.signal));
+        return sessionFromResponse(response);
       },
       close: async (opts = {}) => {
-        const response = await this.#json(taskSessionResourcePath(id, opts, "/close"), {
+        const response = await this.#json(sessionResourcePath(id, opts, "/close"), {
           method: "POST",
           body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
           headers: { "content-type": "application/json" },
           ...requestSignal(opts.signal)
         });
-        return taskSessionFromResponse(response);
+        return sessionFromResponse(response);
       },
       cancel: async (opts = {}) => {
-        const response = await this.#json(taskSessionResourcePath(id, opts, "/cancel"), {
+        const response = await this.#json(sessionResourcePath(id, opts, "/cancel"), {
           method: "POST",
           body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
           headers: { "content-type": "application/json" },
           ...requestSignal(opts.signal)
         });
-        return taskSessionFromResponse(response);
+        return sessionFromResponse(response);
       },
       runs: async (opts = {}) => {
-        const response = await this.#json(taskSessionResourcePath(id, opts, "/runs"), requestSignal(opts.signal));
-        return response.runs.map(taskSessionRunFromResponse);
+        const response = await this.#json(sessionResourcePath(id, opts, "/runs"), requestSignal(opts.signal));
+        return response.runs.map(sessionRunFromResponse);
       },
       input: (target) => {
         const stream = streamTargetName(target);
         return {
           id: stream,
           send: async (data, opts = {}) => {
-            const path = sessionPublicAccessPath(id, stream, "input", opts) ?? taskSessionResourcePath(id, opts, `/inputs/${encodeURIComponent(stream)}`);
+            const path = sessionPublicAccessPath(id, stream, "input", opts) ?? sessionResourcePath(id, opts, `/inputs/${encodeURIComponent(stream)}`);
             const response = await this.#json(path, {
               method: "POST",
               body: JSON.stringify(streamInputSendBody(data, opts)),
@@ -5044,7 +5039,7 @@ class HelmrClient {
         return {
           id: stream,
           append: async (data, opts = {}) => {
-            const response = await this.#json(taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
+            const response = await this.#json(sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
               method: "POST",
               body: JSON.stringify(streamAppendBody(data, opts)),
               headers: { "content-type": "application/json" },
@@ -5054,7 +5049,7 @@ class HelmrClient {
           },
           pipe: async (source, opts = {}) => {
             for await (const item of source) {
-              const response = await this.#json(taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
+              const response = await this.#json(sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
                 method: "POST",
                 body: JSON.stringify(streamAppendBody(item, opts)),
                 headers: { "content-type": "application/json" },
@@ -5065,7 +5060,7 @@ class HelmrClient {
           },
           writer: (opts = {}) => ({
             write: async (data) => {
-              const response = await this.#json(taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
+              const response = await this.#json(sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
                 method: "POST",
                 body: JSON.stringify(streamAppendBody(data, opts)),
                 headers: { "content-type": "application/json" },
@@ -5076,7 +5071,7 @@ class HelmrClient {
             close: async () => {}
           }),
           read: async (opts = {}) => {
-            const path = sessionPublicAccessPath(id, stream, "output", opts) ?? taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}/read`);
+            const path = sessionPublicAccessPath(id, stream, "output", opts) ?? sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}/read`);
             const response = await this.#json(`${path}${sessionStreamQuery(opts)}`, opts.publicAccessToken === undefined ? requestSignal(opts.signal) : {
               headers: { authorization: `Bearer ${opts.publicAccessToken}` },
               ...requestSignal(opts.signal)
@@ -5091,7 +5086,7 @@ class HelmrClient {
     };
   }
   async#listSessionStreamRecords(sessionID, stream, direction, opts) {
-    const response = await this.#json(`${taskSessionResourcePath(sessionID, opts, `/${direction === "input" ? "inputs" : "outputs"}/${encodeURIComponent(stream)}`)}${sessionStreamQuery(opts)}`, requestSignal(opts.signal));
+    const response = await this.#json(`${sessionResourcePath(sessionID, opts, `/${direction === "input" ? "inputs" : "outputs"}/${encodeURIComponent(stream)}`)}${sessionStreamQuery(opts)}`, requestSignal(opts.signal));
     return response.records.map(streamRecordFromResponse);
   }
   runs = {
@@ -5189,7 +5184,8 @@ class HelmrClient {
       const response = await this.#json("/api/schedules", {
         method: "POST",
         body: JSON.stringify(scheduleCreateBody(opts)),
-        headers: { "content-type": "application/json" }
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal)
       });
       return scheduleFromResponse(response);
     },
@@ -5197,8 +5193,8 @@ class HelmrClient {
       const response = await this.#json("/api/schedules", requestSignal(opts.signal));
       return response.schedules.map(scheduleFromResponse);
     },
-    update: async (id, opts) => {
-      const response = await this.#json(`/api/schedules/${encodeURIComponent(id)}`, {
+    update: async (idOrSchedule, opts) => {
+      const response = await this.#json(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}`, {
         method: "PUT",
         body: JSON.stringify(scheduleCreateBody(opts)),
         headers: { "content-type": "application/json" },
@@ -5206,23 +5202,23 @@ class HelmrClient {
       });
       return scheduleFromResponse(response);
     },
-    retrieve: async (id, opts = {}) => {
-      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(id)}`, requestSignal(opts.signal)));
+    retrieve: async (idOrSchedule, opts = {}) => {
+      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}`, requestSignal(opts.signal)));
     },
-    activate: async (id, opts = {}) => {
-      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(id)}/activate`, {
+    activate: async (idOrSchedule, opts = {}) => {
+      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}/activate`, {
         method: "POST",
         ...requestSignal(opts.signal)
       }));
     },
-    deactivate: async (id, opts = {}) => {
-      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(id)}/deactivate`, {
+    deactivate: async (idOrSchedule, opts = {}) => {
+      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}/deactivate`, {
         method: "POST",
         ...requestSignal(opts.signal)
       }));
     },
-    delete: async (id, opts = {}) => {
-      await this.#fetch(`/api/schedules/${encodeURIComponent(id)}`, {
+    delete: async (idOrSchedule, opts = {}) => {
+      await this.#fetch(`/api/schedules/${encodeURIComponent(scheduleId(idOrSchedule))}`, {
         method: "DELETE",
         ...requestSignal(opts.signal)
       });
@@ -5441,14 +5437,22 @@ function runResponseToSnapshot(response) {
     ..."output" in response ? { output: response.output } : {}
   });
 }
-function taskStartFromResponse(response) {
+function sessionStartFromResponse(response) {
   return {
-    session: taskSessionFromResponse(response.session),
+    session: sessionFromResponse(response.session),
     run: runHandle(response.run.id, response.run.task_id),
     isCached: response.is_cached ?? false
   };
 }
-function taskSessionFromResponse(response) {
+function sessionStartAndWaitFromResponse(response) {
+  return {
+    session: sessionFromResponse(response.session),
+    run: runResponseToSnapshot(response.run),
+    isCached: response.is_cached ?? false,
+    timedOut: response.timed_out ?? false
+  };
+}
+function sessionFromResponse(response) {
   return {
     id: response.id,
     projectId: response.project_id,
@@ -5458,6 +5462,8 @@ function taskSessionFromResponse(response) {
     activeDeploymentId: response.active_deployment_id,
     ...response.external_id === undefined || response.external_id === "" ? {} : { externalId: response.external_id },
     status: response.status,
+    activity: response.activity,
+    canClose: response.can_close ?? false,
     currentRunId: response.current_run_id ?? null,
     workspaceId: response.workspace_id ?? null,
     metadata: response.metadata ?? {},
@@ -5467,11 +5473,12 @@ function taskSessionFromResponse(response) {
     timedOut: response.timed_out ?? false,
     ..."terminal_reason" in response ? { terminalReason: response.terminal_reason } : {},
     expiresAt: response.expires_at ?? null,
+    expiredAt: response.expired_at ?? null,
     createdAt: response.created_at,
     updatedAt: response.updated_at
   };
 }
-function taskSessionRunFromResponse(response) {
+function sessionRunFromResponse(response) {
   return {
     id: response.id,
     runId: response.run_id,
@@ -5505,8 +5512,11 @@ function appendStreamRecordFromResponse(response) {
 function sessionId(idOrHandle) {
   return typeof idOrHandle === "string" ? idOrHandle : idOrHandle.id;
 }
-function taskStartBody(payload, opts, maxDurationSeconds) {
-  const runOptions = {
+function sessionStartBody(taskId, payload, opts, maxDurationSeconds) {
+  return {
+    task_id: taskId,
+    ...payload === undefined ? {} : { payload },
+    ...opts.externalId === undefined ? {} : { external_id: opts.externalId },
     ...opts.queue === undefined ? {} : { queue: { name: opts.queue } },
     ...opts.concurrencyKey === undefined ? {} : { concurrency_key: opts.concurrencyKey },
     ...opts.priority === undefined ? {} : { priority: opts.priority },
@@ -5517,28 +5527,18 @@ function taskStartBody(payload, opts, maxDurationSeconds) {
     ...opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") },
     ...opts.workspaceId === undefined ? {} : { workspace_id: opts.workspaceId },
     ...maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds },
-    ...taskStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL)
-  };
-  return {
-    ...payload === undefined ? {} : { payload },
-    ...opts.externalId === undefined ? {} : { external_id: opts.externalId },
-    ...Object.keys(runOptions).length === 0 ? {} : { options: runOptions }
+    ...sessionStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL)
   };
 }
-function taskStartPath(taskId, opts, operation) {
-  const encodedTaskId = encodeURIComponent(taskId);
+function sessionStartPath(opts, operation) {
   if (opts.projectId !== undefined || opts.environmentId !== undefined) {
     if (opts.projectId === undefined || opts.environmentId === undefined) {
       throw new Error("projectId and environmentId must be provided together");
     }
-    return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/tasks/${encodedTaskId}/${operation}`;
+    const base = `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/sessions`;
+    return operation === "start" ? base : `${base}/start-and-wait`;
   }
-  return `/api/tasks/${encodedTaskId}/${operation}`;
-}
-function taskSessionWaitBody(opts) {
-  return {
-    ...opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }
-  };
+  return operation === "start" ? "/api/sessions" : "/api/sessions/start-and-wait";
 }
 function streamInputSendBody(data, opts) {
   return {
@@ -5553,7 +5553,7 @@ function streamAppendBody(data, opts) {
     ...opts.contentType === undefined ? {} : { content_type: opts.contentType }
   };
 }
-function taskSessionListQuery(opts) {
+function sessionListQuery(opts) {
   const query = new URLSearchParams;
   if (opts.status !== undefined)
     query.set("status", opts.status);
@@ -5563,7 +5563,7 @@ function taskSessionListQuery(opts) {
     query.set("limit", String(opts.limit));
   return query.size === 0 ? "" : `?${query}`;
 }
-function taskSessionCollectionPath(opts) {
+function sessionCollectionPath(opts) {
   if (opts.projectId !== undefined || opts.environmentId !== undefined) {
     if (opts.projectId === undefined || opts.environmentId === undefined) {
       throw new Error("projectId and environmentId must be provided together");
@@ -5572,8 +5572,8 @@ function taskSessionCollectionPath(opts) {
   }
   return "/api/sessions";
 }
-function taskSessionResourcePath(id, opts, suffix) {
-  return `${taskSessionCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`;
+function sessionResourcePath(id, opts, suffix) {
+  return `${sessionCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`;
 }
 function sessionPublicAccessPath(sessionID, stream, direction, opts) {
   if (opts.publicAccessToken === undefined) {
@@ -5643,12 +5643,24 @@ function publicAccessTokenCreateBody(opts) {
     scope: {
       type: opts.scope.type,
       session_id: sessionId(opts.scope.sessionId),
-      stream: validateStreamName(opts.scope.stream),
+      stream: publicAccessTokenStreamName(opts.scope),
       ...opts.scope.correlationId === undefined ? {} : { correlation_id: opts.scope.correlationId }
     },
     ...opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") },
     ...opts.maxUses === undefined ? {} : { max_uses: opts.maxUses }
   };
+}
+function publicAccessTokenStreamName(scope) {
+  if (typeof scope.stream === "string") {
+    return streamTargetName(scope.stream);
+  }
+  if (scope.type === "session.input.send" && scope.stream.direction !== "input") {
+    throw new Error("session.input.send public token scope requires an input stream");
+  }
+  if (scope.type === "session.output.read" && scope.stream.direction !== "output") {
+    throw new Error("session.output.read public token scope requires an output stream");
+  }
+  return streamTargetName(scope.stream);
 }
 function publicAccessTokenFromResponse(response) {
   return {
@@ -5945,6 +5957,9 @@ function scheduleFromResponse(response) {
     updatedAt: response.updated_at
   };
 }
+function scheduleId(idOrSchedule) {
+  return typeof idOrSchedule === "string" ? idOrSchedule : idOrSchedule.id;
+}
 function tokenCreateBody(opts) {
   return {
     ...opts.timeout === undefined ? {} : { timeout: opts.timeout },
@@ -6068,7 +6083,7 @@ function delay(ms, signal) {
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
-function taskStartPendingRetryDelay(response) {
+function sessionStartPendingRetryDelay(response) {
   const retryAfter = response.headers.get("retry-after");
   if (retryAfter === null) {
     return TASK_START_PENDING_DEFAULT_RETRY_MS;
@@ -6090,7 +6105,7 @@ function taskStartPendingRetryDelay(response) {
   }
   return TASK_START_PENDING_DEFAULT_RETRY_MS;
 }
-function taskStartPendingResponse(body) {
+function sessionStartPendingResponse(body) {
   try {
     const decoded = JSON.parse(body);
     return decoded.code === "idempotency_pending";
@@ -6541,16 +6556,6 @@ function decodeBase64Text(value) {
   return new TextDecoder().decode(bytes);
 }
 
-// sdk/typescript/src/start.ts
-var defaultClient;
-function getDefaultClient() {
-  defaultClient ??= new HelmrClient;
-  return defaultClient;
-}
-function startTask(task, ...args) {
-  return getDefaultClient()[startTaskClientMethod](task, ...args);
-}
-
 // sdk/typescript/src/schedules.ts
 function task(config) {
   const { cron, ...taskConfig } = config;
@@ -6559,9 +6564,6 @@ function task(config) {
     ...typeof cron === "string" || cron.timezone === undefined ? {} : { timezone: cron.timezone }
   };
   const marked = markScheduledTask({ ...taskConfig, payload: scheduledTaskPayloadSchema }, schedule);
-  Object.defineProperty(marked, "start", {
-    value: (...args) => startTask(marked, ...args)
-  });
   return marked;
 }
 var scheduledTaskPayloadSchema = {
@@ -6576,7 +6578,7 @@ var scheduledTaskPayloadSchema = {
       const timestamp = parseDateField(input["timestamp"], "timestamp");
       const lastTimestamp = parseOptionalDateField(input["lastTimestamp"], "lastTimestamp");
       const timezone = input["timezone"];
-      const scheduleId = input["scheduleId"];
+      const scheduleId2 = input["scheduleId"];
       const scheduleType = input["scheduleType"];
       const externalId = input["externalId"];
       const upcoming = input["upcoming"];
@@ -6584,7 +6586,7 @@ var scheduledTaskPayloadSchema = {
         ...timestamp.issues,
         ...lastTimestamp.issues,
         ...typeof timezone === "string" && timezone.trim() !== "" ? [] : [{ message: "expected string", path: ["timezone"] }],
-        ...typeof scheduleId === "string" && scheduleId.trim() !== "" ? [] : [{ message: "expected string", path: ["scheduleId"] }],
+        ...typeof scheduleId2 === "string" && scheduleId2.trim() !== "" ? [] : [{ message: "expected string", path: ["scheduleId"] }],
         ...scheduleType === "declarative" || scheduleType === "imperative" ? [] : [{ message: "expected declarative or imperative", path: ["scheduleType"] }],
         ...externalId === undefined || typeof externalId === "string" ? [] : [{ message: "expected string", path: ["externalId"] }],
         ...Array.isArray(upcoming) ? [] : [{ message: "expected array", path: ["upcoming"] }]
@@ -6599,7 +6601,7 @@ var scheduledTaskPayloadSchema = {
           timestamp: timestamp.value,
           ...lastTimestamp.value === undefined ? {} : { lastTimestamp: lastTimestamp.value },
           timezone,
-          scheduleId,
+          scheduleId: scheduleId2,
           scheduleType,
           ...externalId === undefined ? {} : { externalId },
           upcoming: upcomingDates.map((item) => item.value)
@@ -6624,22 +6626,43 @@ function parseOptionalDateField(value, path) {
   }
   return parseDateField(value, path);
 }
+
+// sdk/typescript/src/start.ts
+var defaultClient;
+function getDefaultClient() {
+  defaultClient ??= new HelmrClient;
+  return defaultClient;
+}
+function defaultClientNamespace(key) {
+  return new Proxy({}, {
+    get(_target, property, receiver) {
+      return Reflect.get(getDefaultClient()[key], property, receiver);
+    }
+  });
+}
+var sessions = defaultClientNamespace("sessions");
 // sdk/typescript/src/index.ts
-var runs = new Proxy({}, {
-  get(_target, property, receiver) {
-    return Reflect.get(getDefaultClient().runs, property, receiver);
-  }
-});
+var runs = defaultClientNamespace("runs");
+var workspaces = defaultClientNamespace("workspaces");
+var auth = defaultClientNamespace("auth");
 var streams = Object.freeze({
   input: createInputStream,
   output: createOutputStream
 });
-var tokens = Object.freeze({
+var runtimeTokens = {
   async create(opts = {}) {
     const token = runRuntimeIsActive() ? await getRunRuntime().createToken(normalizeRuntimeTokenCreateOptions(opts)) : await getDefaultClient().tokens.create(normalizeTokenCreateOptions(opts));
     return tokenHandle(token);
   },
   wait: tokenWaitHandle
+};
+var tokens = new Proxy({}, {
+  get(_target, property, receiver) {
+    if (Object.prototype.hasOwnProperty.call(runtimeTokens, property)) {
+      return Reflect.get(runtimeTokens, property, receiver);
+    }
+    return Reflect.get(getDefaultClient().tokens, property, receiver);
+  }
 });
 var timers = Object.freeze({
   waitFor(input) {
@@ -6671,21 +6694,31 @@ var logger = Object.freeze({
     getRunRuntime().log("error", values);
   }
 });
-var schedules = Object.freeze({
-  task,
-  create: (...args) => getDefaultClient().schedules.create(...args),
-  update: (...args) => getDefaultClient().schedules.update(...args),
-  list: (...args) => getDefaultClient().schedules.list(...args),
-  retrieve: (...args) => getDefaultClient().schedules.retrieve(...args),
-  activate: (...args) => getDefaultClient().schedules.activate(...args),
-  deactivate: (...args) => getDefaultClient().schedules.deactivate(...args),
-  delete: (...args) => getDefaultClient().schedules.delete(...args)
+var schedules = new Proxy({}, {
+  get(_target, property, receiver) {
+    if (property === "task") {
+      return task;
+    }
+    return Reflect.get(getDefaultClient().schedules, property, receiver);
+  }
 });
 function createInputStream(id, opts) {
-  return inputStreamHandle(validateStreamName(id), opts?.schema);
+  const name = validateStreamName(id);
+  registerStreamDefinition({
+    id: name,
+    direction: "input",
+    ...opts?.schema === undefined ? {} : { schema: opts.schema }
+  });
+  return inputStreamHandle(name, opts?.schema);
 }
 function createOutputStream(id, opts) {
-  return outputStreamHandle(validateStreamName(id), opts?.schema);
+  const name = validateStreamName(id);
+  registerStreamDefinition({
+    id: name,
+    direction: "output",
+    ...opts?.schema === undefined ? {} : { schema: opts.schema }
+  });
+  return outputStreamHandle(name, opts?.schema);
 }
 function inputStreamHandle(id, schema) {
   const wait = (opts = {}) => {
@@ -6889,13 +6922,11 @@ function compile(opts) {
       exportName: opts.exportName ?? "default",
       maxDurationSeconds,
       queue: create(QueueSpecSchema, {
-        name: task3.queue?.name ?? defaultTaskQueueName(task3.id),
-        ...task3.queue?.concurrencyLimit === undefined || task3.queue.concurrencyLimit === null ? {} : { concurrencyLimit: task3.queue.concurrencyLimit }
+        name: taskQueueName(task3)
       }),
       ...task3.ttl === undefined ? {} : { ttl: task3.ttl },
-      retryPolicyJson: JSON.stringify(task3.retry ?? false),
+      retryPolicyJson: JSON.stringify(task3.retry ?? { enabled: false }),
       schedules: compileTaskSchedules(task3.schedule),
-      streams: compileTaskStreams(readStreamDefinitions(task3.streams, `task ${JSON.stringify(task3.id)} streams`)),
       secrets: Object.entries(readSecretDecls(task3.secrets)).map(([name, placement]) => create(SecretPlacementSchema, {
         name,
         placement: compilePlacement(placement)
@@ -6903,18 +6934,89 @@ function compile(opts) {
     })
   });
 }
-function compileTaskStreams(streams2) {
-  return streams2.map((stream) => {
-    const schemaMetadata = streamSchemaMetadata(stream);
-    return create(StreamSpecSchema, {
+function compileQueueCatalog(tasks, queues) {
+  const catalog = new Map;
+  const defined = new Set;
+  for (const queue2 of queues) {
+    defined.add(queue2.id);
+    addQueueCatalogItem(catalog, {
+      name: queue2.id,
+      ...queue2.concurrencyLimit === undefined || queue2.concurrencyLimit === null ? {} : { concurrencyLimit: queue2.concurrencyLimit }
+    });
+  }
+  for (const task3 of tasks) {
+    const taskQueue = task3.queue;
+    if (typeof taskQueue === "object" && taskQueue !== null) {
+      defined.add(taskQueue.id);
+      addQueueCatalogItem(catalog, {
+        name: taskQueue.id,
+        ...taskQueue.concurrencyLimit === undefined || taskQueue.concurrencyLimit === null ? {} : { concurrencyLimit: taskQueue.concurrencyLimit }
+      });
+      continue;
+    }
+    if (typeof taskQueue === "string") {
+      if (!defined.has(taskQueue)) {
+        throw new Error(`task ${JSON.stringify(task3.id)} references undefined queue ${JSON.stringify(taskQueue)}`);
+      }
+      continue;
+    }
+    addQueueCatalogItem(catalog, { name: defaultTaskQueueName(task3.id) });
+  }
+  return [...catalog.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+function addQueueCatalogItem(catalog, item) {
+  const existing = catalog.get(item.name);
+  if (existing === undefined) {
+    catalog.set(item.name, item);
+    return;
+  }
+  if (existing.concurrencyLimit !== item.concurrencyLimit) {
+    throw new Error(`queue ${JSON.stringify(item.name)} has conflicting deployment catalog settings`);
+  }
+}
+function taskQueueName(task3) {
+  if (typeof task3.queue === "string") {
+    return task3.queue;
+  }
+  if (task3.queue !== undefined) {
+    return task3.queue.id;
+  }
+  return defaultTaskQueueName(task3.id);
+}
+function compileStreamCatalog(streams2) {
+  const catalog = new Map;
+  for (const stream of streams2) {
+    const schemaMetadata = stream.schema === undefined ? null : streamSchemaMetadata(stream);
+    const item = {
       name: stream.id,
       direction: stream.direction,
-      schemaFingerprint: streamSchemaFingerprint(schemaMetadata),
+      schemaFingerprint: schemaMetadata === null ? "" : streamSchemaFingerprint(schemaMetadata),
       schemaJson: JSON.stringify(schemaMetadata)
-    });
+    };
+    const key = `${item.direction}:${item.name}`;
+    const existing = catalog.get(key);
+    if (existing !== undefined) {
+      if (existing.schemaFingerprint !== item.schemaFingerprint || existing.schemaJson !== item.schemaJson) {
+        throw new Error(`stream ${JSON.stringify(stream.id)} has conflicting deployment catalog schema`);
+      }
+      continue;
+    }
+    catalog.set(key, item);
+  }
+  return [...catalog.values()].sort((left, right) => {
+    const leftKey = `${left.direction}:${left.name}`;
+    const rightKey = `${right.direction}:${right.name}`;
+    if (leftKey < rightKey)
+      return -1;
+    if (leftKey > rightKey)
+      return 1;
+    return 0;
   });
 }
 function streamSchemaMetadata(stream) {
+  if (stream.schema === undefined) {
+    throw new Error(`stream ${JSON.stringify(stream.id)} has no schema`);
+  }
   const standard = stream.schema["~standard"];
   const vendor = typeof standard["vendor"] === "string" && standard["vendor"].trim() !== "" ? standard["vendor"].trim() : "unknown";
   return {
@@ -7357,7 +7459,12 @@ var HARD_IGNORE_PATTERNS = [
 async function loadConfigTaskRefs(cwd) {
   const config = await loadConfig(cwd);
   const taskFiles = await discoverTaskFiles(cwd, config);
-  return collectTaskRefs(cwd, await importDiscoveredTaskModules(taskFiles));
+  const modules = await importDiscoveredTaskModules(taskFiles);
+  return {
+    refs: collectTaskRefs(cwd, modules),
+    streams: readStreamDefinitions().filter((stream) => isInsideProjectRoot(cwd, stream.originFile)),
+    queues: readQueueDefinitions().filter((queue2) => isInsideProjectRoot(cwd, queue2.originFile))
+  };
 }
 async function loadConfig(cwd) {
   const configPath = resolve(cwd, "helmr.config.ts");
@@ -7376,7 +7483,16 @@ async function loadConfig(cwd) {
   return readDefaultConfig(moduleValue);
 }
 async function loadTaskRegistry(cwd) {
-  return buildTaskRegistry(await loadConfigTaskRefs(cwd));
+  return (await loadDeploymentRegistry(cwd)).tasks;
+}
+async function loadDeploymentRegistry(cwd) {
+  const loaded = await loadConfigTaskRefs(cwd);
+  const tasks = buildTaskRegistry(loaded.refs);
+  return {
+    tasks,
+    streams: compileStreamCatalog(loaded.streams),
+    queues: compileQueueCatalog([...tasks.values()].map((item) => item.task), loaded.queues)
+  };
 }
 function buildTaskRegistry(refs) {
   const registry2 = new Map;
@@ -7515,10 +7631,19 @@ function escapeRegExp(value) {
   return /[\\^$.*+?()[\]{}|]/.test(value) ? `\\${value}` : value;
 }
 async function importDiscoveredTaskModules(files) {
-  return Promise.all(files.map(async (file) => ({
-    path: file,
-    exports: await importProjectModule(file, `task module ${file}`)
-  })));
+  const modules = [];
+  for (const file of files) {
+    setStreamDefinitionContext(file);
+    try {
+      modules.push({
+        path: file,
+        exports: await importProjectModule(file, `task module ${file}`)
+      });
+    } finally {
+      clearStreamDefinitionContext();
+    }
+  }
+  return modules;
 }
 async function importProjectModule(path, label) {
   const moduleValue = await import(`${pathToFileURL(path).href}?helmr=${Date.now()}-${mintImportVersion()}`);
@@ -7584,6 +7709,15 @@ function projectRelativePath(cwd, path) {
     }
   }
   return path;
+}
+function isInsideProjectRoot(cwd, path) {
+  if (path === "unknown") {
+    return false;
+  }
+  return equivalentRoots(cwd).some((root) => {
+    const rel = relative(root, path);
+    return rel === "" || !rel.startsWith("..") && !rel.startsWith(`..${sep}`);
+  });
 }
 function equivalentRoots(path) {
   const roots = [path];
@@ -7732,14 +7866,15 @@ async function runAdapterCli(argv = process.argv.slice(2), io = processIo) {
 async function parseCommand(args, io) {
   const cwd = resolve2(requireArg(args, "cwd"));
   const output = args.options["output"] ?? "json";
-  const registry2 = await loadTaskRegistry(cwd);
   switch (output) {
     case "json": {
-      io.stdout.write(`${JSON.stringify(serializeRegistry(registry2))}
+      const registry2 = await loadDeploymentRegistry(cwd);
+      io.stdout.write(`${JSON.stringify(serializeDeploymentRegistry(registry2))}
 `);
       break;
     }
     case "binary": {
+      const registry2 = await loadTaskRegistry(cwd);
       const taskId = requireArg(args, "task");
       const bytes = toBinary(BundleSchema, lookupRegisteredTask(registry2, taskId).bundle);
       io.stdout.write(bytes);
@@ -7826,7 +7961,7 @@ async function runCommand(args, io) {
       run: taskContext.run,
       task: taskContext.task,
       workspace: taskContext.workspace,
-      session: createTaskSessionContext(taskContext.session.id)
+      session: createSessionContext(taskContext.session.id)
     };
     let result;
     const payload = task3.payload === undefined ? undefined : await parseTaskPayload(task3, rawPayload);
@@ -7887,7 +8022,7 @@ function parseTaskContext(json, runId2, taskId) {
     throw new Error(`task context task.id ${JSON.stringify(contextTaskId)} does not match --task ${JSON.stringify(taskId)}`);
   }
   const workspace = parseTaskWorkspace(record["workspace"]);
-  const session = parseTaskSession(record["session"]);
+  const session = parseSession(record["session"]);
   const runRecord = record["run"];
   const run = {
     id: contextRunId,
@@ -7947,7 +8082,7 @@ function parseTaskWorkspace(value) {
     projectPath: readRequiredString(record, "projectPath", "task context workspace.projectPath")
   };
 }
-function parseTaskSession(value) {
+function parseSession(value) {
   if (value === null || typeof value !== "object") {
     throw new Error("task context session is required");
   }
@@ -7963,9 +8098,9 @@ function readRequiredString(record, key, label) {
   }
   return value;
 }
-function serializeRegistry(registry2) {
+function serializeDeploymentRegistry(registry2) {
   return {
-    tasks: Object.fromEntries([...registry2.entries()].sort(([leftId], [rightId]) => compareAscii2(leftId, rightId)).map(([taskId, task3]) => [
+    tasks: Object.fromEntries([...registry2.tasks.entries()].sort(([leftId], [rightId]) => compareAscii2(leftId, rightId)).map(([taskId, task3]) => [
       taskId,
       {
         originFile: task3.originFile,
@@ -7973,7 +8108,17 @@ function serializeRegistry(registry2) {
         exportName: task3.exportName,
         bundle: toJson(BundleSchema, task3.bundle)
       }
-    ]))
+    ])),
+    streams: registry2.streams.map((stream) => ({
+      name: stream.name,
+      direction: stream.direction,
+      ...stream.schemaFingerprint === "" ? {} : { schema_fingerprint: stream.schemaFingerprint },
+      schema_json: JSON.parse(stream.schemaJson)
+    })),
+    queues: registry2.queues.map((queue2) => ({
+      name: queue2.name,
+      ...queue2.concurrencyLimit === undefined ? {} : { concurrency_limit: queue2.concurrencyLimit }
+    }))
   };
 }
 function compareAscii2(left, right) {
@@ -8053,7 +8198,7 @@ class WaitGate {
     }
   }
 }
-function createTaskSessionContext(id) {
+function createSessionContext(id) {
   return Object.freeze({
     id
   });

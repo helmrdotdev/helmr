@@ -171,7 +171,7 @@ func TestProjectRoutesAcceptBearerSession(t *testing.T) {
 	projectID := uuid.Must(uuid.NewV7())
 	store := &projectManagementStore{
 		sessionHash: sessionHash,
-		session: db.GetSessionByTokenHashRow{
+		session: db.GetAuthSessionByTokenHashRow{
 			ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			UserID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -519,7 +519,7 @@ type projectManagementStore struct {
 	failedDeletionJob    db.DeletionJob
 	deleteProjectErr     error
 	sessionHash          []byte
-	session              db.GetSessionByTokenHashRow
+	session              db.GetAuthSessionByTokenHashRow
 	refreshedSession     pgtype.UUID
 }
 
@@ -696,14 +696,14 @@ func (s *projectManagementStore) DeleteEnvironment(_ context.Context, arg db.Del
 	return s.environment, nil
 }
 
-func (s *projectManagementStore) GetSessionByTokenHash(_ context.Context, hash []byte) (db.GetSessionByTokenHashRow, error) {
+func (s *projectManagementStore) GetAuthSessionByTokenHash(_ context.Context, hash []byte) (db.GetAuthSessionByTokenHashRow, error) {
 	if !bytes.Equal(hash, s.sessionHash) {
-		return db.GetSessionByTokenHashRow{}, pgx.ErrNoRows
+		return db.GetAuthSessionByTokenHashRow{}, pgx.ErrNoRows
 	}
 	return s.session, nil
 }
 
-func (s *projectManagementStore) RefreshSession(_ context.Context, arg db.RefreshSessionParams) error {
+func (s *projectManagementStore) RefreshAuthSession(_ context.Context, arg db.RefreshAuthSessionParams) error {
 	if s.session.ID != arg.ID {
 		return pgx.ErrNoRows
 	}

@@ -14,12 +14,12 @@ import (
 func sessionCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "session",
-		Short: "Work with task sessions.",
+		Short: "Work with sessions.",
 	}
 	cmd.AddCommand(
+		sessionStartCommand(),
 		sessionListCommand(),
 		sessionGetCommand(),
-		sessionWaitCommand(),
 		sessionCancelCommand(),
 		sessionStreamCommand(),
 	)
@@ -32,17 +32,17 @@ func sessionListCommand() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List task sessions.",
+		Short: "List sessions.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := taskSessionScopeForClient(control, projectID, environmentID)
+			scope, err := sessionScopeForClient(control, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			response, err := control.ListTaskSessions(cmd.Context(), scope)
+			response, err := control.ListSessions(cmd.Context(), scope)
 			if err != nil {
 				return err
 			}
@@ -50,7 +50,7 @@ func sessionListCommand() *cobra.Command {
 				return format.JSON(cmd.OutOrStdout(), response)
 			}
 			for _, session := range response.Sessions {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", session.ID, session.TaskID, session.Status, session.CurrentRunID)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", session.ID, session.TaskID, session.Status, session.Activity, session.CurrentRunID)
 			}
 			return nil
 		},
@@ -66,7 +66,7 @@ func sessionGetCommand() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "get SESSION",
-		Short: "Show task session details.",
+		Short: "Show session details.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			session, err := loadSession(cmd, args[0], projectID, environmentID)
@@ -85,49 +85,6 @@ func sessionGetCommand() *cobra.Command {
 	return cmd
 }
 
-func sessionWaitCommand() *cobra.Command {
-	var projectID string
-	var environmentID string
-	var timeout string
-	var jsonOutput bool
-	cmd := &cobra.Command{
-		Use:   "wait SESSION",
-		Short: "Wait for a task session to finish.",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
-			if err != nil {
-				return err
-			}
-			scope, err := taskSessionScopeForClient(control, projectID, environmentID)
-			if err != nil {
-				return err
-			}
-			timeoutSeconds, err := waitTimeoutSeconds(timeout, "--timeout")
-			if err != nil {
-				return err
-			}
-			var deadline time.Time
-			if timeoutSeconds > 0 {
-				deadline = time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
-			}
-			session, err := waitTaskSessionUntilTerminal(cmd.Context(), control, args[0], deadline, timeoutSeconds, scope)
-			if err != nil {
-				return err
-			}
-			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), session)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", session.ID, session.Status)
-			return nil
-		},
-	}
-	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().StringVar(&timeout, "timeout", "", "Maximum wait duration, for example 10m or 1h.")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	return cmd
-}
-
 func sessionCancelCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
@@ -135,18 +92,18 @@ func sessionCancelCommand() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "cancel SESSION",
-		Short: "Cancel a task session.",
+		Short: "Cancel a session.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := taskSessionScopeForClient(control, projectID, environmentID)
+			scope, err := sessionScopeForClient(control, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			session, err := control.CancelTaskSession(cmd.Context(), args[0], api.CancelTaskSessionRequest{Reason: strings.TrimSpace(reason)}, scope)
+			session, err := control.CancelSession(cmd.Context(), args[0], api.CancelSessionRequest{Reason: strings.TrimSpace(reason)}, scope)
 			if err != nil {
 				return err
 			}
@@ -179,18 +136,18 @@ func sessionStreamListCommand() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "list SESSION",
-		Short: "List streams for a task session.",
+		Short: "List streams for a session.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := taskSessionScopeForClient(control, projectID, environmentID)
+			scope, err := sessionScopeForClient(control, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			response, err := control.ListTaskSessionStreams(cmd.Context(), args[0], scope)
+			response, err := control.ListSessionStreams(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}
@@ -226,7 +183,7 @@ func sessionStreamInputSendCommand() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "send SESSION STREAM",
-		Short: "Send input to a task session stream.",
+		Short: "Send input to a session stream.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			data := json.RawMessage(strings.TrimSpace(dataJSON))
@@ -237,11 +194,11 @@ func sessionStreamInputSendCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := taskSessionScopeForClient(control, projectID, environmentID)
+			scope, err := sessionScopeForClient(control, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			response, err := control.AppendTaskSessionInput(cmd.Context(), args[0], args[1], api.AppendStreamRecordRequest{
+			response, err := control.AppendSessionInput(cmd.Context(), args[0], args[1], api.AppendStreamRecordRequest{
 				Data:           data,
 				CorrelationID:  strings.TrimSpace(correlationID),
 				IdempotencyKey: strings.TrimSpace(idempotencyKey),
@@ -280,11 +237,11 @@ func sessionStreamInputListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := taskSessionScopeForClient(control, projectID, environmentID)
+			scope, err := sessionScopeForClient(control, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			response, err := control.ListTaskSessionInputs(cmd.Context(), args[0], args[1], cursor, limit, scope)
+			response, err := control.ListSessionInputs(cmd.Context(), args[0], args[1], cursor, limit, scope)
 			if err != nil {
 				return err
 			}
@@ -322,11 +279,11 @@ func sessionStreamOutputListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := taskSessionScopeForClient(control, projectID, environmentID)
+			scope, err := sessionScopeForClient(control, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			response, err := control.ListTaskSessionOutputs(cmd.Context(), args[0], args[1], cursor, limit, scope)
+			response, err := control.ListSessionOutputs(cmd.Context(), args[0], args[1], cursor, limit, scope)
 			if err != nil {
 				return err
 			}
@@ -343,33 +300,25 @@ func sessionStreamOutputListCommand() *cobra.Command {
 	return cmd
 }
 
-func loadSession(cmd *cobra.Command, sessionID string, projectID string, environmentID string) (api.TaskSessionResponse, error) {
+func loadSession(cmd *cobra.Command, sessionID string, projectID string, environmentID string) (api.SessionResponse, error) {
 	control, err := controlClient(cmd)
 	if err != nil {
-		return api.TaskSessionResponse{}, err
+		return api.SessionResponse{}, err
 	}
-	scope, err := taskSessionScopeForClient(control, projectID, environmentID)
+	scope, err := sessionScopeForClient(control, projectID, environmentID)
 	if err != nil {
-		return api.TaskSessionResponse{}, err
+		return api.SessionResponse{}, err
 	}
-	return control.GetTaskSession(cmd.Context(), sessionID, scope)
+	return control.GetSession(cmd.Context(), sessionID, scope)
 }
 
-func writeSessionSummary(cmd *cobra.Command, session api.TaskSessionResponse) {
+func writeSessionSummary(cmd *cobra.Command, session api.SessionResponse) {
 	fmt.Fprintf(cmd.OutOrStdout(), "Session:   %s\n", session.ID)
 	fmt.Fprintf(cmd.OutOrStdout(), "Task:      %s\n", session.TaskID)
 	fmt.Fprintf(cmd.OutOrStdout(), "Status:    %s\n", session.Status)
+	fmt.Fprintf(cmd.OutOrStdout(), "Activity:  %s\n", session.Activity)
 	fmt.Fprintf(cmd.OutOrStdout(), "Run:       %s\n", session.CurrentRunID)
 	fmt.Fprintf(cmd.OutOrStdout(), "Workspace: %s\n", session.WorkspaceID)
-}
-
-func taskSessionStatusTerminal(status string) bool {
-	switch strings.TrimSpace(status) {
-	case "completed", "failed", "closed", "cancelled", "expired":
-		return true
-	default:
-		return false
-	}
 }
 
 func addScopeFlags(cmd *cobra.Command, projectID *string, environmentID *string) {

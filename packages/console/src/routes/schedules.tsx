@@ -319,7 +319,7 @@ export function Schedules() {
         <div>
           <h1 class={ui.h1}>Schedules</h1>
           <p class={ui.pageSubtitle}>
-            Cron schedules that start task sessions in the selected environment.
+            Cron schedules that start sessions in the selected environment.
           </p>
         </div>
         <button

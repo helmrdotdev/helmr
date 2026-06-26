@@ -12,7 +12,6 @@ import {
   validateTaskId,
 } from "./schema/task"
 import type { IdempotencyKeyInput } from "./idempotency"
-import type { TaskStartResult } from "./runtime/client"
 
 export { parsePayloadWithSchema } from "./schema/payload"
 
@@ -142,13 +141,13 @@ export interface TokenRef {
 export interface OutputStreamDefinition<TPayload = unknown, TInput = TPayload> {
   readonly id: string
   readonly direction: "output"
-  readonly schema: PayloadSchema<TInput, TPayload>
+  readonly schema?: PayloadSchema<TInput, TPayload>
 }
 
 export interface InputStreamDefinition<TPayload = unknown, TInput = TPayload> {
   readonly id: string
   readonly direction: "input"
-  readonly schema: PayloadSchema<TInput, TPayload>
+  readonly schema?: PayloadSchema<TInput, TPayload>
 }
 
 export type StreamDefinition =
@@ -158,7 +157,14 @@ export type StreamDefinition =
 export interface InternalStreamDefinition {
   readonly id: string
   readonly direction: "input" | "output"
-  readonly schema: PayloadSchema<any, any>
+  readonly schema?: PayloadSchema<any, any>
+  readonly originFile: string
+}
+
+export interface InternalQueueDefinition {
+  readonly id: string
+  readonly concurrencyLimit?: number | null
+  readonly originFile: string
 }
 
 export interface InputStreamWaitOptions extends WaitOptions {
@@ -459,10 +465,10 @@ export interface TaskContext {
   }
   readonly task: { readonly id: string }
   readonly workspace: TaskWorkspace
-  readonly session: TaskSessionContext
+  readonly session: SessionContext
 }
 
-export interface TaskSessionContext {
+export interface SessionContext {
   readonly id: string
 }
 
@@ -480,15 +486,19 @@ export interface TaskConfigBase<
   readonly id: string
   readonly sandbox: SandboxBuilder
   readonly maxDuration?: number
-  readonly queue?: TaskQueueConfig
+  readonly queue?: QueueDefinition | string
   readonly ttl?: string
   readonly retry?: RetryPolicy
   readonly secrets?: TSecrets
-  readonly streams?: readonly StreamDefinition[]
 }
 
-export interface TaskQueueConfig {
-  readonly name?: string
+export interface QueueConfig {
+  readonly id: string
+  readonly concurrencyLimit?: number | null
+}
+
+export interface QueueDefinition {
+  readonly id: string
   readonly concurrencyLimit?: number | null
 }
 
@@ -515,8 +525,8 @@ export type TaskRunOptions<TSecrets extends SecretDecls> = {
 }
 
 export type RetryPolicy =
-  | false
   | {
+      readonly enabled?: true
       readonly maxAttempts: number
       readonly backoff?: {
         readonly minMs?: number
@@ -525,14 +535,7 @@ export type RetryPolicy =
         readonly jitter?: "none" | "full"
       }
     }
-
-export type TaskDirectStart<
-  TPayloadInput,
-  TOutput,
-  TSecrets extends SecretDecls,
-> = [TPayloadInput] extends [NoPayload]
-  ? (opts: TaskRunOptions<TSecrets>) => Promise<TaskStartResult<Awaited<TOutput>>>
-  : (payload: TPayloadInput, opts: TaskRunOptions<TSecrets>) => Promise<TaskStartResult<Awaited<TOutput>>>
+  | { readonly enabled: false }
 
 export type TaskConfigWithPayload<
   TPayloadSchema extends PayloadSchema<any, any>,
@@ -577,7 +580,6 @@ export type Task<
   readonly run: [TPayloadInput] extends [NoPayload]
     ? (ctx: TaskContext) => MaybePromise<TOutput>
     : (payload: TPayload, ctx: TaskContext) => MaybePromise<TOutput>
-  readonly start: TaskDirectStart<TPayloadInput, TOutput, TSecrets>
 }
 export type AnyTask = TaskConfigBase<SecretDecls> & {
   readonly schedule?: InternalTaskScheduleConfig
@@ -589,14 +591,13 @@ export type AnyTask = TaskConfigBase<SecretDecls> & {
   }
   readonly payload?: PayloadSchema<any, any>
   readonly run: (...args: any[]) => MaybePromise<any>
-  readonly start: (...args: any[]) => Promise<TaskStartResult<any>>
 }
 
 export type TaskPayload<TTask> =
   TTask extends { readonly "~types"?: { readonly payload: infer TPayload } }
     ? [TPayload] extends [NoPayload] ? never : TPayload
     : never
-export type TaskStartPayload<TTask> =
+export type SessionStartPayload<TTask> =
   TTask extends { readonly "~types"?: { readonly payloadInput: infer TPayloadInput } } ? TPayloadInput : never
 export type TaskOutput<TTask> =
   TTask extends { readonly "~types"?: { readonly output: infer TOutput } } ? Awaited<TOutput> : never
@@ -604,7 +605,6 @@ export type TaskSecrets<TTask> =
   TTask extends { readonly "~types"?: { readonly secrets: infer TSecrets } } ? TSecrets : never
 
 export const taskBrand = Symbol.for("helmr.sdk.Task")
-export const taskOriginBrand = Symbol.for("helmr.sdk.TaskOrigin")
 export const configBrand = Symbol.for("helmr.sdk.Config")
 
 export type ImageCopyInput = SourceFileRef | SourceDirRef | ImageBuilder
@@ -672,6 +672,7 @@ const imageBuilderBrand = Symbol.for("helmr.sdk.ImageBuilder")
 const sandboxBuilderBrand = Symbol.for("helmr.sdk.SandboxBuilder")
 const sourceFileRefBrand = Symbol.for("helmr.sdk.SourceFileRef")
 const sourceDirRefBrand = Symbol.for("helmr.sdk.SourceDirRef")
+const queueDefinitionBrand = Symbol.for("helmr.sdk.QueueDefinition")
 
 export type MarkedTask<
   TPayload,
@@ -724,7 +725,9 @@ function markTaskInternal<
   validateOptionalTTL(config.ttl, `task ${JSON.stringify(config.id)} ttl`)
   validateRetryPolicy(config.retry, `task ${JSON.stringify(config.id)} retry`)
   assertPayloadSchema(config.payload, `task ${JSON.stringify(config.id)} payload`)
-  readStreamDefinitions(config.streams, `task ${JSON.stringify(config.id)} streams`)
+  if (Object.prototype.hasOwnProperty.call(config, "streams")) {
+    throw new Error("task streams are defined with the module-level streams primitive, not task config")
+  }
   if (schedule !== undefined) {
     Object.defineProperty(config, "schedule", {
       value: Object.freeze({ ...schedule }),
@@ -732,54 +735,30 @@ function markTaskInternal<
     })
   }
   Object.defineProperty(config, taskBrand, { value: true })
-  Object.defineProperty(config, taskOriginBrand, { value: captureTaskOrigin() })
   return config as unknown as MarkedTask<TPayload, TOutput, TSecrets, TPayloadSchema>
 }
 
-export function readStreamDefinitions(value: unknown, label = "streams"): readonly InternalStreamDefinition[] {
-  if (value === undefined) {
-    return []
-  }
-  if (!Array.isArray(value)) {
-    throw new Error(`${label} must be an array`)
-  }
-  const seen = new Set<string>()
-  return value.map((item, index) => {
-    if (item === null || typeof item !== "object" || Array.isArray(item)) {
-      throw new Error(`${label}.${index} must be a stream definition`)
-    }
-    const record = item as Record<string, unknown>
-    const id = validateStreamName(record["id"] as string, `${label}.${index}.id`)
-    const direction = record["direction"]
-    if (direction !== "input" && direction !== "output") {
-      throw new Error(`${label}.${index}.direction must be "input" or "output"`)
-    }
-    const schema = record["schema"]
-    if (schema === undefined) {
-      throw new Error(`${label}.${index}.schema is required`)
-    }
-    assertPayloadSchema(schema, `${label}.${index}.schema`)
-    const key = `${direction}:${id}`
-    if (seen.has(key)) {
-      throw new Error(`${label} contains duplicate ${direction} stream ${JSON.stringify(id)}`)
-    }
-    seen.add(key)
-    return { id, direction, schema }
-  })
-}
-
 export function validateRetryPolicy(value: unknown, label = "retry"): void {
-  if (value === undefined || value === false) {
+  if (value === undefined) {
     return
   }
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label} must be false or a retry policy object`)
+    throw new Error(`${label} must be a retry policy object`)
   }
   const record = value as Record<string, unknown>
   for (const key of Object.keys(record)) {
-    if (key !== "maxAttempts" && key !== "backoff") {
+    if (key !== "enabled" && key !== "maxAttempts" && key !== "backoff") {
       throw new Error(`${label}.${key} is not supported`)
     }
+  }
+  if (record["enabled"] === false) {
+    if (record["maxAttempts"] !== undefined || record["backoff"] !== undefined) {
+      throw new Error(`${label} disabled policy must not include retry settings`)
+    }
+    return
+  }
+  if (record["enabled"] !== undefined && record["enabled"] !== true) {
+    throw new Error(`${label}.enabled must be true or false`)
   }
   if (
     typeof record["maxAttempts"] !== "number" ||
@@ -835,21 +814,42 @@ export function validateTaskSchedule(taskId: string, value: InternalTaskSchedule
   }
 }
 
-export function validateTaskQueue(taskId: string, value: TaskQueueConfig | undefined): void {
+export function validateTaskQueue(taskId: string, value: QueueDefinition | string | undefined): void {
   if (value === undefined) {
     return
   }
-  if (value.name !== undefined) {
-    validateQueueName(value.name)
+  if (typeof value === "string") {
+    validateQueueName(value)
+    return
   }
+  if (!isQueueDefinition(value)) {
+    throw new Error(`task ${JSON.stringify(taskId)} queue must use queue(...) or a queue id string`)
+  }
+  validateQueueName(value.id)
   validateOptionalQueueConcurrencyLimit(value.concurrencyLimit)
-  if (value.name === undefined && value.concurrencyLimit === undefined) {
-    throw new Error(`task ${JSON.stringify(taskId)} queue must include name or concurrencyLimit`)
-  }
 }
 
 export function defaultTaskQueueName(taskId: string): string {
   return `task/${taskId}`
+}
+
+export function markQueueDefinition(config: QueueConfig): QueueDefinition {
+  validateQueueName(config.id)
+  validateOptionalQueueConcurrencyLimit(config.concurrencyLimit)
+  const marked = {
+    id: config.id,
+    ...(config.concurrencyLimit === undefined ? {} : { concurrencyLimit: config.concurrencyLimit }),
+  }
+  Object.defineProperty(marked, queueDefinitionBrand, { value: true })
+  registerQueueDefinition({
+    id: marked.id,
+    ...(marked.concurrencyLimit === undefined ? {} : { concurrencyLimit: marked.concurrencyLimit }),
+  })
+  return Object.freeze(marked)
+}
+
+export function isQueueDefinition(value: unknown): value is QueueDefinition {
+  return hasBrand(value, queueDefinitionBrand)
 }
 
 export function validateOptionalTTL(value: unknown, label = "ttl"): void {
@@ -933,12 +933,81 @@ export function isTaskDefinition(
   return hasBrand(value, taskBrand)
 }
 
-export function taskOriginFile(value: unknown): string | null {
-  if (!isTaskDefinition(value)) {
-    return null
+interface DefinitionRegistry {
+  streamDefinitions: InternalStreamDefinition[]
+  queueDefinitions: InternalQueueDefinition[]
+  definitionContext: string | undefined
+}
+
+const definitionRegistryKey = Symbol.for("helmr.sdk.DefinitionRegistry")
+
+function definitionRegistry(): DefinitionRegistry {
+  const globalRegistry = globalThis as unknown as Record<symbol, DefinitionRegistry | undefined>
+  globalRegistry[definitionRegistryKey] ??= {
+    streamDefinitions: [],
+    queueDefinitions: [],
+    definitionContext: undefined,
   }
-  const origin = (value as unknown as Record<PropertyKey, unknown>)[taskOriginBrand]
-  return typeof origin === "string" && origin.length > 0 ? origin : null
+  return globalRegistry[definitionRegistryKey]
+}
+
+export function registerStreamDefinition(value: Omit<InternalStreamDefinition, "originFile">): void {
+  const registry = definitionRegistry()
+  const originFile = registry.definitionContext
+  if (originFile === undefined) {
+    return
+  }
+  const existing = registry.streamDefinitions.find((item) =>
+    item.originFile === originFile &&
+    item.id === value.id &&
+    item.direction === value.direction
+  )
+  if (existing) {
+    return
+  }
+  registry.streamDefinitions.push({ ...value, originFile })
+}
+
+export function registerQueueDefinition(value: Omit<InternalQueueDefinition, "originFile">): void {
+  const registry = definitionRegistry()
+  const originFile = registry.definitionContext
+  if (originFile === undefined) {
+    return
+  }
+  const existing = registry.queueDefinitions.find((item) =>
+    item.originFile === originFile &&
+    item.id === value.id
+  )
+  if (existing) {
+    if (existing.concurrencyLimit !== value.concurrencyLimit) {
+      throw new Error(`queue ${JSON.stringify(value.id)} has conflicting definitions in ${originFile}`)
+    }
+    return
+  }
+  registry.queueDefinitions.push({ ...value, originFile })
+}
+
+export function setStreamDefinitionContext(originFile: string): void {
+  definitionRegistry().definitionContext = originFile
+}
+
+export function clearStreamDefinitionContext(): void {
+  definitionRegistry().definitionContext = undefined
+}
+
+export function readStreamDefinitions(): readonly InternalStreamDefinition[] {
+  const streams = [...definitionRegistry().streamDefinitions]
+  streams.sort((left, right) => {
+    const byDirection = left.direction.localeCompare(right.direction)
+    return byDirection === 0 ? left.id.localeCompare(right.id) : byDirection
+  })
+  return streams
+}
+
+export function readQueueDefinitions(): readonly InternalQueueDefinition[] {
+  const queues = [...definitionRegistry().queueDefinitions]
+  queues.sort((left, right) => left.id.localeCompare(right.id))
+  return queues
 }
 
 export interface HelmrConfig {
@@ -954,35 +1023,6 @@ export function markConfig(config: HelmrConfig): HelmrConfig {
 
 export function isConfigDefinition(value: unknown): value is HelmrConfig & { readonly [configBrand]: true } {
   return hasBrand(value, configBrand)
-}
-
-function captureTaskOrigin(): string {
-  const stack = new Error().stack ?? ""
-  for (const line of stack.split("\n").slice(1)) {
-    const file = stackFrameFile(line)
-    if (file === null || isSdkInternalFrame(file)) {
-      continue
-    }
-    return file
-  }
-  return "unknown"
-}
-
-function stackFrameFile(line: string): string | null {
-  const match = /\(?((?:file:\/\/)?\/[^():]+):\d+:\d+\)?$/.exec(line.trim())
-  if (!match?.[1]) {
-    return null
-  }
-  return match[1].startsWith("file://") ? decodeURIComponent(new URL(match[1]).pathname) : match[1]
-}
-
-function isSdkInternalFrame(file: string): boolean {
-  return (
-    file.includes("/sdk/typescript/src/internal") ||
-    file.includes("/sdk/typescript/src/task") ||
-    file.includes("/sdk/typescript/src/index") ||
-    file.includes("/runtime/typescript/src/")
-  )
 }
 
 export class ImageBuilderImpl implements ImageBuilder {

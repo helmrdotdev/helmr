@@ -3,7 +3,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { pixelsFromRows } from "../lib/pixels";
 import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
-const runtimeCode = `import { cache, image, sandbox, source, streams, task } from "@helmr/sdk"
+const runtimeCode = `import { cache, image, queue, sandbox, source, streams, task } from "@helmr/sdk"
 import { Codex } from "@openai/codex-sdk"
 import { z } from "zod"
 
@@ -20,10 +20,12 @@ const sbx = sandbox("repo-agent")
   .image(base)
   .resources({ cpu: 2, memory: "4Gi" })
 
+const reviews = queue({ id: "review/pr", concurrencyLimit: 5 })
+
 export const reviewPr = task({
   id: "review-pr",
   sandbox: sbx,
-  queue: { concurrencyLimit: 5 },
+  queue: reviews,
   secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }],
   run: async (event, ctx) => {
     const codex = new Codex()
@@ -260,12 +262,13 @@ const decision = await approval.wait({
     lang: "ts",
   },
   {
-    label: "task.start",
+    label: "sessions.start",
     icon: "bolt",
     tone: "pink",
     title: "Start from anywhere",
     caption: "Your product, a webhook, CI, or another task — deduplicated with idempotency keys.",
-    code: `const started = await reviewPr.start(
+    code: `const started = await sessions.start(
+  reviewPr,
   { prNumber: 482 },
   { idempotencyKey: pr.head.sha }
 )`,
@@ -277,7 +280,7 @@ const decision = await approval.wait({
     tone: "green",
     title: "Reuse the workspace",
     caption: "The session records the workflow. The workspace stays available for follow-up execs and terminals.",
-    code: `const workspace = client.workspaces.open(started.session.workspaceId)
+    code: `const workspace = workspaces.open(started.session.workspaceId)
 const exec = await workspace.exec(["bash", "-lc", "bun test"], {
   cwd: "/workspace"
 })
@@ -574,7 +577,7 @@ const renderedFeatures = features.map((feature) => ({
     const codeRows = Array.from(document.querySelectorAll<HTMLElement>(".code-frame .cl"));
     const markIndex = codeRows.findIndex((row) => row.classList.contains("cl-mark"));
     const waitIndex = markIndex >= 0 ? Math.min(markIndex + 1, codeRows.length - 1) : -1;
-    let waitpointResolved = false;
+    let waitResolved = false;
     let runStarted = false;
     let executedUntil = -1;
     let sweepBusy = false;
@@ -585,7 +588,7 @@ const renderedFeatures = features.map((feature) => ({
         const row = codeRows[i];
         row.classList.add("cl-active");
         if (!reduceMotion) await sleep(36);
-        if (!(i === waitIndex && !waitpointResolved)) row.classList.remove("cl-active");
+        if (!(i === waitIndex && !waitResolved)) row.classList.remove("cl-active");
         row.classList.add("cl-done");
         executedUntil = i;
       }
@@ -594,8 +597,8 @@ const renderedFeatures = features.map((feature) => ({
 
     const maybeSweep = async () => {
       if (!runStarted || waitIndex < 0 || sweepBusy) return;
-      const target = waitpointResolved ? codeRows.length - 1 : waitIndex;
-      if (waitpointResolved) codeRows[waitIndex]?.classList.remove("cl-active");
+      const target = waitResolved ? codeRows.length - 1 : waitIndex;
+      if (waitResolved) codeRows[waitIndex]?.classList.remove("cl-active");
       if (target > executedUntil) {
         await sweepTo(target);
         void maybeSweep();
@@ -603,9 +606,9 @@ const renderedFeatures = features.map((feature) => ({
     };
 
     approveButton?.addEventListener("click", async () => {
-      if (!term || waitpointResolved) return;
-      waitpointResolved = true;
-      landing?.setAttribute("data-waitpoint-completed", "");
+      if (!term || waitResolved) return;
+      waitResolved = true;
+      landing?.setAttribute("data-wait-completed", "");
       term.setAttribute("data-completed", "");
       termFoot?.removeAttribute("data-ready");
       // Pin the height so the page doesn't shift; old lines scroll out like a real terminal.
@@ -670,7 +673,7 @@ const renderedFeatures = features.map((feature) => ({
     }
 
     .landing[data-circuit-ready] .circuit { opacity: 1; }
-    .landing[data-waitpoint-completed] .circuit { opacity: 0; }
+    .landing[data-wait-completed] .circuit { opacity: 0; }
 
     .circuit-edge-out {
       position: absolute;

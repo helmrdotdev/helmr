@@ -180,6 +180,9 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 				if isNoRows(err) {
+					if ensureErr := s.ensureQueuedRunWorkspaceMaterializationForLeaseConflict(r.Context(), candidateLease.Entry.OrgID, candidateLease.Entry.RunID); ensureErr != nil {
+						s.log.Warn("ensure queued run workspace materialization after lease conflict failed", "worker_instance_id", worker.WorkerInstanceID.String(), "run_id", pgvalue.UUIDString(candidateLease.Entry.RunID), "error", ensureErr)
+					}
 					s.requeueWorkerQueueItem(r.Context(), worker, candidateLease.Entry.RunID, candidateLease.Lease, dispatch.NackReasonLeaseConflict, "execution lease conflict")
 					continue
 				}
@@ -228,6 +231,18 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{Lease: &lease, Run: &run})
+}
+
+func (s *Server) ensureQueuedRunWorkspaceMaterializationForLeaseConflict(ctx context.Context, orgID pgtype.UUID, runID pgtype.UUID) error {
+	store, tx, err := s.beginControlTransaction(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := ensureQueuedRunWorkspaceMaterialization(ctx, store, orgID, runID, "run_lease_conflict"); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
@@ -459,6 +474,9 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 	}
 	if activeQueueLeaseFound {
 		s.ackWorkerQueueLease(r.Context(), pgvalue.UUID(leaseIDs.runID), lease)
+	}
+	if run.SessionID.Valid && runStatusTerminal(run.Status) {
+		s.reconcileAcceptedSessionRunRequests(r.Context(), run.OrgID, run.ProjectID, run.EnvironmentID, run.SessionID)
 	}
 	writeJSON(w, http.StatusOK, api.WorkerReleaseResponse{RunID: request.Lease.RunID, Status: string(run.Status)})
 }
@@ -1079,7 +1097,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunLeaseRow
 	if err != nil {
 		return api.WorkerRun{}, err
 	}
-	taskSessionID, err := requiredUUIDString(row.TaskSessionID, "task_session_id")
+	sessionID, err := requiredUUIDString(row.SessionID, "session_id")
 	if err != nil {
 		return api.WorkerRun{}, err
 	}
@@ -1095,7 +1113,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunLeaseRow
 		AttemptID:             pgvalue.MustUUIDValue(row.CurrentAttemptID).String(),
 		RunLeaseID:            pgvalue.MustUUIDValue(row.RunLeaseID).String(),
 		SnapshotVersion:       row.StateVersion,
-		TaskSessionID:         taskSessionID,
+		SessionID:             sessionID,
 		TaskID:                row.TaskID,
 		Payload:               json.RawMessage(row.Payload),
 		Secrets:               resolvedSecrets,

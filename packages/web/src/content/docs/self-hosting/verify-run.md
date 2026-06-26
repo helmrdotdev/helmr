@@ -22,10 +22,10 @@ Deploy the task project from a local checkout:
 helmr deploy .
 ```
 
-Start a small task session and watch the run attempt reach a terminal state:
+Start a small session and watch the run attempt reach a terminal state:
 
 ```sh
-helmr task start TASK_ID --wait --follow
+helmr session start TASK_ID --wait --follow
 helmr run list
 helmr run logs RUN_ID
 ```

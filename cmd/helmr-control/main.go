@@ -165,6 +165,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		AuthSecret:          []byte(cfg.AuthSecret),
 		PublicURL:           publicURL,
 		MagicLinkDebugURLs:  cfg.MagicLinkDebugURLs,
+		BackgroundContext:   backgroundCtx,
 	})
 	if err != nil {
 		return fmt.Errorf("configure control server: %w", err)

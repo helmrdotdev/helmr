@@ -176,6 +176,52 @@ func (q *Queries) AppendStreamRecord(ctx context.Context, arg AppendStreamRecord
 	return i, err
 }
 
+const getStreamRecord = `-- name: GetStreamRecord :one
+SELECT id, org_id, project_id, environment_id, session_id, stream_id, direction, sequence, data, correlation_id, content_type, idempotency_key, idempotency_fingerprint, source_type, source_id, public_access_token_id, created_at
+  FROM stream_records
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND id = $4
+`
+
+type GetStreamRecordParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetStreamRecord(ctx context.Context, arg GetStreamRecordParams) (StreamRecord, error) {
+	row := q.db.QueryRow(ctx, getStreamRecord,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ID,
+	)
+	var i StreamRecord
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.SessionID,
+		&i.StreamID,
+		&i.Direction,
+		&i.Sequence,
+		&i.Data,
+		&i.CorrelationID,
+		&i.ContentType,
+		&i.IdempotencyKey,
+		&i.IdempotencyFingerprint,
+		&i.SourceType,
+		&i.SourceID,
+		&i.PublicAccessTokenID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getStreamRecordByIdempotencyKey = `-- name: GetStreamRecordByIdempotencyKey :one
 SELECT id, org_id, project_id, environment_id, session_id, stream_id, direction, sequence, data, correlation_id, content_type, idempotency_key, idempotency_fingerprint, source_type, source_id, public_access_token_id, created_at
   FROM stream_records

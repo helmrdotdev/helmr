@@ -11,7 +11,7 @@ reportPlannedWorkspaceSurface({
   expectedCoverage: [
     "open a port from a materialized workspace",
     "read from a port through a narrow public token",
-    "list active ports without task-session ownership",
+    "list active ports without session ownership",
     "close a port and revoke active public access",
     "reject exec, PTY, shell, and file writes through public tokens",
   ],

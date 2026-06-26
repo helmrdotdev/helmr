@@ -25,7 +25,6 @@ import {
   SecretRefSchema,
   SourceDirRefSchema,
   SourceFileRefSchema,
-  StreamSpecSchema,
   TaskSpecSchema,
   TaskScheduleSpecSchema,
   UserSchema,
@@ -45,15 +44,15 @@ import {
   isSourceFileRef,
   validateSecretName,
   defaultTaskQueueName,
-  readStreamDefinitions,
   type AnyTask,
   type ImageCopyInput,
   type ImageBuildStep,
-  type InternalStreamDefinition,
+  type InternalQueueDefinition,
   type Placement,
   type SandboxNetworkSpec,
   type SandboxWorkspace,
   type InternalTaskScheduleConfig,
+  type InternalStreamDefinition,
 } from "./internal"
 import { readOptionalMaxDurationSeconds } from "./schema/task"
 
@@ -61,6 +60,18 @@ export interface CompileOptions {
   readonly task: AnyTask
   readonly modulePath: string
   readonly exportName?: string
+}
+
+export interface CompiledStreamCatalogItem {
+  readonly name: string
+  readonly direction: "input" | "output"
+  readonly schemaFingerprint: string
+  readonly schemaJson: string
+}
+
+export interface CompiledQueueCatalogItem {
+  readonly name: string
+  readonly concurrencyLimit?: number
 }
 
 export const IMAGE_FORMAT_VERSION = 0
@@ -105,15 +116,11 @@ export function compile(opts: CompileOptions): Bundle {
       exportName: opts.exportName ?? "default",
       maxDurationSeconds,
       queue: create(QueueSpecSchema, {
-        name: task.queue?.name ?? defaultTaskQueueName(task.id),
-        ...(task.queue?.concurrencyLimit === undefined || task.queue.concurrencyLimit === null
-          ? {}
-          : { concurrencyLimit: task.queue.concurrencyLimit }),
+        name: taskQueueName(task),
       }),
       ...(task.ttl === undefined ? {} : { ttl: task.ttl }),
-      retryPolicyJson: JSON.stringify(task.retry ?? false),
+      retryPolicyJson: JSON.stringify(task.retry ?? { enabled: false }),
       schedules: compileTaskSchedules(task.schedule),
-      streams: compileTaskStreams(readStreamDefinitions(task.streams, `task ${JSON.stringify(task.id)} streams`)),
       secrets: Object.entries(readSecretDecls(task.secrets)).map(([name, placement]) =>
         create(BundleSecretPlacementSchema, {
           name,
@@ -124,19 +131,91 @@ export function compile(opts: CompileOptions): Bundle {
   })
 }
 
-function compileTaskStreams(streams: readonly InternalStreamDefinition[]) {
-  return streams.map((stream) => {
-    const schemaMetadata = streamSchemaMetadata(stream)
-    return create(StreamSpecSchema, {
+export function compileQueueCatalog(tasks: readonly AnyTask[], queues: readonly InternalQueueDefinition[]): readonly CompiledQueueCatalogItem[] {
+  const catalog = new Map<string, CompiledQueueCatalogItem>()
+  const defined = new Set<string>()
+  for (const queue of queues) {
+    defined.add(queue.id)
+    addQueueCatalogItem(catalog, {
+      name: queue.id,
+      ...(queue.concurrencyLimit === undefined || queue.concurrencyLimit === null ? {} : { concurrencyLimit: queue.concurrencyLimit }),
+    })
+  }
+  for (const task of tasks) {
+    const taskQueue = task.queue
+    if (typeof taskQueue === "object" && taskQueue !== null) {
+      defined.add(taskQueue.id)
+      addQueueCatalogItem(catalog, {
+        name: taskQueue.id,
+        ...(taskQueue.concurrencyLimit === undefined || taskQueue.concurrencyLimit === null ? {} : { concurrencyLimit: taskQueue.concurrencyLimit }),
+      })
+      continue
+    }
+    if (typeof taskQueue === "string") {
+      if (!defined.has(taskQueue)) {
+        throw new Error(`task ${JSON.stringify(task.id)} references undefined queue ${JSON.stringify(taskQueue)}`)
+      }
+      continue
+    }
+    addQueueCatalogItem(catalog, { name: defaultTaskQueueName(task.id) })
+  }
+  return [...catalog.values()].sort((left, right) => left.name.localeCompare(right.name))
+}
+
+function addQueueCatalogItem(catalog: Map<string, CompiledQueueCatalogItem>, item: CompiledQueueCatalogItem): void {
+  const existing = catalog.get(item.name)
+  if (existing === undefined) {
+    catalog.set(item.name, item)
+    return
+  }
+  if (existing.concurrencyLimit !== item.concurrencyLimit) {
+    throw new Error(`queue ${JSON.stringify(item.name)} has conflicting deployment catalog settings`)
+  }
+}
+
+function taskQueueName(task: AnyTask): string {
+  if (typeof task.queue === "string") {
+    return task.queue
+  }
+  if (task.queue !== undefined) {
+    return task.queue.id
+  }
+  return defaultTaskQueueName(task.id)
+}
+
+export function compileStreamCatalog(streams: readonly InternalStreamDefinition[]): readonly CompiledStreamCatalogItem[] {
+  const catalog = new Map<string, CompiledStreamCatalogItem>()
+  for (const stream of streams) {
+    const schemaMetadata = stream.schema === undefined ? null : streamSchemaMetadata(stream)
+    const item: CompiledStreamCatalogItem = {
       name: stream.id,
       direction: stream.direction,
-      schemaFingerprint: streamSchemaFingerprint(schemaMetadata),
+      schemaFingerprint: schemaMetadata === null ? "" : streamSchemaFingerprint(schemaMetadata),
       schemaJson: JSON.stringify(schemaMetadata),
-    })
+    }
+    const key = `${item.direction}:${item.name}`
+    const existing = catalog.get(key)
+    if (existing !== undefined) {
+      if (existing.schemaFingerprint !== item.schemaFingerprint || existing.schemaJson !== item.schemaJson) {
+        throw new Error(`stream ${JSON.stringify(stream.id)} has conflicting deployment catalog schema`)
+      }
+      continue
+    }
+    catalog.set(key, item)
+  }
+  return [...catalog.values()].sort((left, right) => {
+    const leftKey = `${left.direction}:${left.name}`
+    const rightKey = `${right.direction}:${right.name}`
+    if (leftKey < rightKey) return -1
+    if (leftKey > rightKey) return 1
+    return 0
   })
 }
 
 function streamSchemaMetadata(stream: InternalStreamDefinition): Record<string, unknown> {
+  if (stream.schema === undefined) {
+    throw new Error(`stream ${JSON.stringify(stream.id)} has no schema`)
+  }
   const standard = stream.schema["~standard"] as Record<string, unknown>
   const vendor = typeof standard["vendor"] === "string" && standard["vendor"].trim() !== ""
     ? standard["vendor"].trim()

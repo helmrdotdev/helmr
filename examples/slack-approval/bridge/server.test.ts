@@ -124,9 +124,9 @@ describe("Slack approval bridge", () => {
           },
           complete: async () => {},
         },
-        tasks: {
+        sessions: {
           start: async () => {
-            calls.push({ op: "task.start" })
+            calls.push({ op: "sessions.start" })
             return { session: { id: "session-1" } }
           },
         },

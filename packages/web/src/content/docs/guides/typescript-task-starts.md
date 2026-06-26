@@ -1,27 +1,24 @@
 ---
-title: TypeScript task starts
-description: Start and observe Helmr task sessions from TypeScript.
+title: TypeScript session starts
+description: Start and observe Helmr sessions from TypeScript.
 section: Guides
-sidebarLabel: Task starts
+sidebarLabel: Session starts
 order: 370
 ---
 
-# TypeScript task starts
+# TypeScript session starts
 
-Use the SDK from external TypeScript code when another service should start a Helmr task session. The task id must already exist in a deployment task source.
+Use the SDK from external TypeScript code when another service should start a Helmr session. The selected task, whether passed as an imported task definition or a string id, must already exist in a deployment task source.
 
 ```ts
-import { HelmrClient } from "@helmr/sdk"
-import type { reviewPullRequest } from "./tasks/review-pull-request"
+import { runs, sessions } from "@helmr/sdk"
+import { reviewPullRequest } from "./tasks/review-pull-request"
 
-const client = new HelmrClient({
-  url: process.env.HELMR_API_URL,
-  apiKey: process.env.HELMR_API_KEY,
-})
+const reviewPayload = { owner: "OWNER", repo: "REPO", prNumber: 42 }
 
-const started = await client.tasks.start<typeof reviewPullRequest>(
-  "review-pull-request",
-  { owner: "OWNER", repo: "REPO", prNumber: 42 },
+const started = await sessions.start(
+  reviewPullRequest,
+  reviewPayload,
   {
     externalId: "github:OWNER/REPO#42",
     idempotencyKey: "github:delivery-id",
@@ -30,28 +27,32 @@ const started = await client.tasks.start<typeof reviewPullRequest>(
 )
 ```
 
-`client.tasks.start()` starts or reuses a task session by task id. Imported task definitions can use `task.start()` when local payload schema validation is needed before posting. `externalId` identifies the durable session; `idempotencyKey` identifies one retry-safe start request. Retrieve or wait on the session, and use the returned run handle for compute/debug views:
+`sessions.start()` / `client.sessions.start()` and `sessions.startAndWait()` / `client.sessions.startAndWait()` are the canonical APIs for starting or reusing a session. Use the top-level `sessions` facade with `HELMR_API_URL` and `HELMR_API_KEY`; use `new HelmrClient(...)` when the caller needs explicit credentials or multiple control-plane targets. `task(...)` returns a definition object only; pass that task object to the sessions namespace for payload input, output, and secrets type inference plus local payload schema validation. Pass a string task id when the caller is at an external boundary or the task id is dynamic. `externalId` identifies the durable session; `idempotencyKey` identifies one retry-safe start request. Use `startAndWait()` when the caller needs the first run's terminal output; use the returned run handle for compute/debug views:
 
 ```ts
-const session = await client.sessions.wait(started.session, {
-  timeoutSeconds: 10 * 60,
-})
+const completed = await sessions.startAndWait(
+  reviewPullRequest,
+  reviewPayload,
+  {
+    timeoutSeconds: 10 * 60,
+  },
+)
 
-const currentRun = await client.runs.retrieve(started.run)
-const logs = await client.runs.logs.retrieve(started.run)
-const events = await client.runs.events.list(started.run)
+const currentRun = await runs.retrieve(started.run)
+const logs = await runs.logs.retrieve(started.run)
+const events = await runs.events.list(started.run)
 ```
 
-Follow-up user messages, webhooks, or operator replies are session input, not task start payload:
+Follow-up user messages, webhooks, or operator replies are session input, not session start payload:
 
 ```ts
-await client.sessions.open(started.session).input("approval").send(
+await sessions.open(started.session).input("approval").send(
   { approved: true },
   { correlationId: "github:OWNER/REPO#42" },
 )
 
-const reportRecords = await client.sessions.open(started.session).output("agent.report").list()
-for (const record of reportRecords.records) {
+const reportRecords = await sessions.open(started.session).output("agent.report").list()
+for (const record of reportRecords) {
   console.log(record.sequence, record.data)
 }
 ```
@@ -95,4 +96,4 @@ Keep the public access token scoped to the external action that should be able t
 
 The client also reads `HELMR_API_URL` and `HELMR_API_KEY` from the environment when options are omitted. Authenticated SDK calls require an API key. Plain HTTP is accepted only for loopback hosts.
 
-Task start payload is persisted as audit data. Keep credentials out of payload and declare task secrets in task source.
+Session start payload is persisted as audit data. Keep credentials out of payload and declare task secrets in task source.

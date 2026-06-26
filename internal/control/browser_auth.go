@@ -217,7 +217,7 @@ func (s *Server) completeInviteAuth(r *http.Request, flow browserAuthFlow, ident
 	} else if rows == 0 {
 		return "", errInvalidOrExpiredToken
 	}
-	if _, err := queries.RevokeSessionsForUser(r.Context(), user.ID); err != nil {
+	if _, err := queries.RevokeAuthSessionsForUser(r.Context(), user.ID); err != nil {
 		return "", err
 	}
 	if _, err := queries.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
@@ -284,7 +284,7 @@ func (s *Server) issueSessionForOrg(r *http.Request, queries db.Querier, userID 
 	if err != nil {
 		return "", err
 	}
-	_, err = queries.CreateSession(r.Context(), db.CreateSessionParams{
+	_, err = queries.CreateAuthSession(r.Context(), db.CreateAuthSessionParams{
 		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:     orgID,
 		UserID:    userID,
