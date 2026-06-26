@@ -5462,6 +5462,8 @@ function sessionFromResponse(response) {
     activeDeploymentId: response.active_deployment_id,
     ...response.external_id === undefined || response.external_id === "" ? {} : { externalId: response.external_id },
     status: response.status,
+    activity: response.activity,
+    canClose: response.can_close ?? false,
     currentRunId: response.current_run_id ?? null,
     workspaceId: response.workspace_id ?? null,
     metadata: response.metadata ?? {},
@@ -5471,6 +5473,7 @@ function sessionFromResponse(response) {
     timedOut: response.timed_out ?? false,
     ..."terminal_reason" in response ? { terminalReason: response.terminal_reason } : {},
     expiresAt: response.expires_at ?? null,
+    expiredAt: response.expired_at ?? null,
     createdAt: response.created_at,
     updatedAt: response.updated_at
   };

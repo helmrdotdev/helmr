@@ -158,9 +158,9 @@ func (o *SessionStartOptions) UnmarshalJSON(data []byte) error {
 
 type SessionStartResponse struct {
 	Session  SessionResponse `json:"session"`
-	Run      RunResponse         `json:"run"`
-	IsCached bool                `json:"is_cached,omitempty"`
-	TimedOut bool                `json:"timed_out,omitempty"`
+	Run      RunResponse     `json:"run"`
+	IsCached bool            `json:"is_cached,omitempty"`
+	TimedOut bool            `json:"timed_out,omitempty"`
 }
 
 type SessionStartAndWaitRequest struct {
