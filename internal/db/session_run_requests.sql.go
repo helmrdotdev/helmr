@@ -182,6 +182,62 @@ func (q *Queries) EnsureSessionRunRequestForStreamRecord(ctx context.Context, ar
 	return i, err
 }
 
+const markSessionRunRequestConsumedByActiveRun = `-- name: MarkSessionRunRequestConsumedByActiveRun :one
+UPDATE session_run_requests
+   SET status = 'skipped',
+       last_error = 'consumed_by_active_run',
+       error_message = '',
+       claimed_at = NULL,
+       claim_expires_at = NULL,
+       claim_owner = '',
+       updated_at = now()
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND stream_record_id = $4
+   AND status IN ('accepted', 'claimed')
+RETURNING id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
+`
+
+type MarkSessionRunRequestConsumedByActiveRunParams struct {
+	OrgID          pgtype.UUID `json:"org_id"`
+	ProjectID      pgtype.UUID `json:"project_id"`
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+	StreamRecordID pgtype.UUID `json:"stream_record_id"`
+}
+
+func (q *Queries) MarkSessionRunRequestConsumedByActiveRun(ctx context.Context, arg MarkSessionRunRequestConsumedByActiveRunParams) (SessionRunRequest, error) {
+	row := q.db.QueryRow(ctx, markSessionRunRequestConsumedByActiveRun,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.StreamRecordID,
+	)
+	var i SessionRunRequest
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.SessionID,
+		&i.StreamRecordID,
+		&i.StreamID,
+		&i.CauseKind,
+		&i.Status,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LastError,
+		&i.ClaimedAt,
+		&i.ClaimExpiresAt,
+		&i.ClaimOwner,
+		&i.RunID,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const markSessionRunRequestCreated = `-- name: MarkSessionRunRequestCreated :one
 UPDATE session_run_requests
    SET status = 'created',

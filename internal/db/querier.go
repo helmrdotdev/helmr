@@ -296,6 +296,7 @@ type Querier interface {
 	MarkRunQueueItemEnqueued(ctx context.Context, arg MarkRunQueueItemEnqueuedParams) (RunQueueItem, error)
 	MarkRunWaitResumed(ctx context.Context, arg MarkRunWaitResumedParams) (MarkRunWaitResumedRow, error)
 	MarkScheduleInstanceTriggerFailed(ctx context.Context, arg MarkScheduleInstanceTriggerFailedParams) (int64, error)
+	MarkSessionRunRequestConsumedByActiveRun(ctx context.Context, arg MarkSessionRunRequestConsumedByActiveRunParams) (SessionRunRequest, error)
 	MarkSessionRunRequestCreated(ctx context.Context, arg MarkSessionRunRequestCreatedParams) (SessionRunRequest, error)
 	MarkSessionRunRequestFailed(ctx context.Context, arg MarkSessionRunRequestFailedParams) (SessionRunRequest, error)
 	MarkSessionRunRequestSkipped(ctx context.Context, arg MarkSessionRunRequestSkippedParams) (SessionRunRequest, error)

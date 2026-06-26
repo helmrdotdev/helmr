@@ -117,6 +117,22 @@ UPDATE session_run_requests
 	   AND claim_owner = sqlc.arg(claim_owner)
 	RETURNING *;
 
+-- name: MarkSessionRunRequestConsumedByActiveRun :one
+UPDATE session_run_requests
+   SET status = 'skipped',
+       last_error = 'consumed_by_active_run',
+       error_message = '',
+       claimed_at = NULL,
+       claim_expires_at = NULL,
+       claim_owner = '',
+       updated_at = now()
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND stream_record_id = sqlc.arg(stream_record_id)
+   AND status IN ('accepted', 'claimed')
+RETURNING *;
+
 -- name: MarkSessionRunRequestFailed :one
 UPDATE session_run_requests
    SET status = 'failed',

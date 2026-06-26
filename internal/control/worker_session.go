@@ -180,6 +180,9 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 				if isNoRows(err) {
+					if ensureErr := s.ensureQueuedRunWorkspaceMaterializationForLeaseConflict(r.Context(), candidateLease.Entry.OrgID, candidateLease.Entry.RunID); ensureErr != nil {
+						s.log.Warn("ensure queued run workspace materialization after lease conflict failed", "worker_instance_id", worker.WorkerInstanceID.String(), "run_id", pgvalue.UUIDString(candidateLease.Entry.RunID), "error", ensureErr)
+					}
 					s.requeueWorkerQueueItem(r.Context(), worker, candidateLease.Entry.RunID, candidateLease.Lease, dispatch.NackReasonLeaseConflict, "execution lease conflict")
 					continue
 				}
@@ -228,6 +231,18 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{Lease: &lease, Run: &run})
+}
+
+func (s *Server) ensureQueuedRunWorkspaceMaterializationForLeaseConflict(ctx context.Context, orgID pgtype.UUID, runID pgtype.UUID) error {
+	store, tx, err := s.beginControlTransaction(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := ensureQueuedRunWorkspaceMaterialization(ctx, store, orgID, runID, "run_lease_conflict"); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
