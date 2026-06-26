@@ -46,7 +46,8 @@ type IndexRequest struct {
 }
 
 type Catalog struct {
-	Tasks map[string]CatalogTask
+	Tasks   map[string]CatalogTask
+	Streams []api.WorkerDeploymentStream
 }
 
 type CatalogTask struct {
@@ -173,10 +174,6 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			return failedDeploymentBuild(fmt.Errorf("task %q max duration: %w", taskID, err))
 		}
 		schedules := deploymentTaskSchedules(bundle)
-		streams, err := deploymentTaskStreams(bundle)
-		if err != nil {
-			return failedDeploymentBuild(fmt.Errorf("task %q streams: %w", taskID, err))
-		}
 		imageObject, ok := sandboxImages[sandbox.id]
 		if !ok {
 			imageArtifact, err := e.ImageBuilder.Build(ctx, builder.Request{
@@ -245,7 +242,6 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			RetryPolicy:                deploymentTaskRetryPolicy(bundle),
 			Secrets:                    deploymentTaskSecrets(bundle),
 			Schedules:                  schedules,
-			Streams:                    streams,
 		})
 	}
 
@@ -294,40 +290,9 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		BuildManifestDigest:      buildManifest.Digest,
 		DeploymentManifestDigest: deploymentManifest.Digest,
 		Tasks:                    tasks,
+		Streams:                  index.Streams,
 		CASObjects:               casObjects,
 	}
-}
-
-func deploymentTaskStreams(bundle *bundlev0.Bundle) ([]api.WorkerDeploymentTaskStream, error) {
-	if bundle == nil || bundle.Task == nil {
-		return nil, nil
-	}
-	streams := make([]api.WorkerDeploymentTaskStream, 0, len(bundle.Task.Streams))
-	for i, stream := range bundle.Task.Streams {
-		if stream == nil {
-			return nil, fmt.Errorf("stream %d is nil", i)
-		}
-		direction := strings.TrimSpace(stream.Direction)
-		switch direction {
-		case "input", "output":
-		default:
-			return nil, fmt.Errorf("stream %q has unsupported direction %q", strings.TrimSpace(stream.Name), direction)
-		}
-		schemaJSON := json.RawMessage("null")
-		if raw := strings.TrimSpace(stream.SchemaJson); raw != "" {
-			if !json.Valid([]byte(raw)) {
-				return nil, fmt.Errorf("stream %q schema_json must be valid JSON", strings.TrimSpace(stream.Name))
-			}
-			schemaJSON = json.RawMessage(raw)
-		}
-		streams = append(streams, api.WorkerDeploymentTaskStream{
-			Name:              strings.TrimSpace(stream.Name),
-			Direction:         direction,
-			SchemaFingerprint: strings.TrimSpace(stream.SchemaFingerprint),
-			SchemaJSON:        schemaJSON,
-		})
-	}
-	return streams, nil
 }
 
 func failedDeploymentBuild(err error) api.WorkerDeploymentBuildResult {
@@ -475,11 +440,20 @@ func decodeCatalog(body []byte) (Catalog, error) {
 			ModulePath string `json:"modulePath"`
 			ExportName string `json:"exportName"`
 		} `json:"tasks"`
+		Streams []struct {
+			Name              string          `json:"name"`
+			Direction         string          `json:"direction"`
+			SchemaFingerprint string          `json:"schema_fingerprint"`
+			SchemaJSON        json.RawMessage `json:"schema_json"`
+		} `json:"streams"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return Catalog{}, fmt.Errorf("decode deployment index: %w", err)
 	}
-	index := Catalog{Tasks: make(map[string]CatalogTask, len(payload.Tasks))}
+	index := Catalog{
+		Tasks:   make(map[string]CatalogTask, len(payload.Tasks)),
+		Streams: make([]api.WorkerDeploymentStream, 0, len(payload.Streams)),
+	}
 	for taskID, task := range payload.Tasks {
 		filePath := strings.TrimSpace(task.ModulePath)
 		if filePath == "" {
@@ -489,6 +463,21 @@ func decodeCatalog(body []byte) (Catalog, error) {
 			FilePath:   filePath,
 			ExportName: strings.TrimSpace(task.ExportName),
 		}
+	}
+	for i, stream := range payload.Streams {
+		schemaJSON := json.RawMessage("null")
+		if len(stream.SchemaJSON) > 0 {
+			if !json.Valid(stream.SchemaJSON) {
+				return Catalog{}, fmt.Errorf("deployment index stream %d schema_json must be valid JSON", i)
+			}
+			schemaJSON = stream.SchemaJSON
+		}
+		index.Streams = append(index.Streams, api.WorkerDeploymentStream{
+			Name:              strings.TrimSpace(stream.Name),
+			Direction:         strings.TrimSpace(stream.Direction),
+			SchemaFingerprint: strings.TrimSpace(stream.SchemaFingerprint),
+			SchemaJSON:        schemaJSON,
+		})
 	}
 	return index, nil
 }

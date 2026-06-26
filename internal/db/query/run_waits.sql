@@ -480,6 +480,8 @@ RETURNING *;
 SELECT runs.org_id,
        runs.project_id,
        runs.environment_id,
+       runs.deployment_id,
+       runs.task_id,
        runs.id AS run_id,
        runs.task_session_id,
        runs.workspace_id,

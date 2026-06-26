@@ -447,9 +447,6 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 		}
 		return sessionStartResult{}, err
 	}
-	if err := s.ensureTaskSessionStreams(ctx, store, pgvalue.UUID(actor.OrgID), projectID, environmentID, deploymentTask.DeploymentID, taskID, session.ID); err != nil {
-		return sessionStartResult{}, err
-	}
 	run, err := store.CreateScopedRun(ctx, db.CreateScopedRunParams{
 		ID:                    pgvalue.UUID(runID),
 		OrgID:                 pgvalue.UUID(actor.OrgID),
@@ -573,33 +570,6 @@ func (s *Server) startTaskSessionFromRequestInScope(ctx context.Context, actor a
 		}
 	}
 	return sessionStartResult{session: session, run: createScopedRunSummary(run)}, nil
-}
-
-func (s *Server) ensureTaskSessionStreams(ctx context.Context, store db.Querier, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, taskID string, sessionID pgtype.UUID) error {
-	streams, err := store.ListDeploymentStreamsForTask(ctx, db.ListDeploymentStreamsForTaskParams{
-		OrgID:         orgID,
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		DeploymentID:  deploymentID,
-		TaskID:        taskID,
-	})
-	if err != nil {
-		return err
-	}
-	for _, stream := range streams {
-		if _, err := store.EnsureSessionStream(ctx, db.EnsureSessionStreamParams{
-			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			Metadata:           []byte("{}"),
-			DeploymentStreamID: stream.ID,
-			OrgID:              orgID,
-			ProjectID:          projectID,
-			EnvironmentID:      environmentID,
-			SessionID:          sessionID,
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func validateTaskSessionExternalID(value string) error {

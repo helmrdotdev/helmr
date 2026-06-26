@@ -1,6 +1,7 @@
 import {
   ConcurrentWaitError,
   getRunRuntime,
+  registerStreamDefinition,
   validateStreamName,
   WaitCancelledError,
   WaitTimeoutError,
@@ -333,30 +334,42 @@ function createInputStream<TSchema extends PayloadSchema<any, any>>(
   id: string,
   opts: { readonly schema: TSchema },
 ): InputStreamHandle<SchemaOutput<TSchema>, SchemaInput<TSchema>> & InputStreamDefinition<SchemaOutput<TSchema>, SchemaInput<TSchema>>
-function createInputStream(id: string): InputStreamHandle<unknown, unknown>
+function createInputStream(id: string): InputStreamHandle<unknown, unknown> & InputStreamDefinition<unknown, unknown>
 function createInputStream(
   id: string,
   opts?: { readonly schema?: PayloadSchema<any, any> },
-): InputStreamHandle<unknown, unknown> & Partial<InputStreamDefinition<unknown, unknown>> {
-  return inputStreamHandle(validateStreamName(id), opts?.schema)
+): InputStreamHandle<unknown, unknown> & InputStreamDefinition<unknown, unknown> {
+  const name = validateStreamName(id)
+  registerStreamDefinition({
+    id: name,
+    direction: "input",
+    ...(opts?.schema === undefined ? {} : { schema: opts.schema }),
+  })
+  return inputStreamHandle(name, opts?.schema)
 }
 
 function createOutputStream<TSchema extends PayloadSchema<any, any>>(
   id: string,
   opts: { readonly schema: TSchema },
 ): OutputStreamHandle<SchemaOutput<TSchema>, SchemaInput<TSchema>> & OutputStreamDefinition<SchemaOutput<TSchema>, SchemaInput<TSchema>>
-function createOutputStream(id: string): OutputStreamHandle<unknown, unknown>
+function createOutputStream(id: string): OutputStreamHandle<unknown, unknown> & OutputStreamDefinition<unknown, unknown>
 function createOutputStream(
   id: string,
   opts?: { readonly schema?: PayloadSchema<any, any> },
-): OutputStreamHandle<unknown, unknown> & Partial<OutputStreamDefinition<unknown, unknown>> {
-  return outputStreamHandle(validateStreamName(id), opts?.schema)
+): OutputStreamHandle<unknown, unknown> & OutputStreamDefinition<unknown, unknown> {
+  const name = validateStreamName(id)
+  registerStreamDefinition({
+    id: name,
+    direction: "output",
+    ...(opts?.schema === undefined ? {} : { schema: opts.schema }),
+  })
+  return outputStreamHandle(name, opts?.schema)
 }
 
 function inputStreamHandle(
   id: string,
   schema: PayloadSchema<any, any> | undefined,
-): InputStreamHandle<unknown, unknown> & Partial<InputStreamDefinition<unknown, unknown>> {
+): InputStreamHandle<unknown, unknown> & InputStreamDefinition<unknown, unknown> {
   const wait = (opts: InputStreamWaitOptions = {}) => {
     return waitHandle(() => getRunRuntime().inputStreamWait(id, schema, opts))
   }
@@ -396,7 +409,7 @@ function inputStreamHandle(
 function outputStreamHandle(
   id: string,
   schema: PayloadSchema<any, any> | undefined,
-): OutputStreamHandle<unknown, unknown> & Partial<OutputStreamDefinition<unknown, unknown>> {
+): OutputStreamHandle<unknown, unknown> & OutputStreamDefinition<unknown, unknown> {
   return Object.freeze({
     id,
     direction: "output",

@@ -101,38 +101,27 @@ test("task validates retry policies", () => {
   ).toThrow("retry.retryOn is not supported")
 })
 
-test("task validates stream catalog definitions", () => {
-  const schema: PayloadSchema<unknown, unknown> = {
-    "~standard": {
-      version: 1,
-      vendor: "test",
-      validate: (value) => ({ value }),
-    },
-  }
-  const input = streams.input("approval", { schema })
-  const output = streams.output("events", { schema })
-  expect(task({
-    id: "stream-catalog-valid",
+function assertTaskConfigRejectsStreams(): void {
+  const report = streams.output("report", { schema: issueStringToNumberSchema() })
+  task({
+    id: "stream-config-rejected",
     sandbox: sb,
-    streams: [input, output],
+    // @ts-expect-error streams are module-level primitives, not task config.
+    streams: [report],
     run: async () => null,
-  }).streams).toEqual([input, output])
+  })
+}
+
+test("task rejects streams config at runtime", () => {
+  const report = streams.output("runtime-report", { schema: issueStringToNumberSchema() })
   expect(() =>
     task({
-      id: "stream-catalog-invalid-direction",
+      id: "stream-config-runtime-rejected",
       sandbox: sb,
-      streams: [{ id: "approval", direction: "sideways", schema } as never],
+      streams: [report],
       run: async () => null,
-    }),
-  ).toThrow('streams.0.direction must be "input" or "output"')
-  expect(() =>
-    task({
-      id: "stream-catalog-missing-schema",
-      sandbox: sb,
-      streams: [{ id: "approval", direction: "input" } as never],
-      run: async () => null,
-    }),
-  ).toThrow("streams.0.schema is required")
+    } as never),
+  ).toThrow("task streams are defined with the module-level streams primitive, not task config")
 })
 
 test("task parses payload through payload schema before run", async () => {
@@ -176,6 +165,23 @@ test("output stream parses payload before appending", async () => {
 
     expect(appended).toEqual([{ issue: 41 }, { issue: 42 }])
     await expect(issueStream.append({ issue: 41 } as never)).rejects.toThrow(PayloadSchemaValidationError)
+  } finally {
+    exit()
+  }
+})
+
+test("runtime stream helpers allow repeated schema-bearing handles", async () => {
+  const appended: unknown[] = []
+  const exit = enterRunRuntime(fakeRunRuntime({
+    outputStreamAppend: async (_stream, payload) => {
+      appended.push(payload)
+    },
+  }))
+  try {
+    await streams.output("runtime-issues", { schema: issueStringToNumberSchema() }).append({ issue: "41" })
+    await streams.output("runtime-issues", { schema: issueStringToNumberSchema() }).append({ issue: "42" })
+
+    expect(appended).toEqual([{ issue: 41 }, { issue: 42 }])
   } finally {
     exit()
   }

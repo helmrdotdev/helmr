@@ -75,18 +75,15 @@ func TestCreateRunReturnsExistingRunForActiveIdempotencyKey(t *testing.T) {
 	}
 }
 
-func TestSessionStartMaterializesDeploymentStreamsForSession(t *testing.T) {
-	progressID := pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000401"))
-	reportID := pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000402"))
+func TestSessionStartDoesNotMaterializeDeploymentStreamsForSession(t *testing.T) {
 	store := &fakeStore{
 		deploymentStreams: []db.DeploymentStream{
 			{
-				ID:                progressID,
+				ID:                pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000401")),
 				OrgID:             pgvalue.UUID(dbtest.DefaultOrgID),
 				ProjectID:         testProjectID(),
 				EnvironmentID:     testEnvironmentID(),
 				DeploymentID:      testDeploymentID(),
-				TaskID:            "deploy",
 				Name:              "runtime-smoke.progress",
 				Direction:         db.StreamDirectionOutput,
 				SchemaFingerprint: "sha256:progress",
@@ -94,12 +91,11 @@ func TestSessionStartMaterializesDeploymentStreamsForSession(t *testing.T) {
 				Metadata:          []byte(`{}`),
 			},
 			{
-				ID:                reportID,
+				ID:                pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000402")),
 				OrgID:             pgvalue.UUID(dbtest.DefaultOrgID),
 				ProjectID:         testProjectID(),
 				EnvironmentID:     testEnvironmentID(),
 				DeploymentID:      testDeploymentID(),
-				TaskID:            "deploy",
 				Name:              "runtime-smoke.report",
 				Direction:         db.StreamDirectionOutput,
 				SchemaFingerprint: "sha256:report",
@@ -118,18 +114,8 @@ func TestSessionStartMaterializesDeploymentStreamsForSession(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.ensuredSessionStreams) != 2 {
-		t.Fatalf("ensured session streams = %d, want 2", len(store.ensuredSessionStreams))
-	}
-	got := []pgtype.UUID{store.ensuredSessionStreams[0].DeploymentStreamID, store.ensuredSessionStreams[1].DeploymentStreamID}
-	want := []pgtype.UUID{progressID, reportID}
-	if got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("deployment streams = %+v, want %+v", got, want)
-	}
-	for _, ensured := range store.ensuredSessionStreams {
-		if ensured.SessionID != store.taskSession.ID {
-			t.Fatalf("session stream session_id = %v, want %v", ensured.SessionID, store.taskSession.ID)
-		}
+	if len(store.ensuredSessionStreams) != 0 {
+		t.Fatalf("ensured session streams = %d, want 0", len(store.ensuredSessionStreams))
 	}
 }
 

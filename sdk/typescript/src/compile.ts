@@ -25,7 +25,6 @@ import {
   SecretRefSchema,
   SourceDirRefSchema,
   SourceFileRefSchema,
-  StreamSpecSchema,
   TaskSpecSchema,
   TaskScheduleSpecSchema,
   UserSchema,
@@ -45,15 +44,14 @@ import {
   isSourceFileRef,
   validateSecretName,
   defaultTaskQueueName,
-  readStreamDefinitions,
   type AnyTask,
   type ImageCopyInput,
   type ImageBuildStep,
-  type InternalStreamDefinition,
   type Placement,
   type SandboxNetworkSpec,
   type SandboxWorkspace,
   type InternalTaskScheduleConfig,
+  type InternalStreamDefinition,
 } from "./internal"
 import { readOptionalMaxDurationSeconds } from "./schema/task"
 
@@ -61,6 +59,13 @@ export interface CompileOptions {
   readonly task: AnyTask
   readonly modulePath: string
   readonly exportName?: string
+}
+
+export interface CompiledStreamCatalogItem {
+  readonly name: string
+  readonly direction: "input" | "output"
+  readonly schemaFingerprint: string
+  readonly schemaJson: string
 }
 
 export const IMAGE_FORMAT_VERSION = 0
@@ -113,7 +118,6 @@ export function compile(opts: CompileOptions): Bundle {
       ...(task.ttl === undefined ? {} : { ttl: task.ttl }),
       retryPolicyJson: JSON.stringify(task.retry ?? false),
       schedules: compileTaskSchedules(task.schedule),
-      streams: compileTaskStreams(readStreamDefinitions(task.streams, `task ${JSON.stringify(task.id)} streams`)),
       secrets: Object.entries(readSecretDecls(task.secrets)).map(([name, placement]) =>
         create(BundleSecretPlacementSchema, {
           name,
@@ -124,19 +128,39 @@ export function compile(opts: CompileOptions): Bundle {
   })
 }
 
-function compileTaskStreams(streams: readonly InternalStreamDefinition[]) {
-  return streams.map((stream) => {
-    const schemaMetadata = streamSchemaMetadata(stream)
-    return create(StreamSpecSchema, {
+export function compileStreamCatalog(streams: readonly InternalStreamDefinition[]): readonly CompiledStreamCatalogItem[] {
+  const catalog = new Map<string, CompiledStreamCatalogItem>()
+  for (const stream of streams) {
+    const schemaMetadata = stream.schema === undefined ? null : streamSchemaMetadata(stream)
+    const item: CompiledStreamCatalogItem = {
       name: stream.id,
       direction: stream.direction,
-      schemaFingerprint: streamSchemaFingerprint(schemaMetadata),
+      schemaFingerprint: schemaMetadata === null ? "" : streamSchemaFingerprint(schemaMetadata),
       schemaJson: JSON.stringify(schemaMetadata),
-    })
+    }
+    const key = `${item.direction}:${item.name}`
+    const existing = catalog.get(key)
+    if (existing !== undefined) {
+      if (existing.schemaFingerprint !== item.schemaFingerprint || existing.schemaJson !== item.schemaJson) {
+        throw new Error(`stream ${JSON.stringify(stream.id)} has conflicting deployment catalog schema`)
+      }
+      continue
+    }
+    catalog.set(key, item)
+  }
+  return [...catalog.values()].sort((left, right) => {
+    const leftKey = `${left.direction}:${left.name}`
+    const rightKey = `${right.direction}:${right.name}`
+    if (leftKey < rightKey) return -1
+    if (leftKey > rightKey) return 1
+    return 0
   })
 }
 
 function streamSchemaMetadata(stream: InternalStreamDefinition): Record<string, unknown> {
+  if (stream.schema === undefined) {
+    throw new Error(`stream ${JSON.stringify(stream.id)} has no schema`)
+  }
   const standard = stream.schema["~standard"] as Record<string, unknown>
   const vendor = typeof standard["vendor"] === "string" && standard["vendor"].trim() !== ""
     ? standard["vendor"].trim()

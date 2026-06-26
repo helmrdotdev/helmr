@@ -155,35 +155,35 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		if err := validateTaskSecrets(taskID, task.Secrets); err != nil {
 			return nil, err
 		}
-		if err := validateTaskStreams(taskID, task.Streams); err != nil {
-			return nil, err
-		}
 		if existing, ok := queueLimits[task.QueueName]; ok && !sameOptionalInt32(existing, task.ConcurrencyLimit) {
 			return nil, fmt.Errorf("queue %q has conflicting concurrency_limit values", task.QueueName)
 		}
 		queueLimits[task.QueueName] = task.ConcurrencyLimit
 	}
+	if err := validateDeploymentStreams(result.Streams); err != nil {
+		return nil, err
+	}
 	return casObjects, nil
 }
 
-func validateTaskStreams(taskID string, streams []api.WorkerDeploymentTaskStream) error {
+func validateDeploymentStreams(streams []api.WorkerDeploymentStream) error {
 	seen := map[string]struct{}{}
 	for i, item := range streams {
 		name := strings.TrimSpace(item.Name)
 		if err := api.ValidateStreamName(name); err != nil {
-			return fmt.Errorf("task %q stream %d: %w", taskID, i, err)
+			return fmt.Errorf("deployment stream %d: %w", i, err)
 		}
 		direction := strings.TrimSpace(item.Direction)
 		if direction != "input" && direction != "output" {
-			return fmt.Errorf("task %q stream %q direction must be input or output", taskID, name)
+			return fmt.Errorf("deployment stream %q direction must be input or output", name)
 		}
 		key := direction + ":" + name
 		if _, ok := seen[key]; ok {
-			return fmt.Errorf("task %q has duplicate %s stream %q", taskID, direction, name)
+			return fmt.Errorf("deployment has duplicate %s stream %q", direction, name)
 		}
 		seen[key] = struct{}{}
 		if raw := item.SchemaJSON; len(raw) > 0 && !json.Valid(raw) {
-			return fmt.Errorf("task %q stream %q schema_json must be valid JSON", taskID, name)
+			return fmt.Errorf("deployment stream %q schema_json must be valid JSON", name)
 		}
 	}
 	return nil

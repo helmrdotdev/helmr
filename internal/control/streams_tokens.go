@@ -53,6 +53,10 @@ func (s *Server) listSessionStreams(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if err := s.materializeSessionStreamCatalog(r.Context(), session); err != nil {
+		writeError(w, errors.New("list session streams"))
+		return
+	}
 	rows, err := s.db.ListTaskSessionStreams(r.Context(), db.ListTaskSessionStreamsParams{
 		OrgID:         session.OrgID,
 		ProjectID:     session.ProjectID,
@@ -68,6 +72,35 @@ func (s *Server) listSessionStreams(w http.ResponseWriter, r *http.Request) {
 		streams = append(streams, streamResponse(row))
 	}
 	writeJSON(w, http.StatusOK, api.ListSessionStreamsResponse{Streams: streams})
+}
+
+func (s *Server) materializeSessionStreamCatalog(ctx context.Context, session db.TaskSession) error {
+	if !session.ActiveDeploymentID.Valid {
+		return nil
+	}
+	deploymentStreams, err := s.db.ListDeploymentStreamsForDeployment(ctx, db.ListDeploymentStreamsForDeploymentParams{
+		OrgID:         session.OrgID,
+		ProjectID:     session.ProjectID,
+		EnvironmentID: session.EnvironmentID,
+		DeploymentID:  session.ActiveDeploymentID,
+	})
+	if err != nil {
+		return err
+	}
+	for _, deploymentStream := range deploymentStreams {
+		if _, err := s.db.EnsureSessionStream(ctx, db.EnsureSessionStreamParams{
+			ID:                 pgvalue.UUID(uuid.New()),
+			OrgID:              session.OrgID,
+			ProjectID:          session.ProjectID,
+			EnvironmentID:      session.EnvironmentID,
+			SessionID:          session.ID,
+			DeploymentStreamID: deploymentStream.ID,
+			Metadata:           []byte("{}"),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) appendSessionInputStream(w http.ResponseWriter, r *http.Request) {
@@ -411,15 +444,15 @@ func (s *Server) reconcileClaimedTaskSessionRunRequest(ctx context.Context, requ
 		ID:            request.StreamRecordID,
 	})
 	if isNoRows(err) {
-			if _, markErr := store.MarkTaskSessionRunRequestFailed(ctx, db.MarkTaskSessionRunRequestFailedParams{
-				OrgID:         request.OrgID,
-				ProjectID:     request.ProjectID,
-				EnvironmentID: request.EnvironmentID,
-				ID:            request.ID,
-				ClaimOwner:    request.ClaimOwner,
-				Reason:        "stream_record_not_found",
-			}); markErr != nil {
-				return pgtype.UUID{}, markErr
+		if _, markErr := store.MarkTaskSessionRunRequestFailed(ctx, db.MarkTaskSessionRunRequestFailedParams{
+			OrgID:         request.OrgID,
+			ProjectID:     request.ProjectID,
+			EnvironmentID: request.EnvironmentID,
+			ID:            request.ID,
+			ClaimOwner:    request.ClaimOwner,
+			Reason:        "stream_record_not_found",
+		}); markErr != nil {
+			return pgtype.UUID{}, markErr
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return pgtype.UUID{}, err
@@ -807,35 +840,9 @@ func (s *Server) authorizeSessionStreamResource(w http.ResponseWriter, r *http.R
 		writeError(w, badRequest(err))
 		return db.TaskSession{}, db.Stream{}, false
 	}
-	stream, err := s.db.GetTaskSessionStreamByName(r.Context(), db.GetTaskSessionStreamByNameParams{
-		OrgID:         session.OrgID,
-		ProjectID:     session.ProjectID,
-		EnvironmentID: session.EnvironmentID,
-		TaskSessionID: session.ID,
-		Name:          streamName,
-		Direction:     direction,
-	})
-	if isNoRows(err) {
-		opposite := db.StreamDirectionOutput
-		if direction == db.StreamDirectionOutput {
-			opposite = db.StreamDirectionInput
-		}
-		if _, oppositeErr := s.db.GetTaskSessionStreamByName(r.Context(), db.GetTaskSessionStreamByNameParams{
-			OrgID:         session.OrgID,
-			ProjectID:     session.ProjectID,
-			EnvironmentID: session.EnvironmentID,
-			TaskSessionID: session.ID,
-			Name:          streamName,
-			Direction:     opposite,
-		}); oppositeErr == nil {
-			writeError(w, conflict(errStreamDirectionMismatch))
-			return db.TaskSession{}, db.Stream{}, false
-		}
-		writeError(w, notFound(errStreamNotFound))
-		return db.TaskSession{}, db.Stream{}, false
-	}
+	stream, err := s.ensureTaskSessionStream(r.Context(), s.db, session, session.ActiveDeploymentID, streamName, direction)
 	if err != nil {
-		writeError(w, errors.New("load stream"))
+		s.writeStreamTokenError(w, err)
 		return db.TaskSession{}, db.Stream{}, false
 	}
 	return session, stream, true
@@ -974,17 +981,7 @@ func (s *Server) resolvePublicAccessTokenScopeRequest(ctx context.Context, r *ht
 	if !actor.HasPermission(permission, scope) {
 		return db.TaskSession{}, db.Stream{}, "", pgtype.Text{}, forbidden(errPermissionRequired)
 	}
-	stream, err := s.db.GetTaskSessionStreamByName(ctx, db.GetTaskSessionStreamByNameParams{
-		OrgID:         session.OrgID,
-		ProjectID:     session.ProjectID,
-		EnvironmentID: session.EnvironmentID,
-		TaskSessionID: session.ID,
-		Name:          streamName,
-		Direction:     direction,
-	})
-	if isNoRows(err) {
-		return db.TaskSession{}, db.Stream{}, "", pgtype.Text{}, notFound(errStreamNotFound)
-	}
+	stream, err := s.ensureTaskSessionStream(ctx, s.db, session, session.ActiveDeploymentID, streamName, direction)
 	if err != nil {
 		return db.TaskSession{}, db.Stream{}, "", pgtype.Text{}, err
 	}

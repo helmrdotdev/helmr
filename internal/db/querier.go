@@ -236,7 +236,6 @@ type Querier interface {
 	ListCurrentDeploymentTasks(ctx context.Context, arg ListCurrentDeploymentTasksParams) ([]DeploymentTask, error)
 	ListDeclarativeScheduleSummariesForEnvironment(ctx context.Context, arg ListDeclarativeScheduleSummariesForEnvironmentParams) ([]ListDeclarativeScheduleSummariesForEnvironmentRow, error)
 	ListDeploymentStreamsForDeployment(ctx context.Context, arg ListDeploymentStreamsForDeploymentParams) ([]DeploymentStream, error)
-	ListDeploymentStreamsForTask(ctx context.Context, arg ListDeploymentStreamsForTaskParams) ([]DeploymentStream, error)
 	ListDeploymentTasks(ctx context.Context, arg ListDeploymentTasksParams) ([]DeploymentTask, error)
 	ListDeploymentsByVersionForOrg(ctx context.Context, arg ListDeploymentsByVersionForOrgParams) ([]Deployment, error)
 	ListEnvironments(ctx context.Context, arg ListEnvironmentsParams) ([]Environment, error)

@@ -3694,7 +3694,7 @@ function timestampToJson(val) {
   return new Date(ms).toISOString().replace(".000Z", z);
 }
 // proto/typescript/src/gen/bundle_pb.ts
-var file_bundle = /* @__PURE__ */ fileDesc("CgxidW5kbGUucHJvdG8SD2hlbG1yLmJ1bmRsZS52MCKVAgoGQnVuZGxlEikKBWltYWdlGAEgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYxItCgdzYW5kYm94GAIgASgLMhwuaGVsbXIuYnVuZGxlLnYwLlNhbmRib3hTcGVjEicKBHRhc2sYAyABKAsyGS5oZWxtci5idW5kbGUudjAuVGFza1NwZWMSOgoKc3ViX2ltYWdlcxgEIAMoCzImLmhlbG1yLmJ1bmRsZS52MC5CdW5kbGUuU3ViSW1hZ2VzRW50cnkaTAoOU3ViSW1hZ2VzRW50cnkSCwoDa2V5GAEgASgJEikKBXZhbHVlGAIgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYzoCOAEiLAoIUGxhdGZvcm0SCgoCb3MYASABKAkSFAoMYXJjaGl0ZWN0dXJlGAIgASgJInsKCUltYWdlU3BlYxIWCg5mb3JtYXRfdmVyc2lvbhgBIAEoDRIrCghwbGF0Zm9ybRgCIAEoCzIZLmhlbG1yLmJ1bmRsZS52MC5QbGF0Zm9ybRIpCgVzdGVwcxgDIAMoCzIaLmhlbG1yLmJ1bmRsZS52MC5JbWFnZVN0ZXAiiwMKCUltYWdlU3RlcBIlCgRmcm9tGAEgASgLMhUuaGVsbXIuYnVuZGxlLnYwLkZyb21IABIjCgNydW4YAiABKAsyFC5oZWxtci5idW5kbGUudjAuUnVuSAASOwoQY29weV9zb3VyY2VfZmlsZRgFIAEoCzIfLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRmlsZUgAEjkKD2NvcHlfc291cmNlX2RpchgGIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRGlySAASOQoPY29weV9mcm9tX2ltYWdlGAcgASgLMh4uaGVsbXIuYnVuZGxlLnYwLkNvcHlGcm9tSW1hZ2VIABIrCgd3b3JrZGlyGAggASgLMhguaGVsbXIuYnVuZGxlLnYwLldvcmtkaXJIABIlCgR1c2VyGAkgASgLMhUuaGVsbXIuYnVuZGxlLnYwLlVzZXJIABIjCgNlbnYYCiABKAsyFC5oZWxtci5idW5kbGUudjAuRW52SABCBgoEa2luZCITCgRGcm9tEgsKA3JlZhgBIAEoCSKJAQoDUnVuEgwKBGFyZ3YYASADKAkSOAoMY2FjaGVfbW91bnRzGAIgAygLMiIuaGVsbXIuYnVuZGxlLnYwLkNhY2hlTW91bnRCaW5kaW5nEjoKDXNlY3JldF9tb3VudHMYAyADKAsyIy5oZWxtci5idW5kbGUudjAuU2VjcmV0TW91bnRCaW5kaW5nIh0KDVNvdXJjZUZpbGVSZWYSDAoEcGF0aBgBIAEoCSIsCgxTb3VyY2VEaXJSZWYSDAoEcGF0aBgBIAEoCRIOCgZpZ25vcmUYAiADKAkiXgoOQ29weVNvdXJjZUZpbGUSCwoDZHN0GAEgASgJEi8KB3NyY19yZWYYAiABKAsyHi5oZWxtci5idW5kbGUudjAuU291cmNlRmlsZVJlZhIOCgZkaWdlc3QYAyABKAkicQoNQ29weVNvdXJjZURpchILCgNkc3QYASABKAkSLgoHc3JjX3JlZhgCIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5Tb3VyY2VEaXJSZWYSEwoLdHJlZV9kaWdlc3QYAyABKAkSDgoGaWdub3JlGAQgAygJIkUKDUNvcHlGcm9tSW1hZ2USCwoDZHN0GAEgASgJEhUKDXNyY19pbWFnZV9rZXkYAiABKAkSEAoIc3JjX3BhdGgYAyABKAkiFwoHV29ya2RpchIMCgRwYXRoGAEgASgJIhQKBFVzZXISDAoEbmFtZRgBIAEoCSIhCgNFbnYSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJIkMKEUNhY2hlTW91bnRCaW5kaW5nEgsKA2RzdBgBIAEoCRIQCghjYWNoZV9pZBgCIAEoCRIPCgdzaGFyaW5nGAMgASgJIhkKCVNlY3JldFJlZhIMCgRuYW1lGAEgASgJIlEKElNlY3JldE1vdW50QmluZGluZxILCgNkc3QYASABKAkSLgoKc2VjcmV0X3JlZhgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRSZWYitgEKC1NhbmRib3hTcGVjEgoKAmlkGAEgASgJEjsKCXdvcmtzcGFjZRgCIAEoCzIoLmhlbG1yLmJ1bmRsZS52MC5Xb3Jrc3BhY2VSdW50aW1lQmluZGluZxItCglyZXNvdXJjZXMYAyABKAsyGi5oZWxtci5idW5kbGUudjAuUmVzb3VyY2VzEi8KB25ldHdvcmsYBCABKAsyHi5oZWxtci5idW5kbGUudjAuTmV0d29ya1BvbGljeSItChdXb3Jrc3BhY2VSdW50aW1lQmluZGluZxISCgptb3VudF9wYXRoGAEgASgJIjYKCVJlc291cmNlcxILCgNjcHUYASABKA0SDgoGbWVtb3J5GAIgASgJEgwKBGRpc2sYAyABKAkiPgoNTmV0d29ya1BvbGljeRIQCghpbnRlcm5ldBgBIAEoCBINCgVhbGxvdxgCIAMoCRIMCgRkZW55GAMgAygJIk4KD1NlY3JldFBsYWNlbWVudBIMCgRuYW1lGAEgASgJEi0KCXBsYWNlbWVudBgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5QbGFjZW1lbnQinwEKCVBsYWNlbWVudBIsCgNlbnYYASABKAsyHS5oZWxtci5idW5kbGUudjAuRW52UGxhY2VtZW50SAASLgoEZmlsZRgCIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5GaWxlUGxhY2VtZW50SAASLAoDZGlyGAMgASgLMh0uaGVsbXIuYnVuZGxlLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIi3AIKCFRhc2tTcGVjEgoKAmlkGAEgASgJEhIKCnNhbmRib3hfaWQYAiABKAkSEwoLbW9kdWxlX3BhdGgYAyABKAkSEwoLZXhwb3J0X25hbWUYBCABKAkSHAoUbWF4X2R1cmF0aW9uX3NlY29uZHMYBSABKA0SMQoHc2VjcmV0cxgGIAMoCzIgLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRQbGFjZW1lbnQSKQoFcXVldWUYByABKAsyGi5oZWxtci5idW5kbGUudjAuUXVldWVTcGVjEgsKA3R0bBgIIAEoCRI0CglzY2hlZHVsZXMYCSADKAsyIS5oZWxtci5idW5kbGUudjAuVGFza1NjaGVkdWxlU3BlYxIZChFyZXRyeV9wb2xpY3lfanNvbhgKIAEoCRIsCgdzdHJlYW1zGAsgAygLMhsuaGVsbXIuYnVuZGxlLnYwLlN0cmVhbVNwZWMiXgoKU3RyZWFtU3BlYxIMCgRuYW1lGAEgASgJEhEKCWRpcmVjdGlvbhgCIAEoCRIaChJzY2hlbWFfZmluZ2VycHJpbnQYAyABKAkSEwoLc2NoZW1hX2pzb24YBCABKAkiTwoJUXVldWVTcGVjEgwKBG5hbWUYASABKAkSHgoRY29uY3VycmVuY3lfbGltaXQYAiABKA1IAIgBAUIUChJfY29uY3VycmVuY3lfbGltaXQiXgoQVGFza1NjaGVkdWxlU3BlYxIKCgJpZBgBIAEoCRIMCgRjcm9uGAIgASgJEhAKCHRpbWV6b25lGAMgASgJEhMKBmFjdGl2ZRgEIAEoCEgAiAEBQgkKB19hY3RpdmVCQFo+Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9idW5kbGUvdjA7YnVuZGxldjBiBnByb3RvMw");
+var file_bundle = /* @__PURE__ */ fileDesc("CgxidW5kbGUucHJvdG8SD2hlbG1yLmJ1bmRsZS52MCKVAgoGQnVuZGxlEikKBWltYWdlGAEgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYxItCgdzYW5kYm94GAIgASgLMhwuaGVsbXIuYnVuZGxlLnYwLlNhbmRib3hTcGVjEicKBHRhc2sYAyABKAsyGS5oZWxtci5idW5kbGUudjAuVGFza1NwZWMSOgoKc3ViX2ltYWdlcxgEIAMoCzImLmhlbG1yLmJ1bmRsZS52MC5CdW5kbGUuU3ViSW1hZ2VzRW50cnkaTAoOU3ViSW1hZ2VzRW50cnkSCwoDa2V5GAEgASgJEikKBXZhbHVlGAIgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYzoCOAEiLAoIUGxhdGZvcm0SCgoCb3MYASABKAkSFAoMYXJjaGl0ZWN0dXJlGAIgASgJInsKCUltYWdlU3BlYxIWCg5mb3JtYXRfdmVyc2lvbhgBIAEoDRIrCghwbGF0Zm9ybRgCIAEoCzIZLmhlbG1yLmJ1bmRsZS52MC5QbGF0Zm9ybRIpCgVzdGVwcxgDIAMoCzIaLmhlbG1yLmJ1bmRsZS52MC5JbWFnZVN0ZXAiiwMKCUltYWdlU3RlcBIlCgRmcm9tGAEgASgLMhUuaGVsbXIuYnVuZGxlLnYwLkZyb21IABIjCgNydW4YAiABKAsyFC5oZWxtci5idW5kbGUudjAuUnVuSAASOwoQY29weV9zb3VyY2VfZmlsZRgFIAEoCzIfLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRmlsZUgAEjkKD2NvcHlfc291cmNlX2RpchgGIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRGlySAASOQoPY29weV9mcm9tX2ltYWdlGAcgASgLMh4uaGVsbXIuYnVuZGxlLnYwLkNvcHlGcm9tSW1hZ2VIABIrCgd3b3JrZGlyGAggASgLMhguaGVsbXIuYnVuZGxlLnYwLldvcmtkaXJIABIlCgR1c2VyGAkgASgLMhUuaGVsbXIuYnVuZGxlLnYwLlVzZXJIABIjCgNlbnYYCiABKAsyFC5oZWxtci5idW5kbGUudjAuRW52SABCBgoEa2luZCITCgRGcm9tEgsKA3JlZhgBIAEoCSKJAQoDUnVuEgwKBGFyZ3YYASADKAkSOAoMY2FjaGVfbW91bnRzGAIgAygLMiIuaGVsbXIuYnVuZGxlLnYwLkNhY2hlTW91bnRCaW5kaW5nEjoKDXNlY3JldF9tb3VudHMYAyADKAsyIy5oZWxtci5idW5kbGUudjAuU2VjcmV0TW91bnRCaW5kaW5nIh0KDVNvdXJjZUZpbGVSZWYSDAoEcGF0aBgBIAEoCSIsCgxTb3VyY2VEaXJSZWYSDAoEcGF0aBgBIAEoCRIOCgZpZ25vcmUYAiADKAkiXgoOQ29weVNvdXJjZUZpbGUSCwoDZHN0GAEgASgJEi8KB3NyY19yZWYYAiABKAsyHi5oZWxtci5idW5kbGUudjAuU291cmNlRmlsZVJlZhIOCgZkaWdlc3QYAyABKAkicQoNQ29weVNvdXJjZURpchILCgNkc3QYASABKAkSLgoHc3JjX3JlZhgCIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5Tb3VyY2VEaXJSZWYSEwoLdHJlZV9kaWdlc3QYAyABKAkSDgoGaWdub3JlGAQgAygJIkUKDUNvcHlGcm9tSW1hZ2USCwoDZHN0GAEgASgJEhUKDXNyY19pbWFnZV9rZXkYAiABKAkSEAoIc3JjX3BhdGgYAyABKAkiFwoHV29ya2RpchIMCgRwYXRoGAEgASgJIhQKBFVzZXISDAoEbmFtZRgBIAEoCSIhCgNFbnYSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJIkMKEUNhY2hlTW91bnRCaW5kaW5nEgsKA2RzdBgBIAEoCRIQCghjYWNoZV9pZBgCIAEoCRIPCgdzaGFyaW5nGAMgASgJIhkKCVNlY3JldFJlZhIMCgRuYW1lGAEgASgJIlEKElNlY3JldE1vdW50QmluZGluZxILCgNkc3QYASABKAkSLgoKc2VjcmV0X3JlZhgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRSZWYitgEKC1NhbmRib3hTcGVjEgoKAmlkGAEgASgJEjsKCXdvcmtzcGFjZRgCIAEoCzIoLmhlbG1yLmJ1bmRsZS52MC5Xb3Jrc3BhY2VSdW50aW1lQmluZGluZxItCglyZXNvdXJjZXMYAyABKAsyGi5oZWxtci5idW5kbGUudjAuUmVzb3VyY2VzEi8KB25ldHdvcmsYBCABKAsyHi5oZWxtci5idW5kbGUudjAuTmV0d29ya1BvbGljeSItChdXb3Jrc3BhY2VSdW50aW1lQmluZGluZxISCgptb3VudF9wYXRoGAEgASgJIjYKCVJlc291cmNlcxILCgNjcHUYASABKA0SDgoGbWVtb3J5GAIgASgJEgwKBGRpc2sYAyABKAkiPgoNTmV0d29ya1BvbGljeRIQCghpbnRlcm5ldBgBIAEoCBINCgVhbGxvdxgCIAMoCRIMCgRkZW55GAMgAygJIk4KD1NlY3JldFBsYWNlbWVudBIMCgRuYW1lGAEgASgJEi0KCXBsYWNlbWVudBgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5QbGFjZW1lbnQinwEKCVBsYWNlbWVudBIsCgNlbnYYASABKAsyHS5oZWxtci5idW5kbGUudjAuRW52UGxhY2VtZW50SAASLgoEZmlsZRgCIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5GaWxlUGxhY2VtZW50SAASLAoDZGlyGAMgASgLMh0uaGVsbXIuYnVuZGxlLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIirgIKCFRhc2tTcGVjEgoKAmlkGAEgASgJEhIKCnNhbmRib3hfaWQYAiABKAkSEwoLbW9kdWxlX3BhdGgYAyABKAkSEwoLZXhwb3J0X25hbWUYBCABKAkSHAoUbWF4X2R1cmF0aW9uX3NlY29uZHMYBSABKA0SMQoHc2VjcmV0cxgGIAMoCzIgLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRQbGFjZW1lbnQSKQoFcXVldWUYByABKAsyGi5oZWxtci5idW5kbGUudjAuUXVldWVTcGVjEgsKA3R0bBgIIAEoCRI0CglzY2hlZHVsZXMYCSADKAsyIS5oZWxtci5idW5kbGUudjAuVGFza1NjaGVkdWxlU3BlYxIZChFyZXRyeV9wb2xpY3lfanNvbhgKIAEoCSJPCglRdWV1ZVNwZWMSDAoEbmFtZRgBIAEoCRIeChFjb25jdXJyZW5jeV9saW1pdBgCIAEoDUgAiAEBQhQKEl9jb25jdXJyZW5jeV9saW1pdCJeChBUYXNrU2NoZWR1bGVTcGVjEgoKAmlkGAEgASgJEgwKBGNyb24YAiABKAkSEAoIdGltZXpvbmUYAyABKAkSEwoGYWN0aXZlGAQgASgISACIAQFCCQoHX2FjdGl2ZUJAWj5naXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL2J1bmRsZS92MDtidW5kbGV2MGIGcHJvdG8z");
 var BundleSchema = /* @__PURE__ */ messageDesc(file_bundle, 0);
 var PlatformSchema = /* @__PURE__ */ messageDesc(file_bundle, 1);
 var ImageSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 2);
@@ -3722,9 +3722,8 @@ var EnvPlacementSchema = /* @__PURE__ */ messageDesc(file_bundle, 23);
 var FilePlacementSchema = /* @__PURE__ */ messageDesc(file_bundle, 24);
 var DirPlacementSchema = /* @__PURE__ */ messageDesc(file_bundle, 25);
 var TaskSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 26);
-var StreamSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 27);
-var QueueSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 28);
-var TaskScheduleSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 29);
+var QueueSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 27);
+var TaskScheduleSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 28);
 // proto/typescript/src/gen/run_pb.ts
 var exports_run_pb = {};
 __export(exports_run_pb, {
@@ -4080,7 +4079,6 @@ function validateSecretName(name, label = "secret name") {
   }
 }
 var taskBrand = Symbol.for("helmr.sdk.Task");
-var taskOriginBrand = Symbol.for("helmr.sdk.TaskOrigin");
 var configBrand = Symbol.for("helmr.sdk.Config");
 var imageBuilderBrand = Symbol.for("helmr.sdk.ImageBuilder");
 var sandboxBuilderBrand = Symbol.for("helmr.sdk.SandboxBuilder");
@@ -4097,7 +4095,9 @@ function markTaskInternal(config, schedule) {
   validateOptionalTTL(config.ttl, `task ${JSON.stringify(config.id)} ttl`);
   validateRetryPolicy(config.retry, `task ${JSON.stringify(config.id)} retry`);
   assertPayloadSchema(config.payload, `task ${JSON.stringify(config.id)} payload`);
-  readStreamDefinitions(config.streams, `task ${JSON.stringify(config.id)} streams`);
+  if (Object.prototype.hasOwnProperty.call(config, "streams")) {
+    throw new Error("task streams are defined with the module-level streams primitive, not task config");
+  }
   if (schedule !== undefined) {
     Object.defineProperty(config, "schedule", {
       value: Object.freeze({ ...schedule }),
@@ -4105,39 +4105,7 @@ function markTaskInternal(config, schedule) {
     });
   }
   Object.defineProperty(config, taskBrand, { value: true });
-  Object.defineProperty(config, taskOriginBrand, { value: captureTaskOrigin() });
   return config;
-}
-function readStreamDefinitions(value, label = "streams") {
-  if (value === undefined) {
-    return [];
-  }
-  if (!Array.isArray(value)) {
-    throw new Error(`${label} must be an array`);
-  }
-  const seen = new Set;
-  return value.map((item, index) => {
-    if (item === null || typeof item !== "object" || Array.isArray(item)) {
-      throw new Error(`${label}.${index} must be a stream definition`);
-    }
-    const record = item;
-    const id = validateStreamName(record["id"], `${label}.${index}.id`);
-    const direction = record["direction"];
-    if (direction !== "input" && direction !== "output") {
-      throw new Error(`${label}.${index}.direction must be "input" or "output"`);
-    }
-    const schema = record["schema"];
-    if (schema === undefined) {
-      throw new Error(`${label}.${index}.schema is required`);
-    }
-    assertPayloadSchema(schema, `${label}.${index}.schema`);
-    const key = `${direction}:${id}`;
-    if (seen.has(key)) {
-      throw new Error(`${label} contains duplicate ${direction} stream ${JSON.stringify(id)}`);
-    }
-    seen.add(key);
-    return { id, direction, schema };
-  });
 }
 function validateRetryPolicy(value, label = "retry") {
   if (value === undefined || value === false) {
@@ -4284,30 +4252,35 @@ async function parseTaskPayload(task, payload) {
 function isTaskDefinition(value) {
   return hasBrand(value, taskBrand);
 }
+var streamDefinitions = [];
+var streamDefinitionContext;
+function registerStreamDefinition(value) {
+  const originFile = streamDefinitionContext;
+  if (originFile === undefined) {
+    return;
+  }
+  const existing = streamDefinitions.find((item) => item.originFile === originFile && item.id === value.id && item.direction === value.direction);
+  if (existing) {
+    return;
+  }
+  streamDefinitions.push({ ...value, originFile });
+}
+function setStreamDefinitionContext(originFile) {
+  streamDefinitionContext = originFile;
+}
+function clearStreamDefinitionContext() {
+  streamDefinitionContext = undefined;
+}
+function readStreamDefinitions() {
+  const streams = [...streamDefinitions];
+  streams.sort((left, right) => {
+    const byDirection = left.direction.localeCompare(right.direction);
+    return byDirection === 0 ? left.id.localeCompare(right.id) : byDirection;
+  });
+  return streams;
+}
 function isConfigDefinition(value) {
   return hasBrand(value, configBrand);
-}
-function captureTaskOrigin() {
-  const stack = new Error().stack ?? "";
-  for (const line of stack.split(`
-`).slice(1)) {
-    const file = stackFrameFile(line);
-    if (file === null || isSdkInternalFrame(file)) {
-      continue;
-    }
-    return file;
-  }
-  return "unknown";
-}
-function stackFrameFile(line) {
-  const match = /\(?((?:file:\/\/)?\/[^():]+):\d+:\d+\)?$/.exec(line.trim());
-  if (!match?.[1]) {
-    return null;
-  }
-  return match[1].startsWith("file://") ? decodeURIComponent(new URL(match[1]).pathname) : match[1];
-}
-function isSdkInternalFrame(file) {
-  return file.includes("/sdk/typescript/src/internal") || file.includes("/sdk/typescript/src/task") || file.includes("/sdk/typescript/src/index") || file.includes("/runtime/typescript/src/");
 }
 function isImageBuilder(value) {
   return hasBrand(value, imageBuilderBrand);
@@ -6698,10 +6671,22 @@ var schedules = new Proxy({}, {
   }
 });
 function createInputStream(id, opts) {
-  return inputStreamHandle(validateStreamName(id), opts?.schema);
+  const name = validateStreamName(id);
+  registerStreamDefinition({
+    id: name,
+    direction: "input",
+    ...opts?.schema === undefined ? {} : { schema: opts.schema }
+  });
+  return inputStreamHandle(name, opts?.schema);
 }
 function createOutputStream(id, opts) {
-  return outputStreamHandle(validateStreamName(id), opts?.schema);
+  const name = validateStreamName(id);
+  registerStreamDefinition({
+    id: name,
+    direction: "output",
+    ...opts?.schema === undefined ? {} : { schema: opts.schema }
+  });
+  return outputStreamHandle(name, opts?.schema);
 }
 function inputStreamHandle(id, schema) {
   const wait = (opts = {}) => {
@@ -6911,7 +6896,6 @@ function compile(opts) {
       ...task3.ttl === undefined ? {} : { ttl: task3.ttl },
       retryPolicyJson: JSON.stringify(task3.retry ?? false),
       schedules: compileTaskSchedules(task3.schedule),
-      streams: compileTaskStreams(readStreamDefinitions(task3.streams, `task ${JSON.stringify(task3.id)} streams`)),
       secrets: Object.entries(readSecretDecls(task3.secrets)).map(([name, placement]) => create(SecretPlacementSchema, {
         name,
         placement: compilePlacement(placement)
@@ -6919,18 +6903,40 @@ function compile(opts) {
     })
   });
 }
-function compileTaskStreams(streams2) {
-  return streams2.map((stream) => {
-    const schemaMetadata = streamSchemaMetadata(stream);
-    return create(StreamSpecSchema, {
+function compileStreamCatalog(streams2) {
+  const catalog = new Map;
+  for (const stream of streams2) {
+    const schemaMetadata = stream.schema === undefined ? null : streamSchemaMetadata(stream);
+    const item = {
       name: stream.id,
       direction: stream.direction,
-      schemaFingerprint: streamSchemaFingerprint(schemaMetadata),
+      schemaFingerprint: schemaMetadata === null ? "" : streamSchemaFingerprint(schemaMetadata),
       schemaJson: JSON.stringify(schemaMetadata)
-    });
+    };
+    const key = `${item.direction}:${item.name}`;
+    const existing = catalog.get(key);
+    if (existing !== undefined) {
+      if (existing.schemaFingerprint !== item.schemaFingerprint || existing.schemaJson !== item.schemaJson) {
+        throw new Error(`stream ${JSON.stringify(stream.id)} has conflicting deployment catalog schema`);
+      }
+      continue;
+    }
+    catalog.set(key, item);
+  }
+  return [...catalog.values()].sort((left, right) => {
+    const leftKey = `${left.direction}:${left.name}`;
+    const rightKey = `${right.direction}:${right.name}`;
+    if (leftKey < rightKey)
+      return -1;
+    if (leftKey > rightKey)
+      return 1;
+    return 0;
   });
 }
 function streamSchemaMetadata(stream) {
+  if (stream.schema === undefined) {
+    throw new Error(`stream ${JSON.stringify(stream.id)} has no schema`);
+  }
   const standard = stream.schema["~standard"];
   const vendor = typeof standard["vendor"] === "string" && standard["vendor"].trim() !== "" ? standard["vendor"].trim() : "unknown";
   return {
@@ -7373,7 +7379,11 @@ var HARD_IGNORE_PATTERNS = [
 async function loadConfigTaskRefs(cwd) {
   const config = await loadConfig(cwd);
   const taskFiles = await discoverTaskFiles(cwd, config);
-  return collectTaskRefs(cwd, await importDiscoveredTaskModules(taskFiles));
+  const modules = await importDiscoveredTaskModules(taskFiles);
+  return {
+    refs: collectTaskRefs(cwd, modules),
+    streams: readStreamDefinitions().filter((stream) => isInsideProjectRoot(cwd, stream.originFile))
+  };
 }
 async function loadConfig(cwd) {
   const configPath = resolve(cwd, "helmr.config.ts");
@@ -7392,7 +7402,14 @@ async function loadConfig(cwd) {
   return readDefaultConfig(moduleValue);
 }
 async function loadTaskRegistry(cwd) {
-  return buildTaskRegistry(await loadConfigTaskRefs(cwd));
+  return (await loadDeploymentRegistry(cwd)).tasks;
+}
+async function loadDeploymentRegistry(cwd) {
+  const loaded = await loadConfigTaskRefs(cwd);
+  return {
+    tasks: buildTaskRegistry(loaded.refs),
+    streams: compileStreamCatalog(loaded.streams)
+  };
 }
 function buildTaskRegistry(refs) {
   const registry2 = new Map;
@@ -7531,10 +7548,19 @@ function escapeRegExp(value) {
   return /[\\^$.*+?()[\]{}|]/.test(value) ? `\\${value}` : value;
 }
 async function importDiscoveredTaskModules(files) {
-  return Promise.all(files.map(async (file) => ({
-    path: file,
-    exports: await importProjectModule(file, `task module ${file}`)
-  })));
+  const modules = [];
+  for (const file of files) {
+    setStreamDefinitionContext(file);
+    try {
+      modules.push({
+        path: file,
+        exports: await importProjectModule(file, `task module ${file}`)
+      });
+    } finally {
+      clearStreamDefinitionContext();
+    }
+  }
+  return modules;
 }
 async function importProjectModule(path, label) {
   const moduleValue = await import(`${pathToFileURL(path).href}?helmr=${Date.now()}-${mintImportVersion()}`);
@@ -7600,6 +7626,15 @@ function projectRelativePath(cwd, path) {
     }
   }
   return path;
+}
+function isInsideProjectRoot(cwd, path) {
+  if (path === "unknown") {
+    return false;
+  }
+  return equivalentRoots(cwd).some((root) => {
+    const rel = relative(root, path);
+    return rel === "" || !rel.startsWith("..") && !rel.startsWith(`..${sep}`);
+  });
 }
 function equivalentRoots(path) {
   const roots = [path];
@@ -7748,14 +7783,15 @@ async function runAdapterCli(argv = process.argv.slice(2), io = processIo) {
 async function parseCommand(args, io) {
   const cwd = resolve2(requireArg(args, "cwd"));
   const output = args.options["output"] ?? "json";
-  const registry2 = await loadTaskRegistry(cwd);
   switch (output) {
     case "json": {
-      io.stdout.write(`${JSON.stringify(serializeRegistry(registry2))}
+      const registry2 = await loadDeploymentRegistry(cwd);
+      io.stdout.write(`${JSON.stringify(serializeDeploymentRegistry(registry2))}
 `);
       break;
     }
     case "binary": {
+      const registry2 = await loadTaskRegistry(cwd);
       const taskId = requireArg(args, "task");
       const bytes = toBinary(BundleSchema, lookupRegisteredTask(registry2, taskId).bundle);
       io.stdout.write(bytes);
@@ -7979,9 +8015,9 @@ function readRequiredString(record, key, label) {
   }
   return value;
 }
-function serializeRegistry(registry2) {
+function serializeDeploymentRegistry(registry2) {
   return {
-    tasks: Object.fromEntries([...registry2.entries()].sort(([leftId], [rightId]) => compareAscii2(leftId, rightId)).map(([taskId, task3]) => [
+    tasks: Object.fromEntries([...registry2.tasks.entries()].sort(([leftId], [rightId]) => compareAscii2(leftId, rightId)).map(([taskId, task3]) => [
       taskId,
       {
         originFile: task3.originFile,
@@ -7989,7 +8025,13 @@ function serializeRegistry(registry2) {
         exportName: task3.exportName,
         bundle: toJson(BundleSchema, task3.bundle)
       }
-    ]))
+    ])),
+    streams: registry2.streams.map((stream) => ({
+      name: stream.name,
+      direction: stream.direction,
+      ...stream.schemaFingerprint === "" ? {} : { schema_fingerprint: stream.schemaFingerprint },
+      schema_json: JSON.parse(stream.schemaJson)
+    }))
   };
 }
 function compareAscii2(left, right) {

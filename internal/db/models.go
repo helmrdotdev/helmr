@@ -2503,7 +2503,6 @@ type DeploymentStream struct {
 	ProjectID         pgtype.UUID        `json:"project_id"`
 	EnvironmentID     pgtype.UUID        `json:"environment_id"`
 	DeploymentID      pgtype.UUID        `json:"deployment_id"`
-	TaskID            string             `json:"task_id"`
 	Name              string             `json:"name"`
 	Direction         StreamDirection    `json:"direction"`
 	SchemaFingerprint string             `json:"schema_fingerprint"`

@@ -382,29 +382,26 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			failBuild("record deployment task: " + err.Error())
 			return
 		}
-		for _, stream := range task.Streams {
-			name := strings.TrimSpace(stream.Name)
-			direction := strings.TrimSpace(stream.Direction)
-			schemaJSON := stream.SchemaJSON
-			if len(schemaJSON) == 0 {
-				schemaJSON = []byte("null")
-			}
-			if _, err := queries.UpsertDeploymentStream(r.Context(), db.UpsertDeploymentStreamParams{
-				ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				OrgID:             orgID,
-				ProjectID:         projectID,
-				EnvironmentID:     environmentID,
-				DeploymentID:      deploymentID,
-				TaskID:            strings.TrimSpace(task.TaskID),
-				Name:              name,
-				Direction:         db.StreamDirection(direction),
-				SchemaFingerprint: strings.TrimSpace(stream.SchemaFingerprint),
-				SchemaJson:        schemaJSON,
-				Metadata:          []byte("{}"),
-			}); err != nil {
-				failBuild("record deployment stream: " + err.Error())
-				return
-			}
+	}
+	for _, stream := range request.Result.Streams {
+		schemaJSON := stream.SchemaJSON
+		if len(schemaJSON) == 0 {
+			schemaJSON = []byte("null")
+		}
+		if _, err := queries.UpsertDeploymentStream(r.Context(), db.UpsertDeploymentStreamParams{
+			ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:             orgID,
+			ProjectID:         projectID,
+			EnvironmentID:     environmentID,
+			DeploymentID:      deploymentID,
+			Name:              strings.TrimSpace(stream.Name),
+			Direction:         db.StreamDirection(strings.TrimSpace(stream.Direction)),
+			SchemaFingerprint: strings.TrimSpace(stream.SchemaFingerprint),
+			SchemaJson:        schemaJSON,
+			Metadata:          []byte("{}"),
+		}); err != nil {
+			failBuild("record deployment stream: " + err.Error())
+			return
 		}
 	}
 	row, err := queries.CompleteDeploymentBuild(r.Context(), db.CompleteDeploymentBuildParams{

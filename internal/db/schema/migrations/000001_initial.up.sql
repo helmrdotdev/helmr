@@ -357,7 +357,7 @@ CREATE TABLE worker_instances (
     rootfs_digest TEXT NOT NULL DEFAULT '',
     cni_profile TEXT NOT NULL DEFAULT '',
     worker_version TEXT NOT NULL DEFAULT '',
-    protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (btrim(protocol_version) <> ''),
+    protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v1' CHECK (btrim(protocol_version) <> ''),
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     drained_at TIMESTAMPTZ,
@@ -714,8 +714,8 @@ CREATE TABLE deployments (
     api_version TEXT NOT NULL DEFAULT '2026-06-06' CHECK (btrim(api_version) <> ''),
     sdk_version TEXT NOT NULL DEFAULT '',
     cli_version TEXT NOT NULL DEFAULT '',
-    bundle_format_version INTEGER NOT NULL DEFAULT 1 CHECK (bundle_format_version > 0),
-    worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (btrim(worker_protocol_version) <> ''),
+    bundle_format_version INTEGER NOT NULL DEFAULT 2 CHECK (bundle_format_version > 0),
+    worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v1' CHECK (btrim(worker_protocol_version) <> ''),
     deployment_source_artifact_id UUID NOT NULL,
     build_manifest_artifact_id UUID,
     deployment_manifest_artifact_id UUID,
@@ -869,7 +869,7 @@ CREATE TABLE deployment_tasks (
     export_name TEXT NOT NULL DEFAULT '',
     handler_entrypoint TEXT NOT NULL DEFAULT '',
     bundle_artifact_id UUID NOT NULL,
-    bundle_format_version INTEGER NOT NULL DEFAULT 1 CHECK (bundle_format_version > 0),
+    bundle_format_version INTEGER NOT NULL DEFAULT 2 CHECK (bundle_format_version > 0),
     requested_milli_cpu BIGINT NOT NULL DEFAULT 2000 CHECK (requested_milli_cpu > 0),
     requested_memory_mib BIGINT NOT NULL DEFAULT 2048 CHECK (requested_memory_mib > 0),
     requested_disk_mib BIGINT NOT NULL DEFAULT 0 CHECK (requested_disk_mib >= 0),
@@ -1767,7 +1767,6 @@ CREATE TABLE deployment_streams (
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
-    task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     direction stream_direction NOT NULL,
     schema_fingerprint TEXT NOT NULL DEFAULT '',
@@ -1776,12 +1775,9 @@ CREATE TABLE deployment_streams (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
     UNIQUE (org_id, project_id, environment_id, id, name, direction),
-    UNIQUE (org_id, deployment_id, task_id, name, direction),
+    UNIQUE (org_id, deployment_id, name, direction),
     FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
         REFERENCES deployments(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, deployment_id, task_id)
-        REFERENCES deployment_tasks(org_id, deployment_id, task_id)
         ON DELETE CASCADE
 );
 
@@ -2219,7 +2215,7 @@ CREATE TABLE run_leases (
     status run_lease_status NOT NULL,
     lease_expires_at TIMESTAMPTZ NOT NULL,
     runtime_id TEXT NOT NULL CHECK (btrim(runtime_id) <> ''),
-    worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (btrim(worker_protocol_version) <> ''),
+    worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v1' CHECK (btrim(worker_protocol_version) <> ''),
     active_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (active_duration_ms >= 0),
     trace_id TEXT NOT NULL CHECK (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000'),
     span_id TEXT NOT NULL CHECK (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000'),
@@ -2820,7 +2816,7 @@ CREATE INDEX workspace_materialization_operations_worker_claim_idx
 CREATE UNIQUE INDEX workspace_materialization_operations_active_resource_idx
     ON workspace_materialization_operations(org_id, project_id, environment_id, materialization_id, operation_kind, resource_kind, resource_id)
     WHERE state IN ('queued', 'claimed', 'running') AND resource_id IS NOT NULL;
-CREATE INDEX deployment_streams_lookup_idx ON deployment_streams(org_id, project_id, environment_id, deployment_id, task_id, name, direction);
+CREATE INDEX deployment_streams_lookup_idx ON deployment_streams(org_id, project_id, environment_id, deployment_id, name, direction);
 CREATE UNIQUE INDEX streams_session_name_idx ON streams(org_id, session_id, name, direction);
 CREATE INDEX stream_records_sequence_idx ON stream_records(org_id, stream_id, sequence, id);
 CREATE INDEX stream_records_correlation_sequence_idx ON stream_records(org_id, stream_id, correlation_id, sequence, id)

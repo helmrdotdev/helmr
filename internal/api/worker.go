@@ -280,10 +280,9 @@ type WorkerDeploymentBuildTask struct {
 	RetryPolicy                json.RawMessage                `json:"retry_policy,omitempty"`
 	Secrets                    []SecretDeclaration            `json:"secrets,omitempty"`
 	Schedules                  []WorkerDeploymentTaskSchedule `json:"schedules,omitempty"`
-	Streams                    []WorkerDeploymentTaskStream   `json:"streams,omitempty"`
 }
 
-type WorkerDeploymentTaskStream struct {
+type WorkerDeploymentStream struct {
 	Name              string          `json:"name"`
 	Direction         string          `json:"direction"`
 	SchemaFingerprint string          `json:"schema_fingerprint,omitempty"`
@@ -310,6 +309,7 @@ type WorkerDeploymentBuildResult struct {
 	BuildManifestDigest      string                      `json:"build_manifest_digest"`
 	DeploymentManifestDigest string                      `json:"deployment_manifest_digest"`
 	Tasks                    []WorkerDeploymentBuildTask `json:"tasks"`
+	Streams                  []WorkerDeploymentStream    `json:"streams,omitempty"`
 	CASObjects               []CASObject                 `json:"cas_objects,omitempty"`
 	Error                    *string                     `json:"error,omitempty"`
 }

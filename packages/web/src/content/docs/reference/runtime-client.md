@@ -84,7 +84,15 @@ Create public access tokens with explicit resource bindings. A session input gra
 ```ts
 import { auth, streams } from "@helmr/sdk"
 
-const reportStream = streams.output("agent.report")
+const reportStream = streams.output("agent.report", {
+  schema: {
+    "~standard": {
+      version: 1,
+      vendor: "report",
+      validate: (value: unknown) => ({ value }),
+    },
+  },
+})
 const outputToken = await auth.createPublicToken({
   scope: {
     type: "session.output.read",

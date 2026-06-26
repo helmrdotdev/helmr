@@ -1809,7 +1809,6 @@ func TestDeploymentStreamNameResolutionAndSessionEnsure(t *testing.T) {
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		DeploymentID:  pgvalue.UUID(ids.deploymentID),
-		TaskID:        "approval-task",
 		Name:          "progress",
 		Direction:     db.StreamDirectionOutput,
 	})
@@ -2262,7 +2261,6 @@ func seedSessionStream(t *testing.T, ctx context.Context, queries *db.Queries, i
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		DeploymentID:      pgvalue.UUID(ids.deploymentID),
-		TaskID:            "approval-task",
 		Name:              name,
 		Direction:         direction,
 		SchemaFingerprint: "schema-" + name,

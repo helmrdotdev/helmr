@@ -592,6 +592,8 @@ const getWorkerRunWaitScope = `-- name: GetWorkerRunWaitScope :one
 SELECT runs.org_id,
        runs.project_id,
        runs.environment_id,
+       runs.deployment_id,
+       runs.task_id,
        runs.id AS run_id,
        runs.task_session_id,
        runs.workspace_id,
@@ -648,6 +650,8 @@ type GetWorkerRunWaitScopeRow struct {
 	OrgID                     pgtype.UUID `json:"org_id"`
 	ProjectID                 pgtype.UUID `json:"project_id"`
 	EnvironmentID             pgtype.UUID `json:"environment_id"`
+	DeploymentID              pgtype.UUID `json:"deployment_id"`
+	TaskID                    string      `json:"task_id"`
 	RunID                     pgtype.UUID `json:"run_id"`
 	TaskSessionID             pgtype.UUID `json:"task_session_id"`
 	WorkspaceID               pgtype.UUID `json:"workspace_id"`
@@ -674,6 +678,8 @@ func (q *Queries) GetWorkerRunWaitScope(ctx context.Context, arg GetWorkerRunWai
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.TaskID,
 		&i.RunID,
 		&i.TaskSessionID,
 		&i.WorkspaceID,

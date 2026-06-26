@@ -234,17 +234,14 @@ func (s *Server) workerInputStreamWaitTarget(ctx context.Context, store db.Queri
 	if streamName == "" {
 		return workerStreamWaitParams{}, db.Stream{}, badRequest(errors.New("stream wait params.stream is required"))
 	}
-	stream, err := store.GetTaskSessionStreamByName(ctx, db.GetTaskSessionStreamByNameParams{
-		OrgID:         scope.OrgID,
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		TaskSessionID: scope.TaskSessionID,
-		Name:          streamName,
-		Direction:     db.StreamDirectionInput,
-	})
-	if isNoRows(err) {
-		return workerStreamWaitParams{}, db.Stream{}, errStreamNotFound
-	}
+	stream, err := s.ensureTaskSessionStream(ctx, store, db.TaskSession{
+		ID:                 scope.TaskSessionID,
+		OrgID:              scope.OrgID,
+		ProjectID:          scope.ProjectID,
+		EnvironmentID:      scope.EnvironmentID,
+		ActiveDeploymentID: scope.DeploymentID,
+		TaskID:             scope.TaskID,
+	}, scope.DeploymentID, streamName, db.StreamDirectionInput)
 	if err != nil {
 		return workerStreamWaitParams{}, db.Stream{}, err
 	}

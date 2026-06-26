@@ -789,6 +789,8 @@ SELECT run_leases.id,
        run_leases.run_id,
        runs.project_id,
        runs.environment_id,
+       runs.deployment_id,
+       runs.task_id,
        runs.task_session_id,
        run_leases.worker_instance_id,
        run_leases.worker_protocol_version,
@@ -833,6 +835,8 @@ type GetCurrentRunningRunLeaseRow struct {
 	RunID                 pgtype.UUID        `json:"run_id"`
 	ProjectID             pgtype.UUID        `json:"project_id"`
 	EnvironmentID         pgtype.UUID        `json:"environment_id"`
+	DeploymentID          pgtype.UUID        `json:"deployment_id"`
+	TaskID                string             `json:"task_id"`
 	TaskSessionID         pgtype.UUID        `json:"task_session_id"`
 	WorkerInstanceID      pgtype.UUID        `json:"worker_instance_id"`
 	WorkerProtocolVersion string             `json:"worker_protocol_version"`
@@ -857,6 +861,8 @@ func (q *Queries) GetCurrentRunningRunLease(ctx context.Context, arg GetCurrentR
 		&i.RunID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.TaskID,
 		&i.TaskSessionID,
 		&i.WorkerInstanceID,
 		&i.WorkerProtocolVersion,
@@ -875,6 +881,8 @@ SELECT run_leases.id,
        run_leases.run_id,
        runs.project_id,
        runs.environment_id,
+       runs.deployment_id,
+       runs.task_id,
        runs.task_session_id,
        run_leases.worker_instance_id,
        run_leases.worker_protocol_version,
@@ -916,6 +924,8 @@ type GetRunLeaseQueueLeaseRow struct {
 	RunID                 pgtype.UUID        `json:"run_id"`
 	ProjectID             pgtype.UUID        `json:"project_id"`
 	EnvironmentID         pgtype.UUID        `json:"environment_id"`
+	DeploymentID          pgtype.UUID        `json:"deployment_id"`
+	TaskID                string             `json:"task_id"`
 	TaskSessionID         pgtype.UUID        `json:"task_session_id"`
 	WorkerInstanceID      pgtype.UUID        `json:"worker_instance_id"`
 	WorkerProtocolVersion string             `json:"worker_protocol_version"`
@@ -940,6 +950,8 @@ func (q *Queries) GetRunLeaseQueueLease(ctx context.Context, arg GetRunLeaseQueu
 		&i.RunID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.TaskID,
 		&i.TaskSessionID,
 		&i.WorkerInstanceID,
 		&i.WorkerProtocolVersion,

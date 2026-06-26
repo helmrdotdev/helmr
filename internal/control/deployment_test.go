@@ -1166,14 +1166,13 @@ func (f *fakeStore) GetDeploymentQueueConfig(_ context.Context, arg db.GetDeploy
 	return db.GetDeploymentQueueConfigRow{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) ListDeploymentStreamsForTask(_ context.Context, arg db.ListDeploymentStreamsForTaskParams) ([]db.DeploymentStream, error) {
+func (f *fakeStore) ListDeploymentStreamsForDeployment(_ context.Context, arg db.ListDeploymentStreamsForDeploymentParams) ([]db.DeploymentStream, error) {
 	streams := make([]db.DeploymentStream, 0, len(f.deploymentStreams))
 	for _, stream := range f.deploymentStreams {
 		if stream.OrgID == arg.OrgID &&
 			stream.ProjectID == arg.ProjectID &&
 			stream.EnvironmentID == arg.EnvironmentID &&
-			stream.DeploymentID == arg.DeploymentID &&
-			stream.TaskID == arg.TaskID {
+			stream.DeploymentID == arg.DeploymentID {
 			streams = append(streams, stream)
 		}
 	}

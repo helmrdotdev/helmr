@@ -19,6 +19,7 @@ product repo.
 | `edge-smoke` | Focused edge diagnostics for concurrent wait rejection, workspace overwrite behavior, and intentionally failed runs. Missing-secret and invalid-payload cases are external CLI/API assertions because they fail before task code runs. |
 | `agent-toolchain-smoke` | Validates the task image, Nix, GitHub access, Claude/Codex/Cursor SDKs, and namespace/runtime assumptions. |
 | `stream-input-smoke` | Parks on session input streams, resumes from CLI input sends, and verifies checkpoint-restored workspace/process state. |
+| `session-continuation-smoke` | Verifies session-first continuation semantics: the first run returns with the session open/idle, then an idle input append creates a continuation run without another start call. |
 | `active-stream-smoke` | Exercises active input stream `once`, `peek`, and `on` without parking or runtime checkpoints. |
 | `token-checkpoint-smoke` | Exercises operator tokens across checkpoint restore boundaries. |
 | `timer-smoke` | Parks on a wall-clock timer and verifies workspace state survives resume without active sleep. |
@@ -36,6 +37,7 @@ Expected release-smoke coverage:
 | Deploy/build/promotion, source bundle, workspace, logs/events | `staging` | `runtime-smoke` |
 | Secret resolution and agent SDK credentials | `production` | `secret-smoke`, then `agent-toolchain-smoke` |
 | Stream input and parked wait resume | `staging` | `stream-input-smoke` |
+| Idle session continuation | `staging` | `session-continuation-smoke` |
 | Active stream transport | `staging` | `active-stream-smoke` |
 | Token UX and approval state | `staging` or `production` | `runtime-smoke` with `exerciseToken=true`; `token-checkpoint-smoke` for restore-boundary coverage |
 | Timer parked wait resume | `staging` | `timer-smoke` |
@@ -89,6 +91,15 @@ SKIP_DEPLOY=1 \
 dev/workflows/scripts/run-active-stream-smoke.sh
 ```
 
+To iterate only on session continuation, run:
+
+```sh
+HELMR_API_URL=https://dev.helmr.dev \
+SMOKE_ONLY_SESSION_CONTINUATION=1 \
+SKIP_DEPLOY=1 \
+dev/workflows/scripts/run-release-smoke.sh
+```
+
 The active stream smoke must complete without creating `run_waits`; verify that
 with a DB query when running against AWS dev.
 
@@ -127,11 +138,12 @@ helmr session start edge-smoke \
   --payload-json '{"mode":"expected-error"}'
 ```
 
-## Stream Catalogs
+## Streams
 
-Session streams are deployed catalog entries, not ad hoc runtime names. Define
-input/output stream handles at module scope and list the handles in the task's
-`streams` field:
+Session streams are deployment-level module primitives. Define input/output
+stream handles at module scope and use them from task execution. Do not list
+streams in `task(...)`; optional stream schemas are runtime validation hints on
+the `streams` primitive, not task config.
 
 ```ts
 const input = streams.input("input-smoke", { schema: inputSchema })
@@ -140,7 +152,6 @@ const report = streams.output("input-smoke.report", { schema: reportSchema })
 export const smoke = task({
   id: "smoke",
   sandbox: sbx,
-  streams: [input, report],
   run: async () => {
     await report.append({ ok: true })
   },

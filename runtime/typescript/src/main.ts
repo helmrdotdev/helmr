@@ -37,8 +37,10 @@ import { inspect } from "node:util"
 import {
   DuplicateTaskIdError,
   MissingConfigError,
+  loadDeploymentRegistry,
   loadConfig,
   loadTaskRegistry,
+  type DeploymentRegistry,
   type RegisteredTask,
 } from "./config"
 import {
@@ -119,13 +121,14 @@ export async function runAdapterCli(
 async function parseCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
   const cwd = resolve(requireArg(args, "cwd"))
   const output = args.options["output"] ?? "json"
-  const registry = await loadTaskRegistry(cwd)
   switch (output) {
     case "json": {
-      io.stdout.write(`${JSON.stringify(serializeRegistry(registry))}\n`)
+      const registry = await loadDeploymentRegistry(cwd)
+      io.stdout.write(`${JSON.stringify(serializeDeploymentRegistry(registry))}\n`)
       break
     }
     case "binary": {
+      const registry = await loadTaskRegistry(cwd)
       const taskId = requireArg(args, "task")
       const bytes = toBinary(BundleSchema, lookupRegisteredTask(registry, taskId).bundle)
       io.stdout.write(bytes)
@@ -391,17 +394,23 @@ function readRequiredString(record: Record<string, unknown>, key: string, label:
   return value
 }
 
-function serializeRegistry(registry: ReadonlyMap<string, RegisteredTask>): {
+function serializeDeploymentRegistry(registry: DeploymentRegistry): {
   readonly tasks: Record<string, {
     readonly originFile: string
     readonly modulePath: string
     readonly exportName: string
     readonly bundle: unknown
   }>
+  readonly streams: readonly {
+    readonly name: string
+    readonly direction: "input" | "output"
+    readonly schema_fingerprint?: string
+    readonly schema_json: unknown
+  }[]
 } {
   return {
     tasks: Object.fromEntries(
-      [...registry.entries()]
+      [...registry.tasks.entries()]
         .sort(([leftId], [rightId]) => compareAscii(leftId, rightId))
         .map(([taskId, task]) => [
           taskId,
@@ -413,6 +422,12 @@ function serializeRegistry(registry: ReadonlyMap<string, RegisteredTask>): {
           },
         ]),
     ),
+    streams: registry.streams.map((stream) => ({
+      name: stream.name,
+      direction: stream.direction,
+      ...(stream.schemaFingerprint === "" ? {} : { schema_fingerprint: stream.schemaFingerprint }),
+      schema_json: JSON.parse(stream.schemaJson),
+    })),
   }
 }
 

@@ -64,7 +64,6 @@ export const tokenCheckpointSmoke = task({
   id: "token-checkpoint-smoke",
   sandbox: sbx,
   maxDuration: 1200,
-  streams: [tokenEvents],
   payload,
   run: async (payload: Payload, ctx) => {
     const marker = payload.marker?.trim() || `token-checkpoint-${ctx.run.id}`

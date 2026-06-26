@@ -79,11 +79,49 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"approved":true`) {
 		t.Fatalf("input list wrong correlation status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rec = routeRequest(t, handler, http.MethodPost, "/api/sessions/"+ids.sessionID.String()+"/inputs/updates", inputBody, "Bearer machine-key")
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("direction mismatch status=%d body=%s", rec.Code, rec.Body.String())
+	seedControlDeploymentStream(t, ctx, pool, ids, ids.deploymentID, "updates", "input", "schema-updates-input", `{"kind":"input-updates"}`)
+	rec = routeRequest(t, handler, http.MethodGet, "/api/sessions/"+ids.sessionID.String()+"/streams", "", "Bearer machine-key")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stream list status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	requireErrorCode(t, rec.Body.Bytes(), "stream_direction_mismatch")
+	var listedStreams api.ListSessionStreamsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &listedStreams); err != nil {
+		t.Fatal(err)
+	}
+	if !hasListedStream(listedStreams.Streams, "updates", "input") {
+		t.Fatalf("stream list did not materialize deployment-only input stream: %+v", listedStreams.Streams)
+	}
+	rec = routeRequest(t, handler, http.MethodPost, "/api/sessions/"+ids.sessionID.String()+"/inputs/updates", inputBody, "Bearer machine-key")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("same-name input append status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var sameNameInput api.AppendStreamRecordResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &sameNameInput); err != nil {
+		t.Fatal(err)
+	}
+	if sameNameInput.Record.StreamID == ids.outputStreamID.String() {
+		t.Fatalf("same-name input used output stream id %s", ids.outputStreamID)
+	}
+	var deploymentSchemaJSON []byte
+	if err := pool.QueryRow(ctx, `
+		SELECT schema_json
+		  FROM deployment_streams
+		 WHERE org_id = $1
+		   AND deployment_id = $2
+		   AND name = 'updates'
+		   AND direction = 'input'
+	`, ids.orgID, ids.deploymentID).Scan(&deploymentSchemaJSON); err != nil {
+		t.Fatal(err)
+	}
+	if string(deploymentSchemaJSON) != `{"kind": "input-updates"}` && string(deploymentSchemaJSON) != `{"kind":"input-updates"}` {
+		t.Fatalf("deployment stream schema_json = %s", deploymentSchemaJSON)
+	}
+
+	rec = routeRequest(t, handler, http.MethodPost, "/api/sessions/"+ids.sessionID.String()+"/inputs/undeclared", inputBody, "Bearer machine-key")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("undeclared input append status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	requireErrorCode(t, rec.Body.Bytes(), "stream_not_found")
 
 	outputBody := `{"data":{"text":"ready"}}`
 	rec = routeRequest(t, handler, http.MethodPost, "/api/sessions/"+ids.sessionID.String()+"/outputs/updates", outputBody, "Bearer machine-key")
@@ -418,6 +456,15 @@ func routeRequest(t *testing.T, handler http.Handler, method string, path string
 	return rec
 }
 
+func hasListedStream(streams []api.StreamResponse, name string, direction string) bool {
+	for _, stream := range streams {
+		if stream.Name == name && stream.Direction == direction {
+			return true
+		}
+	}
+	return false
+}
+
 func createRouteToken(t *testing.T, handler http.Handler) api.TokenResponse {
 	t.Helper()
 	rec := routeRequest(t, handler, http.MethodPost, "/api/tokens", `{"timeout":"1h"}`, "Bearer machine-key")
@@ -587,8 +634,8 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	if _, err := pool.Exec(ctx, `INSERT INTO task_sessions (id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, workspace_id) VALUES ($1, $2, $3, $4, $5, $6, $6, $7)`, ids.sessionID, ids.orgID, ids.projectID, ids.environmentID, taskID, ids.deploymentID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
-	seedControlStream(t, ctx, pool, ids, ids.deploymentID, taskID, ids.inputStreamID, "approval", "input")
-	seedControlStream(t, ctx, pool, ids, ids.deploymentID, taskID, ids.outputStreamID, "updates", "output")
+	seedControlStream(t, ctx, pool, ids, ids.deploymentID, ids.inputStreamID, "approval", "input")
+	seedControlStream(t, ctx, pool, ids, ids.deploymentID, ids.outputStreamID, "updates", "output")
 	return ids
 }
 
@@ -702,15 +749,24 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 		}
 }
 
-func seedControlStream(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids streamTokenRouteFixture, deploymentID uuid.UUID, taskID string, streamID uuid.UUID, name string, direction string) {
+func seedControlStream(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids streamTokenRouteFixture, deploymentID uuid.UUID, streamID uuid.UUID, name string, direction string) {
 	t.Helper()
 	deploymentStreamID := uuid.Must(uuid.NewV7())
-	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, project_id, environment_id, deployment_id, task_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}')`, deploymentStreamID, ids.orgID, ids.projectID, ids.environmentID, deploymentID, taskID, name, direction, "schema-"+name); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}')`, deploymentStreamID, ids.orgID, ids.projectID, ids.environmentID, deploymentID, name, direction, "schema-"+name); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO streams (id, org_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, streamID, ids.orgID, ids.projectID, ids.environmentID, ids.sessionID, deploymentStreamID, name, direction, "schema-"+name); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func seedControlDeploymentStream(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids streamTokenRouteFixture, deploymentID uuid.UUID, name string, direction string, schemaFingerprint string, schemaJSON string) uuid.UUID {
+	t.Helper()
+	deploymentStreamID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, deploymentStreamID, ids.orgID, ids.projectID, ids.environmentID, deploymentID, name, direction, schemaFingerprint, schemaJSON); err != nil {
+		t.Fatal(err)
+	}
+	return deploymentStreamID
 }
 
 func testProjectIDStringUUID() uuid.UUID {

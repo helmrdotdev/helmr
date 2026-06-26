@@ -141,13 +141,13 @@ export interface TokenRef {
 export interface OutputStreamDefinition<TPayload = unknown, TInput = TPayload> {
   readonly id: string
   readonly direction: "output"
-  readonly schema: PayloadSchema<TInput, TPayload>
+  readonly schema?: PayloadSchema<TInput, TPayload>
 }
 
 export interface InputStreamDefinition<TPayload = unknown, TInput = TPayload> {
   readonly id: string
   readonly direction: "input"
-  readonly schema: PayloadSchema<TInput, TPayload>
+  readonly schema?: PayloadSchema<TInput, TPayload>
 }
 
 export type StreamDefinition =
@@ -157,7 +157,8 @@ export type StreamDefinition =
 export interface InternalStreamDefinition {
   readonly id: string
   readonly direction: "input" | "output"
-  readonly schema: PayloadSchema<any, any>
+  readonly schema?: PayloadSchema<any, any>
+  readonly originFile: string
 }
 
 export interface InputStreamWaitOptions extends WaitOptions {
@@ -483,7 +484,6 @@ export interface TaskConfigBase<
   readonly ttl?: string
   readonly retry?: RetryPolicy
   readonly secrets?: TSecrets
-  readonly streams?: readonly StreamDefinition[]
 }
 
 export interface TaskQueueConfig {
@@ -593,7 +593,6 @@ export type TaskSecrets<TTask> =
   TTask extends { readonly "~types"?: { readonly secrets: infer TSecrets } } ? TSecrets : never
 
 export const taskBrand = Symbol.for("helmr.sdk.Task")
-export const taskOriginBrand = Symbol.for("helmr.sdk.TaskOrigin")
 export const configBrand = Symbol.for("helmr.sdk.Config")
 
 export type ImageCopyInput = SourceFileRef | SourceDirRef | ImageBuilder
@@ -713,7 +712,9 @@ function markTaskInternal<
   validateOptionalTTL(config.ttl, `task ${JSON.stringify(config.id)} ttl`)
   validateRetryPolicy(config.retry, `task ${JSON.stringify(config.id)} retry`)
   assertPayloadSchema(config.payload, `task ${JSON.stringify(config.id)} payload`)
-  readStreamDefinitions(config.streams, `task ${JSON.stringify(config.id)} streams`)
+  if (Object.prototype.hasOwnProperty.call(config, "streams")) {
+    throw new Error("task streams are defined with the module-level streams primitive, not task config")
+  }
   if (schedule !== undefined) {
     Object.defineProperty(config, "schedule", {
       value: Object.freeze({ ...schedule }),
@@ -721,40 +722,7 @@ function markTaskInternal<
     })
   }
   Object.defineProperty(config, taskBrand, { value: true })
-  Object.defineProperty(config, taskOriginBrand, { value: captureTaskOrigin() })
   return config as unknown as MarkedTask<TPayload, TOutput, TSecrets, TPayloadSchema>
-}
-
-export function readStreamDefinitions(value: unknown, label = "streams"): readonly InternalStreamDefinition[] {
-  if (value === undefined) {
-    return []
-  }
-  if (!Array.isArray(value)) {
-    throw new Error(`${label} must be an array`)
-  }
-  const seen = new Set<string>()
-  return value.map((item, index) => {
-    if (item === null || typeof item !== "object" || Array.isArray(item)) {
-      throw new Error(`${label}.${index} must be a stream definition`)
-    }
-    const record = item as Record<string, unknown>
-    const id = validateStreamName(record["id"] as string, `${label}.${index}.id`)
-    const direction = record["direction"]
-    if (direction !== "input" && direction !== "output") {
-      throw new Error(`${label}.${index}.direction must be "input" or "output"`)
-    }
-    const schema = record["schema"]
-    if (schema === undefined) {
-      throw new Error(`${label}.${index}.schema is required`)
-    }
-    assertPayloadSchema(schema, `${label}.${index}.schema`)
-    const key = `${direction}:${id}`
-    if (seen.has(key)) {
-      throw new Error(`${label} contains duplicate ${direction} stream ${JSON.stringify(id)}`)
-    }
-    seen.add(key)
-    return { id, direction, schema }
-  })
 }
 
 export function validateRetryPolicy(value: unknown, label = "retry"): void {
@@ -922,12 +890,40 @@ export function isTaskDefinition(
   return hasBrand(value, taskBrand)
 }
 
-export function taskOriginFile(value: unknown): string | null {
-  if (!isTaskDefinition(value)) {
-    return null
+const streamDefinitions: InternalStreamDefinition[] = []
+let streamDefinitionContext: string | undefined
+
+export function registerStreamDefinition(value: Omit<InternalStreamDefinition, "originFile">): void {
+  const originFile = streamDefinitionContext
+  if (originFile === undefined) {
+    return
   }
-  const origin = (value as unknown as Record<PropertyKey, unknown>)[taskOriginBrand]
-  return typeof origin === "string" && origin.length > 0 ? origin : null
+  const existing = streamDefinitions.find((item) =>
+    item.originFile === originFile &&
+    item.id === value.id &&
+    item.direction === value.direction
+  )
+  if (existing) {
+    return
+  }
+  streamDefinitions.push({ ...value, originFile })
+}
+
+export function setStreamDefinitionContext(originFile: string): void {
+  streamDefinitionContext = originFile
+}
+
+export function clearStreamDefinitionContext(): void {
+  streamDefinitionContext = undefined
+}
+
+export function readStreamDefinitions(): readonly InternalStreamDefinition[] {
+  const streams = [...streamDefinitions]
+  streams.sort((left, right) => {
+    const byDirection = left.direction.localeCompare(right.direction)
+    return byDirection === 0 ? left.id.localeCompare(right.id) : byDirection
+  })
+  return streams
 }
 
 export interface HelmrConfig {
@@ -943,35 +939,6 @@ export function markConfig(config: HelmrConfig): HelmrConfig {
 
 export function isConfigDefinition(value: unknown): value is HelmrConfig & { readonly [configBrand]: true } {
   return hasBrand(value, configBrand)
-}
-
-function captureTaskOrigin(): string {
-  const stack = new Error().stack ?? ""
-  for (const line of stack.split("\n").slice(1)) {
-    const file = stackFrameFile(line)
-    if (file === null || isSdkInternalFrame(file)) {
-      continue
-    }
-    return file
-  }
-  return "unknown"
-}
-
-function stackFrameFile(line: string): string | null {
-  const match = /\(?((?:file:\/\/)?\/[^():]+):\d+:\d+\)?$/.exec(line.trim())
-  if (!match?.[1]) {
-    return null
-  }
-  return match[1].startsWith("file://") ? decodeURIComponent(new URL(match[1]).pathname) : match[1]
-}
-
-function isSdkInternalFrame(file: string): boolean {
-  return (
-    file.includes("/sdk/typescript/src/internal") ||
-    file.includes("/sdk/typescript/src/task") ||
-    file.includes("/sdk/typescript/src/index") ||
-    file.includes("/runtime/typescript/src/")
-  )
 }
 
 export class ImageBuilderImpl implements ImageBuilder {

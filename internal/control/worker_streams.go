@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -165,15 +166,17 @@ func (s *Server) readWorkerInputStreamWithWakeups(ctx context.Context, worker wo
 type workerRunLeaseStreamScope struct {
 	projectID     pgtype.UUID
 	environmentID pgtype.UUID
+	deploymentID  pgtype.UUID
+	taskID        string
 	taskSessionID pgtype.UUID
 }
 
 func queueLeaseStreamScope(row db.GetRunLeaseQueueLeaseRow) workerRunLeaseStreamScope {
-	return workerRunLeaseStreamScope{projectID: row.ProjectID, environmentID: row.EnvironmentID, taskSessionID: row.TaskSessionID}
+	return workerRunLeaseStreamScope{projectID: row.ProjectID, environmentID: row.EnvironmentID, deploymentID: row.DeploymentID, taskID: row.TaskID, taskSessionID: row.TaskSessionID}
 }
 
 func currentLeaseStreamScope(row db.GetCurrentRunningRunLeaseRow) workerRunLeaseStreamScope {
-	return workerRunLeaseStreamScope{projectID: row.ProjectID, environmentID: row.EnvironmentID, taskSessionID: row.TaskSessionID}
+	return workerRunLeaseStreamScope{projectID: row.ProjectID, environmentID: row.EnvironmentID, deploymentID: row.DeploymentID, taskID: row.TaskID, taskSessionID: row.TaskSessionID}
 }
 
 func (s *Server) workerStreamScope(ctx context.Context, leaseIDs workerRunLeaseIDs, leaseRow workerRunLeaseStreamScope, streamName string, direction db.StreamDirection) (db.TaskSession, db.Stream, error) {
@@ -187,7 +190,19 @@ func (s *Server) workerStreamScope(ctx context.Context, leaseIDs workerRunLeaseI
 		ProjectID:     leaseRow.projectID,
 		EnvironmentID: leaseRow.environmentID,
 	}
-	stream, err := s.db.GetTaskSessionStreamByName(ctx, db.GetTaskSessionStreamByNameParams{
+	stream, err := s.ensureTaskSessionStream(ctx, s.db, session, leaseRow.deploymentID, name, direction)
+	if err != nil {
+		return db.TaskSession{}, db.Stream{}, err
+	}
+	return session, stream, nil
+}
+
+func (s *Server) ensureTaskSessionStream(ctx context.Context, store db.Querier, session db.TaskSession, deploymentID pgtype.UUID, streamName string, direction db.StreamDirection) (db.Stream, error) {
+	name := strings.TrimSpace(streamName)
+	if err := validateSessionStreamName(name); err != nil {
+		return db.Stream{}, badRequest(err)
+	}
+	stream, err := store.GetTaskSessionStreamByName(ctx, db.GetTaskSessionStreamByNameParams{
 		OrgID:         session.OrgID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
@@ -195,13 +210,35 @@ func (s *Server) workerStreamScope(ctx context.Context, leaseIDs workerRunLeaseI
 		Name:          name,
 		Direction:     direction,
 	})
+	if err == nil {
+		return stream, nil
+	}
+	if !isNoRows(err) {
+		return db.Stream{}, err
+	}
+	deploymentStream, err := store.GetDeploymentStreamByName(ctx, db.GetDeploymentStreamByNameParams{
+		OrgID:         session.OrgID,
+		ProjectID:     session.ProjectID,
+		EnvironmentID: session.EnvironmentID,
+		DeploymentID:  deploymentID,
+		Name:          name,
+		Direction:     direction,
+	})
 	if isNoRows(err) {
-		return db.TaskSession{}, db.Stream{}, errStreamNotFound
+		return db.Stream{}, errStreamNotFound
 	}
 	if err != nil {
-		return db.TaskSession{}, db.Stream{}, err
+		return db.Stream{}, err
 	}
-	return session, stream, nil
+	return store.EnsureSessionStream(ctx, db.EnsureSessionStreamParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Metadata:           []byte("{}"),
+		DeploymentStreamID: deploymentStream.ID,
+		OrgID:              session.OrgID,
+		ProjectID:          session.ProjectID,
+		EnvironmentID:      session.EnvironmentID,
+		SessionID:          session.ID,
+	})
 }
 
 func (s *Server) readInputStreamRecord(ctx context.Context, store db.Querier, session db.TaskSession, stream db.Stream, afterSequence int64, correlationID string) (db.StreamRecord, bool, error) {
