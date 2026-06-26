@@ -510,6 +510,10 @@ func (c *Client) followWorkspaceStream(ctx context.Context, path string, cursor 
 type SessionScopeOptions struct {
 	ProjectID     string
 	EnvironmentID string
+	ExternalID    string
+	Status        string
+	TaskID        string
+	Limit         int32
 }
 
 func (c *Client) sessionCollectionPath(opts SessionScopeOptions) (string, error) {
@@ -529,6 +533,22 @@ func (c *Client) ListSessions(ctx context.Context, opts SessionScopeOptions) (ap
 	path, err := c.sessionCollectionPath(opts)
 	if err != nil {
 		return api.ListSessionsResponse{}, err
+	}
+	query := url.Values{}
+	if strings.TrimSpace(opts.ExternalID) != "" {
+		query.Set("external_id", strings.TrimSpace(opts.ExternalID))
+	}
+	if strings.TrimSpace(opts.Status) != "" {
+		query.Set("status", strings.TrimSpace(opts.Status))
+	}
+	if strings.TrimSpace(opts.TaskID) != "" {
+		query.Set("task_id", strings.TrimSpace(opts.TaskID))
+	}
+	if opts.Limit > 0 {
+		query.Set("limit", strconv.FormatInt(int64(opts.Limit), 10))
+	}
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {

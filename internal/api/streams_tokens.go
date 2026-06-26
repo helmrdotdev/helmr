@@ -79,6 +79,11 @@ type CompleteTokenRequest struct {
 	Data json.RawMessage `json:"data,omitempty"`
 }
 
+type CompleteTokenResponse struct {
+	Status string        `json:"status"`
+	Token  TokenResponse `json:"token"`
+}
+
 type PublicAccessTokenScopeRequest struct {
 	Type          string `json:"type"`
 	SessionID     string `json:"session_id"`

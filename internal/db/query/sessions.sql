@@ -314,6 +314,10 @@ SELECT *
        sqlc.arg(task_id_filter)::text = ''
        OR task_id = sqlc.arg(task_id_filter)
    )
+   AND (
+       sqlc.arg(external_id_filter)::text = ''
+       OR external_id = sqlc.arg(external_id_filter)
+   )
  ORDER BY updated_at DESC, id DESC
  LIMIT sqlc.arg(row_limit);
 

@@ -53,8 +53,17 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 		PublicURL:  mustParseTestURL("https://helmr.example.test"),
 	})
 
+	rec := routeRequest(t, handler, http.MethodGet, "/api/sessions?external_id=slack%3AT123%3AC456", "", "Bearer machine-key")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), ids.sessionID.String()) {
+		t.Fatalf("external id session list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = routeRequest(t, handler, http.MethodGet, "/api/sessions?external_id=missing", "", "Bearer machine-key")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"sessions":[]`) {
+		t.Fatalf("missing external id session list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
 	inputBody := `{"data":{"approved":true},"correlation_id":"thread-1","idempotency_key":"input-1"}`
-	rec := routeRequest(t, handler, http.MethodPost, "/api/sessions/"+ids.sessionID.String()+"/inputs/approval", inputBody, "Bearer machine-key")
+	rec = routeRequest(t, handler, http.MethodPost, "/api/sessions/"+ids.sessionID.String()+"/inputs/approval", inputBody, "Bearer machine-key")
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("input send status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -197,8 +206,26 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"completed"`) {
 		t.Fatalf("api key complete status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	var apiComplete api.CompleteTokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &apiComplete); err != nil {
+		t.Fatal(err)
+	}
+	if apiComplete.Status != "completed" || apiComplete.Token.Status != "completed" || string(apiComplete.Token.Data) != `{"ok":true}` {
+		t.Fatalf("api key complete response = %+v token=%+v", apiComplete, apiComplete.Token)
+	}
 	if strings.Contains(rec.Body.String(), "callback_url") || strings.Contains(rec.Body.String(), "public_access_token") {
 		t.Fatalf("complete response leaked completion capability: %s", rec.Body.String())
+	}
+	rec = routeRequest(t, handler, http.MethodPost, "/api/tokens/"+token.ID+"/complete", `{"data":{"ok":true}}`, "Bearer machine-key")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("api key duplicate complete status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var apiDuplicate api.CompleteTokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &apiDuplicate); err != nil {
+		t.Fatal(err)
+	}
+	if apiDuplicate.Status != "already_completed" || string(apiDuplicate.Token.Data) != `{"ok":true}` {
+		t.Fatalf("api key duplicate response = %+v token=%+v", apiDuplicate, apiDuplicate.Token)
 	}
 	rec = routeRequest(t, handler, http.MethodPost, "/api/tokens/"+token.ID+"/complete", `{"data":{"ok":false}}`, "Bearer machine-key")
 	if rec.Code != http.StatusConflict {
@@ -234,6 +261,13 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"public":true`) {
 		t.Fatalf("public complete status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	var publicComplete api.CompleteTokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &publicComplete); err != nil {
+		t.Fatal(err)
+	}
+	if publicComplete.Status != "completed" {
+		t.Fatalf("public complete response = %+v", publicComplete)
+	}
 	publicTokenHash, err := auth.HashToken(authSecret, publicToken.PublicAccessToken)
 	if err != nil {
 		t.Fatal(err)
@@ -246,10 +280,23 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 		t.Fatalf("public access token used_count=%d, want 1", consumedPublicToken.UsedCount)
 	}
 	rec = routeRequest(t, handler, http.MethodPost, "/api/v1/tokens/"+publicToken.ID+"/complete", `{"data":{"public":true}}`, "Bearer "+publicToken.PublicAccessToken)
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("public token replay status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	requireErrorCode(t, rec.Body.Bytes(), "token_scope_denied")
+	var publicDuplicate api.CompleteTokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &publicDuplicate); err != nil {
+		t.Fatal(err)
+	}
+	if publicDuplicate.Status != "already_completed" || string(publicDuplicate.Token.Data) != `{"public":true}` {
+		t.Fatalf("public duplicate response = %+v token=%+v", publicDuplicate, publicDuplicate.Token)
+	}
+	replayedPublicToken, err := queries.LockPublicAccessTokenByHash(ctx, publicTokenHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayedPublicToken.UsedCount != 1 {
+		t.Fatalf("public duplicate used_count=%d, want 1", replayedPublicToken.UsedCount)
+	}
 
 	wrongRaw := createPublicStreamScope(t, ctx, queries, authSecret, ids)
 	conflictToken := createRouteToken(t, handler)
@@ -889,7 +936,7 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint) VALUES ($1, $2, $3, $4, $5, 'default', 'sandbox-fingerprint')`, ids.workspaceID, ids.orgID, ids.projectID, ids.environmentID, sandboxID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, workspace_id) VALUES ($1, $2, $3, $4, $5, $6, $6, $7)`, ids.sessionID, ids.orgID, ids.projectID, ids.environmentID, taskID, ids.deploymentID, ids.workspaceID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, workspace_id, external_id) VALUES ($1, $2, $3, $4, $5, $6, $6, $7, 'slack:T123:C456')`, ids.sessionID, ids.orgID, ids.projectID, ids.environmentID, taskID, ids.deploymentID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	seedControlStream(t, ctx, pool, ids, ids.deploymentID, ids.inputStreamID, "approval", "input")

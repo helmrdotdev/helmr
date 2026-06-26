@@ -1181,13 +1181,21 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = int32(parsed)
 	}
+	externalID := strings.TrimSpace(r.URL.Query().Get("external_id"))
+	if externalID != "" {
+		if err := validateSessionExternalID(externalID); err != nil {
+			writeError(w, badRequest(err))
+			return
+		}
+	}
 	sessions, err := s.db.ListSessions(r.Context(), db.ListSessionsParams{
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		StatusFilter:  strings.TrimSpace(r.URL.Query().Get("status")),
-		TaskIDFilter:  strings.TrimSpace(r.URL.Query().Get("task_id")),
-		RowLimit:      limit,
+		OrgID:            pgvalue.UUID(actor.OrgID),
+		ProjectID:        projectID,
+		EnvironmentID:    environmentID,
+		StatusFilter:     strings.TrimSpace(r.URL.Query().Get("status")),
+		TaskIDFilter:     strings.TrimSpace(r.URL.Query().Get("task_id")),
+		ExternalIDFilter: externalID,
+		RowLimit:         limit,
 	})
 	if err != nil {
 		writeError(w, errors.New("list sessions"))

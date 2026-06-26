@@ -4547,11 +4547,11 @@ class HelmrClient {
       }
       return await this.#startSessionAndWait(target.id, payload, opts, readOptionalMaxDurationSeconds(target.maxDuration));
     },
-    open: (idOrHandle) => {
-      return this.#openSession(sessionId(idOrHandle));
+    open: (address) => {
+      return this.#openSession(sessionAddress(address));
     },
-    retrieve: async (idOrHandle, opts = {}) => {
-      return await this.#openSession(sessionId(idOrHandle)).retrieve(opts);
+    retrieve: async (address, opts = {}) => {
+      return await this.#openSession(sessionAddress(address)).retrieve(opts);
     },
     list: async (opts = {}) => {
       const response = await this.#json(`${sessionCollectionPath(opts)}${sessionListQuery(opts)}`, requestSignal(opts.signal));
@@ -4608,7 +4608,7 @@ class HelmrClient {
       return [...(await this[tokenClientMethod]({ operation: "listPage", opts })).tokens];
     },
     complete: async (token, data, opts = {}) => {
-      await this[tokenClientMethod]({ operation: "complete", token, data, opts });
+      return await this[tokenClientMethod]({ operation: "complete", token, data, opts });
     },
     cancel: async (token, opts = {}) => {
       return await this[tokenClientMethod]({ operation: "cancel", token, opts });
@@ -4655,7 +4655,7 @@ class HelmrClient {
         const id = typeof request.token === "string" ? request.token : request.token.id;
         const publicAccessToken = opts.publicAccessToken ?? tokenPublicAccessToken(request.token);
         const path = publicAccessToken === undefined ? `${tokenCollectionPath(opts)}/${encodeURIComponent(id)}/complete` : `/api/v1/tokens/${encodeURIComponent(id)}/complete`;
-        await this.#fetch(path, {
+        const response = await this.#json(path, {
           method: "POST",
           body: JSON.stringify(tokenCompleteBody(request.data, opts)),
           headers: {
@@ -4664,7 +4664,7 @@ class HelmrClient {
           },
           ...requestSignal(opts.signal)
         });
-        return;
+        return tokenCompleteResultFromResponse(response);
       }
       case "cancel": {
         const opts = request.opts ?? {};
@@ -4979,14 +4979,32 @@ class HelmrClient {
     });
     yield* parseWorkspaceStreamSse(response);
   }
-  #openSession(id) {
-    return {
-      id,
+  async#resolveSessionAddress(address, opts) {
+    if (address.kind === "id") {
+      return address.id;
+    }
+    const response = await this.#json(`${sessionCollectionPath(opts)}${sessionExternalIdQuery(address.externalId)}`, requestSignal(opts.signal));
+    if (response.sessions.length === 0) {
+      throw new Error(`session externalId ${JSON.stringify(address.externalId)} was not found`);
+    }
+    if (response.sessions.length > 1) {
+      throw new Error(`session externalId ${JSON.stringify(address.externalId)} resolved to multiple sessions`);
+    }
+    const session = response.sessions[0];
+    if (session === undefined) {
+      throw new Error(`session externalId ${JSON.stringify(address.externalId)} was not found`);
+    }
+    return session.id;
+  }
+  #openSession(address) {
+    const operations = {
       retrieve: async (opts = {}) => {
+        const id = await this.#resolveSessionAddress(address, opts);
         const response = await this.#json(sessionResourcePath(id, opts, ""), requestSignal(opts.signal));
         return sessionFromResponse(response);
       },
       close: async (opts = {}) => {
+        const id = await this.#resolveSessionAddress(address, opts);
         const response = await this.#json(sessionResourcePath(id, opts, "/close"), {
           method: "POST",
           body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
@@ -4996,6 +5014,7 @@ class HelmrClient {
         return sessionFromResponse(response);
       },
       cancel: async (opts = {}) => {
+        const id = await this.#resolveSessionAddress(address, opts);
         const response = await this.#json(sessionResourcePath(id, opts, "/cancel"), {
           method: "POST",
           body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
@@ -5005,6 +5024,7 @@ class HelmrClient {
         return sessionFromResponse(response);
       },
       runs: async (opts = {}) => {
+        const id = await this.#resolveSessionAddress(address, opts);
         const response = await this.#json(sessionResourcePath(id, opts, "/runs"), requestSignal(opts.signal));
         return response.runs.map(sessionRunFromResponse);
       },
@@ -5013,6 +5033,7 @@ class HelmrClient {
         return {
           id: stream,
           send: async (data, opts = {}) => {
+            const id = await this.#resolveSessionAddress(address, opts);
             const path = sessionPublicAccessPath(id, stream, "input", opts) ?? sessionResourcePath(id, opts, `/inputs/${encodeURIComponent(stream)}`);
             const response = await this.#json(path, {
               method: "POST",
@@ -5030,6 +5051,7 @@ class HelmrClient {
           on: async () => unsupportedClientStreamSubscribe(),
           peek: async () => unsupportedClientStreamPeek(),
           list: async (opts = {}) => {
+            const id = await this.#resolveSessionAddress(address, opts);
             return await this.#listSessionStreamRecords(id, stream, "input", opts);
           }
         };
@@ -5039,6 +5061,7 @@ class HelmrClient {
         return {
           id: stream,
           append: async (data, opts = {}) => {
+            const id = await this.#resolveSessionAddress(address, opts);
             const response = await this.#json(sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
               method: "POST",
               body: JSON.stringify(streamAppendBody(data, opts)),
@@ -5049,6 +5072,7 @@ class HelmrClient {
           },
           pipe: async (source, opts = {}) => {
             for await (const item of source) {
+              const id = await this.#resolveSessionAddress(address, opts);
               const response = await this.#json(sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
                 method: "POST",
                 body: JSON.stringify(streamAppendBody(item, opts)),
@@ -5060,6 +5084,7 @@ class HelmrClient {
           },
           writer: (opts = {}) => ({
             write: async (data) => {
+              const id = await this.#resolveSessionAddress(address, opts);
               const response = await this.#json(sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
                 method: "POST",
                 body: JSON.stringify(streamAppendBody(data, opts)),
@@ -5071,6 +5096,7 @@ class HelmrClient {
             close: async () => {}
           }),
           read: async (opts = {}) => {
+            const id = await this.#resolveSessionAddress(address, opts);
             const path = sessionPublicAccessPath(id, stream, "output", opts) ?? sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}/read`);
             const response = await this.#json(`${path}${sessionStreamQuery(opts)}`, opts.publicAccessToken === undefined ? requestSignal(opts.signal) : {
               headers: { authorization: `Bearer ${opts.publicAccessToken}` },
@@ -5079,11 +5105,16 @@ class HelmrClient {
             return response.record === undefined || response.record === null ? null : streamRecordFromResponse(response.record);
           },
           list: async (opts = {}) => {
+            const id = await this.#resolveSessionAddress(address, opts);
             return await this.#listSessionStreamRecords(id, stream, "output", opts);
           }
         };
       }
     };
+    if (address.kind === "id") {
+      return { id: address.id, ...operations };
+    }
+    return { externalId: address.externalId, ...operations };
   }
   async#listSessionStreamRecords(sessionID, stream, direction, opts) {
     const response = await this.#json(`${sessionResourcePath(sessionID, opts, `/${direction === "input" ? "inputs" : "outputs"}/${encodeURIComponent(stream)}`)}${sessionStreamQuery(opts)}`, requestSignal(opts.signal));
@@ -5509,6 +5540,19 @@ function appendStreamRecordFromResponse(response) {
     idempotencyStatus: response.idempotency_status === "duplicate" ? "duplicate" : "created"
   };
 }
+function sessionAddress(address) {
+  if (typeof address === "string") {
+    return { kind: "id", id: address };
+  }
+  if ("externalId" in address) {
+    const externalId = address.externalId.trim();
+    if (externalId === "") {
+      throw new Error("session externalId must not be empty");
+    }
+    return { kind: "externalId", externalId };
+  }
+  return { kind: "id", id: address.id };
+}
 function sessionId(idOrHandle) {
   return typeof idOrHandle === "string" ? idOrHandle : idOrHandle.id;
 }
@@ -5559,6 +5603,8 @@ function sessionListQuery(opts) {
     query.set("status", opts.status);
   if (opts.taskId !== undefined)
     query.set("task_id", opts.taskId);
+  if (opts.externalId !== undefined)
+    query.set("external_id", opts.externalId);
   if (opts.limit !== undefined)
     query.set("limit", String(opts.limit));
   return query.size === 0 ? "" : `?${query}`;
@@ -5571,6 +5617,11 @@ function sessionCollectionPath(opts) {
     return `/api/projects/${encodeURIComponent(opts.projectId)}/environments/${encodeURIComponent(opts.environmentId)}/sessions`;
   }
   return "/api/sessions";
+}
+function sessionExternalIdQuery(externalId) {
+  const query = new URLSearchParams;
+  query.set("external_id", externalId);
+  return `?${query}`;
 }
 function sessionResourcePath(id, opts, suffix) {
   return `${sessionCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`;
@@ -6002,6 +6053,12 @@ function tokenFromResponse(response) {
     ...response.data === undefined ? {} : { data: response.data },
     ...response.tags === undefined ? {} : { tags: response.tags },
     ...response.metadata === undefined ? {} : { metadata: response.metadata }
+  };
+}
+function tokenCompleteResultFromResponse(response) {
+  return {
+    status: response.status,
+    token: tokenFromResponse(response.token)
   };
 }
 function tokenPublicAccessToken(target) {

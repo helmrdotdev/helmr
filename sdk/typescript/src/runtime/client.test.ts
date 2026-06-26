@@ -824,6 +824,47 @@ test("sessions facade retrieves state and reads/writes session streams", async (
   ])
 })
 
+test("sessions facade resolves explicit external id handles before operations", async () => {
+  const requestedUrls: string[] = []
+  const bodies: unknown[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (init?.body !== undefined) {
+      bodies.push(JSON.parse(String(init.body)))
+    }
+    if (url.endsWith("/api/sessions?external_id=slack%3AT123%3AC456")) {
+      return Response.json({ sessions: [sessionFixture({ id: "session-1", external_id: "slack:T123:C456" })] })
+    }
+    if (url.endsWith("/api/sessions/session-1")) {
+      return Response.json(sessionFixture({ id: "session-1", external_id: "slack:T123:C456" }))
+    }
+    if (url.endsWith("/api/sessions/session-1/inputs/approval")) {
+      return Response.json({
+        record: channelRecordFixture({ data: { approved: true }, correlation_id: "thread-1" }),
+        idempotency_status: "created",
+      }, { status: 201 })
+    }
+    throw new Error(`unexpected URL ${url}`)
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const session = client.sessions.open({ externalId: "slack:T123:C456" })
+
+  expect((await session.retrieve()).id).toBe("session-1")
+  await session.input("approval").send({ approved: true }, { correlationId: "thread-1" })
+
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/sessions?external_id=slack%3AT123%3AC456",
+    "https://api.example.test/api/sessions/session-1",
+    "https://api.example.test/api/sessions?external_id=slack%3AT123%3AC456",
+    "https://api.example.test/api/sessions/session-1/inputs/approval",
+  ])
+  expect(bodies).toEqual([
+    { data: { approved: true }, correlation_id: "thread-1" },
+  ])
+})
+
 test("sessions facade uses public access token stream routes when provided", async () => {
   const requestedUrls: string[] = []
   const authHeaders: Array<string | null> = []
@@ -1045,6 +1086,17 @@ test("tokens namespace exposes default client token methods", async () => {
         id: "token-id",
         status: "cancelled",
         timeout_at: null,
+      })
+    }
+    if (method === "POST" && url.endsWith("/api/v1/tokens/token-id/complete")) {
+      return Response.json({
+        status: "completed",
+        token: {
+          id: "token-id",
+          status: "completed",
+          timeout_at: null,
+          data: { approved: true },
+        },
       })
     }
     return new Response(null, { status: 204 })
@@ -2066,11 +2118,19 @@ test("token method complete uses token public access token when present", async 
     requestedUrl = String(input)
     authorization = new Headers(init?.headers).get("authorization")
     body = JSON.parse(String(init?.body))
-    return new Response(null, { status: 204 })
+    return Response.json({
+      status: "completed",
+      token: {
+        id: "token-id",
+        timeout_at: null,
+        status: "completed",
+        data: { text: "continue" },
+      },
+    })
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client[tokenClientMethod]({
+  const result = await client[tokenClientMethod]({
     operation: "complete",
     token: {
       id: "token-id",
@@ -2086,17 +2146,34 @@ test("token method complete uses token public access token when present", async 
   expect(body).toEqual({
     data: { text: "continue" },
   })
+  expect(result).toEqual({
+    status: "completed",
+    token: {
+      id: "token-id",
+      status: "completed",
+      timeoutAt: null,
+      data: { text: "continue" },
+    },
+  })
 })
 
 test("token method complete accepts explicit public access token option", async () => {
   let authorization: string | null | undefined
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     authorization = new Headers(init?.headers).get("authorization")
-    return new Response(null, { status: 204 })
+    return Response.json({
+      status: "already_completed",
+      token: {
+        id: "token-id",
+        timeout_at: null,
+        status: "completed",
+        data: { reviewed: true },
+      },
+    })
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client[tokenClientMethod]({
+  const result = await client[tokenClientMethod]({
     operation: "complete",
     token: "token-id",
     data: { reviewed: true },
@@ -2104,6 +2181,15 @@ test("token method complete accepts explicit public access token option", async 
   })
 
   expect(authorization).toBe("Bearer raw-token")
+  expect(result).toEqual({
+    status: "already_completed",
+    token: {
+      id: "token-id",
+      status: "completed",
+      timeoutAt: null,
+      data: { reviewed: true },
+    },
+  })
 })
 
 test("token method complete accepts explicit id", async () => {
@@ -2114,11 +2200,19 @@ test("token method complete accepts explicit id", async () => {
     requestedUrl = String(input)
     authorization = new Headers(init?.headers).get("authorization")
     body = JSON.parse(String(init?.body))
-    return new Response(null, { status: 204 })
+    return Response.json({
+      status: "completed",
+      token: {
+        id: "token-id",
+        timeout_at: null,
+        status: "completed",
+        data: { reviewed: true },
+      },
+    })
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client[tokenClientMethod]({
+  const result = await client[tokenClientMethod]({
     operation: "complete",
     token: "token-id",
     data: { reviewed: true },
@@ -2129,6 +2223,8 @@ test("token method complete accepts explicit id", async () => {
   expect(body).toEqual({
     data: { reviewed: true },
   })
+  expect(result.status).toBe("completed")
+  expect(result.token.data).toEqual({ reviewed: true })
 })
 
 test("runs.events.subscribe handles CRLF SSE frames split across chunks", async () => {

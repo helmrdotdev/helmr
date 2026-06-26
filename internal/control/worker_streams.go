@@ -141,13 +141,7 @@ func (s *Server) readWorkerInputStreamWithWakeups(ctx context.Context, worker wo
 			return api.WorkerActiveStreamReadResponse{}, err
 		}
 		if found {
-			if _, err := s.db.MarkSessionRunRequestConsumedByActiveRun(ctx, db.MarkSessionRunRequestConsumedByActiveRunParams{
-				OrgID:          session.OrgID,
-				ProjectID:      session.ProjectID,
-				EnvironmentID:  session.EnvironmentID,
-				ActiveRunID:    pgvalue.UUID(leaseIDs.runID),
-				StreamRecordID: record.ID,
-			}); err != nil && !isNoRows(err) {
+			if err := s.consumeSessionRunRequestByActiveRun(ctx, session, pgvalue.UUID(leaseIDs.runID), record.ID); err != nil {
 				return api.WorkerActiveStreamReadResponse{}, err
 			}
 			response := streamRecordResponse(record)

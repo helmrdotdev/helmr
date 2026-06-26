@@ -121,7 +121,7 @@ func sessionStartCommand() *cobra.Command {
 			if timeoutSeconds > 0 {
 				deadline = time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
 			}
-			sessionScope := client.SessionScopeOptions(scope)
+			sessionScope := client.SessionScopeOptions{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID}
 			if jsonOutput {
 				if wait {
 					waitCtx := cmd.Context()
@@ -204,8 +204,8 @@ func sessionStartCommand() *cobra.Command {
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
 	cmd.Flags().StringVar(&idempotencyKeyTTL, "idempotency-key-ttl", "", "Duration to retain the idempotency key, for example 30d or 24h.")
 	cmd.Flags().StringVar(&workspaceID, "workspace", "", "Existing workspace ID to attach this session to.")
-	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for the session to finish.")
-	cmd.Flags().BoolVar(&follow, "follow", false, "Stream the initial run logs while waiting.")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for the initial run to finish.")
+	cmd.Flags().BoolVar(&follow, "follow", false, "Stream the initial run logs until the run finishes.")
 	cmd.Flags().StringVar(&timeout, "timeout", "", "Maximum wait duration, for example 10m or 1h.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	cmd.MarkFlagsMutuallyExclusive("metadata-file", "metadata-json")
@@ -594,7 +594,7 @@ func workspaceScopeForClient(control *client.Client, projectID string, environme
 
 func sessionScopeForClient(control *client.Client, projectID string, environmentID string) (client.SessionScopeOptions, error) {
 	environmentScope, err := environmentScopeForClient(control, projectID, environmentID)
-	return client.SessionScopeOptions(environmentScope), err
+	return client.SessionScopeOptions{ProjectID: environmentScope.ProjectID, EnvironmentID: environmentScope.EnvironmentID}, err
 }
 
 func resolveRunScope(ctx context.Context, control *client.Client, runID string) (client.RunScopeOptions, error) {

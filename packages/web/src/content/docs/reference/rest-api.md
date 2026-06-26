@@ -101,7 +101,9 @@ Common user/API-key routes:
 
 Auth routes include GitHub OAuth, magic links, device auth, logout, API keys, members, invitations, projects, and environments.
 
-`POST /api/tokens/{id}/complete` accepts a Helmr API key or session bearer with `tokens.complete` permission for the token's project environment. Browser completion uses `POST /api/v1/tokens/{id}/complete` with the token's scoped `public_access_token`; provider callbacks use `POST /api/v1/tokens/{id}/callback/{secret}` and do not use CORS. Token id knowledge is not authorization.
+`GET /api/sessions?external_id=...` filters the session collection by an environment-scoped external conversation id. `/api/sessions/{id}` treats its path segment as a session id only.
+
+`POST /api/tokens/{id}/complete` accepts a Helmr API key or session bearer with `tokens.complete` permission for the token's project environment. Browser completion uses `POST /api/v1/tokens/{id}/complete` with the token's scoped `public_access_token`; provider callbacks use `POST /api/v1/tokens/{id}/callback/{secret}` and do not use CORS. Token id knowledge is not authorization. Completion responses are `{ "status": "completed" | "already_completed", "token": { ... } }`. Retrying the same canonical completion returns `already_completed`; completing with different data returns `409 token_completion_conflict` and never overwrites the token.
 
 `POST /api/public-access-tokens` creates narrow browser capabilities bound to one stream scope. `session.input.send` tokens can call `POST /api/v1/sessions/{id}/inputs/{stream}`. `session.output.read` tokens can call `GET /api/v1/sessions/{id}/outputs/{stream}/read`. The public token's scope row, stream direction, and optional `correlation_id` are checked before the token is consumed.
 

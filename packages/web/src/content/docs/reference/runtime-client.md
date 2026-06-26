@@ -56,7 +56,7 @@ Main surfaces:
 | `tokens.create(opts)` / `client.tokens.create(opts)` | Create an externally completable token. Inside task code, `tokens.create()` returns a waitable runtime token handle. |
 | `tokens.retrieve(id, opts)` / `client.tokens.retrieve(id, opts)` | Retrieve token metadata and completion result. |
 | `tokens.list(opts)` / `client.tokens.list(opts)` | List tokens. |
-| `tokens.complete(token, data, opts)` / `client.tokens.complete(token, data, opts)` | Complete a token with JSON data. |
+| `tokens.complete(token, data, opts)` / `client.tokens.complete(token, data, opts)` | Complete a token with JSON data and return `{ status, token }`. Same canonical duplicate data returns `already_completed`; different data returns `token_completion_conflict`. |
 | `tokens.cancel(token, opts)` / `client.tokens.cancel(token, opts)` | Cancel a pending token. |
 | `schedules.create(opts)` / `client.schedules.create(opts)` | Create an imperative cron schedule for a deployed task. |
 | `schedules.list(opts)` / `client.schedules.list(opts)` | List schedules in a project environment. |
@@ -67,6 +67,8 @@ Main surfaces:
 | `schedules.delete(idOrSchedule, opts)` / `client.schedules.delete(idOrSchedule, opts)` | Delete an imperative schedule. |
 
 The top-level `sessions`, `runs`, `workspaces`, `tokens`, `schedules`, and `auth` facades mirror the client namespaces and use the default client from `HELMR_API_URL` and `HELMR_API_KEY`. Use `new HelmrClient(...)` when the caller needs explicit credentials or multiple control-plane targets. Imported task definitions are typed targets for the sessions namespace; they do not expose direct `.start()` or `.startAndWait()` helpers.
+
+Session handles are explicit. `sessions.open("session_...")` treats the string as a session id only. Use `sessions.open({ externalId })` or `sessions.retrieve({ externalId })` when the caller knows the environment-scoped external conversation id; the SDK resolves it through the session collection's `external_id` filter.
 
 Session start `payload` is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload. Follow-up user messages, webhooks, or operator replies belong in session input streams, not in session start payload.
 

@@ -59,7 +59,9 @@ if (import.meta.main) {
 export async function startBridge(config: Config, client: HelmrClient): Promise<void> {
   const server = createServer((request, response) => {
     void route(request, response, config, {
-      completeToken: (tokenId, data) => client.tokens.complete(tokenId, data),
+      completeToken: async (tokenId, data) => {
+        await client.tokens.complete(tokenId, data)
+      },
     }).catch((error: unknown) => {
       console.error(error)
       if (response.headersSent || response.writableEnded) return

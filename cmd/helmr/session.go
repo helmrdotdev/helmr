@@ -29,6 +29,7 @@ func sessionCommand() *cobra.Command {
 func sessionListCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
+	var externalID string
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -42,6 +43,7 @@ func sessionListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			scope.ExternalID = strings.TrimSpace(externalID)
 			response, err := control.ListSessions(cmd.Context(), scope)
 			if err != nil {
 				return err
@@ -56,6 +58,7 @@ func sessionListCommand() *cobra.Command {
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
+	cmd.Flags().StringVar(&externalID, "external-id", "", "Filter by external session identifier.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
@@ -63,13 +66,28 @@ func sessionListCommand() *cobra.Command {
 func sessionGetCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
+	var externalID string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "get SESSION",
+		Use:   "get [SESSION]",
 		Short: "Show session details.",
-		Args:  cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(externalID) != "" {
+				if len(args) != 0 {
+					return fmt.Errorf("SESSION argument cannot be combined with --external-id")
+				}
+				return nil
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			session, err := loadSession(cmd, args[0], projectID, environmentID)
+			var session api.SessionResponse
+			var err error
+			if strings.TrimSpace(externalID) != "" {
+				session, err = loadSessionByExternalID(cmd, externalID, projectID, environmentID)
+			} else {
+				session, err = loadSession(cmd, args[0], projectID, environmentID)
+			}
 			if err != nil {
 				return err
 			}
@@ -81,6 +99,7 @@ func sessionGetCommand() *cobra.Command {
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
+	cmd.Flags().StringVar(&externalID, "external-id", "", "Load by external session identifier instead of session ID.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
@@ -310,6 +329,31 @@ func loadSession(cmd *cobra.Command, sessionID string, projectID string, environ
 		return api.SessionResponse{}, err
 	}
 	return control.GetSession(cmd.Context(), sessionID, scope)
+}
+
+func loadSessionByExternalID(cmd *cobra.Command, externalID string, projectID string, environmentID string) (api.SessionResponse, error) {
+	control, err := controlClient(cmd)
+	if err != nil {
+		return api.SessionResponse{}, err
+	}
+	scope, err := sessionScopeForClient(control, projectID, environmentID)
+	if err != nil {
+		return api.SessionResponse{}, err
+	}
+	scope.ExternalID = strings.TrimSpace(externalID)
+	scope.Limit = 2
+	response, err := control.ListSessions(cmd.Context(), scope)
+	if err != nil {
+		return api.SessionResponse{}, err
+	}
+	switch len(response.Sessions) {
+	case 0:
+		return api.SessionResponse{}, fmt.Errorf("session with external id %q not found", strings.TrimSpace(externalID))
+	case 1:
+		return response.Sessions[0], nil
+	default:
+		return api.SessionResponse{}, fmt.Errorf("session with external id %q resolved to multiple sessions", strings.TrimSpace(externalID))
+	}
 }
 
 func writeSessionSummary(cmd *cobra.Command, session api.SessionResponse) {
