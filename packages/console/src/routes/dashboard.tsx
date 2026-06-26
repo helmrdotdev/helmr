@@ -3,7 +3,7 @@ import { createQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show, type JSX } from "solid-js";
 import { formatRelative, StatusBadge } from "../features/runs/display";
 import { runHref } from "../features/runs/navigation";
-import { SessionStatusBadge } from "../features/sessions/display";
+import { SessionActivityBadge, SessionStatusBadge } from "../features/sessions/display";
 import { sessionHref } from "../features/sessions/navigation";
 import { listRuns } from "../lib/runs";
 import { listSchedules } from "../lib/schedules";
@@ -24,6 +24,7 @@ function DashboardSessionRow(props: { session: Session }) {
         </A>
       </td>
       <td><SessionStatusBadge status={props.session.status} /></td>
+      <td><SessionActivityBadge activity={props.session.activity} /></td>
       <td><code>{shortID(props.session.workspace_id)}</code></td>
       <td><code>{shortID(props.session.current_run_id)}</code></td>
       <td><span class={ui.muted}>{formatRelative(props.session.updated_at)}</span></td>
@@ -115,6 +116,7 @@ export function Dashboard() {
                     <tr>
                       <th>Task</th>
                       <th>Status</th>
+                      <th>Activity</th>
                       <th>Workspace</th>
                       <th>Current run</th>
                       <th>Updated</th>

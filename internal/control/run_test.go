@@ -1175,6 +1175,49 @@ func TestSessionStartExternalIDReturnsExistingSessionOK(t *testing.T) {
 	}
 }
 
+func TestSessionStartExternalIDReturnsCurrentDerivedActivity(t *testing.T) {
+	store := &fakeStore{}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
+		ExternalID: "durable-1",
+		Payload:    json.RawMessage(`{"env":"prod"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("first status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	store.run.Status = db.RunStatusSucceeded
+	store.sessionRunRequest = db.SessionRunRequest{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+		ProjectID:     testProjectID(),
+		EnvironmentID: testEnvironmentID(),
+		SessionID:     store.session.ID,
+		Status:        "accepted",
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.SessionStartResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Session.Activity != sessionActivityQueued || response.Session.CanClose {
+		t.Fatalf("response activity=%q can_close=%v", response.Session.Activity, response.Session.CanClose)
+	}
+}
+
 func TestStartAndWaitReturnsAfterInitialRunWhileSessionOpen(t *testing.T) {
 	store := &fakeStore{createRunStatus: db.RunStatusSucceeded}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
@@ -1809,6 +1852,151 @@ func TestCloseSessionAllowsTerminalCurrentRun(t *testing.T) {
 	}
 	if response.Status != string(db.SessionStatusClosed) || response.CurrentRunID != pgvalue.MustUUIDValue(runID).String() {
 		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestCloseSessionExpiresDueIdleSession(t *testing.T) {
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &fakeStore{
+		session: db.Session{
+			ID:                  sessionID,
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			TaskID:              "deploy",
+			InitialDeploymentID: testDeploymentID(),
+			ActiveDeploymentID:  testDeploymentID(),
+			Status:              db.SessionStatusOpen,
+			ExpiresAt:           pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true},
+			Metadata:            []byte(`{}`),
+			Tags:                []string{},
+			TerminalReason:      []byte(`{}`),
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
+		},
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/close", strings.NewReader(`{"reason":"done"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.SessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != string(db.SessionStatusExpired) || response.CanClose {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestCloseSessionRejectsPendingContinuationRequest(t *testing.T) {
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	requestID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &fakeStore{
+		session: db.Session{
+			ID:                  sessionID,
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			TaskID:              "deploy",
+			InitialDeploymentID: testDeploymentID(),
+			ActiveDeploymentID:  testDeploymentID(),
+			Status:              db.SessionStatusOpen,
+			CurrentRunID:        runID,
+			Metadata:            []byte(`{}`),
+			Tags:                []string{},
+			TerminalReason:      []byte(`{}`),
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
+		},
+		run: db.Run{
+			ID:            runID,
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			Status:        db.RunStatusSucceeded,
+		},
+		sessionRunRequest: db.SessionRunRequest{
+			ID:            requestID,
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			SessionID:     sessionID,
+			Status:        "accepted",
+		},
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/close", strings.NewReader(`{"reason":"done"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	requireErrorCode(t, rec.Body.Bytes(), "close_run_active")
+}
+
+func TestGetSessionReportsDerivedQueuedActivity(t *testing.T) {
+	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	requestID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &fakeStore{
+		session: db.Session{
+			ID:                  sessionID,
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			TaskID:              "deploy",
+			InitialDeploymentID: testDeploymentID(),
+			ActiveDeploymentID:  testDeploymentID(),
+			Status:              db.SessionStatusOpen,
+			CurrentRunID:        runID,
+			Metadata:            []byte(`{}`),
+			Tags:                []string{},
+			TerminalReason:      []byte(`{}`),
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
+		},
+		run: db.Run{
+			ID:            runID,
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			Status:        db.RunStatusSucceeded,
+		},
+		sessionRunRequest: db.SessionRunRequest{
+			ID:            requestID,
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			SessionID:     sessionID,
+			Status:        "accepted",
+		},
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String(), nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.SessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Activity != sessionActivityQueued || response.CanClose {
+		t.Fatalf("response activity=%q can_close=%v", response.Activity, response.CanClose)
 	}
 }
 
@@ -3063,6 +3251,62 @@ func (f *fakeStore) GetSession(_ context.Context, arg db.GetSessionParams) (db.S
 	return db.Session{}, pgx.ErrNoRows
 }
 
+func (f *fakeStore) GetSessionActivity(_ context.Context, arg db.GetSessionActivityParams) (db.GetSessionActivityRow, error) {
+	if f.session.ID.Valid &&
+		f.session.OrgID == arg.OrgID &&
+		f.session.ProjectID == arg.ProjectID &&
+		f.session.EnvironmentID == arg.EnvironmentID &&
+		f.session.ID == arg.ID {
+		activity, canClose := f.deriveSessionActivity(f.session)
+		return db.GetSessionActivityRow{ID: f.session.ID, Activity: activity, CanClose: canClose}, nil
+	}
+	return db.GetSessionActivityRow{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ListSessionActivities(_ context.Context, arg db.ListSessionActivitiesParams) ([]db.ListSessionActivitiesRow, error) {
+	rows := make([]db.ListSessionActivitiesRow, 0, len(arg.SessionIds))
+	for _, id := range arg.SessionIds {
+		if f.session.ID.Valid &&
+			f.session.OrgID == arg.OrgID &&
+			f.session.ProjectID == arg.ProjectID &&
+			f.session.EnvironmentID == arg.EnvironmentID &&
+			f.session.ID == id {
+			activity, canClose := f.deriveSessionActivity(f.session)
+			rows = append(rows, db.ListSessionActivitiesRow{ID: f.session.ID, Activity: activity, CanClose: canClose})
+		}
+	}
+	return rows, nil
+}
+
+func (f *fakeStore) deriveSessionActivity(session db.Session) (string, bool) {
+	hasPendingRequest := f.sessionRunRequest.ID.Valid &&
+		f.sessionRunRequest.SessionID == session.ID &&
+		(f.sessionRunRequest.Status == "accepted" || f.sessionRunRequest.Status == "claimed")
+	if session.Status != db.SessionStatusOpen {
+		return sessionActivityIdle, false
+	}
+	if session.ExpiresAt.Valid && !session.ExpiresAt.Time.After(time.Now()) {
+		return sessionActivityIdle, false
+	}
+	if hasPendingRequest {
+		return sessionActivityQueued, false
+	}
+	if !session.CurrentRunID.Valid || f.run.ID != session.CurrentRunID || runStatusTerminal(f.run.Status) {
+		return sessionActivityIdle, true
+	}
+	switch f.run.Status {
+	case db.RunStatusQueued:
+		return sessionActivityQueued, false
+	case db.RunStatusWaiting:
+		return sessionActivityWaiting, false
+	default:
+		if f.run.ExecutionStatus == db.RunExecutionStatusWaiting {
+			return sessionActivityWaiting, false
+		}
+		return sessionActivityRunning, false
+	}
+}
+
 func (f *fakeStore) LockSession(_ context.Context, arg db.LockSessionParams) (db.Session, error) {
 	session := f.session
 	if f.lockSession.ID.Valid {
@@ -3159,6 +3403,14 @@ func (f *fakeStore) CloseSession(_ context.Context, arg db.CloseSessionParams) (
 		f.session.EnvironmentID == arg.EnvironmentID &&
 		f.session.ID == arg.ID &&
 		f.session.Status == db.SessionStatusOpen {
+		if f.session.ExpiresAt.Valid && !f.session.ExpiresAt.Time.After(time.Now()) {
+			return db.Session{}, pgx.ErrNoRows
+		}
+		if f.sessionRunRequest.ID.Valid &&
+			f.sessionRunRequest.SessionID == f.session.ID &&
+			(f.sessionRunRequest.Status == "accepted" || f.sessionRunRequest.Status == "claimed") {
+			return db.Session{}, pgx.ErrNoRows
+		}
 		if f.session.CurrentRunID.Valid {
 			if f.run.ID != f.session.CurrentRunID || !runStatusTerminal(f.run.Status) {
 				return db.Session{}, pgx.ErrNoRows
@@ -3168,6 +3420,35 @@ func (f *fakeStore) CloseSession(_ context.Context, arg db.CloseSessionParams) (
 		f.session.ClosedAt = testTime()
 		f.session.ClosedReason = arg.Reason
 		f.session.TerminalReason = fmt.Appendf(nil, `{"origin":"api","reason":%q}`, arg.Reason)
+		f.session.UpdatedAt = testTime()
+		return f.session, nil
+	}
+	return db.Session{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ExpireSessionIfDue(_ context.Context, arg db.ExpireSessionIfDueParams) (db.Session, error) {
+	if f.session.ID.Valid &&
+		f.session.OrgID == arg.OrgID &&
+		f.session.ProjectID == arg.ProjectID &&
+		f.session.EnvironmentID == arg.EnvironmentID &&
+		f.session.ID == arg.ID &&
+		f.session.Status == db.SessionStatusOpen &&
+		f.session.ExpiresAt.Valid &&
+		!f.session.ExpiresAt.Time.After(time.Now()) {
+		if f.sessionRunRequest.ID.Valid &&
+			f.sessionRunRequest.SessionID == f.session.ID &&
+			(f.sessionRunRequest.Status == "accepted" || f.sessionRunRequest.Status == "claimed") {
+			return db.Session{}, pgx.ErrNoRows
+		}
+		if f.session.CurrentRunID.Valid {
+			if f.run.ID != f.session.CurrentRunID || !runStatusTerminal(f.run.Status) {
+				return db.Session{}, pgx.ErrNoRows
+			}
+		}
+		f.session.Status = db.SessionStatusExpired
+		f.session.ExpiredAt = testTime()
+		f.session.TerminalReason = []byte(`{"origin":"api","reason":"session_expired"}`)
+		f.session.Result = []byte(`{"ok":false,"error":{"name":"SessionExpired","message":"session expired","details":{"origin":"api"}}}`)
 		f.session.UpdatedAt = testTime()
 		return f.session, nil
 	}

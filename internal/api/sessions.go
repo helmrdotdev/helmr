@@ -177,6 +177,8 @@ type SessionResponse struct {
 	ActiveDeploymentID  string          `json:"active_deployment_id"`
 	ExternalID          string          `json:"external_id,omitempty"`
 	Status              string          `json:"status"`
+	Activity            string          `json:"activity"`
+	CanClose            bool            `json:"can_close"`
 	CurrentRunID        string          `json:"current_run_id,omitempty"`
 	WorkspaceID         string          `json:"workspace_id,omitempty"`
 	Metadata            json.RawMessage `json:"metadata,omitempty"`
@@ -186,6 +188,7 @@ type SessionResponse struct {
 	TimedOut            bool            `json:"timed_out,omitempty"`
 	TerminalReason      json.RawMessage `json:"terminal_reason,omitempty"`
 	ExpiresAt           *time.Time      `json:"expires_at,omitempty"`
+	ExpiredAt           *time.Time      `json:"expired_at,omitempty"`
 	CreatedAt           time.Time       `json:"created_at"`
 	UpdatedAt           time.Time       `json:"updated_at"`
 }

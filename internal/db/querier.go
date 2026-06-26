@@ -119,8 +119,10 @@ type Querier interface {
 	EnsureWorkspaceMaterializationRequested(ctx context.Context, arg EnsureWorkspaceMaterializationRequestedParams) (EnsureWorkspaceMaterializationRequestedRow, error)
 	EnsureWorkspaceOperationIdempotency(ctx context.Context, arg EnsureWorkspaceOperationIdempotencyParams) (EnsureWorkspaceOperationIdempotencyRow, error)
 	ExpireDueRunWaits(ctx context.Context, orgID pgtype.UUID) ([]RunWait, error)
+	ExpireDueSessions(ctx context.Context, orgID pgtype.UUID) ([]Session, error)
 	ExpireDueTokens(ctx context.Context, orgID pgtype.UUID) ([]ExpireDueTokensRow, error)
 	ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
+	ExpireSessionIfDue(ctx context.Context, arg ExpireSessionIfDueParams) (Session, error)
 	FailDeletionJob(ctx context.Context, arg FailDeletionJobParams) (DeletionJob, error)
 	FailDeploymentBuild(ctx context.Context, arg FailDeploymentBuildParams) (Deployment, error)
 	FailExpiredRunningRunLeases(ctx context.Context, orgID pgtype.UUID) error
@@ -181,6 +183,7 @@ type Querier interface {
 	GetScopedSecretMetadataByName(ctx context.Context, arg GetScopedSecretMetadataByNameParams) (GetScopedSecretMetadataByNameRow, error)
 	GetSecretByName(ctx context.Context, arg GetSecretByNameParams) (Secret, error)
 	GetSession(ctx context.Context, arg GetSessionParams) (Session, error)
+	GetSessionActivity(ctx context.Context, arg GetSessionActivityParams) (GetSessionActivityRow, error)
 	GetSessionByExternalID(ctx context.Context, arg GetSessionByExternalIDParams) (Session, error)
 	GetSessionByOrgID(ctx context.Context, arg GetSessionByOrgIDParams) (Session, error)
 	GetSessionRunByRunID(ctx context.Context, arg GetSessionRunByRunIDParams) (SessionRun, error)
@@ -262,6 +265,7 @@ type Querier interface {
 	ListSecretKeyUsage(ctx context.Context) ([]ListSecretKeyUsageRow, error)
 	ListSecrets(ctx context.Context, arg ListSecretsParams) ([]ListSecretsRow, error)
 	ListSecretsByKeyIDForRotation(ctx context.Context, arg ListSecretsByKeyIDForRotationParams) ([]Secret, error)
+	ListSessionActivities(ctx context.Context, arg ListSessionActivitiesParams) ([]ListSessionActivitiesRow, error)
 	ListSessionRuns(ctx context.Context, arg ListSessionRunsParams) ([]ListSessionRunsRow, error)
 	ListSessionStreams(ctx context.Context, arg ListSessionStreamsParams) ([]Stream, error)
 	ListSessions(ctx context.Context, arg ListSessionsParams) ([]Session, error)

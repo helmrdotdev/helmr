@@ -50,7 +50,7 @@ func sessionListCommand() *cobra.Command {
 				return format.JSON(cmd.OutOrStdout(), response)
 			}
 			for _, session := range response.Sessions {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", session.ID, session.TaskID, session.Status, session.CurrentRunID)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", session.ID, session.TaskID, session.Status, session.Activity, session.CurrentRunID)
 			}
 			return nil
 		},
@@ -316,13 +316,14 @@ func writeSessionSummary(cmd *cobra.Command, session api.SessionResponse) {
 	fmt.Fprintf(cmd.OutOrStdout(), "Session:   %s\n", session.ID)
 	fmt.Fprintf(cmd.OutOrStdout(), "Task:      %s\n", session.TaskID)
 	fmt.Fprintf(cmd.OutOrStdout(), "Status:    %s\n", session.Status)
+	fmt.Fprintf(cmd.OutOrStdout(), "Activity:  %s\n", session.Activity)
 	fmt.Fprintf(cmd.OutOrStdout(), "Run:       %s\n", session.CurrentRunID)
 	fmt.Fprintf(cmd.OutOrStdout(), "Workspace: %s\n", session.WorkspaceID)
 }
 
 func sessionStatusTerminal(status string) bool {
 	switch strings.TrimSpace(status) {
-	case "closed", "cancelled":
+	case "closed", "cancelled", "expired":
 		return true
 	default:
 		return false

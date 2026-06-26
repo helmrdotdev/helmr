@@ -1,3 +1,4 @@
+DROP VIEW IF EXISTS session_activity;
 DROP INDEX IF EXISTS public_access_token_scopes_stream_idx;
 DROP INDEX IF EXISTS public_access_token_scopes_token_idx;
 DROP INDEX IF EXISTS public_access_tokens_scope_expiry_idx;

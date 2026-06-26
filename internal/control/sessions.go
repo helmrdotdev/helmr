@@ -40,6 +40,7 @@ var (
 	errSessionStartIdempotencyFingerprint = codedError{code: "idempotency_fingerprint_mismatch", message: "idempotency_key was already used with different session start parameters"}
 	errSessionStartIdempotencyExternalID  = codedError{code: "idempotency_external_id_mismatch", message: "idempotency_key resolves to a different session"}
 	errSessionTerminated                  = codedError{code: "session_terminal", message: "session is terminal"}
+	errSessionExpired                     = codedError{code: "session_expired", message: "session is expired"}
 	errSessionNoCurrentRun                = codedError{code: "session_has_no_current_run"}
 	errCloseRunActive                     = codedError{code: "close_run_active"}
 	errSessionExpiresAtPatch              = codedError{code: "session_expires_at_not_extendable", message: "session expires_at can only extend an existing future expiry"}
@@ -124,12 +125,17 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runResponse := runResponse(result.run)
+	sessionActivity, err := s.sessionDerivedState(r.Context(), result.session)
+	if err != nil {
+		writeError(w, errors.New("load session activity"))
+		return
+	}
 	status := http.StatusCreated
 	if result.idempotencyHit || result.sessionReused {
 		status = http.StatusOK
 	}
 	writeJSON(w, status, api.SessionStartResponse{
-		Session:  sessionResponse(result.session),
+		Session:  sessionResponseWithDerived(result.session, sessionActivity),
 		Run:      runResponse,
 		IsCached: result.idempotencyHit || result.sessionReused,
 	})
@@ -172,8 +178,13 @@ func (s *Server) startSessionAndWait(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	sessionActivity, err := s.sessionDerivedState(r.Context(), session)
+	if err != nil {
+		writeError(w, errors.New("load session activity"))
+		return
+	}
 	writeJSON(w, http.StatusOK, api.SessionStartResponse{
-		Session:  sessionResponse(session),
+		Session:  sessionResponseWithDerived(session, sessionActivity),
 		Run:      runResponse(run),
 		IsCached: result.idempotencyHit || result.sessionReused,
 		TimedOut: timedOut,
@@ -1035,15 +1046,23 @@ func sessionStartReusable(session db.Session) bool {
 	return session.Status == db.SessionStatusOpen && (!session.ExpiresAt.Valid || session.ExpiresAt.Time.After(time.Now()))
 }
 
-func sessionResponse(session db.Session) api.SessionResponse {
-	return sessionResponseWithMode(session, true, false)
+const (
+	sessionActivityIdle    = "idle"
+	sessionActivityQueued  = "queued"
+	sessionActivityRunning = "running"
+	sessionActivityWaiting = "waiting"
+)
+
+type sessionDerivedStateValue struct {
+	activity string
+	canClose bool
 }
 
-func sessionWaitResponse(session db.Session, timedOut bool) api.SessionResponse {
-	return sessionResponseWithMode(session, true, timedOut)
+func sessionResponseWithDerived(session db.Session, derived sessionDerivedStateValue) api.SessionResponse {
+	return sessionResponseWithDerivedMode(session, derived, true, false)
 }
 
-func sessionResponseWithMode(session db.Session, unwrapResult bool, timedOut bool) api.SessionResponse {
+func sessionResponseWithDerivedMode(session db.Session, derived sessionDerivedStateValue, unwrapResult bool, timedOut bool) api.SessionResponse {
 	response := api.SessionResponse{
 		ID:                  pgvalue.MustUUIDValue(session.ID).String(),
 		ProjectID:           pgvalue.MustUUIDValue(session.ProjectID).String(),
@@ -1053,6 +1072,8 @@ func sessionResponseWithMode(session db.Session, unwrapResult bool, timedOut boo
 		ActiveDeploymentID:  pgvalue.MustUUIDValue(session.ActiveDeploymentID).String(),
 		ExternalID:          session.ExternalID,
 		Status:              string(session.Status),
+		Activity:            derived.activity,
+		CanClose:            derived.canClose,
 		Metadata:            json.RawMessage(session.Metadata),
 		Tags:                append([]string(nil), session.Tags...),
 		TerminalReason:      json.RawMessage(session.TerminalReason),
@@ -1081,7 +1102,42 @@ func sessionResponseWithMode(session db.Session, unwrapResult bool, timedOut boo
 		expiresAt := session.ExpiresAt.Time
 		response.ExpiresAt = &expiresAt
 	}
+	if session.ExpiredAt.Valid {
+		expiredAt := session.ExpiredAt.Time
+		response.ExpiredAt = &expiredAt
+	}
 	return response
+}
+
+func defaultSessionDerivedState(session db.Session) sessionDerivedStateValue {
+	if session.Status == db.SessionStatusOpen &&
+		!session.CurrentRunID.Valid &&
+		(!session.ExpiresAt.Valid || session.ExpiresAt.Time.After(time.Now())) {
+		return sessionDerivedStateValue{activity: sessionActivityIdle, canClose: true}
+	}
+	return sessionDerivedStateValue{activity: sessionActivityIdle}
+}
+
+func sessionDerivedFromActivity(activity string, canClose bool) sessionDerivedStateValue {
+	switch activity {
+	case sessionActivityQueued, sessionActivityRunning, sessionActivityWaiting:
+		return sessionDerivedStateValue{activity: activity, canClose: canClose}
+	default:
+		return sessionDerivedStateValue{activity: sessionActivityIdle, canClose: canClose}
+	}
+}
+
+func (s *Server) sessionDerivedState(ctx context.Context, session db.Session) (sessionDerivedStateValue, error) {
+	row, err := s.db.GetSessionActivity(ctx, db.GetSessionActivityParams{
+		OrgID:         session.OrgID,
+		ProjectID:     session.ProjectID,
+		EnvironmentID: session.EnvironmentID,
+		ID:            session.ID,
+	})
+	if err != nil {
+		return sessionDerivedStateValue{}, err
+	}
+	return sessionDerivedFromActivity(row.Activity, row.CanClose), nil
 }
 
 func unwrapStoredSessionResult(raw []byte) (json.RawMessage, json.RawMessage, bool) {
@@ -1138,8 +1194,32 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := make([]api.SessionResponse, 0, len(sessions))
+	derived := map[pgtype.UUID]sessionDerivedStateValue{}
+	if len(sessions) > 0 {
+		ids := make([]pgtype.UUID, 0, len(sessions))
+		for _, session := range sessions {
+			ids = append(ids, session.ID)
+		}
+		activityRows, err := s.db.ListSessionActivities(r.Context(), db.ListSessionActivitiesParams{
+			OrgID:         pgvalue.UUID(actor.OrgID),
+			ProjectID:     projectID,
+			EnvironmentID: environmentID,
+			SessionIds:    ids,
+		})
+		if err != nil {
+			writeError(w, errors.New("list session activities"))
+			return
+		}
+		for _, row := range activityRows {
+			derived[row.ID] = sessionDerivedFromActivity(row.Activity, row.CanClose)
+		}
+	}
 	for _, session := range sessions {
-		response = append(response, sessionResponse(session))
+		state, ok := derived[session.ID]
+		if !ok {
+			state = defaultSessionDerivedState(session)
+		}
+		response = append(response, sessionResponseWithDerived(session, state))
 	}
 	writeJSON(w, http.StatusOK, api.ListSessionsResponse{Sessions: response})
 }
@@ -1149,7 +1229,12 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, sessionResponse(session))
+	derived, err := s.sessionDerivedState(r.Context(), session)
+	if err != nil {
+		writeError(w, errors.New("load session activity"))
+		return
+	}
+	writeJSON(w, http.StatusOK, sessionResponseWithDerived(session, derived))
 }
 
 func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
@@ -1203,7 +1288,12 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("patch session"))
 		return
 	}
-	writeJSON(w, http.StatusOK, sessionResponse(updated))
+	derived, err := s.sessionDerivedState(r.Context(), updated)
+	if err != nil {
+		writeError(w, errors.New("load session activity"))
+		return
+	}
+	writeJSON(w, http.StatusOK, sessionResponseWithDerived(updated, derived))
 }
 
 func (s *Server) waitForRunTerminal(ctx context.Context, actor auth.Actor, runID pgtype.UUID, timeout time.Duration) (runSummary, bool, error) {
@@ -1255,7 +1345,23 @@ func (s *Server) closeSession(w http.ResponseWriter, r *http.Request) {
 		Reason:        reason,
 	})
 	if isNoRows(err) {
-		activeRun, terminalRun, stateErr := s.closeSessionCurrentRunState(r.Context(), session)
+		if session.ExpiresAt.Valid && !session.ExpiresAt.Time.After(time.Now()) {
+			expired, expireErr := s.db.ExpireSessionIfDue(r.Context(), db.ExpireSessionIfDueParams{
+				OrgID:         session.OrgID,
+				ProjectID:     session.ProjectID,
+				EnvironmentID: session.EnvironmentID,
+				ID:            session.ID,
+			})
+			if expireErr == nil {
+				writeJSON(w, http.StatusOK, sessionResponseWithDerived(expired, sessionDerivedStateValue{activity: sessionActivityIdle}))
+				return
+			}
+			if !isNoRows(expireErr) {
+				writeError(w, errors.New("expire session"))
+				return
+			}
+		}
+		activeRun, canRetry, stateErr := s.closeSessionCurrentRunState(r.Context(), session)
 		if stateErr != nil {
 			writeError(w, errors.New("close session"))
 			return
@@ -1264,7 +1370,7 @@ func (s *Server) closeSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, conflict(errCloseRunActive))
 			return
 		}
-		if terminalRun {
+		if canRetry {
 			closed, err = s.db.CloseSession(r.Context(), db.CloseSessionParams{
 				OrgID:         session.OrgID,
 				ProjectID:     session.ProjectID,
@@ -1273,7 +1379,12 @@ func (s *Server) closeSession(w http.ResponseWriter, r *http.Request) {
 				Reason:        reason,
 			})
 			if err == nil {
-				writeJSON(w, http.StatusOK, sessionResponse(closed))
+				derived, stateErr := s.sessionDerivedState(r.Context(), closed)
+				if stateErr != nil {
+					writeError(w, errors.New("load session activity"))
+					return
+				}
+				writeJSON(w, http.StatusOK, sessionResponseWithDerived(closed, derived))
 				return
 			}
 			if !isNoRows(err) {
@@ -1297,10 +1408,15 @@ func (s *Server) closeSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("close session"))
 		return
 	}
-	writeJSON(w, http.StatusOK, sessionResponse(closed))
+	derived, err := s.sessionDerivedState(r.Context(), closed)
+	if err != nil {
+		writeError(w, errors.New("load session activity"))
+		return
+	}
+	writeJSON(w, http.StatusOK, sessionResponseWithDerived(closed, derived))
 }
 
-func (s *Server) closeSessionCurrentRunState(ctx context.Context, session db.Session) (activeRun bool, terminalRun bool, err error) {
+func (s *Server) closeSessionCurrentRunState(ctx context.Context, session db.Session) (activeRun bool, canRetry bool, err error) {
 	latest, err := s.db.GetSession(ctx, db.GetSessionParams{
 		OrgID:         session.OrgID,
 		ProjectID:     session.ProjectID,
@@ -1313,14 +1429,14 @@ func (s *Server) closeSessionCurrentRunState(ctx context.Context, session db.Ses
 	if err != nil {
 		return false, false, err
 	}
-	if latest.Status != db.SessionStatusOpen || !latest.CurrentRunID.Valid {
+	if latest.Status != db.SessionStatusOpen {
 		return false, false, nil
 	}
-	run, err := s.db.GetRun(ctx, db.GetRunParams{OrgID: latest.OrgID, ID: latest.CurrentRunID})
+	derived, err := s.sessionDerivedState(ctx, latest)
 	if err != nil {
 		return false, false, err
 	}
-	if runStatusTerminal(run.Status) {
+	if derived.canClose {
 		return false, true, nil
 	}
 	return true, false, nil
@@ -1366,7 +1482,7 @@ func (s *Server) cancelSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, errors.New("cancel session"))
 			return
 		}
-		writeJSON(w, http.StatusOK, sessionResponse(locked))
+		writeJSON(w, http.StatusOK, sessionResponseWithDerived(locked, sessionDerivedStateValue{activity: sessionActivityIdle}))
 		return
 	}
 	if locked.Status != db.SessionStatusOpen {
@@ -1398,7 +1514,7 @@ func (s *Server) cancelSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("cancel session"))
 		return
 	}
-	writeJSON(w, http.StatusOK, sessionResponse(cancelled))
+	writeJSON(w, http.StatusOK, sessionResponseWithDerived(cancelled, sessionDerivedStateValue{activity: sessionActivityIdle}))
 }
 
 func (s *Server) cancelSessionRun(ctx context.Context, store db.Querier, actor auth.Actor, session db.Session, reason string) error {

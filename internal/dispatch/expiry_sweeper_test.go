@@ -21,13 +21,13 @@ func TestSweepOnce(t *testing.T) {
 	if err := sweepOnce(context.Background(), store, DefaultExpirySweepOrgLimit); err != nil {
 		t.Fatal(err)
 	}
-	if got := store.calls; got != "requeue,fail,expire-runs,expire-tokens,resolve-timers,expire-waits,fail-stale-waits,requeue-waits,requeue,fail,expire-runs,expire-tokens,resolve-timers,expire-waits,fail-stale-waits,requeue-waits" {
+	if got := store.calls; got != "requeue,fail,expire-runs,expire-sessions,expire-tokens,resolve-timers,expire-waits,fail-stale-waits,requeue-waits,requeue,fail,expire-runs,expire-sessions,expire-tokens,resolve-timers,expire-waits,fail-stale-waits,requeue-waits" {
 		t.Fatalf("calls = %s", got)
 	}
-	if len(store.sweptOrgIDs) != 16 {
+	if len(store.sweptOrgIDs) != 18 {
 		t.Fatalf("swept org IDs = %+v", store.sweptOrgIDs)
 	}
-	if store.sweptOrgIDs[0] != orgA || store.sweptOrgIDs[8] != orgB {
+	if store.sweptOrgIDs[0] != orgA || store.sweptOrgIDs[9] != orgB {
 		t.Fatalf("swept org IDs = %+v", store.sweptOrgIDs)
 	}
 }
@@ -55,10 +55,10 @@ func TestSweepOnceContinuesAfterOrgError(t *testing.T) {
 	if err := sweepOnce(context.Background(), store, DefaultExpirySweepOrgLimit); err == nil {
 		t.Fatal("expected error")
 	}
-	if got := store.calls; got != "requeue,requeue,fail,expire-runs,expire-tokens,resolve-timers,expire-waits,fail-stale-waits,requeue-waits" {
+	if got := store.calls; got != "requeue,requeue,fail,expire-runs,expire-sessions,expire-tokens,resolve-timers,expire-waits,fail-stale-waits,requeue-waits" {
 		t.Fatalf("calls = %s", got)
 	}
-	if len(store.sweptOrgIDs) != 9 || store.sweptOrgIDs[0] != orgA || store.sweptOrgIDs[1] != orgB {
+	if len(store.sweptOrgIDs) != 10 || store.sweptOrgIDs[0] != orgA || store.sweptOrgIDs[1] != orgB {
 		t.Fatalf("swept org IDs = %+v", store.sweptOrgIDs)
 	}
 }
@@ -75,7 +75,7 @@ func TestSweeperPaginatesOrganizations(t *testing.T) {
 	if err := sweeper.sweep(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.sweptOrgIDs) != 24 || store.sweptOrgIDs[0] != orgA || store.sweptOrgIDs[8] != orgB || store.sweptOrgIDs[16] != orgC {
+	if len(store.sweptOrgIDs) != 27 || store.sweptOrgIDs[0] != orgA || store.sweptOrgIDs[9] != orgB || store.sweptOrgIDs[18] != orgC {
 		t.Fatalf("swept org IDs = %+v", store.sweptOrgIDs)
 	}
 	if len(store.args) != 2 || store.args[0].RowLimit != 2 || store.args[1].AfterID != orgB {
@@ -89,10 +89,10 @@ func TestSweepExpiredForOrgUsesProvidedOrg(t *testing.T) {
 	if err := SweepExpiredForOrg(context.Background(), store, orgID); err != nil {
 		t.Fatal(err)
 	}
-	if got := store.calls; got != "requeue,fail,expire-runs,expire-tokens,resolve-timers,expire-waits,fail-stale-waits,requeue-waits" {
+	if got := store.calls; got != "requeue,fail,expire-runs,expire-sessions,expire-tokens,resolve-timers,expire-waits,fail-stale-waits,requeue-waits" {
 		t.Fatalf("calls = %s", got)
 	}
-	if len(store.sweptOrgIDs) != 8 || store.sweptOrgIDs[0] != orgID {
+	if len(store.sweptOrgIDs) != 9 || store.sweptOrgIDs[0] != orgID {
 		t.Fatalf("swept org IDs = %+v", store.sweptOrgIDs)
 	}
 }
@@ -278,6 +278,12 @@ func (f *fakeSweeperOrgStore) ExpireQueuedRuns(_ context.Context, orgID pgtype.U
 	f.sweptOrgIDs = append(f.sweptOrgIDs, orgID)
 	f.calls = appendCall(f.calls, "expire-runs")
 	return nil
+}
+
+func (f *fakeSweeperOrgStore) ExpireDueSessions(_ context.Context, orgID pgtype.UUID) ([]db.Session, error) {
+	f.sweptOrgIDs = append(f.sweptOrgIDs, orgID)
+	f.calls = appendCall(f.calls, "expire-sessions")
+	return nil, nil
 }
 
 func (f *fakeSweeperOrgStore) ExpireDueTokens(_ context.Context, orgID pgtype.UUID) ([]db.ExpireDueTokensRow, error) {

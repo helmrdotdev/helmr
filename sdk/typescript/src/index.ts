@@ -87,6 +87,7 @@ export type {
   SessionListOptions,
   SessionRun,
   SessionSnapshot,
+  SessionActivity,
   SessionStatus,
   SessionStartAndWaitOptions,
   SessionStartOptions,

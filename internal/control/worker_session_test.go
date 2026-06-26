@@ -1205,6 +1205,10 @@ func (f *fakeStore) ExpireDueTokens(context.Context, pgtype.UUID) ([]db.ExpireDu
 	return nil, nil
 }
 
+func (f *fakeStore) ExpireDueSessions(context.Context, pgtype.UUID) ([]db.Session, error) {
+	return nil, nil
+}
+
 func (f *fakeStore) ResolveDueTimerWaits(context.Context, db.ResolveDueTimerWaitsParams) ([]db.ResolveDueTimerWaitsRow, error) {
 	return nil, nil
 }

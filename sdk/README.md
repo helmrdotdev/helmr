@@ -49,7 +49,7 @@ for await (const event of await client.runs.events.subscribe(started.run)) {
   console.log(event)
 }
 
-console.log(completed.session.status, completed.run.status, current.status, logs.stdout, events.length)
+console.log(completed.session.status, completed.session.activity, completed.run.status, current.status, logs.stdout, events.length)
 ```
 
 Tokens are the external completion primitive. Create a token in task code with `tokens.create()`, wait with the returned handle, and complete it from trusted server-side code or a userland bridge:

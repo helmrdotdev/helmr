@@ -1169,6 +1169,7 @@ const (
 	SessionStatusOpen      SessionStatus = "open"
 	SessionStatusClosed    SessionStatus = "closed"
 	SessionStatusCancelled SessionStatus = "cancelled"
+	SessionStatusExpired   SessionStatus = "expired"
 )
 
 func (e *SessionStatus) Scan(src interface{}) error {
@@ -3099,11 +3100,21 @@ type Session struct {
 	ClosedAt            pgtype.Timestamptz `json:"closed_at"`
 	ClosedReason        string             `json:"closed_reason"`
 	CancelledAt         pgtype.Timestamptz `json:"cancelled_at"`
+	ExpiredAt           pgtype.Timestamptz `json:"expired_at"`
 	TerminalReason      []byte             `json:"terminal_reason"`
 	Result              []byte             `json:"result"`
 	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SessionActivity struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+	Activity      string      `json:"activity"`
+	CanClose      bool        `json:"can_close"`
 }
 
 type SessionRun struct {

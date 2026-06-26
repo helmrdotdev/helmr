@@ -361,6 +361,14 @@ expect_session_open_idle() {
     printf 'FAIL %s: expected session to remain open after terminal run\n' "${name}" >&2
     return 1
   fi
+  if [ "$(printf '%s\n' "${session_json}" | jq -er '.activity')" != "idle" ]; then
+    printf 'FAIL %s: expected terminal current run to derive idle session activity\n' "${name}" >&2
+    return 1
+  fi
+  if [ "$(printf '%s\n' "${session_json}" | jq -er '.can_close')" != "true" ]; then
+    printf 'FAIL %s: expected idle open session to be closable\n' "${name}" >&2
+    return 1
+  fi
   if [ -z "$(printf '%s\n' "${session_json}" | jq -r '.current_run_id // ""')" ]; then
     printf 'FAIL %s: expected current_run_id to remain as last/current run pointer\n' "${name}" >&2
     return 1

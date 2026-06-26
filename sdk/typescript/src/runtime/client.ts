@@ -82,7 +82,8 @@ export type SessionsStartAndWaitArgs<TTask extends AnyTask> =
 
 export const tokenClientMethod = Symbol.for("helmr.sdk.client.token")
 
-export type SessionStatus = "open" | "closed" | "cancelled"
+export type SessionStatus = "open" | "closed" | "cancelled" | "expired"
+export type SessionActivity = "idle" | "queued" | "running" | "waiting"
 
 export interface SessionHandle<TOutput = unknown> {
   readonly id: string
@@ -112,6 +113,8 @@ export interface SessionSnapshot<TOutput = unknown> {
   readonly activeDeploymentId: string
   readonly externalId?: string
   readonly status: SessionStatus
+  readonly activity: SessionActivity
+  readonly canClose: boolean
   readonly currentRunId: string | null
   readonly workspaceId: string | null
   readonly metadata: Record<string, unknown>
@@ -121,6 +124,7 @@ export interface SessionSnapshot<TOutput = unknown> {
   readonly timedOut: boolean
   readonly terminalReason?: unknown
   readonly expiresAt: string | null
+  readonly expiredAt: string | null
   readonly createdAt: string
   readonly updatedAt: string
 }
@@ -1956,6 +1960,8 @@ interface SessionResponse {
   readonly active_deployment_id: string
   readonly external_id?: string
   readonly status: SessionStatus
+  readonly activity: SessionActivity
+  readonly can_close?: boolean
   readonly current_run_id?: string | null
   readonly workspace_id?: string | null
   readonly metadata?: Record<string, unknown> | null
@@ -1965,6 +1971,7 @@ interface SessionResponse {
   readonly timed_out?: boolean
   readonly terminal_reason?: unknown
   readonly expires_at?: string | null
+  readonly expired_at?: string | null
   readonly created_at: string
   readonly updated_at: string
 }
@@ -2289,6 +2296,8 @@ function sessionFromResponse<TOutput = unknown>(response: SessionResponse): Sess
     activeDeploymentId: response.active_deployment_id,
     ...(response.external_id === undefined || response.external_id === "" ? {} : { externalId: response.external_id }),
     status: response.status,
+    activity: response.activity,
+    canClose: response.can_close ?? false,
     currentRunId: response.current_run_id ?? null,
     workspaceId: response.workspace_id ?? null,
     metadata: response.metadata ?? {},
@@ -2298,6 +2307,7 @@ function sessionFromResponse<TOutput = unknown>(response: SessionResponse): Sess
     timedOut: response.timed_out ?? false,
     ...("terminal_reason" in response ? { terminalReason: response.terminal_reason } : {}),
     expiresAt: response.expires_at ?? null,
+    expiredAt: response.expired_at ?? null,
     createdAt: response.created_at,
     updatedAt: response.updated_at,
   }

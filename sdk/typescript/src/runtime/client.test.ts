@@ -873,7 +873,7 @@ test("sessions facade uses project environment scoped routes when scope is provi
     if (url.endsWith("/session-1/outputs/agent.report")) {
       return Response.json({ records: [] })
     }
-    return Response.json(sessionFixture({ id: "session-1", status: "completed", result: { ok: true } }))
+    return Response.json(sessionFixture({ id: "session-1", status: "closed", result: { ok: true } }))
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
@@ -2654,6 +2654,8 @@ function sessionFixture(overrides: Partial<{
   readonly type: string
   readonly external_id: string
   readonly status: string
+  readonly activity: string
+  readonly can_close: boolean
   readonly current_run_id: string | null
   readonly workspace_id: string | null
   readonly metadata: Record<string, unknown>
@@ -2663,6 +2665,7 @@ function sessionFixture(overrides: Partial<{
   readonly timed_out: boolean
   readonly terminal_reason: unknown
   readonly expires_at: string | null
+  readonly expired_at: string | null
   readonly created_at: string
   readonly updated_at: string
 }> = {}) {
@@ -2675,11 +2678,14 @@ function sessionFixture(overrides: Partial<{
     active_deployment_id: "deployment-1",
     type: "default",
     status: "open",
+    activity: "queued",
+    can_close: false,
     current_run_id: "run-1",
     workspace_id: "workspace-1",
     metadata: {},
     tags: [],
     expires_at: null,
+    expired_at: null,
     created_at: "2026-04-20T00:00:00Z",
     updated_at: "2026-04-20T00:00:00Z",
     ...overrides,

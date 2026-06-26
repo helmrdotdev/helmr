@@ -263,6 +263,25 @@ SELECT *
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
 
+-- name: GetSessionActivity :one
+SELECT id, activity, can_close
+  FROM session_activity
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id);
+
+-- name: ListSessionActivities :many
+SELECT session_activity.id,
+       session_activity.activity,
+       session_activity.can_close
+  FROM session_activity
+  JOIN unnest(sqlc.arg(session_ids)::uuid[]) AS target(id)
+    ON target.id = session_activity.id
+ WHERE session_activity.org_id = sqlc.arg(org_id)
+   AND session_activity.project_id = sqlc.arg(project_id)
+   AND session_activity.environment_id = sqlc.arg(environment_id);
+
 -- name: LockSession :one
 SELECT *
   FROM sessions
@@ -334,6 +353,7 @@ UPDATE sessions
    AND sessions.environment_id = sqlc.arg(environment_id)
    AND sessions.id = sqlc.arg(id)
    AND sessions.status = 'open'
+   AND (sessions.expires_at IS NULL OR sessions.expires_at > now())
    AND NOT EXISTS (
        SELECT 1
          FROM runs
@@ -342,6 +362,94 @@ UPDATE sessions
           AND runs.environment_id = sessions.environment_id
           AND runs.id = sessions.current_run_id
           AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM session_run_requests
+        WHERE session_run_requests.org_id = sessions.org_id
+          AND session_run_requests.project_id = sessions.project_id
+          AND session_run_requests.environment_id = sessions.environment_id
+          AND session_run_requests.session_id = sessions.id
+          AND session_run_requests.status IN ('accepted', 'claimed')
+   )
+RETURNING *;
+
+-- name: ExpireSessionIfDue :one
+UPDATE sessions
+   SET status = 'expired',
+       expired_at = now(),
+       terminal_reason = jsonb_build_object('reason', 'session_expired', 'origin', 'api'),
+       result = jsonb_build_object(
+           'ok', false,
+           'error', jsonb_build_object(
+               'name', 'SessionExpired',
+               'message', 'session expired',
+               'details', jsonb_build_object('origin', 'api')
+           )
+       ),
+       updated_at = now()
+ WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.project_id = sqlc.arg(project_id)
+   AND sessions.environment_id = sqlc.arg(environment_id)
+   AND sessions.id = sqlc.arg(id)
+   AND sessions.status = 'open'
+   AND sessions.expires_at IS NOT NULL
+   AND sessions.expires_at <= now()
+   AND NOT EXISTS (
+       SELECT 1
+         FROM runs
+        WHERE runs.org_id = sessions.org_id
+          AND runs.project_id = sessions.project_id
+          AND runs.environment_id = sessions.environment_id
+          AND runs.id = sessions.current_run_id
+          AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM session_run_requests
+        WHERE session_run_requests.org_id = sessions.org_id
+          AND session_run_requests.project_id = sessions.project_id
+          AND session_run_requests.environment_id = sessions.environment_id
+          AND session_run_requests.session_id = sessions.id
+          AND session_run_requests.status IN ('accepted', 'claimed')
+   )
+RETURNING *;
+
+-- name: ExpireDueSessions :many
+UPDATE sessions
+   SET status = 'expired',
+       expired_at = now(),
+       terminal_reason = jsonb_build_object('reason', 'session_expired', 'origin', 'sweeper'),
+       result = jsonb_build_object(
+           'ok', false,
+           'error', jsonb_build_object(
+               'name', 'SessionExpired',
+               'message', 'session expired',
+               'details', jsonb_build_object('origin', 'sweeper')
+           )
+       ),
+       updated_at = now()
+ WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.status = 'open'
+   AND sessions.expires_at IS NOT NULL
+   AND sessions.expires_at <= now()
+   AND NOT EXISTS (
+       SELECT 1
+         FROM runs
+        WHERE runs.org_id = sessions.org_id
+          AND runs.project_id = sessions.project_id
+          AND runs.environment_id = sessions.environment_id
+          AND runs.id = sessions.current_run_id
+          AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM session_run_requests
+        WHERE session_run_requests.org_id = sessions.org_id
+          AND session_run_requests.project_id = sessions.project_id
+          AND session_run_requests.environment_id = sessions.environment_id
+          AND session_run_requests.session_id = sessions.id
+          AND session_run_requests.status IN ('accepted', 'claimed')
    )
 RETURNING *;
 

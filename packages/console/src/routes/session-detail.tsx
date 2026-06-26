@@ -3,7 +3,7 @@ import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { formatRelative } from "../features/runs/display";
 import { runHref } from "../features/runs/navigation";
-import { SessionStatusBadge } from "../features/sessions/display";
+import { SessionActivityBadge, SessionStatusBadge } from "../features/sessions/display";
 import { ApiError } from "../lib/api";
 import { formatTaskOutput, hasRunOutput, taskOutputKind } from "../lib/run-output";
 import {
@@ -48,7 +48,7 @@ function isOpen(session: Session): boolean {
 }
 
 function canClose(session: Session): boolean {
-  return isOpen(session) && !session.current_run_id;
+  return isOpen(session) && session.can_close;
 }
 
 function SessionResult(props: { session: Session }) {
@@ -196,6 +196,10 @@ function DetailsAside(props: { session: Session; currentRunHref: string | null }
             <dt>Expires</dt>
             <dd>{formatRelative(props.session.expires_at)}</dd>
           </div>
+          <div>
+            <dt>Expired</dt>
+            <dd>{formatRelative(props.session.expired_at)}</dd>
+          </div>
         </dl>
       </section>
     </aside>
@@ -283,7 +287,14 @@ export function SessionDetail() {
           <A href="/sessions" class={ui.backLink}>Sessions</A>
           <div class={ui.pageTitle}>
             <h1 class={ui.h1}>{session.data?.task_id ?? "Session"}</h1>
-            <Show when={session.data}>{(current) => <SessionStatusBadge status={current().status} />}</Show>
+            <Show when={session.data}>
+              {(current) => (
+                <>
+                  <SessionStatusBadge status={current().status} />
+                  <SessionActivityBadge activity={current().activity} />
+                </>
+              )}
+            </Show>
           </div>
           <Show when={session.data}>
             {(current) => (

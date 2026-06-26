@@ -541,7 +541,8 @@ CREATE TYPE run_retry_decision_kind AS ENUM (
 CREATE TYPE session_status AS ENUM (
     'open',
     'closed',
-    'cancelled'
+    'cancelled',
+    'expired'
 );
 
 CREATE TYPE workspace_state AS ENUM (
@@ -1039,6 +1040,7 @@ CREATE TABLE sessions (
     closed_at TIMESTAMPTZ,
     closed_reason TEXT NOT NULL DEFAULT '',
     cancelled_at TIMESTAMPTZ,
+    expired_at TIMESTAMPTZ,
     terminal_reason JSONB NOT NULL DEFAULT '{}'::jsonb,
     result JSONB,
     expires_at TIMESTAMPTZ,
@@ -2622,6 +2624,66 @@ CREATE TABLE timer_waits (
         REFERENCES run_waits(org_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
+
+CREATE VIEW session_activity AS
+SELECT sessions.org_id,
+       sessions.project_id,
+       sessions.environment_id,
+       sessions.id,
+       CASE
+         WHEN sessions.status <> 'open' THEN 'idle'
+         WHEN EXISTS (
+             SELECT 1
+               FROM session_run_requests
+              WHERE session_run_requests.org_id = sessions.org_id
+                AND session_run_requests.project_id = sessions.project_id
+                AND session_run_requests.environment_id = sessions.environment_id
+                AND session_run_requests.session_id = sessions.id
+                AND session_run_requests.status IN ('accepted', 'claimed')
+         ) THEN 'queued'
+         WHEN sessions.current_run_id IS NULL THEN 'idle'
+         WHEN runs.id IS NULL THEN 'idle'
+         WHEN runs.status IN ('succeeded', 'failed', 'cancelled', 'expired') THEN 'idle'
+         WHEN active_wait.state IN ('parking', 'waiting', 'resolved') THEN 'waiting'
+         WHEN runs.status = 'waiting' OR runs.execution_status = 'waiting' THEN 'waiting'
+         WHEN runs.status = 'queued' OR runs.execution_status IN ('created', 'queued', 'leased') THEN 'queued'
+         ELSE 'running'
+       END::text AS activity,
+       (
+         sessions.status = 'open'
+         AND (sessions.expires_at IS NULL OR sessions.expires_at > now())
+         AND (
+             sessions.current_run_id IS NULL
+             OR runs.id IS NULL
+             OR runs.status IN ('succeeded', 'failed', 'cancelled', 'expired')
+         )
+         AND NOT EXISTS (
+             SELECT 1
+               FROM session_run_requests
+              WHERE session_run_requests.org_id = sessions.org_id
+                AND session_run_requests.project_id = sessions.project_id
+                AND session_run_requests.environment_id = sessions.environment_id
+                AND session_run_requests.session_id = sessions.id
+                AND session_run_requests.status IN ('accepted', 'claimed')
+         )
+       )::bool AS can_close
+  FROM sessions
+  LEFT JOIN runs
+    ON runs.org_id = sessions.org_id
+   AND runs.project_id = sessions.project_id
+   AND runs.environment_id = sessions.environment_id
+   AND runs.id = sessions.current_run_id
+  LEFT JOIN LATERAL (
+       SELECT run_waits.state
+         FROM run_waits
+        WHERE run_waits.org_id = sessions.org_id
+          AND run_waits.project_id = sessions.project_id
+          AND run_waits.environment_id = sessions.environment_id
+          AND run_waits.run_id = sessions.current_run_id
+          AND run_waits.state IN ('parking', 'waiting', 'resolved', 'resuming', 'resumed')
+        ORDER BY run_waits.created_at DESC, run_waits.id DESC
+        LIMIT 1
+  ) active_wait ON true;
 
 CREATE UNIQUE INDEX projects_one_default_idx ON projects(org_id)
     WHERE is_default;

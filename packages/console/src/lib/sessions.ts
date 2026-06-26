@@ -1,5 +1,5 @@
 import { postJson, request } from "./api";
-import type { SessionStatus } from "../features/sessions/display";
+import type { SessionActivity, SessionStatus } from "../features/sessions/display";
 
 export type Session = {
   id: string;
@@ -10,6 +10,8 @@ export type Session = {
   active_deployment_id: string;
   external_id?: string;
   status: SessionStatus;
+  activity: SessionActivity;
+  can_close: boolean;
   current_run_id?: string;
   workspace_id?: string;
   metadata?: unknown;
@@ -19,6 +21,7 @@ export type Session = {
   timed_out?: boolean;
   terminal_reason?: unknown;
   expires_at?: string;
+  expired_at?: string;
   created_at: string;
   updated_at: string;
 };

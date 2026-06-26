@@ -270,8 +270,8 @@ func TestIssueAPIKeyRejectsLegacyBroadWorkspaceScopes(t *testing.T) {
 	}
 }
 
-func TestIssueAPIKeyRejectsLegacyWaitpointAndChannelScopes(t *testing.T) {
-	for _, scope := range []string{"run-waitpoints:read", "channels:write", "waitpoint-tokens:create", "waitpoint-tokens:read", "waitpoint-tokens:complete"} {
+func TestIssueAPIKeyRejectsLegacyChannelScopes(t *testing.T) {
+	for _, scope := range []string{"channels:write"} {
 		t.Run(scope, func(t *testing.T) {
 			store := &apiKeyStore{role: db.OrgMemberRoleOwner}
 			server := testAPIKeyServer(store)

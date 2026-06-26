@@ -293,6 +293,27 @@ type appendedStreamRecord struct {
 }
 
 func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, session db.Session, stream db.Stream, direction db.StreamDirection, sourceType db.StreamRecordSourceType, sourceID string, publicAccessTokenID pgtype.UUID, request api.AppendStreamRecordRequest) (appendedStreamRecord, error) {
+	if direction == db.StreamDirectionInput {
+		locked, err := store.LockSession(ctx, db.LockSessionParams{
+			OrgID:         session.OrgID,
+			ProjectID:     session.ProjectID,
+			EnvironmentID: session.EnvironmentID,
+			ID:            session.ID,
+		})
+		if err != nil {
+			return appendedStreamRecord{}, err
+		}
+		if locked.Status == db.SessionStatusExpired {
+			return appendedStreamRecord{}, gone(errSessionExpired)
+		}
+		if locked.Status != db.SessionStatusOpen {
+			return appendedStreamRecord{}, conflict(errSessionTerminated)
+		}
+		if locked.ExpiresAt.Valid && !locked.ExpiresAt.Time.After(time.Now()) {
+			return appendedStreamRecord{}, gone(errSessionExpired)
+		}
+		session = locked
+	}
 	data := request.Data
 	if len(data) == 0 {
 		data = json.RawMessage(`null`)
@@ -539,13 +560,17 @@ func (s *Server) tryCreateContinuationRunForRequest(ctx context.Context, store d
 		return pgtype.UUID{}, "", err
 	}
 	if locked.Status != db.SessionStatusOpen {
+		reason := "session_not_open"
+		if locked.Status == db.SessionStatusExpired {
+			reason = "session_expired"
+		}
 		if _, err := store.MarkSessionRunRequestSkipped(ctx, db.MarkSessionRunRequestSkippedParams{
 			OrgID:         request.OrgID,
 			ProjectID:     request.ProjectID,
 			EnvironmentID: request.EnvironmentID,
 			ID:            request.ID,
 			ClaimOwner:    request.ClaimOwner,
-			Reason:        "session_not_open",
+			Reason:        reason,
 		}); err != nil {
 			return pgtype.UUID{}, "", err
 		}

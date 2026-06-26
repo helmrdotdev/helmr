@@ -3,7 +3,7 @@ import { createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Select, type SelectOption } from "../ui/Select";
 import { formatRelative } from "../features/runs/display";
-import { SessionStatusBadge, type SessionStatus } from "../features/sessions/display";
+import { SessionActivityBadge, SessionStatusBadge, type SessionStatus } from "../features/sessions/display";
 import { sessionHref, useSessionRowNavigation } from "../features/sessions/navigation";
 import { ApiError } from "../lib/api";
 import { useScope } from "../lib/scope";
@@ -15,8 +15,6 @@ type SessionFilter = SessionStatus | "all";
 const FILTER_OPTIONS: SelectOption<SessionFilter>[] = [
   { value: "open", label: "Open" },
   { value: "all", label: "All" },
-  { value: "completed", label: "Completed" },
-  { value: "failed", label: "Failed" },
   { value: "closed", label: "Closed" },
   { value: "cancelled", label: "Cancelled" },
   { value: "expired", label: "Expired" },
@@ -47,6 +45,7 @@ function SessionRow(props: { session: Session }) {
         </A>
       </td>
       <td><SessionStatusBadge status={props.session.status} /></td>
+      <td><SessionActivityBadge activity={props.session.activity} /></td>
       <td><code>{shortID(props.session.workspace_id)}</code></td>
       <td><code>{shortID(props.session.current_run_id)}</code></td>
       <td><code>{props.session.external_id || "—"}</code></td>
@@ -145,6 +144,7 @@ export function Sessions() {
                 <tr>
                   <th>Task</th>
                   <th>Status</th>
+                  <th>Activity</th>
                   <th>Workspace</th>
                   <th>Current run</th>
                   <th>External ID</th>
