@@ -9,10 +9,10 @@ order: 150
 # Workspaces
 
 A workspace is a durable filesystem and work-state object. It is not owned by a
-single run or task session.
+single run or session.
 
-Task sessions attach to workspaces. Direct workspace operations also attach to
-workspaces without creating task sessions. This lets a task finish while the
+Sessions attach to workspaces. Direct workspace operations also attach to
+workspaces without creating sessions. This lets a task finish while the
 workspace remains available for later inspection, another task invocation, or a
 direct command or terminal operation.
 

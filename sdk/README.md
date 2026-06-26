@@ -19,7 +19,7 @@ binding maps.
 
 ## TypeScript Runtime Client
 
-External TypeScript processes start tasks with `client.sessions.start()` and `client.sessions.startAndWait()`. The top-level `sessions.start(...)`, `sessions.startAndWait(...)`, and `workspaces.*` facades use the default client configured by `HELMR_API_URL` and `HELMR_API_KEY`. Starting a task creates or reuses a task session and returns both the session snapshot and the current run handle. `task(...)` returns a definition object only; pass an imported task definition to the sessions namespace for local payload validation and type inference, or pass a string task id for external boundaries and dynamic task ids.
+External TypeScript processes start tasks with `client.sessions.start()` and `client.sessions.startAndWait()`. The top-level `sessions.start(...)`, `sessions.startAndWait(...)`, and `workspaces.*` facades use the default client configured by `HELMR_API_URL` and `HELMR_API_KEY`. Starting a task creates or reuses a session and returns both the session snapshot and the current run handle. `task(...)` returns a definition object only; pass an imported task definition to the sessions namespace for local payload validation and type inference, or pass a string task id for external boundaries and dynamic task ids.
 
 ```ts
 import { HelmrClient } from "@helmr/sdk"

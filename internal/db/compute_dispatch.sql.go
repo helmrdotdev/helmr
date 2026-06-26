@@ -63,17 +63,17 @@ func (q *Queries) CompleteRunQueueItem(ctx context.Context, arg CompleteRunQueue
 }
 
 const deadLetterRunQueueItem = `-- name: DeadLetterRunQueueItem :one
-WITH locked_task_session AS MATERIALIZED (
-    SELECT task_sessions.id
+WITH locked_session AS MATERIALIZED (
+    SELECT sessions.id
       FROM runs
-      JOIN task_sessions
-        ON task_sessions.org_id = runs.org_id
-       AND task_sessions.project_id = runs.project_id
-       AND task_sessions.environment_id = runs.environment_id
-       AND task_sessions.id = runs.task_session_id
+      JOIN sessions
+        ON sessions.org_id = runs.org_id
+       AND sessions.project_id = runs.project_id
+       AND sessions.environment_id = runs.environment_id
+       AND sessions.id = runs.session_id
      WHERE runs.org_id = $1
        AND runs.id = $2
-     FOR UPDATE OF task_sessions
+     FOR UPDATE OF sessions
 ),
 queue_entry AS (
     UPDATE run_queue_items
@@ -95,7 +95,7 @@ queue_entry AS (
                 WHERE runs.org_id = $1
                   AND runs.id = $2
            )
-           OR EXISTS (SELECT 1 FROM locked_task_session)
+           OR EXISTS (SELECT 1 FROM locked_session)
        )
     RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 ),
@@ -114,7 +114,7 @@ queue_entry AS (
 	       AND runs.id = queue_entry.run_id
 	       AND runs.status = 'queued'
 	       AND runs.current_run_lease_id IS NULL
-	    RETURNING runs.org_id, runs.project_id, runs.environment_id, runs.id, runs.task_session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version
+	    RETURNING runs.org_id, runs.project_id, runs.environment_id, runs.id, runs.session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version
 	),
 	failed_attempt AS (
 	    UPDATE run_attempts
@@ -144,18 +144,18 @@ queue_entry AS (
 	    RETURNING run_snapshots.run_id
 	),
 	failed_session_runs AS (
-	    UPDATE task_session_runs
+	    UPDATE session_runs
 	       SET ended_at = now()
       FROM failed_run
-     WHERE task_session_runs.org_id = failed_run.org_id
-	       AND task_session_runs.project_id = failed_run.project_id
-	       AND task_session_runs.environment_id = failed_run.environment_id
-	       AND task_session_runs.task_session_id = failed_run.task_session_id
-	       AND task_session_runs.run_id = failed_run.id
-	    RETURNING task_session_runs.id
+     WHERE session_runs.org_id = failed_run.org_id
+	       AND session_runs.project_id = failed_run.project_id
+	       AND session_runs.environment_id = failed_run.environment_id
+	       AND session_runs.session_id = failed_run.session_id
+	       AND session_runs.run_id = failed_run.id
+	    RETURNING session_runs.id
 	),
-	failed_task_sessions AS (
-	    SELECT failed_run.task_session_id AS id
+	failed_sessions AS (
+	    SELECT failed_run.session_id AS id
 	      FROM failed_run
 	),
 	run_event_seq AS (
@@ -213,7 +213,7 @@ SELECT queue_entry.run_id, queue_entry.org_id, queue_entry.status, queue_entry.p
   FROM queue_entry
   JOIN run_event_outbox ON true
  WHERE (SELECT count(*) FROM failed_session_runs) >= 0
-   AND (SELECT count(*) FROM failed_task_sessions) >= 0
+   AND (SELECT count(*) FROM failed_sessions) >= 0
 UNION ALL
 SELECT existing_dead_letter.run_id, existing_dead_letter.org_id, existing_dead_letter.status, existing_dead_letter.priority, existing_dead_letter.queue_name, existing_dead_letter.concurrency_key, existing_dead_letter.queue_timestamp, existing_dead_letter.queued_expires_at, existing_dead_letter.dispatch_message_id, existing_dead_letter.reserved_by_worker_instance_id, existing_dead_letter.reservation_expires_at, existing_dead_letter.dispatch_generation, existing_dead_letter.last_error, existing_dead_letter.enqueued_at, existing_dead_letter.updated_at, existing_dead_letter.finished_at
   FROM existing_dead_letter
@@ -596,13 +596,13 @@ WITH candidate_scopes AS (
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
        AND EXISTS (
            SELECT 1
-             FROM task_sessions
-            WHERE task_sessions.org_id = runs.org_id
-              AND task_sessions.project_id = runs.project_id
-              AND task_sessions.environment_id = runs.environment_id
-              AND task_sessions.id = runs.task_session_id
-              AND task_sessions.current_run_id = runs.id
-              AND task_sessions.status = 'open'
+             FROM sessions
+            WHERE sessions.org_id = runs.org_id
+              AND sessions.project_id = runs.project_id
+              AND sessions.environment_id = runs.environment_id
+              AND sessions.id = runs.session_id
+              AND sessions.current_run_id = runs.id
+              AND sessions.status = 'open'
        )
        AND (
            run_queue_items.run_id IS NULL
@@ -713,13 +713,13 @@ SELECT runs.org_id,
    AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
    AND EXISTS (
        SELECT 1
-         FROM task_sessions
-        WHERE task_sessions.org_id = runs.org_id
-          AND task_sessions.project_id = runs.project_id
-          AND task_sessions.environment_id = runs.environment_id
-          AND task_sessions.id = runs.task_session_id
-          AND task_sessions.current_run_id = runs.id
-          AND task_sessions.status = 'open'
+         FROM sessions
+        WHERE sessions.org_id = runs.org_id
+          AND sessions.project_id = runs.project_id
+          AND sessions.environment_id = runs.environment_id
+          AND sessions.id = runs.session_id
+          AND sessions.current_run_id = runs.id
+          AND sessions.status = 'open'
    )
    AND (
        run_queue_items.run_id IS NULL
@@ -967,13 +967,13 @@ WITH target_run AS (
        AND runs.current_run_lease_id IS NULL
        AND EXISTS (
            SELECT 1
-             FROM task_sessions
-            WHERE task_sessions.org_id = runs.org_id
-              AND task_sessions.project_id = runs.project_id
-              AND task_sessions.environment_id = runs.environment_id
-              AND task_sessions.id = runs.task_session_id
-              AND task_sessions.current_run_id = runs.id
-              AND task_sessions.status = 'open'
+             FROM sessions
+            WHERE sessions.org_id = runs.org_id
+              AND sessions.project_id = runs.project_id
+              AND sessions.environment_id = runs.environment_id
+              AND sessions.id = runs.session_id
+              AND sessions.current_run_id = runs.id
+              AND sessions.status = 'open'
        )
 ),
 existing_requirements AS (
@@ -1341,13 +1341,13 @@ UPDATE run_queue_items
           AND runs.current_run_lease_id IS NULL
        AND EXISTS (
            SELECT 1
-             FROM task_sessions
-            WHERE task_sessions.org_id = runs.org_id
-              AND task_sessions.project_id = runs.project_id
-              AND task_sessions.environment_id = runs.environment_id
-              AND task_sessions.id = runs.task_session_id
-              AND task_sessions.current_run_id = runs.id
-              AND task_sessions.status = 'open'
+             FROM sessions
+            WHERE sessions.org_id = runs.org_id
+              AND sessions.project_id = runs.project_id
+              AND sessions.environment_id = runs.environment_id
+              AND sessions.id = runs.session_id
+              AND sessions.current_run_id = runs.id
+              AND sessions.status = 'open'
        )
    )
 RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at

@@ -1,12 +1,14 @@
-import { compile, compileStreamCatalog, type CompiledStreamCatalogItem } from "@helmr/sdk/internal/compile"
+import { compile, compileQueueCatalog, compileStreamCatalog, type CompiledQueueCatalogItem, type CompiledStreamCatalogItem } from "@helmr/sdk/internal/compile"
 import {
   clearStreamDefinitionContext,
   isConfigDefinition,
   isTaskDefinition,
+  readQueueDefinitions,
   readStreamDefinitions,
   setStreamDefinitionContext,
   type AnyTask,
   type HelmrConfig,
+  type InternalQueueDefinition,
   type InternalStreamDefinition,
 } from "@helmr/sdk/internal"
 import type { Bundle } from "@helmr/proto"
@@ -25,11 +27,13 @@ interface ConfigTaskRef {
 interface LoadedConfigTaskRefs {
   readonly refs: readonly ConfigTaskRef[]
   readonly streams: readonly InternalStreamDefinition[]
+  readonly queues: readonly InternalQueueDefinition[]
 }
 
 export interface DeploymentRegistry {
   readonly tasks: ReadonlyMap<string, RegisteredTask>
   readonly streams: readonly CompiledStreamCatalogItem[]
+  readonly queues: readonly CompiledQueueCatalogItem[]
 }
 
 export interface RegisteredTask {
@@ -72,6 +76,7 @@ async function loadConfigTaskRefs(cwd: string): Promise<LoadedConfigTaskRefs> {
   return {
     refs: collectTaskRefs(cwd, modules),
     streams: readStreamDefinitions().filter((stream) => isInsideProjectRoot(cwd, stream.originFile)),
+    queues: readQueueDefinitions().filter((queue) => isInsideProjectRoot(cwd, queue.originFile)),
   }
 }
 
@@ -98,9 +103,11 @@ export async function loadTaskRegistry(cwd: string): Promise<ReadonlyMap<string,
 
 export async function loadDeploymentRegistry(cwd: string): Promise<DeploymentRegistry> {
   const loaded = await loadConfigTaskRefs(cwd)
+  const tasks = buildTaskRegistry(loaded.refs)
   return {
-    tasks: buildTaskRegistry(loaded.refs),
+    tasks,
     streams: compileStreamCatalog(loaded.streams),
+    queues: compileQueueCatalog([...tasks.values()].map((item) => item.task), loaded.queues),
   }
 }
 

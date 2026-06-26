@@ -247,7 +247,7 @@ WITH stale_waits AS MATERIALIZED (
            run_waits.project_id,
            run_waits.environment_id,
            run_waits.run_id,
-           runs.task_session_id,
+           runs.session_id,
            runs.current_attempt_id,
            runs.current_attempt_number,
            runs.trace_id,
@@ -274,10 +274,10 @@ WITH stale_waits AS MATERIALIZED (
                AND runs.project_id = run_waits.project_id
                AND runs.environment_id = run_waits.environment_id
                AND runs.id = run_waits.run_id
-      JOIN task_sessions ON task_sessions.org_id = runs.org_id
-                        AND task_sessions.project_id = runs.project_id
-                        AND task_sessions.environment_id = runs.environment_id
-                        AND task_sessions.id = runs.task_session_id
+      JOIN sessions ON sessions.org_id = runs.org_id
+                        AND sessions.project_id = runs.project_id
+                        AND sessions.environment_id = runs.environment_id
+                        AND sessions.id = runs.session_id
       JOIN runtime_checkpoints ON runtime_checkpoints.org_id = run_waits.org_id
                               AND runtime_checkpoints.project_id = run_waits.project_id
                               AND runtime_checkpoints.environment_id = run_waits.environment_id
@@ -302,7 +302,7 @@ WITH stale_waits AS MATERIALIZED (
        )
      ORDER BY COALESCE(run_waits.resolved_at, run_waits.timeout_at, run_waits.updated_at), run_waits.id
      LIMIT $2
-     FOR UPDATE OF run_waits, runs, task_sessions
+     FOR UPDATE OF run_waits, runs, sessions
 ),
 failed_waits AS (
     UPDATE run_waits
@@ -330,7 +330,7 @@ failed_runs AS (
        AND runs.id = stale_waits.run_id
        AND runs.status = stale_waits.run_status
        AND runs.current_run_lease_id IS NULL
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.task_session_id,
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.session_id,
               runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id,
               runs.state_version, runs.error_message, stale_waits.runtime_checkpoint_id,
               stale_waits.base_workspace_version_id, stale_waits.current_version_id,
@@ -351,18 +351,18 @@ invalidated_checkpoints AS (
     RETURNING runtime_checkpoints.id
 ),
 ended_session_runs AS (
-    UPDATE task_session_runs
+    UPDATE session_runs
        SET ended_at = now()
       FROM failed_runs
-     WHERE task_session_runs.org_id = failed_runs.org_id
-       AND task_session_runs.project_id = failed_runs.project_id
-       AND task_session_runs.environment_id = failed_runs.environment_id
-       AND task_session_runs.task_session_id = failed_runs.task_session_id
-       AND task_session_runs.run_id = failed_runs.id
-    RETURNING task_session_runs.id
+     WHERE session_runs.org_id = failed_runs.org_id
+       AND session_runs.project_id = failed_runs.project_id
+       AND session_runs.environment_id = failed_runs.environment_id
+       AND session_runs.session_id = failed_runs.session_id
+       AND session_runs.run_id = failed_runs.id
+    RETURNING session_runs.id
 ),
-failed_task_sessions AS (
-    SELECT failed_runs.task_session_id AS id
+failed_sessions AS (
+    SELECT failed_runs.session_id AS id
       FROM failed_runs
 ),
 failed_attempts AS (
@@ -595,7 +595,7 @@ SELECT runs.org_id,
        runs.deployment_id,
        runs.task_id,
        runs.id AS run_id,
-       runs.task_session_id,
+       runs.session_id,
        runs.workspace_id,
        runs.current_run_lease_id,
        run_leases.worker_instance_id,
@@ -653,7 +653,7 @@ type GetWorkerRunWaitScopeRow struct {
 	DeploymentID              pgtype.UUID `json:"deployment_id"`
 	TaskID                    string      `json:"task_id"`
 	RunID                     pgtype.UUID `json:"run_id"`
-	TaskSessionID             pgtype.UUID `json:"task_session_id"`
+	SessionID                 pgtype.UUID `json:"session_id"`
 	WorkspaceID               pgtype.UUID `json:"workspace_id"`
 	CurrentRunLeaseID         pgtype.UUID `json:"current_run_lease_id"`
 	WorkerInstanceID          pgtype.UUID `json:"worker_instance_id"`
@@ -681,7 +681,7 @@ func (q *Queries) GetWorkerRunWaitScope(ctx context.Context, arg GetWorkerRunWai
 		&i.DeploymentID,
 		&i.TaskID,
 		&i.RunID,
-		&i.TaskSessionID,
+		&i.SessionID,
 		&i.WorkspaceID,
 		&i.CurrentRunLeaseID,
 		&i.WorkerInstanceID,
@@ -789,7 +789,7 @@ UPDATE run_waits
    AND runs.current_run_lease_id = $5
    AND runs.status = 'running'
    AND runs.execution_status = 'executing'
-RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, deployment_id, deployment_task_id, workspace_id, workspace_materialization_id, deployment_version, api_version, sdk_version, cli_version, task_id, task_session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_run_lease_id, latest_runtime_checkpoint_id, exit_code, error_message, runs.created_at, runs.updated_at, started_at, finished_at, run_waits.id, run_waits.org_id, run_waits.project_id, run_waits.environment_id, run_id, kind, correlation_id, state, timeout_at, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, parked_at, resolved_at, resumed_at, cancelled_at, run_waits.created_at, run_waits.updated_at
+RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, deployment_id, deployment_task_id, workspace_id, workspace_materialization_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_run_lease_id, latest_runtime_checkpoint_id, exit_code, error_message, runs.created_at, runs.updated_at, started_at, finished_at, run_waits.id, run_waits.org_id, run_waits.project_id, run_waits.environment_id, run_id, kind, correlation_id, state, timeout_at, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, parked_at, resolved_at, resumed_at, cancelled_at, run_waits.created_at, run_waits.updated_at
 `
 
 type MarkRunWaitResumedParams struct {
@@ -814,7 +814,7 @@ type MarkRunWaitResumedRow struct {
 	SdkVersion                 string                 `json:"sdk_version"`
 	CliVersion                 string                 `json:"cli_version"`
 	TaskID                     string                 `json:"task_id"`
-	TaskSessionID              pgtype.UUID            `json:"task_session_id"`
+	SessionID                  pgtype.UUID            `json:"session_id"`
 	ScheduleID                 pgtype.UUID            `json:"schedule_id"`
 	ScheduleInstanceID         pgtype.UUID            `json:"schedule_instance_id"`
 	ScheduledAt                pgtype.Timestamptz     `json:"scheduled_at"`
@@ -892,7 +892,7 @@ func (q *Queries) MarkRunWaitResumed(ctx context.Context, arg MarkRunWaitResumed
 		&i.SdkVersion,
 		&i.CliVersion,
 		&i.TaskID,
-		&i.TaskSessionID,
+		&i.SessionID,
 		&i.ScheduleID,
 		&i.ScheduleInstanceID,
 		&i.ScheduledAt,

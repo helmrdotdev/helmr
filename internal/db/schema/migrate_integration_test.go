@@ -17,7 +17,7 @@ import (
 func TestUpWithPostgres(t *testing.T) {
 	ctx := context.Background()
 	if dsn := strings.TrimSpace(os.Getenv("HELMR_TEST_DATABASE_URL")); dsn != "" {
-		testUpWithExternalPostgres(t, ctx, dsn)
+		testUpWithPostgres(t, ctx, dsn, false)
 		return
 	}
 	for _, name := range []string{"initdb", "pg_ctl", "postgres"} {
@@ -46,10 +46,10 @@ func TestUpWithPostgres(t *testing.T) {
 		_ = exec.Command("pg_ctl", "-D", dataDir, "-m", "fast", "-w", "stop").Run()
 	})
 	dsn := fmt.Sprintf("postgres://%s@127.0.0.1:%d/postgres?sslmode=disable", os.Getenv("USER"), port)
-	testUpWithExternalPostgres(t, ctx, dsn)
+	testUpWithPostgres(t, ctx, dsn, true)
 }
 
-func testUpWithExternalPostgres(t *testing.T, ctx context.Context, dsn string) {
+func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDown bool) {
 	t.Helper()
 	dbctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -79,6 +79,18 @@ func testUpWithExternalPostgres(t *testing.T, ctx context.Context, dsn string) {
 		t.Fatal("runs table was not created")
 	}
 	assertWorkspaceStreamSchema(t, dbctx, pool)
+	if !verifyDown {
+		return
+	}
+	if err := Down(dbctx, dsn); err != nil {
+		t.Fatalf("down migration failed: %v", err)
+	}
+	if err := pool.QueryRow(dbctx, `SELECT to_regclass('public.runs') IS NOT NULL`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("runs table still exists after down migration")
+	}
 }
 
 func assertWorkspaceStreamSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {

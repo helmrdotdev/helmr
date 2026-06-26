@@ -365,6 +365,26 @@ INSERT INTO deployment_sandboxes (
 )
 RETURNING *;
 
+-- name: CreateDeploymentQueue :one
+INSERT INTO deployment_queues (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    deployment_id,
+    name,
+    concurrency_limit
+) VALUES (
+    sqlc.arg(id),
+    sqlc.arg(org_id),
+    sqlc.arg(project_id),
+    sqlc.arg(environment_id),
+    sqlc.arg(deployment_id),
+    sqlc.arg(name),
+    sqlc.narg(concurrency_limit)
+)
+RETURNING *;
+
 -- name: CreateDeploymentTask :one
 WITH catalog_task AS (
     INSERT INTO tasks (
@@ -436,7 +456,7 @@ INSERT INTO deployment_tasks (
     sqlc.narg(queue_concurrency_limit),
     sqlc.arg(ttl),
     sqlc.arg(max_active_duration_ms),
-    coalesce(sqlc.arg(retry_policy)::jsonb, 'false'::jsonb)
+    coalesce(sqlc.arg(retry_policy)::jsonb, '{"enabled": false}'::jsonb)
   FROM catalog_task
 RETURNING *;
 
@@ -567,14 +587,14 @@ SELECT deployment_tasks.*,
  LIMIT 1;
 
 -- name: GetDeploymentQueueConfig :one
-SELECT queue_name,
-       queue_concurrency_limit
-  FROM deployment_tasks
+SELECT name AS queue_name,
+       concurrency_limit AS queue_concurrency_limit
+  FROM deployment_queues
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND deployment_id = sqlc.arg(deployment_id)
-   AND queue_name = sqlc.arg(queue_name)
+   AND name = sqlc.arg(queue_name)
  LIMIT 1;
 
 -- name: GetDeploymentTask :one

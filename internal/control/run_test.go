@@ -316,6 +316,7 @@ func TestSessionRefreshWriterPassesFlush(t *testing.T) {
 
 func TestValidatedRetryPolicyRejectsUnsupportedFields(t *testing.T) {
 	for name, raw := range map[string]string{
+		"literalFalse": `false`,
 		"retryOn":      `{"maxAttempts":3,"retryOn":["timeout"]}`,
 		"backoffField": `{"maxAttempts":3,"backoff":{"minMs":1000,"strategy":"linear"}}`,
 	} {
@@ -406,7 +407,7 @@ func TestSessionStartRejectsOversizedExternalID(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"task_id":"deploy","external_id":"`+strings.Repeat("x", maxTaskSessionExternalIDBytes+1)+`"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"task_id":"deploy","external_id":"`+strings.Repeat("x", maxSessionExternalIDBytes+1)+`"}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -1028,8 +1029,8 @@ func TestSessionStartRejectsIncompatibleWorkspaceBeforeSessionCreation(t *testin
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	requireErrorCode(t, rec.Body.Bytes(), "workspace_sandbox_incompatible")
-	if store.taskSession.ID.Valid || store.run.ID.Valid || store.createWorkspaceCalls != 0 {
-		t.Fatalf("unexpected DB side effects: session=%v run=%v createWorkspaceCalls=%d", store.taskSession.ID.Valid, store.run.ID.Valid, store.createWorkspaceCalls)
+	if store.session.ID.Valid || store.run.ID.Valid || store.createWorkspaceCalls != 0 {
+		t.Fatalf("unexpected DB side effects: session=%v run=%v createWorkspaceCalls=%d", store.session.ID.Valid, store.run.ID.Valid, store.createWorkspaceCalls)
 	}
 }
 
@@ -1055,8 +1056,8 @@ func TestSessionStartRejectsWorkspaceResourceFloorBeforeSessionCreation(t *testi
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	requireErrorCode(t, rec.Body.Bytes(), "workspace_resource_floor_unsatisfied")
-	if store.taskSession.ID.Valid || store.run.ID.Valid || store.createWorkspaceCalls != 0 {
-		t.Fatalf("unexpected DB side effects: session=%v run=%v createWorkspaceCalls=%d", store.taskSession.ID.Valid, store.run.ID.Valid, store.createWorkspaceCalls)
+	if store.session.ID.Valid || store.run.ID.Valid || store.createWorkspaceCalls != 0 {
+		t.Fatalf("unexpected DB side effects: session=%v run=%v createWorkspaceCalls=%d", store.session.ID.Valid, store.run.ID.Valid, store.createWorkspaceCalls)
 	}
 }
 
@@ -1073,8 +1074,8 @@ func TestSessionStartIdempotencyRequiresCoordinationBeforeDBSideEffects(t *testi
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	requireErrorCode(t, rec.Body.Bytes(), "coordination_unavailable")
-	if store.taskSession.ID.Valid || store.run.ID.Valid || store.startIdempotency.ID.Valid {
-		t.Fatalf("unexpected DB side effects: session=%v run=%v idempotency=%v", store.taskSession.ID.Valid, store.run.ID.Valid, store.startIdempotency.ID.Valid)
+	if store.session.ID.Valid || store.run.ID.Valid || store.startIdempotency.ID.Valid {
+		t.Fatalf("unexpected DB side effects: session=%v run=%v idempotency=%v", store.session.ID.Valid, store.run.ID.Valid, store.startIdempotency.ID.Valid)
 	}
 }
 
@@ -1082,7 +1083,7 @@ func TestSessionStartExternalIDRejectsDifferentFingerprint(t *testing.T) {
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -1092,7 +1093,7 @@ func TestSessionStartExternalIDRejectsDifferentFingerprint(t *testing.T) {
 			ActiveDeploymentID:  testDeploymentID(),
 			ExternalID:          "durable-1",
 			StartFingerprint:    "old-fingerprint",
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			CurrentRunID:        runID,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
@@ -1198,7 +1199,7 @@ func TestStartAndWaitReturnsAfterInitialRunWhileSessionOpen(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Session.Status != string(db.TaskSessionStatusOpen) || response.Run.Status != api.RunStatusSucceeded || response.TimedOut {
+	if response.Session.Status != string(db.SessionStatusOpen) || response.Run.Status != api.RunStatusSucceeded || response.TimedOut {
 		t.Fatalf("response = %+v", response)
 	}
 }
@@ -1211,7 +1212,7 @@ func TestSessionStartExternalIDDifferentTaskConflicts(t *testing.T) {
 	}
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -1221,7 +1222,7 @@ func TestSessionStartExternalIDDifferentTaskConflicts(t *testing.T) {
 			ActiveDeploymentID:  testDeploymentID(),
 			ExternalID:          "durable-1",
 			StartFingerprint:    startFingerprint.String,
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			CurrentRunID:        runID,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
@@ -1265,7 +1266,7 @@ func TestSessionStartExternalIDIgnoresMetadataTagsInFingerprint(t *testing.T) {
 	}
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -1275,7 +1276,7 @@ func TestSessionStartExternalIDIgnoresMetadataTagsInFingerprint(t *testing.T) {
 			ActiveDeploymentID:  testDeploymentID(),
 			ExternalID:          "durable-1",
 			StartFingerprint:    startFingerprint.String,
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			CurrentRunID:        runID,
 			Metadata:            []byte(`{"origin":"first"}`),
 			Tags:                []string{"first"},
@@ -1323,57 +1324,57 @@ func TestContinuationRunRequestRetriesTransientEnsureFailure(t *testing.T) {
 	previousRun := store.run
 	store.ensureWorkspaceMaterializationErr = errors.New("transient materialization failure")
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store}
-	runID, err := server.reconcileClaimedTaskSessionRunRequest(context.Background(), store.taskSessionRunRequest)
+	runID, err := server.reconcileClaimedSessionRunRequest(context.Background(), store.sessionRunRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runID.Valid || store.taskSessionRunRequest.Status != "accepted" || !strings.Contains(store.taskSessionRunRequest.LastError, "transient materialization failure") {
-		t.Fatalf("first reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.taskSessionRunRequest)
+	if runID.Valid || store.sessionRunRequest.Status != "accepted" || !strings.Contains(store.sessionRunRequest.LastError, "transient materialization failure") {
+		t.Fatalf("first reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionRunRequest)
 	}
-	if len(store.taskSessionRuns) != 1 {
-		t.Fatalf("session runs after first reconcile = %d, want previous only", len(store.taskSessionRuns))
+	if len(store.sessionRuns) != 1 {
+		t.Fatalf("session runs after first reconcile = %d, want previous only", len(store.sessionRuns))
 	}
 
 	store.ensureWorkspaceMaterializationErr = nil
 	store.run = previousRun
-	store.taskSessionRunRequest.Status = "claimed"
-	runID, err = server.reconcileClaimedTaskSessionRunRequest(context.Background(), store.taskSessionRunRequest)
+	store.sessionRunRequest.Status = "claimed"
+	runID, err = server.reconcileClaimedSessionRunRequest(context.Background(), store.sessionRunRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !runID.Valid || store.taskSessionRunRequest.Status != "created" || store.taskSessionRunRequest.RunID != runID {
-		t.Fatalf("second reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.taskSessionRunRequest)
+	if !runID.Valid || store.sessionRunRequest.Status != "created" || store.sessionRunRequest.RunID != runID {
+		t.Fatalf("second reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionRunRequest)
 	}
-	if len(store.taskSessionRuns) != 2 || store.taskSessionRuns[1].PreviousRunID != store.taskSessionRuns[0].RunID || store.taskSessionRuns[1].Reason != "input" {
-		t.Fatalf("session runs = %+v", store.taskSessionRuns)
+	if len(store.sessionRuns) != 2 || store.sessionRuns[1].PreviousRunID != store.sessionRuns[0].RunID || store.sessionRuns[1].Reason != "input" {
+		t.Fatalf("session runs = %+v", store.sessionRuns)
 	}
-	if store.taskSession.CurrentRunID != runID || store.ensureWorkspaceMaterializationCalls != 2 {
-		t.Fatalf("session current=%s materialization calls=%d", pgvalue.UUIDString(store.taskSession.CurrentRunID), store.ensureWorkspaceMaterializationCalls)
+	if store.session.CurrentRunID != runID || store.ensureWorkspaceMaterializationCalls != 2 {
+		t.Fatalf("session current=%s materialization calls=%d", pgvalue.UUIDString(store.session.CurrentRunID), store.ensureWorkspaceMaterializationCalls)
 	}
 }
 
 func TestContinuationRunRequestCreatedAfterLiveRunTerminal(t *testing.T) {
 	store := continuationRunRequestFakeStore(db.RunStatusRunning)
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store}
-	runID, err := server.reconcileClaimedTaskSessionRunRequest(context.Background(), store.taskSessionRunRequest)
+	runID, err := server.reconcileClaimedSessionRunRequest(context.Background(), store.sessionRunRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runID.Valid || store.taskSessionRunRequest.Status != "accepted" || store.taskSessionRunRequest.LastError != "current_run_not_terminal" {
-		t.Fatalf("running reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.taskSessionRunRequest)
+	if runID.Valid || store.sessionRunRequest.Status != "accepted" || store.sessionRunRequest.LastError != "current_run_not_terminal" {
+		t.Fatalf("running reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionRunRequest)
 	}
 
 	store.run.Status = db.RunStatusSucceeded
-	store.taskSessionRunRequest.Status = "claimed"
-	runID, err = server.reconcileClaimedTaskSessionRunRequest(context.Background(), store.taskSessionRunRequest)
+	store.sessionRunRequest.Status = "claimed"
+	runID, err = server.reconcileClaimedSessionRunRequest(context.Background(), store.sessionRunRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !runID.Valid || store.taskSessionRunRequest.Status != "created" {
-		t.Fatalf("terminal reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.taskSessionRunRequest)
+	if !runID.Valid || store.sessionRunRequest.Status != "created" {
+		t.Fatalf("terminal reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionRunRequest)
 	}
-	if len(store.taskSessionRuns) != 2 || store.taskSession.CurrentRunID != runID {
-		t.Fatalf("session runs=%+v current=%s", store.taskSessionRuns, pgvalue.UUIDString(store.taskSession.CurrentRunID))
+	if len(store.sessionRuns) != 2 || store.session.CurrentRunID != runID {
+		t.Fatalf("session runs=%+v current=%s", store.sessionRuns, pgvalue.UUIDString(store.session.CurrentRunID))
 	}
 }
 
@@ -1385,7 +1386,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 	requestID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	now := testTime()
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -1393,7 +1394,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			CurrentRunID:        previousRunID,
 			WorkspaceID:         testWorkspaceID(),
 			Metadata:            []byte(`{}`),
@@ -1409,7 +1410,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
 			DeploymentTaskID: testDeploymentTaskID(),
-			TaskSessionID:    sessionID,
+			SessionID:        sessionID,
 			TaskID:           "deploy",
 			Status:           previousStatus,
 			Payload:          []byte(`{"env":"prod"}`),
@@ -1430,12 +1431,12 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 			SourceType:    db.StreamRecordSourceTypeApiKey,
 			CreatedAt:     now,
 		},
-		taskSessionRunRequest: db.TaskSessionRunRequest{
+		sessionRunRequest: db.SessionRunRequest{
 			ID:             requestID,
 			OrgID:          pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:      testProjectID(),
 			EnvironmentID:  testEnvironmentID(),
-			TaskSessionID:  sessionID,
+			SessionID:      sessionID,
 			StreamRecordID: recordID,
 			StreamID:       streamID,
 			CauseKind:      "stream_record",
@@ -1456,17 +1457,17 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 			BundleArtifactID:    testArtifactID(),
 			QueueName:           "default",
 			MaxActiveDurationMs: 300000,
-			RetryPolicy:         []byte(`false`),
+			RetryPolicy:         []byte(`{"enabled":false}`),
 			DeploymentVersion:   "v1",
 			ApiVersion:          api.CurrentAPIVersion,
 			CreatedAt:           now,
 		},
-		taskSessionRuns: []db.TaskSessionRun{{
+		sessionRuns: []db.SessionRun{{
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
-			TaskSessionID: sessionID,
+			SessionID:     sessionID,
 			RunID:         previousRunID,
 			DeploymentID:  testDeploymentID(),
 			TurnIndex:     1,
@@ -1474,7 +1475,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 			CreatedAt:     now,
 		}},
 	}
-	store.lockTaskSession = store.taskSession
+	store.lockSession = store.session
 	return store
 }
 
@@ -1495,7 +1496,7 @@ func TestSessionStartExternalIDRejectsExpiredOpenSession(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("first status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	store.taskSession.ExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true}
+	store.session.ExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -1515,9 +1516,9 @@ func TestSessionStartExternalIDUniqueRaceReturnsExistingSessionOK(t *testing.T) 
 	}
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		createTaskSessionErr:             &pgconn.PgError{Code: "23505"},
-		getTaskSessionByExternalIDMisses: 1,
-		taskSession: db.TaskSession{
+		createSessionErr:             &pgconn.PgError{Code: "23505"},
+		getSessionByExternalIDMisses: 1,
+		session: db.Session{
 			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -1527,7 +1528,7 @@ func TestSessionStartExternalIDUniqueRaceReturnsExistingSessionOK(t *testing.T) 
 			ActiveDeploymentID:  testDeploymentID(),
 			ExternalID:          "durable-1",
 			StartFingerprint:    startFingerprint.String,
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			CurrentRunID:        runID,
 			CurrentRunVersion:   1,
 			Metadata:            []byte(`{}`),
@@ -1591,7 +1592,7 @@ func TestSessionStartExternalIDWithoutCurrentRunReturnsConflict(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("first status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	store.taskSession.CurrentRunID = pgtype.UUID{}
+	store.session.CurrentRunID = pgtype.UUID{}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -1605,10 +1606,10 @@ func TestSessionStartExternalIDWithoutCurrentRunReturnsConflict(t *testing.T) {
 	}
 }
 
-func TestScopedTaskSessionRouteRejectsWrongPathScope(t *testing.T) {
+func TestScopedSessionRouteRejectsWrongPathScope(t *testing.T) {
 	sessionID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  pgvalue.UUID(sessionID),
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           otherProjectID(),
@@ -1616,7 +1617,7 @@ func TestScopedTaskSessionRouteRejectsWrongPathScope(t *testing.T) {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
 			TerminalReason:      []byte(`{}`),
@@ -1633,7 +1634,7 @@ func TestScopedTaskSessionRouteRejectsWrongPathScope(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
 	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{OrgID: dbtest.DefaultOrgID, Role: auth.RoleOwner, Kind: auth.ActorKindSession}))
 	rec := httptest.NewRecorder()
-	server.getTaskSession(rec, req)
+	server.getSession(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1677,7 +1678,7 @@ func TestSessionStartRejectsUndeployedTask(t *testing.T) {
 	}
 }
 
-func TestListTaskSessionsRejectsOverMaxLimit(t *testing.T) {
+func TestListSessionsRejectsOverMaxLimit(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 	req := httptest.NewRequest(http.MethodGet, "/api/sessions?limit=201", nil)
@@ -1692,10 +1693,10 @@ func TestListTaskSessionsRejectsOverMaxLimit(t *testing.T) {
 	}
 }
 
-func TestTopLevelTaskSessionRouteRejectsSessionActor(t *testing.T) {
+func TestTopLevelSessionRouteRejectsSessionActor(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -1703,7 +1704,7 @@ func TestTopLevelTaskSessionRouteRejectsSessionActor(t *testing.T) {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
 			TerminalReason:      []byte(`{}`),
@@ -1721,11 +1722,11 @@ func TestTopLevelTaskSessionRouteRejectsSessionActor(t *testing.T) {
 	}
 }
 
-func TestCloseTaskSessionRejectsActiveRun(t *testing.T) {
+func TestCloseSessionRejectsActiveRun(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -1733,7 +1734,7 @@ func TestCloseTaskSessionRejectsActiveRun(t *testing.T) {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			CurrentRunID:        runID,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
@@ -1764,11 +1765,11 @@ func TestCloseTaskSessionRejectsActiveRun(t *testing.T) {
 	}
 }
 
-func TestCloseTaskSessionAllowsTerminalCurrentRun(t *testing.T) {
+func TestCloseSessionAllowsTerminalCurrentRun(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -1776,7 +1777,7 @@ func TestCloseTaskSessionAllowsTerminalCurrentRun(t *testing.T) {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			CurrentRunID:        runID,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
@@ -1802,19 +1803,19 @@ func TestCloseTaskSessionAllowsTerminalCurrentRun(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var response api.TaskSessionResponse
+	var response api.SessionResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Status != string(db.TaskSessionStatusClosed) || response.CurrentRunID != pgvalue.MustUUIDValue(runID).String() {
+	if response.Status != string(db.SessionStatusClosed) || response.CurrentRunID != pgvalue.MustUUIDValue(runID).String() {
 		t.Fatalf("response = %+v", response)
 	}
 }
 
-func TestGetTaskSessionUnwrapsStoredResult(t *testing.T) {
+func TestGetSessionUnwrapsStoredResult(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -1822,7 +1823,7 @@ func TestGetTaskSessionUnwrapsStoredResult(t *testing.T) {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusClosed,
+			Status:              db.SessionStatusClosed,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
 			Result:              []byte(`{"ok":true,"value":{"answer":42}}`),
@@ -1841,7 +1842,7 @@ func TestGetTaskSessionUnwrapsStoredResult(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var response api.TaskSessionResponse
+	var response api.SessionResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -1853,11 +1854,11 @@ func TestGetTaskSessionUnwrapsStoredResult(t *testing.T) {
 	}
 }
 
-func TestCloseTaskSessionReportsActiveRunAfterAttachRace(t *testing.T) {
+func TestCloseSessionReportsActiveRunAfterAttachRace(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -1865,7 +1866,7 @@ func TestCloseTaskSessionReportsActiveRunAfterAttachRace(t *testing.T) {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
 			TerminalReason:      []byte(`{}`),
@@ -1879,7 +1880,7 @@ func TestCloseTaskSessionReportsActiveRunAfterAttachRace(t *testing.T) {
 			EnvironmentID: testEnvironmentID(),
 			Status:        db.RunStatusRunning,
 		},
-		closeTaskSessionAttachesRun: runID,
+		closeSessionAttachesRun: runID,
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/close", strings.NewReader(`{"reason":"done"}`))
@@ -1894,11 +1895,11 @@ func TestCloseTaskSessionReportsActiveRunAfterAttachRace(t *testing.T) {
 	requireErrorCode(t, rec.Body.Bytes(), "close_run_active")
 }
 
-func TestCloseTaskSessionRetriesAfterTerminalAttachRace(t *testing.T) {
+func TestCloseSessionRetriesAfterTerminalAttachRace(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -1906,7 +1907,7 @@ func TestCloseTaskSessionRetriesAfterTerminalAttachRace(t *testing.T) {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
 			TerminalReason:      []byte(`{}`),
@@ -1920,7 +1921,7 @@ func TestCloseTaskSessionRetriesAfterTerminalAttachRace(t *testing.T) {
 			EnvironmentID: testEnvironmentID(),
 			Status:        db.RunStatusSucceeded,
 		},
-		closeTaskSessionAttachesRun: runID,
+		closeSessionAttachesRun: runID,
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/close", strings.NewReader(`{"reason":"done"}`))
@@ -1932,21 +1933,21 @@ func TestCloseTaskSessionRetriesAfterTerminalAttachRace(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var response api.TaskSessionResponse
+	var response api.SessionResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Status != string(db.TaskSessionStatusClosed) || response.CurrentRunID != pgvalue.MustUUIDValue(runID).String() {
+	if response.Status != string(db.SessionStatusClosed) || response.CurrentRunID != pgvalue.MustUUIDValue(runID).String() {
 		t.Fatalf("response = %+v", response)
 	}
 }
 
-func TestCloseTaskSessionReportsActiveRunAfterRetryAttachRace(t *testing.T) {
+func TestCloseSessionReportsActiveRunAfterRetryAttachRace(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	terminalRunID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	activeRunID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -1954,7 +1955,7 @@ func TestCloseTaskSessionReportsActiveRunAfterRetryAttachRace(t *testing.T) {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
 			TerminalReason:      []byte(`{}`),
@@ -1968,8 +1969,8 @@ func TestCloseTaskSessionReportsActiveRunAfterRetryAttachRace(t *testing.T) {
 			EnvironmentID: testEnvironmentID(),
 			Status:        db.RunStatusSucceeded,
 		},
-		closeTaskSessionAttachesRun: terminalRunID,
-		closeTaskSessionRetryRun: db.Run{
+		closeSessionAttachesRun: terminalRunID,
+		closeSessionRetryRun: db.Run{
 			ID:            activeRunID,
 			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
@@ -1990,11 +1991,11 @@ func TestCloseTaskSessionReportsActiveRunAfterRetryAttachRace(t *testing.T) {
 	requireErrorCode(t, rec.Body.Bytes(), "close_run_active")
 }
 
-func TestPatchTaskSessionAllowsActiveRun(t *testing.T) {
+func TestPatchSessionAllowsActiveRun(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -2002,7 +2003,7 @@ func TestPatchTaskSessionAllowsActiveRun(t *testing.T) {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			CurrentRunID:        runID,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
@@ -2021,7 +2022,7 @@ func TestPatchTaskSessionAllowsActiveRun(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var response api.TaskSessionResponse
+	var response api.SessionResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -2036,10 +2037,10 @@ func TestPatchTaskSessionAllowsActiveRun(t *testing.T) {
 	}
 }
 
-func TestPatchTaskSessionRejectsExpiresAtWithoutExistingExpiry(t *testing.T) {
+func TestPatchSessionRejectsExpiresAtWithoutExistingExpiry(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -2047,7 +2048,7 @@ func TestPatchTaskSessionRejectsExpiresAtWithoutExistingExpiry(t *testing.T) {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
 			TerminalReason:      []byte(`{}`),
@@ -2069,11 +2070,11 @@ func TestPatchTaskSessionRejectsExpiresAtWithoutExistingExpiry(t *testing.T) {
 	requireErrorCode(t, rec.Body.Bytes(), "session_expires_at_not_extendable")
 }
 
-func TestPatchTaskSessionRejectsExpiresAtShortening(t *testing.T) {
+func TestPatchSessionRejectsExpiresAtShortening(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	existingExpiry := time.Now().Add(2 * time.Hour).UTC()
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -2081,7 +2082,7 @@ func TestPatchTaskSessionRejectsExpiresAtShortening(t *testing.T) {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			ExpiresAt:           pgvalue.Timestamptz(existingExpiry),
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
@@ -2104,10 +2105,10 @@ func TestPatchTaskSessionRejectsExpiresAtShortening(t *testing.T) {
 	requireErrorCode(t, rec.Body.Bytes(), "session_expires_at_not_extendable")
 }
 
-func TestCancelTaskSessionIsIdempotent(t *testing.T) {
+func TestCancelSessionIsIdempotent(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -2115,7 +2116,7 @@ func TestCancelTaskSessionIsIdempotent(t *testing.T) {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
 			TerminalReason:      []byte(`{}`),
@@ -2134,21 +2135,21 @@ func TestCancelTaskSessionIsIdempotent(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("attempt %d status = %d body=%s", attempt+1, rec.Code, rec.Body.String())
 		}
-		var response api.TaskSessionResponse
+		var response api.SessionResponse
 		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 			t.Fatal(err)
 		}
-		if response.Status != string(db.TaskSessionStatusCancelled) {
+		if response.Status != string(db.SessionStatusCancelled) {
 			t.Fatalf("attempt %d status = %s", attempt+1, response.Status)
 		}
 	}
 }
 
-func TestCancelTaskSessionDoesNotCancelStaleCurrentRunAfterConcurrentCancel(t *testing.T) {
+func TestCancelSessionDoesNotCancelStaleCurrentRunAfterConcurrentCancel(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	now := testTime()
-	openSession := db.TaskSession{
+	openSession := db.Session{
 		ID:                  sessionID,
 		OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:           testProjectID(),
@@ -2156,7 +2157,7 @@ func TestCancelTaskSessionDoesNotCancelStaleCurrentRunAfterConcurrentCancel(t *t
 		TaskID:              "deploy",
 		InitialDeploymentID: testDeploymentID(),
 		ActiveDeploymentID:  testDeploymentID(),
-		Status:              db.TaskSessionStatusOpen,
+		Status:              db.SessionStatusOpen,
 		CurrentRunID:        runID,
 		Metadata:            []byte(`{}`),
 		Tags:                []string{},
@@ -2165,14 +2166,14 @@ func TestCancelTaskSessionDoesNotCancelStaleCurrentRunAfterConcurrentCancel(t *t
 		UpdatedAt:           now,
 	}
 	cancelledSession := openSession
-	cancelledSession.Status = db.TaskSessionStatusCancelled
+	cancelledSession.Status = db.SessionStatusCancelled
 	cancelledSession.CurrentRunID = pgtype.UUID{}
 	cancelledSession.CancelledAt = now
 	cancelledSession.TerminalReason = []byte(`{"origin":"api","reason":"first"}`)
 	cancelledSession.Result = []byte(`{"ok":false,"error":{"name":"TaskCancelled","message":"first","details":{"origin":"api"}}}`)
 	store := &fakeStore{
-		taskSession:     openSession,
-		lockTaskSession: cancelledSession,
+		session:     openSession,
+		lockSession: cancelledSession,
 		run: db.Run{
 			ID:              runID,
 			OrgID:           pgvalue.UUID(dbtest.DefaultOrgID),
@@ -2196,11 +2197,11 @@ func TestCancelTaskSessionDoesNotCancelStaleCurrentRunAfterConcurrentCancel(t *t
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var response api.TaskSessionResponse
+	var response api.SessionResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Status != string(db.TaskSessionStatusCancelled) || response.CurrentRunID != "" {
+	if response.Status != string(db.SessionStatusCancelled) || response.CurrentRunID != "" {
 		t.Fatalf("response = %+v, want cancelled session without current run", response)
 	}
 	if store.cancelRunCalls != 0 || store.runOperation.ID.Valid {
@@ -2208,11 +2209,11 @@ func TestCancelTaskSessionDoesNotCancelStaleCurrentRunAfterConcurrentCancel(t *t
 	}
 }
 
-func TestCancelTaskSessionTerminalizesPendingCancelRun(t *testing.T) {
+func TestCancelSessionTerminalizesPendingCancelRun(t *testing.T) {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -2220,7 +2221,7 @@ func TestCancelTaskSessionTerminalizesPendingCancelRun(t *testing.T) {
 			TaskID:              "deploy",
 			InitialDeploymentID: testDeploymentID(),
 			ActiveDeploymentID:  testDeploymentID(),
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			CurrentRunID:        runID,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
@@ -2251,11 +2252,11 @@ func TestCancelTaskSessionTerminalizesPendingCancelRun(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var response api.TaskSessionResponse
+	var response api.SessionResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Status != string(db.TaskSessionStatusCancelled) || response.CurrentRunID != "" {
+	if response.Status != string(db.SessionStatusCancelled) || response.CurrentRunID != "" {
 		t.Fatalf("response = %+v, want cancelled session without current run", response)
 	}
 	if store.cancelRunCalls != 1 || store.run.ExecutionStatus != db.RunExecutionStatusPendingCancel {
@@ -2381,9 +2382,9 @@ type fakeStore struct {
 	workerQueueCapacitySet                      bool
 	claimWorkspaceMaterialization               db.ClaimWorkspaceMaterializationParams
 	claimWorkspaceMaterializationCalls          int
-	taskSession                                 db.TaskSession
-	lockTaskSession                             db.TaskSession
-	createTaskSessionErr                        error
+	session                                     db.Session
+	lockSession                                 db.Session
+	createSessionErr                            error
 	ensureWorkspaceMaterialization              db.EnsureWorkspaceMaterializationRequestedParams
 	ensureWorkspaceMaterializationCalls         int
 	ensureWorkspaceMaterializationInserted      bool
@@ -2395,18 +2396,18 @@ type fakeStore struct {
 	resolveDeploymentSandboxCalls               int
 	workspaceOperationIdempotency               db.WorkspaceOperationIdempotency
 	createdWorkspaceOperationIdempotencies      []db.EnsureWorkspaceOperationIdempotencyParams
-	getTaskSessionByExternalIDMisses            int
+	getSessionByExternalIDMisses                int
 	workspace                                   db.Workspace
 	attachedWorkspace                           db.GetWorkspaceForSessionStartRow
 	createWorkspaceCalls                        int
 	startIdempotency                            db.GetSessionStartIdempotencyRow
-	taskSessionRuns                             []db.TaskSessionRun
+	sessionRuns                                 []db.SessionRun
 	streamRecord                                db.StreamRecord
-	taskSessionRunRequest                       db.TaskSessionRunRequest
+	sessionRunRequest                           db.SessionRunRequest
 	deploymentTaskRow                           db.GetDeploymentTaskRow
 	scheduleTriggerNotCurrent                   bool
-	closeTaskSessionAttachesRun                 pgtype.UUID
-	closeTaskSessionRetryRun                    db.Run
+	closeSessionAttachesRun                     pgtype.UUID
+	closeSessionRetryRun                        db.Run
 }
 
 type fakeControlTransaction struct{}
@@ -2463,7 +2464,7 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		ApiVersion:            arg.ApiVersion,
 		SdkVersion:            arg.SdkVersion,
 		CliVersion:            arg.CliVersion,
-		TaskSessionID:         arg.TaskSessionID,
+		SessionID:             arg.SessionID,
 		TaskID:                arg.TaskID,
 		Status:                status,
 		ExecutionStatus:       db.RunExecutionStatusQueued,
@@ -2503,7 +2504,7 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		DeploymentID:      f.run.DeploymentID,
 		DeploymentTaskID:  f.run.DeploymentTaskID,
 		WorkspaceID:       f.run.WorkspaceID,
-		TaskSessionID:     f.run.TaskSessionID,
+		SessionID:         f.run.SessionID,
 		DeploymentVersion: f.run.DeploymentVersion,
 		ApiVersion:        f.run.ApiVersion,
 		SdkVersion:        f.run.SdkVersion,
@@ -2555,12 +2556,12 @@ func (f *fakeStore) GetTaskForStart(_ context.Context, arg db.GetTaskForStartPar
 	return db.Task{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) CreateTaskSession(_ context.Context, arg db.CreateTaskSessionParams) (db.TaskSession, error) {
-	if f.createTaskSessionErr != nil {
-		return db.TaskSession{}, f.createTaskSessionErr
+func (f *fakeStore) CreateSession(_ context.Context, arg db.CreateSessionParams) (db.Session, error) {
+	if f.createSessionErr != nil {
+		return db.Session{}, f.createSessionErr
 	}
 	now := testTime()
-	f.taskSession = db.TaskSession{
+	f.session = db.Session{
 		ID:                  arg.ID,
 		OrgID:               arg.OrgID,
 		ProjectID:           arg.ProjectID,
@@ -2570,7 +2571,7 @@ func (f *fakeStore) CreateTaskSession(_ context.Context, arg db.CreateTaskSessio
 		ActiveDeploymentID:  arg.ActiveDeploymentID,
 		ExternalID:          arg.ExternalID,
 		StartFingerprint:    arg.StartFingerprint,
-		Status:              db.TaskSessionStatusOpen,
+		Status:              db.SessionStatusOpen,
 		CurrentRunVersion:   1,
 		WorkspaceID:         arg.WorkspaceID,
 		Metadata:            arg.Metadata,
@@ -2580,7 +2581,7 @@ func (f *fakeStore) CreateTaskSession(_ context.Context, arg db.CreateTaskSessio
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
-	return f.taskSession, nil
+	return f.session, nil
 }
 
 func (f *fakeStore) CreateWorkspace(_ context.Context, arg db.CreateWorkspaceParams) (db.Workspace, error) {
@@ -2843,20 +2844,20 @@ func (f *fakeStore) SetQueuedRunWorkspaceMaterialization(_ context.Context, arg 
 	return nil
 }
 
-func (f *fakeStore) SetTaskSessionCurrentRun(_ context.Context, arg db.SetTaskSessionCurrentRunParams) (db.TaskSession, error) {
-	f.taskSession.CurrentRunID = arg.RunID
-	f.taskSession.CurrentRunVersion++
-	f.taskSession.UpdatedAt = testTime()
-	return f.taskSession, nil
+func (f *fakeStore) SetSessionCurrentRun(_ context.Context, arg db.SetSessionCurrentRunParams) (db.Session, error) {
+	f.session.CurrentRunID = arg.RunID
+	f.session.CurrentRunVersion++
+	f.session.UpdatedAt = testTime()
+	return f.session, nil
 }
 
-func (f *fakeStore) CreateTaskSessionRun(_ context.Context, arg db.CreateTaskSessionRunParams) (db.TaskSessionRun, error) {
-	row := db.TaskSessionRun{
+func (f *fakeStore) CreateSessionRun(_ context.Context, arg db.CreateSessionRunParams) (db.SessionRun, error) {
+	row := db.SessionRun{
 		ID:            arg.ID,
 		OrgID:         arg.OrgID,
 		ProjectID:     arg.ProjectID,
 		EnvironmentID: arg.EnvironmentID,
-		TaskSessionID: arg.TaskSessionID,
+		SessionID:     arg.SessionID,
 		RunID:         arg.RunID,
 		DeploymentID:  arg.DeploymentID,
 		PreviousRunID: arg.PreviousRunID,
@@ -2864,21 +2865,21 @@ func (f *fakeStore) CreateTaskSessionRun(_ context.Context, arg db.CreateTaskSes
 		Reason:        arg.Reason,
 		CreatedAt:     testTime(),
 	}
-	f.taskSessionRuns = append(f.taskSessionRuns, row)
+	f.sessionRuns = append(f.sessionRuns, row)
 	return row, nil
 }
 
-func (f *fakeStore) GetTaskSessionRunByRunID(_ context.Context, arg db.GetTaskSessionRunByRunIDParams) (db.TaskSessionRun, error) {
-	for _, row := range f.taskSessionRuns {
+func (f *fakeStore) GetSessionRunByRunID(_ context.Context, arg db.GetSessionRunByRunIDParams) (db.SessionRun, error) {
+	for _, row := range f.sessionRuns {
 		if row.OrgID == arg.OrgID &&
 			row.ProjectID == arg.ProjectID &&
 			row.EnvironmentID == arg.EnvironmentID &&
-			row.TaskSessionID == arg.TaskSessionID &&
+			row.SessionID == arg.SessionID &&
 			row.RunID == arg.RunID {
 			return row, nil
 		}
 	}
-	return db.TaskSessionRun{}, pgx.ErrNoRows
+	return db.SessionRun{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) GetStreamRecord(_ context.Context, arg db.GetStreamRecordParams) (db.StreamRecord, error) {
@@ -2892,60 +2893,60 @@ func (f *fakeStore) GetStreamRecord(_ context.Context, arg db.GetStreamRecordPar
 	return db.StreamRecord{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) ClaimDueTaskSessionRunRequests(_ context.Context, _ db.ClaimDueTaskSessionRunRequestsParams) ([]db.TaskSessionRunRequest, error) {
-	if !f.taskSessionRunRequest.ID.Valid {
+func (f *fakeStore) ClaimDueSessionRunRequests(_ context.Context, _ db.ClaimDueSessionRunRequestsParams) ([]db.SessionRunRequest, error) {
+	if !f.sessionRunRequest.ID.Valid {
 		return nil, nil
 	}
-	f.taskSessionRunRequest.Status = "claimed"
-	f.taskSessionRunRequest.Attempts++
-	return []db.TaskSessionRunRequest{f.taskSessionRunRequest}, nil
+	f.sessionRunRequest.Status = "claimed"
+	f.sessionRunRequest.Attempts++
+	return []db.SessionRunRequest{f.sessionRunRequest}, nil
 }
 
-func (f *fakeStore) ReleaseTaskSessionRunRequestForRetry(_ context.Context, arg db.ReleaseTaskSessionRunRequestForRetryParams) (db.TaskSessionRunRequest, error) {
-	if f.taskSessionRunRequest.ID != arg.ID {
-		return db.TaskSessionRunRequest{}, pgx.ErrNoRows
+func (f *fakeStore) ReleaseSessionRunRequestForRetry(_ context.Context, arg db.ReleaseSessionRunRequestForRetryParams) (db.SessionRunRequest, error) {
+	if f.sessionRunRequest.ID != arg.ID {
+		return db.SessionRunRequest{}, pgx.ErrNoRows
 	}
-	f.taskSessionRunRequest.Status = "accepted"
-	f.taskSessionRunRequest.LastError = arg.LastError
-	f.taskSessionRunRequest.ErrorMessage = arg.LastError
-	f.taskSessionRunRequest.ClaimedAt = pgtype.Timestamptz{}
-	f.taskSessionRunRequest.ClaimExpiresAt = pgtype.Timestamptz{}
-	f.taskSessionRunRequest.ClaimOwner = ""
-	return f.taskSessionRunRequest, nil
+	f.sessionRunRequest.Status = "accepted"
+	f.sessionRunRequest.LastError = arg.LastError
+	f.sessionRunRequest.ErrorMessage = arg.LastError
+	f.sessionRunRequest.ClaimedAt = pgtype.Timestamptz{}
+	f.sessionRunRequest.ClaimExpiresAt = pgtype.Timestamptz{}
+	f.sessionRunRequest.ClaimOwner = ""
+	return f.sessionRunRequest, nil
 }
 
-func (f *fakeStore) MarkTaskSessionRunRequestCreated(_ context.Context, arg db.MarkTaskSessionRunRequestCreatedParams) (db.TaskSessionRunRequest, error) {
-	if f.taskSessionRunRequest.ID != arg.ID {
-		return db.TaskSessionRunRequest{}, pgx.ErrNoRows
+func (f *fakeStore) MarkSessionRunRequestCreated(_ context.Context, arg db.MarkSessionRunRequestCreatedParams) (db.SessionRunRequest, error) {
+	if f.sessionRunRequest.ID != arg.ID {
+		return db.SessionRunRequest{}, pgx.ErrNoRows
 	}
-	f.taskSessionRunRequest.Status = "created"
-	f.taskSessionRunRequest.RunID = arg.RunID
-	f.taskSessionRunRequest.LastError = ""
-	f.taskSessionRunRequest.ErrorMessage = ""
-	f.taskSessionRunRequest.ClaimedAt = pgtype.Timestamptz{}
-	f.taskSessionRunRequest.ClaimExpiresAt = pgtype.Timestamptz{}
-	f.taskSessionRunRequest.ClaimOwner = ""
-	return f.taskSessionRunRequest, nil
+	f.sessionRunRequest.Status = "created"
+	f.sessionRunRequest.RunID = arg.RunID
+	f.sessionRunRequest.LastError = ""
+	f.sessionRunRequest.ErrorMessage = ""
+	f.sessionRunRequest.ClaimedAt = pgtype.Timestamptz{}
+	f.sessionRunRequest.ClaimExpiresAt = pgtype.Timestamptz{}
+	f.sessionRunRequest.ClaimOwner = ""
+	return f.sessionRunRequest, nil
 }
 
-func (f *fakeStore) MarkTaskSessionRunRequestSkipped(_ context.Context, arg db.MarkTaskSessionRunRequestSkippedParams) (db.TaskSessionRunRequest, error) {
-	if f.taskSessionRunRequest.ID != arg.ID {
-		return db.TaskSessionRunRequest{}, pgx.ErrNoRows
+func (f *fakeStore) MarkSessionRunRequestSkipped(_ context.Context, arg db.MarkSessionRunRequestSkippedParams) (db.SessionRunRequest, error) {
+	if f.sessionRunRequest.ID != arg.ID {
+		return db.SessionRunRequest{}, pgx.ErrNoRows
 	}
-	f.taskSessionRunRequest.Status = "skipped"
-	f.taskSessionRunRequest.LastError = arg.Reason
-	f.taskSessionRunRequest.ErrorMessage = arg.Reason
-	return f.taskSessionRunRequest, nil
+	f.sessionRunRequest.Status = "skipped"
+	f.sessionRunRequest.LastError = arg.Reason
+	f.sessionRunRequest.ErrorMessage = arg.Reason
+	return f.sessionRunRequest, nil
 }
 
-func (f *fakeStore) MarkTaskSessionRunRequestFailed(_ context.Context, arg db.MarkTaskSessionRunRequestFailedParams) (db.TaskSessionRunRequest, error) {
-	if f.taskSessionRunRequest.ID != arg.ID {
-		return db.TaskSessionRunRequest{}, pgx.ErrNoRows
+func (f *fakeStore) MarkSessionRunRequestFailed(_ context.Context, arg db.MarkSessionRunRequestFailedParams) (db.SessionRunRequest, error) {
+	if f.sessionRunRequest.ID != arg.ID {
+		return db.SessionRunRequest{}, pgx.ErrNoRows
 	}
-	f.taskSessionRunRequest.Status = "failed"
-	f.taskSessionRunRequest.LastError = arg.Reason
-	f.taskSessionRunRequest.ErrorMessage = arg.Reason
-	return f.taskSessionRunRequest, nil
+	f.sessionRunRequest.Status = "failed"
+	f.sessionRunRequest.LastError = arg.Reason
+	f.sessionRunRequest.ErrorMessage = arg.Reason
+	return f.sessionRunRequest, nil
 }
 
 func (f *fakeStore) GetSessionStartIdempotency(_ context.Context, arg db.GetSessionStartIdempotencyParams) (db.GetSessionStartIdempotencyRow, error) {
@@ -2970,32 +2971,31 @@ func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.Crea
 		TaskID:                     arg.TaskID,
 		IdempotencyKey:             arg.IdempotencyKey,
 		RequestFingerprint:         arg.RequestFingerprint,
-		TaskSessionID:              arg.TaskSessionID,
 		FirstRunID:                 arg.FirstRunID,
 		ExpiresAt:                  arg.ExpiresAt,
 		CreatedAt:                  testTime(),
 		LastUsedAt:                 testTime(),
-		SessionID:                  f.taskSession.ID,
-		SessionOrgID:               f.taskSession.OrgID,
-		SessionProjectID:           f.taskSession.ProjectID,
-		SessionEnvironmentID:       f.taskSession.EnvironmentID,
-		SessionTaskID:              f.taskSession.TaskID,
-		SessionInitialDeploymentID: f.taskSession.InitialDeploymentID,
-		SessionActiveDeploymentID:  f.taskSession.ActiveDeploymentID,
-		SessionExternalID:          f.taskSession.ExternalID,
-		SessionStartFingerprint:    f.taskSession.StartFingerprint,
-		SessionStatus:              f.taskSession.Status,
-		SessionCurrentRunID:        f.taskSession.CurrentRunID,
-		SessionCurrentRunVersion:   f.taskSession.CurrentRunVersion,
-		SessionWorkspaceID:         f.taskSession.WorkspaceID,
-		SessionMetadata:            f.taskSession.Metadata,
-		SessionTags:                f.taskSession.Tags,
-		SessionResult:              f.taskSession.Result,
-		SessionTerminalReason:      f.taskSession.TerminalReason,
-		SessionExpiresAt:           f.taskSession.ExpiresAt,
-		SessionCancelledAt:         f.taskSession.CancelledAt,
-		SessionCreatedAt:           f.taskSession.CreatedAt,
-		SessionUpdatedAt:           f.taskSession.UpdatedAt,
+		SessionID:                  f.session.ID,
+		SessionOrgID:               f.session.OrgID,
+		SessionProjectID:           f.session.ProjectID,
+		SessionEnvironmentID:       f.session.EnvironmentID,
+		SessionTaskID:              f.session.TaskID,
+		SessionInitialDeploymentID: f.session.InitialDeploymentID,
+		SessionActiveDeploymentID:  f.session.ActiveDeploymentID,
+		SessionExternalID:          f.session.ExternalID,
+		SessionStartFingerprint:    f.session.StartFingerprint,
+		SessionStatus:              f.session.Status,
+		SessionCurrentRunID:        f.session.CurrentRunID,
+		SessionCurrentRunVersion:   f.session.CurrentRunVersion,
+		SessionWorkspaceID:         f.session.WorkspaceID,
+		SessionMetadata:            f.session.Metadata,
+		SessionTags:                f.session.Tags,
+		SessionResult:              f.session.Result,
+		SessionTerminalReason:      f.session.TerminalReason,
+		SessionExpiresAt:           f.session.ExpiresAt,
+		SessionCancelledAt:         f.session.CancelledAt,
+		SessionCreatedAt:           f.session.CreatedAt,
+		SessionUpdatedAt:           f.session.UpdatedAt,
 		RunID:                      f.run.ID,
 		RunOrgID:                   f.run.OrgID,
 		RunProjectID:               f.run.ProjectID,
@@ -3026,7 +3026,7 @@ func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.Crea
 		TaskID:             arg.TaskID,
 		IdempotencyKey:     arg.IdempotencyKey,
 		RequestFingerprint: arg.RequestFingerprint,
-		TaskSessionID:      arg.TaskSessionID,
+		SessionID:          arg.SessionID,
 		FirstRunID:         arg.FirstRunID,
 		ExpiresAt:          arg.ExpiresAt,
 		CreatedAt:          testTime(),
@@ -3052,21 +3052,21 @@ func (f *fakeStore) TouchSessionStartIdempotency(context.Context, db.TouchSessio
 	return nil
 }
 
-func (f *fakeStore) GetTaskSession(_ context.Context, arg db.GetTaskSessionParams) (db.TaskSession, error) {
-	if f.taskSession.ID.Valid &&
-		f.taskSession.OrgID == arg.OrgID &&
-		f.taskSession.ProjectID == arg.ProjectID &&
-		f.taskSession.EnvironmentID == arg.EnvironmentID &&
-		f.taskSession.ID == arg.ID {
-		return f.taskSession, nil
+func (f *fakeStore) GetSession(_ context.Context, arg db.GetSessionParams) (db.Session, error) {
+	if f.session.ID.Valid &&
+		f.session.OrgID == arg.OrgID &&
+		f.session.ProjectID == arg.ProjectID &&
+		f.session.EnvironmentID == arg.EnvironmentID &&
+		f.session.ID == arg.ID {
+		return f.session, nil
 	}
-	return db.TaskSession{}, pgx.ErrNoRows
+	return db.Session{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) LockTaskSession(_ context.Context, arg db.LockTaskSessionParams) (db.TaskSession, error) {
-	session := f.taskSession
-	if f.lockTaskSession.ID.Valid {
-		session = f.lockTaskSession
+func (f *fakeStore) LockSession(_ context.Context, arg db.LockSessionParams) (db.Session, error) {
+	session := f.session
+	if f.lockSession.ID.Valid {
+		session = f.lockSession
 	}
 	if session.ID.Valid &&
 		session.OrgID == arg.OrgID &&
@@ -3075,103 +3075,103 @@ func (f *fakeStore) LockTaskSession(_ context.Context, arg db.LockTaskSessionPar
 		session.ID == arg.ID {
 		return session, nil
 	}
-	return db.TaskSession{}, pgx.ErrNoRows
+	return db.Session{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) GetTaskSessionByOrgID(_ context.Context, arg db.GetTaskSessionByOrgIDParams) (db.TaskSession, error) {
-	if f.taskSession.ID.Valid && f.taskSession.OrgID == arg.OrgID && f.taskSession.ID == arg.ID {
-		return f.taskSession, nil
+func (f *fakeStore) GetSessionByOrgID(_ context.Context, arg db.GetSessionByOrgIDParams) (db.Session, error) {
+	if f.session.ID.Valid && f.session.OrgID == arg.OrgID && f.session.ID == arg.ID {
+		return f.session, nil
 	}
-	return db.TaskSession{}, pgx.ErrNoRows
+	return db.Session{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) PatchTaskSession(_ context.Context, arg db.PatchTaskSessionParams) (db.TaskSession, error) {
-	if f.taskSession.ID.Valid &&
-		f.taskSession.OrgID == arg.OrgID &&
-		f.taskSession.ProjectID == arg.ProjectID &&
-		f.taskSession.EnvironmentID == arg.EnvironmentID &&
-		f.taskSession.ID == arg.ID &&
-		f.taskSession.Status == db.TaskSessionStatusOpen {
+func (f *fakeStore) PatchSession(_ context.Context, arg db.PatchSessionParams) (db.Session, error) {
+	if f.session.ID.Valid &&
+		f.session.OrgID == arg.OrgID &&
+		f.session.ProjectID == arg.ProjectID &&
+		f.session.EnvironmentID == arg.EnvironmentID &&
+		f.session.ID == arg.ID &&
+		f.session.Status == db.SessionStatusOpen {
 		if arg.Metadata != nil {
-			f.taskSession.Metadata = arg.Metadata
+			f.session.Metadata = arg.Metadata
 		}
 		if arg.Tags != nil {
-			f.taskSession.Tags = arg.Tags
+			f.session.Tags = arg.Tags
 		}
-		if arg.ExpiresAt.Valid && f.taskSession.ExpiresAt.Valid && arg.ExpiresAt.Time.After(f.taskSession.ExpiresAt.Time) {
-			f.taskSession.ExpiresAt = arg.ExpiresAt
+		if arg.ExpiresAt.Valid && f.session.ExpiresAt.Valid && arg.ExpiresAt.Time.After(f.session.ExpiresAt.Time) {
+			f.session.ExpiresAt = arg.ExpiresAt
 		}
-		f.taskSession.UpdatedAt = testTime()
-		return f.taskSession, nil
+		f.session.UpdatedAt = testTime()
+		return f.session, nil
 	}
-	return db.TaskSession{}, pgx.ErrNoRows
+	return db.Session{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) GetTaskSessionByExternalID(_ context.Context, arg db.GetTaskSessionByExternalIDParams) (db.TaskSession, error) {
-	if f.getTaskSessionByExternalIDMisses > 0 {
-		f.getTaskSessionByExternalIDMisses--
-		return db.TaskSession{}, pgx.ErrNoRows
+func (f *fakeStore) GetSessionByExternalID(_ context.Context, arg db.GetSessionByExternalIDParams) (db.Session, error) {
+	if f.getSessionByExternalIDMisses > 0 {
+		f.getSessionByExternalIDMisses--
+		return db.Session{}, pgx.ErrNoRows
 	}
-	if f.taskSession.ID.Valid &&
-		f.taskSession.OrgID == arg.OrgID &&
-		f.taskSession.ProjectID == arg.ProjectID &&
-		f.taskSession.EnvironmentID == arg.EnvironmentID &&
-		f.taskSession.ExternalID == arg.ExternalID {
-		return f.taskSession, nil
+	if f.session.ID.Valid &&
+		f.session.OrgID == arg.OrgID &&
+		f.session.ProjectID == arg.ProjectID &&
+		f.session.EnvironmentID == arg.EnvironmentID &&
+		f.session.ExternalID == arg.ExternalID {
+		return f.session, nil
 	}
-	return db.TaskSession{}, pgx.ErrNoRows
+	return db.Session{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) CancelTaskSession(_ context.Context, arg db.CancelTaskSessionParams) (db.TaskSession, error) {
-	if f.taskSession.ID.Valid &&
-		f.taskSession.OrgID == arg.OrgID &&
-		f.taskSession.ProjectID == arg.ProjectID &&
-		f.taskSession.EnvironmentID == arg.EnvironmentID &&
-		f.taskSession.ID == arg.ID &&
-		f.taskSession.Status == db.TaskSessionStatusOpen {
-		f.taskSession.Status = db.TaskSessionStatusCancelled
-		f.taskSession.CancelledAt = testTime()
-		f.taskSession.TerminalReason = fmt.Appendf(nil, `{"origin":"api","reason":%q}`, arg.Reason)
-		f.taskSession.Result = fmt.Appendf(nil, `{"ok":false,"error":{"name":"TaskCancelled","message":%q,"details":{"origin":"api"}}}`, arg.Reason)
-		f.taskSession.CurrentRunID = pgtype.UUID{}
-		f.taskSession.CurrentRunVersion++
-		f.taskSession.UpdatedAt = testTime()
-		return f.taskSession, nil
+func (f *fakeStore) CancelSession(_ context.Context, arg db.CancelSessionParams) (db.Session, error) {
+	if f.session.ID.Valid &&
+		f.session.OrgID == arg.OrgID &&
+		f.session.ProjectID == arg.ProjectID &&
+		f.session.EnvironmentID == arg.EnvironmentID &&
+		f.session.ID == arg.ID &&
+		f.session.Status == db.SessionStatusOpen {
+		f.session.Status = db.SessionStatusCancelled
+		f.session.CancelledAt = testTime()
+		f.session.TerminalReason = fmt.Appendf(nil, `{"origin":"api","reason":%q}`, arg.Reason)
+		f.session.Result = fmt.Appendf(nil, `{"ok":false,"error":{"name":"TaskCancelled","message":%q,"details":{"origin":"api"}}}`, arg.Reason)
+		f.session.CurrentRunID = pgtype.UUID{}
+		f.session.CurrentRunVersion++
+		f.session.UpdatedAt = testTime()
+		return f.session, nil
 	}
-	return db.TaskSession{}, pgx.ErrNoRows
+	return db.Session{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) CloseTaskSession(_ context.Context, arg db.CloseTaskSessionParams) (db.TaskSession, error) {
-	if f.closeTaskSessionAttachesRun.Valid {
-		f.taskSession.CurrentRunID = f.closeTaskSessionAttachesRun
-		f.closeTaskSessionAttachesRun = pgtype.UUID{}
-		return db.TaskSession{}, pgx.ErrNoRows
+func (f *fakeStore) CloseSession(_ context.Context, arg db.CloseSessionParams) (db.Session, error) {
+	if f.closeSessionAttachesRun.Valid {
+		f.session.CurrentRunID = f.closeSessionAttachesRun
+		f.closeSessionAttachesRun = pgtype.UUID{}
+		return db.Session{}, pgx.ErrNoRows
 	}
-	if f.closeTaskSessionRetryRun.ID.Valid {
-		f.taskSession.CurrentRunID = f.closeTaskSessionRetryRun.ID
-		f.run = f.closeTaskSessionRetryRun
-		f.closeTaskSessionRetryRun = db.Run{}
-		return db.TaskSession{}, pgx.ErrNoRows
+	if f.closeSessionRetryRun.ID.Valid {
+		f.session.CurrentRunID = f.closeSessionRetryRun.ID
+		f.run = f.closeSessionRetryRun
+		f.closeSessionRetryRun = db.Run{}
+		return db.Session{}, pgx.ErrNoRows
 	}
-	if f.taskSession.ID.Valid &&
-		f.taskSession.OrgID == arg.OrgID &&
-		f.taskSession.ProjectID == arg.ProjectID &&
-		f.taskSession.EnvironmentID == arg.EnvironmentID &&
-		f.taskSession.ID == arg.ID &&
-		f.taskSession.Status == db.TaskSessionStatusOpen {
-		if f.taskSession.CurrentRunID.Valid {
-			if f.run.ID != f.taskSession.CurrentRunID || !runStatusTerminal(f.run.Status) {
-				return db.TaskSession{}, pgx.ErrNoRows
+	if f.session.ID.Valid &&
+		f.session.OrgID == arg.OrgID &&
+		f.session.ProjectID == arg.ProjectID &&
+		f.session.EnvironmentID == arg.EnvironmentID &&
+		f.session.ID == arg.ID &&
+		f.session.Status == db.SessionStatusOpen {
+		if f.session.CurrentRunID.Valid {
+			if f.run.ID != f.session.CurrentRunID || !runStatusTerminal(f.run.Status) {
+				return db.Session{}, pgx.ErrNoRows
 			}
 		}
-		f.taskSession.Status = db.TaskSessionStatusClosed
-		f.taskSession.ClosedAt = testTime()
-		f.taskSession.ClosedReason = arg.Reason
-		f.taskSession.TerminalReason = fmt.Appendf(nil, `{"origin":"api","reason":%q}`, arg.Reason)
-		f.taskSession.UpdatedAt = testTime()
-		return f.taskSession, nil
+		f.session.Status = db.SessionStatusClosed
+		f.session.ClosedAt = testTime()
+		f.session.ClosedReason = arg.Reason
+		f.session.TerminalReason = fmt.Appendf(nil, `{"origin":"api","reason":%q}`, arg.Reason)
+		f.session.UpdatedAt = testTime()
+		return f.session, nil
 	}
-	return db.TaskSession{}, pgx.ErrNoRows
+	return db.Session{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) GetRun(_ context.Context, arg db.GetRunParams) (db.Run, error) {

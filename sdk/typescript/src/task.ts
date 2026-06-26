@@ -1,11 +1,13 @@
 import {
   markTask,
+  markQueueDefinition,
   type AnyTask,
   type NoPayload,
+  type QueueConfig,
+  type QueueDefinition,
   type SecretDecls,
   type Task,
   type TaskConfig,
-  type TaskQueueConfig,
   type TaskConfigWithPayload,
   type TaskConfigWithoutPayload,
   type TaskRunOptions,
@@ -37,8 +39,8 @@ export function task(
   return markTask(config)
 }
 
-export function queue(config: TaskQueueConfig): TaskQueueConfig {
-  return Object.freeze({ ...config })
+export function queue(config: QueueConfig): QueueDefinition {
+  return markQueueDefinition(config)
 }
 
-export type { NoPayload, Task, TaskConfig, TaskOutput, TaskPayload, TaskQueueConfig, TaskRunOptions, SessionStartPayload }
+export type { NoPayload, QueueConfig, QueueDefinition, Task, TaskConfig, TaskOutput, TaskPayload, TaskRunOptions, SessionStartPayload }

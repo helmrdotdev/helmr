@@ -226,7 +226,7 @@ func (f *fakeStore) CancelRun(_ context.Context, arg db.CancelRunParams) (db.Can
 		EnvironmentID:        f.run.EnvironmentID,
 		DeploymentID:         fakeRunDeploymentID(f.run),
 		DeploymentTaskID:     fakeRunDeploymentTaskID(f.run),
-		TaskSessionID:        fakeRunTaskSessionID(f.run),
+		SessionID:            fakeRunSessionID(f.run),
 		DeploymentVersion:    f.run.DeploymentVersion,
 		ApiVersion:           f.run.ApiVersion,
 		SdkVersion:           f.run.SdkVersion,

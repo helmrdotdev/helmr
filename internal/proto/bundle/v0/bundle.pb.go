@@ -1734,11 +1734,10 @@ func (x *TaskSpec) GetRetryPolicyJson() string {
 }
 
 type QueueSpec struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Name             string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	ConcurrencyLimit *uint32                `protobuf:"varint,2,opt,name=concurrency_limit,json=concurrencyLimit,proto3,oneof" json:"concurrency_limit,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *QueueSpec) Reset() {
@@ -1776,13 +1775,6 @@ func (x *QueueSpec) GetName() string {
 		return x.Name
 	}
 	return ""
-}
-
-func (x *QueueSpec) GetConcurrencyLimit() uint32 {
-	if x != nil && x.ConcurrencyLimit != nil {
-		return *x.ConcurrencyLimit
-	}
-	return 0
 }
 
 type TaskScheduleSpec struct {
@@ -1979,11 +1971,9 @@ const file_bundle_proto_rawDesc = "" +
 	"\x03ttl\x18\b \x01(\tR\x03ttl\x12?\n" +
 	"\tschedules\x18\t \x03(\v2!.helmr.bundle.v0.TaskScheduleSpecR\tschedules\x12*\n" +
 	"\x11retry_policy_json\x18\n" +
-	" \x01(\tR\x0fretryPolicyJson\"g\n" +
+	" \x01(\tR\x0fretryPolicyJson\"\x1f\n" +
 	"\tQueueSpec\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x120\n" +
-	"\x11concurrency_limit\x18\x02 \x01(\rH\x00R\x10concurrencyLimit\x88\x01\x01B\x14\n" +
-	"\x12_concurrency_limit\"z\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"z\n" +
 	"\x10TaskScheduleSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04cron\x18\x02 \x01(\tR\x04cron\x12\x1a\n" +
@@ -2096,7 +2086,6 @@ func file_bundle_proto_init() {
 	}
 	file_bundle_proto_msgTypes[24].OneofWrappers = []any{}
 	file_bundle_proto_msgTypes[25].OneofWrappers = []any{}
-	file_bundle_proto_msgTypes[27].OneofWrappers = []any{}
 	file_bundle_proto_msgTypes[28].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

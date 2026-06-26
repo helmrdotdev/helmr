@@ -25,25 +25,25 @@ INSERT INTO streams (
     metadata
 )
 SELECT $1,
-       task_sessions.org_id,
-       task_sessions.project_id,
-       task_sessions.environment_id,
-       task_sessions.id,
+       sessions.org_id,
+       sessions.project_id,
+       sessions.environment_id,
+       sessions.id,
        deployment_streams.id,
        deployment_streams.name,
        deployment_streams.direction,
        deployment_streams.schema_fingerprint,
        COALESCE($2::jsonb, '{}'::jsonb)
-  FROM task_sessions
+  FROM sessions
   JOIN deployment_streams
-    ON deployment_streams.org_id = task_sessions.org_id
-   AND deployment_streams.project_id = task_sessions.project_id
-   AND deployment_streams.environment_id = task_sessions.environment_id
+    ON deployment_streams.org_id = sessions.org_id
+   AND deployment_streams.project_id = sessions.project_id
+   AND deployment_streams.environment_id = sessions.environment_id
    AND deployment_streams.id = $3
- WHERE task_sessions.org_id = $4
-   AND task_sessions.project_id = $5
-   AND task_sessions.environment_id = $6
-   AND task_sessions.id = $7
+ WHERE sessions.org_id = $4
+   AND sessions.project_id = $5
+   AND sessions.environment_id = $6
+   AND sessions.id = $7
 ON CONFLICT (org_id, session_id, name, direction)
 DO UPDATE SET
     deployment_stream_id = streams.deployment_stream_id,

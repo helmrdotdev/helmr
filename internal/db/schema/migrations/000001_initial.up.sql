@@ -119,7 +119,7 @@ CREATE TABLE environments (
         ON DELETE CASCADE
 );
 
-CREATE TABLE sessions (
+CREATE TABLE auth_sessions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -538,7 +538,7 @@ CREATE TYPE run_retry_decision_kind AS ENUM (
     'cancel_run'
 );
 
-CREATE TYPE task_session_status AS ENUM (
+CREATE TYPE session_status AS ENUM (
     'open',
     'closed',
     'cancelled'
@@ -857,6 +857,22 @@ CREATE TABLE deployment_sandboxes (
         ON DELETE RESTRICT
 );
 
+CREATE TABLE deployment_queues (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    deployment_id UUID NOT NULL,
+    name TEXT NOT NULL CHECK (btrim(name) <> ''),
+    concurrency_limit INTEGER CHECK (concurrency_limit IS NULL OR concurrency_limit > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, id),
+    UNIQUE (org_id, project_id, environment_id, deployment_id, name),
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
+        ON DELETE CASCADE
+);
+
 CREATE TABLE deployment_tasks (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
@@ -881,7 +897,7 @@ CREATE TABLE deployment_tasks (
     queue_concurrency_limit INTEGER,
     ttl TEXT NOT NULL DEFAULT '',
     max_active_duration_ms BIGINT NOT NULL CHECK (max_active_duration_ms > 0),
-    retry_policy JSONB NOT NULL DEFAULT 'false'::jsonb,
+    retry_policy JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
     UNIQUE (org_id, deployment_id, id),
@@ -895,6 +911,9 @@ CREATE TABLE deployment_tasks (
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id, deployment_sandbox_id)
         REFERENCES deployment_sandboxes(org_id, project_id, environment_id, id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_id, queue_name)
+        REFERENCES deployment_queues(org_id, project_id, environment_id, deployment_id, name)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, project_id, environment_id, bundle_artifact_id)
         REFERENCES artifacts(org_id, project_id, environment_id, id)
@@ -1001,7 +1020,7 @@ CREATE TABLE workspaces (
         ON DELETE RESTRICT
 );
 
-CREATE TABLE task_sessions (
+CREATE TABLE sessions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
@@ -1011,7 +1030,7 @@ CREATE TABLE task_sessions (
     active_deployment_id UUID NOT NULL,
     external_id TEXT NOT NULL DEFAULT '' CHECK (external_id = btrim(external_id) AND octet_length(external_id) <= 512),
     start_fingerprint TEXT NOT NULL DEFAULT '',
-    status task_session_status NOT NULL DEFAULT 'open',
+    status session_status NOT NULL DEFAULT 'open',
     current_run_id UUID,
     current_run_version BIGINT NOT NULL DEFAULT 1 CHECK (current_run_version > 0),
     workspace_id UUID NOT NULL,
@@ -1056,7 +1075,7 @@ CREATE TABLE runs (
     sdk_version TEXT NOT NULL DEFAULT '',
     cli_version TEXT NOT NULL DEFAULT '',
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
-    task_session_id UUID NOT NULL,
+    session_id UUID NOT NULL,
     schedule_id UUID,
     schedule_instance_id UUID,
     scheduled_at TIMESTAMPTZ,
@@ -1067,7 +1086,7 @@ CREATE TABLE runs (
     output JSONB,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     tags TEXT[] NOT NULL DEFAULT '{}'::text[],
-    locked_retry_policy JSONB NOT NULL DEFAULT 'false'::jsonb,
+    locked_retry_policy JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
     queue_concurrency_limit INTEGER,
     concurrency_key TEXT,
@@ -1109,8 +1128,8 @@ CREATE TABLE runs (
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, task_session_id, task_id)
-        REFERENCES task_sessions(org_id, project_id, environment_id, id, task_id)
+    FOREIGN KEY (org_id, project_id, environment_id, session_id, task_id)
+        REFERENCES sessions(org_id, project_id, environment_id, id, task_id)
         ON DELETE RESTRICT,
     FOREIGN KEY (schedule_id)
         REFERENCES task_schedules(id)
@@ -1120,8 +1139,8 @@ CREATE TABLE runs (
         ON DELETE SET NULL (schedule_instance_id)
 );
 
-ALTER TABLE task_sessions
-    ADD CONSTRAINT task_sessions_current_run_id_fkey
+ALTER TABLE sessions
+    ADD CONSTRAINT sessions_current_run_id_fkey
     FOREIGN KEY (org_id, project_id, environment_id, current_run_id)
     REFERENCES runs(org_id, project_id, environment_id, id)
     ON DELETE SET NULL (current_run_id)
@@ -1156,12 +1175,12 @@ CREATE UNIQUE INDEX run_operations_idempotency_idx
     ON run_operations (org_id, project_id, environment_id, run_id, kind, idempotency_key)
     WHERE idempotency_key <> '';
 
-CREATE TABLE task_session_runs (
+CREATE TABLE session_runs (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    task_session_id UUID NOT NULL,
+    session_id UUID NOT NULL,
     run_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
     previous_run_id UUID,
@@ -1169,10 +1188,10 @@ CREATE TABLE task_session_runs (
     reason TEXT NOT NULL CHECK (reason IN ('initial', 'input')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     ended_at TIMESTAMPTZ,
-    UNIQUE (org_id, task_session_id, run_id),
-    UNIQUE (org_id, task_session_id, turn_index),
-    FOREIGN KEY (org_id, project_id, environment_id, task_session_id)
-        REFERENCES task_sessions(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, session_id, run_id),
+    UNIQUE (org_id, session_id, turn_index),
+    FOREIGN KEY (org_id, project_id, environment_id, session_id)
+        REFERENCES sessions(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id, run_id)
         REFERENCES runs(org_id, project_id, environment_id, id)
@@ -1193,7 +1212,7 @@ CREATE TABLE session_start_idempotencies (
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
     idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
     request_fingerprint TEXT NOT NULL CHECK (btrim(request_fingerprint) <> ''),
-    task_session_id UUID NOT NULL,
+    session_id UUID NOT NULL,
     first_run_id UUID NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1202,8 +1221,8 @@ CREATE TABLE session_start_idempotencies (
     FOREIGN KEY (org_id, project_id, environment_id, task_id)
         REFERENCES tasks(org_id, project_id, environment_id, task_id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, task_session_id)
-        REFERENCES task_sessions(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, session_id)
+        REFERENCES sessions(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id, first_run_id)
         REFERENCES runs(org_id, project_id, environment_id, id)
@@ -1799,7 +1818,7 @@ CREATE TABLE streams (
     UNIQUE (org_id, project_id, environment_id, id, session_id, direction),
     UNIQUE (org_id, session_id, name, direction),
     FOREIGN KEY (org_id, project_id, environment_id, session_id)
-        REFERENCES task_sessions(org_id, project_id, environment_id, id)
+        REFERENCES sessions(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id, deployment_stream_id, name, direction)
         REFERENCES deployment_streams(org_id, project_id, environment_id, id, name, direction)
@@ -1926,12 +1945,12 @@ CREATE TABLE stream_records (
         ON DELETE SET NULL (public_access_token_id)
 );
 
-CREATE TABLE task_session_run_requests (
+CREATE TABLE session_run_requests (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    task_session_id UUID NOT NULL,
+    session_id UUID NOT NULL,
     stream_record_id UUID NOT NULL,
     stream_id UUID NOT NULL,
     cause_kind TEXT NOT NULL CHECK (cause_kind = 'stream_record'),
@@ -1947,8 +1966,8 @@ CREATE TABLE task_session_run_requests (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, project_id, environment_id, stream_record_id),
-    FOREIGN KEY (org_id, project_id, environment_id, task_session_id)
-        REFERENCES task_sessions(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, session_id)
+        REFERENCES sessions(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id, stream_record_id)
         REFERENCES stream_records(org_id, project_id, environment_id, id)
@@ -2293,7 +2312,7 @@ CREATE TABLE run_retry_decisions (
     error_class TEXT NOT NULL DEFAULT '',
     retry_after TIMESTAMPTZ,
     next_attempt_number INTEGER CHECK (next_attempt_number IS NULL OR next_attempt_number > 0),
-    policy_snapshot JSONB NOT NULL DEFAULT 'false'::jsonb,
+    policy_snapshot JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
     error JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, run_id, attempt_id),
@@ -2644,8 +2663,8 @@ CREATE INDEX run_queue_concurrency_leases_active_idx ON run_queue_concurrency_le
 CREATE UNIQUE INDEX run_queue_concurrency_leases_active_scope_slot_idx ON run_queue_concurrency_leases(org_id, environment_id, queue_name, COALESCE(concurrency_key, ''), slot_ordinal)
     WHERE released_at IS NULL;
 CREATE INDEX org_members_user_active_idx ON org_members(user_id, org_id) WHERE disabled_at IS NULL;
-CREATE INDEX sessions_user_active_idx ON sessions(user_id) WHERE revoked_at IS NULL;
-CREATE INDEX sessions_expiry_active_idx ON sessions(expires_at) WHERE revoked_at IS NULL;
+CREATE INDEX auth_sessions_user_active_idx ON auth_sessions(user_id) WHERE revoked_at IS NULL;
+CREATE INDEX auth_sessions_expiry_active_idx ON auth_sessions(expires_at) WHERE revoked_at IS NULL;
 CREATE UNIQUE INDEX invitations_pending_invitee_idx ON invitations(org_id, invitee_email)
     WHERE accepted_at IS NULL AND revoked_at IS NULL;
 CREATE INDEX invitations_email_lookup_idx ON invitations(org_id, invitee_email);
@@ -2744,13 +2763,13 @@ CREATE INDEX task_schedule_instances_environment_idx
 CREATE INDEX task_schedule_instances_index_due_idx
     ON task_schedule_instances (coalesce(retry_after, next_fire_at), id)
     WHERE active AND next_fire_at IS NOT NULL;
-CREATE UNIQUE INDEX task_sessions_external_id_idx ON task_sessions(org_id, project_id, environment_id, external_id)
+CREATE UNIQUE INDEX sessions_external_id_idx ON sessions(org_id, project_id, environment_id, external_id)
     WHERE external_id <> '';
-CREATE INDEX task_sessions_scope_status_updated_idx ON task_sessions(org_id, project_id, environment_id, status, updated_at DESC);
-CREATE INDEX task_sessions_tags_idx ON task_sessions USING GIN (tags);
+CREATE INDEX sessions_scope_status_updated_idx ON sessions(org_id, project_id, environment_id, status, updated_at DESC);
+CREATE INDEX sessions_tags_idx ON sessions USING GIN (tags);
 CREATE INDEX session_start_idempotencies_expiry_idx ON session_start_idempotencies(org_id, project_id, environment_id, expires_at);
-CREATE INDEX task_session_runs_timeline_idx ON task_session_runs(org_id, task_session_id, turn_index, created_at);
-CREATE INDEX task_session_run_requests_pending_idx ON task_session_run_requests(next_attempt_at, created_at)
+CREATE INDEX session_runs_timeline_idx ON session_runs(org_id, session_id, turn_index, created_at);
+CREATE INDEX session_run_requests_pending_idx ON session_run_requests(next_attempt_at, created_at)
     WHERE status IN ('accepted', 'claimed');
 CREATE INDEX workspaces_state_idx ON workspaces(org_id, project_id, environment_id, state, updated_at DESC);
 CREATE INDEX workspaces_tags_idx ON workspaces USING GIN (tags);

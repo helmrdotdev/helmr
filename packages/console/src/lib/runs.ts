@@ -30,7 +30,7 @@ export type Run = {
   environment_id: string;
   version: string;
   deployment_version: string;
-  task_session_id: string;
+  session_id: string;
   api_version: string;
   sdk_version?: string;
   cli_version?: string;

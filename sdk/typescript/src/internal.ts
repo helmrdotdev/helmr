@@ -161,6 +161,12 @@ export interface InternalStreamDefinition {
   readonly originFile: string
 }
 
+export interface InternalQueueDefinition {
+  readonly id: string
+  readonly concurrencyLimit?: number | null
+  readonly originFile: string
+}
+
 export interface InputStreamWaitOptions extends WaitOptions {
   readonly correlationId?: string
   readonly afterSequence?: number
@@ -459,10 +465,10 @@ export interface TaskContext {
   }
   readonly task: { readonly id: string }
   readonly workspace: TaskWorkspace
-  readonly session: TaskSessionContext
+  readonly session: SessionContext
 }
 
-export interface TaskSessionContext {
+export interface SessionContext {
   readonly id: string
 }
 
@@ -480,14 +486,19 @@ export interface TaskConfigBase<
   readonly id: string
   readonly sandbox: SandboxBuilder
   readonly maxDuration?: number
-  readonly queue?: TaskQueueConfig
+  readonly queue?: QueueDefinition | string
   readonly ttl?: string
   readonly retry?: RetryPolicy
   readonly secrets?: TSecrets
 }
 
-export interface TaskQueueConfig {
-  readonly name?: string
+export interface QueueConfig {
+  readonly id: string
+  readonly concurrencyLimit?: number | null
+}
+
+export interface QueueDefinition {
+  readonly id: string
   readonly concurrencyLimit?: number | null
 }
 
@@ -514,8 +525,8 @@ export type TaskRunOptions<TSecrets extends SecretDecls> = {
 }
 
 export type RetryPolicy =
-  | false
   | {
+      readonly enabled?: true
       readonly maxAttempts: number
       readonly backoff?: {
         readonly minMs?: number
@@ -524,6 +535,7 @@ export type RetryPolicy =
         readonly jitter?: "none" | "full"
       }
     }
+  | { readonly enabled: false }
 
 export type TaskConfigWithPayload<
   TPayloadSchema extends PayloadSchema<any, any>,
@@ -660,6 +672,7 @@ const imageBuilderBrand = Symbol.for("helmr.sdk.ImageBuilder")
 const sandboxBuilderBrand = Symbol.for("helmr.sdk.SandboxBuilder")
 const sourceFileRefBrand = Symbol.for("helmr.sdk.SourceFileRef")
 const sourceDirRefBrand = Symbol.for("helmr.sdk.SourceDirRef")
+const queueDefinitionBrand = Symbol.for("helmr.sdk.QueueDefinition")
 
 export type MarkedTask<
   TPayload,
@@ -726,17 +739,26 @@ function markTaskInternal<
 }
 
 export function validateRetryPolicy(value: unknown, label = "retry"): void {
-  if (value === undefined || value === false) {
+  if (value === undefined) {
     return
   }
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label} must be false or a retry policy object`)
+    throw new Error(`${label} must be a retry policy object`)
   }
   const record = value as Record<string, unknown>
   for (const key of Object.keys(record)) {
-    if (key !== "maxAttempts" && key !== "backoff") {
+    if (key !== "enabled" && key !== "maxAttempts" && key !== "backoff") {
       throw new Error(`${label}.${key} is not supported`)
     }
+  }
+  if (record["enabled"] === false) {
+    if (record["maxAttempts"] !== undefined || record["backoff"] !== undefined) {
+      throw new Error(`${label} disabled policy must not include retry settings`)
+    }
+    return
+  }
+  if (record["enabled"] !== undefined && record["enabled"] !== true) {
+    throw new Error(`${label}.enabled must be true or false`)
   }
   if (
     typeof record["maxAttempts"] !== "number" ||
@@ -792,21 +814,42 @@ export function validateTaskSchedule(taskId: string, value: InternalTaskSchedule
   }
 }
 
-export function validateTaskQueue(taskId: string, value: TaskQueueConfig | undefined): void {
+export function validateTaskQueue(taskId: string, value: QueueDefinition | string | undefined): void {
   if (value === undefined) {
     return
   }
-  if (value.name !== undefined) {
-    validateQueueName(value.name)
+  if (typeof value === "string") {
+    validateQueueName(value)
+    return
   }
+  if (!isQueueDefinition(value)) {
+    throw new Error(`task ${JSON.stringify(taskId)} queue must use queue(...) or a queue id string`)
+  }
+  validateQueueName(value.id)
   validateOptionalQueueConcurrencyLimit(value.concurrencyLimit)
-  if (value.name === undefined && value.concurrencyLimit === undefined) {
-    throw new Error(`task ${JSON.stringify(taskId)} queue must include name or concurrencyLimit`)
-  }
 }
 
 export function defaultTaskQueueName(taskId: string): string {
   return `task/${taskId}`
+}
+
+export function markQueueDefinition(config: QueueConfig): QueueDefinition {
+  validateQueueName(config.id)
+  validateOptionalQueueConcurrencyLimit(config.concurrencyLimit)
+  const marked = {
+    id: config.id,
+    ...(config.concurrencyLimit === undefined ? {} : { concurrencyLimit: config.concurrencyLimit }),
+  }
+  Object.defineProperty(marked, queueDefinitionBrand, { value: true })
+  registerQueueDefinition({
+    id: marked.id,
+    ...(marked.concurrencyLimit === undefined ? {} : { concurrencyLimit: marked.concurrencyLimit }),
+  })
+  return Object.freeze(marked)
+}
+
+export function isQueueDefinition(value: unknown): value is QueueDefinition {
+  return hasBrand(value, queueDefinitionBrand)
 }
 
 export function validateOptionalTTL(value: unknown, label = "ttl"): void {
@@ -891,6 +934,7 @@ export function isTaskDefinition(
 }
 
 const streamDefinitions: InternalStreamDefinition[] = []
+const queueDefinitions: InternalQueueDefinition[] = []
 let streamDefinitionContext: string | undefined
 
 export function registerStreamDefinition(value: Omit<InternalStreamDefinition, "originFile">): void {
@@ -909,6 +953,24 @@ export function registerStreamDefinition(value: Omit<InternalStreamDefinition, "
   streamDefinitions.push({ ...value, originFile })
 }
 
+export function registerQueueDefinition(value: Omit<InternalQueueDefinition, "originFile">): void {
+  const originFile = streamDefinitionContext
+  if (originFile === undefined) {
+    return
+  }
+  const existing = queueDefinitions.find((item) =>
+    item.originFile === originFile &&
+    item.id === value.id
+  )
+  if (existing) {
+    if (existing.concurrencyLimit !== value.concurrencyLimit) {
+      throw new Error(`queue ${JSON.stringify(value.id)} has conflicting definitions in ${originFile}`)
+    }
+    return
+  }
+  queueDefinitions.push({ ...value, originFile })
+}
+
 export function setStreamDefinitionContext(originFile: string): void {
   streamDefinitionContext = originFile
 }
@@ -924,6 +986,12 @@ export function readStreamDefinitions(): readonly InternalStreamDefinition[] {
     return byDirection === 0 ? left.id.localeCompare(right.id) : byDirection
   })
   return streams
+}
+
+export function readQueueDefinitions(): readonly InternalQueueDefinition[] {
+  const queues = [...queueDefinitions]
+  queues.sort((left, right) => left.id.localeCompare(right.id))
+  return queues
 }
 
 export interface HelmrConfig {

@@ -12,13 +12,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestCancelRunTerminalizesQueuedTaskSession(t *testing.T) {
+func TestCancelRunTerminalizesQueuedSession(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	taskSessionID := seedTaskSessionForRun(t, ctx, pool, ids)
-	seedTaskSessionRun(t, ctx, pool, ids, taskSessionID)
+	sessionID := seedSessionForRun(t, ctx, pool, ids)
+	seedSessionRun(t, ctx, pool, ids, sessionID)
 	seedCurrentAttempt(t, ctx, pool, ids, db.RunAttemptStatusQueued)
 	operation := seedCancelOperation(t, ctx, queries, ids, "user requested")
 
@@ -32,36 +32,36 @@ func TestCancelRunTerminalizesQueuedTaskSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var sessionStatus db.TaskSessionStatus
+	var sessionStatus db.SessionStatus
 	var currentRunID pgtype.UUID
 	var endedAt pgtype.Timestamptz
 	if err := pool.QueryRow(ctx, `
-		SELECT task_sessions.status, task_sessions.current_run_id, task_session_runs.ended_at
-		  FROM task_sessions
-		  JOIN task_session_runs ON task_session_runs.org_id = task_sessions.org_id
-		                   AND task_session_runs.task_session_id = task_sessions.id
-		 WHERE task_sessions.id = $1
-	`, taskSessionID).Scan(&sessionStatus, &currentRunID, &endedAt); err != nil {
+		SELECT sessions.status, sessions.current_run_id, session_runs.ended_at
+		  FROM sessions
+		  JOIN session_runs ON session_runs.org_id = sessions.org_id
+		                   AND session_runs.session_id = sessions.id
+		 WHERE sessions.id = $1
+	`, sessionID).Scan(&sessionStatus, &currentRunID, &endedAt); err != nil {
 		t.Fatal(err)
 	}
-	if sessionStatus != db.TaskSessionStatusCancelled {
+	if sessionStatus != db.SessionStatusCancelled {
 		t.Fatalf("session status = %s, want cancelled", sessionStatus)
 	}
 	if currentRunID.Valid {
 		t.Fatalf("current_run_id should be cleared, got %v", currentRunID)
 	}
 	if !endedAt.Valid {
-		t.Fatal("task_session_runs.ended_at was not set")
+		t.Fatal("session_runs.ended_at was not set")
 	}
 }
 
-func TestCancelRunLeavesExecutingTaskSessionForRelease(t *testing.T) {
+func TestCancelRunLeavesExecutingSessionForRelease(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	taskSessionID, _, _ := seedRunningTaskSessionLease(t, ctx, pool, ids)
-	seedTaskSessionRun(t, ctx, pool, ids, taskSessionID)
+	sessionID, _, _ := seedRunningSessionLease(t, ctx, pool, ids)
+	seedSessionRun(t, ctx, pool, ids, sessionID)
 	operation := seedCancelOperation(t, ctx, queries, ids, "interrupt")
 
 	if _, err := queries.CancelRun(ctx, db.CancelRunParams{
@@ -74,42 +74,42 @@ func TestCancelRunLeavesExecutingTaskSessionForRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var sessionStatus db.TaskSessionStatus
+	var sessionStatus db.SessionStatus
 	var currentRunID pgtype.UUID
 	var endedAt pgtype.Timestamptz
 	var runExecutionStatus db.RunExecutionStatus
 	if err := pool.QueryRow(ctx, `
-		SELECT task_sessions.status, task_sessions.current_run_id, task_session_runs.ended_at, runs.execution_status
-		  FROM task_sessions
-		  JOIN task_session_runs ON task_session_runs.org_id = task_sessions.org_id
-		                   AND task_session_runs.task_session_id = task_sessions.id
-		  JOIN runs ON runs.org_id = task_sessions.org_id
-		           AND runs.id = task_sessions.current_run_id
-		 WHERE task_sessions.id = $1
-	`, taskSessionID).Scan(&sessionStatus, &currentRunID, &endedAt, &runExecutionStatus); err != nil {
+		SELECT sessions.status, sessions.current_run_id, session_runs.ended_at, runs.execution_status
+		  FROM sessions
+		  JOIN session_runs ON session_runs.org_id = sessions.org_id
+		                   AND session_runs.session_id = sessions.id
+		  JOIN runs ON runs.org_id = sessions.org_id
+		           AND runs.id = sessions.current_run_id
+		 WHERE sessions.id = $1
+	`, sessionID).Scan(&sessionStatus, &currentRunID, &endedAt, &runExecutionStatus); err != nil {
 		t.Fatal(err)
 	}
-	if sessionStatus != db.TaskSessionStatusOpen {
+	if sessionStatus != db.SessionStatusOpen {
 		t.Fatalf("session status = %s, want open", sessionStatus)
 	}
 	if !currentRunID.Valid {
 		t.Fatal("current_run_id should remain set while leased run is pending cancellation")
 	}
 	if endedAt.Valid {
-		t.Fatal("task_session_runs.ended_at should remain unset until lease release")
+		t.Fatal("session_runs.ended_at should remain unset until lease release")
 	}
 	if runExecutionStatus != db.RunExecutionStatusPendingCancel {
 		t.Fatalf("run execution status = %s, want pending_cancel", runExecutionStatus)
 	}
 }
 
-func TestCancelTaskSessionLeavesPendingCancelRunForRelease(t *testing.T) {
+func TestCancelSessionLeavesPendingCancelRunForRelease(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	taskSessionID, _, _ := seedRunningTaskSessionLease(t, ctx, pool, ids)
-	seedTaskSessionRun(t, ctx, pool, ids, taskSessionID)
+	sessionID, _, _ := seedRunningSessionLease(t, ctx, pool, ids)
+	seedSessionRun(t, ctx, pool, ids, sessionID)
 	operation := seedCancelOperation(t, ctx, queries, ids, "interrupt")
 
 	if _, err := queries.CancelRun(ctx, db.CancelRunParams{
@@ -121,32 +121,32 @@ func TestCancelTaskSessionLeavesPendingCancelRunForRelease(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.CancelTaskSession(ctx, db.CancelTaskSessionParams{
+	if _, err := queries.CancelSession(ctx, db.CancelSessionParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
-		ID:            pgvalue.UUID(taskSessionID),
+		ID:            pgvalue.UUID(sessionID),
 		Reason:        "interrupt",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	var sessionStatus db.TaskSessionStatus
+	var sessionStatus db.SessionStatus
 	var currentRunID pgtype.UUID
 	var endedAt pgtype.Timestamptz
 	var runExecutionStatus db.RunExecutionStatus
 	if err := pool.QueryRow(ctx, `
-		SELECT task_sessions.status, task_sessions.current_run_id, task_session_runs.ended_at, runs.execution_status
-		  FROM task_sessions
-		  JOIN task_session_runs ON task_session_runs.org_id = task_sessions.org_id
-		                   AND task_session_runs.task_session_id = task_sessions.id
-		  JOIN runs ON runs.org_id = task_sessions.org_id
+		SELECT sessions.status, sessions.current_run_id, session_runs.ended_at, runs.execution_status
+		  FROM sessions
+		  JOIN session_runs ON session_runs.org_id = sessions.org_id
+		                   AND session_runs.session_id = sessions.id
+		  JOIN runs ON runs.org_id = sessions.org_id
 		           AND runs.id = $2
-		 WHERE task_sessions.id = $1
-	`, taskSessionID, ids.runID).Scan(&sessionStatus, &currentRunID, &endedAt, &runExecutionStatus); err != nil {
+		 WHERE sessions.id = $1
+	`, sessionID, ids.runID).Scan(&sessionStatus, &currentRunID, &endedAt, &runExecutionStatus); err != nil {
 		t.Fatal(err)
 	}
-	if sessionStatus != db.TaskSessionStatusCancelled || currentRunID.Valid || !endedAt.Valid {
+	if sessionStatus != db.SessionStatusCancelled || currentRunID.Valid || !endedAt.Valid {
 		t.Fatalf("session after cancel = status %s current %v ended %v, want cancelled/no-current/ended", sessionStatus, currentRunID, endedAt)
 	}
 	if runExecutionStatus != db.RunExecutionStatusPendingCancel {
@@ -154,13 +154,13 @@ func TestCancelTaskSessionLeavesPendingCancelRunForRelease(t *testing.T) {
 	}
 }
 
-func TestDeadLetterRunQueueItemTerminalizesTaskSession(t *testing.T) {
+func TestDeadLetterRunQueueItemTerminalizesSession(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	taskSessionID := seedTaskSessionForRun(t, ctx, pool, ids)
-	seedTaskSessionRun(t, ctx, pool, ids, taskSessionID)
+	sessionID := seedSessionForRun(t, ctx, pool, ids)
+	seedSessionRun(t, ctx, pool, ids, sessionID)
 	seedCurrentAttempt(t, ctx, pool, ids, db.RunAttemptStatusQueued)
 	if _, err := pool.Exec(ctx, `
 		UPDATE runs
@@ -211,30 +211,30 @@ func TestDeadLetterRunQueueItemTerminalizesTaskSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var sessionStatus db.TaskSessionStatus
+	var sessionStatus db.SessionStatus
 	var currentRunID pgtype.UUID
 	var endedAt pgtype.Timestamptz
 	var runStatus db.RunStatus
 	var terminalOutcome db.NullRunTerminalOutcome
 	if err := pool.QueryRow(ctx, `
-		SELECT task_sessions.status, task_sessions.current_run_id, task_session_runs.ended_at, runs.status, runs.terminal_outcome
-		  FROM task_sessions
-		  JOIN task_session_runs ON task_session_runs.org_id = task_sessions.org_id
-		                   AND task_session_runs.task_session_id = task_sessions.id
-		  JOIN runs ON runs.org_id = task_sessions.org_id
+		SELECT sessions.status, sessions.current_run_id, session_runs.ended_at, runs.status, runs.terminal_outcome
+		  FROM sessions
+		  JOIN session_runs ON session_runs.org_id = sessions.org_id
+		                   AND session_runs.session_id = sessions.id
+		  JOIN runs ON runs.org_id = sessions.org_id
 		           AND runs.id = $2
-		 WHERE task_sessions.id = $1
-	`, taskSessionID, ids.runID).Scan(&sessionStatus, &currentRunID, &endedAt, &runStatus, &terminalOutcome); err != nil {
+		 WHERE sessions.id = $1
+	`, sessionID, ids.runID).Scan(&sessionStatus, &currentRunID, &endedAt, &runStatus, &terminalOutcome); err != nil {
 		t.Fatal(err)
 	}
-	if sessionStatus != db.TaskSessionStatusOpen {
+	if sessionStatus != db.SessionStatusOpen {
 		t.Fatalf("session status = %s, want open", sessionStatus)
 	}
 	if currentRunID != pgvalue.UUID(ids.runID) {
 		t.Fatalf("current_run_id = %v, want %v", currentRunID, ids.runID)
 	}
 	if !endedAt.Valid {
-		t.Fatal("task_session_runs.ended_at was not set")
+		t.Fatal("session_runs.ended_at was not set")
 	}
 	if runStatus != db.RunStatusFailed || !terminalOutcome.Valid || terminalOutcome.RunTerminalOutcome != db.RunTerminalOutcomeDeadLettered {
 		t.Fatalf("run terminal state = %s/%v, want failed/dead_lettered", runStatus, terminalOutcome)
@@ -261,14 +261,14 @@ func seedCurrentAttempt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, i
 	}
 }
 
-func seedTaskSessionRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, taskSessionID uuid.UUID) {
+func seedSessionRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, sessionID uuid.UUID) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO task_session_runs (
-			id, org_id, project_id, environment_id, task_session_id, run_id, deployment_id, turn_index
+		INSERT INTO session_runs (
+			id, org_id, project_id, environment_id, session_id, run_id, deployment_id, turn_index
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 1)
-	`, uuid.Must(uuid.NewV7()), ids.orgID, ids.projectID, ids.environmentID, taskSessionID, ids.runID, ids.deploymentID); err != nil {
+	`, uuid.Must(uuid.NewV7()), ids.orgID, ids.projectID, ids.environmentID, sessionID, ids.runID, ids.deploymentID); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -1,22 +1,22 @@
 ---
-title: Task sessions
+title: Sessions
 description: Task invocation history, streams, runs, and workspace attachment.
 section: Concepts
-sidebarLabel: Task sessions
+sidebarLabel: Sessions
 order: 156
 ---
 
-# Task Sessions
+# Sessions
 
-A task session is one task invocation and its durable interaction history. It
+A session is one task invocation and its durable interaction history. It
 records the selected task, session status, stream records, related runs, and
 the workspace the task uses.
 
-A task session does not own the workspace. It references a workspace.
+A session does not own the workspace. It references a workspace.
 
 ## What A Session Owns
 
-Task sessions own task-specific history:
+Sessions own task-specific history:
 
 - session status
 - stream input and output records
@@ -48,7 +48,7 @@ follow-up messages, webhook replies, operator responses, and structured task
 output that belongs to the task invocation.
 
 Streams are not project-level resources. A stream name only has meaning
-inside its task session.
+inside its session.
 
 Use input streams when something outside the task should continue the workflow,
 such as a product UI, webhook handler, or approval bridge. Use output streams

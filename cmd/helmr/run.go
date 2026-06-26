@@ -51,7 +51,7 @@ func sessionStartCommand() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "start TASK",
-		Short: "Start a task session.",
+		Short: "Start a session.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			payload, err := parsePayload(payloadFile, payloadJSON, payloadPairs)
@@ -121,7 +121,7 @@ func sessionStartCommand() *cobra.Command {
 			if timeoutSeconds > 0 {
 				deadline = time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
 			}
-			sessionScope := client.TaskSessionScopeOptions(scope)
+			sessionScope := client.SessionScopeOptions(scope)
 			if jsonOutput {
 				if wait {
 					waitCtx := cmd.Context()
@@ -158,7 +158,7 @@ func sessionStartCommand() *cobra.Command {
 					EnvironmentID: scope.EnvironmentID,
 				}); err != nil {
 					if errors.Is(err, context.DeadlineExceeded) {
-						session, snapshotErr := control.GetTaskSession(cmd.Context(), started.Session.ID, sessionScope)
+						session, snapshotErr := control.GetSession(cmd.Context(), started.Session.ID, sessionScope)
 						if snapshotErr == nil {
 							fmt.Fprintf(cmd.OutOrStdout(), "session_status: %s\n", session.Status)
 						}
@@ -203,8 +203,8 @@ func sessionStartCommand() *cobra.Command {
 	cmd.Flags().StringVar(&retryJSON, "retry-json", "", "Inline retry policy JSON literal.")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
 	cmd.Flags().StringVar(&idempotencyKeyTTL, "idempotency-key-ttl", "", "Duration to retain the idempotency key, for example 30d or 24h.")
-	cmd.Flags().StringVar(&workspaceID, "workspace", "", "Existing workspace ID to attach this task session to.")
-	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for the task session to finish.")
+	cmd.Flags().StringVar(&workspaceID, "workspace", "", "Existing workspace ID to attach this session to.")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for the session to finish.")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Stream the initial run logs while waiting.")
 	cmd.Flags().StringVar(&timeout, "timeout", "", "Maximum wait duration, for example 10m or 1h.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
@@ -381,7 +381,7 @@ func runListCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	cmd.Flags().BoolVar(&jsonLines, "jsonl", false, "Emit one JSON run per line.")
 	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().StringVar(&sessionID, "session", "", "Filter by task session ID.")
+	cmd.Flags().StringVar(&sessionID, "session", "", "Filter by session ID.")
 	return cmd
 }
 
@@ -592,9 +592,9 @@ func workspaceScopeForClient(control *client.Client, projectID string, environme
 	return client.WorkspaceScopeOptions(environmentScope), err
 }
 
-func taskSessionScopeForClient(control *client.Client, projectID string, environmentID string) (client.TaskSessionScopeOptions, error) {
+func sessionScopeForClient(control *client.Client, projectID string, environmentID string) (client.SessionScopeOptions, error) {
 	environmentScope, err := environmentScopeForClient(control, projectID, environmentID)
-	return client.TaskSessionScopeOptions(environmentScope), err
+	return client.SessionScopeOptions(environmentScope), err
 }
 
 func resolveRunScope(ctx context.Context, control *client.Client, runID string) (client.RunScopeOptions, error) {

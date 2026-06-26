@@ -46,7 +46,7 @@ test("task rejects zero queue concurrency limit", () => {
     task({
       id: "zero-queue-limit",
       sandbox: sb,
-      queue: queue({ name: "task/zero-queue-limit", concurrencyLimit: 0 }),
+      queue: queue({ id: "task/zero-queue-limit", concurrencyLimit: 0 }),
       run: async () => null,
     }),
   ).toThrow("queue concurrencyLimit must be a positive integer")

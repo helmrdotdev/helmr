@@ -37,7 +37,10 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		return nil, err
 	}
 	seen := map[string]struct{}{}
-	queueLimits := map[string]*int32{}
+	queueLimits, err := validateDeploymentQueues(result.Queues)
+	if err != nil {
+		return nil, err
+	}
 	sandboxDefinitions := map[string]workerBuildSandboxDefinition{}
 	for _, task := range result.Tasks {
 		taskID := strings.TrimSpace(task.TaskID)
@@ -141,8 +144,12 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		if err := api.ValidateQueueName(task.QueueName); err != nil {
 			return nil, fmt.Errorf("task %q queue_name: %w", taskID, err)
 		}
-		if task.ConcurrencyLimit != nil && *task.ConcurrencyLimit <= 0 {
-			return nil, fmt.Errorf("task %q concurrency_limit must be positive", taskID)
+		declaredLimit, ok := queueLimits[task.QueueName]
+		if !ok {
+			return nil, fmt.Errorf("task %q references undefined queue %q", taskID, task.QueueName)
+		}
+		if task.ConcurrencyLimit != nil && !sameOptionalInt32(task.ConcurrencyLimit, declaredLimit) {
+			return nil, fmt.Errorf("task %q concurrency_limit must match queue %q", taskID, task.QueueName)
 		}
 		if ttl := strings.TrimSpace(task.TTL); ttl != "" {
 			if _, err := api.ParsePositiveDuration(ttl, "ttl"); err != nil {
@@ -155,15 +162,35 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		if err := validateTaskSecrets(taskID, task.Secrets); err != nil {
 			return nil, err
 		}
-		if existing, ok := queueLimits[task.QueueName]; ok && !sameOptionalInt32(existing, task.ConcurrencyLimit) {
-			return nil, fmt.Errorf("queue %q has conflicting concurrency_limit values", task.QueueName)
-		}
-		queueLimits[task.QueueName] = task.ConcurrencyLimit
 	}
 	if err := validateDeploymentStreams(result.Streams); err != nil {
 		return nil, err
 	}
 	return casObjects, nil
+}
+
+func validateDeploymentQueues(queues []api.WorkerDeploymentQueue) (map[string]*int32, error) {
+	if len(queues) == 0 {
+		return nil, errors.New("deployment build must include queue catalog")
+	}
+	out := map[string]*int32{}
+	for i, item := range queues {
+		name := strings.TrimSpace(item.Name)
+		if err := api.ValidateQueueName(name); err != nil {
+			return nil, fmt.Errorf("deployment queue %d: %w", i, err)
+		}
+		if item.ConcurrencyLimit != nil && *item.ConcurrencyLimit <= 0 {
+			return nil, fmt.Errorf("deployment queue %q concurrency_limit must be positive", name)
+		}
+		if existing, ok := out[name]; ok {
+			if !sameOptionalInt32(existing, item.ConcurrencyLimit) {
+				return nil, fmt.Errorf("queue %q has conflicting concurrency_limit values", name)
+			}
+			return nil, fmt.Errorf("duplicate queue %q", name)
+		}
+		out[name] = item.ConcurrencyLimit
+	}
+	return out, nil
 }
 
 func validateDeploymentStreams(streams []api.WorkerDeploymentStream) error {

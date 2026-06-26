@@ -301,7 +301,7 @@ func TestSessionStartFollowTimeoutReturnsError(t *testing.T) {
 			}
 			<-r.Context().Done()
 		case r.Method == http.MethodGet && r.URL.Path == "/api/sessions/session-1":
-			_ = json.NewEncoder(w).Encode(api.TaskSessionResponse{ID: "session-1", Status: "open"})
+			_ = json.NewEncoder(w).Encode(api.SessionResponse{ID: "session-1", Status: "open"})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
 		}
@@ -327,7 +327,7 @@ func TestSessionStartFollowTimeoutReturnsError(t *testing.T) {
 func sessionStartResponseFixture() api.SessionStartResponse {
 	now := time.Unix(0, 0).UTC()
 	return api.SessionStartResponse{
-		Session: api.TaskSessionResponse{
+		Session: api.SessionResponse{
 			ID:                  "session-1",
 			ProjectID:           "project-1",
 			EnvironmentID:       "env-1",

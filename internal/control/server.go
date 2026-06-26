@@ -200,7 +200,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		devicePollEvery:     cfg.DevicePollEvery,
 	}
 	if cfg.BackgroundContext != nil {
-		go server.RunTaskSessionRunRequestReconciler(cfg.BackgroundContext)
+		go server.RunSessionRunRequestReconciler(cfg.BackgroundContext)
 	}
 	router := chi.NewRouter()
 	router.Use(server.recoverPanics)
@@ -394,7 +394,7 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/output", s.listWorkspacePtyOutput)
 		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/resize", s.resizeWorkspacePty)
 		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/close", s.closeWorkspacePty)
-		s.mountTaskSessionRoutes(r, "/projects/{projectID}/environments/{environmentID}")
+		s.mountSessionRoutes(r, "/projects/{projectID}/environments/{environmentID}")
 		r.Get("/projects/{projectID}/environments/{environmentID}/schedules", s.listSchedules)
 		r.Post("/projects/{projectID}/environments/{environmentID}/schedules", s.createSchedule)
 		r.Get("/projects/{projectID}/environments/{environmentID}/schedules/{id}", s.getSchedule)
@@ -439,7 +439,7 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 func (s *Server) mountRunRoutes(r chi.Router) {
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)
-		s.mountTaskSessionRoutes(r, "")
+		s.mountSessionRoutes(r, "")
 		r.Get("/runs", s.listRuns)
 		r.Get("/runs/counts", s.countRuns)
 		r.Get("/runs/{id}", s.getRun)
@@ -479,17 +479,17 @@ func (s *Server) mountRunRoutes(r chi.Router) {
 	})
 }
 
-func (s *Server) mountTaskSessionRoutes(r chi.Router, prefix string) {
+func (s *Server) mountSessionRoutes(r chi.Router, prefix string) {
 	r.Get(prefix+"/tasks", s.listTasks)
 	r.Get(prefix+"/tasks/{taskID}", s.getTask)
 	r.Post(prefix+"/sessions", s.startSession)
 	r.Post(prefix+"/sessions/start-and-wait", s.startSessionAndWait)
-	r.Get(prefix+"/sessions", s.listTaskSessions)
-	r.Get(prefix+"/sessions/{sessionID}", s.getTaskSession)
-	r.Patch(prefix+"/sessions/{sessionID}", s.patchTaskSession)
-	r.Post(prefix+"/sessions/{sessionID}/close", s.closeTaskSession)
-	r.Post(prefix+"/sessions/{sessionID}/cancel", s.cancelTaskSession)
-	r.Get(prefix+"/sessions/{sessionID}/runs", s.listTaskSessionRuns)
+	r.Get(prefix+"/sessions", s.listSessions)
+	r.Get(prefix+"/sessions/{sessionID}", s.getSession)
+	r.Patch(prefix+"/sessions/{sessionID}", s.patchSession)
+	r.Post(prefix+"/sessions/{sessionID}/close", s.closeSession)
+	r.Post(prefix+"/sessions/{sessionID}/cancel", s.cancelSession)
+	r.Get(prefix+"/sessions/{sessionID}/runs", s.listSessionRuns)
 	r.Get(prefix+"/sessions/{sessionID}/streams", s.listSessionStreams)
 	r.Post(prefix+"/sessions/{sessionID}/inputs/{stream}", s.appendSessionInputStream)
 	r.Get(prefix+"/sessions/{sessionID}/inputs/{stream}", s.listSessionInputStreamRecords)

@@ -176,7 +176,6 @@ message TaskSpec {
 
 message QueueSpec {
   string name = 1;
-  optional uint32 concurrency_limit = 2;
 }
 
 message TaskScheduleSpec {

@@ -262,6 +262,23 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		failBuild("record deployment manifest artifact: " + err.Error())
 		return
 	}
+	queueConcurrencyLimits := map[string]*int32{}
+	for _, queue := range request.Result.Queues {
+		queueName := strings.TrimSpace(queue.Name)
+		queueConcurrencyLimits[queueName] = queue.ConcurrencyLimit
+		if _, err := queries.CreateDeploymentQueue(r.Context(), db.CreateDeploymentQueueParams{
+			ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:            orgID,
+			ProjectID:        projectID,
+			EnvironmentID:    environmentID,
+			DeploymentID:     deploymentID,
+			Name:             queueName,
+			ConcurrencyLimit: pgvalue.Int4Ptr(queue.ConcurrencyLimit),
+		}); err != nil {
+			failBuild("record deployment queue: " + err.Error())
+			return
+		}
+	}
 	deploymentSandboxIDs := map[string]pgtype.UUID{}
 	for _, task := range request.Result.Tasks {
 		bundleArtifact, err := createDeploymentBuildArtifact(r.Context(), queries, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.BundleDigest), db.ArtifactKindTaskBundle, casObjectByDigest)
@@ -348,6 +365,12 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			deploymentSandboxID = row.ID
 			deploymentSandboxIDs[sandboxID] = deploymentSandboxID
 		}
+		queueName := strings.TrimSpace(task.QueueName)
+		queueConcurrencyLimit, ok := queueConcurrencyLimits[queueName]
+		if !ok {
+			failBuild("deployment task references undefined queue")
+			return
+		}
 		retryPolicy, err := normalizedRetryPolicy(task.RetryPolicy)
 		if err != nil {
 			failBuild("validate deployment task retry policy: " + err.Error())
@@ -373,8 +396,8 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			ResourceRequirements:  []byte("{}"),
 			NetworkPolicy:         networkPolicy,
 			ScheduleDeclarations:  scheduleDeclarations,
-			QueueName:             strings.TrimSpace(task.QueueName),
-			QueueConcurrencyLimit: pgvalue.Int4Ptr(task.ConcurrencyLimit),
+			QueueName:             queueName,
+			QueueConcurrencyLimit: pgvalue.Int4Ptr(queueConcurrencyLimit),
 			Ttl:                   strings.TrimSpace(task.TTL),
 			MaxActiveDurationMs:   int64(task.MaxDurationSeconds) * 1000,
 			RetryPolicy:           retryPolicy,

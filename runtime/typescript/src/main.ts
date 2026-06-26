@@ -12,7 +12,7 @@ import {
   type StreamListOptions,
   type StreamReadOptions,
   type StreamRecord,
-  type TaskSessionContext,
+  type SessionContext,
   type WaitResult,
   type PayloadSchema,
   type RuntimeTokenCreateOptions,
@@ -226,7 +226,7 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
       run: taskContext.run,
       task: taskContext.task,
       workspace: taskContext.workspace,
-      session: createTaskSessionContext(taskContext.session.id),
+      session: createSessionContext(taskContext.session.id),
     }
     let result: unknown
     const payload = task.payload === undefined ? undefined : await parseTaskPayload(task, rawPayload)
@@ -305,7 +305,7 @@ function parseTaskContext(json: string, runId: string, taskId: string): ParsedTa
     throw new Error(`task context task.id ${JSON.stringify(contextTaskId)} does not match --task ${JSON.stringify(taskId)}`)
   }
   const workspace = parseTaskWorkspace(record["workspace"])
-  const session = parseTaskSession(record["session"])
+  const session = parseSession(record["session"])
   const runRecord = record["run"] as Record<string, unknown>
   const run = {
     id: contextRunId,
@@ -376,7 +376,7 @@ function parseTaskWorkspace(value: unknown): TaskWorkspace {
   }
 }
 
-function parseTaskSession(value: unknown): { readonly id: string } {
+function parseSession(value: unknown): { readonly id: string } {
   if (value === null || typeof value !== "object") {
     throw new Error("task context session is required")
   }
@@ -407,6 +407,10 @@ function serializeDeploymentRegistry(registry: DeploymentRegistry): {
     readonly schema_fingerprint?: string
     readonly schema_json: unknown
   }[]
+  readonly queues: readonly {
+    readonly name: string
+    readonly concurrency_limit?: number
+  }[]
 } {
   return {
     tasks: Object.fromEntries(
@@ -427,6 +431,10 @@ function serializeDeploymentRegistry(registry: DeploymentRegistry): {
       direction: stream.direction,
       ...(stream.schemaFingerprint === "" ? {} : { schema_fingerprint: stream.schemaFingerprint }),
       schema_json: JSON.parse(stream.schemaJson),
+    })),
+    queues: registry.queues.map((queue) => ({
+      name: queue.name,
+      ...(queue.concurrencyLimit === undefined ? {} : { concurrency_limit: queue.concurrencyLimit }),
     })),
   }
 }
@@ -531,9 +539,9 @@ class WaitGate {
   }
 }
 
-function createTaskSessionContext(
+function createSessionContext(
   id: string,
-): TaskSessionContext {
+): SessionContext {
   return Object.freeze({
     id,
   })

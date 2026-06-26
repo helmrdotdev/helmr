@@ -179,7 +179,7 @@ type RunTaskRequest struct {
 	AttemptNumber   uint32                 `protobuf:"varint,10,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
 	RunLeaseId      string                 `protobuf:"bytes,11,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
 	SnapshotVersion uint64                 `protobuf:"varint,12,opt,name=snapshot_version,json=snapshotVersion,proto3" json:"snapshot_version,omitempty"`
-	TaskSessionId   string                 `protobuf:"bytes,13,opt,name=task_session_id,json=taskSessionId,proto3" json:"task_session_id,omitempty"`
+	SessionId       string                 `protobuf:"bytes,13,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	RetryReason     string                 `protobuf:"bytes,14,opt,name=retry_reason,json=retryReason,proto3" json:"retry_reason,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
@@ -299,9 +299,9 @@ func (x *RunTaskRequest) GetSnapshotVersion() uint64 {
 	return 0
 }
 
-func (x *RunTaskRequest) GetTaskSessionId() string {
+func (x *RunTaskRequest) GetSessionId() string {
 	if x != nil {
-		return x.TaskSessionId
+		return x.SessionId
 	}
 	return ""
 }
@@ -2043,7 +2043,7 @@ const file_run_proto_rawDesc = "" +
 	"\n" +
 	"size_bytes\x18\x04 \x01(\x04R\tsizeBytes\x12\x1f\n" +
 	"\ventry_count\x18\x05 \x01(\rR\n" +
-	"entryCount\"\x9a\x04\n" +
+	"entryCount\"\x91\x04\n" +
 	"\x0eRunTaskRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1f\n" +
 	"\vmodule_path\x18\x02 \x01(\tR\n" +
@@ -2060,8 +2060,9 @@ const file_run_proto_rawDesc = "" +
 	" \x01(\rR\rattemptNumber\x12 \n" +
 	"\frun_lease_id\x18\v \x01(\tR\n" +
 	"runLeaseId\x12)\n" +
-	"\x10snapshot_version\x18\f \x01(\x04R\x0fsnapshotVersion\x12&\n" +
-	"\x0ftask_session_id\x18\r \x01(\tR\rtaskSessionId\x12!\n" +
+	"\x10snapshot_version\x18\f \x01(\x04R\x0fsnapshotVersion\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\r \x01(\tR\tsessionId\x12!\n" +
 	"\fretry_reason\x18\x0e \x01(\tR\vretryReason\"d\n" +
 	"\fTraceContext\x12\x19\n" +
 	"\btrace_id\x18\x01 \x01(\tR\atraceId\x12\x17\n" +

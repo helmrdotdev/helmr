@@ -27,9 +27,9 @@ Main surfaces:
 
 | API | Purpose |
 | --- | --- |
-| `sessions.start(taskObject, payload, opts)` / `client.sessions.start(taskObject, payload, opts)` | Start or reuse a task session and return the session plus first/current run handle. Pass a task object for local payload validation and type inference; pass a string id for external boundaries or dynamic task ids. |
-| `sessions.startAndWait(taskObject, payload, opts)` / `client.sessions.startAndWait(taskObject, payload, opts)` | Start or reuse a task session, then wait for the first run to become terminal or time out. The session remains open unless explicitly closed or cancelled. Pass a task object for local payload validation and type inference; pass a string id for external boundaries or dynamic task ids. |
-| `sessions.retrieve(session)` / `client.sessions.retrieve(session)` | Fetch current task session state. |
+| `sessions.start(taskObject, payload, opts)` / `client.sessions.start(taskObject, payload, opts)` | Start or reuse a session and return the session plus first/current run handle. Pass a task object for local payload validation and type inference; pass a string id for external boundaries or dynamic task ids. |
+| `sessions.startAndWait(taskObject, payload, opts)` / `client.sessions.startAndWait(taskObject, payload, opts)` | Start or reuse a session, then wait for the first run to become terminal or time out. The session remains open unless explicitly closed or cancelled. Pass a task object for local payload validation and type inference; pass a string id for external boundaries or dynamic task ids. |
+| `sessions.retrieve(session)` / `client.sessions.retrieve(session)` | Fetch current session state. |
 | `sessions.open(session).input(stream).send(data)` / `client.sessions.open(session).input(stream).send(data)` | Append durable input to a session stream. |
 | `sessions.open(session).output(stream).list(opts)` / `client.sessions.open(session).output(stream).list(opts)` | Read durable session output records from a cursor. |
 | `sessions.open(session).output(stream).read(opts)` / `client.sessions.open(session).output(stream).read(opts)` | Read one durable session output record from a cursor. |
@@ -70,12 +70,12 @@ The top-level `sessions`, `runs`, `workspaces`, `tokens`, `schedules`, and `auth
 
 Session start `payload` is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload. Follow-up user messages, webhooks, or operator replies belong in session input streams, not in session start payload.
 
-Session starts create or reuse a task session and attach a workspace. When no
+Session starts create or reuse a session and attach a workspace. When no
 workspace is supplied, Helmr creates one from the deployed task's sandbox.
 Direct workspace operations are separate: creating an exec or PTY on a
-workspace does not create a task session or run.
+workspace does not create a session or run.
 
-Session streams are named lanes on a task session. Input streams accept
+Session streams are named lanes on a session. Input streams accept
 follow-up records. Output streams expose task-published records through list
 and read APIs.
 

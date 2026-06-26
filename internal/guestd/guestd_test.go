@@ -2500,10 +2500,10 @@ func TestCopyTreeRejectsDestinationSymlinkParent(t *testing.T) {
 
 func testRunTaskRequest() *runv0.RunTaskRequest {
 	return &runv0.RunTaskRequest{
-		TaskId:        "task",
-		RunId:         "run",
-		TaskSessionId: "session",
-		PayloadJson:   "{}",
+		TaskId:      "task",
+		RunId:       "run",
+		SessionId:   "session",
+		PayloadJson: "{}",
 		Workspace: &runv0.RunTaskWorkspace{
 			Path:        "/workspace",
 			ProjectPath: "/workspace",

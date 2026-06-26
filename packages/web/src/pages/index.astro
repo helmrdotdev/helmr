@@ -3,7 +3,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { pixelsFromRows } from "../lib/pixels";
 import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
-const runtimeCode = `import { cache, image, sandbox, source, streams, task } from "@helmr/sdk"
+const runtimeCode = `import { cache, image, queue, sandbox, source, streams, task } from "@helmr/sdk"
 import { Codex } from "@openai/codex-sdk"
 import { z } from "zod"
 
@@ -20,10 +20,12 @@ const sbx = sandbox("repo-agent")
   .image(base)
   .resources({ cpu: 2, memory: "4Gi" })
 
+const reviews = queue({ id: "review/pr", concurrencyLimit: 5 })
+
 export const reviewPr = task({
   id: "review-pr",
   sandbox: sbx,
-  queue: { concurrencyLimit: 5 },
+  queue: reviews,
   secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }],
   run: async (event, ctx) => {
     const codex = new Codex()

@@ -160,6 +160,11 @@ ON CONFLICT (environment_id, task_id) DO UPDATE
        archived_at = NULL,
        updated_at = now();
 
+INSERT INTO deployment_queues (id, org_id, project_id, environment_id, deployment_id, name)
+VALUES
+    ('00000000-0000-0000-0000-000000000810', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', 'default')
+ON CONFLICT (org_id, project_id, environment_id, deployment_id, name) DO NOTHING;
+
 INSERT INTO deployment_tasks (
     id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id,
     file_path, export_name, handler_entrypoint, bundle_artifact_id, queue_name, max_duration_seconds
@@ -217,7 +222,7 @@ UPDATE workspaces
     '00000000-0000-0000-0000-000000000904'
  );
 
-INSERT INTO task_sessions (
+INSERT INTO sessions (
     id, org_id, project_id, environment_id, task_id, initial_deployment_id,
     active_deployment_id, status, current_run_id, workspace_id, metadata, tags,
     completed_at, failed_at, terminal_reason, result, created_at, updated_at
@@ -240,7 +245,7 @@ ON CONFLICT (id) DO UPDATE
 
 INSERT INTO runs (
     id, org_id, project_id, environment_id, deployment_id, deployment_task_id,
-    workspace_id, deployment_version, sdk_version, task_id, task_session_id,
+    workspace_id, deployment_version, sdk_version, task_id, session_id,
     status, execution_status, terminal_outcome, payload, output, metadata, tags,
     queue_name, priority, max_duration_seconds, trace_id, root_span_id,
     current_attempt_id, current_attempt_number, exit_code, error_message,
@@ -278,7 +283,7 @@ ON CONFLICT (id) DO UPDATE
        started_at = EXCLUDED.started_at,
        finished_at = EXCLUDED.finished_at;
 
-INSERT INTO task_session_runs (id, org_id, project_id, environment_id, task_session_id, run_id, deployment_id, turn_index, ended_at)
+INSERT INTO session_runs (id, org_id, project_id, environment_id, session_id, run_id, deployment_id, turn_index, ended_at)
 VALUES
     ('00000000-0000-0000-0000-000000001301', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000001001', '00000000-0000-0000-0000-000000001101', '00000000-0000-0000-0000-000000000601', 0, NULL),
     ('00000000-0000-0000-0000-000000001302', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000001002', '00000000-0000-0000-0000-000000001102', '00000000-0000-0000-0000-000000000601', 0, NULL),

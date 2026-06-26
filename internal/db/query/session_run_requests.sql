@@ -1,10 +1,10 @@
--- name: EnsureTaskSessionRunRequestForStreamRecord :one
-INSERT INTO task_session_run_requests (
+-- name: EnsureSessionRunRequestForStreamRecord :one
+INSERT INTO session_run_requests (
     id,
     org_id,
     project_id,
     environment_id,
-    task_session_id,
+    session_id,
     stream_record_id,
     stream_id,
     cause_kind
@@ -13,19 +13,19 @@ INSERT INTO task_session_run_requests (
     sqlc.arg(org_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
-    sqlc.arg(task_session_id),
+    sqlc.arg(session_id),
     sqlc.arg(stream_record_id),
     sqlc.arg(stream_id),
     'stream_record'
 )
 ON CONFLICT (org_id, project_id, environment_id, stream_record_id)
-DO UPDATE SET updated_at = task_session_run_requests.updated_at
+DO UPDATE SET updated_at = session_run_requests.updated_at
 RETURNING *;
 
--- name: ClaimDueTaskSessionRunRequests :many
+-- name: ClaimDueSessionRunRequests :many
 WITH eligible AS (
     SELECT id
-      FROM task_session_run_requests
+      FROM session_run_requests
      WHERE status IN ('accepted', 'claimed')
        AND (
            status = 'accepted'
@@ -46,14 +46,14 @@ WITH eligible AS (
            OR environment_id = sqlc.narg(environment_id)
        )
        AND (
-           sqlc.narg(task_session_id)::uuid IS NULL
-           OR task_session_id = sqlc.narg(task_session_id)
+           sqlc.narg(session_id)::uuid IS NULL
+           OR session_id = sqlc.narg(session_id)
        )
      ORDER BY next_attempt_at ASC, created_at ASC, id ASC
      LIMIT sqlc.arg(limit_count)
      FOR UPDATE SKIP LOCKED
 )
-UPDATE task_session_run_requests
+UPDATE session_run_requests
    SET status = 'claimed',
        attempts = attempts + 1,
        claimed_at = now(),
@@ -61,11 +61,11 @@ UPDATE task_session_run_requests
        claim_owner = sqlc.arg(claim_owner),
        updated_at = now()
   FROM eligible
- WHERE task_session_run_requests.id = eligible.id
-RETURNING task_session_run_requests.*;
+ WHERE session_run_requests.id = eligible.id
+RETURNING session_run_requests.*;
 
--- name: ReleaseTaskSessionRunRequestForRetry :one
-UPDATE task_session_run_requests
+-- name: ReleaseSessionRunRequestForRetry :one
+UPDATE session_run_requests
    SET status = 'accepted',
        next_attempt_at = now() + sqlc.arg(retry_after)::interval,
        last_error = sqlc.arg(last_error),
@@ -82,8 +82,8 @@ UPDATE task_session_run_requests
 	   AND claim_owner = sqlc.arg(claim_owner)
 	RETURNING *;
 
--- name: MarkTaskSessionRunRequestCreated :one
-UPDATE task_session_run_requests
+-- name: MarkSessionRunRequestCreated :one
+UPDATE session_run_requests
    SET status = 'created',
        run_id = sqlc.arg(run_id),
        last_error = '',
@@ -100,8 +100,8 @@ UPDATE task_session_run_requests
 	   AND claim_owner = sqlc.arg(claim_owner)
 	RETURNING *;
 
--- name: MarkTaskSessionRunRequestSkipped :one
-UPDATE task_session_run_requests
+-- name: MarkSessionRunRequestSkipped :one
+UPDATE session_run_requests
    SET status = 'skipped',
        last_error = sqlc.arg(reason),
        error_message = sqlc.arg(reason),
@@ -117,8 +117,8 @@ UPDATE task_session_run_requests
 	   AND claim_owner = sqlc.arg(claim_owner)
 	RETURNING *;
 
--- name: MarkTaskSessionRunRequestFailed :one
-UPDATE task_session_run_requests
+-- name: MarkSessionRunRequestFailed :one
+UPDATE session_run_requests
    SET status = 'failed',
        last_error = sqlc.arg(reason),
        error_message = sqlc.arg(reason),

@@ -19,7 +19,7 @@ import {
   runAdapterCli,
   type AdapterIo,
 } from "../../../runtime/typescript/src/main"
-import { compile } from "./compile"
+import { compile, compileQueueCatalog } from "./compile"
 import { validateSecretName } from "./internal"
 import { image, queue, sandbox, schedules, source, streams, task, type PayloadSchema } from "./index"
 
@@ -146,8 +146,8 @@ describe("compile", () => {
     ])
   })
 
-  test("emits task queue and ttl metadata", () => {
-    const serialQueue = queue({ name: "review/pr", concurrencyLimit: 1 })
+  test("emits task queue reference and ttl metadata", () => {
+    const serialQueue = queue({ id: "review/pr", concurrencyLimit: 1 })
     const bundle = compile({
       task: task({
         id: "queued-task",
@@ -159,8 +159,44 @@ describe("compile", () => {
       modulePath: "tasks/queued-task.ts",
     })
     expect(bundle.task?.queue?.name).toBe("review/pr")
-    expect(bundle.task?.queue?.concurrencyLimit).toBe(1)
     expect(bundle.task?.ttl).toBe("10m")
+  })
+
+  test("queue catalog rejects undefined string queue references", () => {
+    const queued = task({
+      id: "queued-task",
+      sandbox: sandbox("queued-task").image(image("queued-task").from("debian:trixie-slim")),
+      queue: "review/pr",
+      run: async () => null,
+    })
+    expect(() => compileQueueCatalog([queued], [])).toThrow('task "queued-task" references undefined queue "review/pr"')
+  })
+
+  test("queue catalog includes declared queues and implicit task queues", () => {
+    const catalog = compileQueueCatalog([
+      task({
+        id: "defaulted",
+        sandbox: sandbox("defaulted").image(image("defaulted").from("debian:trixie-slim")),
+        run: async () => null,
+      }),
+      task({
+        id: "queued-task",
+        sandbox: sandbox("queued-task").image(image("queued-task").from("debian:trixie-slim")),
+        queue: "review/pr",
+        run: async () => null,
+      }),
+    ], [{ id: "review/pr", concurrencyLimit: 1, originFile: "tasks/review.ts" }])
+    expect(catalog).toEqual([
+      { name: "review/pr", concurrencyLimit: 1 },
+      { name: "task/defaulted" },
+    ])
+  })
+
+  test("queue catalog rejects conflicting queue definitions", () => {
+    expect(() => compileQueueCatalog([], [
+      { id: "review/pr", concurrencyLimit: 1, originFile: "tasks/review.ts" },
+      { id: "review/pr", concurrencyLimit: 5, originFile: "tasks/review.ts" },
+    ])).toThrow('queue "review/pr" has conflicting deployment catalog settings')
   })
 
   test("emits task retry policy metadata", () => {

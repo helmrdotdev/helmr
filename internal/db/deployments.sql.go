@@ -233,6 +233,61 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 	return i, err
 }
 
+const createDeploymentQueue = `-- name: CreateDeploymentQueue :one
+INSERT INTO deployment_queues (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    deployment_id,
+    name,
+    concurrency_limit
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7
+)
+RETURNING id, org_id, project_id, environment_id, deployment_id, name, concurrency_limit, created_at
+`
+
+type CreateDeploymentQueueParams struct {
+	ID               pgtype.UUID `json:"id"`
+	OrgID            pgtype.UUID `json:"org_id"`
+	ProjectID        pgtype.UUID `json:"project_id"`
+	EnvironmentID    pgtype.UUID `json:"environment_id"`
+	DeploymentID     pgtype.UUID `json:"deployment_id"`
+	Name             string      `json:"name"`
+	ConcurrencyLimit pgtype.Int4 `json:"concurrency_limit"`
+}
+
+func (q *Queries) CreateDeploymentQueue(ctx context.Context, arg CreateDeploymentQueueParams) (DeploymentQueue, error) {
+	row := q.db.QueryRow(ctx, createDeploymentQueue,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+		arg.Name,
+		arg.ConcurrencyLimit,
+	)
+	var i DeploymentQueue
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.Name,
+		&i.ConcurrencyLimit,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createDeploymentSandbox = `-- name: CreateDeploymentSandbox :one
 INSERT INTO deployment_sandboxes (
     id,
@@ -444,7 +499,7 @@ INSERT INTO deployment_tasks (
     $21,
     $22,
     $23,
-    coalesce($24::jsonb, 'false'::jsonb)
+    coalesce($24::jsonb, '{"enabled": false}'::jsonb)
   FROM catalog_task
 RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, secret_declarations, resource_requirements, network_policy, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_active_duration_ms, retry_policy, created_at
 `
@@ -1114,14 +1169,14 @@ func (q *Queries) GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForO
 }
 
 const getDeploymentQueueConfig = `-- name: GetDeploymentQueueConfig :one
-SELECT queue_name,
-       queue_concurrency_limit
-  FROM deployment_tasks
+SELECT name AS queue_name,
+       concurrency_limit AS queue_concurrency_limit
+  FROM deployment_queues
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
    AND deployment_id = $4
-   AND queue_name = $5
+   AND name = $5
  LIMIT 1
 `
 

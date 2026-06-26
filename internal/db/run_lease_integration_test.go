@@ -15,12 +15,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestTaskSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
+func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	taskSessionID := seedTaskSessionForRun(t, ctx, pool, ids)
+	sessionID := seedSessionForRun(t, ctx, pool, ids)
 	workspaceID := ids.workspaceID
 	baseArtifactID := uuid.Must(uuid.NewV7())
 	baseVersionID := uuid.Must(uuid.NewV7())
@@ -129,13 +129,13 @@ func TestTaskSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
 			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
-			task_session_id, status, execution_status, payload, queue_name, queue_timestamp,
+			session_id, status, execution_status, payload, queue_name, queue_timestamp,
 			max_active_duration_ms, trace_id, root_span_id
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task',
 			$8, 'queued', 'queued', '{}', 'default', now(), 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, loserRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, taskSessionID); err != nil {
+	`, loserRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -799,7 +799,7 @@ func TestReleaseLeasedRunLeaseDoesNotAccrueActiveTimeBeforeStart(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	if _, err := pool.Exec(ctx, `
 		UPDATE run_leases
 		   SET status = 'leased',
@@ -852,7 +852,7 @@ func TestReleaseRunLeaseDoesNotRegressActiveTimeWhenClockMovesBackward(t *testin
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	if _, err := pool.Exec(ctx, `
 		UPDATE runs
 		   SET active_elapsed_ms = 500,

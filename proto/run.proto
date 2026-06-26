@@ -32,7 +32,7 @@ message RunTaskRequest {
   uint32 attempt_number = 10;
   string run_lease_id = 11;
   uint64 snapshot_version = 12;
-  string task_session_id = 13;
+  string session_id = 13;
   string retry_reason = 14;
 }
 

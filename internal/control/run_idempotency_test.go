@@ -142,8 +142,8 @@ func TestCreateRunRequiresCoordinationForIdempotencyKey(t *testing.T) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 	requireErrorCode(t, rec.Body.Bytes(), "coordination_unavailable")
-	if store.run.ID.Valid || store.taskSession.ID.Valid || len(store.events) != 0 || runEnqueuer.count != 0 {
-		t.Fatalf("side effects: run=%v session=%v events=%d enqueues=%d", store.run.ID.Valid, store.taskSession.ID.Valid, len(store.events), runEnqueuer.count)
+	if store.run.ID.Valid || store.session.ID.Valid || len(store.events) != 0 || runEnqueuer.count != 0 {
+		t.Fatalf("side effects: run=%v session=%v events=%d enqueues=%d", store.run.ID.Valid, store.session.ID.Valid, len(store.events), runEnqueuer.count)
 	}
 }
 
@@ -156,7 +156,7 @@ func TestCreateRunRequiresCoordinationBeforeBindingExistingExternalIDToIdempoten
 	}
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		taskSession: db.TaskSession{
+		session: db.Session{
 			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -166,7 +166,7 @@ func TestCreateRunRequiresCoordinationBeforeBindingExistingExternalIDToIdempoten
 			ActiveDeploymentID:  testDeploymentID(),
 			ExternalID:          "durable-1",
 			StartFingerprint:    startFingerprint.String,
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			CurrentRunID:        runID,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
@@ -229,8 +229,8 @@ func TestSessionStartExternalIDDoesNotRequireCoordination(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !store.taskSession.ID.Valid || !store.run.ID.Valid {
-		t.Fatalf("expected task session and run to be created, got session=%v run=%v", store.taskSession.ID.Valid, store.run.ID.Valid)
+	if !store.session.ID.Valid || !store.run.ID.Valid {
+		t.Fatalf("expected session and run to be created, got session=%v run=%v", store.session.ID.Valid, store.run.ID.Valid)
 	}
 }
 
@@ -268,7 +268,7 @@ func TestSessionStartFingerprintCanonicalizesRetryPolicy(t *testing.T) {
 	}
 }
 
-func TestCreateRunReturnsIdempotencyHitForTerminalTaskSession(t *testing.T) {
+func TestCreateRunReturnsIdempotencyHitForTerminalSession(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, RunEnqueuer: runEnqueuer, EventStream: newTestEventStream(t)})
@@ -292,8 +292,8 @@ func TestCreateRunReturnsIdempotencyHitForTerminalTaskSession(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
 		t.Fatal(err)
 	}
-	store.taskSession.Status = db.TaskSessionStatusOpen
-	store.startIdempotency.SessionStatus = db.TaskSessionStatusOpen
+	store.session.Status = db.SessionStatusOpen
+	store.startIdempotency.SessionStatus = db.SessionStatusOpen
 
 	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -306,7 +306,7 @@ func TestCreateRunReturnsIdempotencyHitForTerminalTaskSession(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.Run.ID != first.Run.ID || !second.IsCached || second.Session.Status != string(db.TaskSessionStatusOpen) {
+	if second.Run.ID != first.Run.ID || !second.IsCached || second.Session.Status != string(db.SessionStatusOpen) {
 		t.Fatalf("second response = %+v first=%+v", second, first)
 	}
 	if len(store.events) != 1 || runEnqueuer.count != 1 {
@@ -594,8 +594,8 @@ func TestCreateRunBindsIdempotencyKeyWhenExternalIDReusesSession(t *testing.T) {
 	if second.Run.ID != pgvalue.MustUUIDValue(firstRunID).String() || !second.IsCached {
 		t.Fatalf("second response = %+v, want cached run %s", second, pgvalue.MustUUIDValue(firstRunID))
 	}
-	if !store.startIdempotency.ID.Valid || store.startIdempotency.TaskSessionID != store.taskSession.ID || store.startIdempotency.FirstRunID != firstRunID {
-		t.Fatalf("stored idempotency = %+v session=%s run=%s", store.startIdempotency, pgvalue.MustUUIDValue(store.taskSession.ID), pgvalue.MustUUIDValue(firstRunID))
+	if !store.startIdempotency.ID.Valid || store.startIdempotency.SessionID != store.session.ID || store.startIdempotency.FirstRunID != firstRunID {
+		t.Fatalf("stored idempotency = %+v session=%s run=%s", store.startIdempotency, pgvalue.MustUUIDValue(store.session.ID), pgvalue.MustUUIDValue(firstRunID))
 	}
 
 	thirdBody, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
@@ -626,9 +626,9 @@ func TestCreateRunBindsIdempotencyKeyAfterExternalIDUniqueRace(t *testing.T) {
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
-		createTaskSessionErr:             &pgconn.PgError{Code: "23505"},
-		getTaskSessionByExternalIDMisses: 1,
-		taskSession: db.TaskSession{
+		createSessionErr:             &pgconn.PgError{Code: "23505"},
+		getSessionByExternalIDMisses: 1,
+		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:           testProjectID(),
@@ -638,7 +638,7 @@ func TestCreateRunBindsIdempotencyKeyAfterExternalIDUniqueRace(t *testing.T) {
 			ActiveDeploymentID:  testDeploymentID(),
 			ExternalID:          "durable-1",
 			StartFingerprint:    startFingerprint.String,
-			Status:              db.TaskSessionStatusOpen,
+			Status:              db.SessionStatusOpen,
 			CurrentRunID:        runID,
 			Metadata:            []byte(`{}`),
 			Tags:                []string{},
@@ -676,7 +676,7 @@ func TestCreateRunBindsIdempotencyKeyAfterExternalIDUniqueRace(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !store.startIdempotency.ID.Valid || store.startIdempotency.TaskSessionID != sessionID || store.startIdempotency.FirstRunID != runID {
+	if !store.startIdempotency.ID.Valid || store.startIdempotency.SessionID != sessionID || store.startIdempotency.FirstRunID != runID {
 		t.Fatalf("idempotency binding = %+v, want session %s run %s", store.startIdempotency, pgvalue.MustUUIDValue(sessionID), pgvalue.MustUUIDValue(runID))
 	}
 }

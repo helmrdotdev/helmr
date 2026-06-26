@@ -192,7 +192,7 @@ WITH stale_waits AS MATERIALIZED (
            run_waits.project_id,
            run_waits.environment_id,
            run_waits.run_id,
-           runs.task_session_id,
+           runs.session_id,
            runs.current_attempt_id,
            runs.current_attempt_number,
            runs.trace_id,
@@ -219,10 +219,10 @@ WITH stale_waits AS MATERIALIZED (
                AND runs.project_id = run_waits.project_id
                AND runs.environment_id = run_waits.environment_id
                AND runs.id = run_waits.run_id
-      JOIN task_sessions ON task_sessions.org_id = runs.org_id
-                        AND task_sessions.project_id = runs.project_id
-                        AND task_sessions.environment_id = runs.environment_id
-                        AND task_sessions.id = runs.task_session_id
+      JOIN sessions ON sessions.org_id = runs.org_id
+                        AND sessions.project_id = runs.project_id
+                        AND sessions.environment_id = runs.environment_id
+                        AND sessions.id = runs.session_id
       JOIN runtime_checkpoints ON runtime_checkpoints.org_id = run_waits.org_id
                               AND runtime_checkpoints.project_id = run_waits.project_id
                               AND runtime_checkpoints.environment_id = run_waits.environment_id
@@ -247,7 +247,7 @@ WITH stale_waits AS MATERIALIZED (
        )
      ORDER BY COALESCE(run_waits.resolved_at, run_waits.timeout_at, run_waits.updated_at), run_waits.id
      LIMIT sqlc.arg(limit_count)
-     FOR UPDATE OF run_waits, runs, task_sessions
+     FOR UPDATE OF run_waits, runs, sessions
 ),
 failed_waits AS (
     UPDATE run_waits
@@ -275,7 +275,7 @@ failed_runs AS (
        AND runs.id = stale_waits.run_id
        AND runs.status = stale_waits.run_status
        AND runs.current_run_lease_id IS NULL
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.task_session_id,
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.session_id,
               runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id,
               runs.state_version, runs.error_message, stale_waits.runtime_checkpoint_id,
               stale_waits.base_workspace_version_id, stale_waits.current_version_id,
@@ -296,18 +296,18 @@ invalidated_checkpoints AS (
     RETURNING runtime_checkpoints.id
 ),
 ended_session_runs AS (
-    UPDATE task_session_runs
+    UPDATE session_runs
        SET ended_at = now()
       FROM failed_runs
-     WHERE task_session_runs.org_id = failed_runs.org_id
-       AND task_session_runs.project_id = failed_runs.project_id
-       AND task_session_runs.environment_id = failed_runs.environment_id
-       AND task_session_runs.task_session_id = failed_runs.task_session_id
-       AND task_session_runs.run_id = failed_runs.id
-    RETURNING task_session_runs.id
+     WHERE session_runs.org_id = failed_runs.org_id
+       AND session_runs.project_id = failed_runs.project_id
+       AND session_runs.environment_id = failed_runs.environment_id
+       AND session_runs.session_id = failed_runs.session_id
+       AND session_runs.run_id = failed_runs.id
+    RETURNING session_runs.id
 ),
-failed_task_sessions AS (
-    SELECT failed_runs.task_session_id AS id
+failed_sessions AS (
+    SELECT failed_runs.session_id AS id
       FROM failed_runs
 ),
 failed_attempts AS (
@@ -483,7 +483,7 @@ SELECT runs.org_id,
        runs.deployment_id,
        runs.task_id,
        runs.id AS run_id,
-       runs.task_session_id,
+       runs.session_id,
        runs.workspace_id,
        runs.current_run_lease_id,
        run_leases.worker_instance_id,

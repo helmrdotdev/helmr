@@ -13,7 +13,7 @@ func TestGetWorkerRunWaitScopeUsesWorkerGroupIdentity(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	_, runLeaseID, workerID := seedRunningTaskSessionLease(t, ctx, pool, ids)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 
 	scope, err := queries.GetWorkerRunWaitScope(ctx, db.GetWorkerRunWaitScopeParams{

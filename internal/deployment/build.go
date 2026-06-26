@@ -47,12 +47,17 @@ type IndexRequest struct {
 
 type Catalog struct {
 	Tasks   map[string]CatalogTask
+	Queues  map[string]CatalogQueue
 	Streams []api.WorkerDeploymentStream
 }
 
 type CatalogTask struct {
 	FilePath   string
 	ExportName string
+}
+
+type CatalogQueue struct {
+	ConcurrencyLimit *int32
 }
 
 type GuestIndexer struct {
@@ -135,6 +140,16 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 	}
 
 	tasks := make([]api.WorkerDeploymentBuildTask, 0, len(taskIDs))
+	queues := make([]api.WorkerDeploymentQueue, 0, len(index.Queues))
+	for queueName, queue := range index.Queues {
+		queues = append(queues, api.WorkerDeploymentQueue{
+			Name:             queueName,
+			ConcurrencyLimit: queue.ConcurrencyLimit,
+		})
+	}
+	sort.Slice(queues, func(i, j int) bool {
+		return queues[i].Name < queues[j].Name
+	})
 	casObjects := make([]api.CASObject, 0, len(taskIDs)*2+2)
 	sandboxImages := map[string]api.CASObject{}
 	for _, taskID := range taskIDs {
@@ -212,9 +227,10 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			return failedDeploymentBuild(fmt.Errorf("store task %q bundle: %w", taskID, err))
 		}
 		casObjects = append(casObjects, api.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType})
-		concurrencyLimit, err := deploymentTaskConcurrencyLimit(bundle)
-		if err != nil {
-			return failedDeploymentBuild(fmt.Errorf("task %q concurrency limit: %w", taskID, err))
+		queueName := deploymentTaskQueueName(bundle, taskID)
+		queue, ok := index.Queues[queueName]
+		if !ok {
+			return failedDeploymentBuild(fmt.Errorf("task %q references undefined queue %q", taskID, queueName))
 		}
 		tasks = append(tasks, api.WorkerDeploymentBuildTask{
 			TaskID:                     taskID,
@@ -235,8 +251,8 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			RequestedMemoryMiB:         resources.MemoryMiB,
 			RequestedDiskMiB:           resources.DiskMiB,
 			Network:                    network,
-			QueueName:                  deploymentTaskQueueName(bundle, taskID),
-			ConcurrencyLimit:           concurrencyLimit,
+			QueueName:                  queueName,
+			ConcurrencyLimit:           queue.ConcurrencyLimit,
 			TTL:                        deploymentTaskTTL(bundle),
 			MaxDurationSeconds:         maxDurationSeconds,
 			RetryPolicy:                deploymentTaskRetryPolicy(bundle),
@@ -290,6 +306,7 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		BuildManifestDigest:      buildManifest.Digest,
 		DeploymentManifestDigest: deploymentManifest.Digest,
 		Tasks:                    tasks,
+		Queues:                   queues,
 		Streams:                  index.Streams,
 		CASObjects:               casObjects,
 	}
@@ -446,12 +463,17 @@ func decodeCatalog(body []byte) (Catalog, error) {
 			SchemaFingerprint string          `json:"schema_fingerprint"`
 			SchemaJSON        json.RawMessage `json:"schema_json"`
 		} `json:"streams"`
+		Queues []struct {
+			Name             string `json:"name"`
+			ConcurrencyLimit *int32 `json:"concurrency_limit"`
+		} `json:"queues"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return Catalog{}, fmt.Errorf("decode deployment index: %w", err)
 	}
 	index := Catalog{
 		Tasks:   make(map[string]CatalogTask, len(payload.Tasks)),
+		Queues:  make(map[string]CatalogQueue, len(payload.Queues)),
 		Streams: make([]api.WorkerDeploymentStream, 0, len(payload.Streams)),
 	}
 	for taskID, task := range payload.Tasks {
@@ -478,6 +500,22 @@ func decodeCatalog(body []byte) (Catalog, error) {
 			SchemaFingerprint: strings.TrimSpace(stream.SchemaFingerprint),
 			SchemaJSON:        schemaJSON,
 		})
+	}
+	for i, queue := range payload.Queues {
+		name := strings.TrimSpace(queue.Name)
+		if err := api.ValidateQueueName(name); err != nil {
+			return Catalog{}, fmt.Errorf("deployment index queue %d: %w", i, err)
+		}
+		if queue.ConcurrencyLimit != nil && *queue.ConcurrencyLimit <= 0 {
+			return Catalog{}, fmt.Errorf("deployment index queue %q concurrency_limit must be positive", name)
+		}
+		if existing, ok := index.Queues[name]; ok {
+			if !sameOptionalInt32(existing.ConcurrencyLimit, queue.ConcurrencyLimit) {
+				return Catalog{}, fmt.Errorf("queue %q has conflicting concurrency_limit values", name)
+			}
+			continue
+		}
+		index.Queues[name] = CatalogQueue{ConcurrencyLimit: queue.ConcurrencyLimit}
 	}
 	return index, nil
 }
@@ -548,21 +586,6 @@ func deploymentTaskQueueName(bundle *bundlev0.Bundle, taskID string) string {
 		return "task/" + taskID
 	}
 	return queueName
-}
-
-func deploymentTaskConcurrencyLimit(bundle *bundlev0.Bundle) (*int32, error) {
-	if bundle == nil || bundle.GetTask() == nil || bundle.GetTask().GetQueue() == nil {
-		return nil, nil
-	}
-	value := bundle.GetTask().GetQueue().ConcurrencyLimit
-	if value == nil {
-		return nil, nil
-	}
-	if *value > uint32(1<<31-1) {
-		return nil, fmt.Errorf("concurrency_limit %d exceeds int32", *value)
-	}
-	converted := int32(*value)
-	return &converted, nil
 }
 
 func deploymentTaskTTL(bundle *bundlev0.Bundle) string {

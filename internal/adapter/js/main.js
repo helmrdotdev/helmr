@@ -3694,7 +3694,7 @@ function timestampToJson(val) {
   return new Date(ms).toISOString().replace(".000Z", z);
 }
 // proto/typescript/src/gen/bundle_pb.ts
-var file_bundle = /* @__PURE__ */ fileDesc("CgxidW5kbGUucHJvdG8SD2hlbG1yLmJ1bmRsZS52MCKVAgoGQnVuZGxlEikKBWltYWdlGAEgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYxItCgdzYW5kYm94GAIgASgLMhwuaGVsbXIuYnVuZGxlLnYwLlNhbmRib3hTcGVjEicKBHRhc2sYAyABKAsyGS5oZWxtci5idW5kbGUudjAuVGFza1NwZWMSOgoKc3ViX2ltYWdlcxgEIAMoCzImLmhlbG1yLmJ1bmRsZS52MC5CdW5kbGUuU3ViSW1hZ2VzRW50cnkaTAoOU3ViSW1hZ2VzRW50cnkSCwoDa2V5GAEgASgJEikKBXZhbHVlGAIgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYzoCOAEiLAoIUGxhdGZvcm0SCgoCb3MYASABKAkSFAoMYXJjaGl0ZWN0dXJlGAIgASgJInsKCUltYWdlU3BlYxIWCg5mb3JtYXRfdmVyc2lvbhgBIAEoDRIrCghwbGF0Zm9ybRgCIAEoCzIZLmhlbG1yLmJ1bmRsZS52MC5QbGF0Zm9ybRIpCgVzdGVwcxgDIAMoCzIaLmhlbG1yLmJ1bmRsZS52MC5JbWFnZVN0ZXAiiwMKCUltYWdlU3RlcBIlCgRmcm9tGAEgASgLMhUuaGVsbXIuYnVuZGxlLnYwLkZyb21IABIjCgNydW4YAiABKAsyFC5oZWxtci5idW5kbGUudjAuUnVuSAASOwoQY29weV9zb3VyY2VfZmlsZRgFIAEoCzIfLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRmlsZUgAEjkKD2NvcHlfc291cmNlX2RpchgGIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRGlySAASOQoPY29weV9mcm9tX2ltYWdlGAcgASgLMh4uaGVsbXIuYnVuZGxlLnYwLkNvcHlGcm9tSW1hZ2VIABIrCgd3b3JrZGlyGAggASgLMhguaGVsbXIuYnVuZGxlLnYwLldvcmtkaXJIABIlCgR1c2VyGAkgASgLMhUuaGVsbXIuYnVuZGxlLnYwLlVzZXJIABIjCgNlbnYYCiABKAsyFC5oZWxtci5idW5kbGUudjAuRW52SABCBgoEa2luZCITCgRGcm9tEgsKA3JlZhgBIAEoCSKJAQoDUnVuEgwKBGFyZ3YYASADKAkSOAoMY2FjaGVfbW91bnRzGAIgAygLMiIuaGVsbXIuYnVuZGxlLnYwLkNhY2hlTW91bnRCaW5kaW5nEjoKDXNlY3JldF9tb3VudHMYAyADKAsyIy5oZWxtci5idW5kbGUudjAuU2VjcmV0TW91bnRCaW5kaW5nIh0KDVNvdXJjZUZpbGVSZWYSDAoEcGF0aBgBIAEoCSIsCgxTb3VyY2VEaXJSZWYSDAoEcGF0aBgBIAEoCRIOCgZpZ25vcmUYAiADKAkiXgoOQ29weVNvdXJjZUZpbGUSCwoDZHN0GAEgASgJEi8KB3NyY19yZWYYAiABKAsyHi5oZWxtci5idW5kbGUudjAuU291cmNlRmlsZVJlZhIOCgZkaWdlc3QYAyABKAkicQoNQ29weVNvdXJjZURpchILCgNkc3QYASABKAkSLgoHc3JjX3JlZhgCIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5Tb3VyY2VEaXJSZWYSEwoLdHJlZV9kaWdlc3QYAyABKAkSDgoGaWdub3JlGAQgAygJIkUKDUNvcHlGcm9tSW1hZ2USCwoDZHN0GAEgASgJEhUKDXNyY19pbWFnZV9rZXkYAiABKAkSEAoIc3JjX3BhdGgYAyABKAkiFwoHV29ya2RpchIMCgRwYXRoGAEgASgJIhQKBFVzZXISDAoEbmFtZRgBIAEoCSIhCgNFbnYSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJIkMKEUNhY2hlTW91bnRCaW5kaW5nEgsKA2RzdBgBIAEoCRIQCghjYWNoZV9pZBgCIAEoCRIPCgdzaGFyaW5nGAMgASgJIhkKCVNlY3JldFJlZhIMCgRuYW1lGAEgASgJIlEKElNlY3JldE1vdW50QmluZGluZxILCgNkc3QYASABKAkSLgoKc2VjcmV0X3JlZhgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRSZWYitgEKC1NhbmRib3hTcGVjEgoKAmlkGAEgASgJEjsKCXdvcmtzcGFjZRgCIAEoCzIoLmhlbG1yLmJ1bmRsZS52MC5Xb3Jrc3BhY2VSdW50aW1lQmluZGluZxItCglyZXNvdXJjZXMYAyABKAsyGi5oZWxtci5idW5kbGUudjAuUmVzb3VyY2VzEi8KB25ldHdvcmsYBCABKAsyHi5oZWxtci5idW5kbGUudjAuTmV0d29ya1BvbGljeSItChdXb3Jrc3BhY2VSdW50aW1lQmluZGluZxISCgptb3VudF9wYXRoGAEgASgJIjYKCVJlc291cmNlcxILCgNjcHUYASABKA0SDgoGbWVtb3J5GAIgASgJEgwKBGRpc2sYAyABKAkiPgoNTmV0d29ya1BvbGljeRIQCghpbnRlcm5ldBgBIAEoCBINCgVhbGxvdxgCIAMoCRIMCgRkZW55GAMgAygJIk4KD1NlY3JldFBsYWNlbWVudBIMCgRuYW1lGAEgASgJEi0KCXBsYWNlbWVudBgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5QbGFjZW1lbnQinwEKCVBsYWNlbWVudBIsCgNlbnYYASABKAsyHS5oZWxtci5idW5kbGUudjAuRW52UGxhY2VtZW50SAASLgoEZmlsZRgCIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5GaWxlUGxhY2VtZW50SAASLAoDZGlyGAMgASgLMh0uaGVsbXIuYnVuZGxlLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIirgIKCFRhc2tTcGVjEgoKAmlkGAEgASgJEhIKCnNhbmRib3hfaWQYAiABKAkSEwoLbW9kdWxlX3BhdGgYAyABKAkSEwoLZXhwb3J0X25hbWUYBCABKAkSHAoUbWF4X2R1cmF0aW9uX3NlY29uZHMYBSABKA0SMQoHc2VjcmV0cxgGIAMoCzIgLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRQbGFjZW1lbnQSKQoFcXVldWUYByABKAsyGi5oZWxtci5idW5kbGUudjAuUXVldWVTcGVjEgsKA3R0bBgIIAEoCRI0CglzY2hlZHVsZXMYCSADKAsyIS5oZWxtci5idW5kbGUudjAuVGFza1NjaGVkdWxlU3BlYxIZChFyZXRyeV9wb2xpY3lfanNvbhgKIAEoCSJPCglRdWV1ZVNwZWMSDAoEbmFtZRgBIAEoCRIeChFjb25jdXJyZW5jeV9saW1pdBgCIAEoDUgAiAEBQhQKEl9jb25jdXJyZW5jeV9saW1pdCJeChBUYXNrU2NoZWR1bGVTcGVjEgoKAmlkGAEgASgJEgwKBGNyb24YAiABKAkSEAoIdGltZXpvbmUYAyABKAkSEwoGYWN0aXZlGAQgASgISACIAQFCCQoHX2FjdGl2ZUJAWj5naXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL2J1bmRsZS92MDtidW5kbGV2MGIGcHJvdG8z");
+var file_bundle = /* @__PURE__ */ fileDesc("CgxidW5kbGUucHJvdG8SD2hlbG1yLmJ1bmRsZS52MCKVAgoGQnVuZGxlEikKBWltYWdlGAEgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYxItCgdzYW5kYm94GAIgASgLMhwuaGVsbXIuYnVuZGxlLnYwLlNhbmRib3hTcGVjEicKBHRhc2sYAyABKAsyGS5oZWxtci5idW5kbGUudjAuVGFza1NwZWMSOgoKc3ViX2ltYWdlcxgEIAMoCzImLmhlbG1yLmJ1bmRsZS52MC5CdW5kbGUuU3ViSW1hZ2VzRW50cnkaTAoOU3ViSW1hZ2VzRW50cnkSCwoDa2V5GAEgASgJEikKBXZhbHVlGAIgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYzoCOAEiLAoIUGxhdGZvcm0SCgoCb3MYASABKAkSFAoMYXJjaGl0ZWN0dXJlGAIgASgJInsKCUltYWdlU3BlYxIWCg5mb3JtYXRfdmVyc2lvbhgBIAEoDRIrCghwbGF0Zm9ybRgCIAEoCzIZLmhlbG1yLmJ1bmRsZS52MC5QbGF0Zm9ybRIpCgVzdGVwcxgDIAMoCzIaLmhlbG1yLmJ1bmRsZS52MC5JbWFnZVN0ZXAiiwMKCUltYWdlU3RlcBIlCgRmcm9tGAEgASgLMhUuaGVsbXIuYnVuZGxlLnYwLkZyb21IABIjCgNydW4YAiABKAsyFC5oZWxtci5idW5kbGUudjAuUnVuSAASOwoQY29weV9zb3VyY2VfZmlsZRgFIAEoCzIfLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRmlsZUgAEjkKD2NvcHlfc291cmNlX2RpchgGIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRGlySAASOQoPY29weV9mcm9tX2ltYWdlGAcgASgLMh4uaGVsbXIuYnVuZGxlLnYwLkNvcHlGcm9tSW1hZ2VIABIrCgd3b3JrZGlyGAggASgLMhguaGVsbXIuYnVuZGxlLnYwLldvcmtkaXJIABIlCgR1c2VyGAkgASgLMhUuaGVsbXIuYnVuZGxlLnYwLlVzZXJIABIjCgNlbnYYCiABKAsyFC5oZWxtci5idW5kbGUudjAuRW52SABCBgoEa2luZCITCgRGcm9tEgsKA3JlZhgBIAEoCSKJAQoDUnVuEgwKBGFyZ3YYASADKAkSOAoMY2FjaGVfbW91bnRzGAIgAygLMiIuaGVsbXIuYnVuZGxlLnYwLkNhY2hlTW91bnRCaW5kaW5nEjoKDXNlY3JldF9tb3VudHMYAyADKAsyIy5oZWxtci5idW5kbGUudjAuU2VjcmV0TW91bnRCaW5kaW5nIh0KDVNvdXJjZUZpbGVSZWYSDAoEcGF0aBgBIAEoCSIsCgxTb3VyY2VEaXJSZWYSDAoEcGF0aBgBIAEoCRIOCgZpZ25vcmUYAiADKAkiXgoOQ29weVNvdXJjZUZpbGUSCwoDZHN0GAEgASgJEi8KB3NyY19yZWYYAiABKAsyHi5oZWxtci5idW5kbGUudjAuU291cmNlRmlsZVJlZhIOCgZkaWdlc3QYAyABKAkicQoNQ29weVNvdXJjZURpchILCgNkc3QYASABKAkSLgoHc3JjX3JlZhgCIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5Tb3VyY2VEaXJSZWYSEwoLdHJlZV9kaWdlc3QYAyABKAkSDgoGaWdub3JlGAQgAygJIkUKDUNvcHlGcm9tSW1hZ2USCwoDZHN0GAEgASgJEhUKDXNyY19pbWFnZV9rZXkYAiABKAkSEAoIc3JjX3BhdGgYAyABKAkiFwoHV29ya2RpchIMCgRwYXRoGAEgASgJIhQKBFVzZXISDAoEbmFtZRgBIAEoCSIhCgNFbnYSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJIkMKEUNhY2hlTW91bnRCaW5kaW5nEgsKA2RzdBgBIAEoCRIQCghjYWNoZV9pZBgCIAEoCRIPCgdzaGFyaW5nGAMgASgJIhkKCVNlY3JldFJlZhIMCgRuYW1lGAEgASgJIlEKElNlY3JldE1vdW50QmluZGluZxILCgNkc3QYASABKAkSLgoKc2VjcmV0X3JlZhgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRSZWYitgEKC1NhbmRib3hTcGVjEgoKAmlkGAEgASgJEjsKCXdvcmtzcGFjZRgCIAEoCzIoLmhlbG1yLmJ1bmRsZS52MC5Xb3Jrc3BhY2VSdW50aW1lQmluZGluZxItCglyZXNvdXJjZXMYAyABKAsyGi5oZWxtci5idW5kbGUudjAuUmVzb3VyY2VzEi8KB25ldHdvcmsYBCABKAsyHi5oZWxtci5idW5kbGUudjAuTmV0d29ya1BvbGljeSItChdXb3Jrc3BhY2VSdW50aW1lQmluZGluZxISCgptb3VudF9wYXRoGAEgASgJIjYKCVJlc291cmNlcxILCgNjcHUYASABKA0SDgoGbWVtb3J5GAIgASgJEgwKBGRpc2sYAyABKAkiPgoNTmV0d29ya1BvbGljeRIQCghpbnRlcm5ldBgBIAEoCBINCgVhbGxvdxgCIAMoCRIMCgRkZW55GAMgAygJIk4KD1NlY3JldFBsYWNlbWVudBIMCgRuYW1lGAEgASgJEi0KCXBsYWNlbWVudBgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5QbGFjZW1lbnQinwEKCVBsYWNlbWVudBIsCgNlbnYYASABKAsyHS5oZWxtci5idW5kbGUudjAuRW52UGxhY2VtZW50SAASLgoEZmlsZRgCIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5GaWxlUGxhY2VtZW50SAASLAoDZGlyGAMgASgLMh0uaGVsbXIuYnVuZGxlLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIirgIKCFRhc2tTcGVjEgoKAmlkGAEgASgJEhIKCnNhbmRib3hfaWQYAiABKAkSEwoLbW9kdWxlX3BhdGgYAyABKAkSEwoLZXhwb3J0X25hbWUYBCABKAkSHAoUbWF4X2R1cmF0aW9uX3NlY29uZHMYBSABKA0SMQoHc2VjcmV0cxgGIAMoCzIgLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRQbGFjZW1lbnQSKQoFcXVldWUYByABKAsyGi5oZWxtci5idW5kbGUudjAuUXVldWVTcGVjEgsKA3R0bBgIIAEoCRI0CglzY2hlZHVsZXMYCSADKAsyIS5oZWxtci5idW5kbGUudjAuVGFza1NjaGVkdWxlU3BlYxIZChFyZXRyeV9wb2xpY3lfanNvbhgKIAEoCSIZCglRdWV1ZVNwZWMSDAoEbmFtZRgBIAEoCSJeChBUYXNrU2NoZWR1bGVTcGVjEgoKAmlkGAEgASgJEgwKBGNyb24YAiABKAkSEAoIdGltZXpvbmUYAyABKAkSEwoGYWN0aXZlGAQgASgISACIAQFCCQoHX2FjdGl2ZUJAWj5naXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL2J1bmRsZS92MDtidW5kbGV2MGIGcHJvdG8z");
 var BundleSchema = /* @__PURE__ */ messageDesc(file_bundle, 0);
 var PlatformSchema = /* @__PURE__ */ messageDesc(file_bundle, 1);
 var ImageSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 2);
@@ -3755,7 +3755,7 @@ __export(exports_run_pb, {
   ActiveStreamReadResultSchema: () => ActiveStreamReadResultSchema,
   ActiveStreamReadRequestedSchema: () => ActiveStreamReadRequestedSchema
 });
-var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCJ7ChBSdW5UYXNrV29ya3NwYWNlEgwKBHBhdGgYASABKAkSFAoMcHJvamVjdF9wYXRoGAIgASgJEjEKCGFydGlmYWN0GAMgASgLMh8uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFydGlmYWN0EhAKCHdyaXRhYmxlGAUgASgIInIKEVdvcmtzcGFjZUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJEhAKCGVuY29kaW5nGAMgASgJEhIKCnNpemVfYnl0ZXMYBCABKAQSEwoLZW50cnlfY291bnQYBSABKA0i/wIKDlJ1blRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSEwoLbW9kdWxlX3BhdGgYAiABKAkSCwoDY3dkGAMgASgJEisKB3NlY3JldHMYBCADKAsyGi5oZWxtci5ydW4udjAuU2VjcmV0SW5qZWN0Eg4KBnJ1bl9pZBgFIAEoCRIUCgxwYXlsb2FkX2pzb24YBiABKAkSMQoJd29ya3NwYWNlGAcgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2USKQoFdHJhY2UYCCABKAsyGi5oZWxtci5ydW4udjAuVHJhY2VDb250ZXh0EhIKCmF0dGVtcHRfaWQYCSABKAkSFgoOYXR0ZW1wdF9udW1iZXIYCiABKA0SFAoMcnVuX2xlYXNlX2lkGAsgASgJEhgKEHNuYXBzaG90X3ZlcnNpb24YDCABKAQSFwoPdGFza19zZXNzaW9uX2lkGA0gASgJEhQKDHJldHJ5X3JlYXNvbhgOIAEoCSJGCgxUcmFjZUNvbnRleHQSEAoIdHJhY2VfaWQYASABKAkSDwoHc3Bhbl9pZBgCIAEoCRITCgt0cmFjZXBhcmVudBgDIAEoCSJdCgxTZWNyZXRJbmplY3QSDAoEbmFtZRgBIAEoCRIqCglwbGFjZW1lbnQYAiABKAsyFy5oZWxtci5ydW4udjAuUGxhY2VtZW50EhMKC3ZhbHVlX2J5dGVzGAMgASgMIpYBCglQbGFjZW1lbnQSKQoDZW52GAEgASgLMhouaGVsbXIucnVuLnYwLkVudlBsYWNlbWVudEgAEisKBGZpbGUYAiABKAsyGy5oZWxtci5ydW4udjAuRmlsZVBsYWNlbWVudEgAEikKA2RpchgDIAEoCzIaLmhlbG1yLnJ1bi52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIpgECghSdW5FdmVudBIWCgxzdGRvdXRfY2h1bmsYASABKAxIABIWCgxzdGRlcnJfY2h1bmsYAiABKAxIABITCglsb2dfZW50cnkYAyABKAlIABIvCgt0YXNrX3Jlc3VsdBgEIAEoCzIYLmhlbG1yLnJ1bi52MC5UYXNrUmVzdWx0SAASPAoScnVuX3dhaXRfcmVxdWVzdGVkGAUgASgLMh4uaGVsbXIucnVuLnYwLlJ1bldhaXRSZXF1ZXN0ZWRIABI5ChBtZXRhZGF0YV91cGRhdGVkGAcgASgLMh0uaGVsbXIucnVuLnYwLk1ldGFkYXRhVXBkYXRlZEgAEkQKFnRva2VuX2NyZWF0ZV9yZXF1ZXN0ZWQYCCABKAsyIi5oZWxtci5ydW4udjAuVG9rZW5DcmVhdGVSZXF1ZXN0ZWRIABJEChZvdXRwdXRfc3RyZWFtX2FwcGVuZGVkGAkgASgLMiIuaGVsbXIucnVuLnYwLk91dHB1dFN0cmVhbUFwcGVuZGVkSAASTwocYWN0aXZlX3N0cmVhbV9yZWFkX3JlcXVlc3RlZBgKIAEoCzInLmhlbG1yLnJ1bi52MC5BY3RpdmVTdHJlYW1SZWFkUmVxdWVzdGVkSAASNwoPcmVzdW1lX2NvbnN1bWVkGAYgASgLMhwuaGVsbXIucnVuLnYwLlJlc3VtZUNvbnN1bWVkSABCBwoFZXZlbnQirgEKClRhc2tSZXN1bHQSEQoJZXhpdF9jb2RlGAEgASgFEhoKDWVycm9yX21lc3NhZ2UYAiABKAlIAIgBARIYCgtvdXRwdXRfanNvbhgDIAEoCUgBiAEBEisKBWVycm9yGAQgASgLMhcuaGVsbXIucnVuLnYwLlRhc2tFcnJvckgCiAEBQhAKDl9lcnJvcl9tZXNzYWdlQg4KDF9vdXRwdXRfanNvbkIICgZfZXJyb3IiYQoJVGFza0Vycm9yEgwKBHR5cGUYASABKAkSDAoEY29kZRgCIAEoCRIPCgdtZXNzYWdlGAMgASgJEhEKCXJldHJ5YWJsZRgEIAEoCBIUCgxkZXRhaWxzX2pzb24YBSABKAki4wEKEFJ1bldhaXRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDAoEa2luZBgCIAEoCRITCgtwYXJhbXNfanNvbhgDIAEoCRIaCg1tZXRhZGF0YV9qc29uGAQgASgJSACIAQESFAoHdGltZW91dBgFIAEoDUgBiAEBEgwKBHRhZ3MYBiADKAkSGQoMaWRsZV90aW1lb3V0GAkgASgNSAKIAQFCEAoOX21ldGFkYXRhX2pzb25CCgoIX3RpbWVvdXRCDwoNX2lkbGVfdGltZW91dEoECAcQCEoECAgQCSKyAQoUVG9rZW5DcmVhdGVSZXF1ZXN0ZWQSFwoKdGltZW91dF9hdBgBIAEoCUgAiAEBEh8KEnRpbWVvdXRfaW5fc2Vjb25kcxgCIAEoDUgBiAEBEgwKBHRhZ3MYBCADKAkSGgoNbWV0YWRhdGFfanNvbhgFIAEoCUgCiAEBQg0KC190aW1lb3V0X2F0QhUKE190aW1lb3V0X2luX3NlY29uZHNCEAoOX21ldGFkYXRhX2pzb24ioQIKEVRva2VuQ3JlYXRlUmVzdWx0EgoKAmlkGAEgASgJEhQKDGNhbGxiYWNrX3VybBgCIAEoCRIgChNwdWJsaWNfYWNjZXNzX3Rva2VuGAMgASgJSACIAQESFwoKdGltZW91dF9hdBgEIAEoCUgBiAEBEhMKBnN0YXR1cxgFIAEoCUgCiAEBEgwKBHRhZ3MYBiADKAkSGgoNbWV0YWRhdGFfanNvbhgHIAEoCUgDiAEBEhoKDWVycm9yX21lc3NhZ2UYCSABKAlIBIgBAUIWChRfcHVibGljX2FjY2Vzc190b2tlbkINCgtfdGltZW91dF9hdEIJCgdfc3RhdHVzQhAKDl9tZXRhZGF0YV9qc29uQhAKDl9lcnJvcl9tZXNzYWdlIsoBChlBY3RpdmVTdHJlYW1SZWFkUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEg4KBnN0cmVhbRgCIAEoCRIWCg5hZnRlcl9zZXF1ZW5jZRgDIAEoAxIiChVyZWNvcmRfY29ycmVsYXRpb25faWQYBCABKAlIAIgBARIUCgd0aW1lb3V0GAUgASgNSAGIAQESDQoFYmxvY2sYBiABKAhCGAoWX3JlY29yZF9jb3JyZWxhdGlvbl9pZEIKCghfdGltZW91dCKsAQoMU3RyZWFtUmVjb3JkEgoKAmlkGAEgASgJEhEKCXN0cmVhbV9pZBgCIAEoCRIQCghzZXF1ZW5jZRgDIAEoAxIRCglkYXRhX2pzb24YBCABKAkSGwoOY29ycmVsYXRpb25faWQYBSABKAlIAIgBARIUCgxjb250ZW50X3R5cGUYBiABKAkSEgoKY3JlYXRlZF9hdBgHIAEoCUIRCg9fY29ycmVsYXRpb25faWQirQEKFkFjdGl2ZVN0cmVhbVJlYWRSZXN1bHQSFgoOY29ycmVsYXRpb25faWQYASABKAkSLwoGcmVjb3JkGAIgASgLMhouaGVsbXIucnVuLnYwLlN0cmVhbVJlY29yZEgAiAEBEhEKCXRpbWVkX291dBgDIAEoCBIaCg1lcnJvcl9tZXNzYWdlGAQgASgJSAGIAQFCCQoHX3JlY29yZEIQCg5fZXJyb3JfbWVzc2FnZSJfChZDaGVja3BvaW50UGF1c2VSZXF1ZXN0EhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGQoRY2FwdHVyZV93b3Jrc3BhY2UYAyABKAgiQgoUQ2hlY2twb2ludFBhdXNlUmVhZHkSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCSJQCgxSZXN1bWVBdHRhY2gSFQoNY2hlY2twb2ludF9pZBgBIAEoCRITCgtydW5fd2FpdF9pZBgCIAEoCRIUCgxydW5fbGVhc2VfaWQYAyABKAkiZAoOUmVzdW1lRGVjaXNpb24SEwoLcnVuX3dhaXRfaWQYASABKAkSDAoEa2luZBgCIAEoCRIRCglkYXRhX2pzb24YAyABKAkSHAoUcmVxdWlyZV9jb25zdW1lZF9hY2sYBCABKAgiIAoJUmVzdW1lQWNrEhMKC3J1bl93YWl0X2lkGAEgASgJIiUKDlJlc3VtZUNvbnN1bWVkEhMKC3J1bl93YWl0X2lkGAEgASgJImgKFE91dHB1dFN0cmVhbUFwcGVuZGVkEg4KBnN0cmVhbRgBIAEoCRIUCgxwYXlsb2FkX2pzb24YAiABKAkSGQoMY29udGVudF90eXBlGAMgASgJSACIAQFCDwoNX2NvbnRlbnRfdHlwZSKuAQoPTWV0YWRhdGFVcGRhdGVkEhEKCW9wZXJhdGlvbhgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIXCgp2YWx1ZV9qc29uGAMgASgJSAGIAQESFwoKcGF0Y2hfanNvbhgEIAEoCUgCiAEBEhMKBmFtb3VudBgFIAEoAUgDiAEBQgYKBF9rZXlCDQoLX3ZhbHVlX2pzb25CDQoLX3BhdGNoX2pzb25CCQoHX2Ftb3VudEI6WjhnaXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL3J1bi92MDtydW52MGIGcHJvdG8z");
+var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCJ7ChBSdW5UYXNrV29ya3NwYWNlEgwKBHBhdGgYASABKAkSFAoMcHJvamVjdF9wYXRoGAIgASgJEjEKCGFydGlmYWN0GAMgASgLMh8uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFydGlmYWN0EhAKCHdyaXRhYmxlGAUgASgIInIKEVdvcmtzcGFjZUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJEhAKCGVuY29kaW5nGAMgASgJEhIKCnNpemVfYnl0ZXMYBCABKAQSEwoLZW50cnlfY291bnQYBSABKA0i+gIKDlJ1blRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSEwoLbW9kdWxlX3BhdGgYAiABKAkSCwoDY3dkGAMgASgJEisKB3NlY3JldHMYBCADKAsyGi5oZWxtci5ydW4udjAuU2VjcmV0SW5qZWN0Eg4KBnJ1bl9pZBgFIAEoCRIUCgxwYXlsb2FkX2pzb24YBiABKAkSMQoJd29ya3NwYWNlGAcgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2USKQoFdHJhY2UYCCABKAsyGi5oZWxtci5ydW4udjAuVHJhY2VDb250ZXh0EhIKCmF0dGVtcHRfaWQYCSABKAkSFgoOYXR0ZW1wdF9udW1iZXIYCiABKA0SFAoMcnVuX2xlYXNlX2lkGAsgASgJEhgKEHNuYXBzaG90X3ZlcnNpb24YDCABKAQSEgoKc2Vzc2lvbl9pZBgNIAEoCRIUCgxyZXRyeV9yZWFzb24YDiABKAkiRgoMVHJhY2VDb250ZXh0EhAKCHRyYWNlX2lkGAEgASgJEg8KB3NwYW5faWQYAiABKAkSEwoLdHJhY2VwYXJlbnQYAyABKAkiXQoMU2VjcmV0SW5qZWN0EgwKBG5hbWUYASABKAkSKgoJcGxhY2VtZW50GAIgASgLMhcuaGVsbXIucnVuLnYwLlBsYWNlbWVudBITCgt2YWx1ZV9ieXRlcxgDIAEoDCKWAQoJUGxhY2VtZW50EikKA2VudhgBIAEoCzIaLmhlbG1yLnJ1bi52MC5FbnZQbGFjZW1lbnRIABIrCgRmaWxlGAIgASgLMhsuaGVsbXIucnVuLnYwLkZpbGVQbGFjZW1lbnRIABIpCgNkaXIYAyABKAsyGi5oZWxtci5ydW4udjAuRGlyUGxhY2VtZW50SABCBgoEa2luZCIcCgxFbnZQbGFjZW1lbnQSDAoEbmFtZRgBIAEoCSJXCg1GaWxlUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIlYKDERpclBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciKYBAoIUnVuRXZlbnQSFgoMc3Rkb3V0X2NodW5rGAEgASgMSAASFgoMc3RkZXJyX2NodW5rGAIgASgMSAASEwoJbG9nX2VudHJ5GAMgASgJSAASLwoLdGFza19yZXN1bHQYBCABKAsyGC5oZWxtci5ydW4udjAuVGFza1Jlc3VsdEgAEjwKEnJ1bl93YWl0X3JlcXVlc3RlZBgFIAEoCzIeLmhlbG1yLnJ1bi52MC5SdW5XYWl0UmVxdWVzdGVkSAASOQoQbWV0YWRhdGFfdXBkYXRlZBgHIAEoCzIdLmhlbG1yLnJ1bi52MC5NZXRhZGF0YVVwZGF0ZWRIABJEChZ0b2tlbl9jcmVhdGVfcmVxdWVzdGVkGAggASgLMiIuaGVsbXIucnVuLnYwLlRva2VuQ3JlYXRlUmVxdWVzdGVkSAASRAoWb3V0cHV0X3N0cmVhbV9hcHBlbmRlZBgJIAEoCzIiLmhlbG1yLnJ1bi52MC5PdXRwdXRTdHJlYW1BcHBlbmRlZEgAEk8KHGFjdGl2ZV9zdHJlYW1fcmVhZF9yZXF1ZXN0ZWQYCiABKAsyJy5oZWxtci5ydW4udjAuQWN0aXZlU3RyZWFtUmVhZFJlcXVlc3RlZEgAEjcKD3Jlc3VtZV9jb25zdW1lZBgGIAEoCzIcLmhlbG1yLnJ1bi52MC5SZXN1bWVDb25zdW1lZEgAQgcKBWV2ZW50Iq4BCgpUYXNrUmVzdWx0EhEKCWV4aXRfY29kZRgBIAEoBRIaCg1lcnJvcl9tZXNzYWdlGAIgASgJSACIAQESGAoLb3V0cHV0X2pzb24YAyABKAlIAYgBARIrCgVlcnJvchgEIAEoCzIXLmhlbG1yLnJ1bi52MC5UYXNrRXJyb3JIAogBAUIQCg5fZXJyb3JfbWVzc2FnZUIOCgxfb3V0cHV0X2pzb25CCAoGX2Vycm9yImEKCVRhc2tFcnJvchIMCgR0eXBlGAEgASgJEgwKBGNvZGUYAiABKAkSDwoHbWVzc2FnZRgDIAEoCRIRCglyZXRyeWFibGUYBCABKAgSFAoMZGV0YWlsc19qc29uGAUgASgJIuMBChBSdW5XYWl0UmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEwoLcGFyYW1zX2pzb24YAyABKAkSGgoNbWV0YWRhdGFfanNvbhgEIAEoCUgAiAEBEhQKB3RpbWVvdXQYBSABKA1IAYgBARIMCgR0YWdzGAYgAygJEhkKDGlkbGVfdGltZW91dBgJIAEoDUgCiAEBQhAKDl9tZXRhZGF0YV9qc29uQgoKCF90aW1lb3V0Qg8KDV9pZGxlX3RpbWVvdXRKBAgHEAhKBAgIEAkisgEKFFRva2VuQ3JlYXRlUmVxdWVzdGVkEhcKCnRpbWVvdXRfYXQYASABKAlIAIgBARIfChJ0aW1lb3V0X2luX3NlY29uZHMYAiABKA1IAYgBARIMCgR0YWdzGAQgAygJEhoKDW1ldGFkYXRhX2pzb24YBSABKAlIAogBAUINCgtfdGltZW91dF9hdEIVChNfdGltZW91dF9pbl9zZWNvbmRzQhAKDl9tZXRhZGF0YV9qc29uIqECChFUb2tlbkNyZWF0ZVJlc3VsdBIKCgJpZBgBIAEoCRIUCgxjYWxsYmFja191cmwYAiABKAkSIAoTcHVibGljX2FjY2Vzc190b2tlbhgDIAEoCUgAiAEBEhcKCnRpbWVvdXRfYXQYBCABKAlIAYgBARITCgZzdGF0dXMYBSABKAlIAogBARIMCgR0YWdzGAYgAygJEhoKDW1ldGFkYXRhX2pzb24YByABKAlIA4gBARIaCg1lcnJvcl9tZXNzYWdlGAkgASgJSASIAQFCFgoUX3B1YmxpY19hY2Nlc3NfdG9rZW5CDQoLX3RpbWVvdXRfYXRCCQoHX3N0YXR1c0IQCg5fbWV0YWRhdGFfanNvbkIQCg5fZXJyb3JfbWVzc2FnZSLKAQoZQWN0aXZlU3RyZWFtUmVhZFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIOCgZzdHJlYW0YAiABKAkSFgoOYWZ0ZXJfc2VxdWVuY2UYAyABKAMSIgoVcmVjb3JkX2NvcnJlbGF0aW9uX2lkGAQgASgJSACIAQESFAoHdGltZW91dBgFIAEoDUgBiAEBEg0KBWJsb2NrGAYgASgIQhgKFl9yZWNvcmRfY29ycmVsYXRpb25faWRCCgoIX3RpbWVvdXQirAEKDFN0cmVhbVJlY29yZBIKCgJpZBgBIAEoCRIRCglzdHJlYW1faWQYAiABKAkSEAoIc2VxdWVuY2UYAyABKAMSEQoJZGF0YV9qc29uGAQgASgJEhsKDmNvcnJlbGF0aW9uX2lkGAUgASgJSACIAQESFAoMY29udGVudF90eXBlGAYgASgJEhIKCmNyZWF0ZWRfYXQYByABKAlCEQoPX2NvcnJlbGF0aW9uX2lkIq0BChZBY3RpdmVTdHJlYW1SZWFkUmVzdWx0EhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEi8KBnJlY29yZBgCIAEoCzIaLmhlbG1yLnJ1bi52MC5TdHJlYW1SZWNvcmRIAIgBARIRCgl0aW1lZF9vdXQYAyABKAgSGgoNZXJyb3JfbWVzc2FnZRgEIAEoCUgBiAEBQgkKB19yZWNvcmRCEAoOX2Vycm9yX21lc3NhZ2UiXwoWQ2hlY2twb2ludFBhdXNlUmVxdWVzdBITCgtydW5fd2FpdF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJEhkKEWNhcHR1cmVfd29ya3NwYWNlGAMgASgIIkIKFENoZWNrcG9pbnRQYXVzZVJlYWR5EhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkiUAoMUmVzdW1lQXR0YWNoEhUKDWNoZWNrcG9pbnRfaWQYASABKAkSEwoLcnVuX3dhaXRfaWQYAiABKAkSFAoMcnVuX2xlYXNlX2lkGAMgASgJImQKDlJlc3VtZURlY2lzaW9uEhMKC3J1bl93YWl0X2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEQoJZGF0YV9qc29uGAMgASgJEhwKFHJlcXVpcmVfY29uc3VtZWRfYWNrGAQgASgIIiAKCVJlc3VtZUFjaxITCgtydW5fd2FpdF9pZBgBIAEoCSIlCg5SZXN1bWVDb25zdW1lZBITCgtydW5fd2FpdF9pZBgBIAEoCSJoChRPdXRwdXRTdHJlYW1BcHBlbmRlZBIOCgZzdHJlYW0YASABKAkSFAoMcGF5bG9hZF9qc29uGAIgASgJEhkKDGNvbnRlbnRfdHlwZRgDIAEoCUgAiAEBQg8KDV9jb250ZW50X3R5cGUirgEKD01ldGFkYXRhVXBkYXRlZBIRCglvcGVyYXRpb24YASABKAkSEAoDa2V5GAIgASgJSACIAQESFwoKdmFsdWVfanNvbhgDIAEoCUgBiAEBEhcKCnBhdGNoX2pzb24YBCABKAlIAogBARITCgZhbW91bnQYBSABKAFIA4gBAUIGCgRfa2V5Qg0KC192YWx1ZV9qc29uQg0KC19wYXRjaF9qc29uQgkKB19hbW91bnRCOlo4Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9ydW4vdjA7cnVudjBiBnByb3RvMw");
 var RunTaskWorkspaceSchema = /* @__PURE__ */ messageDesc(file_run, 0);
 var WorkspaceArtifactSchema = /* @__PURE__ */ messageDesc(file_run, 1);
 var RunTaskRequestSchema = /* @__PURE__ */ messageDesc(file_run, 2);
@@ -4084,6 +4084,7 @@ var imageBuilderBrand = Symbol.for("helmr.sdk.ImageBuilder");
 var sandboxBuilderBrand = Symbol.for("helmr.sdk.SandboxBuilder");
 var sourceFileRefBrand = Symbol.for("helmr.sdk.SourceFileRef");
 var sourceDirRefBrand = Symbol.for("helmr.sdk.SourceDirRef");
+var queueDefinitionBrand = Symbol.for("helmr.sdk.QueueDefinition");
 function markScheduledTask(config, schedule) {
   return markTaskInternal(config, schedule);
 }
@@ -4108,17 +4109,26 @@ function markTaskInternal(config, schedule) {
   return config;
 }
 function validateRetryPolicy(value, label = "retry") {
-  if (value === undefined || value === false) {
+  if (value === undefined) {
     return;
   }
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label} must be false or a retry policy object`);
+    throw new Error(`${label} must be a retry policy object`);
   }
   const record = value;
   for (const key of Object.keys(record)) {
-    if (key !== "maxAttempts" && key !== "backoff") {
+    if (key !== "enabled" && key !== "maxAttempts" && key !== "backoff") {
       throw new Error(`${label}.${key} is not supported`);
     }
+  }
+  if (record["enabled"] === false) {
+    if (record["maxAttempts"] !== undefined || record["backoff"] !== undefined) {
+      throw new Error(`${label} disabled policy must not include retry settings`);
+    }
+    return;
+  }
+  if (record["enabled"] !== undefined && record["enabled"] !== true) {
+    throw new Error(`${label}.enabled must be true or false`);
   }
   if (typeof record["maxAttempts"] !== "number" || !Number.isInteger(record["maxAttempts"]) || record["maxAttempts"] < 1 || record["maxAttempts"] > 10) {
     throw new Error(`${label}.maxAttempts must be an integer between 1 and 10`);
@@ -4170,16 +4180,21 @@ function validateTaskQueue(taskId, value) {
   if (value === undefined) {
     return;
   }
-  if (value.name !== undefined) {
-    validateQueueName(value.name);
+  if (typeof value === "string") {
+    validateQueueName(value);
+    return;
   }
+  if (!isQueueDefinition(value)) {
+    throw new Error(`task ${JSON.stringify(taskId)} queue must use queue(...) or a queue id string`);
+  }
+  validateQueueName(value.id);
   validateOptionalQueueConcurrencyLimit(value.concurrencyLimit);
-  if (value.name === undefined && value.concurrencyLimit === undefined) {
-    throw new Error(`task ${JSON.stringify(taskId)} queue must include name or concurrencyLimit`);
-  }
 }
 function defaultTaskQueueName(taskId) {
   return `task/${taskId}`;
+}
+function isQueueDefinition(value) {
+  return hasBrand(value, queueDefinitionBrand);
 }
 function validateOptionalTTL(value, label = "ttl") {
   if (value === undefined) {
@@ -4253,6 +4268,7 @@ function isTaskDefinition(value) {
   return hasBrand(value, taskBrand);
 }
 var streamDefinitions = [];
+var queueDefinitions = [];
 var streamDefinitionContext;
 function registerStreamDefinition(value) {
   const originFile = streamDefinitionContext;
@@ -4278,6 +4294,11 @@ function readStreamDefinitions() {
     return byDirection === 0 ? left.id.localeCompare(right.id) : byDirection;
   });
   return streams;
+}
+function readQueueDefinitions() {
+  const queues = [...queueDefinitions];
+  queues.sort((left, right) => left.id.localeCompare(right.id));
+  return queues;
 }
 function isConfigDefinition(value) {
   return hasBrand(value, configBrand);
@@ -4525,8 +4546,8 @@ class HelmrClient {
       return await this.#openSession(sessionId(idOrHandle)).retrieve(opts);
     },
     list: async (opts = {}) => {
-      const response = await this.#json(`${taskSessionCollectionPath(opts)}${taskSessionListQuery(opts)}`, requestSignal(opts.signal));
-      return response.sessions.map(taskSessionFromResponse);
+      const response = await this.#json(`${sessionCollectionPath(opts)}${sessionListQuery(opts)}`, requestSignal(opts.signal));
+      return response.sessions.map(sessionFromResponse);
     }
   };
   workspaces = {
@@ -4954,37 +4975,37 @@ class HelmrClient {
     return {
       id,
       retrieve: async (opts = {}) => {
-        const response = await this.#json(taskSessionResourcePath(id, opts, ""), requestSignal(opts.signal));
-        return taskSessionFromResponse(response);
+        const response = await this.#json(sessionResourcePath(id, opts, ""), requestSignal(opts.signal));
+        return sessionFromResponse(response);
       },
       close: async (opts = {}) => {
-        const response = await this.#json(taskSessionResourcePath(id, opts, "/close"), {
+        const response = await this.#json(sessionResourcePath(id, opts, "/close"), {
           method: "POST",
           body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
           headers: { "content-type": "application/json" },
           ...requestSignal(opts.signal)
         });
-        return taskSessionFromResponse(response);
+        return sessionFromResponse(response);
       },
       cancel: async (opts = {}) => {
-        const response = await this.#json(taskSessionResourcePath(id, opts, "/cancel"), {
+        const response = await this.#json(sessionResourcePath(id, opts, "/cancel"), {
           method: "POST",
           body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
           headers: { "content-type": "application/json" },
           ...requestSignal(opts.signal)
         });
-        return taskSessionFromResponse(response);
+        return sessionFromResponse(response);
       },
       runs: async (opts = {}) => {
-        const response = await this.#json(taskSessionResourcePath(id, opts, "/runs"), requestSignal(opts.signal));
-        return response.runs.map(taskSessionRunFromResponse);
+        const response = await this.#json(sessionResourcePath(id, opts, "/runs"), requestSignal(opts.signal));
+        return response.runs.map(sessionRunFromResponse);
       },
       input: (target) => {
         const stream = streamTargetName(target);
         return {
           id: stream,
           send: async (data, opts = {}) => {
-            const path = sessionPublicAccessPath(id, stream, "input", opts) ?? taskSessionResourcePath(id, opts, `/inputs/${encodeURIComponent(stream)}`);
+            const path = sessionPublicAccessPath(id, stream, "input", opts) ?? sessionResourcePath(id, opts, `/inputs/${encodeURIComponent(stream)}`);
             const response = await this.#json(path, {
               method: "POST",
               body: JSON.stringify(streamInputSendBody(data, opts)),
@@ -5010,7 +5031,7 @@ class HelmrClient {
         return {
           id: stream,
           append: async (data, opts = {}) => {
-            const response = await this.#json(taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
+            const response = await this.#json(sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
               method: "POST",
               body: JSON.stringify(streamAppendBody(data, opts)),
               headers: { "content-type": "application/json" },
@@ -5020,7 +5041,7 @@ class HelmrClient {
           },
           pipe: async (source, opts = {}) => {
             for await (const item of source) {
-              const response = await this.#json(taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
+              const response = await this.#json(sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
                 method: "POST",
                 body: JSON.stringify(streamAppendBody(item, opts)),
                 headers: { "content-type": "application/json" },
@@ -5031,7 +5052,7 @@ class HelmrClient {
           },
           writer: (opts = {}) => ({
             write: async (data) => {
-              const response = await this.#json(taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
+              const response = await this.#json(sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`), {
                 method: "POST",
                 body: JSON.stringify(streamAppendBody(data, opts)),
                 headers: { "content-type": "application/json" },
@@ -5042,7 +5063,7 @@ class HelmrClient {
             close: async () => {}
           }),
           read: async (opts = {}) => {
-            const path = sessionPublicAccessPath(id, stream, "output", opts) ?? taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}/read`);
+            const path = sessionPublicAccessPath(id, stream, "output", opts) ?? sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}/read`);
             const response = await this.#json(`${path}${sessionStreamQuery(opts)}`, opts.publicAccessToken === undefined ? requestSignal(opts.signal) : {
               headers: { authorization: `Bearer ${opts.publicAccessToken}` },
               ...requestSignal(opts.signal)
@@ -5057,7 +5078,7 @@ class HelmrClient {
     };
   }
   async#listSessionStreamRecords(sessionID, stream, direction, opts) {
-    const response = await this.#json(`${taskSessionResourcePath(sessionID, opts, `/${direction === "input" ? "inputs" : "outputs"}/${encodeURIComponent(stream)}`)}${sessionStreamQuery(opts)}`, requestSignal(opts.signal));
+    const response = await this.#json(`${sessionResourcePath(sessionID, opts, `/${direction === "input" ? "inputs" : "outputs"}/${encodeURIComponent(stream)}`)}${sessionStreamQuery(opts)}`, requestSignal(opts.signal));
     return response.records.map(streamRecordFromResponse);
   }
   runs = {
@@ -5410,20 +5431,20 @@ function runResponseToSnapshot(response) {
 }
 function sessionStartFromResponse(response) {
   return {
-    session: taskSessionFromResponse(response.session),
+    session: sessionFromResponse(response.session),
     run: runHandle(response.run.id, response.run.task_id),
     isCached: response.is_cached ?? false
   };
 }
 function sessionStartAndWaitFromResponse(response) {
   return {
-    session: taskSessionFromResponse(response.session),
+    session: sessionFromResponse(response.session),
     run: runResponseToSnapshot(response.run),
     isCached: response.is_cached ?? false,
     timedOut: response.timed_out ?? false
   };
 }
-function taskSessionFromResponse(response) {
+function sessionFromResponse(response) {
   return {
     id: response.id,
     projectId: response.project_id,
@@ -5446,7 +5467,7 @@ function taskSessionFromResponse(response) {
     updatedAt: response.updated_at
   };
 }
-function taskSessionRunFromResponse(response) {
+function sessionRunFromResponse(response) {
   return {
     id: response.id,
     runId: response.run_id,
@@ -5521,7 +5542,7 @@ function streamAppendBody(data, opts) {
     ...opts.contentType === undefined ? {} : { content_type: opts.contentType }
   };
 }
-function taskSessionListQuery(opts) {
+function sessionListQuery(opts) {
   const query = new URLSearchParams;
   if (opts.status !== undefined)
     query.set("status", opts.status);
@@ -5531,7 +5552,7 @@ function taskSessionListQuery(opts) {
     query.set("limit", String(opts.limit));
   return query.size === 0 ? "" : `?${query}`;
 }
-function taskSessionCollectionPath(opts) {
+function sessionCollectionPath(opts) {
   if (opts.projectId !== undefined || opts.environmentId !== undefined) {
     if (opts.projectId === undefined || opts.environmentId === undefined) {
       throw new Error("projectId and environmentId must be provided together");
@@ -5540,8 +5561,8 @@ function taskSessionCollectionPath(opts) {
   }
   return "/api/sessions";
 }
-function taskSessionResourcePath(id, opts, suffix) {
-  return `${taskSessionCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`;
+function sessionResourcePath(id, opts, suffix) {
+  return `${sessionCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`;
 }
 function sessionPublicAccessPath(sessionID, stream, direction, opts) {
   if (opts.publicAccessToken === undefined) {
@@ -6890,11 +6911,10 @@ function compile(opts) {
       exportName: opts.exportName ?? "default",
       maxDurationSeconds,
       queue: create(QueueSpecSchema, {
-        name: task3.queue?.name ?? defaultTaskQueueName(task3.id),
-        ...task3.queue?.concurrencyLimit === undefined || task3.queue.concurrencyLimit === null ? {} : { concurrencyLimit: task3.queue.concurrencyLimit }
+        name: taskQueueName(task3)
       }),
       ...task3.ttl === undefined ? {} : { ttl: task3.ttl },
-      retryPolicyJson: JSON.stringify(task3.retry ?? false),
+      retryPolicyJson: JSON.stringify(task3.retry ?? { enabled: false }),
       schedules: compileTaskSchedules(task3.schedule),
       secrets: Object.entries(readSecretDecls(task3.secrets)).map(([name, placement]) => create(SecretPlacementSchema, {
         name,
@@ -6902,6 +6922,55 @@ function compile(opts) {
       }))
     })
   });
+}
+function compileQueueCatalog(tasks, queues) {
+  const catalog = new Map;
+  const defined = new Set;
+  for (const queue2 of queues) {
+    defined.add(queue2.id);
+    addQueueCatalogItem(catalog, {
+      name: queue2.id,
+      ...queue2.concurrencyLimit === undefined || queue2.concurrencyLimit === null ? {} : { concurrencyLimit: queue2.concurrencyLimit }
+    });
+  }
+  for (const task3 of tasks) {
+    const taskQueue = task3.queue;
+    if (typeof taskQueue === "object" && taskQueue !== null) {
+      defined.add(taskQueue.id);
+      addQueueCatalogItem(catalog, {
+        name: taskQueue.id,
+        ...taskQueue.concurrencyLimit === undefined || taskQueue.concurrencyLimit === null ? {} : { concurrencyLimit: taskQueue.concurrencyLimit }
+      });
+      continue;
+    }
+    if (typeof taskQueue === "string") {
+      if (!defined.has(taskQueue)) {
+        throw new Error(`task ${JSON.stringify(task3.id)} references undefined queue ${JSON.stringify(taskQueue)}`);
+      }
+      continue;
+    }
+    addQueueCatalogItem(catalog, { name: defaultTaskQueueName(task3.id) });
+  }
+  return [...catalog.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+function addQueueCatalogItem(catalog, item) {
+  const existing = catalog.get(item.name);
+  if (existing === undefined) {
+    catalog.set(item.name, item);
+    return;
+  }
+  if (existing.concurrencyLimit !== item.concurrencyLimit) {
+    throw new Error(`queue ${JSON.stringify(item.name)} has conflicting deployment catalog settings`);
+  }
+}
+function taskQueueName(task3) {
+  if (typeof task3.queue === "string") {
+    return task3.queue;
+  }
+  if (task3.queue !== undefined) {
+    return task3.queue.id;
+  }
+  return defaultTaskQueueName(task3.id);
 }
 function compileStreamCatalog(streams2) {
   const catalog = new Map;
@@ -7382,7 +7451,8 @@ async function loadConfigTaskRefs(cwd) {
   const modules = await importDiscoveredTaskModules(taskFiles);
   return {
     refs: collectTaskRefs(cwd, modules),
-    streams: readStreamDefinitions().filter((stream) => isInsideProjectRoot(cwd, stream.originFile))
+    streams: readStreamDefinitions().filter((stream) => isInsideProjectRoot(cwd, stream.originFile)),
+    queues: readQueueDefinitions().filter((queue2) => isInsideProjectRoot(cwd, queue2.originFile))
   };
 }
 async function loadConfig(cwd) {
@@ -7406,9 +7476,11 @@ async function loadTaskRegistry(cwd) {
 }
 async function loadDeploymentRegistry(cwd) {
   const loaded = await loadConfigTaskRefs(cwd);
+  const tasks = buildTaskRegistry(loaded.refs);
   return {
-    tasks: buildTaskRegistry(loaded.refs),
-    streams: compileStreamCatalog(loaded.streams)
+    tasks,
+    streams: compileStreamCatalog(loaded.streams),
+    queues: compileQueueCatalog([...tasks.values()].map((item) => item.task), loaded.queues)
   };
 }
 function buildTaskRegistry(refs) {
@@ -7878,7 +7950,7 @@ async function runCommand(args, io) {
       run: taskContext.run,
       task: taskContext.task,
       workspace: taskContext.workspace,
-      session: createTaskSessionContext(taskContext.session.id)
+      session: createSessionContext(taskContext.session.id)
     };
     let result;
     const payload = task3.payload === undefined ? undefined : await parseTaskPayload(task3, rawPayload);
@@ -7939,7 +8011,7 @@ function parseTaskContext(json, runId2, taskId) {
     throw new Error(`task context task.id ${JSON.stringify(contextTaskId)} does not match --task ${JSON.stringify(taskId)}`);
   }
   const workspace = parseTaskWorkspace(record["workspace"]);
-  const session = parseTaskSession(record["session"]);
+  const session = parseSession(record["session"]);
   const runRecord = record["run"];
   const run = {
     id: contextRunId,
@@ -7999,7 +8071,7 @@ function parseTaskWorkspace(value) {
     projectPath: readRequiredString(record, "projectPath", "task context workspace.projectPath")
   };
 }
-function parseTaskSession(value) {
+function parseSession(value) {
   if (value === null || typeof value !== "object") {
     throw new Error("task context session is required");
   }
@@ -8031,6 +8103,10 @@ function serializeDeploymentRegistry(registry2) {
       direction: stream.direction,
       ...stream.schemaFingerprint === "" ? {} : { schema_fingerprint: stream.schemaFingerprint },
       schema_json: JSON.parse(stream.schemaJson)
+    })),
+    queues: registry2.queues.map((queue2) => ({
+      name: queue2.name,
+      ...queue2.concurrencyLimit === undefined ? {} : { concurrency_limit: queue2.concurrencyLimit }
     }))
   };
 }
@@ -8111,7 +8187,7 @@ class WaitGate {
     }
   }
 }
-function createTaskSessionContext(id) {
+function createSessionContext(id) {
   return Object.freeze({
     id
   });

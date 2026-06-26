@@ -8,7 +8,7 @@ order: 165
 
 # Schedules
 
-A schedule starts task sessions for a deployed task from a 5-field cron expression. The logical schedule is scoped to a project. Each environment gets its own schedule instance, which stores run options, active state, and next-fire cursor state.
+A schedule starts sessions for a deployed task from a 5-field cron expression. The logical schedule is scoped to a project. Each environment gets its own schedule instance, which stores run options, active state, and next-fire cursor state.
 
 Schedules are not arbitrary payload templates. Helmr generates the scheduled task payload at fire time so every scheduled run receives consistent schedule metadata:
 

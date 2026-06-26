@@ -1153,7 +1153,7 @@ func (f *fakeStore) LeaseRunLease(_ context.Context, arg db.LeaseRunLeaseParams)
 		OrgID:                              f.run.OrgID,
 		ProjectID:                          projectID,
 		EnvironmentID:                      environmentID,
-		TaskSessionID:                      fakeRunTaskSessionID(f.run),
+		SessionID:                          fakeRunSessionID(f.run),
 		TaskID:                             f.run.TaskID,
 		Status:                             f.run.Status,
 		Payload:                            f.run.Output,

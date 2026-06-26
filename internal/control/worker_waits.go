@@ -198,8 +198,8 @@ func (s *Server) matchBufferedWorkerStreamWait(ctx context.Context, scope db.Get
 	if err != nil {
 		return nil, false, err
 	}
-	session := db.TaskSession{
-		ID:            scope.TaskSessionID,
+	session := db.Session{
+		ID:            scope.SessionID,
 		OrgID:         scope.OrgID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
@@ -234,8 +234,8 @@ func (s *Server) workerInputStreamWaitTarget(ctx context.Context, store db.Queri
 	if streamName == "" {
 		return workerStreamWaitParams{}, db.Stream{}, badRequest(errors.New("stream wait params.stream is required"))
 	}
-	stream, err := s.ensureTaskSessionStream(ctx, store, db.TaskSession{
-		ID:                 scope.TaskSessionID,
+	stream, err := s.ensureSessionStream(ctx, store, db.Session{
+		ID:                 scope.SessionID,
 		OrgID:              scope.OrgID,
 		ProjectID:          scope.ProjectID,
 		EnvironmentID:      scope.EnvironmentID,

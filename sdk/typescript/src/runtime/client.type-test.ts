@@ -1,7 +1,7 @@
-import type { PublicAccessToken, Schedule, TaskSessionSnapshot, SessionStartResult, SessionStartAndWaitResult, HelmrClient, Token, Workspace } from "./client"
+import type { PublicAccessToken, Schedule, SessionSnapshot, SessionStartResult, SessionStartAndWaitResult, HelmrClient, Token, Workspace } from "./client"
 import type { RunEventRecord, RunHandle, RunSnapshot } from "./run"
 import type { StreamRecord, Task } from "../internal"
-import { auth, idempotencyKeys, image, sandbox, schedules, sessions, source, streams, task, tokens, workspaces, type PayloadSchema } from "../index"
+import { auth, idempotencyKeys, image, queue, sandbox, schedules, sessions, source, streams, task, tokens, workspaces, type PayloadSchema } from "../index"
 
 declare const client: HelmrClient
 declare const handle: RunHandle
@@ -65,6 +65,33 @@ if (false) {
     sandbox: sandbox("no-payload").image(image("no-payload").from("debian:trixie-slim")),
     run: async (ctx) => ({ runId: ctx.run.id }),
   })
+  const serialQueue = queue({ id: "review/pr", concurrencyLimit: 1 })
+  task({
+    id: "queued-task",
+    sandbox: sandbox("queued-task").image(image("queued-task").from("debian:trixie-slim")),
+    queue: serialQueue,
+    run: async () => null,
+  })
+  task({
+    id: "dynamic-queue-ref",
+    sandbox: sandbox("dynamic-queue-ref").image(image("dynamic-queue-ref").from("debian:trixie-slim")),
+    queue: "review/pr",
+    run: async () => null,
+  })
+  task({
+    id: "bad-inline-queue",
+    sandbox: sandbox("bad-inline-queue").image(image("bad-inline-queue").from("debian:trixie-slim")),
+    // @ts-expect-error queue policy is defined with queue(...), not inline task config.
+    queue: { concurrencyLimit: 1 },
+    run: async () => null,
+  })
+  task({
+    id: "bad-retry-disabled",
+    sandbox: sandbox("bad-retry-disabled").image(image("bad-retry-disabled").from("debian:trixie-slim")),
+    // @ts-expect-error retry policy is always an object.
+    retry: false,
+    run: async () => null,
+  })
   const rawLeaseEventRecord: RunEventRecord = {
     id: "event-1",
     run_id: "run-1",
@@ -80,8 +107,8 @@ if (false) {
   const clientNoPayloadStartAndWait: Promise<SessionStartAndWaitResult<{ runId: string }>> = client.sessions.startAndWait(noPayloadTask, {})
   const session = client.sessions.open<{ ok: boolean }>("session-1")
   const topLevelSession = sessions.open<{ ok: boolean }>("session-1")
-  const sessionSnapshot: Promise<TaskSessionSnapshot<{ ok: boolean }>> = session.retrieve()
-  const topLevelSessionSnapshot: Promise<TaskSessionSnapshot<{ ok: boolean }>> = sessions.retrieve("session-1")
+  const sessionSnapshot: Promise<SessionSnapshot<{ ok: boolean }>> = session.retrieve()
+  const topLevelSessionSnapshot: Promise<SessionSnapshot<{ ok: boolean }>> = sessions.retrieve("session-1")
   const approvalStream = streams.input("approval", { schema: approvalSchema })
   const reportStream = streams.output("agent.report", { schema: reportSchema })
   const inputRecord: Promise<StreamRecord<{ approved: boolean }>> = session.input(approvalStream).send({ approved: true }, {

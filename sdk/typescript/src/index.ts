@@ -40,7 +40,7 @@ import {
   type InputStreamHandle,
   type OutputStreamHandle,
   type TaskContext,
-  type TaskSessionContext,
+  type SessionContext,
   type TaskWorkspace,
   type TaskOutput,
   type TaskPayload,
@@ -64,7 +64,7 @@ import {
 } from "./runtime/client"
 export type {
   ListSchedulesOptions,
-  OpenTaskSessionApi,
+  OpenSessionApi,
   PublicAccessToken,
   PublicAccessTokenCreateOptions,
   PublicAccessTokenScope,
@@ -81,13 +81,13 @@ export type {
   SessionOutputStreamApi,
   SessionStreamListOptions,
   SessionStreamReadOptions,
-  TaskSessionCancelOptions,
-  TaskSessionCloseOptions,
-  TaskSessionHandle,
-  TaskSessionListOptions,
-  TaskSessionRun,
-  TaskSessionSnapshot,
-  TaskSessionStatus,
+  SessionCancelOptions,
+  SessionCloseOptions,
+  SessionHandle,
+  SessionListOptions,
+  SessionRun,
+  SessionSnapshot,
+  SessionStatus,
   SessionStartAndWaitOptions,
   SessionStartOptions,
   SessionStartAndWaitResult,
@@ -137,7 +137,7 @@ export type {
 } from "./runtime/client"
 import { sandbox } from "./sandbox"
 import { defineConfig, type HelmrConfig, type HelmrConfigInput } from "./config"
-import { queue, task, type Task, type TaskConfig, type TaskQueueConfig } from "./task"
+import { queue, task, type QueueConfig, type QueueDefinition, type Task, type TaskConfig } from "./task"
 import {
   task as scheduledTask,
   type ScheduleCron,
@@ -182,7 +182,8 @@ export type {
   SecretDecls,
   Task,
   TaskConfig,
-  TaskQueueConfig,
+  QueueConfig,
+  QueueDefinition,
   TaskOutput,
   TaskPayload,
   SessionStartPayload,
@@ -325,7 +326,7 @@ export type {
   SourceDirectoryOptions,
   SourceFileRef,
   TaskContext,
-  TaskSessionContext,
+  SessionContext,
   TaskWorkspace,
   RuntimeTokenCreateOptions,
 }

@@ -421,7 +421,7 @@ func (s *Server) completeMagicLinkInvite(r *http.Request, queries db.Querier, li
 	} else if rows == 0 {
 		return "", pgtype.UUID{}, errInvalidOrExpiredToken
 	}
-	if _, err := queries.RevokeSessionsForUser(r.Context(), user.ID); err != nil {
+	if _, err := queries.RevokeAuthSessionsForUser(r.Context(), user.ID); err != nil {
 		return "", pgtype.UUID{}, err
 	}
 	if _, err := queries.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{

@@ -98,7 +98,7 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 	if err != nil {
 		return pgtype.UUID{}, fmt.Errorf("schedule trigger org id is invalid: %v", err)
 	}
-	started, err := s.startTaskSessionFromRequest(ctx, auth.Actor{
+	started, err := s.startSessionFromRequest(ctx, auth.Actor{
 		OrgID: orgID,
 		Kind:  auth.ActorKindSystem,
 		Role:  auth.RoleOwner,
@@ -412,7 +412,7 @@ func (s *Server) listRunSummaries(r *http.Request, actor auth.Actor, statusFilte
 	if err != nil {
 		return nil, err
 	}
-	taskSessionID, err := optionalRunSessionIDFilter(r)
+	sessionID, err := optionalRunSessionIDFilter(r)
 	if err != nil {
 		return nil, err
 	}
@@ -421,7 +421,7 @@ func (s *Server) listRunSummaries(r *http.Request, actor auth.Actor, statusFilte
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		StatusFilter:  statusFilter,
-		TaskSessionID: taskSessionID,
+		SessionID:     sessionID,
 		RowLimit:      limit,
 	})
 	if err != nil {

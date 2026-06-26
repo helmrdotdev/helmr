@@ -98,7 +98,7 @@ async function runWorkspaceLifecycleSmoke(): Promise<SmokeEvidence> {
     assertEqual(running.id, materialized.id, "running materialization id changed")
 
     const sessionsBeforeAttach = await sessionsForTask(config.taskId)
-    assert(!sessionsBeforeAttach.some((session) => session.workspaceId === directWorkspace.id), "direct materialization created a task session")
+    assert(!sessionsBeforeAttach.some((session) => session.workspaceId === directWorkspace.id), "direct materialization created a session")
 
     const first = await startAndWaitRuntime(`${config.marker}-first`, directWorkspace.id)
     const firstSession = await client.sessions.retrieve(first.sessionId, scope)

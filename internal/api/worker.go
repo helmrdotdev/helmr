@@ -149,7 +149,7 @@ type WorkerRun struct {
 	AttemptID             string                         `json:"attempt_id"`
 	RunLeaseID            string                         `json:"run_lease_id"`
 	SnapshotVersion       int64                          `json:"snapshot_version"`
-	TaskSessionID         string                         `json:"task_session_id"`
+	SessionID             string                         `json:"session_id"`
 	TaskID                string                         `json:"task_id"`
 	Payload               json.RawMessage                `json:"payload"`
 	Secrets               ResolvedSecrets                `json:"secrets,omitempty"`
@@ -289,6 +289,11 @@ type WorkerDeploymentStream struct {
 	SchemaJSON        json.RawMessage `json:"schema_json,omitempty"`
 }
 
+type WorkerDeploymentQueue struct {
+	Name             string `json:"name"`
+	ConcurrencyLimit *int32 `json:"concurrency_limit,omitempty"`
+}
+
 type SecretDeclaration struct {
 	Name  string `json:"name"`
 	Env   string `json:"env,omitempty"`
@@ -309,6 +314,7 @@ type WorkerDeploymentBuildResult struct {
 	BuildManifestDigest      string                      `json:"build_manifest_digest"`
 	DeploymentManifestDigest string                      `json:"deployment_manifest_digest"`
 	Tasks                    []WorkerDeploymentBuildTask `json:"tasks"`
+	Queues                   []WorkerDeploymentQueue     `json:"queues"`
 	Streams                  []WorkerDeploymentStream    `json:"streams,omitempty"`
 	CASObjects               []CASObject                 `json:"cas_objects,omitempty"`
 	Error                    *string                     `json:"error,omitempty"`

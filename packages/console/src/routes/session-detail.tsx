@@ -3,26 +3,26 @@ import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { formatRelative } from "../features/runs/display";
 import { runHref } from "../features/runs/navigation";
-import { TaskSessionStatusBadge } from "../features/sessions/display";
+import { SessionStatusBadge } from "../features/sessions/display";
 import { ApiError } from "../lib/api";
 import { formatTaskOutput, hasRunOutput, taskOutputKind } from "../lib/run-output";
 import {
-  cancelTaskSession,
-  closeTaskSession,
-  getTaskSession,
-  listTaskSessionRuns,
-  listTaskSessionStreamRecords,
-  listTaskSessionStreams,
+  cancelSession,
+  closeSession,
+  getSession,
+  listSessionRuns,
+  listSessionStreamRecords,
+  listSessionStreams,
   type StreamRecord,
-  type TaskSession,
-  type TaskSessionRun,
-  type TaskSessionStream,
-} from "../lib/task-sessions";
+  type Session,
+  type SessionRun,
+  type SessionStream,
+} from "../lib/sessions";
 import { useScope } from "../lib/scope";
 import { cx, ui } from "../ui/styles";
 
 type TimelineStream = {
-  stream: TaskSessionStream;
+  stream: SessionStream;
   records: StreamRecord[];
 };
 
@@ -43,15 +43,15 @@ function shortID(id: string | undefined): string {
   return id ? id.slice(0, 8) : "—";
 }
 
-function isOpen(session: TaskSession): boolean {
+function isOpen(session: Session): boolean {
   return session.status === "open";
 }
 
-function canClose(session: TaskSession): boolean {
+function canClose(session: Session): boolean {
   return isOpen(session) && !session.current_run_id;
 }
 
-function SessionResult(props: { session: TaskSession }) {
+function SessionResult(props: { session: Session }) {
   const result = createMemo(() => props.session.result ?? props.session.error ?? props.session.terminal_reason);
   return (
     <Show when={result() !== undefined}>
@@ -68,7 +68,7 @@ function SessionResult(props: { session: TaskSession }) {
   );
 }
 
-function SessionRuns(props: { sessionID: string; runs: TaskSessionRun[]; projectID: string; environmentID: string }) {
+function SessionRuns(props: { sessionID: string; runs: SessionRun[]; projectID: string; environmentID: string }) {
   return (
     <section class={"border border-console-border bg-console-surface p-4"}>
       <div class={"mb-3 flex items-center justify-between gap-3"}>
@@ -158,7 +158,7 @@ function StreamTimeline(props: { streams: TimelineStream[] }) {
   );
 }
 
-function DetailsAside(props: { session: TaskSession; currentRunHref: string | null }) {
+function DetailsAside(props: { session: Session; currentRunHref: string | null }) {
   return (
     <aside class={"sticky top-13.5 flex flex-col gap-3 max-[960px]:static"}>
       <section class={"border border-console-border bg-console-surface px-4 py-3.5"}>
@@ -216,24 +216,24 @@ export function SessionDetail() {
   const scopeIDs = () => ({ projectID: projectID(), environmentID: environmentID() });
 
   const session = createQuery(() => ({
-    queryKey: ["task-session", sessionID(), projectID(), environmentID()],
-    queryFn: () => getTaskSession(sessionID(), scopeIDs()),
+    queryKey: ["session", sessionID(), projectID(), environmentID()],
+    queryFn: () => getSession(sessionID(), scopeIDs()),
     enabled: hasSessionID() && !!projectID() && !!environmentID(),
     retry: false,
   }));
   const runs = createQuery(() => ({
-    queryKey: ["task-session-runs", sessionID(), projectID(), environmentID()],
-    queryFn: () => listTaskSessionRuns(sessionID(), scopeIDs()),
+    queryKey: ["session-runs", sessionID(), projectID(), environmentID()],
+    queryFn: () => listSessionRuns(sessionID(), scopeIDs()),
     enabled: hasSessionID() && !!projectID() && !!environmentID(),
     retry: false,
   }));
   const timeline = createQuery(() => ({
-    queryKey: ["task-session-streams", sessionID(), projectID(), environmentID()],
+    queryKey: ["session-streams", sessionID(), projectID(), environmentID()],
     queryFn: async (): Promise<TimelineStream[]> => {
-      const streams = await listTaskSessionStreams(sessionID(), scopeIDs());
+      const streams = await listSessionStreams(sessionID(), scopeIDs());
       return Promise.all(streams.streams.map(async (stream) => ({
         stream,
-        records: (await listTaskSessionStreamRecords(sessionID(), scopeIDs(), stream, { limit: 100 })).records,
+        records: (await listSessionStreamRecords(sessionID(), scopeIDs(), stream, { limit: 100 })).records,
       })));
     },
     enabled: hasSessionID() && !!projectID() && !!environmentID(),
@@ -259,14 +259,14 @@ export function SessionDetail() {
     setActionError(null);
     try {
       if (kind === "close") {
-        await closeTaskSession(session.data.id, scopeIDs());
+        await closeSession(session.data.id, scopeIDs());
       } else {
-        await cancelTaskSession(session.data.id, scopeIDs());
+        await cancelSession(session.data.id, scopeIDs());
       }
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["task-session"] }),
-        queryClient.invalidateQueries({ queryKey: ["task-session-runs"] }),
-        queryClient.invalidateQueries({ queryKey: ["task-sessions"] }),
+        queryClient.invalidateQueries({ queryKey: ["session"] }),
+        queryClient.invalidateQueries({ queryKey: ["session-runs"] }),
+        queryClient.invalidateQueries({ queryKey: ["sessions"] }),
         queryClient.invalidateQueries({ queryKey: ["runs"] }),
       ]);
     } catch (error) {
@@ -283,7 +283,7 @@ export function SessionDetail() {
           <A href="/sessions" class={ui.backLink}>Sessions</A>
           <div class={ui.pageTitle}>
             <h1 class={ui.h1}>{session.data?.task_id ?? "Session"}</h1>
-            <Show when={session.data}>{(current) => <TaskSessionStatusBadge status={current().status} />}</Show>
+            <Show when={session.data}>{(current) => <SessionStatusBadge status={current().status} />}</Show>
           </div>
           <Show when={session.data}>
             {(current) => (

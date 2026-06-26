@@ -18,11 +18,11 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr deploy [path] [-p PROJECT] [-e ENV] [--env-file FILE] [--timeout DURATION] [--json]` | Parse `helmr.config.ts`, archive source, stream deployment progress, and create a deployment. |
 | `helmr task list [--json]` | List deployed task definitions. |
 | `helmr task get TASK [--json]` | Show a deployed task definition. |
-| `helmr session start TASK [-p PROJECT] [-e ENV] [--json]` | Start a task session for a deployed task. |
-| `helmr session list` | List task sessions. |
-| `helmr session get SESSION` | Show task session details. |
-| `helmr session wait SESSION` | Wait for a task session to finish. |
-| `helmr session cancel SESSION` | Cancel a task session. |
+| `helmr session start TASK [-p PROJECT] [-e ENV] [--json]` | Start a session for a deployed task. |
+| `helmr session list` | List sessions. |
+| `helmr session get SESSION` | Show session details. |
+| `helmr session wait SESSION` | Wait for a session to finish. |
+| `helmr session cancel SESSION` | Cancel a session. |
 | `helmr session input send SESSION STREAM --data-json JSON` | Append a session input record. |
 | `helmr session output list SESSION STREAM` | List retained session stream output. |
 | `helmr run list [--session SESSION] [--json]` | List run attempts. |
@@ -68,7 +68,7 @@ Common options:
 
 `helmr deploy` writes human-readable progress to stderr and the final deployment version or ID to stdout. With `--json`, it emits JSON lines for local steps, deployment events, and the final deployment result.
 
-`helmr session start` accepts payloads from `--payload-file`, `--payload-json`, or repeated `--payload KEY=VALUE`. `-p` is reserved for `--project`. Use `--workspace WORKSPACE_ID` to attach the new task session to an existing durable workspace. Secrets are declared by deployed task source and resolved from the selected project environment at run time.
+`helmr session start` accepts payloads from `--payload-file`, `--payload-json`, or repeated `--payload KEY=VALUE`. `-p` is reserved for `--project`. Use `--workspace WORKSPACE_ID` to attach the new session to an existing durable workspace. Secrets are declared by deployed task source and resolved from the selected project environment at run time.
 
 `helmr run wait` follows durable run events and reconnects with the last event cursor. It no longer polls on an interval.
 

@@ -3,14 +3,14 @@ import { createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Select, type SelectOption } from "../ui/Select";
 import { formatRelative } from "../features/runs/display";
-import { TaskSessionStatusBadge, type TaskSessionStatus } from "../features/sessions/display";
+import { SessionStatusBadge, type SessionStatus } from "../features/sessions/display";
 import { sessionHref, useSessionRowNavigation } from "../features/sessions/navigation";
 import { ApiError } from "../lib/api";
 import { useScope } from "../lib/scope";
-import { listTaskSessions, type ListTaskSessionsOptions, type TaskSession } from "../lib/task-sessions";
+import { listSessions, type ListSessionsOptions, type Session } from "../lib/sessions";
 import { ui } from "../ui/styles";
 
-type SessionFilter = TaskSessionStatus | "all";
+type SessionFilter = SessionStatus | "all";
 
 const FILTER_OPTIONS: SelectOption<SessionFilter>[] = [
   { value: "open", label: "Open" },
@@ -24,16 +24,16 @@ const FILTER_OPTIONS: SelectOption<SessionFilter>[] = [
 
 function sessionsErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.errorKind === "forbidden") {
-    return "You do not have permission to view task sessions.";
+    return "You do not have permission to view sessions.";
   }
-  return "Could not load task sessions.";
+  return "Could not load sessions.";
 }
 
 function shortID(id: string | undefined): string {
   return id ? id.slice(0, 8) : "—";
 }
 
-function SessionRow(props: { session: TaskSession }) {
+function SessionRow(props: { session: Session }) {
   const rowNavigation = useSessionRowNavigation(() => props.session);
 
   return (
@@ -46,7 +46,7 @@ function SessionRow(props: { session: TaskSession }) {
           {props.session.task_id}
         </A>
       </td>
-      <td><TaskSessionStatusBadge status={props.session.status} /></td>
+      <td><SessionStatusBadge status={props.session.status} /></td>
       <td><code>{shortID(props.session.workspace_id)}</code></td>
       <td><code>{shortID(props.session.current_run_id)}</code></td>
       <td><code>{props.session.external_id || "—"}</code></td>
@@ -62,7 +62,7 @@ function SessionsEmptyState(props: { filtered: boolean }) {
       <strong class="text-console-text">
         {props.filtered ? "No sessions match this filter." : "No sessions yet."}
       </strong>
-      <span>Started task sessions will appear here with their workspace and run history.</span>
+      <span>Started sessions will appear here with their workspace and run history.</span>
     </div>
   );
 }
@@ -76,8 +76,8 @@ export function Sessions() {
   const [searchParams] = useSearchParams();
   const [filter, setFilter] = createSignal<SessionFilter>("all");
   const taskID = createMemo(() => searchParamValue(searchParams["task_id"]));
-  const sessionOptions = (): ListTaskSessionsOptions => {
-    const options: ListTaskSessionsOptions = {
+  const sessionOptions = (): ListSessionsOptions => {
+    const options: ListSessionsOptions = {
       status: filter(),
       projectID: scope.selectedProjectID(),
       environmentID: scope.selectedEnvironmentID(),
@@ -86,8 +86,8 @@ export function Sessions() {
     return options;
   };
   const sessions = createQuery(() => ({
-    queryKey: ["task-sessions", filter(), taskID(), scope.selectedProjectID(), scope.selectedEnvironmentID()],
-    queryFn: () => listTaskSessions(sessionOptions()),
+    queryKey: ["sessions", filter(), taskID(), scope.selectedProjectID(), scope.selectedEnvironmentID()],
+    queryFn: () => listSessions(sessionOptions()),
     enabled: !!scope.selectedProjectID() && !!scope.selectedEnvironmentID(),
     retry: false,
   }));

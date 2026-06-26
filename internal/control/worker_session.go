@@ -460,8 +460,8 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 	if activeQueueLeaseFound {
 		s.ackWorkerQueueLease(r.Context(), pgvalue.UUID(leaseIDs.runID), lease)
 	}
-	if run.TaskSessionID.Valid && runStatusTerminal(run.Status) {
-		s.reconcileAcceptedTaskSessionRunRequests(r.Context(), run.OrgID, run.ProjectID, run.EnvironmentID, run.TaskSessionID)
+	if run.SessionID.Valid && runStatusTerminal(run.Status) {
+		s.reconcileAcceptedSessionRunRequests(r.Context(), run.OrgID, run.ProjectID, run.EnvironmentID, run.SessionID)
 	}
 	writeJSON(w, http.StatusOK, api.WorkerReleaseResponse{RunID: request.Lease.RunID, Status: string(run.Status)})
 }
@@ -1082,7 +1082,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunLeaseRow
 	if err != nil {
 		return api.WorkerRun{}, err
 	}
-	taskSessionID, err := requiredUUIDString(row.TaskSessionID, "task_session_id")
+	sessionID, err := requiredUUIDString(row.SessionID, "session_id")
 	if err != nil {
 		return api.WorkerRun{}, err
 	}
@@ -1098,7 +1098,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunLeaseRow
 		AttemptID:             pgvalue.MustUUIDValue(row.CurrentAttemptID).String(),
 		RunLeaseID:            pgvalue.MustUUIDValue(row.RunLeaseID).String(),
 		SnapshotVersion:       row.StateVersion,
-		TaskSessionID:         taskSessionID,
+		SessionID:             sessionID,
 		TaskID:                row.TaskID,
 		Payload:               json.RawMessage(row.Payload),
 		Secrets:               resolvedSecrets,

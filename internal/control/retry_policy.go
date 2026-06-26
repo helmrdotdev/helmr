@@ -7,13 +7,15 @@ import (
 	"math"
 )
 
+var disabledRetryPolicyJSON = []byte(`{"enabled":false}`)
+
 func resolvedRetryPolicy(runPolicy json.RawMessage, taskPolicy []byte) ([]byte, error) {
 	raw := bytes.TrimSpace(runPolicy)
 	if len(raw) == 0 {
 		raw = bytes.TrimSpace(taskPolicy)
 	}
 	if len(raw) == 0 {
-		raw = []byte("false")
+		return append([]byte(nil), disabledRetryPolicyJSON...), nil
 	}
 	return validatedRetryPolicyJSON(raw, "retry")
 }
@@ -23,22 +25,34 @@ func validatedRetryPolicyJSON(raw []byte, label string) ([]byte, error) {
 	if !json.Valid(raw) {
 		return nil, fmt.Errorf("%s must be valid JSON", label)
 	}
-	if bytes.Equal(raw, []byte("false")) {
-		return []byte("false"), nil
-	}
 	var value any
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return nil, fmt.Errorf("%s decode failed: %w", label, err)
 	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("%s must be false or an object", label)
+		return nil, fmt.Errorf("%s must be an object", label)
 	}
 	for field := range object {
 		switch field {
-		case "maxAttempts", "backoff":
+		case "enabled", "maxAttempts", "backoff":
 		default:
 			return nil, fmt.Errorf("%s.%s is not supported", label, field)
+		}
+	}
+	if enabled, ok := object["enabled"]; ok {
+		enabledBool, ok := enabled.(bool)
+		if !ok {
+			return nil, fmt.Errorf("%s.enabled must be true or false", label)
+		}
+		if !enabledBool {
+			if _, ok := object["maxAttempts"]; ok {
+				return nil, fmt.Errorf("%s disabled policy must not include retry settings", label)
+			}
+			if _, ok := object["backoff"]; ok {
+				return nil, fmt.Errorf("%s disabled policy must not include retry settings", label)
+			}
+			return append([]byte(nil), disabledRetryPolicyJSON...), nil
 		}
 	}
 	maxAttempts, ok := object["maxAttempts"].(float64)
@@ -93,11 +107,11 @@ func isFinite(number float64) bool {
 
 func normalizedRetryPolicy(raw json.RawMessage) ([]byte, error) {
 	if len(raw) == 0 {
-		return []byte("false"), nil
+		return append([]byte(nil), disabledRetryPolicyJSON...), nil
 	}
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
-		return []byte("false"), nil
+		return append([]byte(nil), disabledRetryPolicyJSON...), nil
 	}
 	return validatedRetryPolicyJSON(trimmed, "retry")
 }

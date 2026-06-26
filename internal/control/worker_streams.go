@@ -168,45 +168,45 @@ type workerRunLeaseStreamScope struct {
 	environmentID pgtype.UUID
 	deploymentID  pgtype.UUID
 	taskID        string
-	taskSessionID pgtype.UUID
+	sessionID     pgtype.UUID
 }
 
 func queueLeaseStreamScope(row db.GetRunLeaseQueueLeaseRow) workerRunLeaseStreamScope {
-	return workerRunLeaseStreamScope{projectID: row.ProjectID, environmentID: row.EnvironmentID, deploymentID: row.DeploymentID, taskID: row.TaskID, taskSessionID: row.TaskSessionID}
+	return workerRunLeaseStreamScope{projectID: row.ProjectID, environmentID: row.EnvironmentID, deploymentID: row.DeploymentID, taskID: row.TaskID, sessionID: row.SessionID}
 }
 
 func currentLeaseStreamScope(row db.GetCurrentRunningRunLeaseRow) workerRunLeaseStreamScope {
-	return workerRunLeaseStreamScope{projectID: row.ProjectID, environmentID: row.EnvironmentID, deploymentID: row.DeploymentID, taskID: row.TaskID, taskSessionID: row.TaskSessionID}
+	return workerRunLeaseStreamScope{projectID: row.ProjectID, environmentID: row.EnvironmentID, deploymentID: row.DeploymentID, taskID: row.TaskID, sessionID: row.SessionID}
 }
 
-func (s *Server) workerStreamScope(ctx context.Context, leaseIDs workerRunLeaseIDs, leaseRow workerRunLeaseStreamScope, streamName string, direction db.StreamDirection) (db.TaskSession, db.Stream, error) {
+func (s *Server) workerStreamScope(ctx context.Context, leaseIDs workerRunLeaseIDs, leaseRow workerRunLeaseStreamScope, streamName string, direction db.StreamDirection) (db.Session, db.Stream, error) {
 	name := strings.TrimSpace(streamName)
 	if err := validateSessionStreamName(name); err != nil {
-		return db.TaskSession{}, db.Stream{}, badRequest(err)
+		return db.Session{}, db.Stream{}, badRequest(err)
 	}
-	session := db.TaskSession{
-		ID:            leaseRow.taskSessionID,
+	session := db.Session{
+		ID:            leaseRow.sessionID,
 		OrgID:         pgvalue.UUID(leaseIDs.orgID),
 		ProjectID:     leaseRow.projectID,
 		EnvironmentID: leaseRow.environmentID,
 	}
-	stream, err := s.ensureTaskSessionStream(ctx, s.db, session, leaseRow.deploymentID, name, direction)
+	stream, err := s.ensureSessionStream(ctx, s.db, session, leaseRow.deploymentID, name, direction)
 	if err != nil {
-		return db.TaskSession{}, db.Stream{}, err
+		return db.Session{}, db.Stream{}, err
 	}
 	return session, stream, nil
 }
 
-func (s *Server) ensureTaskSessionStream(ctx context.Context, store db.Querier, session db.TaskSession, deploymentID pgtype.UUID, streamName string, direction db.StreamDirection) (db.Stream, error) {
+func (s *Server) ensureSessionStream(ctx context.Context, store db.Querier, session db.Session, deploymentID pgtype.UUID, streamName string, direction db.StreamDirection) (db.Stream, error) {
 	name := strings.TrimSpace(streamName)
 	if err := validateSessionStreamName(name); err != nil {
 		return db.Stream{}, badRequest(err)
 	}
-	stream, err := store.GetTaskSessionStreamByName(ctx, db.GetTaskSessionStreamByNameParams{
+	stream, err := store.GetSessionStreamByName(ctx, db.GetSessionStreamByNameParams{
 		OrgID:         session.OrgID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
-		TaskSessionID: session.ID,
+		SessionID:     session.ID,
 		Name:          name,
 		Direction:     direction,
 	})
@@ -241,7 +241,7 @@ func (s *Server) ensureTaskSessionStream(ctx context.Context, store db.Querier, 
 	})
 }
 
-func (s *Server) readInputStreamRecord(ctx context.Context, store db.Querier, session db.TaskSession, stream db.Stream, afterSequence int64, correlationID string) (db.StreamRecord, bool, error) {
+func (s *Server) readInputStreamRecord(ctx context.Context, store db.Querier, session db.Session, stream db.Stream, afterSequence int64, correlationID string) (db.StreamRecord, bool, error) {
 	records, err := store.ListStreamRecords(ctx, db.ListStreamRecordsParams{
 		OrgID:         session.OrgID,
 		ProjectID:     session.ProjectID,

@@ -18,9 +18,9 @@ func runTaskRequest(request Request) (*runv0.RunTaskRequest, error) {
 	if task == nil {
 		return nil, errors.New("runtime task spec is required")
 	}
-	taskSessionID := strings.TrimSpace(request.Run.TaskSessionID)
-	if taskSessionID == "" {
-		return nil, errors.New("runtime task_session_id is required")
+	sessionID := strings.TrimSpace(request.Run.SessionID)
+	if sessionID == "" {
+		return nil, errors.New("runtime session_id is required")
 	}
 	modulePath := strings.TrimSpace(task.ModulePath)
 	if modulePath == "" {
@@ -48,7 +48,7 @@ func runTaskRequest(request Request) (*runv0.RunTaskRequest, error) {
 		AttemptNumber:   uint32(request.Run.AttemptNumber),
 		RunLeaseId:      request.Run.RunLeaseID,
 		SnapshotVersion: uint64(request.Run.SnapshotVersion),
-		TaskSessionId:   taskSessionID,
+		SessionId:       sessionID,
 		Trace: &runv0.TraceContext{
 			TraceId:     request.Run.Trace.TraceID,
 			SpanId:      request.Run.Trace.SpanID,

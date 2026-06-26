@@ -507,17 +507,17 @@ func (c *Client) followWorkspaceStream(ctx context.Context, path string, cursor 
 	})
 }
 
-type TaskSessionScopeOptions struct {
+type SessionScopeOptions struct {
 	ProjectID     string
 	EnvironmentID string
 }
 
-func (c *Client) sessionCollectionPath(opts TaskSessionScopeOptions) (string, error) {
+func (c *Client) sessionCollectionPath(opts SessionScopeOptions) (string, error) {
 	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sessions")
 	return path, err
 }
 
-func (c *Client) sessionItemPath(sessionID string, suffix string, opts TaskSessionScopeOptions) (string, error) {
+func (c *Client) sessionItemPath(sessionID string, suffix string, opts SessionScopeOptions) (string, error) {
 	path, err := c.sessionCollectionPath(opts)
 	if err != nil {
 		return "", err
@@ -525,51 +525,51 @@ func (c *Client) sessionItemPath(sessionID string, suffix string, opts TaskSessi
 	return environmentScopedResourcePath(path, sessionID, suffix), nil
 }
 
-func (c *Client) ListTaskSessions(ctx context.Context, opts TaskSessionScopeOptions) (api.ListTaskSessionsResponse, error) {
+func (c *Client) ListSessions(ctx context.Context, opts SessionScopeOptions) (api.ListSessionsResponse, error) {
 	path, err := c.sessionCollectionPath(opts)
 	if err != nil {
-		return api.ListTaskSessionsResponse{}, err
+		return api.ListSessionsResponse{}, err
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.ListTaskSessionsResponse{}, err
+		return api.ListSessionsResponse{}, err
 	}
-	var response api.ListTaskSessionsResponse
+	var response api.ListSessionsResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return api.ListTaskSessionsResponse{}, err
+		return api.ListSessionsResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) GetTaskSession(ctx context.Context, sessionID string, opts TaskSessionScopeOptions) (api.TaskSessionResponse, error) {
+func (c *Client) GetSession(ctx context.Context, sessionID string, opts SessionScopeOptions) (api.SessionResponse, error) {
 	path, err := c.sessionItemPath(sessionID, "", opts)
 	if err != nil {
-		return api.TaskSessionResponse{}, err
+		return api.SessionResponse{}, err
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.TaskSessionResponse{}, err
+		return api.SessionResponse{}, err
 	}
-	var response api.TaskSessionResponse
+	var response api.SessionResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return api.TaskSessionResponse{}, err
+		return api.SessionResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) CancelTaskSession(ctx context.Context, sessionID string, input api.CancelTaskSessionRequest, opts TaskSessionScopeOptions) (api.TaskSessionResponse, error) {
+func (c *Client) CancelSession(ctx context.Context, sessionID string, input api.CancelSessionRequest, opts SessionScopeOptions) (api.SessionResponse, error) {
 	path, err := c.sessionItemPath(sessionID, "/cancel", opts)
 	if err != nil {
-		return api.TaskSessionResponse{}, err
+		return api.SessionResponse{}, err
 	}
-	var response api.TaskSessionResponse
+	var response api.SessionResponse
 	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.TaskSessionResponse{}, err
+		return api.SessionResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) AppendTaskSessionInput(ctx context.Context, sessionID string, stream string, input api.AppendStreamRecordRequest, opts TaskSessionScopeOptions) (api.AppendStreamRecordResponse, error) {
+func (c *Client) AppendSessionInput(ctx context.Context, sessionID string, stream string, input api.AppendStreamRecordRequest, opts SessionScopeOptions) (api.AppendStreamRecordResponse, error) {
 	path, err := c.sessionItemPath(sessionID, "/inputs/"+url.PathEscape(stream), opts)
 	if err != nil {
 		return api.AppendStreamRecordResponse{}, err
@@ -581,7 +581,7 @@ func (c *Client) AppendTaskSessionInput(ctx context.Context, sessionID string, s
 	return response, nil
 }
 
-func (c *Client) ListTaskSessionStreams(ctx context.Context, sessionID string, opts TaskSessionScopeOptions) (api.ListSessionStreamsResponse, error) {
+func (c *Client) ListSessionStreams(ctx context.Context, sessionID string, opts SessionScopeOptions) (api.ListSessionStreamsResponse, error) {
 	path, err := c.sessionItemPath(sessionID, "/streams", opts)
 	if err != nil {
 		return api.ListSessionStreamsResponse{}, err
@@ -597,7 +597,7 @@ func (c *Client) ListTaskSessionStreams(ctx context.Context, sessionID string, o
 	return response, nil
 }
 
-func (c *Client) ListTaskSessionInputs(ctx context.Context, sessionID string, stream string, cursor int64, limit int32, opts TaskSessionScopeOptions) (api.ListStreamRecordsResponse, error) {
+func (c *Client) ListSessionInputs(ctx context.Context, sessionID string, stream string, cursor int64, limit int32, opts SessionScopeOptions) (api.ListStreamRecordsResponse, error) {
 	path, err := c.sessionItemPath(sessionID, "/inputs/"+url.PathEscape(stream), opts)
 	if err != nil {
 		return api.ListStreamRecordsResponse{}, err
@@ -623,7 +623,7 @@ func (c *Client) ListTaskSessionInputs(ctx context.Context, sessionID string, st
 	return response, nil
 }
 
-func (c *Client) ListTaskSessionOutputs(ctx context.Context, sessionID string, stream string, cursor int64, limit int32, opts TaskSessionScopeOptions) (api.ListStreamRecordsResponse, error) {
+func (c *Client) ListSessionOutputs(ctx context.Context, sessionID string, stream string, cursor int64, limit int32, opts SessionScopeOptions) (api.ListStreamRecordsResponse, error) {
 	path, err := c.sessionItemPath(sessionID, "/outputs/"+url.PathEscape(stream), opts)
 	if err != nil {
 		return api.ListStreamRecordsResponse{}, err

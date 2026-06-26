@@ -157,7 +157,7 @@ func (o *SessionStartOptions) UnmarshalJSON(data []byte) error {
 }
 
 type SessionStartResponse struct {
-	Session  TaskSessionResponse `json:"session"`
+	Session  SessionResponse `json:"session"`
 	Run      RunResponse         `json:"run"`
 	IsCached bool                `json:"is_cached,omitempty"`
 	TimedOut bool                `json:"timed_out,omitempty"`
@@ -168,7 +168,7 @@ type SessionStartAndWaitRequest struct {
 	TimeoutSeconds int32 `json:"timeout_seconds,omitempty"`
 }
 
-type TaskSessionResponse struct {
+type SessionResponse struct {
 	ID                  string          `json:"id"`
 	ProjectID           string          `json:"project_id"`
 	EnvironmentID       string          `json:"environment_id"`
@@ -190,25 +190,25 @@ type TaskSessionResponse struct {
 	UpdatedAt           time.Time       `json:"updated_at"`
 }
 
-type ListTaskSessionsResponse struct {
-	Sessions []TaskSessionResponse `json:"sessions"`
+type ListSessionsResponse struct {
+	Sessions []SessionResponse `json:"sessions"`
 }
 
-type PatchTaskSessionRequest struct {
+type PatchSessionRequest struct {
 	Metadata  json.RawMessage `json:"metadata,omitempty"`
 	Tags      []string        `json:"tags,omitempty"`
 	ExpiresAt *time.Time      `json:"expires_at,omitempty"`
 }
 
-type CloseTaskSessionRequest struct {
+type CloseSessionRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-type CancelTaskSessionRequest struct {
+type CancelSessionRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-type TaskSessionRunResponse struct {
+type SessionRunResponse struct {
 	ID              string     `json:"id"`
 	RunID           string     `json:"run_id"`
 	DeploymentID    string     `json:"deployment_id"`
@@ -221,6 +221,6 @@ type TaskSessionRunResponse struct {
 	EndedAt         *time.Time `json:"ended_at,omitempty"`
 }
 
-type ListTaskSessionRunsResponse struct {
-	Runs []TaskSessionRunResponse `json:"runs"`
+type ListSessionRunsResponse struct {
+	Runs []SessionRunResponse `json:"runs"`
 }

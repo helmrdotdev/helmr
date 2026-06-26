@@ -353,7 +353,7 @@ test("sessions namespace exposes the default client session methods", async () =
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     requestedUrl = String(input)
     authorization = new Headers(init?.headers).get("authorization")
-    return Response.json(taskSessionFixture({ id: "session-1" }))
+    return Response.json(sessionFixture({ id: "session-1" }))
   }) as typeof fetch
 
   const session = await sessions.retrieve("session-1")
@@ -778,7 +778,7 @@ test("sessions facade retrieves state and reads/writes session streams", async (
       bodies.push(JSON.parse(String(init.body)))
     }
     if (url.endsWith("/api/sessions/session-1")) {
-      return Response.json(taskSessionFixture({ id: "session-1", external_id: "case-123" }))
+      return Response.json(sessionFixture({ id: "session-1", external_id: "case-123" }))
     }
     if (url.endsWith("/api/sessions/session-1/inputs/approval")) {
       return Response.json({
@@ -873,7 +873,7 @@ test("sessions facade uses project environment scoped routes when scope is provi
     if (url.endsWith("/session-1/outputs/agent.report")) {
       return Response.json({ records: [] })
     }
-    return Response.json(taskSessionFixture({ id: "session-1", status: "completed", result: { ok: true } }))
+    return Response.json(sessionFixture({ id: "session-1", status: "completed", result: { ok: true } }))
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
@@ -2633,7 +2633,7 @@ function sessionStartFixture(run: {
   readonly [key: string]: unknown
 }, opts: { readonly isCached?: boolean } = {}) {
   return {
-    session: taskSessionFixture({
+    session: sessionFixture({
       id: "session-1",
       task_id: run.task_id,
       current_run_id: run.id,
@@ -2644,7 +2644,7 @@ function sessionStartFixture(run: {
   }
 }
 
-function taskSessionFixture(overrides: Partial<{
+function sessionFixture(overrides: Partial<{
   readonly id: string
   readonly project_id: string
   readonly environment_id: string

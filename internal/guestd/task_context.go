@@ -23,8 +23,8 @@ func adapterTaskContextJSON(request *runv0.RunTaskRequest) (string, error) {
 	if strings.TrimSpace(workspace.ProjectPath) == "" {
 		return "", errors.New("task context workspace.project_path is required")
 	}
-	taskSessionID := strings.TrimSpace(request.TaskSessionId)
-	if taskSessionID == "" {
+	sessionID := strings.TrimSpace(request.SessionId)
+	if sessionID == "" {
 		return "", errors.New("task context session.id is required")
 	}
 	run := map[string]any{
@@ -51,7 +51,7 @@ func adapterTaskContextJSON(request *runv0.RunTaskRequest) (string, error) {
 		"task":      map[string]string{"id": request.TaskId},
 		"workspace": workspaceContext,
 		"session": map[string]any{
-			"id": taskSessionID,
+			"id": sessionID,
 		},
 	}
 	encoded, err := json.Marshal(payload)

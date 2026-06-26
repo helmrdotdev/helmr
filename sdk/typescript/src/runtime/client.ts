@@ -82,28 +82,28 @@ export type SessionsStartAndWaitArgs<TTask extends AnyTask> =
 
 export const tokenClientMethod = Symbol.for("helmr.sdk.client.token")
 
-export type TaskSessionStatus = "open" | "closed" | "cancelled"
+export type SessionStatus = "open" | "closed" | "cancelled"
 
-export interface TaskSessionHandle<TOutput = unknown> {
+export interface SessionHandle<TOutput = unknown> {
   readonly id: string
   readonly taskId: string
   readonly currentRunId: string | null
 }
 
 export interface SessionStartResult<TOutput = unknown> {
-  readonly session: TaskSessionSnapshot<TOutput>
+  readonly session: SessionSnapshot<TOutput>
   readonly run: RunHandle<TOutput>
   readonly isCached: boolean
 }
 
 export interface SessionStartAndWaitResult<TOutput = unknown> {
-  readonly session: TaskSessionSnapshot<TOutput>
+  readonly session: SessionSnapshot<TOutput>
   readonly run: RunSnapshot<TOutput>
   readonly isCached: boolean
   readonly timedOut: boolean
 }
 
-export interface TaskSessionSnapshot<TOutput = unknown> {
+export interface SessionSnapshot<TOutput = unknown> {
   readonly id: string
   readonly projectId: string
   readonly environmentId: string
@@ -111,7 +111,7 @@ export interface TaskSessionSnapshot<TOutput = unknown> {
   readonly initialDeploymentId: string
   readonly activeDeploymentId: string
   readonly externalId?: string
-  readonly status: TaskSessionStatus
+  readonly status: SessionStatus
   readonly currentRunId: string | null
   readonly workspaceId: string | null
   readonly metadata: Record<string, unknown>
@@ -125,42 +125,42 @@ export interface TaskSessionSnapshot<TOutput = unknown> {
   readonly updatedAt: string
 }
 
-export interface TaskSessionListOptions {
+export interface SessionListOptions {
   readonly projectId?: string
   readonly environmentId?: string
-  readonly status?: TaskSessionStatus | "all"
+  readonly status?: SessionStatus | "all"
   readonly taskId?: string
   readonly limit?: number
   readonly signal?: AbortSignal
 }
 
-export interface TaskSessionRetrieveOptions {
+export interface SessionRetrieveOptions {
   readonly projectId?: string
   readonly environmentId?: string
   readonly signal?: AbortSignal
 }
 
-export interface TaskSessionCloseOptions {
-  readonly projectId?: string
-  readonly environmentId?: string
-  readonly reason?: string
-  readonly signal?: AbortSignal
-}
-
-export interface TaskSessionCancelOptions {
+export interface SessionCloseOptions {
   readonly projectId?: string
   readonly environmentId?: string
   readonly reason?: string
   readonly signal?: AbortSignal
 }
 
-export interface TaskSessionRunsOptions {
+export interface SessionCancelOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
+  readonly reason?: string
+  readonly signal?: AbortSignal
+}
+
+export interface SessionRunsOptions {
   readonly projectId?: string
   readonly environmentId?: string
   readonly signal?: AbortSignal
 }
 
-export interface TaskSessionRun {
+export interface SessionRun {
   readonly id: string
   readonly runId: string
   readonly deploymentId: string
@@ -206,13 +206,13 @@ export interface SessionOutputAppendOptions extends StreamAppendOptions {
 export type PublicAccessTokenScope =
   | {
       readonly type: "session.input.send"
-      readonly sessionId: string | TaskSessionHandle
+      readonly sessionId: string | SessionHandle
       readonly stream: string | InputStreamDefinition<any, any>
       readonly correlationId?: string
     }
   | {
       readonly type: "session.output.read"
-      readonly sessionId: string | TaskSessionHandle
+      readonly sessionId: string | SessionHandle
       readonly stream: string | OutputStreamDefinition<any, any>
       readonly correlationId?: string
     }
@@ -252,12 +252,12 @@ export interface SessionOutputStreamApi<TPayload = unknown, TInput = TPayload> {
   list(opts?: SessionStreamListOptions): Promise<StreamRecord<TPayload>[]>
 }
 
-export interface OpenTaskSessionApi<TOutput = unknown> {
+export interface OpenSessionApi<TOutput = unknown> {
   readonly id: string
-  retrieve(opts?: TaskSessionRetrieveOptions): Promise<TaskSessionSnapshot<TOutput>>
-  close(opts?: TaskSessionCloseOptions): Promise<TaskSessionSnapshot<TOutput>>
-  cancel(opts?: TaskSessionCancelOptions): Promise<TaskSessionSnapshot<TOutput>>
-  runs(opts?: TaskSessionRunsOptions): Promise<TaskSessionRun[]>
+  retrieve(opts?: SessionRetrieveOptions): Promise<SessionSnapshot<TOutput>>
+  close(opts?: SessionCloseOptions): Promise<SessionSnapshot<TOutput>>
+  cancel(opts?: SessionCancelOptions): Promise<SessionSnapshot<TOutput>>
+  runs(opts?: SessionRunsOptions): Promise<SessionRun[]>
   input<TSchema extends InputStreamDefinition<any, any>>(definition: TSchema): TSchema extends InputStreamDefinition<infer TPayload, infer TInput> ? SessionInputStreamApi<TPayload, TInput> : never
   input(stream: string): SessionInputStreamApi<unknown, unknown>
   output<TSchema extends OutputStreamDefinition<any, any>>(definition: TSchema): TSchema extends OutputStreamDefinition<infer TPayload, infer TInput> ? SessionOutputStreamApi<TPayload, TInput> : never
@@ -824,21 +824,21 @@ export class HelmrClient {
       }
       return await this.#startSessionAndWait(target.id, payload, opts, readOptionalMaxDurationSeconds(target.maxDuration))
     },
-    open: <TOutput = unknown>(idOrHandle: string | TaskSessionHandle<TOutput>): OpenTaskSessionApi<TOutput> => {
+    open: <TOutput = unknown>(idOrHandle: string | SessionHandle<TOutput>): OpenSessionApi<TOutput> => {
       return this.#openSession<TOutput>(sessionId(idOrHandle))
     },
     retrieve: async <TOutput = unknown>(
-      idOrHandle: string | TaskSessionHandle<TOutput>,
-      opts: TaskSessionRetrieveOptions = {},
-    ): Promise<TaskSessionSnapshot<TOutput>> => {
+      idOrHandle: string | SessionHandle<TOutput>,
+      opts: SessionRetrieveOptions = {},
+    ): Promise<SessionSnapshot<TOutput>> => {
       return await this.#openSession<TOutput>(sessionId(idOrHandle)).retrieve(opts)
     },
-    list: async (opts: TaskSessionListOptions = {}): Promise<TaskSessionSnapshot[]> => {
-      const response = await this.#json<ListTaskSessionsResponse>(
-        `${taskSessionCollectionPath(opts)}${taskSessionListQuery(opts)}`,
+    list: async (opts: SessionListOptions = {}): Promise<SessionSnapshot[]> => {
+      const response = await this.#json<ListSessionsResponse>(
+        `${sessionCollectionPath(opts)}${sessionListQuery(opts)}`,
         requestSignal(opts.signal),
       )
-      return response.sessions.map(taskSessionFromResponse)
+      return response.sessions.map(sessionFromResponse)
     },
   }
 
@@ -1375,19 +1375,19 @@ export class HelmrClient {
     yield* parseWorkspaceStreamSse(response)
   }
 
-  #openSession<TOutput = unknown>(id: string): OpenTaskSessionApi<TOutput> {
+  #openSession<TOutput = unknown>(id: string): OpenSessionApi<TOutput> {
     return {
       id,
       retrieve: async (opts = {}) => {
-        const response = await this.#json<TaskSessionResponse>(
-          taskSessionResourcePath(id, opts, ""),
+        const response = await this.#json<SessionResponse>(
+          sessionResourcePath(id, opts, ""),
           requestSignal(opts.signal),
         )
-        return taskSessionFromResponse<TOutput>(response)
+        return sessionFromResponse<TOutput>(response)
       },
       close: async (opts = {}) => {
-        const response = await this.#json<TaskSessionResponse>(
-          taskSessionResourcePath(id, opts, "/close"),
+        const response = await this.#json<SessionResponse>(
+          sessionResourcePath(id, opts, "/close"),
           {
             method: "POST",
             body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
@@ -1395,11 +1395,11 @@ export class HelmrClient {
             ...requestSignal(opts.signal),
           },
         )
-        return taskSessionFromResponse<TOutput>(response)
+        return sessionFromResponse<TOutput>(response)
       },
       cancel: async (opts = {}) => {
-        const response = await this.#json<TaskSessionResponse>(
-          taskSessionResourcePath(id, opts, "/cancel"),
+        const response = await this.#json<SessionResponse>(
+          sessionResourcePath(id, opts, "/cancel"),
           {
             method: "POST",
             body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
@@ -1407,14 +1407,14 @@ export class HelmrClient {
             ...requestSignal(opts.signal),
           },
         )
-        return taskSessionFromResponse<TOutput>(response)
+        return sessionFromResponse<TOutput>(response)
       },
       runs: async (opts = {}) => {
-        const response = await this.#json<ListTaskSessionRunsResponse>(
-          taskSessionResourcePath(id, opts, "/runs"),
+        const response = await this.#json<ListSessionRunsResponse>(
+          sessionResourcePath(id, opts, "/runs"),
           requestSignal(opts.signal),
         )
-        return response.runs.map(taskSessionRunFromResponse)
+        return response.runs.map(sessionRunFromResponse)
       },
       input: (target: string | InputStreamDefinition<any, any>) => {
         const stream = streamTargetName(target)
@@ -1422,7 +1422,7 @@ export class HelmrClient {
           id: stream,
           send: async <TData = unknown>(data: TData, opts: SessionInputSendOptions = {}) => {
             const path = sessionPublicAccessPath(id, stream, "input", opts) ??
-              taskSessionResourcePath(id, opts, `/inputs/${encodeURIComponent(stream)}`)
+              sessionResourcePath(id, opts, `/inputs/${encodeURIComponent(stream)}`)
             const response = await this.#json<AppendStreamRecordResponse>(
               path,
               {
@@ -1452,7 +1452,7 @@ export class HelmrClient {
           id: stream,
           append: async <TData = unknown>(data: TData, opts: SessionOutputAppendOptions = {}) => {
             const response = await this.#json<AppendStreamRecordResponse>(
-              taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`),
+              sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`),
               {
                 method: "POST",
                 body: JSON.stringify(streamAppendBody(data, opts)),
@@ -1465,7 +1465,7 @@ export class HelmrClient {
           pipe: async <TData = unknown>(source: AsyncIterable<TData> | Iterable<TData>, opts: SessionOutputAppendOptions = {}) => {
             for await (const item of source) {
               const response = await this.#json<AppendStreamRecordResponse>(
-                taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`),
+                sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`),
                 {
                   method: "POST",
                   body: JSON.stringify(streamAppendBody(item, opts)),
@@ -1479,7 +1479,7 @@ export class HelmrClient {
           writer: (opts: SessionOutputAppendOptions = {}): StreamWriter<unknown> => ({
             write: async (data: unknown) => {
               const response = await this.#json<AppendStreamRecordResponse>(
-                taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`),
+                sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`),
                 {
                   method: "POST",
                   body: JSON.stringify(streamAppendBody(data, opts)),
@@ -1493,7 +1493,7 @@ export class HelmrClient {
           }),
           read: async <TData = unknown>(opts: SessionStreamReadOptions = {}) => {
             const path = sessionPublicAccessPath(id, stream, "output", opts) ??
-              taskSessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}/read`)
+              sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}/read`)
             const response = await this.#json<ReadStreamRecordResponse>(
               `${path}${sessionStreamQuery(opts)}`,
               opts.publicAccessToken === undefined
@@ -1520,7 +1520,7 @@ export class HelmrClient {
     opts: SessionStreamListOptions,
   ): Promise<StreamRecord<TData>[]> {
     const response = await this.#json<ListStreamRecordsResponse>(
-      `${taskSessionResourcePath(sessionID, opts, `/${direction === "input" ? "inputs" : "outputs"}/${encodeURIComponent(stream)}`)}${sessionStreamQuery(opts)}`,
+      `${sessionResourcePath(sessionID, opts, `/${direction === "input" ? "inputs" : "outputs"}/${encodeURIComponent(stream)}`)}${sessionStreamQuery(opts)}`,
       requestSignal(opts.signal),
     )
     return response.records.map(streamRecordFromResponse<TData>)
@@ -1941,13 +1941,13 @@ export interface ListRunsResponse {
 }
 
 interface SessionStartResponse {
-  readonly session: TaskSessionResponse
+  readonly session: SessionResponse
   readonly run: RunResponse
   readonly is_cached?: boolean
   readonly timed_out?: boolean
 }
 
-interface TaskSessionResponse {
+interface SessionResponse {
   readonly id: string
   readonly project_id: string
   readonly environment_id: string
@@ -1955,7 +1955,7 @@ interface TaskSessionResponse {
   readonly initial_deployment_id: string
   readonly active_deployment_id: string
   readonly external_id?: string
-  readonly status: TaskSessionStatus
+  readonly status: SessionStatus
   readonly current_run_id?: string | null
   readonly workspace_id?: string | null
   readonly metadata?: Record<string, unknown> | null
@@ -1969,11 +1969,11 @@ interface TaskSessionResponse {
   readonly updated_at: string
 }
 
-interface ListTaskSessionsResponse {
-  readonly sessions: readonly TaskSessionResponse[]
+interface ListSessionsResponse {
+  readonly sessions: readonly SessionResponse[]
 }
 
-interface TaskSessionRunResponse {
+interface SessionRunResponse {
   readonly id: string
   readonly run_id: string
   readonly deployment_id: string
@@ -1986,8 +1986,8 @@ interface TaskSessionRunResponse {
   readonly ended_at?: string
 }
 
-interface ListTaskSessionRunsResponse {
-  readonly runs: readonly TaskSessionRunResponse[]
+interface ListSessionRunsResponse {
+  readonly runs: readonly SessionRunResponse[]
 }
 
 interface StreamRecordResponse {
@@ -2264,7 +2264,7 @@ function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSna
 
 function sessionStartFromResponse<TOutput = unknown>(response: SessionStartResponse): SessionStartResult<TOutput> {
   return {
-    session: taskSessionFromResponse<TOutput>(response.session),
+    session: sessionFromResponse<TOutput>(response.session),
     run: runHandle<TOutput>(response.run.id, response.run.task_id),
     isCached: response.is_cached ?? false,
   }
@@ -2272,14 +2272,14 @@ function sessionStartFromResponse<TOutput = unknown>(response: SessionStartRespo
 
 function sessionStartAndWaitFromResponse<TOutput = unknown>(response: SessionStartResponse): SessionStartAndWaitResult<TOutput> {
   return {
-    session: taskSessionFromResponse<TOutput>(response.session),
+    session: sessionFromResponse<TOutput>(response.session),
     run: runResponseToSnapshot<TOutput>(response.run),
     isCached: response.is_cached ?? false,
     timedOut: response.timed_out ?? false,
   }
 }
 
-function taskSessionFromResponse<TOutput = unknown>(response: TaskSessionResponse): TaskSessionSnapshot<TOutput> {
+function sessionFromResponse<TOutput = unknown>(response: SessionResponse): SessionSnapshot<TOutput> {
   return {
     id: response.id,
     projectId: response.project_id,
@@ -2303,7 +2303,7 @@ function taskSessionFromResponse<TOutput = unknown>(response: TaskSessionRespons
   }
 }
 
-function taskSessionRunFromResponse(response: TaskSessionRunResponse): TaskSessionRun {
+function sessionRunFromResponse(response: SessionRunResponse): SessionRun {
   return {
     id: response.id,
     runId: response.run_id,
@@ -2339,7 +2339,7 @@ function appendStreamRecordFromResponse<TData = unknown>(
   }
 }
 
-function sessionId<TOutput>(idOrHandle: string | TaskSessionHandle<TOutput>): string {
+function sessionId<TOutput>(idOrHandle: string | SessionHandle<TOutput>): string {
   return typeof idOrHandle === "string" ? idOrHandle : idOrHandle.id
 }
 
@@ -2396,7 +2396,7 @@ function streamAppendBody(data: unknown, opts: StreamAppendOptions): Record<stri
   }
 }
 
-function taskSessionListQuery(opts: TaskSessionListOptions): string {
+function sessionListQuery(opts: SessionListOptions): string {
   const query = new URLSearchParams()
   if (opts.status !== undefined) query.set("status", opts.status)
   if (opts.taskId !== undefined) query.set("task_id", opts.taskId)
@@ -2404,7 +2404,7 @@ function taskSessionListQuery(opts: TaskSessionListOptions): string {
   return query.size === 0 ? "" : `?${query}`
 }
 
-function taskSessionCollectionPath(opts: { readonly projectId?: string; readonly environmentId?: string }): string {
+function sessionCollectionPath(opts: { readonly projectId?: string; readonly environmentId?: string }): string {
   if (opts.projectId !== undefined || opts.environmentId !== undefined) {
     if (opts.projectId === undefined || opts.environmentId === undefined) {
       throw new Error("projectId and environmentId must be provided together")
@@ -2414,12 +2414,12 @@ function taskSessionCollectionPath(opts: { readonly projectId?: string; readonly
   return "/api/sessions"
 }
 
-function taskSessionResourcePath(
+function sessionResourcePath(
   id: string,
   opts: { readonly projectId?: string; readonly environmentId?: string },
   suffix: string,
 ): string {
-  return `${taskSessionCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`
+  return `${sessionCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`
 }
 
 function sessionPublicAccessPath(

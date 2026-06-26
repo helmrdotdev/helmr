@@ -631,7 +631,7 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint) VALUES ($1, $2, $3, $4, $5, 'default', 'sandbox-fingerprint')`, ids.workspaceID, ids.orgID, ids.projectID, ids.environmentID, sandboxID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO task_sessions (id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, workspace_id) VALUES ($1, $2, $3, $4, $5, $6, $6, $7)`, ids.sessionID, ids.orgID, ids.projectID, ids.environmentID, taskID, ids.deploymentID, ids.workspaceID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, workspace_id) VALUES ($1, $2, $3, $4, $5, $6, $6, $7)`, ids.sessionID, ids.orgID, ids.projectID, ids.environmentID, taskID, ids.deploymentID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	seedControlStream(t, ctx, pool, ids, ids.deploymentID, ids.inputStreamID, "approval", "input")
@@ -670,7 +670,7 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
 			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
-			task_session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
+			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'running', 'executing', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
@@ -718,7 +718,7 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		UPDATE task_sessions
+		UPDATE sessions
 		   SET current_run_id = $1
 		 WHERE org_id = $2
 		   AND id = $3
