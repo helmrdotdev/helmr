@@ -239,6 +239,10 @@ WITH target AS MATERIALIZED (
        AND session_run_requests.environment_id = $3
        AND session_run_requests.stream_record_id = $4
        AND session_run_requests.status IN ('accepted', 'claimed', 'created')
+       AND (
+           session_run_requests.status <> 'created'
+           OR session_run_requests.run_id IS DISTINCT FROM $5
+       )
      FOR UPDATE
 ),
 cancelled_runs AS (

@@ -134,6 +134,10 @@ WITH target AS MATERIALIZED (
        AND session_run_requests.environment_id = sqlc.arg(environment_id)
        AND session_run_requests.stream_record_id = sqlc.arg(stream_record_id)
        AND session_run_requests.status IN ('accepted', 'claimed', 'created')
+       AND (
+           session_run_requests.status <> 'created'
+           OR session_run_requests.run_id IS DISTINCT FROM sqlc.arg(active_run_id)
+       )
      FOR UPDATE
 ),
 cancelled_runs AS (
