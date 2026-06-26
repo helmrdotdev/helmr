@@ -294,6 +294,7 @@ func TestRunOnceUsesRenewedLeaseForExecutionContextAndRelease(t *testing.T) {
 	renewedClaim.DispatchLeaseID = "lease-2"
 	renewedClaim.ExpiresAt = time.Now().Add(2 * time.Minute)
 	renewed := make(chan struct{}, 1)
+	allowRenew := make(chan struct{})
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
 			Lease: &claim,
@@ -301,22 +302,36 @@ func TestRunOnceUsesRenewedLeaseForExecutionContextAndRelease(t *testing.T) {
 		},
 		renewResponse: api.WorkerRenewResponse{Lease: renewedClaim},
 		renewed:       renewed,
+		renewGate:     allowRenew,
 	}
 	executor := executorFunc(func(ctx context.Context, leases api.WorkerRunLeaseProvider, _ api.WorkerRun) api.WorkerReleaseResult {
 		got := leases.CurrentWorkerRunLease()
 		if got.DispatchLeaseID != "lease-1" {
-			t.Fatalf("initial executor lease = %+v", got)
+			return api.WorkerReleaseResult{Kind: "failed", Error: new("initial executor lease did not match")}
 		}
+		close(allowRenew)
 		timer := time.NewTimer(time.Second)
 		defer timer.Stop()
 		select {
 		case <-renewed:
+		case <-ctx.Done():
+			return api.WorkerReleaseResult{Kind: "failed", Error: new("context cancelled before lease renewal")}
 		case <-timer.C:
 			return api.WorkerReleaseResult{Kind: "failed", Error: new("timed out waiting for lease renewal")}
 		}
-		current := leases.CurrentWorkerRunLease()
-		if current.DispatchLeaseID != "lease-2" {
-			t.Fatalf("current executor lease = %+v", current)
+		for {
+			current := leases.CurrentWorkerRunLease()
+			if current.DispatchLeaseID == "lease-2" {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return api.WorkerReleaseResult{Kind: "failed", Error: new("context cancelled before renewed lease became current")}
+			case <-timer.C:
+				return api.WorkerReleaseResult{Kind: "failed", Error: new("timed out waiting for renewed lease to become current")}
+			default:
+				time.Sleep(time.Millisecond)
+			}
 		}
 		exitCode := int32(0)
 		return api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode}
@@ -333,6 +348,9 @@ func TestRunOnceUsesRenewedLeaseForExecutionContextAndRelease(t *testing.T) {
 	}
 	if client.releaseLease.DispatchLeaseID != "lease-2" {
 		t.Fatalf("release lease = %+v", client.releaseLease)
+	}
+	if client.releaseResult.Kind != "completed" {
+		t.Fatalf("release result = %+v", client.releaseResult)
 	}
 }
 
@@ -758,6 +776,7 @@ type fakeClient struct {
 	releaseErr                error
 	releaseCtxErr             error
 	renewed                   chan<- struct{}
+	renewGate                 <-chan struct{}
 	renewWaitForCancel        bool
 	starts                    int
 	renews                    int
@@ -945,6 +964,13 @@ func (f *fakeClient) StartRun(context.Context, api.WorkerRunLease) (api.WorkerSt
 }
 
 func (f *fakeClient) RenewRun(ctx context.Context, _ api.WorkerRunLease) (api.WorkerRenewResponse, error) {
+	if f.renewGate != nil {
+		select {
+		case <-f.renewGate:
+		case <-ctx.Done():
+			return api.WorkerRenewResponse{}, ctx.Err()
+		}
+	}
 	f.renews++
 	if f.renewed != nil {
 		select {
