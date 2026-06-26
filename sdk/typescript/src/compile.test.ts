@@ -932,6 +932,42 @@ streams.input("shared-approval", {
     ])
   })
 
+  test("bundled adapter shares module-level definition registry with project sdk copies", async () => {
+    const cwd = await parseTaskFixture(
+      "bundled-definition-registry",
+      `
+import { image, queue, sandbox, streams, task } from "@helmr/sdk"
+
+const serial = queue({ id: "critical/reviews", concurrencyLimit: 1 })
+streams.input("bundled-approval")
+streams.output("bundled-events")
+
+const sb = sandbox("bundled-definition-registry")
+  .image(image("bundled-definition-registry").from("debian:trixie-slim"))
+  .workspace("/app")
+
+export const bundledDefinitionRegistry = task({
+  id: "bundled-definition-registry",
+  queue: serial,
+  sandbox: sb,
+  run: async () => ({ ok: true }),
+})
+`,
+    )
+    const result = await parseBundledAdapterRegistry(cwd)
+
+    expect(result.status, result.stderr).toBe(0)
+    const registry = JSON.parse(result.stdout) as {
+      readonly streams: readonly { readonly name: string; readonly direction: string }[]
+      readonly queues: readonly { readonly name: string; readonly concurrency_limit?: number }[]
+    }
+    expect(registry.streams.map((stream) => `${stream.direction}:${stream.name}`)).toEqual([
+      "input:bundled-approval",
+      "output:bundled-events",
+    ])
+    expect(registry.queues).toContainEqual({ name: "critical/reviews", concurrency_limit: 1 })
+  })
+
   test("adapter parse emits duplicate task id kind", async () => {
     const cwd = await mkdtemp(resolve(tmpdir(), "helmr-adapter-duplicate-kind-test-"))
     await mkdir(resolve(cwd, "tasks/agents"), { recursive: true })
@@ -1987,6 +2023,33 @@ async function parseAdapterRegistry(
     stderr: result.stderr,
     status: result.status,
   }
+}
+
+async function parseBundledAdapterRegistry(
+  cwd: string,
+): Promise<{ readonly stdout: string; readonly stderr: string; readonly status: number }> {
+  const bundleDir = await mkdtemp(resolve(tmpdir(), "helmr-bundled-adapter-test-"))
+  const adapterPath = resolve(bundleDir, "main.js")
+  const build = await Bun.build({
+    entrypoints: [fileURLToPath(new URL("../../../runtime/typescript/src/main.ts", import.meta.url))],
+    target: "node",
+    format: "esm",
+  })
+  expect(build.success).toBe(true)
+  expect(build.outputs.length).toBe(1)
+  await Bun.write(adapterPath, build.outputs[0])
+  const sdkRoot = fileURLToPath(new URL("..", import.meta.url))
+  await linkLocalSdk(cwd, sdkRoot)
+  const proc = Bun.spawn([process.execPath, adapterPath, "parse", "--cwd", cwd, "--output", "json"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const [stdout, stderr, status] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+  return { stdout, stderr, status }
 }
 
 async function runAdapterTask(

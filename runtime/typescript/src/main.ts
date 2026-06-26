@@ -41,7 +41,6 @@ import {
   loadConfig,
   loadTaskRegistry,
   type DeploymentRegistry,
-  type RegisteredTask,
 } from "./config"
 import {
   TaskNotFoundError,

@@ -803,24 +803,26 @@ default_run_ref() {
 run_hello_world() {
   check_tools
   task="${DEBUG_RUN_TASK:-hello-world}"
-  repo="$(repo_slug)"
-  ref="${DEBUG_RUN_REF:-$(default_run_ref)}"
-  subpath="${DEBUG_RUN_SUBPATH:-examples/hello-world}"
   max_duration="${DEBUG_RUN_MAX_DURATION_SECONDS:-600}"
-  HELMR_API_URL="$(control_url)" go run ./cmd/helmr run "${task}" \
-    --repo "${repo}" \
-    --ref "${ref}" \
-    --subpath "${subpath}" \
-    --max-duration-seconds "${max_duration}"
+  project="${DEBUG_RUN_PROJECT:-helmr}"
+  env="${DEBUG_RUN_ENV:-production}"
+  payload_json="${DEBUG_RUN_PAYLOAD_JSON:-{\"name\":\"Ada\"}}"
+  HELMR_API_URL="$(control_url)" go run ./cmd/helmr session start "${task}" \
+    --project "${project}" \
+    --env "${env}" \
+    --payload-json "${payload_json}" \
+    --max-duration-seconds "${max_duration}" \
+    --wait \
+    --json
 }
 
 show_run() {
   run_id=${1:-}
   [ -n "${run_id}" ] || die "RUN_ID is required"
   base_url="$(control_url)"
-  HELMR_API_URL="${base_url}" go run ./cmd/helmr show "${run_id}"
-  HELMR_API_URL="${base_url}" go run ./cmd/helmr events "${run_id}"
-  HELMR_API_URL="${base_url}" go run ./cmd/helmr logs "${run_id}"
+  HELMR_API_URL="${base_url}" go run ./cmd/helmr run get "${run_id}"
+  HELMR_API_URL="${base_url}" go run ./cmd/helmr run events "${run_id}"
+  HELMR_API_URL="${base_url}" go run ./cmd/helmr run logs "${run_id}"
 }
 
 command=${1:-}

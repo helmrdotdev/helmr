@@ -933,16 +933,31 @@ export function isTaskDefinition(
   return hasBrand(value, taskBrand)
 }
 
-const streamDefinitions: InternalStreamDefinition[] = []
-const queueDefinitions: InternalQueueDefinition[] = []
-let streamDefinitionContext: string | undefined
+interface DefinitionRegistry {
+  streamDefinitions: InternalStreamDefinition[]
+  queueDefinitions: InternalQueueDefinition[]
+  definitionContext: string | undefined
+}
+
+const definitionRegistryKey = Symbol.for("helmr.sdk.DefinitionRegistry")
+
+function definitionRegistry(): DefinitionRegistry {
+  const globalRegistry = globalThis as unknown as Record<symbol, DefinitionRegistry | undefined>
+  globalRegistry[definitionRegistryKey] ??= {
+    streamDefinitions: [],
+    queueDefinitions: [],
+    definitionContext: undefined,
+  }
+  return globalRegistry[definitionRegistryKey]
+}
 
 export function registerStreamDefinition(value: Omit<InternalStreamDefinition, "originFile">): void {
-  const originFile = streamDefinitionContext
+  const registry = definitionRegistry()
+  const originFile = registry.definitionContext
   if (originFile === undefined) {
     return
   }
-  const existing = streamDefinitions.find((item) =>
+  const existing = registry.streamDefinitions.find((item) =>
     item.originFile === originFile &&
     item.id === value.id &&
     item.direction === value.direction
@@ -950,15 +965,16 @@ export function registerStreamDefinition(value: Omit<InternalStreamDefinition, "
   if (existing) {
     return
   }
-  streamDefinitions.push({ ...value, originFile })
+  registry.streamDefinitions.push({ ...value, originFile })
 }
 
 export function registerQueueDefinition(value: Omit<InternalQueueDefinition, "originFile">): void {
-  const originFile = streamDefinitionContext
+  const registry = definitionRegistry()
+  const originFile = registry.definitionContext
   if (originFile === undefined) {
     return
   }
-  const existing = queueDefinitions.find((item) =>
+  const existing = registry.queueDefinitions.find((item) =>
     item.originFile === originFile &&
     item.id === value.id
   )
@@ -968,19 +984,19 @@ export function registerQueueDefinition(value: Omit<InternalQueueDefinition, "or
     }
     return
   }
-  queueDefinitions.push({ ...value, originFile })
+  registry.queueDefinitions.push({ ...value, originFile })
 }
 
 export function setStreamDefinitionContext(originFile: string): void {
-  streamDefinitionContext = originFile
+  definitionRegistry().definitionContext = originFile
 }
 
 export function clearStreamDefinitionContext(): void {
-  streamDefinitionContext = undefined
+  definitionRegistry().definitionContext = undefined
 }
 
 export function readStreamDefinitions(): readonly InternalStreamDefinition[] {
-  const streams = [...streamDefinitions]
+  const streams = [...definitionRegistry().streamDefinitions]
   streams.sort((left, right) => {
     const byDirection = left.direction.localeCompare(right.direction)
     return byDirection === 0 ? left.id.localeCompare(right.id) : byDirection
@@ -989,7 +1005,7 @@ export function readStreamDefinitions(): readonly InternalStreamDefinition[] {
 }
 
 export function readQueueDefinitions(): readonly InternalQueueDefinition[] {
-  const queues = [...queueDefinitions]
+  const queues = [...definitionRegistry().queueDefinitions]
   queues.sort((left, right) => left.id.localeCompare(right.id))
   return queues
 }

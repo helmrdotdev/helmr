@@ -4267,28 +4267,36 @@ async function parseTaskPayload(task, payload) {
 function isTaskDefinition(value) {
   return hasBrand(value, taskBrand);
 }
-var streamDefinitions = [];
-var queueDefinitions = [];
-var streamDefinitionContext;
+var definitionRegistryKey = Symbol.for("helmr.sdk.DefinitionRegistry");
+function definitionRegistry() {
+  const globalRegistry = globalThis;
+  globalRegistry[definitionRegistryKey] ??= {
+    streamDefinitions: [],
+    queueDefinitions: [],
+    definitionContext: undefined
+  };
+  return globalRegistry[definitionRegistryKey];
+}
 function registerStreamDefinition(value) {
-  const originFile = streamDefinitionContext;
+  const registry2 = definitionRegistry();
+  const originFile = registry2.definitionContext;
   if (originFile === undefined) {
     return;
   }
-  const existing = streamDefinitions.find((item) => item.originFile === originFile && item.id === value.id && item.direction === value.direction);
+  const existing = registry2.streamDefinitions.find((item) => item.originFile === originFile && item.id === value.id && item.direction === value.direction);
   if (existing) {
     return;
   }
-  streamDefinitions.push({ ...value, originFile });
+  registry2.streamDefinitions.push({ ...value, originFile });
 }
 function setStreamDefinitionContext(originFile) {
-  streamDefinitionContext = originFile;
+  definitionRegistry().definitionContext = originFile;
 }
 function clearStreamDefinitionContext() {
-  streamDefinitionContext = undefined;
+  definitionRegistry().definitionContext = undefined;
 }
 function readStreamDefinitions() {
-  const streams = [...streamDefinitions];
+  const streams = [...definitionRegistry().streamDefinitions];
   streams.sort((left, right) => {
     const byDirection = left.direction.localeCompare(right.direction);
     return byDirection === 0 ? left.id.localeCompare(right.id) : byDirection;
@@ -4296,7 +4304,7 @@ function readStreamDefinitions() {
   return streams;
 }
 function readQueueDefinitions() {
-  const queues = [...queueDefinitions];
+  const queues = [...definitionRegistry().queueDefinitions];
   queues.sort((left, right) => left.id.localeCompare(right.id));
   return queues;
 }
