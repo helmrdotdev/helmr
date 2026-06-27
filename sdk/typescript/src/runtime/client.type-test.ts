@@ -125,9 +125,11 @@ if (false) {
   const outputRecords: Promise<StreamRecord<{ text: string }>[]> = session.output(reportStream).list({ cursor: 1 })
   const outputRecord: Promise<StreamRecord<{ text: string }> | null> = session.output(reportStream).read({ cursor: 1 })
   const outputToken: Promise<PublicAccessToken> = client.auth.createPublicToken({
+    projectId: "project-1",
+    environmentId: "env-1",
     scope: {
       type: "session.output.read",
-      sessionId: "session-1",
+      session: { externalId: "slack:T123:C456" },
       stream: "agent.report",
       correlationId: "thread-1",
     },
@@ -136,21 +138,21 @@ if (false) {
   const inputToken: Promise<PublicAccessToken> = client.auth.createPublicToken({
     scope: {
       type: "session.input.send",
-      sessionId: session.id,
+      session,
       stream: "approval",
     },
   })
   const topLevelOutputToken: Promise<PublicAccessToken> = auth.createPublicToken({
     scope: {
       type: "session.output.read",
-      sessionId: topLevelSession.id,
+      session: topLevelSession,
       stream: reportStream,
     },
   })
   const topLevelInputToken: Promise<PublicAccessToken> = auth.createPublicToken({
     scope: {
       type: "session.input.send",
-      sessionId: topLevelSession.id,
+      session: topLevelSession.id,
       stream: approvalStream,
     },
   })
@@ -325,6 +327,14 @@ if (false) {
     scope: {
       // @ts-expect-error public token scopes are closed.
       type: "sessions:*",
+      session: "session-1",
+      stream: "approval",
+    },
+  })
+  client.auth.createPublicToken({
+    scope: {
+      type: "session.input.send",
+      // @ts-expect-error public token session scope uses `session`, not legacy `sessionId`.
       sessionId: "session-1",
       stream: "approval",
     },
@@ -333,7 +343,7 @@ if (false) {
     // @ts-expect-error input grants require an input stream or string.
     scope: {
       type: "session.input.send",
-      sessionId: "session-1",
+      session: "session-1",
       stream: reportStream,
     },
   })
@@ -341,7 +351,7 @@ if (false) {
     // @ts-expect-error output grants require an output stream or string.
     scope: {
       type: "session.output.read",
-      sessionId: "session-1",
+      session: "session-1",
       stream: approvalStream,
     },
   })

@@ -24,7 +24,7 @@ func (s *Server) requestEnvironmentScope(ctx context.Context, actor auth.Actor, 
 		}
 		scope, ok := actor.EnvironmentScope()
 		if !ok {
-			return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("API key is not bound to an environment")
+			return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, errAPIKeyEnvironmentScopeRequired
 		}
 		scopeProjectID, scopeEnvironmentID, err := runScopeIDs(scope)
 		if err != nil {
@@ -69,6 +69,12 @@ func environmentScopeRefsFromRequest(r *http.Request, actor auth.Actor, projectI
 			return "", "", errors.New("project_id and environment_id are not accepted with API keys")
 		}
 	}
+	if hasPathScope {
+		if projectID != "" || environmentID != "" {
+			return "", "", errors.New("project_id and environment_id are not accepted with project environment scoped routes")
+		}
+		return pathProjectID, pathEnvironmentID, nil
+	}
 	return projectID, environmentID, nil
 }
 
@@ -85,7 +91,7 @@ func (s *Server) requireActorScopeForRecord(r *http.Request, actor auth.Actor, p
 	case auth.ActorKindAPIKey:
 		scope, ok := actor.EnvironmentScope()
 		if !ok {
-			return errors.New("API key is not bound to an environment")
+			return errAPIKeyEnvironmentScopeRequired
 		}
 		recordScope := auth.Scope{
 			OrgID:         actor.OrgID,
@@ -123,7 +129,7 @@ func (s *Server) requestedRunListScope(r *http.Request, actor auth.Actor) (auth.
 	if actor.Kind == auth.ActorKindAPIKey {
 		scope, ok := actor.EnvironmentScope()
 		if !ok {
-			return auth.Scope{}, errors.New("API key is not bound to an environment")
+			return auth.Scope{}, errAPIKeyEnvironmentScopeRequired
 		}
 		return scope, nil
 	}

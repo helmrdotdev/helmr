@@ -95,7 +95,7 @@ export interface SessionExternalIdAddress {
   readonly externalId: string
 }
 
-export type SessionAddress<TOutput = unknown> = string | SessionHandle<TOutput> | SessionExternalIdAddress
+export type SessionAddress<TOutput = unknown> = string | SessionHandle<TOutput> | OpenSessionHandle<TOutput> | SessionExternalIdAddress
 
 export interface SessionStartResult<TOutput = unknown> {
   readonly session: SessionSnapshot<TOutput>
@@ -217,18 +217,20 @@ export interface SessionOutputAppendOptions extends StreamAppendOptions {
 export type PublicAccessTokenScope =
   | {
       readonly type: "session.input.send"
-      readonly sessionId: string | SessionHandle
+      readonly session: SessionAddress
       readonly stream: string | InputStreamDefinition<any, any>
       readonly correlationId?: string
     }
   | {
       readonly type: "session.output.read"
-      readonly sessionId: string | SessionHandle
+      readonly session: SessionAddress
       readonly stream: string | OutputStreamDefinition<any, any>
       readonly correlationId?: string
     }
 
 export interface PublicAccessTokenCreateOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
   readonly scope: PublicAccessTokenScope
   readonly expiresAt?: string | Date
   readonly maxUses?: number
@@ -1408,44 +1410,18 @@ export class HelmrClient {
     yield* parseWorkspaceStreamSse(response)
   }
 
-  async #resolveSessionAddress(
-    address: SessionResolvedAddress,
-    opts: { readonly projectId?: string; readonly environmentId?: string; readonly signal?: AbortSignal },
-  ): Promise<string> {
-    if (address.kind === "id") {
-      return address.id
-    }
-    const response = await this.#json<ListSessionsResponse>(
-      `${sessionCollectionPath(opts)}${sessionExternalIdQuery(address.externalId)}`,
-      requestSignal(opts.signal),
-    )
-    if (response.sessions.length === 0) {
-      throw new Error(`session externalId ${JSON.stringify(address.externalId)} was not found`)
-    }
-    if (response.sessions.length > 1) {
-      throw new Error(`session externalId ${JSON.stringify(address.externalId)} resolved to multiple sessions`)
-    }
-    const session = response.sessions[0]
-    if (session === undefined) {
-      throw new Error(`session externalId ${JSON.stringify(address.externalId)} was not found`)
-    }
-    return session.id
-  }
-
   #openSession<TOutput = unknown>(address: SessionResolvedAddress): OpenSessionHandle<TOutput> {
     const operations: OpenSessionOperationsApi<TOutput> = {
       retrieve: async (opts = {}) => {
-        const id = await this.#resolveSessionAddress(address, opts)
         const response = await this.#json<SessionResponse>(
-          sessionResourcePath(id, opts, ""),
+          sessionResourcePath(address, opts, ""),
           requestSignal(opts.signal),
         )
         return sessionFromResponse<TOutput>(response)
       },
       close: async (opts = {}) => {
-        const id = await this.#resolveSessionAddress(address, opts)
         const response = await this.#json<SessionResponse>(
-          sessionResourcePath(id, opts, "/close"),
+          sessionResourcePath(address, opts, "/close"),
           {
             method: "POST",
             body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
@@ -1456,9 +1432,8 @@ export class HelmrClient {
         return sessionFromResponse<TOutput>(response)
       },
       cancel: async (opts = {}) => {
-        const id = await this.#resolveSessionAddress(address, opts)
         const response = await this.#json<SessionResponse>(
-          sessionResourcePath(id, opts, "/cancel"),
+          sessionResourcePath(address, opts, "/cancel"),
           {
             method: "POST",
             body: JSON.stringify(opts.reason === undefined ? {} : { reason: opts.reason }),
@@ -1469,9 +1444,8 @@ export class HelmrClient {
         return sessionFromResponse<TOutput>(response)
       },
       runs: async (opts = {}) => {
-        const id = await this.#resolveSessionAddress(address, opts)
         const response = await this.#json<ListSessionRunsResponse>(
-          sessionResourcePath(id, opts, "/runs"),
+          sessionResourcePath(address, opts, "/runs"),
           requestSignal(opts.signal),
         )
         return response.runs.map(sessionRunFromResponse)
@@ -1481,9 +1455,8 @@ export class HelmrClient {
         return {
           id: stream,
           send: async <TData = unknown>(data: TData, opts: SessionInputSendOptions = {}) => {
-            const id = await this.#resolveSessionAddress(address, opts)
-            const path = sessionPublicAccessPath(id, stream, "input", opts) ??
-              sessionResourcePath(id, opts, `/inputs/${encodeURIComponent(stream)}`)
+            const path = sessionPublicAccessResourcePath(address, opts, `/inputs/${encodeURIComponent(stream)}`) ??
+              sessionResourcePath(address, opts, `/inputs/${encodeURIComponent(stream)}`)
             const response = await this.#json<AppendStreamRecordResponse>(
               path,
               {
@@ -1503,8 +1476,7 @@ export class HelmrClient {
           on: async () => unsupportedClientStreamSubscribe(),
           peek: async () => unsupportedClientStreamPeek(),
           list: async <TData = unknown>(opts: SessionStreamListOptions = {}) => {
-            const id = await this.#resolveSessionAddress(address, opts)
-            return await this.#listSessionStreamRecords<TData>(id, stream, "input", opts)
+            return await this.#listSessionStreamRecords<TData>(address, stream, "input", opts)
           },
         }
       },
@@ -1513,9 +1485,8 @@ export class HelmrClient {
         return {
           id: stream,
           append: async <TData = unknown>(data: TData, opts: SessionOutputAppendOptions = {}) => {
-            const id = await this.#resolveSessionAddress(address, opts)
             const response = await this.#json<AppendStreamRecordResponse>(
-              sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`),
+              sessionResourcePath(address, opts, `/outputs/${encodeURIComponent(stream)}`),
               {
                 method: "POST",
                 body: JSON.stringify(streamAppendBody(data, opts)),
@@ -1526,10 +1497,10 @@ export class HelmrClient {
             return appendStreamRecordFromResponse<TData>(response)
           },
           pipe: async <TData = unknown>(source: AsyncIterable<TData> | Iterable<TData>, opts: SessionOutputAppendOptions = {}) => {
+            const path = sessionResourcePath(address, opts, `/outputs/${encodeURIComponent(stream)}`)
             for await (const item of source) {
-              const id = await this.#resolveSessionAddress(address, opts)
               const response = await this.#json<AppendStreamRecordResponse>(
-                sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`),
+                path,
                 {
                   method: "POST",
                   body: JSON.stringify(streamAppendBody(item, opts)),
@@ -1542,9 +1513,8 @@ export class HelmrClient {
           },
           writer: (opts: SessionOutputAppendOptions = {}): StreamWriter<unknown> => ({
             write: async (data: unknown) => {
-              const id = await this.#resolveSessionAddress(address, opts)
               const response = await this.#json<AppendStreamRecordResponse>(
-                sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}`),
+                sessionResourcePath(address, opts, `/outputs/${encodeURIComponent(stream)}`),
                 {
                   method: "POST",
                   body: JSON.stringify(streamAppendBody(data, opts)),
@@ -1557,11 +1527,11 @@ export class HelmrClient {
             close: async () => {},
           }),
           read: async <TData = unknown>(opts: SessionStreamReadOptions = {}) => {
-            const id = await this.#resolveSessionAddress(address, opts)
-            const path = sessionPublicAccessPath(id, stream, "output", opts) ??
-              sessionResourcePath(id, opts, `/outputs/${encodeURIComponent(stream)}/read`)
+            const query = sessionStreamSearchParams(opts)
+            const path = sessionPublicAccessResourcePath(address, opts, `/outputs/${encodeURIComponent(stream)}/read`, query) ??
+              sessionResourcePath(address, opts, `/outputs/${encodeURIComponent(stream)}/read`, query)
             const response = await this.#json<ReadStreamRecordResponse>(
-              `${path}${sessionStreamQuery(opts)}`,
+              path,
               opts.publicAccessToken === undefined
                 ? requestSignal(opts.signal)
                 : {
@@ -1572,8 +1542,7 @@ export class HelmrClient {
             return response.record === undefined || response.record === null ? null : streamRecordFromResponse<TData>(response.record)
           },
           list: async <TData = unknown>(opts: SessionStreamListOptions = {}) => {
-            const id = await this.#resolveSessionAddress(address, opts)
-            return await this.#listSessionStreamRecords<TData>(id, stream, "output", opts)
+            return await this.#listSessionStreamRecords<TData>(address, stream, "output", opts)
           },
         }
       },
@@ -1585,13 +1554,13 @@ export class HelmrClient {
   }
 
   async #listSessionStreamRecords<TData>(
-    sessionID: string,
+    address: SessionResolvedAddress,
     stream: string,
     direction: "input" | "output",
     opts: SessionStreamListOptions,
   ): Promise<StreamRecord<TData>[]> {
     const response = await this.#json<ListStreamRecordsResponse>(
-      `${sessionResourcePath(sessionID, opts, `/${direction === "input" ? "inputs" : "outputs"}/${encodeURIComponent(stream)}`)}${sessionStreamQuery(opts)}`,
+      sessionResourcePath(address, opts, `/${direction === "input" ? "inputs" : "outputs"}/${encodeURIComponent(stream)}`, sessionStreamSearchParams(opts)),
       requestSignal(opts.signal),
     )
     return response.records.map(streamRecordFromResponse<TData>)
@@ -2087,9 +2056,15 @@ interface ReadStreamRecordResponse {
   readonly record?: StreamRecordResponse | null
 }
 
+interface SessionAddressResponse {
+  readonly type: "id" | "external_id"
+  readonly id?: string
+  readonly external_id?: string
+}
+
 interface PublicAccessTokenScopeResponse {
   readonly type: "session.input.send" | "session.output.read"
-  readonly session_id: string
+  readonly session: SessionAddressResponse
   readonly stream: string
   readonly correlation_id?: string
 }
@@ -2429,6 +2404,9 @@ function sessionAddress<TOutput>(address: SessionAddress<TOutput>): SessionResol
   if (typeof address === "string") {
     return { kind: "id", id: address }
   }
+  if ("id" in address) {
+    return { kind: "id", id: address.id }
+  }
   if ("externalId" in address) {
     const externalId = address.externalId.trim()
     if (externalId === "") {
@@ -2436,11 +2414,7 @@ function sessionAddress<TOutput>(address: SessionAddress<TOutput>): SessionResol
     }
     return { kind: "externalId", externalId }
   }
-  return { kind: "id", id: address.id }
-}
-
-function sessionId<TOutput>(idOrHandle: string | SessionHandle<TOutput>): string {
-  return typeof idOrHandle === "string" ? idOrHandle : idOrHandle.id
+  throw new Error("session address must be a session id, session handle, or externalId")
 }
 
 function sessionStartBody(
@@ -2515,25 +2489,24 @@ function sessionCollectionPath(opts: { readonly projectId?: string; readonly env
   return "/api/sessions"
 }
 
-function sessionExternalIdQuery(externalId: string): string {
-  const query = new URLSearchParams()
-  query.set("external_id", externalId)
-  return `?${query}`
-}
-
 function sessionResourcePath(
-  id: string,
+  address: SessionResolvedAddress,
   opts: { readonly projectId?: string; readonly environmentId?: string },
   suffix: string,
+  query?: URLSearchParams,
 ): string {
-  return `${sessionCollectionPath(opts)}/${encodeURIComponent(id)}${suffix}`
+  if (address.kind === "id") {
+    return sessionPathWithQuery(`${sessionCollectionPath(opts)}/${encodeURIComponent(address.id)}${suffix}`, query)
+  }
+  const nextQuery = sessionExternalIDSearchParams(address.externalId, query)
+  return sessionPathWithQuery(`${sessionCollectionPath(opts)}/by-external-id${suffix}`, nextQuery)
 }
 
-function sessionPublicAccessPath(
-  sessionID: string,
-  stream: string,
-  direction: "input" | "output",
+function sessionPublicAccessResourcePath(
+  address: SessionResolvedAddress,
   opts: { readonly projectId?: string; readonly environmentId?: string; readonly publicAccessToken?: string },
+  suffix: string,
+  query?: URLSearchParams,
 ): string | undefined {
   if (opts.publicAccessToken === undefined) {
     return undefined
@@ -2541,12 +2514,19 @@ function sessionPublicAccessPath(
   if (opts.projectId !== undefined || opts.environmentId !== undefined) {
     throw new Error("projectId and environmentId cannot be combined with publicAccessToken")
   }
-  const encodedSessionID = encodeURIComponent(sessionID)
-  const encodedStream = encodeURIComponent(stream)
-  if (direction === "input") {
-    return `/api/v1/sessions/${encodedSessionID}/inputs/${encodedStream}`
+  if (address.kind === "id") {
+    return sessionPathWithQuery(`/api/v1/sessions/${encodeURIComponent(address.id)}${suffix}`, query)
   }
-  return `/api/v1/sessions/${encodedSessionID}/outputs/${encodedStream}/read`
+  const nextQuery = sessionExternalIDSearchParams(address.externalId, query)
+  return sessionPathWithQuery(`/api/v1/sessions/by-external-id${suffix}`, nextQuery)
+}
+
+function sessionExternalIDSearchParams(externalId: string, query?: URLSearchParams): URLSearchParams {
+  const nextQuery = new URLSearchParams([["external_id", externalId]])
+  for (const [key, value] of query ?? new URLSearchParams()) {
+    nextQuery.append(key, value)
+  }
+  return nextQuery
 }
 
 function runCollectionPath(opts: { readonly projectId?: string; readonly environmentId?: string }): string {
@@ -2606,25 +2586,42 @@ async function unsupportedClientStreamPeek(): Promise<never> {
   throw new UnsupportedTransportError("client session stream peek is not implemented until stream read REST support lands")
 }
 
-function sessionStreamQuery(opts: SessionStreamListOptions): string {
+function sessionPathWithQuery(path: string, query: URLSearchParams | undefined): string {
+  if (query === undefined || query.size === 0) {
+    return path
+  }
+  return `${path}${path.includes("?") ? "&" : "?"}${query}`
+}
+
+function sessionStreamSearchParams(opts: SessionStreamListOptions): URLSearchParams {
   const query = new URLSearchParams()
   if (opts.cursor !== undefined) query.set("after_sequence", String(opts.cursor))
   if (opts.limit !== undefined) query.set("limit", String(opts.limit))
   if (opts.correlationId !== undefined) query.set("correlation_id", opts.correlationId)
-  return query.size === 0 ? "" : `?${query}`
+  return query
 }
 
 function publicAccessTokenCreateBody(opts: PublicAccessTokenCreateOptions): Record<string, unknown> {
   return {
+    ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
+    ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
     scope: {
       type: opts.scope.type,
-      session_id: sessionId(opts.scope.sessionId),
+      session: sessionAddressRequest(opts.scope.session),
       stream: publicAccessTokenStreamName(opts.scope),
       ...(opts.scope.correlationId === undefined ? {} : { correlation_id: opts.scope.correlationId }),
     },
     ...(opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") }),
     ...(opts.maxUses === undefined ? {} : { max_uses: opts.maxUses }),
   }
+}
+
+function sessionAddressRequest(address: SessionAddress): Record<string, string> {
+  const resolved = sessionAddress(address)
+  if (resolved.kind === "id") {
+    return { type: "id", id: resolved.id }
+  }
+  return { type: "external_id", external_id: resolved.externalId }
 }
 
 function publicAccessTokenStreamName(scope: PublicAccessTokenScope): string {
@@ -2646,7 +2643,7 @@ function publicAccessTokenFromResponse(response: PublicAccessTokenResponse): Pub
     publicAccessToken: response.public_access_token,
     scope: {
       type: response.scope.type,
-      sessionId: response.scope.session_id,
+      session: sessionAddressFromResponse(response.scope.session),
       stream: response.scope.stream,
       ...(response.scope.correlation_id === undefined ? {} : { correlationId: response.scope.correlation_id }),
     },
@@ -2654,6 +2651,19 @@ function publicAccessTokenFromResponse(response: PublicAccessTokenResponse): Pub
     ...(response.max_uses === undefined ? {} : { maxUses: response.max_uses }),
     createdAt: response.created_at,
   }
+}
+
+function sessionAddressFromResponse(response: SessionAddressResponse): SessionAddress {
+  if (response.type === "id") {
+    if (response.id === undefined || response.id.trim() === "") {
+      throw new Error("public access token scope session.id is missing")
+    }
+    return response.id
+  }
+  if (response.external_id === undefined || response.external_id.trim() === "") {
+    throw new Error("public access token scope session.external_id is missing")
+  }
+  return { externalId: response.external_id }
 }
 
 function isoDateString(value: string | Date, label: string): string {

@@ -68,7 +68,7 @@ Main surfaces:
 
 The top-level `sessions`, `runs`, `workspaces`, `tokens`, `schedules`, and `auth` facades mirror the client namespaces and use the default client from `HELMR_API_URL` and `HELMR_API_KEY`. Use `new HelmrClient(...)` when the caller needs explicit credentials or multiple control-plane targets. Imported task definitions are typed targets for the sessions namespace; they do not expose direct `.start()` or `.startAndWait()` helpers.
 
-Session handles are explicit. `sessions.open("session_...")` treats the string as a session id only. Use `sessions.open({ externalId })` or `sessions.retrieve({ externalId })` when the caller knows the environment-scoped external conversation id; the SDK resolves it through the session collection's `external_id` filter.
+Session handles are explicit. `sessions.open("session-id")` treats the string as a session id only. Use `sessions.open({ externalId })` or `sessions.retrieve({ externalId })` when the caller knows the environment-scoped external conversation id; the SDK sends that external id as a server-resolved session address.
 
 Session start `payload` is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload. Follow-up user messages, webhooks, or operator replies belong in session input streams, not in session start payload.
 
@@ -98,13 +98,15 @@ const reportStream = streams.output("agent.report", {
 const outputToken = await auth.createPublicToken({
   scope: {
     type: "session.output.read",
-    sessionId: session.id,
+    session: { externalId: "slack:T123:C456" },
     stream: reportStream,
     correlationId: "thread-1",
   },
   maxUses: 100,
 })
 ```
+
+API keys use the environment bound to the key. Session-addressed public token requests from user/session auth should pass `projectId` and `environmentId` when the session address is an external id.
 
 `client.runs.wait()` follows the durable run-event stream and uses run snapshots as the convergence source of truth. If the event stream disconnects, it reconnects from the last event cursor. If a malformed SSE frame is detected while waiting, the client falls back to snapshots instead of failing the wait.
 

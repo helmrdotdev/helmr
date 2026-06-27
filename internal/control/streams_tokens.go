@@ -151,7 +151,7 @@ func (s *Server) appendSessionInputStreamWithPublicAccessToken(w http.ResponseWr
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	session, stream, consumedToken, err := s.authorizePublicAccessTokenStream(r.Context(), store, publicAccessToken, db.PublicAccessTokenScopeTypeSessioninputsend, db.StreamDirectionInput, pgtype.Text{String: strings.TrimSpace(request.CorrelationID), Valid: strings.TrimSpace(request.CorrelationID) != ""})
+	session, stream, consumedToken, err := s.authorizePublicAccessTokenStream(r.Context(), r, store, publicAccessToken, db.PublicAccessTokenScopeTypeSessioninputsend, db.StreamDirectionInput, pgtype.Text{String: strings.TrimSpace(request.CorrelationID), Valid: strings.TrimSpace(request.CorrelationID) != ""})
 	if err != nil {
 		s.writeStreamTokenError(w, err)
 		return
@@ -191,7 +191,7 @@ func (s *Server) readSessionOutputStreamWithPublicAccessToken(w http.ResponseWri
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	session, stream, _, err := s.authorizePublicAccessTokenStream(r.Context(), store, publicAccessToken, db.PublicAccessTokenScopeTypeSessionoutputread, db.StreamDirectionOutput, correlationID)
+	session, stream, _, err := s.authorizePublicAccessTokenStream(r.Context(), r, store, publicAccessToken, db.PublicAccessTokenScopeTypeSessionoutputread, db.StreamDirectionOutput, correlationID)
 	if err != nil {
 		s.writeStreamTokenError(w, err)
 		return
@@ -857,38 +857,7 @@ func (s *Server) listSessionStreamRecords(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) authorizeSessionStreamRequest(w http.ResponseWriter, r *http.Request, permission auth.Permission) (db.Session, bool) {
-	sessionID, err := parseUUIDParam(r, "sessionID")
-	if err != nil {
-		writeError(w, badRequest(err))
-		return db.Session{}, false
-	}
-	actor := actorFromContext(r.Context())
-	session, err := s.db.GetSessionByOrgID(r.Context(), db.GetSessionByOrgIDParams{
-		OrgID: pgvalue.UUID(actor.OrgID),
-		ID:    pgvalue.UUID(sessionID),
-	})
-	if isNoRows(err) {
-		writeError(w, notFound(errStreamNotFound))
-		return db.Session{}, false
-	}
-	if err != nil {
-		writeError(w, errors.New("load session"))
-		return db.Session{}, false
-	}
-	if err := s.requireActorScopeForRecord(r, actor, session.ProjectID, session.EnvironmentID); err != nil {
-		if isNoRows(err) {
-			writeError(w, notFound(errStreamNotFound))
-			return db.Session{}, false
-		}
-		writeError(w, badRequest(err))
-		return db.Session{}, false
-	}
-	scope := auth.Scope{OrgID: actor.OrgID, ProjectID: pgvalue.MustUUIDValue(session.ProjectID).String(), EnvironmentID: pgvalue.MustUUIDValue(session.EnvironmentID).String()}
-	if !actor.HasPermission(permission, scope) {
-		writeError(w, forbidden(errPermissionRequired))
-		return db.Session{}, false
-	}
-	return session, true
+	return s.loadSessionForRequest(w, r, permission)
 }
 
 func (s *Server) authorizeSessionStreamResource(w http.ResponseWriter, r *http.Request, permission auth.Permission, direction db.StreamDirection) (db.Session, db.Stream, bool) {
@@ -916,7 +885,7 @@ func (s *Server) createPublicAccessToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	actor := actorFromContext(r.Context())
-	session, stream, scopeType, correlationID, err := s.resolvePublicAccessTokenScopeRequest(r.Context(), r, actor, request.Scope)
+	session, stream, scopeType, correlationID, err := s.resolvePublicAccessTokenScopeRequest(r.Context(), actor, request)
 	if err != nil {
 		s.writeStreamTokenError(w, err)
 		return
@@ -999,7 +968,7 @@ func (s *Server) createPublicAccessToken(w http.ResponseWriter, r *http.Request)
 		PublicAccessToken: rawToken,
 		Scope: api.PublicAccessTokenScopeResponse{
 			Type:          string(scope.ScopeType),
-			SessionID:     pgvalue.MustUUIDValue(session.ID).String(),
+			Session:       sessionAddressResponse(session),
 			Stream:        stream.Name,
 			CorrelationID: scope.CorrelationID,
 		},
@@ -1009,34 +978,44 @@ func (s *Server) createPublicAccessToken(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-func (s *Server) resolvePublicAccessTokenScopeRequest(ctx context.Context, r *http.Request, actor auth.Actor, request api.PublicAccessTokenScopeRequest) (db.Session, db.Stream, db.PublicAccessTokenScopeType, pgtype.Text, error) {
-	sessionID, err := uuid.Parse(strings.TrimSpace(request.SessionID))
-	if err != nil {
-		return db.Session{}, db.Stream{}, "", pgtype.Text{}, badRequest(errors.New("scope.session_id must be a UUID"))
-	}
-	direction, permission, scopeType, err := publicAccessTokenScopeContract(request.Type)
+func (s *Server) resolvePublicAccessTokenScopeRequest(ctx context.Context, actor auth.Actor, request api.CreatePublicAccessTokenRequest) (db.Session, db.Stream, db.PublicAccessTokenScopeType, pgtype.Text, error) {
+	scopeRequest := request.Scope
+	address, err := sessionAddressFromAPIAddress(scopeRequest.Session)
 	if err != nil {
 		return db.Session{}, db.Stream{}, "", pgtype.Text{}, badRequest(err)
 	}
-	streamName := strings.TrimSpace(request.Stream)
+	direction, permission, scopeType, err := publicAccessTokenScopeContract(scopeRequest.Type)
+	if err != nil {
+		return db.Session{}, db.Stream{}, "", pgtype.Text{}, badRequest(err)
+	}
+	streamName := strings.TrimSpace(scopeRequest.Stream)
 	if err := validateSessionStreamName(streamName); err != nil {
 		return db.Session{}, db.Stream{}, "", pgtype.Text{}, badRequest(err)
 	}
-	session, err := s.db.GetSessionByOrgID(ctx, db.GetSessionByOrgIDParams{
-		OrgID: pgvalue.UUID(actor.OrgID),
-		ID:    pgvalue.UUID(sessionID),
-	})
+	var session db.Session
+	requestProjectID := strings.TrimSpace(request.ProjectID)
+	requestEnvironmentID := strings.TrimSpace(request.EnvironmentID)
+	hasRequestedScope := requestProjectID != "" || requestEnvironmentID != ""
+	if actor.Kind != auth.ActorKindAPIKey && (requestProjectID == "" || requestEnvironmentID == "") {
+		return db.Session{}, db.Stream{}, "", pgtype.Text{}, badRequest(errors.New("project_id and environment_id are required for public token session resolution"))
+	}
+	if hasRequestedScope {
+		_, projectID, environmentID, scopeErr := s.requestEnvironmentScope(ctx, actor, request.ProjectID, request.EnvironmentID)
+		if scopeErr != nil {
+			return db.Session{}, db.Stream{}, "", pgtype.Text{}, badRequest(scopeErr)
+		}
+		session, err = s.loadSessionAddressInScope(ctx, actor.OrgID, projectID, environmentID, address)
+	} else {
+		session, err = s.loadSessionByActorAddress(ctx, actor, address)
+	}
 	if isNoRows(err) {
 		return db.Session{}, db.Stream{}, "", pgtype.Text{}, notFound(errStreamNotFound)
 	}
+	if err != nil && (errors.Is(err, errSessionExternalIDScopeRequired) || errors.Is(err, errAPIKeyEnvironmentScopeRequired)) {
+		return db.Session{}, db.Stream{}, "", pgtype.Text{}, badRequest(err)
+	}
 	if err != nil {
 		return db.Session{}, db.Stream{}, "", pgtype.Text{}, err
-	}
-	if err := s.requireActorScopeForRecord(r, actor, session.ProjectID, session.EnvironmentID); err != nil {
-		if isNoRows(err) {
-			return db.Session{}, db.Stream{}, "", pgtype.Text{}, notFound(errStreamNotFound)
-		}
-		return db.Session{}, db.Stream{}, "", pgtype.Text{}, badRequest(err)
 	}
 	scope := auth.Scope{OrgID: actor.OrgID, ProjectID: pgvalue.MustUUIDValue(session.ProjectID).String(), EnvironmentID: pgvalue.MustUUIDValue(session.EnvironmentID).String()}
 	if !actor.HasPermission(permission, scope) {
@@ -1046,7 +1025,7 @@ func (s *Server) resolvePublicAccessTokenScopeRequest(ctx context.Context, r *ht
 	if err != nil {
 		return db.Session{}, db.Stream{}, "", pgtype.Text{}, err
 	}
-	correlationID := strings.TrimSpace(request.CorrelationID)
+	correlationID := strings.TrimSpace(scopeRequest.CorrelationID)
 	return session, stream, scopeType, pgtype.Text{String: correlationID, Valid: correlationID != ""}, nil
 }
 
@@ -1511,8 +1490,8 @@ func (s *Server) consumePublicAccessToken(ctx context.Context, store db.Querier,
 	return consumed, nil
 }
 
-func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, store db.Querier, raw string, scopeType db.PublicAccessTokenScopeType, direction db.StreamDirection, correlationID pgtype.Text) (db.Session, db.Stream, db.PublicAccessToken, error) {
-	sessionID, err := parseUUIDString(strings.TrimSpace(chi.URLParamFromCtx(ctx, "sessionID")), "sessionID")
+func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, r *http.Request, store db.Querier, raw string, scopeType db.PublicAccessTokenScopeType, direction db.StreamDirection, correlationID pgtype.Text) (db.Session, db.Stream, db.PublicAccessToken, error) {
+	address, err := sessionAddressFromRequest(r)
 	if err != nil {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, badRequest(err)
 	}
@@ -1524,10 +1503,7 @@ func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, store db.
 	if err != nil {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
-	session, err := store.GetSessionByOrgID(ctx, db.GetSessionByOrgIDParams{
-		OrgID: publicToken.OrgID,
-		ID:    pgvalue.UUID(sessionID),
-	})
+	session, err := loadSessionAddressInScope(ctx, store, pgvalue.MustUUIDValue(publicToken.OrgID), publicToken.ProjectID, publicToken.EnvironmentID, address)
 	if isNoRows(err) {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, notFound(errStreamNotFound)
 	}
