@@ -2625,6 +2625,9 @@ type fakeStore struct {
 	createdWorkspaceOperationIdempotencies      []db.EnsureWorkspaceOperationIdempotencyParams
 	getSessionByExternalIDMisses                int
 	workspace                                   db.Workspace
+	workspaceVersions                           []db.WorkspaceVersion
+	getWorkspaceVersionCalls                    int
+	listWorkspaceVersionsCalls                  int
 	attachedWorkspace                           db.GetWorkspaceForSessionStartRow
 	createWorkspaceCalls                        int
 	startIdempotency                            db.GetSessionStartIdempotencyRow
@@ -2936,6 +2939,43 @@ func (f *fakeStore) GetWorkspace(_ context.Context, arg db.GetWorkspaceParams) (
 		return f.workspace, nil
 	}
 	return db.Workspace{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) GetWorkspaceVersion(_ context.Context, arg db.GetWorkspaceVersionParams) (db.WorkspaceVersion, error) {
+	f.getWorkspaceVersionCalls++
+	for _, version := range f.workspaceVersions {
+		if version.OrgID == arg.OrgID &&
+			version.ProjectID == arg.ProjectID &&
+			version.EnvironmentID == arg.EnvironmentID &&
+			version.WorkspaceID == arg.WorkspaceID &&
+			version.ID == arg.ID &&
+			version.State == db.WorkspaceVersionStateReady {
+			return version, nil
+		}
+	}
+	return db.WorkspaceVersion{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ListWorkspaceVersions(_ context.Context, arg db.ListWorkspaceVersionsParams) ([]db.WorkspaceVersion, error) {
+	f.listWorkspaceVersionsCalls++
+	var rows []db.WorkspaceVersion
+	for _, version := range f.workspaceVersions {
+		if version.OrgID != arg.OrgID ||
+			version.ProjectID != arg.ProjectID ||
+			version.EnvironmentID != arg.EnvironmentID ||
+			version.WorkspaceID != arg.WorkspaceID ||
+			version.State != db.WorkspaceVersionStateReady {
+			continue
+		}
+		if arg.Kind.Valid && version.Kind != arg.Kind.WorkspaceVersionKind {
+			continue
+		}
+		rows = append(rows, version)
+		if arg.LimitCount > 0 && len(rows) >= int(arg.LimitCount) {
+			break
+		}
+	}
+	return rows, nil
 }
 
 func (f *fakeStore) ListWorkspaces(_ context.Context, arg db.ListWorkspacesParams) ([]db.Workspace, error) {

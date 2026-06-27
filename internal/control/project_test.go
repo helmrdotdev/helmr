@@ -502,6 +502,7 @@ type fakeCAS struct {
 	object        cas.Object
 	objects       map[string]cas.Object
 	body          []byte
+	bodies        map[string][]byte
 	deletedDigest string
 }
 
@@ -777,7 +778,14 @@ func (f *fakeCAS) Stat(_ context.Context, digest string) (cas.Object, error) {
 	return f.object, nil
 }
 
-func (f *fakeCAS) Get(context.Context, string) (io.ReadCloser, error) {
+func (f *fakeCAS) Get(_ context.Context, digest string) (io.ReadCloser, error) {
+	if f.bodies != nil {
+		body, ok := f.bodies[digest]
+		if !ok {
+			return nil, errors.New("object not found")
+		}
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
 	return io.NopCloser(bytes.NewReader(f.body)), nil
 }
 

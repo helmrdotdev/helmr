@@ -16,8 +16,10 @@ const (
 	errNotFound
 	errConflict
 	errGone
+	errUnprocessable
 	errTooLarge
 	errBadGateway
+	errNotImplemented
 	errUnavailable
 )
 
@@ -110,10 +112,14 @@ func errorStatus(err error) int {
 		return http.StatusConflict
 	case errGone:
 		return http.StatusGone
+	case errUnprocessable:
+		return http.StatusUnprocessableEntity
 	case errTooLarge:
 		return http.StatusRequestEntityTooLarge
 	case errBadGateway:
 		return http.StatusBadGateway
+	case errNotImplemented:
+		return http.StatusNotImplemented
 	case errUnavailable:
 		return http.StatusServiceUnavailable
 	default:

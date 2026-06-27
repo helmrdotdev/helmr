@@ -221,6 +221,7 @@ type Querier interface {
 	GetWorkspacePtyStreamChunkAtOffset(ctx context.Context, arg GetWorkspacePtyStreamChunkAtOffsetParams) (WorkspacePtyStreamChunk, error)
 	GetWorkspacePtyStreamChunkReceiptAtOffset(ctx context.Context, arg GetWorkspacePtyStreamChunkReceiptAtOffsetParams) (WorkspacePtyStreamChunkReceipt, error)
 	GetWorkspaceScopedOperationIdempotency(ctx context.Context, arg GetWorkspaceScopedOperationIdempotencyParams) (WorkspaceOperationIdempotency, error)
+	GetWorkspaceVersion(ctx context.Context, arg GetWorkspaceVersionParams) (WorkspaceVersion, error)
 	InsertWorkspaceExecOutputStreamChunk(ctx context.Context, arg InsertWorkspaceExecOutputStreamChunkParams) (WorkspaceExecStreamChunk, error)
 	InsertWorkspaceExecStreamChunk(ctx context.Context, arg InsertWorkspaceExecStreamChunkParams) (WorkspaceExecStreamChunk, error)
 	InsertWorkspaceExecStreamChunkReceipt(ctx context.Context, arg InsertWorkspaceExecStreamChunkReceiptParams) (WorkspaceExecStreamChunkReceipt, error)
@@ -282,6 +283,7 @@ type Querier interface {
 	ListWorkspacePtySessions(ctx context.Context, arg ListWorkspacePtySessionsParams) ([]WorkspacePtySession, error)
 	ListWorkspacePtySessionsAwaitingDispatch(ctx context.Context, arg ListWorkspacePtySessionsAwaitingDispatchParams) ([]WorkspacePtySession, error)
 	ListWorkspacePtyStreamChunksAfter(ctx context.Context, arg ListWorkspacePtyStreamChunksAfterParams) ([]WorkspacePtyStreamChunk, error)
+	ListWorkspaceVersions(ctx context.Context, arg ListWorkspaceVersionsParams) ([]WorkspaceVersion, error)
 	ListWorkspaces(ctx context.Context, arg ListWorkspacesParams) ([]Workspace, error)
 	LockDeploymentReusableBuildKey(ctx context.Context, arg LockDeploymentReusableBuildKeyParams) error
 	LockPublicAccessTokenByHash(ctx context.Context, tokenHash []byte) (PublicAccessToken, error)

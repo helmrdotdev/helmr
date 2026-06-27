@@ -327,6 +327,88 @@ test("workspaces create list update materialize connect and stop use workspace r
   ])
 })
 
+test("workspace files and versions use read-only workspace routes", async () => {
+  const requests: Array<{ url: string; method: string }> = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    const method = init?.method ?? "GET"
+    requests.push({ url, method })
+    if (url.includes("/files/content")) {
+      return new Response("hello\n", {
+        headers: {
+          "content-type": "application/octet-stream",
+          "x-helmr-workspace-version-id": "version-1",
+        },
+      })
+    }
+    if (url.includes("/files/stat")) {
+      return Response.json({
+        entry: {
+          path: "src/app.ts",
+          kind: "file",
+          size_bytes: 6,
+          mode: 420,
+          mod_time: "2026-01-01T00:00:00Z",
+        },
+      })
+    }
+    if (url.includes("/files?")) {
+      return Response.json({
+        path: "src",
+        entries: [{
+          path: "src/app.ts",
+          name: "app.ts",
+          kind: "file",
+          size_bytes: 6,
+          mode: 420,
+          mod_time: "2026-01-01T00:00:00Z",
+        }],
+        next_cursor: "src/app.ts",
+      })
+    }
+    if (url.endsWith("/versions/version-1")) {
+      return Response.json({ version: workspaceVersionFixture({ id: "version-1" }) })
+    }
+    return Response.json({ versions: [workspaceVersionFixture({ id: "version-1" })] })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const workspace = client.workspaces.open("workspace-1")
+  const read = await workspace.files.read("src/app.ts")
+  const listed = await workspace.files.list("src", { source: "version", versionId: "version-1", limit: 2 })
+  const stat = await workspace.files.stat("src/app.ts", { source: "live", materializationId: "materialization-1" })
+  const version = await workspace.versions.retrieve("version-1")
+  const versions = await workspace.versions.list({ kind: "user", limit: 5 })
+
+  expect(new TextDecoder().decode(read)).toBe("hello\n")
+  expect(listed.nextCursor).toBe("src/app.ts")
+  expect(stat.modTime).toBe("2026-01-01T00:00:00Z")
+  expect(version.id).toBe("version-1")
+  expect(versions[0]?.workspaceId).toBe("workspace-1")
+  expect(requests).toEqual([
+    { method: "GET", url: "https://api.example.test/api/workspaces/workspace-1/files/content?path=src%2Fapp.ts&source=current" },
+    { method: "GET", url: "https://api.example.test/api/workspaces/workspace-1/files?path=src&source=version&version_id=version-1&limit=2" },
+    { method: "GET", url: "https://api.example.test/api/workspaces/workspace-1/files/stat?path=src%2Fapp.ts&source=live&materialization_id=materialization-1" },
+    { method: "GET", url: "https://api.example.test/api/workspaces/workspace-1/versions/version-1" },
+    { method: "GET", url: "https://api.example.test/api/workspaces/workspace-1/versions?kind=user&limit=5" },
+  ])
+})
+
+test("workspace files reject versionId without source version", async () => {
+  globalThis.fetch = (async () => {
+    throw new Error("fetch should not be called")
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+
+  await expect(client.workspaces.open("workspace-1").files.read("src/app.ts", { versionId: "version-1" } as any)).rejects.toThrow(
+    "versionId requires source",
+  )
+  await expect(client.workspaces.open("workspace-1").files.stat("src/app.ts", { source: "version" } as any)).rejects.toThrow(
+    "versionId is required",
+  )
+})
+
 test("workspaces namespace uses the default client", async () => {
   process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
@@ -2888,6 +2970,37 @@ function workspaceFixture(overrides: Partial<{
     last_activity_at: "2026-04-20T00:00:00Z",
     created_at: "2026-04-20T00:00:00Z",
     updated_at: "2026-04-20T00:00:00Z",
+    ...overrides,
+  }
+}
+
+function workspaceVersionFixture(overrides: Partial<{
+  readonly id: string
+  readonly workspace_id: string
+  readonly parent_version_id: string | null
+  readonly kind: string
+  readonly state: string
+  readonly content_digest: string
+  readonly size_bytes: number
+  readonly artifact_encoding: string
+  readonly artifact_entry_count: number
+  readonly message: string
+  readonly promoted_at: string | null
+  readonly created_at: string
+}> = {}) {
+  return {
+    id: "version-1",
+    workspace_id: "workspace-1",
+    parent_version_id: null,
+    kind: "user",
+    state: "ready",
+    content_digest: "sha256:workspace",
+    size_bytes: 6,
+    artifact_encoding: "tar",
+    artifact_entry_count: 1,
+    message: "captured workspace",
+    promoted_at: null,
+    created_at: "2026-04-20T00:00:00Z",
     ...overrides,
   }
 }
