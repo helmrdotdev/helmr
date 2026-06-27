@@ -1,4 +1,4 @@
-import type { PublicAccessToken, Schedule, SessionSnapshot, SessionStartResult, SessionStartAndWaitResult, HelmrClient, Token, TokenCompleteResult, Workspace } from "./client"
+import type { PublicAccessToken, Schedule, SessionSnapshot, SessionStartResult, SessionStartAndWaitResult, HelmrClient, Token, TokenCompleteResult, Workspace, WorkspaceFileEntry, WorkspaceFileList, WorkspaceVersion } from "./client"
 import type { RunEventRecord, RunHandle, RunSnapshot } from "./run"
 import type { StreamRecord, Task } from "../internal"
 import { auth, idempotencyKeys, image, queue, sandbox, schedules, sessions, source, streams, task, tokens, workspaces, type PayloadSchema } from "../index"
@@ -174,6 +174,22 @@ if (false) {
   const workspace: Promise<Workspace> = workspaces.retrieve("workspace-1")
   const openedWorkspace = workspaces.open("workspace-1")
   const workspaceExec = openedWorkspace.exec(["bash", "-lc", "echo ok"])
+  const fileReadCurrent: Promise<Uint8Array> = openedWorkspace.files.read("src/app.ts")
+  const fileReadVersion: Promise<Uint8Array> = openedWorkspace.files.read("src/app.ts", { source: "version", versionId: "version-1" })
+  const fileList: Promise<WorkspaceFileList> = openedWorkspace.files.list("src", { source: "version", versionId: "version-1", limit: 10 })
+  const fileStatLive: Promise<WorkspaceFileEntry> = openedWorkspace.files.stat("src/app.ts", { source: "live", materializationId: "materialization-1" })
+  const workspaceVersion: Promise<WorkspaceVersion> = openedWorkspace.versions.retrieve("version-1")
+  const workspaceVersions: Promise<WorkspaceVersion[]> = openedWorkspace.versions.list({ kind: "user", limit: 10 })
+  // @ts-expect-error versionId requires source: "version".
+  openedWorkspace.files.read("src/app.ts", { versionId: "version-1" })
+  // @ts-expect-error source: "version" requires versionId.
+  openedWorkspace.files.read("src/app.ts", { source: "version" })
+  // @ts-expect-error current source does not accept versionId.
+  openedWorkspace.files.stat("src/app.ts", { source: "current", versionId: "version-1" })
+  // @ts-expect-error version source does not accept materializationId.
+  openedWorkspace.files.list("src", { source: "version", versionId: "version-1", materializationId: "materialization-1" })
+  // @ts-expect-error live source does not accept versionId.
+  openedWorkspace.files.stat("src/app.ts", { source: "live", versionId: "version-1" })
   client.schedules.create({
     deduplicationKey: "inspect-customer-1",
     task: "inspect",
@@ -234,6 +250,12 @@ if (false) {
   retrievedFromId.then
   waitedFromHandle.then
   waitedFromId.then
+  fileReadCurrent.then
+  fileReadVersion.then
+  fileList.then
+  fileStatLive.then
+  workspaceVersion.then
+  workspaceVersions.then
   delegatedToken.then
   delegatedById.then
   completedToken.then

@@ -29,6 +29,7 @@ The current user-facing lifecycle is:
 | Create | Create a durable workspace from a deployed sandbox. |
 | Retrieve/list | Read workspace metadata and lifecycle state. |
 | Update | Replace user metadata and tags. |
+| Read files | Read, list, or stat files from persisted ready versions. |
 | Materialize | Ask Helmr to prepare a live VM/worker materialization for the workspace. |
 | Connect | Return the current live materialization, creating or requesting one when needed. |
 | Stop | Request controlled shutdown of the live materialization. |
@@ -42,6 +43,34 @@ bridge between durable workspace state and active execution.
 Task runs, workspace execs, and PTY sessions use materializations when they need
 to execute code. If a workspace is not live, Helmr can request a materialization
 before dispatching the operation.
+
+## Files and Versions
+
+Workspace file reads inspect persisted read-only version artifacts. They do not
+start a VM, request materialization, acquire a workspace lease, or run shell
+commands inside the workspace.
+
+```ts
+import { workspaces } from "@helmr/sdk"
+
+const workspace = workspaces.open("workspace-id")
+const bytes = await workspace.files.read("src/app.ts")
+const entries = await workspace.files.list("src")
+const stat = await workspace.files.stat("src/app.ts")
+```
+
+By default, file reads use `source: "current"` and read the workspace's ready
+`currentVersionId`. To inspect a specific ready version from the same
+workspace, pass `{ source: "version", versionId }`. `source: "live"` is reserved
+for future live file access and is not implemented.
+
+```ts
+const version = await workspace.versions.retrieve("version-id")
+const versionBytes = await workspace.files.read("src/app.ts", {
+  source: "version",
+  versionId: version.id,
+})
+```
 
 ## Exec
 

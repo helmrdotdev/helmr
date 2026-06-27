@@ -2,12 +2,15 @@ package db_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workspace"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestWorkspaceMaterializationRequiresReadyCurrentVersion(t *testing.T) {
@@ -124,5 +127,125 @@ func TestCreateWorkspaceFromSandboxCreatesInitialCurrentVersion(t *testing.T) {
 	}
 	if versionWorkspaceID != workspaceID {
 		t.Fatalf("version workspace_id = %s, want %s", versionWorkspaceID, workspaceID)
+	}
+}
+
+func TestWorkspaceVersionReadQueriesRequireReadySameWorkspace(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	artifactID := seedWorkspaceVersionArtifact(t, ctx, pool, ids)
+	readyVersionID := uuid.Must(uuid.NewV7())
+	newerReadyVersionID := uuid.Must(uuid.NewV7())
+	systemReadyVersionID := uuid.Must(uuid.NewV7())
+	capturingVersionID := uuid.Must(uuid.NewV7())
+	otherWorkspaceID := uuid.Must(uuid.NewV7())
+	otherVersionID := uuid.Must(uuid.NewV7())
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_versions (
+			id, org_id, project_id, environment_id, workspace_id, kind, state,
+			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at, created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, 'user', 'ready', $6, $7, 1, $8, 10, now(), now() - interval '1 minute')
+	`, readyVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, workspace.ArtifactEncoding, testDigest("ready-version")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_versions (
+			id, org_id, project_id, environment_id, workspace_id, kind, state,
+			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at, created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, 'user', 'ready', $6, $7, 1, $8, 10, now(), now())
+	`, newerReadyVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, workspace.ArtifactEncoding, testDigest("newer-ready-version")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_versions (
+			id, org_id, project_id, environment_id, workspace_id, kind, state,
+			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at, created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, 'system', 'ready', $6, $7, 1, $8, 10, now(), now() + interval '1 minute')
+	`, systemReadyVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, workspace.ArtifactEncoding, testDigest("system-ready-version")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_versions (
+			id, org_id, project_id, environment_id, workspace_id, kind, state,
+			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes
+		)
+		VALUES ($1, $2, $3, $4, $5, 'user', 'capturing', $6, $7, 1, $8, 10)
+	`, capturingVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, workspace.ArtifactEncoding, testDigest("capturing-version")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspaces (
+			id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint
+		)
+		VALUES ($1, $2, $3, $4, $5, 'default', 'sandbox-fingerprint')
+	`, otherWorkspaceID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentSandboxID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_versions (
+			id, org_id, project_id, environment_id, workspace_id, kind, state,
+			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
+		)
+		VALUES ($1, $2, $3, $4, $5, 'user', 'ready', $6, $7, 1, $8, 10, now())
+	`, otherVersionID, ids.orgID, ids.projectID, ids.environmentID, otherWorkspaceID, artifactID, workspace.ArtifactEncoding, testDigest("other-workspace-version")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := queries.GetWorkspaceVersion(ctx, db.GetWorkspaceVersionParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            pgvalue.UUID(readyVersionID),
+	})
+	if err != nil {
+		t.Fatalf("GetWorkspaceVersion ready: %v", err)
+	}
+	if pgvalue.MustUUIDValue(got.ID) != readyVersionID {
+		t.Fatalf("version id = %s, want %s", pgvalue.MustUUIDValue(got.ID), readyVersionID)
+	}
+
+	_, err = queries.GetWorkspaceVersion(ctx, db.GetWorkspaceVersionParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            pgvalue.UUID(capturingVersionID),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("GetWorkspaceVersion non-ready err = %v, want pgx.ErrNoRows", err)
+	}
+	_, err = queries.GetWorkspaceVersion(ctx, db.GetWorkspaceVersionParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            pgvalue.UUID(otherVersionID),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("GetWorkspaceVersion cross-workspace err = %v, want pgx.ErrNoRows", err)
+	}
+
+	rows, err := queries.ListWorkspaceVersions(ctx, db.ListWorkspaceVersionsParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		Kind:          db.NullWorkspaceVersionKind{WorkspaceVersionKind: db.WorkspaceVersionKindUser, Valid: true},
+		LimitCount:    10,
+	})
+	if err != nil {
+		t.Fatalf("ListWorkspaceVersions: %v", err)
+	}
+	if len(rows) != 2 ||
+		pgvalue.MustUUIDValue(rows[0].ID) != newerReadyVersionID ||
+		pgvalue.MustUUIDValue(rows[1].ID) != readyVersionID {
+		t.Fatalf("listed versions = %+v, want newest user versions %s then %s", rows, newerReadyVersionID, readyVersionID)
 	}
 }

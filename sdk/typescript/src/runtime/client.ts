@@ -318,6 +318,8 @@ export interface Workspace {
 export interface WorkspaceHandle {
   readonly id: string
   exec(command: readonly string[], opts?: WorkspaceExecCreateOptions): Promise<WorkspaceExecHandle>
+  readonly files: WorkspaceFilesApi
+  readonly versions: WorkspaceVersionsApi
   readonly execs: WorkspaceExecsApi
   readonly pty: WorkspacePtyApi
   retrieve(opts?: WorkspaceRetrieveOptions): Promise<Workspace>
@@ -376,6 +378,65 @@ export interface WorkspaceMaterializeOptions extends WorkspaceRetrieveOptions {}
 export interface WorkspaceStopOptions extends WorkspaceRetrieveOptions {
   readonly idempotencyKey?: string
   readonly idempotencyKeyTTL?: string
+}
+
+export type WorkspaceFileSourceOptions =
+  | { readonly source?: "current"; readonly versionId?: never; readonly materializationId?: never }
+  | { readonly source: "version"; readonly versionId: string; readonly materializationId?: never }
+  | { readonly source: "live"; readonly materializationId?: string; readonly versionId?: never }
+
+export type WorkspaceFileReadOptions = WorkspaceRetrieveOptions & WorkspaceFileSourceOptions
+export type WorkspaceFileListOptions = WorkspaceRetrieveOptions & WorkspaceFileSourceOptions & {
+  readonly limit?: number
+  readonly cursor?: string
+}
+export type WorkspaceFileStatOptions = WorkspaceRetrieveOptions & WorkspaceFileSourceOptions
+
+export interface WorkspaceFilesApi {
+  read(path: string, opts?: WorkspaceFileReadOptions): Promise<Uint8Array>
+  list(path: string, opts?: WorkspaceFileListOptions): Promise<WorkspaceFileList>
+  stat(path: string, opts?: WorkspaceFileStatOptions): Promise<WorkspaceFileEntry>
+}
+
+export interface WorkspaceFileEntry {
+  readonly path: string
+  readonly name: string | null
+  readonly kind: "file" | "directory" | "symlink"
+  readonly sizeBytes: number
+  readonly mode: number
+  readonly linkTarget: string | null
+  readonly modTime: string | null
+}
+
+export interface WorkspaceFileList {
+  readonly path: string
+  readonly entries: readonly WorkspaceFileEntry[]
+  readonly nextCursor: string | null
+}
+
+export interface WorkspaceVersion {
+  readonly id: string
+  readonly workspaceId: string
+  readonly parentVersionId: string | null
+  readonly kind: string
+  readonly state: string
+  readonly contentDigest: string
+  readonly sizeBytes: number
+  readonly artifactEncoding: string
+  readonly artifactEntryCount: number
+  readonly message: string
+  readonly promotedAt: string | null
+  readonly createdAt: string
+}
+
+export interface WorkspaceVersionsApi {
+  retrieve(versionId: string, opts?: WorkspaceRetrieveOptions): Promise<WorkspaceVersion>
+  list(opts?: WorkspaceVersionListOptions): Promise<WorkspaceVersion[]>
+}
+
+export interface WorkspaceVersionListOptions extends WorkspaceRetrieveOptions {
+  readonly kind?: "user" | "system"
+  readonly limit?: number
 }
 
 export interface WorkspaceMaterialization {
@@ -1106,6 +1167,42 @@ export class HelmrClient {
       id,
       exec: async (command, opts = {}) => {
         return await this.#createWorkspaceExec(id, command, opts)
+      },
+      files: {
+        read: async (filePath, opts = {}) => {
+          const response = await this.#fetch(workspaceFileResourcePath(id, opts, "/content", filePath, true), requestSignal(opts.signal))
+          return new Uint8Array(await response.arrayBuffer())
+        },
+        list: async (filePath, opts = {}) => {
+          const response = await this.#json<ListWorkspaceFilesResponse>(
+            workspaceFileResourcePath(id, opts, "", filePath, false),
+            requestSignal(opts.signal),
+          )
+          return workspaceFileListFromResponse(response)
+        },
+        stat: async (filePath, opts = {}) => {
+          const response = await this.#json<WorkspaceFileStatResponse>(
+            workspaceFileResourcePath(id, opts, "/stat", filePath, true),
+            requestSignal(opts.signal),
+          )
+          return workspaceFileEntryFromResponse(response.entry)
+        },
+      },
+      versions: {
+        retrieve: async (versionId, opts = {}) => {
+          const response = await this.#json<WorkspaceVersionEnvelopeResponse>(
+            `${workspaceResourcePath(id, opts)}/versions/${encodeURIComponent(versionId)}`,
+            requestSignal(opts.signal),
+          )
+          return workspaceVersionFromResponse(response.version)
+        },
+        list: async (opts = {}) => {
+          const response = await this.#json<ListWorkspaceVersionsResponse>(
+            `${workspaceResourcePath(id, opts)}/versions${workspaceVersionListQuery(opts)}`,
+            requestSignal(opts.signal),
+          )
+          return response.versions.map(workspaceVersionFromResponse)
+        },
       },
       execs: {
         retrieve: (execId: string): WorkspaceExecHandle => {
@@ -2190,6 +2287,49 @@ interface WorkspaceStopResponse {
   readonly materialization?: WorkspaceMaterializationResponse | null
 }
 
+interface WorkspaceFileEntryResponse {
+  readonly path: string
+  readonly name?: string
+  readonly kind: "file" | "directory" | "symlink"
+  readonly size_bytes: number
+  readonly mode: number
+  readonly link_target?: string
+  readonly mod_time?: string
+}
+
+interface WorkspaceFileStatResponse {
+  readonly entry: WorkspaceFileEntryResponse
+}
+
+interface ListWorkspaceFilesResponse {
+  readonly path: string
+  readonly entries: readonly WorkspaceFileEntryResponse[]
+  readonly next_cursor?: string
+}
+
+interface WorkspaceVersionResponse {
+  readonly id: string
+  readonly workspace_id: string
+  readonly parent_version_id?: string
+  readonly kind: string
+  readonly state: string
+  readonly content_digest: string
+  readonly size_bytes: number
+  readonly artifact_encoding: string
+  readonly artifact_entry_count: number
+  readonly message?: string
+  readonly promoted_at?: string
+  readonly created_at: string
+}
+
+interface WorkspaceVersionEnvelopeResponse {
+  readonly version: WorkspaceVersionResponse
+}
+
+interface ListWorkspaceVersionsResponse {
+  readonly versions: readonly WorkspaceVersionResponse[]
+}
+
 interface WorkspaceExecResponse {
   readonly id: string
   readonly workspace_id: string
@@ -2723,6 +2863,62 @@ function workspaceResourcePath(id: string, opts: { readonly projectId?: string; 
   return `${workspaceCollectionPath(opts)}/${encodeURIComponent(id)}`
 }
 
+function workspaceFileResourcePath(
+  id: string,
+  opts: WorkspaceFileReadOptions | WorkspaceFileListOptions | WorkspaceFileStatOptions,
+  suffix: string,
+  filePath: string,
+  requirePath: boolean,
+): string {
+  const query = new URLSearchParams()
+  const trimmedPath = filePath.trim()
+  if (trimmedPath === "" && requirePath) {
+    throw new Error("workspace file path is required")
+  }
+  if (trimmedPath !== "") {
+    query.set("path", trimmedPath)
+  }
+  workspaceFileSourceQuery(query, opts)
+  if ("limit" in opts && opts.limit !== undefined) query.set("limit", String(opts.limit))
+  if ("cursor" in opts && opts.cursor !== undefined) query.set("cursor", opts.cursor)
+  return `${workspaceResourcePath(id, opts)}/files${suffix}?${query}`
+}
+
+function workspaceFileSourceQuery(query: URLSearchParams, opts: WorkspaceFileSourceOptions): void {
+  const source = opts.source ?? "current"
+  query.set("source", source)
+  switch (source) {
+    case "current":
+      if (opts.versionId !== undefined) {
+        throw new Error("versionId requires source: \"version\"")
+      }
+      if (opts.materializationId !== undefined) {
+        throw new Error("materializationId requires source: \"live\"")
+      }
+      return
+    case "version":
+      if (opts.versionId === undefined || opts.versionId.trim() === "") {
+        throw new Error("versionId is required when source is \"version\"")
+      }
+      query.set("version_id", opts.versionId)
+      return
+    case "live":
+      if (opts.materializationId !== undefined) {
+        query.set("materialization_id", opts.materializationId)
+      }
+      return
+    default:
+      throw new Error("workspace file source must be current, version, or live")
+  }
+}
+
+function workspaceVersionListQuery(opts: WorkspaceVersionListOptions): string {
+  const query = new URLSearchParams()
+  if (opts.kind !== undefined) query.set("kind", opts.kind)
+  if (opts.limit !== undefined) query.set("limit", String(opts.limit))
+  return query.size === 0 ? "" : `?${query}`
+}
+
 function workspaceCreateBody(opts: WorkspaceCreateOptions): Record<string, unknown> {
   return {
     sandbox_id: opts.sandboxId,
@@ -2860,6 +3056,43 @@ function workspaceStopFromResponse(response: WorkspaceStopResponse): WorkspaceSt
     workspaceId: response.workspace_id,
     state: response.state,
     materialization: response.materialization == null ? null : workspaceMaterializationFromResponse(response.materialization),
+  }
+}
+
+function workspaceFileEntryFromResponse(response: WorkspaceFileEntryResponse): WorkspaceFileEntry {
+  return {
+    path: response.path,
+    name: response.name ?? null,
+    kind: response.kind,
+    sizeBytes: response.size_bytes,
+    mode: response.mode,
+    linkTarget: response.link_target ?? null,
+    modTime: response.mod_time ?? null,
+  }
+}
+
+function workspaceFileListFromResponse(response: ListWorkspaceFilesResponse): WorkspaceFileList {
+  return {
+    path: response.path,
+    entries: response.entries.map(workspaceFileEntryFromResponse),
+    nextCursor: response.next_cursor ?? null,
+  }
+}
+
+function workspaceVersionFromResponse(response: WorkspaceVersionResponse): WorkspaceVersion {
+  return {
+    id: response.id,
+    workspaceId: response.workspace_id,
+    parentVersionId: response.parent_version_id ?? null,
+    kind: response.kind,
+    state: response.state,
+    contentDigest: response.content_digest,
+    sizeBytes: response.size_bytes,
+    artifactEncoding: response.artifact_encoding,
+    artifactEntryCount: response.artifact_entry_count,
+    message: response.message ?? "",
+    promotedAt: response.promoted_at ?? null,
+    createdAt: response.created_at,
   }
 }
 

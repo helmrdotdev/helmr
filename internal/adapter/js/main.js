@@ -4741,6 +4741,30 @@ class HelmrClient {
       exec: async (command, opts = {}) => {
         return await this.#createWorkspaceExec(id, command, opts);
       },
+      files: {
+        read: async (filePath, opts = {}) => {
+          const response = await this.#fetch(workspaceFileResourcePath(id, opts, "/content", filePath, true), requestSignal(opts.signal));
+          return new Uint8Array(await response.arrayBuffer());
+        },
+        list: async (filePath, opts = {}) => {
+          const response = await this.#json(workspaceFileResourcePath(id, opts, "", filePath, false), requestSignal(opts.signal));
+          return workspaceFileListFromResponse(response);
+        },
+        stat: async (filePath, opts = {}) => {
+          const response = await this.#json(workspaceFileResourcePath(id, opts, "/stat", filePath, true), requestSignal(opts.signal));
+          return workspaceFileEntryFromResponse(response.entry);
+        }
+      },
+      versions: {
+        retrieve: async (versionId, opts = {}) => {
+          const response = await this.#json(`${workspaceResourcePath(id, opts)}/versions/${encodeURIComponent(versionId)}`, requestSignal(opts.signal));
+          return workspaceVersionFromResponse(response.version);
+        },
+        list: async (opts = {}) => {
+          const response = await this.#json(`${workspaceResourcePath(id, opts)}/versions${workspaceVersionListQuery(opts)}`, requestSignal(opts.signal));
+          return response.versions.map(workspaceVersionFromResponse);
+        }
+      },
       execs: {
         retrieve: (execId) => {
           return this.#openWorkspaceExec(id, execId);
@@ -5785,6 +5809,57 @@ function workspaceCollectionPath(opts) {
 function workspaceResourcePath(id, opts) {
   return `${workspaceCollectionPath(opts)}/${encodeURIComponent(id)}`;
 }
+function workspaceFileResourcePath(id, opts, suffix, filePath, requirePath) {
+  const query = new URLSearchParams;
+  const trimmedPath = filePath.trim();
+  if (trimmedPath === "" && requirePath) {
+    throw new Error("workspace file path is required");
+  }
+  if (trimmedPath !== "") {
+    query.set("path", trimmedPath);
+  }
+  workspaceFileSourceQuery(query, opts);
+  if ("limit" in opts && opts.limit !== undefined)
+    query.set("limit", String(opts.limit));
+  if ("cursor" in opts && opts.cursor !== undefined)
+    query.set("cursor", opts.cursor);
+  return `${workspaceResourcePath(id, opts)}/files${suffix}?${query}`;
+}
+function workspaceFileSourceQuery(query, opts) {
+  const source = opts.source ?? "current";
+  query.set("source", source);
+  switch (source) {
+    case "current":
+      if (opts.versionId !== undefined) {
+        throw new Error('versionId requires source: "version"');
+      }
+      if (opts.materializationId !== undefined) {
+        throw new Error('materializationId requires source: "live"');
+      }
+      return;
+    case "version":
+      if (opts.versionId === undefined || opts.versionId.trim() === "") {
+        throw new Error('versionId is required when source is "version"');
+      }
+      query.set("version_id", opts.versionId);
+      return;
+    case "live":
+      if (opts.materializationId !== undefined) {
+        query.set("materialization_id", opts.materializationId);
+      }
+      return;
+    default:
+      throw new Error("workspace file source must be current, version, or live");
+  }
+}
+function workspaceVersionListQuery(opts) {
+  const query = new URLSearchParams;
+  if (opts.kind !== undefined)
+    query.set("kind", opts.kind);
+  if (opts.limit !== undefined)
+    query.set("limit", String(opts.limit));
+  return query.size === 0 ? "" : `?${query}`;
+}
 function workspaceCreateBody(opts) {
   return {
     sandbox_id: opts.sandboxId,
@@ -5917,6 +5992,40 @@ function workspaceStopFromResponse(response) {
     workspaceId: response.workspace_id,
     state: response.state,
     materialization: response.materialization == null ? null : workspaceMaterializationFromResponse(response.materialization)
+  };
+}
+function workspaceFileEntryFromResponse(response) {
+  return {
+    path: response.path,
+    name: response.name ?? null,
+    kind: response.kind,
+    sizeBytes: response.size_bytes,
+    mode: response.mode,
+    linkTarget: response.link_target ?? null,
+    modTime: response.mod_time ?? null
+  };
+}
+function workspaceFileListFromResponse(response) {
+  return {
+    path: response.path,
+    entries: response.entries.map(workspaceFileEntryFromResponse),
+    nextCursor: response.next_cursor ?? null
+  };
+}
+function workspaceVersionFromResponse(response) {
+  return {
+    id: response.id,
+    workspaceId: response.workspace_id,
+    parentVersionId: response.parent_version_id ?? null,
+    kind: response.kind,
+    state: response.state,
+    contentDigest: response.content_digest,
+    sizeBytes: response.size_bytes,
+    artifactEncoding: response.artifact_encoding,
+    artifactEntryCount: response.artifact_entry_count,
+    message: response.message ?? "",
+    promotedAt: response.promoted_at ?? null,
+    createdAt: response.created_at
   };
 }
 function workspaceExecFromResponse(response) {

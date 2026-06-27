@@ -116,6 +116,13 @@ export type {
   WorkspaceExecState,
   WorkspaceExecStdinApi,
   WorkspaceExecsApi,
+  WorkspaceFileEntry,
+  WorkspaceFileList,
+  WorkspaceFileListOptions,
+  WorkspaceFileReadOptions,
+  WorkspaceFileSourceOptions,
+  WorkspaceFilesApi,
+  WorkspaceFileStatOptions,
   WorkspaceHandle,
   WorkspaceListOptions,
   WorkspaceMaterialization,
@@ -140,6 +147,9 @@ export type {
   WorkspacesApi,
   WorkspaceState,
   WorkspaceUpdateOptions,
+  WorkspaceVersion,
+  WorkspaceVersionListOptions,
+  WorkspaceVersionsApi,
 } from "./runtime/client"
 import { sandbox } from "./sandbox"
 import { defineConfig, type HelmrConfig, type HelmrConfigInput } from "./config"

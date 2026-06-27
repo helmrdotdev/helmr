@@ -43,6 +43,11 @@ Main surfaces:
 | `workspaces.materialize(idOrHandle, opts)` / `client.workspaces.materialize(idOrHandle, opts)` | Request worker materialization for a workspace. |
 | `workspaces.connect(idOrHandle, opts)` / `client.workspaces.connect(idOrHandle, opts)` | Connect to an existing or newly materialized workspace. |
 | `workspaces.stop(idOrHandle, opts)` / `client.workspaces.stop(idOrHandle, opts)` | Stop the active materialization for a workspace. |
+| `workspaces.open(id).files.read(path, opts)` / `client.workspaces.open(id).files.read(path, opts)` | Read raw bytes from a ready workspace version. |
+| `workspaces.open(id).files.list(path, opts)` / `client.workspaces.open(id).files.list(path, opts)` | List direct children from a ready workspace version. |
+| `workspaces.open(id).files.stat(path, opts)` / `client.workspaces.open(id).files.stat(path, opts)` | Read metadata for one file, directory, or symlink in a ready workspace version. |
+| `workspaces.open(id).versions.retrieve(versionId, opts)` / `client.workspaces.open(id).versions.retrieve(versionId, opts)` | Retrieve one ready workspace version. |
+| `workspaces.open(id).versions.list(opts)` / `client.workspaces.open(id).versions.list(opts)` | List ready workspace versions. |
 | `workspaces.open(id).exec(command, opts)` / `client.workspaces.open(id).exec(command, opts)` | Start a write-capable command in the workspace. |
 | `workspaces.open(id).execs.list(opts)` / `client.workspaces.open(id).execs.list(opts)` | List execs for a workspace. |
 | `workspaces.open(id).pty.create(opts)` / `client.workspaces.open(id).pty.create(opts)` | Start an interactive PTY in the workspace. |
@@ -76,6 +81,14 @@ Session starts create or reuse a session and attach a workspace. When no
 workspace is supplied, Helmr creates one from the deployed task's sandbox.
 Direct workspace operations are separate: creating an exec or PTY on a
 workspace does not create a session or run.
+
+Workspace file APIs read persisted version artifacts. Omitting `source` is the
+same as `source: "current"` and reads the workspace's ready current version.
+Use `{ source: "version", versionId }` to read a specific ready version in the
+same workspace. Passing `versionId` without `source: "version"` is rejected.
+`source: "live"` is reserved and returns not implemented until live file reads
+are available. `files.list()` accepts `limit` up to 500 with a default of 200.
+`versions.list()` accepts `limit` up to 200 with a default of 100.
 
 Session streams are named lanes on a session. Input streams accept
 follow-up records. Output streams expose task-published records through list
