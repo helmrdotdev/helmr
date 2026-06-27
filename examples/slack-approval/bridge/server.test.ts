@@ -45,7 +45,6 @@ describe("Slack approval bridge", () => {
         action_ts: "1710000000.0001",
         value: JSON.stringify({
           sessionExternalId: "slack:C123:v1.2.3",
-          publicAccessToken: "hlmr_pat_secret",
           approved: true,
         }),
       }],
@@ -53,7 +52,6 @@ describe("Slack approval bridge", () => {
 
     expect(action).toEqual({
       sessionExternalId: "slack:C123:v1.2.3",
-      publicAccessToken: "hlmr_pat_secret",
       approved: true,
       userId: "U123",
       channelId: "C123",
@@ -64,7 +62,6 @@ describe("Slack approval bridge", () => {
   test("rejects malformed Slack action payloads before session input", async () => {
     const payload = slackPayload({
       sessionExternalId: "slack:C123:v1.2.3",
-      publicAccessToken: "hlmr_pat_secret",
       approved: "false",
     })
     const body = new URLSearchParams({ payload }).toString()
@@ -85,7 +82,6 @@ describe("Slack approval bridge", () => {
   test("sends session input from Slack action", async () => {
     const payload = slackPayload({
       sessionExternalId: "slack:C123:v1.2.3",
-      publicAccessToken: "hlmr_pat_secret",
       approved: true,
     })
     const body = new URLSearchParams({ payload }).toString()
@@ -102,7 +98,6 @@ describe("Slack approval bridge", () => {
     expect(calls).toEqual([{
       action: {
         sessionExternalId: "slack:C123:v1.2.3",
-        publicAccessToken: "hlmr_pat_secret",
         approved: true,
         userId: "U123",
         channelId: "C123",
@@ -116,7 +111,6 @@ describe("Slack approval bridge", () => {
   test("treats recorded session input as deterministic duplicate UI", async () => {
     const payload = slackPayload({
       sessionExternalId: "slack:C123:v1.2.3",
-      publicAccessToken: "hlmr_pat_secret",
       approved: false,
     })
     const body = new URLSearchParams({ payload }).toString()
@@ -124,7 +118,7 @@ describe("Slack approval bridge", () => {
 
     await handleSlackAction(signedRequest(body), response as unknown as ServerResponse, config, {
       sendApprovalInput: async () => {
-        throw new Error("Helmr API 403: {\"code\":\"token_scope_denied\"}")
+        throw new Error("Helmr API 409: {\"code\":\"idempotency_fingerprint_mismatch\"}")
       },
     })
 
@@ -148,12 +142,6 @@ describe("Slack approval bridge", () => {
               calls.push({ op: "sessions.cancel", session, opts })
             },
           }),
-        },
-        auth: {
-          createPublicToken: async (opts: unknown) => {
-            calls.push({ op: "auth.createPublicToken", opts })
-            return { publicAccessToken: "hlmr_pat_secret" }
-          },
         },
       } as never)).rejects.toThrow("Slack post failed: channel_not_found")
     } finally {
@@ -183,19 +171,6 @@ describe("Slack approval bridge", () => {
         },
       },
       {
-        op: "auth.createPublicToken",
-        opts: {
-          scope: {
-            type: "session.input.send",
-            session: { externalId: "slack:C123:v1.2.3" },
-            stream: "approval",
-            correlationId: "slack:C123:v1.2.3",
-          },
-          maxUses: 1,
-          expiresAt: expect.any(Date),
-        },
-      },
-      {
         op: "sessions.cancel",
         session: { id: "session-1", taskId: "slack-approval", currentRunId: "run-1" },
         opts: { reason: "slack_setup_failed" },
@@ -203,39 +178,10 @@ describe("Slack approval bridge", () => {
     ])
   })
 
-  test("cancels the parked session when public token creation fails", async () => {
-    const calls: unknown[] = []
-    await expect(startBridge({ ...config, port: 0 }, {
-      sessions: {
-        start: async (_taskId: string, payload: unknown, opts: unknown) => {
-          calls.push({ op: "sessions.start", payload, opts })
-          return { session: { id: "session-1", taskId: "slack-approval", currentRunId: "run-1" } }
-        },
-        open: (session: unknown) => ({
-          cancel: async (opts: unknown) => {
-            calls.push({ op: "sessions.cancel", session, opts })
-          },
-        }),
-      },
-      auth: {
-        createPublicToken: async (opts: unknown) => {
-          calls.push({ op: "auth.createPublicToken", opts })
-          throw new Error("scope denied")
-        },
-      },
-    } as never)).rejects.toThrow("scope denied")
-
-    expect(calls.map((call) => (call as { op: string }).op)).toEqual([
-      "sessions.start",
-      "auth.createPublicToken",
-      "sessions.cancel",
-    ])
-  })
 })
 
 function slackPayload(value: {
   readonly sessionExternalId: string
-  readonly publicAccessToken: string
   readonly approved: unknown
 }): string {
   return JSON.stringify({

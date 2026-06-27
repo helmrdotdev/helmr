@@ -22,7 +22,6 @@ export type Config = {
 
 type SlackAction = {
   readonly sessionExternalId: string
-  readonly publicAccessToken: string
   readonly approved: boolean
   readonly userId: string
   readonly channelId?: string
@@ -44,9 +43,8 @@ type BridgeDeps = {
   readonly sendApprovalInput: (action: SlackAction, data: unknown) => Promise<void>
 }
 
-type ApprovalGrant = {
+type ApprovalTarget = {
   readonly sessionExternalId: string
-  readonly publicAccessToken: string
 }
 
 if (import.meta.main) {
@@ -65,7 +63,6 @@ export async function startBridge(config: Config, client: HelmrClient): Promise<
         await client.sessions.open({ externalId: action.sessionExternalId }).input("approval").send(data, {
           correlationId: action.sessionExternalId,
           idempotencyKey: approvalDecisionIdempotencyKey(action.sessionExternalId),
-          publicAccessToken: action.publicAccessToken,
         })
       },
     }).catch((error: unknown) => {
@@ -94,20 +91,7 @@ export async function startBridge(config: Config, client: HelmrClient): Promise<
     })
 
     try {
-      const grant = await client.auth.createPublicToken({
-        scope: {
-          type: "session.input.send",
-          session: { externalId: sessionExternalId },
-          stream: "approval",
-          correlationId: sessionExternalId,
-        },
-        maxUses: 1,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      })
-      await postSlackApproval(config, {
-        sessionExternalId,
-        publicAccessToken: grant.publicAccessToken,
-      })
+      await postSlackApproval(config, { sessionExternalId })
     } catch (error) {
       await client.sessions.open(started.session).cancel({ reason: "slack_setup_failed" }).catch((cancelError: unknown) => {
         console.error("failed to cancel Slack approval session after setup failure", cancelError)
@@ -186,7 +170,7 @@ export async function handleSlackAction(
   }
 }
 
-export async function postSlackApproval(config: Config, grant: ApprovalGrant): Promise<void> {
+export async function postSlackApproval(config: Config, target: ApprovalTarget): Promise<void> {
   const response = await fetch("https://slack.com/api/chat.postMessage", {
     method: "POST",
     headers: {
@@ -202,8 +186,8 @@ export async function postSlackApproval(config: Config, grant: ApprovalGrant): P
         {
           type: "actions",
           elements: [
-            slackButton(grant, "Approve", "primary", true),
-            slackButton(grant, "Reject", "danger", false),
+            slackButton(target, "Approve", "primary", true),
+            slackButton(target, "Reject", "danger", false),
           ],
         },
       ],
@@ -213,15 +197,14 @@ export async function postSlackApproval(config: Config, grant: ApprovalGrant): P
   if (!response.ok || result.ok !== true) throw new Error(`Slack post failed: ${result.error ?? response.statusText}`)
 }
 
-export function slackButton(grant: ApprovalGrant, text: string, style: "primary" | "danger", approved: boolean) {
+export function slackButton(target: ApprovalTarget, text: string, style: "primary" | "danger", approved: boolean) {
   return {
     type: "button",
     text: { type: "plain_text", text },
     style,
     action_id: approved ? "helmr_approve" : "helmr_reject",
     value: JSON.stringify({
-      sessionExternalId: grant.sessionExternalId,
-      publicAccessToken: grant.publicAccessToken,
+      sessionExternalId: target.sessionExternalId,
       approved,
     }),
   }
@@ -255,12 +238,9 @@ export function parseSlackAction(payloadJson: string): SlackAction {
   const channel = payload.channel as Record<string, unknown> | undefined
   const sessionExternalId = typeof value.sessionExternalId === "string" ? value.sessionExternalId.trim() : ""
   if (sessionExternalId.length === 0) throw new Error("missing session external id")
-  const publicAccessToken = typeof value.publicAccessToken === "string" ? value.publicAccessToken.trim() : ""
-  if (publicAccessToken.length === 0) throw new Error("missing public access token")
   if (typeof value.approved !== "boolean") throw new Error("missing approval decision")
   return {
     sessionExternalId,
-    publicAccessToken,
     approved: value.approved,
     userId: String(user?.id ?? "slack-user"),
     channelId: typeof channel?.id === "string" ? channel.id : undefined,
@@ -271,9 +251,9 @@ export function parseSlackAction(payloadJson: string): SlackAction {
 export function isRecordedApprovalInput(error: unknown): boolean {
   if (error === null || typeof error !== "object") return false
   const code = "code" in error ? String((error as { readonly code?: unknown }).code) : ""
-  if (code === "idempotency_fingerprint_mismatch" || code === "token_scope_denied") return true
+  if (code === "idempotency_fingerprint_mismatch") return true
   const message = error instanceof Error ? error.message : String(error)
-  return message.includes("idempotency_fingerprint_mismatch") || message.includes("token_scope_denied")
+  return message.includes("idempotency_fingerprint_mismatch")
 }
 
 async function readBody(request: IncomingMessage): Promise<string> {

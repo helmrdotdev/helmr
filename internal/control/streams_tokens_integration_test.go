@@ -52,30 +52,25 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 		AuthSecret: authSecret,
 		PublicURL:  mustParseTestURL("https://helmr.example.test"),
 	})
-
-	rec := routeRequest(t, handler, http.MethodGet, "/api/sessions?external_id=slack%3AT123%3AC456", "", "Bearer machine-key")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), ids.sessionID.String()) {
-		t.Fatalf("external id session list status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	rec = routeRequest(t, handler, http.MethodGet, "/api/sessions?external_id=missing", "", "Bearer machine-key")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"sessions":[]`) {
-		t.Fatalf("missing external id session list status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	rec = routeRequest(t, handler, http.MethodGet, "/api/sessions/by-external-id?external_id=slack%3AT123%3AC456", "", "Bearer machine-key")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), ids.sessionID.String()) {
-		t.Fatalf("external id session get status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	sessionHandler := newTestServer(testServerConfig{
+	readHandler := newTestServer(testServerConfig{
 		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		DBTX:       pool,
-		Auth:       fakeAuth{kind: auth.ActorKindSession},
+		Auth:       fakeAuth{projectID: ids.projectID.String(), environmentID: ids.environmentID.String(), permissions: append(streamTokenRoutePermissions(), auth.PermissionRunsRead)},
 		AuthSecret: authSecret,
 		PublicURL:  mustParseTestURL("https://helmr.example.test"),
 	})
-	scopedExternalPath := "/api/projects/" + ids.projectID.String() + "/environments/" + ids.environmentID.String() + "/sessions/by-external-id?external_id=slack%3AT123%3AC456"
-	rec = routeRequest(t, sessionHandler, http.MethodGet, scopedExternalPath, "", "Bearer user-session")
+
+	rec := routeRequest(t, readHandler, http.MethodGet, "/api/sessions?external_id=slack%3AT123%3AC456", "", "Bearer machine-key")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), ids.sessionID.String()) {
-		t.Fatalf("scoped external id session get status=%d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("external id session list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = routeRequest(t, readHandler, http.MethodGet, "/api/sessions?external_id=missing", "", "Bearer machine-key")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"sessions":[]`) {
+		t.Fatalf("missing external id session list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = routeRequest(t, readHandler, http.MethodGet, "/api/sessions/by-external-id?external_id=slack%3AT123%3AC456", "", "Bearer machine-key")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), ids.sessionID.String()) {
+		t.Fatalf("external id session get status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	orgScopedHandler := newTestServer(testServerConfig{
 		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -88,6 +83,13 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("unscoped external id session get status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	sessionHandler := newTestServer(testServerConfig{
+		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DBTX:       pool,
+		Auth:       fakeAuth{kind: auth.ActorKindSession},
+		AuthSecret: authSecret,
+		PublicURL:  mustParseTestURL("https://helmr.example.test"),
+	})
 
 	inputBody := `{"data":{"approved":true},"correlation_id":"thread-1","idempotency_key":"input-1"}`
 	rec = routeRequest(t, handler, http.MethodPost, "/api/sessions/by-external-id/inputs/approval?external_id=slack%3AT123%3AC456", inputBody, "Bearer machine-key")
@@ -430,7 +432,7 @@ func TestWorkerActiveInputReadDoesNotRequireWakeupTransportForBufferedRecord(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+	server := newControlIntegrationServer(pool)
 
 	response, err := server.readWorkerInputStream(ctx, worker, leaseIDs, api.WorkerActiveStreamReadRequest{
 		Stream:        "approval",
@@ -486,7 +488,7 @@ func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+	server := newControlIntegrationServer(pool)
 
 	response, err := server.readWorkerInputStream(ctx, worker, leaseIDs, api.WorkerActiveStreamReadRequest{
 		Stream:        "approval",
@@ -585,7 +587,7 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 	`, continuationRunID, ids.orgID, ids.projectID, ids.environmentID, ids.sessionID); err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+	server := newControlIntegrationServer(pool)
 
 	response, err := server.readWorkerInputStream(ctx, worker, leaseIDs, api.WorkerActiveStreamReadRequest{
 		Stream:        "approval",
@@ -672,7 +674,7 @@ func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T
 	`, leaseIDs.runID, ids.orgID, ids.projectID, ids.environmentID, request.ID); err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+	server := newControlIntegrationServer(pool)
 
 	response, err := server.readWorkerInputStream(ctx, worker, leaseIDs, api.WorkerActiveStreamReadRequest{
 		Stream:        "approval",
@@ -711,9 +713,8 @@ func TestWorkerActiveInputReadRequiresWakeupTransportOnlyWhenBlockingAfterMiss(t
 	ctx := context.Background()
 	pool := newControlIntegrationDB(t, ctx)
 	ids := seedControlStreamTokenFixture(t, ctx, pool)
-	queries := db.New(pool)
 	worker, leaseIDs := seedControlRunningRunLease(t, ctx, pool, ids)
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+	server := newControlIntegrationServer(pool)
 
 	response, err := server.readWorkerInputStream(ctx, worker, leaseIDs, api.WorkerActiveStreamReadRequest{
 		Stream:        "approval",
@@ -744,7 +745,7 @@ func TestWorkerActiveInputReadRechecksDBAfterWakeupCursorInitialization(t *testi
 	ids := seedControlStreamTokenFixture(t, ctx, pool)
 	queries := db.New(pool)
 	worker, leaseIDs := seedControlRunningRunLease(t, ctx, pool, ids)
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+	server := newControlIntegrationServer(pool)
 	wakeups := &cursorInitAppendWakeups{
 		t:       t,
 		queries: queries,
@@ -937,6 +938,14 @@ func controlTestDatabaseDSN(t *testing.T, dsn string, database string) string {
 	}
 	parsed.Path = "/" + database
 	return parsed.String()
+}
+
+func newControlIntegrationServer(pool *pgxpool.Pool) *Server {
+	return &Server{
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db:  db.New(pool),
+		tx:  pool,
+	}
 }
 
 func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) streamTokenRouteFixture {
