@@ -37,18 +37,21 @@ describe("Slack approval bridge", () => {
     expect(verifySlackSignature(request, `${body}x`, config.slackSigningSecret)).toBe(false)
   })
 
-  test("parses token action payloads", () => {
+  test("parses session input action payloads", () => {
     const action = parseSlackAction(JSON.stringify({
       user: { id: "U123" },
       channel: { id: "C123" },
       actions: [{
         action_ts: "1710000000.0001",
-        value: JSON.stringify({ tokenId: "token-1", approved: true }),
+        value: JSON.stringify({
+          sessionExternalId: "slack:C123:v1.2.3",
+          approved: true,
+        }),
       }],
     }))
 
     expect(action).toEqual({
-      tokenId: "token-1",
+      sessionExternalId: "slack:C123:v1.2.3",
       approved: true,
       userId: "U123",
       channelId: "C123",
@@ -56,51 +59,66 @@ describe("Slack approval bridge", () => {
     })
   })
 
-  test("rejects malformed Slack action payloads before token completion", async () => {
-    const payload = slackPayload({ tokenId: "token-1", approved: "false" })
+  test("rejects malformed Slack action payloads before session input", async () => {
+    const payload = slackPayload({
+      sessionExternalId: "slack:C123:v1.2.3",
+      approved: "false",
+    })
     const body = new URLSearchParams({ payload }).toString()
     const response = new MockResponse()
-    let completed = false
+    let sent = false
 
     await handleSlackAction(signedRequest(body), response as unknown as ServerResponse, config, {
-      completeToken: async () => {
-        completed = true
+      sendApprovalInput: async () => {
+        sent = true
       },
     })
 
     expect(response.status).toBe(400)
     expect(response.body).toBe("invalid slack payload")
-    expect(completed).toBe(false)
+    expect(sent).toBe(false)
   })
 
-  test("completes token from Slack action", async () => {
-    const payload = slackPayload({ tokenId: "token-1", approved: true })
+  test("sends session input from Slack action", async () => {
+    const payload = slackPayload({
+      sessionExternalId: "slack:C123:v1.2.3",
+      approved: true,
+    })
     const body = new URLSearchParams({ payload }).toString()
     const response = new MockResponse()
     const calls: unknown[] = []
 
     await handleSlackAction(signedRequest(body), response as unknown as ServerResponse, config, {
-      completeToken: async (tokenId, data) => {
-        calls.push({ tokenId, data })
+      sendApprovalInput: async (action, data) => {
+        calls.push({ action, data })
       },
     })
 
     expect(response.status).toBe(200)
     expect(calls).toEqual([{
-      tokenId: "token-1",
-      data: { approved: true, actor: "U123", channelId: "C123" },
+      action: {
+        sessionExternalId: "slack:C123:v1.2.3",
+        approved: true,
+        userId: "U123",
+        channelId: "C123",
+        actionTs: "1710000000.0001",
+      },
+      data: { approved: true, actor: "U123", channelId: "C123", actionTs: "1710000000.0001" },
     }])
     expect(JSON.parse(response.body).text).toBe("Approved in Helmr.")
   })
 
-  test("treats duplicate token completion as deterministic duplicate UI", async () => {
-    const payload = slackPayload({ tokenId: "token-1", approved: false })
+  test("treats recorded session input as deterministic duplicate UI", async () => {
+    const payload = slackPayload({
+      sessionExternalId: "slack:C123:v1.2.3",
+      approved: false,
+    })
     const body = new URLSearchParams({ payload }).toString()
     const response = new MockResponse()
 
     await handleSlackAction(signedRequest(body), response as unknown as ServerResponse, config, {
-      completeToken: async () => {
-        throw new Error("Helmr API 409: {\"code\":\"token_completion_conflict\"}")
+      sendApprovalInput: async () => {
+        throw new Error("Helmr API 409: {\"code\":\"idempotency_fingerprint_mismatch\"}")
       },
     })
 
@@ -108,27 +126,22 @@ describe("Slack approval bridge", () => {
     expect(JSON.parse(response.body).text).toBe("This approval was already recorded in Helmr.")
   })
 
-  test("does not start a parked task when Slack post fails", async () => {
+  test("cancels the parked session when Slack post fails", async () => {
     const originalFetch = globalThis.fetch
     const calls: unknown[] = []
     globalThis.fetch = async () => Response.json({ ok: false, error: "channel_not_found" })
     try {
       await expect(startBridge({ ...config, port: 0 }, {
-        tokens: {
-          create: async (opts: unknown) => {
-            calls.push({ op: "token.create", opts })
-            return { id: "token-1" }
-          },
-          cancel: async (tokenId: string) => {
-            calls.push({ op: "token.cancel", tokenId })
-          },
-          complete: async () => {},
-        },
         sessions: {
-          start: async () => {
-            calls.push({ op: "sessions.start" })
-            return { session: { id: "session-1" } }
+          start: async (_taskId: string, payload: unknown, opts: unknown) => {
+            calls.push({ op: "sessions.start", payload, opts })
+            return { session: { id: "session-1", taskId: "slack-approval", currentRunId: "run-1" } }
           },
+          open: (session: unknown) => ({
+            cancel: async (opts: unknown) => {
+              calls.push({ op: "sessions.cancel", session, opts })
+            },
+          }),
         },
       } as never)).rejects.toThrow("Slack post failed: channel_not_found")
     } finally {
@@ -137,10 +150,15 @@ describe("Slack approval bridge", () => {
 
     expect(calls).toEqual([
       {
-        op: "token.create",
+        op: "sessions.start",
+        payload: {
+          release: "v1.2.3",
+          summary: "Ship v1.2.3",
+          approvalCorrelationId: "slack:C123:v1.2.3",
+        },
         opts: {
-          timeout: "7d",
-          tags: ["approval", "bridge:slack-approval", "medium:slack"],
+          externalId: "slack:C123:v1.2.3",
+          idempotencyKey: "slack-approval:slack-approval:C123:v1.2.3:start",
           metadata: {
             release: "v1.2.3",
             summary: "Ship v1.2.3",
@@ -149,15 +167,23 @@ describe("Slack approval bridge", () => {
             stagingUrl: null,
             productionUrl: null,
           },
-          idempotencyKey: "slack-approval:slack-approval:C123:v1.2.3:token",
+          tags: ["approval", "bridge:slack-approval", "medium:slack"],
         },
       },
-      { op: "token.cancel", tokenId: "token-1" },
+      {
+        op: "sessions.cancel",
+        session: { id: "session-1", taskId: "slack-approval", currentRunId: "run-1" },
+        opts: { reason: "slack_setup_failed" },
+      },
     ])
   })
+
 })
 
-function slackPayload(value: { readonly tokenId: string; readonly approved: unknown }): string {
+function slackPayload(value: {
+  readonly sessionExternalId: string
+  readonly approved: unknown
+}): string {
   return JSON.stringify({
     user: { id: "U123" },
     channel: { id: "C123" },

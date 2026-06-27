@@ -1,4 +1,4 @@
-import type { PublicAccessToken, Schedule, SessionSnapshot, SessionStartResult, SessionStartAndWaitResult, HelmrClient, Token, Workspace } from "./client"
+import type { PublicAccessToken, Schedule, SessionSnapshot, SessionStartResult, SessionStartAndWaitResult, HelmrClient, Token, TokenCompleteResult, Workspace } from "./client"
 import type { RunEventRecord, RunHandle, RunSnapshot } from "./run"
 import type { StreamRecord, Task } from "../internal"
 import { auth, idempotencyKeys, image, queue, sandbox, schedules, sessions, source, streams, task, tokens, workspaces, type PayloadSchema } from "../index"
@@ -106,9 +106,17 @@ if (false) {
   const noPayloadStartAndWait: Promise<SessionStartAndWaitResult<{ runId: string }>> = sessions.startAndWait(noPayloadTask, {})
   const clientNoPayloadStartAndWait: Promise<SessionStartAndWaitResult<{ runId: string }>> = client.sessions.startAndWait(noPayloadTask, {})
   const session = client.sessions.open<{ ok: boolean }>("session-1")
+  const externalSession = client.sessions.open({ externalId: "slack:T123:C456" })
   const topLevelSession = sessions.open<{ ok: boolean }>("session-1")
+  const externalSessionExternalId: string = externalSession.externalId
+  void externalSessionExternalId
+  // @ts-expect-error external-id handles do not expose a session id before resolution.
+  externalSession.id
   const sessionSnapshot: Promise<SessionSnapshot<{ ok: boolean }>> = session.retrieve()
   const topLevelSessionSnapshot: Promise<SessionSnapshot<{ ok: boolean }>> = sessions.retrieve("session-1")
+  const externalSessionSnapshot: Promise<SessionSnapshot> = client.sessions.retrieve({ externalId: "slack:T123:C456" })
+  const externalSessionList: Promise<SessionSnapshot[]> = client.sessions.list({ externalId: "slack:T123:C456" })
+  void externalSessionList
   const approvalStream = streams.input("approval", { schema: approvalSchema })
   const reportStream = streams.output("agent.report", { schema: reportSchema })
   const inputRecord: Promise<StreamRecord<{ approved: boolean }>> = session.input(approvalStream).send({ approved: true }, {
@@ -117,9 +125,11 @@ if (false) {
   const outputRecords: Promise<StreamRecord<{ text: string }>[]> = session.output(reportStream).list({ cursor: 1 })
   const outputRecord: Promise<StreamRecord<{ text: string }> | null> = session.output(reportStream).read({ cursor: 1 })
   const outputToken: Promise<PublicAccessToken> = client.auth.createPublicToken({
+    projectId: "project-1",
+    environmentId: "env-1",
     scope: {
       type: "session.output.read",
-      sessionId: "session-1",
+      session: { externalId: "slack:T123:C456" },
       stream: "agent.report",
       correlationId: "thread-1",
     },
@@ -128,21 +138,21 @@ if (false) {
   const inputToken: Promise<PublicAccessToken> = client.auth.createPublicToken({
     scope: {
       type: "session.input.send",
-      sessionId: session.id,
+      session,
       stream: "approval",
     },
   })
   const topLevelOutputToken: Promise<PublicAccessToken> = auth.createPublicToken({
     scope: {
       type: "session.output.read",
-      sessionId: topLevelSession.id,
+      session: topLevelSession,
       stream: reportStream,
     },
   })
   const topLevelInputToken: Promise<PublicAccessToken> = auth.createPublicToken({
     scope: {
       type: "session.input.send",
-      sessionId: topLevelSession.id,
+      session: topLevelSession.id,
       stream: approvalStream,
     },
   })
@@ -204,9 +214,9 @@ if (false) {
   // @ts-expect-error client tokens are data records; task-runtime token handles expose wait().
   retrievedClientToken.wait()
   const delegatedById = tokens.create({ timeout: { hours: 1 } })
-  tokens.complete("token-1", { approved: true })
+  const completedToken: Promise<TokenCompleteResult<{ approved: boolean }>> = tokens.complete("token-1", { approved: true })
   const cancelledTopLevelToken: Promise<Token> = tokens.cancel("token-1")
-  client.tokens.complete({
+  const publicCompletedToken: Promise<TokenCompleteResult<{ approved: boolean }>> = client.tokens.complete({
     id: "token-1",
     callbackUrl: "https://api.example.test/api/v1/tokens/token-1/callback/raw-token",
     publicAccessToken: "raw-token",
@@ -226,6 +236,8 @@ if (false) {
   waitedFromId.then
   delegatedToken.then
   delegatedById.then
+  completedToken.then
+  publicCompletedToken.then
   retrievedTopLevelToken.then
   listedTopLevelTokens.then
   cancelledTopLevelToken.then
@@ -246,6 +258,8 @@ if (false) {
   noPayloadStartAndWait.then
   clientNoPayloadStartAndWait.then
   sessionSnapshot.then
+  externalSession.retrieve().then
+  externalSessionSnapshot.then
   inputRecord.then
   outputRecords.then
   outputRecord.then
@@ -313,6 +327,14 @@ if (false) {
     scope: {
       // @ts-expect-error public token scopes are closed.
       type: "sessions:*",
+      session: "session-1",
+      stream: "approval",
+    },
+  })
+  client.auth.createPublicToken({
+    scope: {
+      type: "session.input.send",
+      // @ts-expect-error public token session scope uses `session`, not legacy `sessionId`.
       sessionId: "session-1",
       stream: "approval",
     },
@@ -321,7 +343,7 @@ if (false) {
     // @ts-expect-error input grants require an input stream or string.
     scope: {
       type: "session.input.send",
-      sessionId: "session-1",
+      session: "session-1",
       stream: reportStream,
     },
   })
@@ -329,11 +351,11 @@ if (false) {
     // @ts-expect-error output grants require an output stream or string.
     scope: {
       type: "session.output.read",
-      sessionId: "session-1",
+      session: "session-1",
       stream: approvalStream,
     },
   })
-  // @ts-expect-error sessions.open requires a session id string or session handle.
+  // @ts-expect-error sessions.open requires a session id string, session handle, or explicit externalId address.
   client.sessions.open({ runId: "run-1" })
   // @ts-expect-error run replay is not exposed.
   client.runs.replay("run-1")

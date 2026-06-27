@@ -44,6 +44,64 @@ func TestSessionStreamInputSendUsesCanonicalCommand(t *testing.T) {
 	}
 }
 
+func TestSessionListFiltersByExternalID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/sessions" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("external_id") != "slack:T123:C456" {
+			t.Fatalf("query = %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(api.ListSessionsResponse{
+			Sessions: []api.SessionResponse{{ID: "session-1", TaskID: "review", Status: "open", Activity: "idle"}},
+		})
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"session", "list", "--external-id", "slack:T123:C456"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "session-1\treview\topen\tidle") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestSessionGetByExternalIDUsesCollectionFilter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/sessions" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("external_id") != "slack:T123:C456" || r.URL.Query().Get("limit") != "2" {
+			t.Fatalf("query = %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(api.ListSessionsResponse{
+			Sessions: []api.SessionResponse{{ID: "session-1", TaskID: "review", Status: "open", Activity: "idle", CurrentRunID: "run-1", WorkspaceID: "workspace-1"}},
+		})
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"session", "get", "--external-id", "slack:T123:C456"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Session:   session-1") || !strings.Contains(out.String(), "Run:       run-1") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
 func TestSessionStreamListUsesCanonicalCommand(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/sessions/session-1/streams" {

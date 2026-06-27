@@ -1,9 +1,9 @@
-import { cache, image, logger, sandbox, source, task, tokens, type PayloadSchema } from "@helmr/sdk"
+import { cache, image, logger, sandbox, source, streams, task, type PayloadSchema } from "@helmr/sdk"
 
 interface ReleaseApprovalPayload {
   readonly release: string
   readonly summary: string
-  readonly tokenId: string
+  readonly approvalCorrelationId: string
   readonly risk?: string
   readonly stagingUrl?: string
   readonly productionUrl?: string
@@ -13,6 +13,7 @@ interface ApprovalDecision {
   readonly approved: boolean
   readonly actor?: string
   readonly channelId?: string
+  readonly actionTs?: string
 }
 
 type SchemaIssue = { readonly message: string; readonly path?: readonly string[] }
@@ -27,7 +28,7 @@ const releasePayload: PayloadSchema<ReleaseApprovalPayload> = {
       const issues = [
         stringIssue(record.release, "release"),
         stringIssue(record.summary, "summary"),
-        stringIssue(record.tokenId, "tokenId"),
+        stringIssue(record.approvalCorrelationId, "approvalCorrelationId"),
         optionalStringIssue(record.risk, "risk"),
         optionalStringIssue(record.stagingUrl, "stagingUrl"),
         optionalStringIssue(record.productionUrl, "productionUrl"),
@@ -38,7 +39,7 @@ const releasePayload: PayloadSchema<ReleaseApprovalPayload> = {
         value: {
           release: record.release,
           summary: record.summary,
-          tokenId: record.tokenId,
+          approvalCorrelationId: record.approvalCorrelationId,
           ...(record.risk === undefined ? {} : { risk: record.risk }),
           ...(record.stagingUrl === undefined ? {} : { stagingUrl: record.stagingUrl }),
           ...(record.productionUrl === undefined ? {} : { productionUrl: record.productionUrl }),
@@ -59,6 +60,7 @@ const approvalDecision: PayloadSchema<ApprovalDecision> = {
         booleanIssue(record.approved, "approved"),
         optionalStringIssue(record.actor, "actor"),
         optionalStringIssue(record.channelId, "channelId"),
+        optionalStringIssue(record.actionTs, "actionTs"),
       ].filter((issue): issue is SchemaIssue => issue !== null)
 
       if (issues.length > 0) return { issues }
@@ -67,11 +69,14 @@ const approvalDecision: PayloadSchema<ApprovalDecision> = {
           approved: record.approved,
           ...(record.actor === undefined ? {} : { actor: record.actor }),
           ...(record.channelId === undefined ? {} : { channelId: record.channelId }),
+          ...(record.actionTs === undefined ? {} : { actionTs: record.actionTs }),
         } as ApprovalDecision,
       }
     },
   },
 }
+
+const approvalInput = streams.input("approval", { schema: approvalDecision })
 
 const base = image("slack-approval")
   .from("node:24-bookworm-slim")
@@ -94,9 +99,9 @@ export const releaseApproval = task({
   maxDuration: 15 * 60,
   payload: releasePayload,
   run: async (payload) => {
-    logger.info("waiting for Slack approval token", { tokenId: payload.tokenId, release: payload.release })
-    const decision = await tokens.wait(payload.tokenId, {
-      schema: approvalDecision,
+    logger.info("waiting for Slack approval input", { release: payload.release })
+    const decision = await approvalInput.wait({
+      correlationId: payload.approvalCorrelationId,
       timeout: "7d",
       tags: ["approval", "bridge:slack-approval", "medium:slack"],
       metadata: {
@@ -110,6 +115,7 @@ export const releaseApproval = task({
       approved: decision.approved,
       actor: decision.actor ?? null,
       channelId: decision.channelId ?? null,
+      actionTs: decision.actionTs ?? null,
       completedAt: new Date().toISOString(),
     }
   },

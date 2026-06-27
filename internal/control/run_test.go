@@ -1421,6 +1421,44 @@ func TestContinuationRunRequestCreatedAfterLiveRunTerminal(t *testing.T) {
 	}
 }
 
+func TestContinuationRunRequestClaimLostRollsBackContinuationCreation(t *testing.T) {
+	store := continuationRunRequestFakeStore(db.RunStatusSucceeded)
+	request := store.sessionRunRequest
+	store.sessionRunRequest.ClaimOwner = "other-control"
+	previousSessionRunCount := len(store.sessionRuns)
+	previousCurrentRunID := store.session.CurrentRunID
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store}
+
+	runID, err := server.reconcileClaimedSessionRunRequest(context.Background(), request)
+
+	if !errors.Is(err, errSessionRunRequestLost) {
+		t.Fatalf("err = %v, want session run request claim lost", err)
+	}
+	if runID.Valid {
+		t.Fatalf("runID = %s, want empty", pgvalue.UUIDString(runID))
+	}
+	if len(store.sessionRuns) != previousSessionRunCount || store.session.CurrentRunID != previousCurrentRunID {
+		t.Fatalf("continuation side effects committed: session runs=%d current=%s", len(store.sessionRuns), pgvalue.UUIDString(store.session.CurrentRunID))
+	}
+}
+
+func TestActiveRunInputConsumptionLocksSessionAndSkipsRequest(t *testing.T) {
+	store := continuationRunRequestFakeStore(db.RunStatusRunning)
+	activeRunID := store.run.ID
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store}
+
+	if err := server.consumeSessionRunRequestByActiveRun(context.Background(), store.session, activeRunID, store.streamRecord.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if store.lockSessionCalls != 1 {
+		t.Fatalf("lock session calls = %d, want 1", store.lockSessionCalls)
+	}
+	if store.sessionRunRequest.Status != "skipped" || store.sessionRunRequest.LastError != "consumed_by_active_run" {
+		t.Fatalf("request status=%q last_error=%q", store.sessionRunRequest.Status, store.sessionRunRequest.LastError)
+	}
+}
+
 func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 	sessionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	previousRunID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
@@ -1484,6 +1522,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 			StreamID:       streamID,
 			CauseKind:      "stream_record",
 			Status:         "claimed",
+			ClaimOwner:     "control-a",
 			Attempts:       1,
 			NextAttemptAt:  now,
 			CreatedAt:      now,
@@ -2592,24 +2631,46 @@ type fakeStore struct {
 	sessionRuns                                 []db.SessionRun
 	streamRecord                                db.StreamRecord
 	sessionRunRequest                           db.SessionRunRequest
+	lockSessionCalls                            int
 	deploymentTaskRow                           db.GetDeploymentTaskRow
 	scheduleTriggerNotCurrent                   bool
 	closeSessionAttachesRun                     pgtype.UUID
 	closeSessionRetryRun                        db.Run
 }
 
-type fakeControlTransaction struct{}
+type fakeControlTransaction struct {
+	store             *fakeStore
+	session           db.Session
+	run               db.Run
+	sessionRuns       []db.SessionRun
+	sessionRunRequest db.SessionRunRequest
+	committed         bool
+}
 
-func (fakeControlTransaction) Commit(context.Context) error {
+func (tx *fakeControlTransaction) Commit(context.Context) error {
+	tx.committed = true
 	return nil
 }
 
-func (fakeControlTransaction) Rollback(context.Context) error {
+func (tx *fakeControlTransaction) Rollback(context.Context) error {
+	if tx == nil || tx.committed || tx.store == nil {
+		return nil
+	}
+	tx.store.session = tx.session
+	tx.store.run = tx.run
+	tx.store.sessionRuns = append([]db.SessionRun(nil), tx.sessionRuns...)
+	tx.store.sessionRunRequest = tx.sessionRunRequest
 	return nil
 }
 
 func (f *fakeStore) BeginQuerier(context.Context) (db.Querier, controlTransaction, error) {
-	return f, fakeControlTransaction{}, nil
+	return f, &fakeControlTransaction{
+		store:             f,
+		session:           f.session,
+		run:               f.run,
+		sessionRuns:       append([]db.SessionRun(nil), f.sessionRuns...),
+		sessionRunRequest: f.sessionRunRequest,
+	}, nil
 }
 
 type fakeRunEnqueuer struct {
@@ -3091,7 +3152,7 @@ func (f *fakeStore) ClaimDueSessionRunRequests(_ context.Context, _ db.ClaimDueS
 }
 
 func (f *fakeStore) ReleaseSessionRunRequestForRetry(_ context.Context, arg db.ReleaseSessionRunRequestForRetryParams) (db.SessionRunRequest, error) {
-	if f.sessionRunRequest.ID != arg.ID {
+	if f.sessionRunRequest.ID != arg.ID || f.sessionRunRequest.Status != "claimed" || f.sessionRunRequest.ClaimOwner != arg.ClaimOwner {
 		return db.SessionRunRequest{}, pgx.ErrNoRows
 	}
 	f.sessionRunRequest.Status = "accepted"
@@ -3104,7 +3165,7 @@ func (f *fakeStore) ReleaseSessionRunRequestForRetry(_ context.Context, arg db.R
 }
 
 func (f *fakeStore) MarkSessionRunRequestCreated(_ context.Context, arg db.MarkSessionRunRequestCreatedParams) (db.SessionRunRequest, error) {
-	if f.sessionRunRequest.ID != arg.ID {
+	if f.sessionRunRequest.ID != arg.ID || f.sessionRunRequest.Status != "claimed" || f.sessionRunRequest.ClaimOwner != arg.ClaimOwner {
 		return db.SessionRunRequest{}, pgx.ErrNoRows
 	}
 	f.sessionRunRequest.Status = "created"
@@ -3118,22 +3179,53 @@ func (f *fakeStore) MarkSessionRunRequestCreated(_ context.Context, arg db.MarkS
 }
 
 func (f *fakeStore) MarkSessionRunRequestSkipped(_ context.Context, arg db.MarkSessionRunRequestSkippedParams) (db.SessionRunRequest, error) {
-	if f.sessionRunRequest.ID != arg.ID {
+	if f.sessionRunRequest.ID != arg.ID || f.sessionRunRequest.Status != "claimed" || f.sessionRunRequest.ClaimOwner != arg.ClaimOwner {
 		return db.SessionRunRequest{}, pgx.ErrNoRows
 	}
 	f.sessionRunRequest.Status = "skipped"
 	f.sessionRunRequest.LastError = arg.Reason
 	f.sessionRunRequest.ErrorMessage = arg.Reason
+	f.sessionRunRequest.ClaimedAt = pgtype.Timestamptz{}
+	f.sessionRunRequest.ClaimExpiresAt = pgtype.Timestamptz{}
+	f.sessionRunRequest.ClaimOwner = ""
+	return f.sessionRunRequest, nil
+}
+
+func (f *fakeStore) MarkSessionRunRequestConsumedByActiveRun(_ context.Context, arg db.MarkSessionRunRequestConsumedByActiveRunParams) (db.SessionRunRequest, error) {
+	if f.sessionRunRequest.OrgID != arg.OrgID ||
+		f.sessionRunRequest.ProjectID != arg.ProjectID ||
+		f.sessionRunRequest.EnvironmentID != arg.EnvironmentID ||
+		f.sessionRunRequest.StreamRecordID != arg.StreamRecordID {
+		return db.SessionRunRequest{}, pgx.ErrNoRows
+	}
+	if f.sessionRunRequest.Status != "accepted" && f.sessionRunRequest.Status != "claimed" && f.sessionRunRequest.Status != "created" {
+		return db.SessionRunRequest{}, pgx.ErrNoRows
+	}
+	if f.sessionRunRequest.Status == "created" && f.sessionRunRequest.RunID == arg.ActiveRunID {
+		return db.SessionRunRequest{}, pgx.ErrNoRows
+	}
+	if f.sessionRunRequest.Status == "created" && f.session.CurrentRunID == f.sessionRunRequest.RunID {
+		f.session.CurrentRunID = arg.ActiveRunID
+	}
+	f.sessionRunRequest.Status = "skipped"
+	f.sessionRunRequest.LastError = "consumed_by_active_run"
+	f.sessionRunRequest.ErrorMessage = ""
+	f.sessionRunRequest.ClaimedAt = pgtype.Timestamptz{}
+	f.sessionRunRequest.ClaimExpiresAt = pgtype.Timestamptz{}
+	f.sessionRunRequest.ClaimOwner = ""
 	return f.sessionRunRequest, nil
 }
 
 func (f *fakeStore) MarkSessionRunRequestFailed(_ context.Context, arg db.MarkSessionRunRequestFailedParams) (db.SessionRunRequest, error) {
-	if f.sessionRunRequest.ID != arg.ID {
+	if f.sessionRunRequest.ID != arg.ID || f.sessionRunRequest.Status != "claimed" || f.sessionRunRequest.ClaimOwner != arg.ClaimOwner {
 		return db.SessionRunRequest{}, pgx.ErrNoRows
 	}
 	f.sessionRunRequest.Status = "failed"
 	f.sessionRunRequest.LastError = arg.Reason
 	f.sessionRunRequest.ErrorMessage = arg.Reason
+	f.sessionRunRequest.ClaimedAt = pgtype.Timestamptz{}
+	f.sessionRunRequest.ClaimExpiresAt = pgtype.Timestamptz{}
+	f.sessionRunRequest.ClaimOwner = ""
 	return f.sessionRunRequest, nil
 }
 
@@ -3308,6 +3400,7 @@ func (f *fakeStore) deriveSessionActivity(session db.Session) (string, bool) {
 }
 
 func (f *fakeStore) LockSession(_ context.Context, arg db.LockSessionParams) (db.Session, error) {
+	f.lockSessionCalls++
 	session := f.session
 	if f.lockSession.ID.Valid {
 		session = f.lockSession

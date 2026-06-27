@@ -197,6 +197,12 @@ type ListSessionsResponse struct {
 	Sessions []SessionResponse `json:"sessions"`
 }
 
+type SessionAddress struct {
+	Type       string `json:"type"`
+	ID         string `json:"id,omitempty"`
+	ExternalID string `json:"external_id,omitempty"`
+}
+
 type PatchSessionRequest struct {
 	Metadata  json.RawMessage `json:"metadata,omitempty"`
 	Tags      []string        `json:"tags,omitempty"`

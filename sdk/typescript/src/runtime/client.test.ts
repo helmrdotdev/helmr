@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 
-import { HelmrClient, WorkspaceStreamError, WorkspaceStreamTerminalError, tokenClientMethod } from "./client"
+import { HelmrClient, WorkspaceStreamError, WorkspaceStreamTerminalError, tokenClientMethod, type SessionSnapshot } from "./client"
 import { runStateBooleans } from "./run"
 import { PayloadSchemaValidationError, auth, idempotencyKeys, image, sandbox, schedules, sessions, source, streams, task, tokens, workspaces, type PayloadSchema } from "../index"
 import { resetDefaultClientForTest } from "../start"
@@ -824,6 +824,42 @@ test("sessions facade retrieves state and reads/writes session streams", async (
   ])
 })
 
+test("sessions facade uses external id session address routes directly", async () => {
+  const requestedUrls: string[] = []
+  const bodies: unknown[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (init?.body !== undefined) {
+      bodies.push(JSON.parse(String(init.body)))
+    }
+    if (url.endsWith("/api/sessions/by-external-id?external_id=slack%3AT123%2FC456")) {
+      return Response.json(sessionFixture({ id: "session-1", external_id: "slack:T123:C456" }))
+    }
+    if (url.endsWith("/api/sessions/by-external-id/inputs/approval?external_id=slack%3AT123%2FC456")) {
+      return Response.json({
+        record: channelRecordFixture({ data: { approved: true }, correlation_id: "thread-1" }),
+        idempotency_status: "created",
+      }, { status: 201 })
+    }
+    throw new Error(`unexpected URL ${url}`)
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const session = client.sessions.open({ externalId: "slack:T123/C456" })
+
+  expect((await session.retrieve()).id).toBe("session-1")
+  await session.input("approval").send({ approved: true }, { correlationId: "thread-1" })
+
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/sessions/by-external-id?external_id=slack%3AT123%2FC456",
+    "https://api.example.test/api/sessions/by-external-id/inputs/approval?external_id=slack%3AT123%2FC456",
+  ])
+  expect(bodies).toEqual([
+    { data: { approved: true }, correlation_id: "thread-1" },
+  ])
+})
+
 test("sessions facade uses public access token stream routes when provided", async () => {
   const requestedUrls: string[] = []
   const authHeaders: Array<string | null> = []
@@ -841,6 +877,7 @@ test("sessions facade uses public access token stream routes when provided", asy
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const session = client.sessions.open("session-1")
+  const externalSession = client.sessions.open({ externalId: "slack:T123/C456" })
 
   await session.input("approval").send({ approved: true }, {
     correlationId: "thread-1",
@@ -851,13 +888,20 @@ test("sessions facade uses public access token stream routes when provided", asy
     correlationId: "thread-1",
     publicAccessToken: "public-output-token",
   })
+  await externalSession.output("agent.report").read({
+    cursor: 2,
+    correlationId: "thread-2",
+    publicAccessToken: "public-output-token",
+  })
 
   expect(requestedUrls).toEqual([
     "https://api.example.test/api/v1/sessions/session-1/inputs/approval",
     "https://api.example.test/api/v1/sessions/session-1/outputs/agent.report/read?after_sequence=1&correlation_id=thread-1",
+    "https://api.example.test/api/v1/sessions/by-external-id/outputs/agent.report/read?external_id=slack%3AT123%2FC456&after_sequence=2&correlation_id=thread-2",
   ])
   expect(authHeaders).toEqual([
     "Bearer public-input-token",
+    "Bearer public-output-token",
     "Bearer public-output-token",
   ])
 })
@@ -902,7 +946,7 @@ test("auth.createPublicToken posts a scoped public access token request", async 
       public_access_token: "hlmr_pat_secret",
       scope: {
         type: "session.output.read",
-        session_id: "session-1",
+        session: { type: "id", id: "session-1" },
         stream: "agent.report",
         correlation_id: "thread-1",
       },
@@ -914,9 +958,11 @@ test("auth.createPublicToken posts a scoped public access token request", async 
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const token = await client.auth.createPublicToken({
+    projectId: "project-1",
+    environmentId: "env-1",
     scope: {
       type: "session.output.read",
-      sessionId: "session-1",
+      session: { externalId: "slack:T123/C456" },
       stream: "agent.report",
       correlationId: "thread-1",
     },
@@ -926,9 +972,11 @@ test("auth.createPublicToken posts a scoped public access token request", async 
 
   expect(requestedUrl).toBe("https://api.example.test/api/public-access-tokens")
   expect(body).toEqual({
+    project_id: "project-1",
+    environment_id: "env-1",
     scope: {
       type: "session.output.read",
-      session_id: "session-1",
+      session: { type: "external_id", external_id: "slack:T123/C456" },
       stream: "agent.report",
       correlation_id: "thread-1",
     },
@@ -940,13 +988,70 @@ test("auth.createPublicToken posts a scoped public access token request", async 
     publicAccessToken: "hlmr_pat_secret",
     scope: {
       type: "session.output.read",
-      sessionId: "session-1",
+      session: "session-1",
       stream: "agent.report",
       correlationId: "thread-1",
     },
     expiresAt: "2026-04-20T01:00:00Z",
     maxUses: 5,
     createdAt: "2026-04-20T00:00:00Z",
+  })
+})
+
+test("auth.createPublicToken uses concrete session id when a session snapshot has externalId", async () => {
+  let body: unknown
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body))
+    return Response.json({
+      id: "public-token-id",
+      public_access_token: "hlmr_pat_secret",
+      scope: {
+        type: "session.input.send",
+        session: { type: "id", id: "session-1" },
+        stream: "approval",
+      },
+      expires_at: "2026-04-20T01:00:00Z",
+      created_at: "2026-04-20T00:00:00Z",
+    }, { status: 201 })
+  }) as typeof fetch
+
+  const session: SessionSnapshot = {
+    id: "session-1",
+    projectId: "project-1",
+    environmentId: "env-1",
+    taskId: "review",
+    initialDeploymentId: "deployment-1",
+    activeDeploymentId: "deployment-1",
+    externalId: "slack:T123:C456",
+    status: "open",
+    activity: "idle",
+    canClose: true,
+    currentRunId: null,
+    workspaceId: null,
+    metadata: {},
+    tags: [],
+    timedOut: false,
+    expiresAt: null,
+    expiredAt: null,
+    createdAt: "2026-04-20T00:00:00Z",
+    updatedAt: "2026-04-20T00:00:00Z",
+  }
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await client.auth.createPublicToken({
+    scope: {
+      type: "session.input.send",
+      session,
+      stream: "approval",
+    },
+  })
+
+  expect(body).toEqual({
+    scope: {
+      type: "session.input.send",
+      session: { type: "id", id: "session-1" },
+      stream: "approval",
+    },
   })
 })
 
@@ -965,7 +1070,7 @@ test("auth namespace uses the default client and accepts stream definitions", as
       public_access_token: "hlmr_pat_secret",
       scope: {
         type: "session.output.read",
-        session_id: "session-1",
+        session: { type: "id", id: "session-1" },
         stream: "agent.report",
       },
       expires_at: "2026-04-20T01:00:00Z",
@@ -976,7 +1081,7 @@ test("auth namespace uses the default client and accepts stream definitions", as
   await auth.createPublicToken({
     scope: {
       type: "session.output.read",
-      sessionId: "session-1",
+      session: "session-1",
       stream: streams.output("agent.report"),
     },
   })
@@ -986,7 +1091,7 @@ test("auth namespace uses the default client and accepts stream definitions", as
   expect(body).toEqual({
     scope: {
       type: "session.output.read",
-      session_id: "session-1",
+      session: { type: "id", id: "session-1" },
       stream: "agent.report",
     },
   })
@@ -998,7 +1103,7 @@ test("auth.createPublicToken rejects mismatched stream definition directions", a
   await expect(client.auth.createPublicToken({
     scope: {
       type: "session.input.send",
-      sessionId: "session-1",
+      session: "session-1",
       stream: streams.output("agent.report"),
     },
   } as never)).rejects.toThrow("requires an input stream")
@@ -1006,7 +1111,7 @@ test("auth.createPublicToken rejects mismatched stream definition directions", a
   await expect(client.auth.createPublicToken({
     scope: {
       type: "session.output.read",
-      sessionId: "session-1",
+      session: "session-1",
       stream: streams.input("approval"),
     },
   } as never)).rejects.toThrow("requires an output stream")
@@ -1045,6 +1150,17 @@ test("tokens namespace exposes default client token methods", async () => {
         id: "token-id",
         status: "cancelled",
         timeout_at: null,
+      })
+    }
+    if (method === "POST" && url.endsWith("/api/v1/tokens/token-id/complete")) {
+      return Response.json({
+        status: "completed",
+        token: {
+          id: "token-id",
+          status: "completed",
+          timeout_at: null,
+          data: { approved: true },
+        },
       })
     }
     return new Response(null, { status: 204 })
@@ -2066,11 +2182,19 @@ test("token method complete uses token public access token when present", async 
     requestedUrl = String(input)
     authorization = new Headers(init?.headers).get("authorization")
     body = JSON.parse(String(init?.body))
-    return new Response(null, { status: 204 })
+    return Response.json({
+      status: "completed",
+      token: {
+        id: "token-id",
+        timeout_at: null,
+        status: "completed",
+        data: { text: "continue" },
+      },
+    })
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client[tokenClientMethod]({
+  const result = await client[tokenClientMethod]({
     operation: "complete",
     token: {
       id: "token-id",
@@ -2086,17 +2210,34 @@ test("token method complete uses token public access token when present", async 
   expect(body).toEqual({
     data: { text: "continue" },
   })
+  expect(result).toEqual({
+    status: "completed",
+    token: {
+      id: "token-id",
+      status: "completed",
+      timeoutAt: null,
+      data: { text: "continue" },
+    },
+  })
 })
 
 test("token method complete accepts explicit public access token option", async () => {
   let authorization: string | null | undefined
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     authorization = new Headers(init?.headers).get("authorization")
-    return new Response(null, { status: 204 })
+    return Response.json({
+      status: "already_completed",
+      token: {
+        id: "token-id",
+        timeout_at: null,
+        status: "completed",
+        data: { reviewed: true },
+      },
+    })
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client[tokenClientMethod]({
+  const result = await client[tokenClientMethod]({
     operation: "complete",
     token: "token-id",
     data: { reviewed: true },
@@ -2104,6 +2245,15 @@ test("token method complete accepts explicit public access token option", async 
   })
 
   expect(authorization).toBe("Bearer raw-token")
+  expect(result).toEqual({
+    status: "already_completed",
+    token: {
+      id: "token-id",
+      status: "completed",
+      timeoutAt: null,
+      data: { reviewed: true },
+    },
+  })
 })
 
 test("token method complete accepts explicit id", async () => {
@@ -2114,11 +2264,19 @@ test("token method complete accepts explicit id", async () => {
     requestedUrl = String(input)
     authorization = new Headers(init?.headers).get("authorization")
     body = JSON.parse(String(init?.body))
-    return new Response(null, { status: 204 })
+    return Response.json({
+      status: "completed",
+      token: {
+        id: "token-id",
+        timeout_at: null,
+        status: "completed",
+        data: { reviewed: true },
+      },
+    })
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client[tokenClientMethod]({
+  const result = await client[tokenClientMethod]({
     operation: "complete",
     token: "token-id",
     data: { reviewed: true },
@@ -2129,6 +2287,8 @@ test("token method complete accepts explicit id", async () => {
   expect(body).toEqual({
     data: { reviewed: true },
   })
+  expect(result.status).toBe("completed")
+  expect(result.token.data).toEqual({ reviewed: true })
 })
 
 test("runs.events.subscribe handles CRLF SSE frames split across chunks", async () => {

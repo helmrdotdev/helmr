@@ -21,7 +21,7 @@ absolute paths keep normal Linux container semantics.
 - `dependency-cache` — dependency-layer image builds with a runtime workspace report.
 - `cli-tooling` — install a CLI in the sandbox image and run it against the workspace.
 - `human-in-the-loop` — generic token-backed human decision workflows.
-- `slack-approval` — app-owned Slack buttons backed by Helmr tokens.
+- `slack-approval` — app-owned Slack buttons backed by external-id session input.
 - `resend-email-approval` — app-owned Resend email links backed by Helmr tokens.
 - `task-secrets` — declared task secrets resolved from the selected project environment.
 - `github-pr-review` — a GitHub PR workflow with a human-approved write action.

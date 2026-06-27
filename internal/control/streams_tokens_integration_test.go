@@ -52,9 +52,47 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 		AuthSecret: authSecret,
 		PublicURL:  mustParseTestURL("https://helmr.example.test"),
 	})
+	readHandler := newTestServer(testServerConfig{
+		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DBTX:       pool,
+		Auth:       fakeAuth{projectID: ids.projectID.String(), environmentID: ids.environmentID.String(), permissions: append(streamTokenRoutePermissions(), auth.PermissionRunsRead)},
+		AuthSecret: authSecret,
+		PublicURL:  mustParseTestURL("https://helmr.example.test"),
+	})
+
+	rec := routeRequest(t, readHandler, http.MethodGet, "/api/sessions?external_id=slack%3AT123%3AC456", "", "Bearer machine-key")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), ids.sessionID.String()) {
+		t.Fatalf("external id session list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = routeRequest(t, readHandler, http.MethodGet, "/api/sessions?external_id=missing", "", "Bearer machine-key")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"sessions":[]`) {
+		t.Fatalf("missing external id session list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = routeRequest(t, readHandler, http.MethodGet, "/api/sessions/by-external-id?external_id=slack%3AT123%3AC456", "", "Bearer machine-key")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), ids.sessionID.String()) {
+		t.Fatalf("external id session get status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	orgScopedHandler := newTestServer(testServerConfig{
+		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DBTX:       pool,
+		Auth:       fakeAuth{kind: auth.ActorKindSystem},
+		AuthSecret: authSecret,
+		PublicURL:  mustParseTestURL("https://helmr.example.test"),
+	})
+	rec = routeRequest(t, orgScopedHandler, http.MethodGet, "/api/sessions/by-external-id?external_id=slack%3AT123%3AC456", "", "Bearer system")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unscoped external id session get status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	sessionHandler := newTestServer(testServerConfig{
+		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DBTX:       pool,
+		Auth:       fakeAuth{kind: auth.ActorKindSession},
+		AuthSecret: authSecret,
+		PublicURL:  mustParseTestURL("https://helmr.example.test"),
+	})
 
 	inputBody := `{"data":{"approved":true},"correlation_id":"thread-1","idempotency_key":"input-1"}`
-	rec := routeRequest(t, handler, http.MethodPost, "/api/sessions/"+ids.sessionID.String()+"/inputs/approval", inputBody, "Bearer machine-key")
+	rec = routeRequest(t, handler, http.MethodPost, "/api/sessions/by-external-id/inputs/approval?external_id=slack%3AT123%3AC456", inputBody, "Bearer machine-key")
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("input send status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -132,7 +170,7 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"text":"ready"`) {
 		t.Fatalf("output read status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rec = routeRequest(t, handler, http.MethodPost, "/api/public-access-tokens", `{"scope":{"type":"session.input.send","session_id":"`+ids.sessionID.String()+`","stream":"approval","correlation_id":"thread-3"},"max_uses":2}`, "Bearer machine-key")
+	rec = routeRequest(t, handler, http.MethodPost, "/api/public-access-tokens", `{"scope":{"type":"session.input.send","session":{"type":"external_id","external_id":"slack:T123:C456"},"stream":"approval","correlation_id":"thread-3"},"max_uses":2}`, "Bearer machine-key")
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("public input token create status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -143,16 +181,52 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 	if publicInput.PublicAccessToken == "" || publicInput.Scope.Type != "session.input.send" || publicInput.Scope.CorrelationID != "thread-3" {
 		t.Fatalf("public input token response = %+v", publicInput)
 	}
-	rec = routeRequest(t, handler, http.MethodPost, "/api/v1/sessions/"+ids.sessionID.String()+"/inputs/approval", `{"data":{"approved":false},"correlation_id":"thread-2"}`, "Bearer "+publicInput.PublicAccessToken)
+	orgScopedAPIKeyHandler := newTestServer(testServerConfig{
+		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DBTX:       pool,
+		Auth:       fakeAuth{kind: auth.ActorKindAPIKey},
+		AuthSecret: authSecret,
+		PublicURL:  mustParseTestURL("https://helmr.example.test"),
+	})
+	rec = routeRequest(t, orgScopedAPIKeyHandler, http.MethodPost, "/api/public-access-tokens", `{"scope":{"type":"session.input.send","session":{"type":"id","id":"`+ids.sessionID.String()+`"},"stream":"approval"}}`, "Bearer org-key")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("org-scoped api key public token create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = routeRequest(t, sessionHandler, http.MethodPost, "/api/public-access-tokens", `{"scope":{"type":"session.input.send","session":{"type":"id","id":"`+ids.sessionID.String()+`"},"stream":"approval"}}`, "Bearer user-session")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("session actor public token create without scope status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = routeRequest(t, sessionHandler, http.MethodPost, "/api/public-access-tokens", `{"project_id":"`+ids.projectID.String()+`","scope":{"type":"session.input.send","session":{"type":"id","id":"`+ids.sessionID.String()+`"},"stream":"approval"}}`, "Bearer user-session")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("session actor public token create with partial scope status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = routeRequest(t, sessionHandler, http.MethodPost, "/api/public-access-tokens", `{"project_id":"`+ids.projectID.String()+`","environment_id":"`+ids.environmentID.String()+`","scope":{"type":"session.input.send","session":{"type":"external_id","external_id":"slack:T123:C456"},"stream":"approval","correlation_id":"thread-4"},"max_uses":1}`, "Bearer user-session")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("user public input token create with external id status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var publicInputFromSessionActor api.PublicAccessTokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &publicInputFromSessionActor); err != nil {
+		t.Fatal(err)
+	}
+	if publicInputFromSessionActor.Scope.Session.Type != "id" || publicInputFromSessionActor.Scope.Session.ID != ids.sessionID.String() || publicInputFromSessionActor.Scope.CorrelationID != "thread-4" {
+		t.Fatalf("user public input token response = %+v", publicInputFromSessionActor)
+	}
+	rec = routeRequest(t, handler, http.MethodPost, "/api/v1/sessions/by-external-id/inputs/approval?external_id=slack%3AT123%3AC456", `{"data":{"approved":false},"correlation_id":"thread-2"}`, "Bearer "+publicInput.PublicAccessToken)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("public input wrong correlation status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	requireErrorCode(t, rec.Body.Bytes(), "token_scope_denied")
-	rec = routeRequest(t, handler, http.MethodPost, "/api/v1/sessions/"+ids.sessionID.String()+"/inputs/approval", `{"data":{"approved":false},"correlation_id":"thread-3"}`, "Bearer "+publicInput.PublicAccessToken)
+	otherSessionID, _ := seedControlStreamSession(t, ctx, pool, ids, "slack:T123:C999", "approval", "input")
+	rec = routeRequest(t, handler, http.MethodPost, "/api/v1/sessions/"+otherSessionID.String()+"/inputs/approval", `{"data":{"approved":false},"correlation_id":"thread-3"}`, "Bearer "+publicInput.PublicAccessToken)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("public input different session status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	requireErrorCode(t, rec.Body.Bytes(), "token_scope_denied")
+	rec = routeRequest(t, handler, http.MethodPost, "/api/v1/sessions/by-external-id/inputs/approval?external_id=slack%3AT123%3AC456", `{"data":{"approved":false},"correlation_id":"thread-3"}`, "Bearer "+publicInput.PublicAccessToken)
 	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"approved":false`) {
 		t.Fatalf("public input send status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rec = routeRequest(t, handler, http.MethodPost, "/api/public-access-tokens", `{"scope":{"type":"session.output.read","session_id":"`+ids.sessionID.String()+`","stream":"updates"},"max_uses":1}`, "Bearer machine-key")
+	rec = routeRequest(t, handler, http.MethodPost, "/api/public-access-tokens", `{"scope":{"type":"session.output.read","session":{"type":"id","id":"`+ids.sessionID.String()+`"},"stream":"updates"},"max_uses":1}`, "Bearer machine-key")
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("public output token create status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -197,8 +271,26 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"completed"`) {
 		t.Fatalf("api key complete status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	var apiComplete api.CompleteTokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &apiComplete); err != nil {
+		t.Fatal(err)
+	}
+	if apiComplete.Status != "completed" || apiComplete.Token.Status != "completed" || string(apiComplete.Token.Data) != `{"ok":true}` {
+		t.Fatalf("api key complete response = %+v token=%+v", apiComplete, apiComplete.Token)
+	}
 	if strings.Contains(rec.Body.String(), "callback_url") || strings.Contains(rec.Body.String(), "public_access_token") {
 		t.Fatalf("complete response leaked completion capability: %s", rec.Body.String())
+	}
+	rec = routeRequest(t, handler, http.MethodPost, "/api/tokens/"+token.ID+"/complete", `{"data":{"ok":true}}`, "Bearer machine-key")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("api key duplicate complete status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var apiDuplicate api.CompleteTokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &apiDuplicate); err != nil {
+		t.Fatal(err)
+	}
+	if apiDuplicate.Status != "already_completed" || string(apiDuplicate.Token.Data) != `{"ok":true}` {
+		t.Fatalf("api key duplicate response = %+v token=%+v", apiDuplicate, apiDuplicate.Token)
 	}
 	rec = routeRequest(t, handler, http.MethodPost, "/api/tokens/"+token.ID+"/complete", `{"data":{"ok":false}}`, "Bearer machine-key")
 	if rec.Code != http.StatusConflict {
@@ -234,6 +326,13 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"public":true`) {
 		t.Fatalf("public complete status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	var publicComplete api.CompleteTokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &publicComplete); err != nil {
+		t.Fatal(err)
+	}
+	if publicComplete.Status != "completed" {
+		t.Fatalf("public complete response = %+v", publicComplete)
+	}
 	publicTokenHash, err := auth.HashToken(authSecret, publicToken.PublicAccessToken)
 	if err != nil {
 		t.Fatal(err)
@@ -246,10 +345,23 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 		t.Fatalf("public access token used_count=%d, want 1", consumedPublicToken.UsedCount)
 	}
 	rec = routeRequest(t, handler, http.MethodPost, "/api/v1/tokens/"+publicToken.ID+"/complete", `{"data":{"public":true}}`, "Bearer "+publicToken.PublicAccessToken)
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("public token replay status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	requireErrorCode(t, rec.Body.Bytes(), "token_scope_denied")
+	var publicDuplicate api.CompleteTokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &publicDuplicate); err != nil {
+		t.Fatal(err)
+	}
+	if publicDuplicate.Status != "already_completed" || string(publicDuplicate.Token.Data) != `{"public":true}` {
+		t.Fatalf("public duplicate response = %+v token=%+v", publicDuplicate, publicDuplicate.Token)
+	}
+	replayedPublicToken, err := queries.LockPublicAccessTokenByHash(ctx, publicTokenHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayedPublicToken.UsedCount != 1 {
+		t.Fatalf("public duplicate used_count=%d, want 1", replayedPublicToken.UsedCount)
+	}
 
 	wrongRaw := createPublicStreamScope(t, ctx, queries, authSecret, ids)
 	conflictToken := createRouteToken(t, handler)
@@ -320,7 +432,7 @@ func TestWorkerActiveInputReadDoesNotRequireWakeupTransportForBufferedRecord(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+	server := newControlIntegrationServer(pool)
 
 	response, err := server.readWorkerInputStream(ctx, worker, leaseIDs, api.WorkerActiveStreamReadRequest{
 		Stream:        "approval",
@@ -376,7 +488,7 @@ func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+	server := newControlIntegrationServer(pool)
 
 	response, err := server.readWorkerInputStream(ctx, worker, leaseIDs, api.WorkerActiveStreamReadRequest{
 		Stream:        "approval",
@@ -475,7 +587,7 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 	`, continuationRunID, ids.orgID, ids.projectID, ids.environmentID, ids.sessionID); err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+	server := newControlIntegrationServer(pool)
 
 	response, err := server.readWorkerInputStream(ctx, worker, leaseIDs, api.WorkerActiveStreamReadRequest{
 		Stream:        "approval",
@@ -562,7 +674,7 @@ func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T
 	`, leaseIDs.runID, ids.orgID, ids.projectID, ids.environmentID, request.ID); err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+	server := newControlIntegrationServer(pool)
 
 	response, err := server.readWorkerInputStream(ctx, worker, leaseIDs, api.WorkerActiveStreamReadRequest{
 		Stream:        "approval",
@@ -601,9 +713,8 @@ func TestWorkerActiveInputReadRequiresWakeupTransportOnlyWhenBlockingAfterMiss(t
 	ctx := context.Background()
 	pool := newControlIntegrationDB(t, ctx)
 	ids := seedControlStreamTokenFixture(t, ctx, pool)
-	queries := db.New(pool)
 	worker, leaseIDs := seedControlRunningRunLease(t, ctx, pool, ids)
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+	server := newControlIntegrationServer(pool)
 
 	response, err := server.readWorkerInputStream(ctx, worker, leaseIDs, api.WorkerActiveStreamReadRequest{
 		Stream:        "approval",
@@ -634,7 +745,7 @@ func TestWorkerActiveInputReadRechecksDBAfterWakeupCursorInitialization(t *testi
 	ids := seedControlStreamTokenFixture(t, ctx, pool)
 	queries := db.New(pool)
 	worker, leaseIDs := seedControlRunningRunLease(t, ctx, pool, ids)
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: queries}
+	server := newControlIntegrationServer(pool)
 	wakeups := &cursorInitAppendWakeups{
 		t:       t,
 		queries: queries,
@@ -829,6 +940,14 @@ func controlTestDatabaseDSN(t *testing.T, dsn string, database string) string {
 	return parsed.String()
 }
 
+func newControlIntegrationServer(pool *pgxpool.Pool) *Server {
+	return &Server{
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db:  db.New(pool),
+		tx:  pool,
+	}
+}
+
 func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) streamTokenRouteFixture {
 	t.Helper()
 	ids := streamTokenRouteFixture{
@@ -889,7 +1008,7 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint) VALUES ($1, $2, $3, $4, $5, 'default', 'sandbox-fingerprint')`, ids.workspaceID, ids.orgID, ids.projectID, ids.environmentID, sandboxID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, workspace_id) VALUES ($1, $2, $3, $4, $5, $6, $6, $7)`, ids.sessionID, ids.orgID, ids.projectID, ids.environmentID, taskID, ids.deploymentID, ids.workspaceID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, workspace_id, external_id) VALUES ($1, $2, $3, $4, $5, $6, $6, $7, 'slack:T123:C456')`, ids.sessionID, ids.orgID, ids.projectID, ids.environmentID, taskID, ids.deploymentID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	seedControlStream(t, ctx, pool, ids, ids.deploymentID, ids.inputStreamID, "approval", "input")
@@ -1016,6 +1135,44 @@ func seedControlStream(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id
 	if _, err := pool.Exec(ctx, `INSERT INTO streams (id, org_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, streamID, ids.orgID, ids.projectID, ids.environmentID, ids.sessionID, deploymentStreamID, name, direction, "schema-"+name); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func seedControlStreamSession(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids streamTokenRouteFixture, externalID string, streamName string, direction string) (uuid.UUID, uuid.UUID) {
+	t.Helper()
+	sessionID := uuid.Must(uuid.NewV7())
+	streamID := uuid.Must(uuid.NewV7())
+	var deploymentStreamID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT id
+		  FROM deployment_streams
+		 WHERE org_id = $1
+		   AND project_id = $2
+		   AND environment_id = $3
+		   AND deployment_id = $4
+		   AND name = $5
+		   AND direction = $6
+	`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, streamName, direction).Scan(&deploymentStreamID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO sessions (
+			id, org_id, project_id, environment_id, task_id,
+			initial_deployment_id, active_deployment_id, workspace_id, external_id
+		)
+		VALUES ($1, $2, $3, $4, 'approval-task', $5, $5, $6, $7)
+	`, sessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID, externalID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO streams (
+			id, org_id, project_id, environment_id, session_id,
+			deployment_stream_id, name, direction, schema_fingerprint
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, streamID, ids.orgID, ids.projectID, ids.environmentID, sessionID, deploymentStreamID, streamName, direction, "schema-"+streamName); err != nil {
+		t.Fatal(err)
+	}
+	return sessionID, streamID
 }
 
 func seedControlDeploymentStream(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids streamTokenRouteFixture, deploymentID uuid.UUID, name string, direction string, schemaFingerprint string, schemaJSON string) uuid.UUID {

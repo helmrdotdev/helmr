@@ -47,6 +47,8 @@ var (
 	errSandboxNotDeployed                 = codedError{code: "sandbox_not_deployed", message: "task sandbox is not deployed"}
 	errWorkspaceSandboxIncompatible       = codedError{code: "workspace_sandbox_incompatible", message: "workspace sandbox is incompatible with this task"}
 	errWorkspaceResourceFloor             = codedError{code: "workspace_resource_floor_unsatisfied", message: "workspace resource floor is lower than this task requires"}
+	errAPIKeyEnvironmentScopeRequired     = errors.New("API key is not bound to an environment")
+	errSessionExternalIDScopeRequired     = errors.New("external_id session addressing requires project_id and environment_id")
 )
 
 type sessionStartSource struct {
@@ -78,6 +80,17 @@ type sessionStartIdempotencyBinding struct {
 	FirstRunID         pgtype.UUID
 	ExpiresAt          pgtype.Timestamptz
 }
+
+type sessionAddress struct {
+	kind       string
+	id         uuid.UUID
+	externalID string
+}
+
+const (
+	sessionAddressID         = "id"
+	sessionAddressExternalID = "external_id"
+)
 
 type controlTransaction interface {
 	Commit(context.Context) error
@@ -591,6 +604,55 @@ func validateSessionExternalID(value string) error {
 		return fmt.Errorf("external_id must be at most %d bytes", maxSessionExternalIDBytes)
 	}
 	return nil
+}
+
+func sessionAddressFromID(id uuid.UUID) sessionAddress {
+	return sessionAddress{kind: sessionAddressID, id: id}
+}
+
+func sessionAddressFromExternalID(externalID string) (sessionAddress, error) {
+	externalID = strings.TrimSpace(externalID)
+	if externalID == "" {
+		return sessionAddress{}, errors.New("external_id is required")
+	}
+	if err := validateSessionExternalID(externalID); err != nil {
+		return sessionAddress{}, err
+	}
+	return sessionAddress{kind: sessionAddressExternalID, externalID: externalID}, nil
+}
+
+func sessionAddressFromAPIAddress(address api.SessionAddress) (sessionAddress, error) {
+	switch strings.TrimSpace(address.Type) {
+	case sessionAddressID:
+		id, err := uuid.Parse(strings.TrimSpace(address.ID))
+		if err != nil {
+			return sessionAddress{}, errors.New("session.id must be a UUID")
+		}
+		return sessionAddressFromID(id), nil
+	case sessionAddressExternalID:
+		return sessionAddressFromExternalID(address.ExternalID)
+	default:
+		return sessionAddress{}, errors.New("session.type must be id or external_id")
+	}
+}
+
+func sessionAddressFromRequest(r *http.Request) (sessionAddress, error) {
+	rawSessionID := strings.TrimSpace(chi.URLParam(r, "sessionID"))
+	if rawSessionID != "" {
+		sessionID, err := parseUUIDString(rawSessionID, "sessionID")
+		if err != nil {
+			return sessionAddress{}, err
+		}
+		return sessionAddressFromID(sessionID), nil
+	}
+	return sessionAddressFromExternalID(r.URL.Query().Get("external_id"))
+}
+
+func sessionAddressResponse(session db.Session) api.SessionAddress {
+	return api.SessionAddress{
+		Type: sessionAddressID,
+		ID:   pgvalue.MustUUIDValue(session.ID).String(),
+	}
 }
 
 func parseOptionalWorkspaceID(raw string) (pgtype.UUID, error) {
@@ -1181,13 +1243,21 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = int32(parsed)
 	}
+	externalID := strings.TrimSpace(r.URL.Query().Get("external_id"))
+	if externalID != "" {
+		if err := validateSessionExternalID(externalID); err != nil {
+			writeError(w, badRequest(err))
+			return
+		}
+	}
 	sessions, err := s.db.ListSessions(r.Context(), db.ListSessionsParams{
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		StatusFilter:  strings.TrimSpace(r.URL.Query().Get("status")),
-		TaskIDFilter:  strings.TrimSpace(r.URL.Query().Get("task_id")),
-		RowLimit:      limit,
+		OrgID:            pgvalue.UUID(actor.OrgID),
+		ProjectID:        projectID,
+		EnvironmentID:    environmentID,
+		StatusFilter:     strings.TrimSpace(r.URL.Query().Get("status")),
+		TaskIDFilter:     strings.TrimSpace(r.URL.Query().Get("task_id")),
+		ExternalIDFilter: externalID,
+		RowLimit:         limit,
 	})
 	if err != nil {
 		writeError(w, errors.New("list sessions"))
@@ -1594,7 +1664,7 @@ func (s *Server) listSessionRuns(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) loadSessionForRequest(w http.ResponseWriter, r *http.Request, permission auth.Permission) (db.Session, bool) {
-	sessionID, err := parseUUIDParam(r, "sessionID")
+	address, err := sessionAddressFromRequest(r)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return db.Session{}, false
@@ -1604,31 +1674,26 @@ func (s *Server) loadSessionForRequest(w http.ResponseWriter, r *http.Request, p
 	var sessionErr error
 	pathProjectID := strings.TrimSpace(chi.URLParam(r, "projectID"))
 	pathEnvironmentID := strings.TrimSpace(chi.URLParam(r, "environmentID"))
-	if actor.Kind == auth.ActorKindSession {
-		if pathProjectID == "" || pathEnvironmentID == "" {
-			writeError(w, forbidden(errors.New("session actor must use a project/environment scoped session route")))
-			return db.Session{}, false
-		}
+	if pathProjectID != "" || pathEnvironmentID != "" {
 		_, projectID, environmentID, scopeErr := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
 		if scopeErr != nil {
 			writeError(w, badRequest(scopeErr))
 			return db.Session{}, false
 		}
-		session, sessionErr = s.db.GetSession(r.Context(), db.GetSessionParams{
-			OrgID:         pgvalue.UUID(actor.OrgID),
-			ProjectID:     projectID,
-			EnvironmentID: environmentID,
-			ID:            pgvalue.UUID(sessionID),
-		})
+		session, sessionErr = s.loadSessionAddressInScope(r.Context(), actor.OrgID, projectID, environmentID, address)
 	} else {
-		session, sessionErr = s.loadSessionByActor(r.Context(), actor, sessionID)
+		if actor.Kind == auth.ActorKindSession {
+			writeError(w, forbidden(errors.New("session actor must use a project/environment scoped session route")))
+			return db.Session{}, false
+		}
+		session, sessionErr = s.loadSessionByActorAddress(r.Context(), actor, address)
 	}
 	if isNoRows(sessionErr) {
 		writeError(w, notFound(errors.New("session not found")))
 		return db.Session{}, false
 	}
 	if sessionErr != nil {
-		if isScopeRequestError(sessionErr) || strings.Contains(sessionErr.Error(), "API key is not bound") {
+		if isScopeRequestError(sessionErr) || errors.Is(sessionErr, errAPIKeyEnvironmentScopeRequired) || errors.Is(sessionErr, errSessionExternalIDScopeRequired) {
 			writeError(w, badRequest(sessionErr))
 			return db.Session{}, false
 		}
@@ -1647,25 +1712,44 @@ func (s *Server) loadSessionForRequest(w http.ResponseWriter, r *http.Request, p
 	return session, true
 }
 
-func (s *Server) loadSessionByActor(ctx context.Context, actor auth.Actor, sessionID uuid.UUID) (db.Session, error) {
+func (s *Server) loadSessionAddressInScope(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, address sessionAddress) (db.Session, error) {
+	return loadSessionAddressInScope(ctx, s.db, orgID, projectID, environmentID, address)
+}
+
+func loadSessionAddressInScope(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, address sessionAddress) (db.Session, error) {
+	if address.kind == sessionAddressExternalID {
+		return store.GetSessionByExternalID(ctx, db.GetSessionByExternalIDParams{
+			OrgID:         pgvalue.UUID(orgID),
+			ProjectID:     projectID,
+			EnvironmentID: environmentID,
+			ExternalID:    address.externalID,
+		})
+	}
+	return store.GetSession(ctx, db.GetSessionParams{
+		OrgID:         pgvalue.UUID(orgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		ID:            pgvalue.UUID(address.id),
+	})
+}
+
+func (s *Server) loadSessionByActorAddress(ctx context.Context, actor auth.Actor, address sessionAddress) (db.Session, error) {
 	if actor.Kind == auth.ActorKindAPIKey {
 		scope, ok := actor.EnvironmentScope()
 		if !ok {
-			return db.Session{}, errors.New("API key is not bound to an environment")
+			return db.Session{}, errAPIKeyEnvironmentScopeRequired
 		}
 		projectID, environmentID, err := runScopeIDs(scope)
 		if err != nil {
 			return db.Session{}, err
 		}
-		return s.db.GetSession(ctx, db.GetSessionParams{
-			OrgID:         pgvalue.UUID(actor.OrgID),
-			ProjectID:     projectID,
-			EnvironmentID: environmentID,
-			ID:            pgvalue.UUID(sessionID),
-		})
+		return s.loadSessionAddressInScope(ctx, actor.OrgID, projectID, environmentID, address)
+	}
+	if address.kind == sessionAddressExternalID {
+		return db.Session{}, errSessionExternalIDScopeRequired
 	}
 	return s.db.GetSessionByOrgID(ctx, db.GetSessionByOrgIDParams{
 		OrgID: pgvalue.UUID(actor.OrgID),
-		ID:    pgvalue.UUID(sessionID),
+		ID:    pgvalue.UUID(address.id),
 	})
 }

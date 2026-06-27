@@ -1432,17 +1432,22 @@ SELECT id, org_id, project_id, environment_id, task_id, initial_deployment_id, a
        $5::text = ''
        OR task_id = $5
    )
+   AND (
+       $6::text = ''
+       OR external_id = $6
+   )
  ORDER BY updated_at DESC, id DESC
- LIMIT $6
+ LIMIT $7
 `
 
 type ListSessionsParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	StatusFilter  string      `json:"status_filter"`
-	TaskIDFilter  string      `json:"task_id_filter"`
-	RowLimit      int32       `json:"row_limit"`
+	OrgID            pgtype.UUID `json:"org_id"`
+	ProjectID        pgtype.UUID `json:"project_id"`
+	EnvironmentID    pgtype.UUID `json:"environment_id"`
+	StatusFilter     string      `json:"status_filter"`
+	TaskIDFilter     string      `json:"task_id_filter"`
+	ExternalIDFilter string      `json:"external_id_filter"`
+	RowLimit         int32       `json:"row_limit"`
 }
 
 func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]Session, error) {
@@ -1452,6 +1457,7 @@ func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]S
 		arg.EnvironmentID,
 		arg.StatusFilter,
 		arg.TaskIDFilter,
+		arg.ExternalIDFilter,
 		arg.RowLimit,
 	)
 	if err != nil {

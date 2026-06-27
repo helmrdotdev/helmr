@@ -79,24 +79,31 @@ type CompleteTokenRequest struct {
 	Data json.RawMessage `json:"data,omitempty"`
 }
 
+type CompleteTokenResponse struct {
+	Status string        `json:"status"`
+	Token  TokenResponse `json:"token"`
+}
+
 type PublicAccessTokenScopeRequest struct {
-	Type          string `json:"type"`
-	SessionID     string `json:"session_id"`
-	Stream        string `json:"stream"`
-	CorrelationID string `json:"correlation_id,omitempty"`
+	Type          string         `json:"type"`
+	Session       SessionAddress `json:"session"`
+	Stream        string         `json:"stream"`
+	CorrelationID string         `json:"correlation_id,omitempty"`
 }
 
 type CreatePublicAccessTokenRequest struct {
-	Scope     PublicAccessTokenScopeRequest `json:"scope"`
-	ExpiresAt *time.Time                    `json:"expires_at,omitempty"`
-	MaxUses   *int32                        `json:"max_uses,omitempty"`
+	ProjectID     string                        `json:"project_id,omitempty"`
+	EnvironmentID string                        `json:"environment_id,omitempty"`
+	Scope         PublicAccessTokenScopeRequest `json:"scope"`
+	ExpiresAt     *time.Time                    `json:"expires_at,omitempty"`
+	MaxUses       *int32                        `json:"max_uses,omitempty"`
 }
 
 type PublicAccessTokenScopeResponse struct {
-	Type          string `json:"type"`
-	SessionID     string `json:"session_id"`
-	Stream        string `json:"stream"`
-	CorrelationID string `json:"correlation_id,omitempty"`
+	Type          string         `json:"type"`
+	Session       SessionAddress `json:"session"`
+	Stream        string         `json:"stream"`
+	CorrelationID string         `json:"correlation_id,omitempty"`
 }
 
 type PublicAccessTokenResponse struct {

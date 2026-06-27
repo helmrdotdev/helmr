@@ -211,13 +211,7 @@ func (s *Server) matchBufferedWorkerStreamWait(ctx context.Context, scope db.Get
 	if !found {
 		return nil, false, nil
 	}
-	if _, err := s.db.MarkSessionRunRequestConsumedByActiveRun(ctx, db.MarkSessionRunRequestConsumedByActiveRunParams{
-		OrgID:          scope.OrgID,
-		ProjectID:      scope.ProjectID,
-		EnvironmentID:  scope.EnvironmentID,
-		ActiveRunID:    scope.RunID,
-		StreamRecordID: record.ID,
-	}); err != nil && !isNoRows(err) {
+	if err := s.consumeSessionRunRequestByActiveRun(ctx, session, scope.RunID, record.ID); err != nil {
 		return nil, false, err
 	}
 	payload, err := json.Marshal(map[string]any{
