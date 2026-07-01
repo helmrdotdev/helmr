@@ -12,6 +12,11 @@ A session is one task invocation and its durable interaction history. It
 records the selected task, lifecycle status, derived activity, stream records,
 related runs, and the workspace the task uses.
 
+For agent workflows, the session is the conversation or job boundary. Start
+payload creates the session; follow-up human messages, approvals, webhooks, and
+operator corrections should usually enter through session input streams so they
+remain part of the same durable history.
+
 A session does not own the workspace. It references a workspace.
 
 ## What A Session Owns
@@ -56,8 +61,9 @@ output that belongs to the task invocation.
 Streams are not project-level resources. A stream name only has meaning
 inside its session.
 
-Use input streams when something outside the task should continue the workflow,
-such as a product UI, webhook handler, or approval bridge. Use output streams
+Use input streams as the default human-in-the-loop surface when something
+outside the task should continue the workflow, such as a product UI, webhook
+handler, Slack action, cancel button, or approval bridge. Use output streams
 when the task should publish structured records that another service can read or
 stream without parsing logs.
 

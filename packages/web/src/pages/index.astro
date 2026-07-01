@@ -3,7 +3,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { pixelsFromRows } from "../lib/pixels";
 import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
-const runtimeCode = `import { cache, image, queue, sandbox, source, streams, task } from "@helmr/sdk"
+const runtimeCode = `import { cache, image, sandbox, source, streams, task } from "@helmr/sdk"
 import { Codex } from "@openai/codex-sdk"
 import { z } from "zod"
 
@@ -20,12 +20,9 @@ const sbx = sandbox("repo-agent")
   .image(base)
   .resources({ cpu: 2, memory: "4Gi" })
 
-const reviews = queue({ id: "review/pr", concurrencyLimit: 5 })
-
 export const reviewPr = task({
   id: "review-pr",
   sandbox: sbx,
-  queue: reviews,
   secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }],
   run: async (event, ctx) => {
     const codex = new Codex()
@@ -93,16 +90,16 @@ const highlightTypeScript = (value: string) => {
 };
 
 const codeRegions = [
-  { label: "image", from: 5, to: 12, tone: "blue", strong: "#5079e4" },
-  { label: "sandbox", from: 14, to: 16, tone: "green", strong: "#3c8a59" },
-  { label: "task", from: 18, to: 26, tone: "pink", strong: "#da5992" },
-  { label: "input", from: 28, to: 41, tone: "yellow", strong: "#dfa400" },
+  { key: "image", label: "image", from: 5, to: 12, tone: "blue", strong: "#5079e4" },
+  { key: "sandbox", label: "sandbox", from: 14, to: 16, tone: "green", strong: "#3c8a59" },
+  { key: "task", label: "task", from: 18, to: 25, tone: "pink", strong: "#da5992" },
+  { key: "input", label: "human input", from: 27, to: 40, tone: "yellow", strong: "#dfa400" },
 ] as const;
 
 const codeLines = runtimeCode.split("\n").map((line, index) => ({
   html: highlightTypeScript(line) || "&nbsp;",
   marked: line.includes("microVM freezes"),
-  region: codeRegions.find((region) => index + 1 >= region.from && index + 1 <= region.to)?.label,
+  region: codeRegions.find((region) => index + 1 >= region.from && index + 1 <= region.to)?.key,
 }));
 
 const highlightShell = (value: string) =>
@@ -219,6 +216,7 @@ const renderedHeroChips = heroChips.map((chip) => ({
 }));
 
 const codeTags = codeRegions.map((region) => ({
+  key: region.key,
   label: region.label,
   line: region.from,
   tone: region.tone,
@@ -227,12 +225,12 @@ const codeTags = codeRegions.map((region) => ({
 
 const features = [
   {
-    label: "streams.input",
+    label: "session input",
     icon: "pause",
     tone: "yellow",
-    title: "Pause for session input",
+    title: "Pause for human input",
     caption:
-      "The microVM freezes whole while it waits. A webhook, UI, or operator appends input and resumes it mid-instruction.",
+      "The microVM freezes whole while it waits. A webhook, UI, or operator appends human input and resumes it mid-instruction.",
     code: `const approval = streams.input("approval", {
   schema: z.object({ approved: z.boolean() })
 })
@@ -312,7 +310,7 @@ const renderedFeatures = features.map((feature) => ({
           </h1>
           <p class="hero-lede">
             Define tasks in plain TypeScript. Each run gets its own microVM,
-            pauses whole for session input, then resumes with every input and output attached.
+            pauses whole for human input, callbacks, or timers, then resumes with every input and output attached.
           </p>
           <div class="hero-actions">
             <a class="btn btn-dark" href="/docs/start/quickstart">Start building</a>
@@ -387,7 +385,7 @@ const renderedFeatures = features.map((feature) => ({
       <div class="section-head">
         <h2 class="headline section-title">
           One TypeScript file.
-          <span class="faint">Image, sandbox, task, secrets, session input.</span>
+          <span class="faint">Image, sandbox, task, secrets, human input.</span>
         </h2>
         <p class="section-note">
           Codex here &mdash; or Claude Code, the AI SDK, any agent SDK that runs on
@@ -405,7 +403,7 @@ const renderedFeatures = features.map((feature) => ({
         <div class="code-tags" aria-hidden="true">
           {codeTags.map((tag) => (
             <span
-              class={`code-tag code-tag-${tag.label}`}
+              class={`code-tag code-tag-${tag.key}`}
               style={`--line: ${tag.line}; --tag-strong: ${tag.strong}; background: var(--wash-${tag.tone})`}
             >{tag.label}</span>
           ))}
