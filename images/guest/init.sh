@@ -61,6 +61,17 @@ mount_scratch() {
 	chmod 1777 /var/lib/helmr/tmp
 }
 
+mount_substrate() {
+	if [ ! -b /dev/vdc ]; then
+		return 0
+	fi
+	mkdir -p /var/lib/helmr/substrate
+	if ! is_mounted /var/lib/helmr/substrate; then
+		mount -t ext4 -o ro /dev/vdc /var/lib/helmr/substrate
+	fi
+	export HELMR_GUESTD_SUBSTRATE_ROOT=/var/lib/helmr/substrate
+}
+
 load_vsock() {
 	if command -v modprobe >/dev/null 2>&1 && [ -d /lib/modules ]; then
 		if ! modprobe af_packet; then
@@ -268,11 +279,15 @@ configure_runtime_identity() {
 mount_base
 configure_namespaces
 mount_scratch
+mount_substrate
 load_vsock
 configure_network
 configure_runtime_identity
 
 export HELMR_GUESTD_TMPDIR=/var/lib/helmr/tmp
+if [ -f /etc/helmr/checkpoint-storage-telemetry ]; then
+  export HELMR_CHECKPOINT_STORAGE_TELEMETRY=1
+fi
 exec /usr/bin/guestd \
   --adapter-runtime-path /usr/bin/node \
   --adapter-register-path /opt/helmr/adapter/register.mjs \

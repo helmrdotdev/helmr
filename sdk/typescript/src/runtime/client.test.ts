@@ -277,7 +277,7 @@ test("workspaces create list update materialize connect and stop use workspace r
       return Response.json(workspaceMaterializationFixture())
     }
     if (url.endsWith("/stop")) {
-      return Response.json({ workspace_id: "workspace-1", state: "stopping", materialization: workspaceMaterializationFixture({ state: "stopping" }) })
+      return Response.json({ workspace_id: "workspace-1", state: "stopping", mount: workspaceMaterializationFixture({ state: "stopping" }) })
     }
     if (method === "GET" && url.includes("/workspaces?")) {
       return Response.json({ workspaces: [workspaceFixture({ tags: ["prod"] })] })
@@ -388,7 +388,7 @@ test("workspace files and versions use read-only workspace routes", async () => 
   expect(requests).toEqual([
     { method: "GET", url: "https://api.example.test/api/workspaces/workspace-1/files/content?path=src%2Fapp.ts&source=current" },
     { method: "GET", url: "https://api.example.test/api/workspaces/workspace-1/files?path=src&source=version&version_id=version-1&limit=2" },
-    { method: "GET", url: "https://api.example.test/api/workspaces/workspace-1/files/stat?path=src%2Fapp.ts&source=live&materialization_id=materialization-1" },
+    { method: "GET", url: "https://api.example.test/api/workspaces/workspace-1/files/stat?path=src%2Fapp.ts&source=live&workspace_mount_id=materialization-1" },
     { method: "GET", url: "https://api.example.test/api/workspaces/workspace-1/versions/version-1" },
     { method: "GET", url: "https://api.example.test/api/workspaces/workspace-1/versions?kind=user&limit=5" },
   ])
@@ -626,7 +626,7 @@ test("workspace pty output stream surfaces lost terminal as typed error", async 
         stream: "output",
         state: "lost",
         cursor: 0,
-        error: { code: "workspace_materialization_lost" },
+        error: { code: "workspace_mount_lost" },
       }],
     ])) as unknown as typeof fetch
 
@@ -644,7 +644,7 @@ test("workspace pty output stream surfaces lost terminal as typed error", async 
     }
   }
   expect(terminal).toBeInstanceOf(WorkspaceStreamTerminalError)
-  expect(terminal?.terminal.error).toEqual({ code: "workspace_materialization_lost" })
+  expect(terminal?.terminal.error).toEqual({ code: "workspace_mount_lost" })
 })
 
 test("workspace stream surfaces cursor expiry as typed error", async () => {
@@ -2946,7 +2946,7 @@ function workspaceFixture(overrides: Partial<{
   readonly state: string
   readonly desired_state: string
   readonly dirty_state: string
-  readonly last_materialization_id: string | null
+  readonly last_workspace_mount_id: string | null
   readonly metadata: Record<string, unknown>
   readonly tags: readonly string[]
   readonly last_activity_at: string
@@ -2964,7 +2964,7 @@ function workspaceFixture(overrides: Partial<{
     state: "active",
     desired_state: "active",
     dirty_state: "clean",
-    last_materialization_id: null,
+    last_workspace_mount_id: null,
     metadata: {},
     tags: [],
     last_activity_at: "2026-04-20T00:00:00Z",
@@ -3043,7 +3043,7 @@ function workspaceMaterializationFixture(overrides: Partial<{
 function workspaceExecFixture(overrides: Partial<{
   readonly id: string
   readonly workspace_id: string
-  readonly materialization_id: string | null
+  readonly workspace_mount_id: string | null
   readonly command: readonly string[]
   readonly cwd: string
   readonly env_shape: Record<string, string>
@@ -3066,7 +3066,7 @@ function workspaceExecFixture(overrides: Partial<{
   return {
     id: "exec-1",
     workspace_id: "workspace-1",
-    materialization_id: "materialization-1",
+    workspace_mount_id: "materialization-1",
     command: ["bash", "-lc", "echo ok"],
     cwd: "/workspace",
     env_shape: {},
@@ -3092,7 +3092,7 @@ function workspaceExecFixture(overrides: Partial<{
 function workspacePtyFixture(overrides: Partial<{
   readonly id: string
   readonly workspace_id: string
-  readonly materialization_id: string | null
+  readonly workspace_mount_id: string | null
   readonly cwd: string
   readonly cols: number
   readonly rows: number
@@ -3110,7 +3110,7 @@ function workspacePtyFixture(overrides: Partial<{
   return {
     id: "pty-1",
     workspace_id: "workspace-1",
-    materialization_id: "materialization-1",
+    workspace_mount_id: "materialization-1",
     cwd: "/workspace",
     cols: 80,
     rows: 24,

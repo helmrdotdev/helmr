@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/runprotocol"
 	"github.com/helmrdotdev/helmr/internal/safepath"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -326,7 +328,7 @@ func TestServeHealthReportsStartingUntilReady(t *testing.T) {
 	defer listener.Close()
 
 	var ready atomic.Bool
-	go serveHealth(listener, ready.Load)
+	go serveHealth(listener, ready.Load, nil)
 
 	client := http.Client{Timeout: time.Second}
 	url := "http://" + listener.Addr().String()
@@ -349,6 +351,46 @@ func TestServeHealthReportsStartingUntilReady(t *testing.T) {
 	assertHealthStatus("starting")
 	ready.Store(true)
 	assertHealthStatus("ok")
+}
+
+func TestServeHealthLogsResponseTiming(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	var logBuffer lockedBuffer
+	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
+	var ready atomic.Bool
+	ready.Store(true)
+	go serveHealth(listener, ready.Load, logger)
+
+	client := http.Client{Timeout: time.Second}
+	resp, err := client.Get("http://" + listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		logs := logBuffer.String()
+		requestIndex := strings.Index(logs, "guestd health request received")
+		responseIndex := strings.Index(logs, "guestd health response written")
+		if requestIndex >= 0 &&
+			responseIndex > requestIndex &&
+			strings.Contains(logs, "duration_ms=") &&
+			strings.Contains(logs, "flush_duration_ms=") &&
+			strings.Contains(logs, "bytes=36") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("health logs = %q, want response timing", logs)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func TestRunAdapterReportsPrelaunchFailure(t *testing.T) {
@@ -702,6 +744,106 @@ func TestHandleRunConnectionAcceptsEmptyWorkspaceArtifact(t *testing.T) {
 	}
 	if complete.ExitCode != 1 {
 		t.Fatalf("complete = %+v", complete)
+	}
+}
+
+func TestHandleWorkspaceRunConnectionUsesRegisteredWorkspaceMount(t *testing.T) {
+	imageRoot := t.TempDir()
+	workspaceRoot := filepath.Join(imageRoot, "workspace")
+	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	registry := newWorkspaceOperationRegistry()
+	registry.register("mat-1", &workspaceMountEntry{
+		channelToken:      "channel-token",
+		workspaceID:       "workspace-1",
+		fencingGeneration: 2,
+		imageRoot:         imageRoot,
+		imageConfig:       ociRuntimeConfig{},
+		workspaceMount:    "/workspace",
+		workspaceRoot:     workspaceRoot,
+		processes:         map[string]*workspaceProcess{},
+		events:            make(chan *workspacev0.WorkspaceOperationEvent, 1),
+		eventsDone:        make(chan struct{}),
+		cleanup:           func() {},
+	})
+	var input bytes.Buffer
+	if err := transport.WriteProtoFrame(&input, &workspacev0.WorkspaceOperationEnvelope{
+		WorkspaceMountId:  "mat-1",
+		WorkspaceId:       "workspace-1",
+		ChannelToken:      "channel-token",
+		FencingGeneration: 2,
+		WriteLeaseId:      "write-lease-1",
+		FencingToken:      "write-token-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deploymentSource := tarBytes(t, nil)
+	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: "run-1"}, uint64(len(deploymentSource))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := input.Write(deploymentSource); err != nil {
+		t.Fatal(err)
+	}
+	request := testRunTaskRequest()
+	request.RunId = "run-1"
+	request.Cwd = "/workspace"
+	if err := transport.WriteProtoFrame(&input, request); err != nil {
+		t.Fatal(err)
+	}
+	stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
+
+	err := handleWorkspaceRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), registry, transport.StreamHeader{
+		Type:             transport.StreamTypeWorkspaceRun,
+		RunID:            "run-1",
+		WorkspaceID:      "workspace-1",
+		WorkspaceMountID: "mat-1",
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream.read.Len() != 0 {
+		t.Fatalf("unread bytes = %d", stream.read.Len())
+	}
+	stderr, complete := readGuestdFailureEvents(t, &stream.written)
+	if !strings.Contains(stderr, "adapter bundle path is required") || complete.ExitCode != 1 {
+		t.Fatalf("stderr = %q complete = %+v", stderr, complete)
+	}
+}
+
+func TestHandleWorkspaceRunConnectionRejectsInvalidChannelToken(t *testing.T) {
+	registry := newWorkspaceOperationRegistry()
+	registry.register("mat-1", &workspaceMountEntry{
+		channelToken:      "channel-token",
+		workspaceID:       "workspace-1",
+		fencingGeneration: 2,
+		cleanup:           func() {},
+	})
+	var input bytes.Buffer
+	if err := transport.WriteProtoFrame(&input, &workspacev0.WorkspaceOperationEnvelope{
+		WorkspaceMountId:  "mat-1",
+		WorkspaceId:       "workspace-1",
+		ChannelToken:      "wrong-token",
+		FencingGeneration: 2,
+		WriteLeaseId:      "write-lease-1",
+		FencingToken:      "write-token-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
+
+	err := handleWorkspaceRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), registry, transport.StreamHeader{
+		Type:             transport.StreamTypeWorkspaceRun,
+		RunID:            "run-1",
+		WorkspaceID:      "workspace-1",
+		WorkspaceMountID: "mat-1",
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr, complete := readGuestdFailureEvents(t, &stream.written)
+	if !strings.Contains(stderr, "workspace run channel token or fencing generation is invalid") || complete.ExitCode != 1 {
+		t.Fatalf("stderr = %q complete = %+v", stderr, complete)
 	}
 }
 
@@ -1272,6 +1414,9 @@ func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 	secondGuest, secondHost := net.Pipe()
 	defer secondGuest.Close()
 	defer secondHost.Close()
+	originalReader := bufio.NewReader(originalHost)
+	firstReader := bufio.NewReader(firstHost)
+	secondReader := bufio.NewReader(secondHost)
 
 	deadline := time.Now().Add(15 * time.Second)
 	for _, conn := range []net.Conn{originalHost, firstHost, secondHost} {
@@ -1290,24 +1435,24 @@ func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), registry)
 	}()
 
-	readRunWaitRequested(t, originalHost)
-	writeSuspendAndReadReady(t, originalHost, "run-wait-id-1", "checkpoint-1")
+	readRunWaitRequestedFrom(t, originalReader)
+	writeSuspendAndReadReadyFrom(t, originalHost, originalReader, "run-wait-id-1", "checkpoint-1")
 	if err := registry.attach("run-wait-id-1", "checkpoint-1", firstGuest); err != nil {
 		t.Fatal(err)
 	}
-	writeDecisionAndReadAck(t, firstHost, "run-wait-id-1", "completed")
+	writeDecisionAndReadAckFrom(t, firstHost, firstReader, "run-wait-id-1", "completed")
 
-	readRunWaitRequested(t, firstHost)
-	writeSuspendAndReadReady(t, firstHost, "run-wait-id-2", "checkpoint-2")
+	readRunWaitRequestedFrom(t, firstReader)
+	writeSuspendAndReadReadyFrom(t, firstHost, firstReader, "run-wait-id-2", "checkpoint-2")
 	if err := registry.attach("run-wait-id-2", "checkpoint-2", secondGuest); err != nil {
 		t.Fatal(err)
 	}
-	writeDecisionAndReadAck(t, secondHost, "run-wait-id-2", "completed")
+	writeDecisionAndReadAckFrom(t, secondHost, secondReader, "run-wait-id-2", "completed")
 
 	var stdout strings.Builder
 	var completed bool
 	for !completed {
-		event, err := transport.ReadRunEvent(secondHost)
+		event, err := transport.ReadRunEvent(secondReader)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1358,9 +1503,9 @@ func TestAdapterRunStreamTimesOutWaitingForResumeConsumed(t *testing.T) {
 	}
 }
 
-func readRunWaitRequested(t *testing.T, conn io.Reader) {
+func readRunWaitRequestedFrom(t *testing.T, reader *bufio.Reader) {
 	t.Helper()
-	_ = readRunWaitRequestedEvent(t, conn)
+	_ = readRunWaitRequestedEvent(t, reader)
 }
 
 func readRunWaitRequestedEvent(t *testing.T, conn io.Reader) *runv0.RunWaitRequested {
@@ -1387,9 +1532,25 @@ func writeSuspendAndReadReady(t *testing.T, conn io.ReadWriter, runWaitID string
 	readCheckpointPauseReady(t, conn, runWaitID, checkpointID)
 }
 
+func writeSuspendAndReadReadyFrom(t *testing.T, conn io.Writer, reader *bufio.Reader, runWaitID string, checkpointID string) {
+	t.Helper()
+	if err := runprotocol.WriteCheckpointPauseRequest(conn, &runv0.CheckpointPauseRequest{
+		RunWaitId:    runWaitID,
+		CheckpointId: checkpointID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	readCheckpointPauseReadyFrom(t, reader, runWaitID, checkpointID)
+}
+
 func readCheckpointPauseReady(t *testing.T, conn io.Reader, runWaitID string, checkpointID string) {
 	t.Helper()
 	reader := bufio.NewReader(conn)
+	readCheckpointPauseReadyFrom(t, reader, runWaitID, checkpointID)
+}
+
+func readCheckpointPauseReadyFrom(t *testing.T, reader *bufio.Reader, runWaitID string, checkpointID string) {
+	t.Helper()
 	for {
 		prefix, err := reader.Peek(4)
 		if err != nil {
@@ -1416,9 +1577,9 @@ func readCheckpointPauseReady(t *testing.T, conn io.Reader, runWaitID string, ch
 	}
 }
 
-func writeDecisionAndReadAck(t *testing.T, conn io.ReadWriter, runWaitID string, kind string) {
+func writeDecisionAndReadAckFrom(t *testing.T, writer io.Writer, reader *bufio.Reader, runWaitID string, kind string) {
 	t.Helper()
-	if err := transport.WriteProtoFrame(conn, &runv0.ResumeDecision{
+	if err := transport.WriteProtoFrame(writer, &runv0.ResumeDecision{
 		RunWaitId:          runWaitID,
 		Kind:               kind,
 		DataJson:           "{}",
@@ -1427,7 +1588,7 @@ func writeDecisionAndReadAck(t *testing.T, conn io.ReadWriter, runWaitID string,
 		t.Fatal(err)
 	}
 	var ack runv0.ResumeAck
-	if err := transport.ReadProtoFrame(conn, &ack); err != nil {
+	if err := transport.ReadProtoFrame(reader, &ack); err != nil {
 		t.Fatal(err)
 	}
 	if ack.RunWaitId != runWaitID {
@@ -1842,6 +2003,23 @@ func readGuestdFailureEvents(t *testing.T, stream io.Reader) (string, *runv0.Tas
 
 func slogDiscard() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func TestParseAdapterReturnsBinaryBundle(t *testing.T) {

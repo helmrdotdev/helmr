@@ -14,12 +14,15 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
+	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/helmrdotdev/helmr/internal/task"
 	"github.com/helmrdotdev/helmr/internal/version"
+	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/worker"
 )
 
@@ -98,6 +101,7 @@ func run(log *slog.Logger) error {
 		MemoryMiB:               cfg.VMMemoryMiB,
 		ScratchDiskMiB:          cfg.VMScratchDiskMiB,
 		HealthTimeout:           cfg.VMHealthTimeout,
+		HealthAttemptTimeout:    cfg.VMHealthAttemptTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("configure firecracker connector: %w", err)
@@ -109,13 +113,12 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("inspect firecracker runtime: %w", err)
 	}
-	workerDiskMiB, err := advertisedWorkerDiskMiB(workDir, cfg.WorkerDiskMiB)
+	hostDiskMiB, err := advertisedWorkerDiskMiB(workDir, cfg.WorkerDiskMiB)
 	if err != nil {
 		return fmt.Errorf("inspect worker disk capacity: %w", err)
 	}
-	if workerDiskMiB > cfg.VMScratchDiskMiB {
-		workerDiskMiB = cfg.VMScratchDiskMiB
-	}
+	workerDiskMiB := min(hostDiskMiB, cfg.VMScratchDiskMiB)
+	substrateCacheMaxBytes, artifactCacheMaxBytes := workerCacheBudgetsBytes(cfg.SubstrateCacheMaxMiB, cfg.ArtifactCacheMaxMiB, hostDiskMiB)
 	workerCapabilities := api.WorkerCapabilities{
 		ProtocolVersion:         api.CurrentWorkerProtocolVersion,
 		WorkerVersion:           version.Version,
@@ -147,7 +150,48 @@ func run(log *slog.Logger) error {
 		Connector: connector,
 		TempDir:   filepath.Join(workDir, "tmp"),
 	}
-	materializationSessions := executor.NewWorkspaceMaterializationSessions()
+	substrateResolver := &substrate.Resolver{
+		CacheDir:      filepath.Join(workDir, "substrate-cache"),
+		MkfsExt4Path:  "mkfs.ext4",
+		MaxCacheBytes: substrateCacheMaxBytes,
+	}
+	workspaceMountSessions := executor.NewWorkspaceMountSessions()
+	backgroundGate := executor.NewBackgroundWorkGate()
+	workspaceMountSessions.BackgroundGate = backgroundGate
+	var workspaceMountConnector vm.MaterializingConnector = connector
+	var preparedBaseConnector *firecracker.PreparedBaseConnector
+	if cfg.PreparedBasePoolSize > 0 {
+		preparedBaseConnector = firecracker.NewPreparedBaseConnector(connector, cfg.PreparedBasePoolSize, log)
+		preparedBaseConnector.BackgroundGate = backgroundGate
+		preparedBaseConnector.Start(ctx, compute.DefaultNetworkPolicy())
+		defer func() {
+			if err := preparedBaseConnector.Close(context.Background()); err != nil {
+				log.Warn("prepared base connector close failed", "error", err)
+			}
+		}()
+		workspaceMountConnector = preparedBaseConnector
+		log.Info("prepared base connector enabled", "pool_size", cfg.PreparedBasePoolSize)
+	}
+	var preparedRuntimePool *executor.PreparedRuntimePool
+	if cfg.PreparedRuntimePoolSize > 0 {
+		preparedRuntimePool = executor.NewPreparedRuntimePool(workspaceMountConnector, store, cfg.PreparedRuntimePoolSize, log)
+		preparedRuntimePool.TempDir = filepath.Join(workDir, "tmp")
+		preparedRuntimePool.ArtifactCacheDir = filepath.Join(workDir, "artifact-cache")
+		preparedRuntimePool.ArtifactCacheMaxBytes = artifactCacheMaxBytes
+		preparedRuntimePool.Substrates = substrateResolver
+		preparedRuntimePool.RuntimeSubstrates = controlClient
+		preparedRuntimePool.CheckpointEncryptor = checkpointEncryptor
+		preparedRuntimePool.Network = compute.DefaultNetworkPolicy()
+		preparedRuntimePool.RuntimeInstances = controlClient
+		preparedRuntimePool.BackgroundGate = backgroundGate
+		defer func() {
+			if err := preparedRuntimePool.Close(context.Background()); err != nil {
+				log.Warn("prepared runtime pool close failed", "error", err)
+			}
+		}()
+		log.Info("prepared runtime pool enabled", "pool_size", cfg.PreparedRuntimePoolSize)
+	}
+	workspaceMountSessions.RuntimePool = preparedRuntimePool
 	runner, err := worker.NewRunner(
 		controlClient,
 		executor.Executor{
@@ -159,14 +203,19 @@ func run(log *slog.Logger) error {
 				Client: controlClient,
 			},
 			Runner: executor.GuestRunner{
-				Connector:           connector,
-				CAS:                 store,
-				CheckpointEncryptor: checkpointEncryptor,
-				Materializations:    materializationSessions,
-				Events:              controlClient,
-				TempDir:             filepath.Join(workDir, "tmp"),
-				Stdout:              os.Stdout,
-				Stderr:              os.Stderr,
+				Connector:             connector,
+				CAS:                   store,
+				CheckpointEncryptor:   checkpointEncryptor,
+				WorkspaceMounts:       workspaceMountSessions,
+				Events:                controlClient,
+				TempDir:               filepath.Join(workDir, "tmp"),
+				ArtifactCacheDir:      filepath.Join(workDir, "artifact-cache"),
+				ArtifactCacheMaxBytes: artifactCacheMaxBytes,
+				Substrates:            substrateResolver,
+				RuntimeSubstrates:     controlClient,
+				Log:                   log,
+				Stdout:                os.Stdout,
+				Stderr:                os.Stderr,
 			},
 		},
 		workerCapabilities,
@@ -180,15 +229,28 @@ func run(log *slog.Logger) error {
 			ImageBuilder: builder,
 		}),
 		worker.WithMaterializer(executor.WorkspaceMaterializer{
-			Connector:      connector,
-			CAS:            store,
-			Sessions:       materializationSessions,
-			TempDir:        filepath.Join(workDir, "tmp"),
-			StartupTimeout: cfg.WorkspaceMaterializeTimeout,
+			Connector:             workspaceMountConnector,
+			CAS:                   store,
+			Sessions:              workspaceMountSessions,
+			TempDir:               filepath.Join(workDir, "tmp"),
+			ArtifactCacheDir:      filepath.Join(workDir, "artifact-cache"),
+			ArtifactCacheMaxBytes: artifactCacheMaxBytes,
+			Substrates:            substrateResolver,
+			StartupTimeout:        cfg.WorkspaceMountStartupTimeout,
+			Log:                   log,
+			RuntimePool:           preparedRuntimePool,
+			BackgroundGate:        backgroundGate,
 		}),
 	)
 	if err != nil {
 		return fmt.Errorf("configure worker: %w", err)
+	}
+	if preparedRuntimePool != nil {
+		go func() {
+			if err := preparedRuntimePool.FollowWarmCommands(ctx, controlClient, workerCapabilities); err != nil && err != context.Canceled {
+				log.Warn("prepared runtime warm command follower stopped", "error", err)
+			}
+		}()
 	}
 	log.Info("helmr worker listening", "control_url", cfg.ControlURL, "worker_instance_id", workerCredential.WorkerInstanceID)
 	if err := runner.Run(ctx); err != nil && err != context.Canceled {

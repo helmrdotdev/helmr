@@ -95,7 +95,67 @@ To iterate only on session continuation, run:
 
 ```sh
 HELMR_API_URL=https://dev.helmr.dev \
-SMOKE_ONLY_SESSION_CONTINUATION=1 \
+SMOKE_CASES=session-continuation \
+SKIP_DEPLOY=1 \
+dev/workflows/scripts/run-release-smoke.sh
+```
+
+Use comma-separated `SMOKE_CASES` entries to run multiple focused real-usecase
+checks, for example `SMOKE_CASES=active-stream,stream-input,token-checkpoint`.
+Leave `SMOKE_CASES` unset for the full release smoke.
+
+Before interpreting AWS dev latency numbers, run the measurement preflight:
+
+```sh
+AWS_PROFILE=helmr-dev HELMR_MEASUREMENT_PREFLIGHT_ALLOW_ECS_TASK=1 \
+nix develop .#infra -c dev/aws/run-measurement-preflight.sh
+```
+
+Run it again with `--require-deployments` after the first deploy and before
+using `SKIP_DEPLOY=1` for focused measurements. The `LABEL` passed to
+`dev/aws/run-smoke-with-path-report.sh` is only an output directory label such
+as `hot-60s`; `SMOKE_CASES` must use the script selectors such as `runtime`,
+`active-stream`, `stream-input`, `token-checkpoint`, and `timer`.
+For latency measurements, set `HELMR_PATH_REPORT_REQUIRE_RUNS=1` on the wrapper
+so a smoke that accidentally creates no runs is rejected before analysis. Leave
+it unset for smoke cases such as `missing-secrets` that are expected to pass
+before run creation. Strict latency measurements also capture sanitized
+pre/post surface attestation files in the same report directory, including the
+control/dispatcher ECS task definition revision, digest-pinned control image,
+current deployment, sandbox ABI/digests, selected runtime release, and worker
+heartbeat/capacity evidence. This keeps wall-clock results tied to the actual
+runtime surface that produced them. Interaction smokes also emit `ux_timing`
+records for user-visible boundaries such as start returned, stream phase
+visible, input accepted, token visible, token completion accepted, and terminal
+observed; the wrapper extracts them into `ux-timing.log`.
+
+After collecting repeated samples, summarize one or more report directories:
+
+```sh
+dev/aws/summarize-measurement-reports.sh \
+  .helmr-aws-dev-smoke/path-reports/20260629T000000Z-token-hot-60s \
+  .helmr-aws-dev-smoke/path-reports/20260629T000100Z-token-hot-60s
+```
+
+The summary emits per-report metadata, per-run runtime path classification,
+checkpoint artifact role size/encrypt/store timing, per UX timing delta, and
+aggregate count/min/p50/p95/max by case, metric, and detail. Use that output
+instead of a single wall-clock number when deciding whether an optimization
+improved the user experience.
+
+For interaction latency checks, keep the same smoke case and vary only the
+human/input delay knobs:
+
+```sh
+SMOKE_CASES=token-checkpoint \
+TOKEN_CHECKPOINT_DECISION_DELAY_SECONDS=60 \
+TOKEN_CHECKPOINT_REPLY_DELAY_SECONDS=60 \
+SKIP_DEPLOY=1 \
+dev/workflows/scripts/run-release-smoke.sh
+
+SMOKE_CASES=stream-input \
+STREAM_INPUT_APPROVAL_DELAY_SECONDS=60 \
+STREAM_INPUT_MESSAGE_DELAY_SECONDS=60 \
 SKIP_DEPLOY=1 \
 dev/workflows/scripts/run-release-smoke.sh
 ```

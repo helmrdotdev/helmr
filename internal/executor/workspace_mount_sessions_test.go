@@ -5,13 +5,14 @@ import (
 	"io"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
-func TestBorrowedRunSessionReleaseCheckpointSourceClosesParentMaterialization(t *testing.T) {
+func TestBorrowedRunSessionReleaseCheckpointSourceClosesParentWorkspaceMount(t *testing.T) {
 	parent := &borrowedParentSession{stream: discardReadWriteCloser{}}
 	runStream := &countingReadWriteCloser{}
-	session := newBorrowedRunSession(parent, runStream)
+	session := newBorrowedRunSession(parent, runStream, nil)
 
 	checkpointable, ok := session.(vm.CheckpointableSession)
 	if !ok {
@@ -32,6 +33,45 @@ func TestBorrowedRunSessionReleaseCheckpointSourceClosesParentMaterialization(t 
 	}
 	if runStream.closeCount != 0 {
 		t.Fatalf("run stream close count = %d, want 0", runStream.closeCount)
+	}
+}
+
+func TestOpenWorkspaceMountSessionMarksForegroundRun(t *testing.T) {
+	gate := NewBackgroundWorkGate()
+	registry := NewWorkspaceMountSessions()
+	registry.BackgroundGate = gate
+	unregister := registry.RegisterWorkspaceMountSession(api.WorkerWorkspaceMount{ID: "mat-1"}, &borrowedParentSession{stream: discardReadWriteCloser{}}, "channel-token")
+	defer unregister()
+
+	backgroundCtx, finishBackground, ok := gate.BeginBackground(context.Background())
+	defer finishBackground()
+	if !ok {
+		t.Fatalf("background work did not start before run borrow")
+	}
+
+	borrowed, err := registry.OpenWorkspaceMountSession(context.Background(), "mat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-backgroundCtx.Done():
+	default:
+		t.Fatalf("background work was not cancelled when run borrowed the workspaceMount")
+	}
+
+	_, finishWhileBorrowed, ok := gate.BeginBackground(context.Background())
+	defer finishWhileBorrowed()
+	if ok {
+		t.Fatalf("background work started while a run had borrowed the workspaceMount")
+	}
+
+	if err := borrowed.Session.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, finishAfterRun, ok := gate.BeginBackground(context.Background())
+	defer finishAfterRun()
+	if !ok {
+		t.Fatalf("background work did not start after borrowed run session closed")
 	}
 }
 

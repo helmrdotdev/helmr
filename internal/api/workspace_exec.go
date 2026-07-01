@@ -19,27 +19,27 @@ type WorkspaceExecStdinWriteRequest struct {
 }
 
 type WorkspaceExecResponse struct {
-	ID                string          `json:"id"`
-	WorkspaceID       string          `json:"workspace_id"`
-	MaterializationID string          `json:"materialization_id,omitempty"`
-	Command           json.RawMessage `json:"command"`
-	Cwd               string          `json:"cwd"`
-	EnvShape          json.RawMessage `json:"env_shape,omitempty"`
-	FilesystemMode    string          `json:"filesystem_mode"`
-	State             string          `json:"state"`
-	Detached          bool            `json:"detached"`
-	ProcessID         string          `json:"process_id,omitempty"`
-	ExitCode          *int32          `json:"exit_code,omitempty"`
-	Signal            string          `json:"signal,omitempty"`
-	Error             json.RawMessage `json:"error,omitempty"`
-	StdoutCursor      int64           `json:"stdout_cursor"`
-	StderrCursor      int64           `json:"stderr_cursor"`
-	StdinCursor       int64           `json:"stdin_cursor"`
-	StdinClosedAt     *time.Time      `json:"stdin_closed_at,omitempty"`
-	CreatedAt         time.Time       `json:"created_at"`
-	StartedAt         *time.Time      `json:"started_at,omitempty"`
-	ExitedAt          *time.Time      `json:"exited_at,omitempty"`
-	UpdatedAt         time.Time       `json:"updated_at"`
+	ID               string          `json:"id"`
+	WorkspaceID      string          `json:"workspace_id"`
+	WorkspaceMountID string          `json:"workspace_mount_id,omitempty"`
+	Command          json.RawMessage `json:"command"`
+	Cwd              string          `json:"cwd"`
+	EnvShape         json.RawMessage `json:"env_shape,omitempty"`
+	FilesystemMode   string          `json:"filesystem_mode"`
+	State            string          `json:"state"`
+	Detached         bool            `json:"detached"`
+	ProcessID        string          `json:"process_id,omitempty"`
+	ExitCode         *int32          `json:"exit_code,omitempty"`
+	Signal           string          `json:"signal,omitempty"`
+	Error            json.RawMessage `json:"error,omitempty"`
+	StdoutCursor     int64           `json:"stdout_cursor"`
+	StderrCursor     int64           `json:"stderr_cursor"`
+	StdinCursor      int64           `json:"stdin_cursor"`
+	StdinClosedAt    *time.Time      `json:"stdin_closed_at,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	StartedAt        *time.Time      `json:"started_at,omitempty"`
+	ExitedAt         *time.Time      `json:"exited_at,omitempty"`
+	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
 type WorkspaceExecEnvelope struct {

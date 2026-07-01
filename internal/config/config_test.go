@@ -280,9 +280,13 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("HELMR_VM_SCRATCH_DISK_MIB", " 12288 ")
 	t.Setenv("HELMR_WORKER_CAPACITY_VCPUS", " 8 ")
 	t.Setenv("HELMR_WORKER_CAPACITY_MEMORY_MIB", " 16384 ")
+	t.Setenv("HELMR_WORKER_SUBSTRATE_CACHE_MAX_MIB", " 32768 ")
+	t.Setenv("HELMR_WORKER_ARTIFACT_CACHE_MAX_MIB", " 16384 ")
 	t.Setenv("HELMR_WORKER_EXECUTION_SLOTS", " 4 ")
 	t.Setenv("HELMR_VM_HEALTH_TIMEOUT", " 90s ")
-	t.Setenv("HELMR_WORKSPACE_MATERIALIZATION_STARTUP_TIMEOUT", " 3m ")
+	t.Setenv("HELMR_VM_HEALTH_ATTEMPT_TIMEOUT", " 7s ")
+	t.Setenv("HELMR_WORKSPACE_MOUNT_STARTUP_TIMEOUT", " 3m ")
+	t.Setenv("HELMR_WORKER_PREPARED_BASE_POOL_SIZE", " 1 ")
 
 	cfg, err := LoadWorker()
 	if err != nil {
@@ -291,7 +295,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.CASURI != "s3://helmr-cas" || cfg.WorkDir != "/var/lib/helmr" || cfg.ImagesDir != "/var/lib/helmr/images" || cfg.GitPath != "/usr/bin/git" || cfg.BuildKitAddr != "unix:///run/helmr/buildkit/buildkitd.sock" || cfg.BuildKitCacheNS != "helmr-ci" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.CNINetworkName != "helmr-ci" || cfg.CNIConfDir != "/etc/helmr/cni" || cfg.CNIBinDir != "/opt/helmr/cni/bin" || cfg.CNICacheDir != "/var/lib/helmr/cni" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.VMHealthTimeout != 90*time.Second || cfg.WorkspaceMaterializeTimeout != 3*time.Minute {
+	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.CNINetworkName != "helmr-ci" || cfg.CNIConfDir != "/etc/helmr/cni" || cfg.CNIBinDir != "/opt/helmr/cni/bin" || cfg.CNICacheDir != "/var/lib/helmr/cni" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.SubstrateCacheMaxMiB != 32768 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.VMHealthTimeout != 90*time.Second || cfg.VMHealthAttemptTimeout != 7*time.Second || cfg.WorkspaceMountStartupTimeout != 3*time.Minute || cfg.PreparedBasePoolSize != 1 {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.JailerPath != "/usr/bin/jailer" || cfg.JailerUID != 1001 || cfg.JailerGID != 1002 || cfg.JailerNumaNode != 1 || cfg.JailerChrootDir != "/var/lib/helmr/jailer" || cfg.CgroupVersion != "2" || cfg.CNIProfile != "helmr-ci/v2" || cfg.IPPath != "/usr/sbin/ip" || cfg.NFTPath != "/usr/sbin/nft" {
@@ -385,6 +389,58 @@ func TestLoadWorkerRejectsInvalidVMNumbers(t *testing.T) {
 	_, err := LoadWorker()
 	if err == nil {
 		t.Fatal("expected invalid memory error")
+	}
+}
+
+func TestLoadWorkerRejectsNegativePreparedBasePoolSize(t *testing.T) {
+	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
+	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
+	t.Setenv("HELMR_CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
+	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
+	t.Setenv("HELMR_WORKER_PREPARED_BASE_POOL_SIZE", "-1")
+
+	_, err := LoadWorker()
+	if err == nil {
+		t.Fatal("expected prepared base pool size error")
+	}
+	if got, want := err.Error(), "HELMR_WORKER_PREPARED_BASE_POOL_SIZE"; !strings.HasPrefix(got, want) {
+		t.Fatalf("error = %q", got)
+	}
+}
+
+func TestLoadWorkerRejectsHealthAttemptLongerThanHealthTimeout(t *testing.T) {
+	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
+	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
+	t.Setenv("HELMR_CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
+	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
+	t.Setenv("HELMR_VM_HEALTH_TIMEOUT", "5s")
+	t.Setenv("HELMR_VM_HEALTH_ATTEMPT_TIMEOUT", "6s")
+
+	_, err := LoadWorker()
+	if err == nil {
+		t.Fatal("expected health attempt timeout error")
+	}
+	if got, want := err.Error(), "HELMR_VM_HEALTH_ATTEMPT_TIMEOUT"; !strings.HasPrefix(got, want) {
+		t.Fatalf("error = %q", got)
+	}
+}
+
+func TestLoadWorkerClampsDefaultHealthAttemptToShortHealthTimeout(t *testing.T) {
+	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
+	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
+	t.Setenv("HELMR_CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
+	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
+	t.Setenv("HELMR_VM_HEALTH_TIMEOUT", "1s")
+
+	cfg, err := LoadWorker()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.VMHealthAttemptTimeout != time.Second {
+		t.Fatalf("VMHealthAttemptTimeout = %s, want 1s", cfg.VMHealthAttemptTimeout)
 	}
 }
 

@@ -22,7 +22,7 @@ func (s *Server) workerMarkWorkspacePtyOpened(w http.ResponseWriter, r *http.Req
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace pty opened request JSON: %w", err)))
 		return
 	}
-	materialization, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
+	mount, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "validate workspace pty event scope", err)
 		return
@@ -33,24 +33,24 @@ func (s *Server) workerMarkWorkspacePtyOpened(w http.ResponseWriter, r *http.Req
 		return
 	}
 	row, err := s.db.MarkWorkspacePtyOpen(r.Context(), db.MarkWorkspacePtyOpenParams{
-		ProcessID:         strings.TrimSpace(request.ProcessID),
-		OrgID:             materialization.OrgID,
-		ProjectID:         materialization.ProjectID,
-		EnvironmentID:     materialization.EnvironmentID,
-		WorkspaceID:       materialization.WorkspaceID,
-		ID:                ptyID,
-		MaterializationID: materialization.ID,
+		ProcessID:        strings.TrimSpace(request.ProcessID),
+		OrgID:            mount.OrgID,
+		ProjectID:        mount.ProjectID,
+		EnvironmentID:    mount.EnvironmentID,
+		WorkspaceID:      mount.WorkspaceID,
+		ID:               ptyID,
+		WorkspaceMountID: mount.ID,
 	})
 	if err != nil {
 		if isNoRows(err) {
 			existing, getErr := s.db.GetWorkspacePtySession(r.Context(), db.GetWorkspacePtySessionParams{
-				OrgID:         materialization.OrgID,
-				ProjectID:     materialization.ProjectID,
-				EnvironmentID: materialization.EnvironmentID,
-				WorkspaceID:   materialization.WorkspaceID,
+				OrgID:         mount.OrgID,
+				ProjectID:     mount.ProjectID,
+				EnvironmentID: mount.EnvironmentID,
+				WorkspaceID:   mount.WorkspaceID,
 				ID:            ptyID,
 			})
-			if getErr == nil && workspacePtyTerminalEventMatches(existing, materialization.ID, false, nil) {
+			if getErr == nil && workspacePtyTerminalEventMatches(existing, mount.ID, false, nil) {
 				writeJSON(w, http.StatusOK, api.WorkspacePtyEnvelope{Pty: workspacePtyResponse(existing)})
 				return
 			}
@@ -67,7 +67,7 @@ func (s *Server) workerAppendWorkspacePtyOutput(w http.ResponseWriter, r *http.R
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace pty output request JSON: %w", err)))
 		return
 	}
-	materialization, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
+	mount, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "validate workspace pty output scope", err)
 		return
@@ -78,18 +78,18 @@ func (s *Server) workerAppendWorkspacePtyOutput(w http.ResponseWriter, r *http.R
 		return
 	}
 	pty, err := s.db.GetWorkspacePtySession(r.Context(), db.GetWorkspacePtySessionParams{
-		OrgID:         materialization.OrgID,
-		ProjectID:     materialization.ProjectID,
-		EnvironmentID: materialization.EnvironmentID,
-		WorkspaceID:   materialization.WorkspaceID,
+		OrgID:         mount.OrgID,
+		ProjectID:     mount.ProjectID,
+		EnvironmentID: mount.EnvironmentID,
+		WorkspaceID:   mount.WorkspaceID,
 		ID:            ptyID,
 	})
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "get workspace pty", err)
 		return
 	}
-	if !pty.MaterializationID.Valid || pgvalue.MustUUIDValue(pty.MaterializationID) != pgvalue.MustUUIDValue(materialization.ID) {
-		writeError(w, conflict(errors.New("workspace pty is not bound to this materialization")))
+	if !pty.WorkspaceMountID.Valid || pgvalue.MustUUIDValue(pty.WorkspaceMountID) != pgvalue.MustUUIDValue(mount.ID) {
+		writeError(w, conflict(errors.New("workspace pty is not bound to this workspace mount")))
 		return
 	}
 	out := make([]api.WorkspacePtyStreamChunkResponse, 0, len(request.Chunks))
@@ -110,9 +110,9 @@ func (s *Server) workerListWorkspacePtyInput(w http.ResponseWriter, r *http.Requ
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace pty input request JSON: %w", err)))
 		return
 	}
-	materialization, pty, ok := s.loadWorkerWorkspacePtyBoundToMaterialization(w, r, request.WorkerWorkspacePrimitiveScope, request.PtyID)
+	mount, pty, ok := s.loadWorkerWorkspacePtyBoundToWorkspaceMount(w, r, request.WorkerWorkspacePrimitiveScope, request.PtyID)
 	if !ok {
-		_ = materialization
+		_ = mount
 		return
 	}
 	limit := request.Limit
@@ -120,10 +120,10 @@ func (s *Server) workerListWorkspacePtyInput(w http.ResponseWriter, r *http.Requ
 		limit = 100
 	}
 	rows, err := s.db.ListWorkspacePtyInputChunksAfterDelivered(r.Context(), db.ListWorkspacePtyInputChunksAfterDeliveredParams{
-		OrgID:         materialization.OrgID,
-		ProjectID:     materialization.ProjectID,
-		EnvironmentID: materialization.EnvironmentID,
-		WorkspaceID:   materialization.WorkspaceID,
+		OrgID:         mount.OrgID,
+		ProjectID:     mount.ProjectID,
+		EnvironmentID: mount.EnvironmentID,
+		WorkspaceID:   mount.WorkspaceID,
 		PtySessionID:  pty.ID,
 		LimitCount:    limit,
 	})
@@ -149,9 +149,9 @@ func (s *Server) workerAdvanceWorkspacePtyInputDelivered(w http.ResponseWriter, 
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace pty input delivered request JSON: %w", err)))
 		return
 	}
-	materialization, pty, ok := s.loadWorkerWorkspacePtyBoundToMaterialization(w, r, request.WorkerWorkspacePrimitiveScope, request.PtyID)
+	mount, pty, ok := s.loadWorkerWorkspacePtyBoundToWorkspaceMount(w, r, request.WorkerWorkspacePrimitiveScope, request.PtyID)
 	if !ok {
-		_ = materialization
+		_ = mount
 		return
 	}
 	if s.tx == nil {
@@ -166,10 +166,10 @@ func (s *Server) workerAdvanceWorkspacePtyInputDelivered(w http.ResponseWriter, 
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	store := db.New(tx)
 	deliveredChunk, err := store.GetWorkspacePtyStreamChunkAtOffset(r.Context(), db.GetWorkspacePtyStreamChunkAtOffsetParams{
-		OrgID:         materialization.OrgID,
-		ProjectID:     materialization.ProjectID,
-		EnvironmentID: materialization.EnvironmentID,
-		WorkspaceID:   materialization.WorkspaceID,
+		OrgID:         mount.OrgID,
+		ProjectID:     mount.ProjectID,
+		EnvironmentID: mount.EnvironmentID,
+		WorkspaceID:   mount.WorkspaceID,
 		PtySessionID:  pty.ID,
 		Stream:        db.WorkspacePtyStreamInput,
 		OffsetStart:   request.OffsetStart,
@@ -177,10 +177,10 @@ func (s *Server) workerAdvanceWorkspacePtyInputDelivered(w http.ResponseWriter, 
 	if err != nil {
 		if isNoRows(err) {
 			current, getErr := store.GetWorkspacePtySession(r.Context(), db.GetWorkspacePtySessionParams{
-				OrgID:         materialization.OrgID,
-				ProjectID:     materialization.ProjectID,
-				EnvironmentID: materialization.EnvironmentID,
-				WorkspaceID:   materialization.WorkspaceID,
+				OrgID:         mount.OrgID,
+				ProjectID:     mount.ProjectID,
+				EnvironmentID: mount.EnvironmentID,
+				WorkspaceID:   mount.WorkspaceID,
 				ID:            pty.ID,
 			})
 			if getErr == nil && current.InputDeliveredCursor >= request.OffsetEnd {
@@ -197,10 +197,10 @@ func (s *Server) workerAdvanceWorkspacePtyInputDelivered(w http.ResponseWriter, 
 	}
 	deliveredDigest := workspace.StreamDataSHA256(deliveredChunk.Data)
 	if _, err := store.InsertWorkspacePtyStreamChunkReceipt(r.Context(), db.InsertWorkspacePtyStreamChunkReceiptParams{
-		OrgID:         materialization.OrgID,
-		ProjectID:     materialization.ProjectID,
-		EnvironmentID: materialization.EnvironmentID,
-		WorkspaceID:   materialization.WorkspaceID,
+		OrgID:         mount.OrgID,
+		ProjectID:     mount.ProjectID,
+		EnvironmentID: mount.EnvironmentID,
+		WorkspaceID:   mount.WorkspaceID,
 		PtySessionID:  pty.ID,
 		Stream:        db.WorkspacePtyStreamInput,
 		OffsetStart:   deliveredChunk.OffsetStart,
@@ -211,10 +211,10 @@ func (s *Server) workerAdvanceWorkspacePtyInputDelivered(w http.ResponseWriter, 
 	}); err != nil {
 		if isNoRows(err) {
 			receipt, getErr := store.GetWorkspacePtyStreamChunkReceiptAtOffset(r.Context(), db.GetWorkspacePtyStreamChunkReceiptAtOffsetParams{
-				OrgID:         materialization.OrgID,
-				ProjectID:     materialization.ProjectID,
-				EnvironmentID: materialization.EnvironmentID,
-				WorkspaceID:   materialization.WorkspaceID,
+				OrgID:         mount.OrgID,
+				ProjectID:     mount.ProjectID,
+				EnvironmentID: mount.EnvironmentID,
+				WorkspaceID:   mount.WorkspaceID,
 				PtySessionID:  pty.ID,
 				Stream:        db.WorkspacePtyStreamInput,
 				OffsetStart:   deliveredChunk.OffsetStart,
@@ -233,20 +233,20 @@ func (s *Server) workerAdvanceWorkspacePtyInputDelivered(w http.ResponseWriter, 
 	}
 	row, err := store.AdvanceWorkspacePtyInputDeliveredCursor(r.Context(), db.AdvanceWorkspacePtyInputDeliveredCursorParams{
 		OffsetEnd:     request.OffsetEnd,
-		OrgID:         materialization.OrgID,
-		ProjectID:     materialization.ProjectID,
-		EnvironmentID: materialization.EnvironmentID,
-		WorkspaceID:   materialization.WorkspaceID,
+		OrgID:         mount.OrgID,
+		ProjectID:     mount.ProjectID,
+		EnvironmentID: mount.EnvironmentID,
+		WorkspaceID:   mount.WorkspaceID,
 		PtySessionID:  pty.ID,
 		OffsetStart:   request.OffsetStart,
 	})
 	if err != nil {
 		if isNoRows(err) {
 			current, getErr := store.GetWorkspacePtySession(r.Context(), db.GetWorkspacePtySessionParams{
-				OrgID:         materialization.OrgID,
-				ProjectID:     materialization.ProjectID,
-				EnvironmentID: materialization.EnvironmentID,
-				WorkspaceID:   materialization.WorkspaceID,
+				OrgID:         mount.OrgID,
+				ProjectID:     mount.ProjectID,
+				EnvironmentID: mount.EnvironmentID,
+				WorkspaceID:   mount.WorkspaceID,
 				ID:            pty.ID,
 			})
 			if getErr == nil && current.InputDeliveredCursor >= request.OffsetEnd {
@@ -258,10 +258,10 @@ func (s *Server) workerAdvanceWorkspacePtyInputDelivered(w http.ResponseWriter, 
 		return
 	}
 	if err := store.DeleteWorkspacePtyStreamChunksBefore(r.Context(), db.DeleteWorkspacePtyStreamChunksBeforeParams{
-		OrgID:             materialization.OrgID,
-		ProjectID:         materialization.ProjectID,
-		EnvironmentID:     materialization.EnvironmentID,
-		WorkspaceID:       materialization.WorkspaceID,
+		OrgID:             mount.OrgID,
+		ProjectID:         mount.ProjectID,
+		EnvironmentID:     mount.EnvironmentID,
+		WorkspaceID:       mount.WorkspaceID,
 		PtySessionID:      pty.ID,
 		Stream:            db.WorkspacePtyStreamInput,
 		RetainAfterOffset: request.OffsetEnd,
@@ -282,7 +282,7 @@ func (s *Server) workerMarkWorkspacePtyResizeApplied(w http.ResponseWriter, r *h
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace pty resize request JSON: %w", err)))
 		return
 	}
-	materialization, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
+	mount, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "validate workspace pty resize scope", err)
 		return
@@ -293,25 +293,25 @@ func (s *Server) workerMarkWorkspacePtyResizeApplied(w http.ResponseWriter, r *h
 		return
 	}
 	row, err := s.db.MarkWorkspacePtyResizeApplied(r.Context(), db.MarkWorkspacePtyResizeAppliedParams{
-		OrgID:             materialization.OrgID,
-		ProjectID:         materialization.ProjectID,
-		EnvironmentID:     materialization.EnvironmentID,
-		WorkspaceID:       materialization.WorkspaceID,
-		ID:                ptyID,
-		MaterializationID: materialization.ID,
-		Cols:              pgtype.Int4{Int32: request.Cols, Valid: true},
-		Rows:              pgtype.Int4{Int32: request.Rows, Valid: true},
+		OrgID:            mount.OrgID,
+		ProjectID:        mount.ProjectID,
+		EnvironmentID:    mount.EnvironmentID,
+		WorkspaceID:      mount.WorkspaceID,
+		ID:               ptyID,
+		WorkspaceMountID: mount.ID,
+		Cols:             pgtype.Int4{Int32: request.Cols, Valid: true},
+		Rows:             pgtype.Int4{Int32: request.Rows, Valid: true},
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			existing, getErr := s.db.GetWorkspacePtySession(r.Context(), db.GetWorkspacePtySessionParams{
-				OrgID:         materialization.OrgID,
-				ProjectID:     materialization.ProjectID,
-				EnvironmentID: materialization.EnvironmentID,
-				WorkspaceID:   materialization.WorkspaceID,
+				OrgID:         mount.OrgID,
+				ProjectID:     mount.ProjectID,
+				EnvironmentID: mount.EnvironmentID,
+				WorkspaceID:   mount.WorkspaceID,
 				ID:            ptyID,
 			})
-			if getErr == nil && workspacePtyResizeAppliedEventMatches(existing, materialization.ID, request.Cols, request.Rows) {
+			if getErr == nil && workspacePtyResizeAppliedEventMatches(existing, mount.ID, request.Cols, request.Rows) {
 				writeJSON(w, http.StatusOK, api.WorkspacePtyEnvelope{Pty: workspacePtyResponse(existing)})
 				return
 			}
@@ -326,33 +326,33 @@ func (s *Server) workerMarkWorkspacePtyResizeApplied(w http.ResponseWriter, r *h
 	writeJSON(w, http.StatusOK, api.WorkspacePtyEnvelope{Pty: workspacePtyResponse(row)})
 }
 
-func (s *Server) loadWorkerWorkspacePtyBoundToMaterialization(w http.ResponseWriter, r *http.Request, scope api.WorkerWorkspacePrimitiveScope, rawPtyID string) (db.WorkspaceMaterialization, db.WorkspacePtySession, bool) {
-	materialization, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), scope)
+func (s *Server) loadWorkerWorkspacePtyBoundToWorkspaceMount(w http.ResponseWriter, r *http.Request, scope api.WorkerWorkspacePrimitiveScope, rawPtyID string) (db.WorkspaceMount, db.WorkspacePtySession, bool) {
+	mount, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), scope)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "validate workspace pty scope", err)
-		return db.WorkspaceMaterialization{}, db.WorkspacePtySession{}, false
+		return db.WorkspaceMount{}, db.WorkspacePtySession{}, false
 	}
 	ptyID, err := parseWorkerPrimitiveUUID("pty_id", rawPtyID)
 	if err != nil {
 		writeError(w, badRequest(err))
-		return db.WorkspaceMaterialization{}, db.WorkspacePtySession{}, false
+		return db.WorkspaceMount{}, db.WorkspacePtySession{}, false
 	}
 	pty, err := s.db.GetWorkspacePtySession(r.Context(), db.GetWorkspacePtySessionParams{
-		OrgID:         materialization.OrgID,
-		ProjectID:     materialization.ProjectID,
-		EnvironmentID: materialization.EnvironmentID,
-		WorkspaceID:   materialization.WorkspaceID,
+		OrgID:         mount.OrgID,
+		ProjectID:     mount.ProjectID,
+		EnvironmentID: mount.EnvironmentID,
+		WorkspaceID:   mount.WorkspaceID,
 		ID:            ptyID,
 	})
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "get workspace pty", err)
-		return db.WorkspaceMaterialization{}, db.WorkspacePtySession{}, false
+		return db.WorkspaceMount{}, db.WorkspacePtySession{}, false
 	}
-	if !pty.MaterializationID.Valid || pgvalue.MustUUIDValue(pty.MaterializationID) != pgvalue.MustUUIDValue(materialization.ID) {
-		writeError(w, conflict(errors.New("workspace pty is not bound to this materialization")))
-		return db.WorkspaceMaterialization{}, db.WorkspacePtySession{}, false
+	if !pty.WorkspaceMountID.Valid || pgvalue.MustUUIDValue(pty.WorkspaceMountID) != pgvalue.MustUUIDValue(mount.ID) {
+		writeError(w, conflict(errors.New("workspace pty is not bound to this workspace mount")))
+		return db.WorkspaceMount{}, db.WorkspacePtySession{}, false
 	}
-	return materialization, pty, true
+	return mount, pty, true
 }
 
 func (s *Server) workerMarkWorkspacePtyClosed(w http.ResponseWriter, r *http.Request) {
@@ -361,7 +361,7 @@ func (s *Server) workerMarkWorkspacePtyClosed(w http.ResponseWriter, r *http.Req
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace pty closed request JSON: %w", err)))
 		return
 	}
-	materialization, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
+	mount, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "validate workspace pty terminal scope", err)
 		return
@@ -379,24 +379,24 @@ func (s *Server) workerMarkWorkspacePtyClosed(w http.ResponseWriter, r *http.Req
 	var row db.WorkspacePtySession
 	if len(errorJSON) > 0 {
 		failed, markErr := s.db.MarkWorkspacePtyFailed(r.Context(), db.MarkWorkspacePtyFailedParams{
-			Error:             errorJSON,
-			OrgID:             materialization.OrgID,
-			ProjectID:         materialization.ProjectID,
-			EnvironmentID:     materialization.EnvironmentID,
-			WorkspaceID:       materialization.WorkspaceID,
-			ID:                ptyID,
-			MaterializationID: materialization.ID,
+			Error:            errorJSON,
+			OrgID:            mount.OrgID,
+			ProjectID:        mount.ProjectID,
+			EnvironmentID:    mount.EnvironmentID,
+			WorkspaceID:      mount.WorkspaceID,
+			ID:               ptyID,
+			WorkspaceMountID: mount.ID,
 		})
 		err = markErr
 		row = workspacePtyFromFailedRow(failed)
 	} else {
 		closed, markErr := s.db.MarkWorkspacePtyClosed(r.Context(), db.MarkWorkspacePtyClosedParams{
-			OrgID:             materialization.OrgID,
-			ProjectID:         materialization.ProjectID,
-			EnvironmentID:     materialization.EnvironmentID,
-			WorkspaceID:       materialization.WorkspaceID,
-			ID:                ptyID,
-			MaterializationID: materialization.ID,
+			OrgID:            mount.OrgID,
+			ProjectID:        mount.ProjectID,
+			EnvironmentID:    mount.EnvironmentID,
+			WorkspaceID:      mount.WorkspaceID,
+			ID:               ptyID,
+			WorkspaceMountID: mount.ID,
 		})
 		err = markErr
 		row = workspacePtyFromClosedRow(closed)
@@ -404,13 +404,13 @@ func (s *Server) workerMarkWorkspacePtyClosed(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			existing, getErr := s.db.GetWorkspacePtySession(r.Context(), db.GetWorkspacePtySessionParams{
-				OrgID:         materialization.OrgID,
-				ProjectID:     materialization.ProjectID,
-				EnvironmentID: materialization.EnvironmentID,
-				WorkspaceID:   materialization.WorkspaceID,
+				OrgID:         mount.OrgID,
+				ProjectID:     mount.ProjectID,
+				EnvironmentID: mount.EnvironmentID,
+				WorkspaceID:   mount.WorkspaceID,
 				ID:            ptyID,
 			})
-			if getErr == nil && workspacePtyTerminalEventMatches(existing, materialization.ID, len(errorJSON) > 0, errorJSON) {
+			if getErr == nil && workspacePtyTerminalEventMatches(existing, mount.ID, len(errorJSON) > 0, errorJSON) {
 				writeJSON(w, http.StatusOK, api.WorkspacePtyEnvelope{Pty: workspacePtyResponse(existing)})
 				return
 			}
@@ -425,15 +425,15 @@ func (s *Server) workerMarkWorkspacePtyClosed(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, api.WorkspacePtyEnvelope{Pty: workspacePtyResponse(row)})
 }
 
-func workspacePtyResizeAppliedEventMatches(row db.WorkspacePtySession, materializationID pgtype.UUID, cols int32, rows int32) bool {
-	return workerPrimitiveMaterializationMatches(row.MaterializationID, materializationID) &&
+func workspacePtyResizeAppliedEventMatches(row db.WorkspacePtySession, workspaceMountID pgtype.UUID, cols int32, rows int32) bool {
+	return workerPrimitiveWorkspaceMountMatches(row.WorkspaceMountID, workspaceMountID) &&
 		(row.State == db.WorkspacePtyStateOpen || row.State == db.WorkspacePtyStateClosing || row.State == db.WorkspacePtyStateClosed) &&
 		row.Cols == cols &&
 		row.Rows == rows
 }
 
-func workspacePtyTerminalEventMatches(row db.WorkspacePtySession, materializationID pgtype.UUID, failed bool, errorJSON []byte) bool {
-	if !workerPrimitiveMaterializationMatches(row.MaterializationID, materializationID) {
+func workspacePtyTerminalEventMatches(row db.WorkspacePtySession, workspaceMountID pgtype.UUID, failed bool, errorJSON []byte) bool {
+	if !workerPrimitiveWorkspaceMountMatches(row.WorkspaceMountID, workspaceMountID) {
 		return false
 	}
 	if row.State == db.WorkspacePtyStateLost {

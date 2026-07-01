@@ -38,9 +38,23 @@ func LoadControl() (Control, error) {
 		GitHubOAuthClientID:     envString("HELMR_GITHUB_OAUTH_CLIENT_ID"),
 		GitHubOAuthClientSecret: envString("HELMR_GITHUB_OAUTH_CLIENT_SECRET"),
 		ScheduleJitter:          30 * time.Second,
+		RuntimePrepareTarget:    0,
+		RuntimePrepareLimit:     20,
 	}
 	if cfg.ScheduleJitter, err = envDuration("HELMR_SCHEDULE_JITTER", cfg.ScheduleJitter); err != nil {
 		return cfg, err
+	}
+	if cfg.RuntimePrepareTarget, err = envInt("HELMR_PREPARED_RUNTIME_WARM_TARGET", cfg.RuntimePrepareTarget); err != nil {
+		return cfg, err
+	}
+	if cfg.RuntimePrepareTarget < 0 {
+		return cfg, errors.New("HELMR_PREPARED_RUNTIME_WARM_TARGET must be non-negative")
+	}
+	if cfg.RuntimePrepareLimit, err = envInt("HELMR_PREPARED_RUNTIME_WARM_LIMIT", cfg.RuntimePrepareLimit); err != nil {
+		return cfg, err
+	}
+	if cfg.RuntimePrepareLimit <= 0 {
+		return cfg, errors.New("HELMR_PREPARED_RUNTIME_WARM_LIMIT must be positive")
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")

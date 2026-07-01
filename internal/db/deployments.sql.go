@@ -1206,6 +1206,97 @@ func (q *Queries) GetDeploymentQueueConfig(ctx context.Context, arg GetDeploymen
 	return i, err
 }
 
+const getDeploymentSandboxByID = `-- name: GetDeploymentSandboxByID :one
+SELECT id, org_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, resource_floor, disk_floor_mib, network_policy, runtime_abi, guestd_abi, adapter_abi, filesystem_format, default_uid, default_gid, default_workdir, contract_version, fingerprint, created_at
+  FROM deployment_sandboxes
+ WHERE id = $1
+ LIMIT 1
+`
+
+func (q *Queries) GetDeploymentSandboxByID(ctx context.Context, id pgtype.UUID) (DeploymentSandbox, error) {
+	row := q.db.QueryRow(ctx, getDeploymentSandboxByID, id)
+	var i DeploymentSandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.SandboxID,
+		&i.ImageArtifactID,
+		&i.ImageArtifactFormat,
+		&i.RootfsDigest,
+		&i.ImageDigest,
+		&i.ImageFormat,
+		&i.WorkspaceMountPath,
+		&i.ResourceFloor,
+		&i.DiskFloorMib,
+		&i.NetworkPolicy,
+		&i.RuntimeABI,
+		&i.GuestdAbi,
+		&i.AdapterAbi,
+		&i.FilesystemFormat,
+		&i.DefaultUid,
+		&i.DefaultGid,
+		&i.DefaultWorkdir,
+		&i.ContractVersion,
+		&i.Fingerprint,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getDeploymentSandboxForWorkerGroup = `-- name: GetDeploymentSandboxForWorkerGroup :one
+SELECT deployment_sandboxes.id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
+  FROM deployment_sandboxes
+  JOIN deployments
+    ON deployments.org_id = deployment_sandboxes.org_id
+   AND deployments.project_id = deployment_sandboxes.project_id
+   AND deployments.environment_id = deployment_sandboxes.environment_id
+   AND deployments.id = deployment_sandboxes.deployment_id
+   AND deployments.worker_group_id = $1
+ WHERE deployment_sandboxes.id = $2
+ LIMIT 1
+`
+
+type GetDeploymentSandboxForWorkerGroupParams struct {
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetDeploymentSandboxForWorkerGroup(ctx context.Context, arg GetDeploymentSandboxForWorkerGroupParams) (DeploymentSandbox, error) {
+	row := q.db.QueryRow(ctx, getDeploymentSandboxForWorkerGroup, arg.WorkerGroupID, arg.ID)
+	var i DeploymentSandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.SandboxID,
+		&i.ImageArtifactID,
+		&i.ImageArtifactFormat,
+		&i.RootfsDigest,
+		&i.ImageDigest,
+		&i.ImageFormat,
+		&i.WorkspaceMountPath,
+		&i.ResourceFloor,
+		&i.DiskFloorMib,
+		&i.NetworkPolicy,
+		&i.RuntimeABI,
+		&i.GuestdAbi,
+		&i.AdapterAbi,
+		&i.FilesystemFormat,
+		&i.DefaultUid,
+		&i.DefaultGid,
+		&i.DefaultWorkdir,
+		&i.ContractVersion,
+		&i.Fingerprint,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getDeploymentTask = `-- name: GetDeploymentTask :one
 SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at,
        deployment_sandboxes.sandbox_id,

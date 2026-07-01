@@ -40,16 +40,19 @@ requeued_attempts AS (
        AND run_attempts.id = updated_runs.current_attempt_id
     RETURNING run_attempts.id, run_attempts.run_id
 ),
-restored_runtime_checkpoint AS (
-    UPDATE runtime_checkpoints
-       SET state = 'ready',
-           error_message = NULL,
-           invalidated_at = NULL
+abandoned_runtime_checkpoint_restore AS (
+    UPDATE runtime_checkpoint_restores
+       SET status = 'abandoned',
+           error_message = 'worker lease expired before execution started',
+           finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
+           updated_at = now()
       FROM updated_runs
-     WHERE runtime_checkpoints.run_id = updated_runs.run_id
-       AND runtime_checkpoints.id = updated_runs.restore_runtime_checkpoint_id
-       AND runtime_checkpoints.state = 'restoring'
-    RETURNING runtime_checkpoints.id
+     WHERE runtime_checkpoint_restores.org_id = $1
+       AND runtime_checkpoint_restores.run_id = updated_runs.run_id
+       AND runtime_checkpoint_restores.run_lease_id = updated_runs.run_lease_id
+       AND runtime_checkpoint_restores.runtime_checkpoint_id = updated_runs.restore_runtime_checkpoint_id
+       AND runtime_checkpoint_restores.status = 'restoring'
+    RETURNING runtime_checkpoint_restores.id
 ),
 requeued_queue_entries AS (
     UPDATE run_queue_items
@@ -164,7 +167,7 @@ lost_snapshots AS (
 ),
 cleanup AS (
     SELECT
-        (SELECT count(*) FROM restored_runtime_checkpoint) AS restored_runtime_checkpoint_count,
+        (SELECT count(*) FROM abandoned_runtime_checkpoint_restore) AS abandoned_runtime_checkpoint_restore_count,
         (SELECT count(*) FROM requeued_queue_entries) AS requeued_queue_entry_count,
         (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slot_count,
         (SELECT count(*) FROM released_workspace_leases) AS released_workspace_lease_count,
@@ -178,7 +181,7 @@ UPDATE run_leases
  FROM updated_runs
  WHERE run_leases.id = updated_runs.run_lease_id
    AND run_leases.run_id = updated_runs.run_id
-   AND (SELECT restored_runtime_checkpoint_count + requeued_queue_entry_count + released_concurrency_slot_count + released_workspace_lease_count + lost_event_count + lost_snapshot_count FROM cleanup) >= 0;
+   AND (SELECT abandoned_runtime_checkpoint_restore_count + requeued_queue_entry_count + released_concurrency_slot_count + released_workspace_lease_count + lost_event_count + lost_snapshot_count FROM cleanup) >= 0;
 
 -- name: AbandonLeasedRunLease :exec
 WITH abandoned AS (
@@ -213,21 +216,18 @@ requeued_attempt AS (
        AND run_attempts.id = abandoned.current_attempt_id
     RETURNING run_attempts.id, run_attempts.run_id
 ),
-restored_runtime_checkpoint AS (
-    UPDATE runtime_checkpoints
-       SET state = 'ready',
-           error_message = NULL,
-           invalidated_at = NULL
+abandoned_runtime_checkpoint_restore AS (
+    UPDATE runtime_checkpoint_restores
+       SET status = 'abandoned',
+           error_message = 'worker lease abandoned before execution started',
+           finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
+           updated_at = now()
       FROM abandoned
-      JOIN run_leases ON run_leases.org_id = sqlc.arg(org_id)
-                         AND run_leases.run_id = abandoned.id
-                         AND run_leases.id = sqlc.arg(run_lease_id)
-                         AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
-     WHERE runtime_checkpoints.org_id = sqlc.arg(org_id)
-       AND runtime_checkpoints.run_id = abandoned.id
-       AND runtime_checkpoints.id = run_leases.restore_runtime_checkpoint_id
-       AND runtime_checkpoints.state = 'restoring'
-    RETURNING runtime_checkpoints.id
+     WHERE runtime_checkpoint_restores.org_id = sqlc.arg(org_id)
+       AND runtime_checkpoint_restores.run_id = abandoned.id
+       AND runtime_checkpoint_restores.run_lease_id = sqlc.arg(run_lease_id)
+       AND runtime_checkpoint_restores.status = 'restoring'
+    RETURNING runtime_checkpoint_restores.id
 ),
 released_concurrency_slots AS (
     UPDATE run_queue_concurrency_leases
@@ -269,7 +269,7 @@ abandoned_snapshot AS (
 ),
 cleanup AS (
     SELECT
-        (SELECT count(*) FROM restored_runtime_checkpoint) AS restored_runtime_checkpoint_count,
+        (SELECT count(*) FROM abandoned_runtime_checkpoint_restore) AS abandoned_runtime_checkpoint_restore_count,
         (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slot_count,
         (SELECT count(*) FROM released_workspace_leases) AS released_workspace_lease_count,
         (SELECT count(*) FROM abandoned_snapshot) AS abandoned_snapshot_count
@@ -284,7 +284,7 @@ UPDATE run_leases
    AND run_leases.id = sqlc.arg(run_lease_id)
    AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
    AND run_leases.status = 'leased'
-   AND (SELECT restored_runtime_checkpoint_count + released_concurrency_slot_count + released_workspace_lease_count + abandoned_snapshot_count FROM cleanup) >= 0;
+   AND (SELECT abandoned_runtime_checkpoint_restore_count + released_concurrency_slot_count + released_workspace_lease_count + abandoned_snapshot_count FROM cleanup) >= 0;
 
 -- name: FailExpiredRunningRunLeases :exec
 WITH locked_sessions AS MATERIALIZED (
@@ -387,20 +387,20 @@ retry_candidate AS (
            AND eligible.previous_status = 'running'
            AND eligible.previous_attempt_number < policy.max_attempts
     ),
-parking_dirty_loss_scope AS MATERIALIZED (
+checkpointing_dirty_loss_scope AS MATERIALIZED (
     SELECT eligible.run_id,
            eligible.project_id,
            eligible.environment_id,
            workspace_leases.workspace_id,
            run_waits.id AS run_wait_id,
-           workspace_materializations.id AS materialization_id,
-           workspace_materializations.dirty_generation
+           workspace_mounts.id AS workspace_mount_id,
+           workspace_mounts.dirty_generation
       FROM eligible
       JOIN run_waits ON run_waits.org_id = eligible.org_id
                     AND run_waits.project_id = eligible.project_id
                     AND run_waits.environment_id = eligible.environment_id
                     AND run_waits.run_id = eligible.run_id
-                    AND run_waits.state = 'parking'
+                    AND run_waits.state = 'checkpointing'
                     AND run_waits.workspace_version_id IS NULL
       JOIN workspace_leases
         ON workspace_leases.org_id = eligible.org_id
@@ -410,48 +410,48 @@ parking_dirty_loss_scope AS MATERIALIZED (
        AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.state IN ('active', 'releasing')
        AND workspace_leases.released_at IS NULL
-      JOIN workspace_materializations
-        ON workspace_materializations.org_id = workspace_leases.org_id
-       AND workspace_materializations.project_id = workspace_leases.project_id
-       AND workspace_materializations.environment_id = workspace_leases.environment_id
-       AND workspace_materializations.workspace_id = workspace_leases.workspace_id
-       AND workspace_materializations.id = workspace_leases.materialization_id
-       AND workspace_materializations.dirty_generation > 0
+      JOIN workspace_mounts
+        ON workspace_mounts.org_id = workspace_leases.org_id
+       AND workspace_mounts.project_id = workspace_leases.project_id
+       AND workspace_mounts.environment_id = workspace_leases.environment_id
+       AND workspace_mounts.workspace_id = workspace_leases.workspace_id
+       AND workspace_mounts.id = workspace_leases.workspace_mount_id
+       AND workspace_mounts.dirty_generation > 0
 ),
 dirty_lost_workspaces AS (
     UPDATE workspaces
        SET state = 'recovery_required',
            dirty_state = 'dirty_state_lost',
            updated_at = now()
-      FROM parking_dirty_loss_scope
+      FROM checkpointing_dirty_loss_scope
      WHERE workspaces.org_id = $1
-       AND workspaces.project_id = parking_dirty_loss_scope.project_id
-       AND workspaces.environment_id = parking_dirty_loss_scope.environment_id
-       AND workspaces.id = parking_dirty_loss_scope.workspace_id
+       AND workspaces.project_id = checkpointing_dirty_loss_scope.project_id
+       AND workspaces.environment_id = checkpointing_dirty_loss_scope.environment_id
+       AND workspaces.id = checkpointing_dirty_loss_scope.workspace_id
        AND workspaces.state = 'active'
        AND workspaces.dirty_state <> 'clean'
        AND EXISTS (
            SELECT 1
              FROM run_waits
             WHERE run_waits.org_id = $1
-              AND run_waits.project_id = parking_dirty_loss_scope.project_id
-              AND run_waits.environment_id = parking_dirty_loss_scope.environment_id
-              AND run_waits.run_id = parking_dirty_loss_scope.run_id
-              AND run_waits.id = parking_dirty_loss_scope.run_wait_id
-              AND run_waits.state = 'parking'
+              AND run_waits.project_id = checkpointing_dirty_loss_scope.project_id
+              AND run_waits.environment_id = checkpointing_dirty_loss_scope.environment_id
+              AND run_waits.run_id = checkpointing_dirty_loss_scope.run_id
+              AND run_waits.id = checkpointing_dirty_loss_scope.run_wait_id
+              AND run_waits.state = 'checkpointing'
               AND run_waits.workspace_version_id IS NULL
        )
        AND EXISTS (
            SELECT 1
-             FROM workspace_materializations
-            WHERE workspace_materializations.org_id = $1
-              AND workspace_materializations.project_id = parking_dirty_loss_scope.project_id
-              AND workspace_materializations.environment_id = parking_dirty_loss_scope.environment_id
-              AND workspace_materializations.workspace_id = parking_dirty_loss_scope.workspace_id
-              AND workspace_materializations.id = parking_dirty_loss_scope.materialization_id
-              AND workspace_materializations.dirty_generation > 0
+             FROM workspace_mounts
+            WHERE workspace_mounts.org_id = $1
+              AND workspace_mounts.project_id = checkpointing_dirty_loss_scope.project_id
+              AND workspace_mounts.environment_id = checkpointing_dirty_loss_scope.environment_id
+              AND workspace_mounts.workspace_id = checkpointing_dirty_loss_scope.workspace_id
+              AND workspace_mounts.id = checkpointing_dirty_loss_scope.workspace_mount_id
+              AND workspace_mounts.dirty_generation > 0
        )
-    RETURNING parking_dirty_loss_scope.run_id, workspaces.id
+    RETURNING checkpointing_dirty_loss_scope.run_id, workspaces.id
 ),
 retry_plan AS (
     SELECT retry_candidate.*
@@ -577,8 +577,20 @@ cancelled_run_waits AS (
       FROM updated_runs
      WHERE run_waits.org_id = $1
        AND run_waits.run_id = updated_runs.run_id
-       AND run_waits.state IN ('parking', 'waiting')
-    RETURNING run_waits.id
+       AND run_waits.state IN ('live_waiting', 'checkpointing', 'checkpointed_waiting', 'resolved_live')
+    RETURNING run_waits.org_id, run_waits.run_id, run_waits.id
+),
+acknowledged_cancelled_worker_commands AS (
+    UPDATE worker_commands
+       SET acknowledged_at = COALESCE(worker_commands.acknowledged_at, now()),
+           delivery_locked_until = NULL,
+           updated_at = now()
+      FROM cancelled_run_waits
+     WHERE worker_commands.org_id = cancelled_run_waits.org_id
+       AND worker_commands.run_id = cancelled_run_waits.run_id
+       AND worker_commands.run_wait_id = cancelled_run_waits.id
+       AND worker_commands.acknowledged_at IS NULL
+    RETURNING worker_commands.id
 ),
 invalidated_runtime_checkpoints AS (
     UPDATE runtime_checkpoints
@@ -587,19 +599,22 @@ invalidated_runtime_checkpoints AS (
            invalidated_at = now()
       FROM updated_runs
      WHERE runtime_checkpoints.run_id = updated_runs.run_id
-       AND runtime_checkpoints.state IN ('creating', 'restoring')
+       AND runtime_checkpoints.state = 'creating'
     RETURNING runtime_checkpoints.run_id, runtime_checkpoints.id
 ),
-failed_restore_runtime_checkpoints AS (
-    UPDATE runtime_checkpoints
-       SET state = 'invalid',
+failed_runtime_checkpoint_restores AS (
+    UPDATE runtime_checkpoint_restores
+       SET status = 'failed',
            error_message = CASE WHEN updated_runs.status = 'cancelled' THEN COALESCE(updated_runs.error_message, 'run cancelled') ELSE 'worker lease expired' END,
-           invalidated_at = now()
+           finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
+           updated_at = now()
       FROM updated_runs
-     WHERE runtime_checkpoints.run_id = updated_runs.run_id
-       AND runtime_checkpoints.id = updated_runs.restore_runtime_checkpoint_id
-       AND runtime_checkpoints.state = 'restoring'
-    RETURNING runtime_checkpoints.run_id, runtime_checkpoints.id
+     WHERE runtime_checkpoint_restores.org_id = $1
+       AND runtime_checkpoint_restores.run_id = updated_runs.run_id
+       AND runtime_checkpoint_restores.run_lease_id = updated_runs.run_lease_id
+       AND runtime_checkpoint_restores.runtime_checkpoint_id = updated_runs.restore_runtime_checkpoint_id
+       AND runtime_checkpoint_restores.status = 'restoring'
+    RETURNING runtime_checkpoint_restores.id
 ),
 completed_queue_entries AS (
     UPDATE run_queue_items
@@ -908,7 +923,7 @@ cleanup AS (
         (SELECT count(*) FROM dirty_lost_workspaces) AS dirty_lost_workspaces,
         (SELECT count(*) FROM cancelled_run_waits) AS cancelled_run_waits,
         (SELECT count(*) FROM invalidated_runtime_checkpoints) AS invalidated_runtime_checkpoints,
-        (SELECT count(*) FROM failed_restore_runtime_checkpoints) AS failed_restore_runtime_checkpoints,
+        (SELECT count(*) FROM failed_runtime_checkpoint_restores) AS failed_runtime_checkpoint_restores,
         (SELECT count(*) FROM completed_queue_entries) AS completed_queue_entries,
         (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slots,
         (SELECT count(*) FROM released_workspace_leases) AS released_workspace_leases,
@@ -928,7 +943,7 @@ UPDATE run_leases
   FROM updated_runs
  WHERE run_leases.id = updated_runs.run_lease_id
    AND run_leases.run_id = updated_runs.run_id
-   AND (SELECT dirty_lost_workspaces + cancelled_run_waits + invalidated_runtime_checkpoints + failed_restore_runtime_checkpoints + completed_queue_entries + released_concurrency_slots + released_workspace_leases + terminal_events + lost_events + failed_snapshots + retry_decisions + retry_events + event_outboxes + active_time_usage_events FROM cleanup) >= 0;
+   AND (SELECT dirty_lost_workspaces + cancelled_run_waits + invalidated_runtime_checkpoints + failed_runtime_checkpoint_restores + completed_queue_entries + released_concurrency_slots + released_workspace_leases + terminal_events + lost_events + failed_snapshots + retry_decisions + retry_events + event_outboxes + active_time_usage_events FROM cleanup) >= 0;
 
 -- name: LeaseRunLease :one
 WITH
@@ -941,7 +956,7 @@ locked_dispatch AS MATERIALIZED (
      WHERE run_queue_items.org_id = sqlc.arg(org_id)
        AND run_queue_items.run_id = sqlc.arg(run_id)
        AND run_queue_items.reserved_by_worker_instance_id = sqlc.arg(worker_instance_id)
-       AND run_queue_items.dispatch_message_id = sqlc.arg(dispatch_message_id)
+       AND run_queue_items.dispatch_message_id = sqlc.narg(dispatch_message_id)::text
        AND run_queue_items.status = 'reserved'
        AND run_queue_items.reservation_expires_at > now()
      FOR UPDATE OF run_queue_items
@@ -974,15 +989,15 @@ dispatch AS (
 	           worker_instances.rootfs_digest,
 	           worker_instances.cni_profile,
 	           worker_instances.worker_group_id,
-	           worker_instances.protocol_version,
-	           active.used_milli_cpu,
-	           active.used_memory_mib,
-	           active.used_disk_mib,
-	           active.used_slots,
-	           active_materializations.used_milli_cpu AS used_materialization_milli_cpu,
-	           active_materializations.used_memory_mib AS used_materialization_memory_mib,
-	           active_materializations.used_disk_mib AS used_materialization_disk_mib,
-	           active_materializations.used_slots AS used_materialization_slots
+           worker_instances.protocol_version,
+           active.used_milli_cpu,
+           active.used_memory_mib,
+           active.used_disk_mib,
+           active.used_slots,
+           active_runtime_instances.used_milli_cpu AS used_runtime_instance_milli_cpu,
+           active_runtime_instances.used_memory_mib AS used_runtime_instance_memory_mib,
+           active_runtime_instances.used_disk_mib AS used_runtime_instance_disk_mib,
+           active_runtime_instances.used_slots AS used_runtime_instance_slots
       FROM locked_dispatch
       JOIN locked_worker_instance AS worker_instances ON worker_instances.id = locked_dispatch.reserved_by_worker_instance_id
       LEFT JOIN LATERAL (
@@ -991,38 +1006,31 @@ dispatch AS (
                  COALESCE(sum(run_runtime_requirements.requested_disk_mib), 0)::bigint AS used_disk_mib,
                  COALESCE(sum(run_runtime_requirements.requested_execution_slots), 0)::int AS used_slots
             FROM run_leases
+            JOIN runs ON runs.org_id = run_leases.org_id
+                     AND runs.id = run_leases.run_id
+                     AND runs.workspace_mount_id IS NULL
             JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_leases.org_id
                                  AND run_runtime_requirements.run_id = run_leases.run_id
            WHERE run_leases.worker_instance_id = worker_instances.id
              AND run_leases.status IN ('leased', 'running')
       ) active ON true
       LEFT JOIN LATERAL (
-          SELECT COALESCE(sum(workspace_materializations.reserved_cpu_millis), 0)::bigint AS used_milli_cpu,
-                 COALESCE(sum(workspace_materializations.reserved_memory_mib), 0)::bigint AS used_memory_mib,
-                 COALESCE(sum(workspace_materializations.reserved_disk_mib), 0)::bigint AS used_disk_mib,
-                 COALESCE(sum(workspace_materializations.reserved_execution_slots), 0)::int AS used_slots
-            FROM workspace_materializations
-           WHERE workspace_materializations.worker_instance_id = worker_instances.id
-             AND workspace_materializations.state IN ('materializing', 'restoring', 'running', 'pausing', 'paused', 'capturing', 'stopping')
+          SELECT COALESCE(sum(runtime_instances.reserved_cpu_millis), 0)::bigint AS used_milli_cpu,
+                 COALESCE(sum(runtime_instances.reserved_memory_mib), 0)::bigint AS used_memory_mib,
+                 COALESCE(sum(runtime_instances.reserved_disk_mib), 0)::bigint AS used_disk_mib,
+                 COALESCE(sum(runtime_instances.reserved_execution_slots), 0)::int AS used_slots
+            FROM runtime_instances
+           WHERE runtime_instances.worker_instance_id = worker_instances.id
+             AND runtime_instances.state IN ('preparing', 'ready', 'binding', 'running', 'waiting_hot', 'checkpointing', 'stopping')
              AND (
-                 workspace_materializations.state NOT IN ('materializing', 'restoring')
-                 OR workspace_materializations.reservation_expires_at IS NULL
-                 OR workspace_materializations.reservation_expires_at > now()
+                 runtime_instances.expires_at IS NULL
+                 OR runtime_instances.expires_at > now()
              )
-             AND NOT EXISTS (
-                 SELECT 1
-                   FROM runs
-                   JOIN run_leases ON run_leases.org_id = runs.org_id
-                                  AND run_leases.run_id = runs.id
-                  WHERE runs.org_id = workspace_materializations.org_id
-                    AND runs.workspace_materialization_id = workspace_materializations.id
-                    AND run_leases.worker_instance_id = worker_instances.id
-                    AND run_leases.status IN ('leased', 'running')
-             )
-      ) active_materializations ON true
+      ) active_runtime_instances ON true
 ),
 candidate AS (
     SELECT runs.id,
+           runs.org_id,
            runs.project_id,
            runs.environment_id,
            runs.workspace_id,
@@ -1100,9 +1108,15 @@ candidate AS (
                   AND runtime_checkpoints.kernel_digest = dispatch.kernel_digest
                   AND runtime_checkpoints.initramfs_digest = dispatch.initramfs_digest
                   AND runtime_checkpoints.rootfs_digest = dispatch.rootfs_digest
-                  AND (runtime_checkpoints.runtime_vcpus IS NULL OR runtime_checkpoints.runtime_vcpus = ((dispatch.total_milli_cpu + 999) / 1000))
-                  AND (runtime_checkpoints.runtime_memory_mib IS NULL OR runtime_checkpoints.runtime_memory_mib = dispatch.total_memory_mib)
-                  AND (runtime_checkpoints.runtime_scratch_disk_mib IS NULL OR runtime_checkpoints.runtime_scratch_disk_mib = dispatch.total_disk_mib)
+                  AND (runtime_checkpoints.runtime_vcpus IS NULL OR runtime_checkpoints.runtime_vcpus = ((run_runtime_requirements.requested_milli_cpu + 999) / 1000))
+                  AND (runtime_checkpoints.runtime_memory_mib IS NULL OR runtime_checkpoints.runtime_memory_mib = run_runtime_requirements.requested_memory_mib)
+                  AND (
+                      runtime_checkpoints.runtime_scratch_disk_mib IS NULL
+                      OR runtime_checkpoints.runtime_scratch_disk_mib = CASE
+                          WHEN run_runtime_requirements.requested_disk_mib > 0 THEN run_runtime_requirements.requested_disk_mib
+                          ELSE dispatch.total_disk_mib
+                      END
+                  )
                   AND runtime_checkpoints.cni_profile = dispatch.cni_profile
            )
        )
@@ -1110,6 +1124,7 @@ candidate AS (
 ),
 workspace_candidate AS (
     SELECT candidate.id AS run_id,
+           candidate.org_id,
            candidate.project_id,
            candidate.environment_id,
            workspaces.id AS workspace_id,
@@ -1124,6 +1139,9 @@ workspace_candidate AS (
            deployment_sandboxes.image_artifact_format,
            deployment_sandboxes.image_digest,
            deployment_sandboxes.image_format,
+           image_artifact.digest AS sandbox_image_artifact_digest,
+           image_artifact.size_bytes AS sandbox_image_artifact_size_bytes,
+           image_artifact.media_type AS sandbox_image_artifact_media_type,
            workspace_artifact.digest AS workspace_artifact_digest,
            workspace_artifact.size_bytes AS workspace_artifact_size_bytes,
            workspace_artifact.media_type AS workspace_artifact_media_type,
@@ -1169,49 +1187,58 @@ workspace_candidate AS (
        AND image_artifact.kind = 'sandbox_image'
        AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
 ),
-existing_workspace_materialization AS (
-    SELECT workspace_materializations.id,
-	           workspace_materializations.org_id,
-	           workspace_materializations.project_id,
-	           workspace_materializations.environment_id,
-	           workspace_materializations.workspace_id,
-	           workspace_materializations.fencing_generation,
-	           workspace_materializations.reserved_cpu_millis,
-	           workspace_materializations.reserved_memory_mib,
-	           workspace_materializations.reserved_disk_mib,
-	           workspace_materializations.reserved_execution_slots
+existing_workspace_mount AS (
+    SELECT workspace_mounts.id,
+           workspace_mounts.org_id,
+           workspace_mounts.project_id,
+           workspace_mounts.environment_id,
+           workspace_mounts.workspace_id,
+           workspace_mounts.fencing_generation,
+           runtime_instances.id AS runtime_instance_id,
+           runtime_instances.reserved_cpu_millis,
+           runtime_instances.reserved_memory_mib,
+           runtime_instances.reserved_disk_mib,
+           runtime_instances.reserved_execution_slots
       FROM workspace_candidate
-      JOIN workspace_materializations
-        ON workspace_materializations.org_id = sqlc.arg(org_id)
-       AND workspace_materializations.project_id = workspace_candidate.project_id
-       AND workspace_materializations.environment_id = workspace_candidate.environment_id
-       AND workspace_materializations.workspace_id = workspace_candidate.workspace_id
-       AND workspace_materializations.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND workspace_materializations.state = 'running'
-       AND workspace_materializations.reservation_expires_at > now()
+      JOIN workspace_mounts
+        ON workspace_mounts.org_id = sqlc.arg(org_id)
+       AND workspace_mounts.project_id = workspace_candidate.project_id
+       AND workspace_mounts.environment_id = workspace_candidate.environment_id
+       AND workspace_mounts.workspace_id = workspace_candidate.workspace_id
+       AND workspace_mounts.state = 'mounted'
+      JOIN runtime_instances
+        ON runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.id = workspace_mounts.runtime_instance_id
+       AND runtime_instances.workspace_mount_id = workspace_mounts.id
+       AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND runtime_instances.state IN ('binding', 'running', 'waiting_hot')
+       AND (
+           runtime_instances.expires_at IS NULL
+           OR runtime_instances.expires_at > now()
+       )
 ),
-workspace_materialization AS (
-    SELECT * FROM existing_workspace_materialization
+workspace_mount AS (
+    SELECT * FROM existing_workspace_mount
 ),
 workspace_ready_candidate AS (
     SELECT candidate.*
       FROM candidate
       JOIN dispatch ON dispatch.run_id = candidate.id
       JOIN workspace_candidate ON workspace_candidate.run_id = candidate.id
-      JOIN workspace_materialization
-        ON workspace_materialization.org_id = sqlc.arg(org_id)
-       AND workspace_materialization.project_id = workspace_candidate.project_id
-       AND workspace_materialization.environment_id = workspace_candidate.environment_id
-       AND workspace_materialization.workspace_id = workspace_candidate.workspace_id
-     WHERE workspace_candidate.requested_milli_cpu <= GREATEST(dispatch.available_milli_cpu - dispatch.used_milli_cpu - dispatch.used_materialization_milli_cpu + workspace_materialization.reserved_cpu_millis, 0)
-       AND workspace_candidate.requested_memory_mib <= GREATEST(dispatch.available_memory_mib - dispatch.used_memory_mib - dispatch.used_materialization_memory_mib + workspace_materialization.reserved_memory_mib, 0)
-       AND workspace_candidate.requested_disk_mib <= GREATEST(dispatch.available_disk_mib - dispatch.used_disk_mib - dispatch.used_materialization_disk_mib + workspace_materialization.reserved_disk_mib, 0)
-       AND workspace_candidate.requested_execution_slots <= GREATEST(dispatch.available_execution_slots - dispatch.used_slots - dispatch.used_materialization_slots + workspace_materialization.reserved_execution_slots, 0)
+      JOIN workspace_mount
+        ON workspace_mount.org_id = sqlc.arg(org_id)
+       AND workspace_mount.project_id = workspace_candidate.project_id
+       AND workspace_mount.environment_id = workspace_candidate.environment_id
+       AND workspace_mount.workspace_id = workspace_candidate.workspace_id
+     WHERE workspace_candidate.requested_milli_cpu <= GREATEST(dispatch.available_milli_cpu - dispatch.used_milli_cpu - dispatch.used_runtime_instance_milli_cpu + workspace_mount.reserved_cpu_millis, 0)
+       AND workspace_candidate.requested_memory_mib <= GREATEST(dispatch.available_memory_mib - dispatch.used_memory_mib - dispatch.used_runtime_instance_memory_mib + workspace_mount.reserved_memory_mib, 0)
+       AND workspace_candidate.requested_disk_mib <= GREATEST(dispatch.available_disk_mib - dispatch.used_disk_mib - dispatch.used_runtime_instance_disk_mib + workspace_mount.reserved_disk_mib, 0)
+       AND workspace_candidate.requested_execution_slots <= GREATEST(dispatch.available_execution_slots - dispatch.used_slots - dispatch.used_runtime_instance_slots + workspace_mount.reserved_execution_slots, 0)
        AND NOT EXISTS (
                SELECT 1
                  FROM workspace_leases
-            WHERE workspace_leases.org_id = workspace_materialization.org_id
-              AND workspace_leases.workspace_id = workspace_materialization.workspace_id
+            WHERE workspace_leases.org_id = workspace_mount.org_id
+              AND workspace_leases.workspace_id = workspace_mount.workspace_id
               AND workspace_leases.lease_kind = 'write'
               AND workspace_leases.state IN ('active', 'releasing')
        )
@@ -1316,7 +1343,8 @@ leaseable_capacity AS (
 ),
 restore_runtime_checkpoint AS (
     SELECT runtime_checkpoints.id,
-           runtime_checkpoints.run_id
+           runtime_checkpoints.run_id,
+           run_waits.id AS run_wait_id
       FROM leaseable_capacity
       JOIN workspace_candidate ON workspace_candidate.run_id = leaseable_capacity.id
       JOIN runtime_checkpoints
@@ -1326,38 +1354,46 @@ restore_runtime_checkpoint AS (
        AND runtime_checkpoints.base_workspace_version_id = workspace_candidate.workspace_base_version_id
        AND runtime_checkpoints.state = 'ready'
        AND (runtime_checkpoints.expires_at IS NULL OR runtime_checkpoints.expires_at > now())
+      JOIN run_waits
+        ON run_waits.org_id = sqlc.arg(org_id)
+       AND run_waits.project_id = leaseable_capacity.project_id
+       AND run_waits.environment_id = leaseable_capacity.environment_id
+       AND run_waits.run_id = leaseable_capacity.id
+       AND run_waits.runtime_checkpoint_id = runtime_checkpoints.id
+       AND run_waits.state = 'resuming'
 ),
-fenced_workspace_materialization AS (
-    UPDATE workspace_materializations
-       SET fencing_generation = workspace_materializations.fencing_generation + 1,
+fenced_workspace_mount AS (
+    UPDATE workspace_mounts
+       SET fencing_generation = workspace_mounts.fencing_generation + 1,
            updated_at = now()
-      FROM workspace_materialization
+      FROM workspace_mount
       JOIN workspace_candidate
-        ON workspace_candidate.project_id = workspace_materialization.project_id
-       AND workspace_candidate.environment_id = workspace_materialization.environment_id
-       AND workspace_candidate.workspace_id = workspace_materialization.workspace_id
+        ON workspace_candidate.project_id = workspace_mount.project_id
+       AND workspace_candidate.environment_id = workspace_mount.environment_id
+       AND workspace_candidate.workspace_id = workspace_mount.workspace_id
       JOIN leaseable_capacity
         ON leaseable_capacity.id = workspace_candidate.run_id
-     WHERE workspace_materializations.org_id = workspace_materialization.org_id
-       AND workspace_materializations.project_id = workspace_materialization.project_id
-       AND workspace_materializations.environment_id = workspace_materialization.environment_id
-       AND workspace_materializations.workspace_id = workspace_materialization.workspace_id
-       AND workspace_materializations.id = workspace_materialization.id
-       AND workspace_materializations.fencing_generation = workspace_materialization.fencing_generation
+     WHERE workspace_mounts.org_id = workspace_mount.org_id
+       AND workspace_mounts.project_id = workspace_mount.project_id
+       AND workspace_mounts.environment_id = workspace_mount.environment_id
+       AND workspace_mounts.workspace_id = workspace_mount.workspace_id
+       AND workspace_mounts.id = workspace_mount.id
+       AND workspace_mounts.fencing_generation = workspace_mount.fencing_generation
        AND NOT EXISTS (
            SELECT 1
              FROM workspace_leases
-            WHERE workspace_leases.org_id = workspace_materialization.org_id
-              AND workspace_leases.workspace_id = workspace_materialization.workspace_id
+            WHERE workspace_leases.org_id = workspace_mount.org_id
+              AND workspace_leases.workspace_id = workspace_mount.workspace_id
               AND workspace_leases.lease_kind = 'write'
               AND workspace_leases.state IN ('active', 'releasing')
        )
-    RETURNING workspace_materializations.id,
-              workspace_materializations.org_id,
-              workspace_materializations.project_id,
-              workspace_materializations.environment_id,
-              workspace_materializations.workspace_id,
-              workspace_materializations.fencing_generation
+    RETURNING workspace_mounts.id,
+              workspace_mounts.org_id,
+              workspace_mounts.project_id,
+              workspace_mounts.environment_id,
+              workspace_mounts.workspace_id,
+              workspace_mounts.fencing_generation,
+              workspace_mounts.runtime_instance_id
 ),
 workspace_write_lease AS (
     INSERT INTO workspace_leases (
@@ -1365,7 +1401,7 @@ workspace_write_lease AS (
         project_id,
         environment_id,
         workspace_id,
-        materialization_id,
+        workspace_mount_id,
         lease_kind,
         state,
         owner_run_id,
@@ -1380,25 +1416,25 @@ workspace_write_lease AS (
            workspace_candidate.project_id,
            workspace_candidate.environment_id,
            workspace_candidate.workspace_id,
-           fenced_workspace_materialization.id,
+           fenced_workspace_mount.id,
            'write',
            'active',
            workspace_candidate.run_id,
            workspace_candidate.workspace_base_version_id,
            workspace_candidate.workspace_base_version_id,
-           fenced_workspace_materialization.fencing_generation,
+           fenced_workspace_mount.fencing_generation,
            uuidv7()::text,
            uuidv7()::text,
            sqlc.arg(lease_expires_at)
      FROM leaseable_capacity
      JOIN workspace_candidate ON workspace_candidate.run_id = leaseable_capacity.id
-     JOIN fenced_workspace_materialization ON fenced_workspace_materialization.workspace_id = workspace_candidate.workspace_id
+     JOIN fenced_workspace_mount ON fenced_workspace_mount.workspace_id = workspace_candidate.workspace_id
      WHERE (
            leaseable_capacity.latest_runtime_checkpoint_id IS NULL
            OR EXISTS (SELECT 1 FROM restore_runtime_checkpoint WHERE restore_runtime_checkpoint.run_id = leaseable_capacity.id)
        )
     ON CONFLICT DO NOTHING
-    RETURNING id, workspace_id, materialization_id, owner_run_id, fencing_token
+    RETURNING id, workspace_id, workspace_mount_id, owner_run_id, fencing_token, acquired_fencing_generation
 ),
 released_concurrency_slot_without_workspace AS (
     UPDATE run_queue_concurrency_leases
@@ -1411,38 +1447,111 @@ released_concurrency_slot_without_workspace AS (
 leaseable_workspace AS (
     SELECT leaseable_capacity.*,
            workspace_write_lease.id AS workspace_lease_id,
-           workspace_write_lease.materialization_id AS workspace_materialization_id,
+           workspace_write_lease.workspace_mount_id AS workspace_mount_id,
+           workspace_write_lease.acquired_fencing_generation AS workspace_mount_fencing_generation,
            workspace_write_lease.fencing_token AS workspace_fencing_token,
+           workspace_candidate.deployment_sandbox_id,
+           workspace_candidate.image_artifact_format AS sandbox_image_artifact_format,
+           workspace_candidate.sandbox_image_artifact_digest,
+           workspace_candidate.sandbox_image_artifact_size_bytes,
+           workspace_candidate.sandbox_image_artifact_media_type,
+           workspace_candidate.image_digest AS sandbox_image_digest,
+           workspace_candidate.image_format AS sandbox_image_format,
+           workspace_candidate.rootfs_digest AS sandbox_rootfs_digest,
+           workspace_candidate.deployment_sandbox_runtime_abi,
+           workspace_candidate.guestd_abi,
+           workspace_candidate.adapter_abi,
            workspace_candidate.workspace_base_version_id,
            workspace_candidate.workspace_mount_path,
            workspace_candidate.workspace_artifact_digest,
            workspace_candidate.workspace_artifact_size_bytes,
            workspace_candidate.workspace_artifact_media_type,
            workspace_candidate.workspace_artifact_encoding,
-           workspace_candidate.workspace_artifact_entry_count
-      FROM leaseable_capacity
+           workspace_candidate.workspace_artifact_entry_count,
+           COALESCE(runtime_instance_substrate_artifact.id, runtime_substrate_candidate.id) AS runtime_substrate_artifact_id,
+           COALESCE(runtime_instance_substrate_artifact.substrate_digest, runtime_substrate_candidate.substrate_digest) AS runtime_substrate_digest,
+           COALESCE(runtime_instance_substrate_artifact.substrate_format, runtime_substrate_candidate.substrate_format) AS runtime_substrate_format,
+           COALESCE(runtime_instance_substrate_artifact.builder_abi, runtime_substrate_candidate.builder_abi) AS runtime_substrate_builder_abi,
+           COALESCE(runtime_instance_substrate_artifact.layout_abi, runtime_substrate_candidate.layout_abi) AS runtime_substrate_layout_abi,
+           COALESCE(runtime_instance_substrate_artifact.substrate_size_bytes, runtime_substrate_candidate.substrate_size_bytes) AS runtime_substrate_size_bytes,
+           COALESCE(runtime_instance_substrate_artifact.artifact_digest, runtime_substrate_candidate.artifact_digest) AS runtime_substrate_artifact_digest,
+           COALESCE(runtime_instance_substrate_artifact.artifact_size_bytes, runtime_substrate_candidate.artifact_size_bytes) AS runtime_substrate_artifact_size_bytes,
+           COALESCE(runtime_instance_substrate_artifact.artifact_media_type, runtime_substrate_candidate.artifact_media_type) AS runtime_substrate_artifact_media_type
+     FROM leaseable_capacity
      LEFT JOIN workspace_candidate ON workspace_candidate.run_id = leaseable_capacity.id
-     LEFT JOIN workspace_write_lease ON workspace_write_lease.owner_run_id = leaseable_capacity.id
+     JOIN workspace_write_lease ON workspace_write_lease.owner_run_id = leaseable_capacity.id
                                   AND workspace_write_lease.workspace_id = workspace_candidate.workspace_id
+     JOIN fenced_workspace_mount ON fenced_workspace_mount.id = workspace_write_lease.workspace_mount_id
+     LEFT JOIN runtime_instances AS lease_runtime_instance
+       ON lease_runtime_instance.org_id = workspace_candidate.org_id
+      AND lease_runtime_instance.project_id = workspace_candidate.project_id
+      AND lease_runtime_instance.environment_id = workspace_candidate.environment_id
+      AND lease_runtime_instance.id = fenced_workspace_mount.runtime_instance_id
+     LEFT JOIN LATERAL (
+        SELECT runtime_substrate_artifacts.id,
+               runtime_substrate_artifacts.substrate_digest,
+               runtime_substrate_artifacts.substrate_format,
+               runtime_substrate_artifacts.builder_abi,
+               runtime_substrate_artifacts.layout_abi,
+               runtime_substrate_artifacts.substrate_size_bytes,
+               artifacts.digest AS artifact_digest,
+               artifacts.size_bytes AS artifact_size_bytes,
+               artifacts.media_type AS artifact_media_type
+          FROM runtime_substrate_artifacts
+          JOIN artifacts
+            ON artifacts.org_id = runtime_substrate_artifacts.org_id
+           AND artifacts.project_id = runtime_substrate_artifacts.project_id
+           AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
+           AND artifacts.id = runtime_substrate_artifacts.artifact_id
+         WHERE runtime_substrate_artifacts.org_id = workspace_candidate.org_id
+           AND runtime_substrate_artifacts.project_id = workspace_candidate.project_id
+           AND runtime_substrate_artifacts.environment_id = workspace_candidate.environment_id
+           AND runtime_substrate_artifacts.id = lease_runtime_instance.runtime_substrate_artifact_id
+           AND runtime_substrate_artifacts.retired_at IS NULL
+         LIMIT 1
+     ) AS runtime_instance_substrate_artifact ON true
+     LEFT JOIN LATERAL (
+        SELECT runtime_substrate_artifacts.id,
+               runtime_substrate_artifacts.substrate_digest,
+               runtime_substrate_artifacts.substrate_format,
+               runtime_substrate_artifacts.builder_abi,
+               runtime_substrate_artifacts.layout_abi,
+               runtime_substrate_artifacts.substrate_size_bytes,
+               artifacts.digest AS artifact_digest,
+               artifacts.size_bytes AS artifact_size_bytes,
+               artifacts.media_type AS artifact_media_type
+          FROM runtime_substrate_artifacts
+          JOIN artifacts
+            ON artifacts.org_id = runtime_substrate_artifacts.org_id
+           AND artifacts.project_id = runtime_substrate_artifacts.project_id
+           AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
+           AND artifacts.id = runtime_substrate_artifacts.artifact_id
+         WHERE runtime_substrate_artifacts.org_id = workspace_candidate.org_id
+           AND runtime_substrate_artifacts.project_id = workspace_candidate.project_id
+           AND runtime_substrate_artifacts.environment_id = workspace_candidate.environment_id
+           AND runtime_substrate_artifacts.deployment_sandbox_id = workspace_candidate.deployment_sandbox_id
+           AND runtime_substrate_artifacts.retired_at IS NULL
+         ORDER BY runtime_substrate_artifacts.last_referenced_at DESC NULLS LAST,
+                  runtime_substrate_artifacts.created_at DESC
+         LIMIT 1
+     ) AS runtime_substrate_candidate ON true
      WHERE workspace_write_lease.id IS NOT NULL
        AND (
            leaseable_capacity.latest_runtime_checkpoint_id IS NULL
            OR EXISTS (SELECT 1 FROM restore_runtime_checkpoint WHERE restore_runtime_checkpoint.run_id = leaseable_capacity.id)
        )
 ),
-marked_restore_runtime_checkpoint AS (
-    UPDATE runtime_checkpoints
-       SET state = 'restoring',
-           error_message = NULL,
-           invalidated_at = NULL
-      FROM leaseable_workspace
+selected_restore_runtime_checkpoint AS (
+    SELECT runtime_checkpoints.id,
+           runtime_checkpoints.run_id
+      FROM runtime_checkpoints
+      JOIN leaseable_workspace
+        ON leaseable_workspace.id = runtime_checkpoints.run_id
      WHERE runtime_checkpoints.org_id = sqlc.arg(org_id)
-       AND runtime_checkpoints.run_id = leaseable_workspace.id
        AND runtime_checkpoints.id = leaseable_workspace.latest_runtime_checkpoint_id
        AND runtime_checkpoints.base_workspace_version_id = leaseable_workspace.workspace_base_version_id
        AND runtime_checkpoints.state = 'ready'
        AND (runtime_checkpoints.expires_at IS NULL OR runtime_checkpoints.expires_at > now())
-    RETURNING runtime_checkpoints.id, runtime_checkpoints.run_id
 ),
 leased_run_lease AS (
     INSERT INTO run_leases (
@@ -1471,7 +1580,7 @@ leased_run_lease AS (
            candidate.current_attempt_id,
            sqlc.arg(worker_instance_id),
            dispatch.worker_group_id,
-           sqlc.arg(dispatch_message_id),
+           sqlc.narg(dispatch_message_id)::text,
            sqlc.arg(dispatch_lease_id),
            sqlc.arg(dispatch_attempt)::int,
            'leased',
@@ -1482,26 +1591,60 @@ leased_run_lease AS (
            sqlc.arg(run_lease_span_id),
            candidate.root_span_id,
            '00-' || candidate.trace_id || '-' || sqlc.arg(run_lease_span_id)::text || '-01',
-           (SELECT marked_restore_runtime_checkpoint.id FROM marked_restore_runtime_checkpoint WHERE marked_restore_runtime_checkpoint.run_id = candidate.id)
+           (SELECT selected_restore_runtime_checkpoint.id FROM selected_restore_runtime_checkpoint WHERE selected_restore_runtime_checkpoint.run_id = candidate.id)
       FROM leaseable_workspace AS candidate
       JOIN dispatch ON dispatch.run_id = candidate.id
      WHERE candidate.latest_runtime_checkpoint_id IS NULL
-        OR EXISTS (SELECT 1 FROM marked_restore_runtime_checkpoint WHERE marked_restore_runtime_checkpoint.run_id = candidate.id)
+        OR EXISTS (SELECT 1 FROM selected_restore_runtime_checkpoint WHERE selected_restore_runtime_checkpoint.run_id = candidate.id)
     RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, attempt_id, lease_expires_at, worker_protocol_version, trace_id, span_id, traceparent, restore_runtime_checkpoint_id
+),
+runtime_checkpoint_restore AS (
+    INSERT INTO runtime_checkpoint_restores (
+        id,
+        org_id,
+        project_id,
+        environment_id,
+        run_id,
+        runtime_checkpoint_id,
+        run_wait_id,
+        run_lease_id,
+        worker_instance_id,
+        status,
+        started_at,
+        created_at,
+        updated_at
+    )
+    SELECT uuidv7(),
+           sqlc.arg(org_id),
+           leaseable_workspace.project_id,
+           leaseable_workspace.environment_id,
+           leaseable_workspace.id,
+           selected_restore_runtime_checkpoint.id,
+           restore_runtime_checkpoint.run_wait_id,
+           leased_run_lease.id,
+           sqlc.arg(worker_instance_id),
+           'restoring',
+           now(),
+           now(),
+           now()
+      FROM leased_run_lease
+      JOIN leaseable_workspace ON true
+      JOIN selected_restore_runtime_checkpoint
+        ON selected_restore_runtime_checkpoint.run_id = leaseable_workspace.id
+       AND selected_restore_runtime_checkpoint.id = leased_run_lease.restore_runtime_checkpoint_id
+      JOIN restore_runtime_checkpoint
+        ON restore_runtime_checkpoint.run_id = leaseable_workspace.id
+       AND restore_runtime_checkpoint.id = selected_restore_runtime_checkpoint.id
+     WHERE leased_run_lease.restore_runtime_checkpoint_id IS NOT NULL
+    ON CONFLICT DO NOTHING
+    RETURNING id
 ),
 -- Roll back any scheduler/workspace claims if checkpoint restore eligibility
 -- disappears after the queue slot and write lease have been claimed.
-restored_unleased_runtime_checkpoint AS (
-    UPDATE runtime_checkpoints
-       SET state = 'ready',
-           error_message = NULL,
-           invalidated_at = NULL
-      FROM marked_restore_runtime_checkpoint
-     WHERE runtime_checkpoints.org_id = sqlc.arg(org_id)
-       AND runtime_checkpoints.id = marked_restore_runtime_checkpoint.id
-       AND runtime_checkpoints.state = 'restoring'
-       AND NOT EXISTS (SELECT 1 FROM leased_run_lease)
-    RETURNING runtime_checkpoints.id
+unleased_runtime_checkpoint_restore AS (
+    SELECT selected_restore_runtime_checkpoint.id
+      FROM selected_restore_runtime_checkpoint
+     WHERE NOT EXISTS (SELECT 1 FROM leased_run_lease)
 ),
 released_workspace_lease_without_run_lease AS (
     UPDATE workspace_leases
@@ -1527,7 +1670,7 @@ released_concurrency_slot_without_run_lease AS (
 ),
 lease_cleanup AS (
     SELECT
-        (SELECT count(*) FROM restored_unleased_runtime_checkpoint) AS restored_unleased_runtime_checkpoints,
+        (SELECT count(*) FROM unleased_runtime_checkpoint_restore) AS unleased_runtime_checkpoint_restores,
         (SELECT count(*) FROM released_workspace_lease_without_run_lease) AS released_workspace_leases_without_run_lease,
         (SELECT count(*) FROM released_concurrency_slot_without_run_lease) AS released_concurrency_slots_without_run_lease
 ),
@@ -1540,12 +1683,46 @@ updated AS (
        SET status = 'running',
            execution_status = 'leased',
            current_run_lease_id = (SELECT id FROM leased_run_lease),
-           workspace_materialization_id = (SELECT materialization_id FROM workspace_write_lease),
+           workspace_mount_id = (SELECT workspace_mount_id FROM workspace_write_lease),
            state_version = state_version + 1,
            updated_at = now()
      WHERE id = (SELECT id FROM leaseable_workspace)
       AND EXISTS (SELECT 1 FROM leased_run_lease)
     RETURNING *
+),
+activated_runtime_instance AS (
+    UPDATE runtime_instances
+       SET state = 'running',
+           runtime_epoch = runtime_instances.runtime_epoch + 1,
+           reserved_cpu_millis = GREATEST(runtime_instances.reserved_cpu_millis, run_runtime_requirements.requested_milli_cpu),
+           reserved_memory_mib = GREATEST(runtime_instances.reserved_memory_mib, run_runtime_requirements.requested_memory_mib),
+           reserved_disk_mib = GREATEST(runtime_instances.reserved_disk_mib, run_runtime_requirements.requested_disk_mib),
+           reserved_execution_slots = GREATEST(runtime_instances.reserved_execution_slots, run_runtime_requirements.requested_execution_slots),
+           owner_run_id = updated.id,
+           owner_run_lease_id = leased_run_lease.id,
+           owner_run_wait_id = NULL,
+           owner_workspace_id = workspace_mounts.workspace_id,
+           owner_workspace_version_id = workspace_mounts.base_version_id,
+           owner_run_state_version = updated.state_version,
+           running_at = COALESCE(runtime_instances.running_at, now()),
+           last_heartbeat_at = now(),
+           updated_at = now()
+      FROM updated
+      JOIN leased_run_lease ON true
+      JOIN workspace_mounts
+        ON workspace_mounts.org_id = updated.org_id
+       AND workspace_mounts.project_id = updated.project_id
+       AND workspace_mounts.environment_id = updated.environment_id
+       AND workspace_mounts.id = updated.workspace_mount_id
+      JOIN run_runtime_requirements
+        ON run_runtime_requirements.org_id = updated.org_id
+       AND run_runtime_requirements.run_id = updated.id
+     WHERE runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.id = workspace_mounts.runtime_instance_id
+       AND runtime_instances.worker_instance_id = leased_run_lease.worker_instance_id
+       AND runtime_instances.workspace_mount_id = workspace_mounts.id
+       AND runtime_instances.state IN ('binding', 'running', 'waiting_hot')
+    RETURNING runtime_instances.id
 ),
 updated_attempt AS (
     UPDATE run_attempts
@@ -1553,8 +1730,9 @@ updated_attempt AS (
            updated_at = now()
       FROM updated
      WHERE run_attempts.org_id = updated.org_id
-       AND run_attempts.run_id = updated.id
-       AND run_attempts.id = updated.current_attempt_id
+      AND run_attempts.run_id = updated.id
+      AND run_attempts.id = updated.current_attempt_id
+      AND EXISTS (SELECT 1 FROM activated_runtime_instance)
     RETURNING run_attempts.id
 ),
 leased_snapshot AS (
@@ -1641,15 +1819,36 @@ SELECT
     active_time.active_duration_ms AS active_duration_ms,
     leaseable_workspace.workspace_id AS workspace_id,
     leaseable_workspace.workspace_lease_id AS workspace_lease_id,
-    leaseable_workspace.workspace_materialization_id AS workspace_materialization_id,
+    leaseable_workspace.workspace_mount_id AS workspace_mount_id,
+    leaseable_workspace.workspace_mount_fencing_generation AS workspace_mount_fencing_generation,
     leaseable_workspace.workspace_fencing_token AS workspace_fencing_token,
+    leaseable_workspace.deployment_sandbox_id AS workspace_deployment_sandbox_id,
+    leaseable_workspace.sandbox_image_artifact_format AS workspace_sandbox_image_artifact_format,
+    leaseable_workspace.sandbox_image_artifact_digest AS workspace_sandbox_image_artifact_digest,
+    leaseable_workspace.sandbox_image_artifact_size_bytes AS workspace_sandbox_image_artifact_size_bytes,
+    leaseable_workspace.sandbox_image_artifact_media_type AS workspace_sandbox_image_artifact_media_type,
+    leaseable_workspace.sandbox_image_digest AS workspace_sandbox_image_digest,
+    leaseable_workspace.sandbox_image_format AS workspace_sandbox_image_format,
+    leaseable_workspace.sandbox_rootfs_digest AS workspace_sandbox_rootfs_digest,
+    leaseable_workspace.deployment_sandbox_runtime_abi AS workspace_runtime_abi,
+    leaseable_workspace.guestd_abi AS workspace_guestd_abi,
+    leaseable_workspace.adapter_abi AS workspace_adapter_abi,
     leaseable_workspace.workspace_base_version_id AS workspace_base_version_id,
     leaseable_workspace.workspace_mount_path AS workspace_mount_path,
     leaseable_workspace.workspace_artifact_digest AS workspace_artifact_digest,
     leaseable_workspace.workspace_artifact_size_bytes AS workspace_artifact_size_bytes,
     leaseable_workspace.workspace_artifact_media_type AS workspace_artifact_media_type,
     leaseable_workspace.workspace_artifact_encoding AS workspace_artifact_encoding,
-    leaseable_workspace.workspace_artifact_entry_count AS workspace_artifact_entry_count
+    leaseable_workspace.workspace_artifact_entry_count AS workspace_artifact_entry_count,
+    leaseable_workspace.runtime_substrate_artifact_id AS workspace_runtime_substrate_artifact_id,
+    COALESCE(leaseable_workspace.runtime_substrate_digest, '') AS workspace_runtime_substrate_digest,
+    COALESCE(leaseable_workspace.runtime_substrate_format, '') AS workspace_runtime_substrate_format,
+    COALESCE(leaseable_workspace.runtime_substrate_builder_abi, '') AS workspace_runtime_substrate_builder_abi,
+    COALESCE(leaseable_workspace.runtime_substrate_layout_abi, '') AS workspace_runtime_substrate_layout_abi,
+    COALESCE(leaseable_workspace.runtime_substrate_size_bytes, 0) AS workspace_runtime_substrate_size_bytes,
+    COALESCE(leaseable_workspace.runtime_substrate_artifact_digest, '') AS workspace_runtime_substrate_artifact_digest,
+    COALESCE(leaseable_workspace.runtime_substrate_artifact_size_bytes, 0) AS workspace_runtime_substrate_artifact_size_bytes,
+    COALESCE(leaseable_workspace.runtime_substrate_artifact_media_type, '') AS workspace_runtime_substrate_artifact_media_type
 FROM updated
 JOIN lease_cleanup ON true
 JOIN leased_run_lease ON true
@@ -2344,7 +2543,86 @@ released_workspace_lease AS (
        AND workspace_leases.owner_run_id = released.id
        AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.released_at IS NULL
-    RETURNING workspace_leases.id
+    RETURNING workspace_leases.id,
+              workspace_leases.workspace_id,
+              workspace_leases.workspace_mount_id
+),
+waiting_runtime_instance AS (
+    UPDATE runtime_instances
+       SET state = 'waiting_hot',
+           owner_run_id = NULL,
+           owner_run_lease_id = NULL,
+           owner_run_wait_id = NULL,
+           owner_run_state_version = NULL,
+           waiting_at = now(),
+           updated_at = now()
+      FROM released
+      JOIN workspace_mounts
+        ON workspace_mounts.org_id = released.org_id
+       AND workspace_mounts.project_id = released.project_id
+       AND workspace_mounts.environment_id = released.environment_id
+       AND workspace_mounts.id = released.workspace_mount_id
+      JOIN workspaces
+        ON workspaces.org_id = workspace_mounts.org_id
+       AND workspaces.project_id = workspace_mounts.project_id
+       AND workspaces.environment_id = workspace_mounts.environment_id
+       AND workspaces.id = workspace_mounts.workspace_id
+      JOIN released_workspace_lease
+        ON released_workspace_lease.workspace_id = workspace_mounts.workspace_id
+       AND released_workspace_lease.workspace_mount_id = workspace_mounts.id
+     WHERE released.status = 'succeeded'
+       AND runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.id = workspace_mounts.runtime_instance_id
+       AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND runtime_instances.workspace_mount_id = workspace_mounts.id
+       AND runtime_instances.state = 'running'
+       AND workspace_mounts.state = 'mounted'
+       AND workspace_mounts.dirty_generation = 0
+       AND workspaces.state = 'active'
+       AND workspaces.deleted_at IS NULL
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_leases
+            WHERE workspace_leases.org_id = workspace_mounts.org_id
+              AND workspace_leases.project_id = workspace_mounts.project_id
+              AND workspace_leases.environment_id = workspace_mounts.environment_id
+              AND workspace_leases.workspace_id = workspace_mounts.workspace_id
+              AND workspace_leases.workspace_mount_id = workspace_mounts.id
+              AND workspace_leases.id <> released_workspace_lease.id
+              AND workspace_leases.state IN ('active', 'releasing')
+              AND workspace_leases.expires_at > now()
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_execs
+            WHERE workspace_execs.org_id = workspace_mounts.org_id
+              AND workspace_execs.project_id = workspace_mounts.project_id
+              AND workspace_execs.environment_id = workspace_mounts.environment_id
+              AND workspace_execs.workspace_id = workspace_mounts.workspace_id
+              AND (workspace_execs.workspace_mount_id = workspace_mounts.id OR workspace_execs.workspace_mount_id IS NULL)
+              AND workspace_execs.state IN ('queued', 'materializing', 'running')
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_pty_sessions
+            WHERE workspace_pty_sessions.org_id = workspace_mounts.org_id
+              AND workspace_pty_sessions.project_id = workspace_mounts.project_id
+              AND workspace_pty_sessions.environment_id = workspace_mounts.environment_id
+              AND workspace_pty_sessions.workspace_id = workspace_mounts.workspace_id
+              AND (workspace_pty_sessions.workspace_mount_id = workspace_mounts.id OR workspace_pty_sessions.workspace_mount_id IS NULL)
+              AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_ports
+            WHERE workspace_ports.org_id = workspace_mounts.org_id
+              AND workspace_ports.project_id = workspace_mounts.project_id
+              AND workspace_ports.environment_id = workspace_mounts.environment_id
+              AND workspace_ports.workspace_id = workspace_mounts.workspace_id
+              AND workspace_ports.workspace_mount_id = workspace_mounts.id
+              AND workspace_ports.state IN ('exposing', 'open', 'closing')
+       )
+    RETURNING runtime_instances.id
 ),
 released_run_lease AS (
     UPDATE run_leases
@@ -2386,8 +2664,20 @@ cancelled_run_waits AS (
       FROM released
      WHERE run_waits.org_id = sqlc.arg(org_id)
        AND run_waits.run_id = released.id
-       AND run_waits.state IN ('parking', 'waiting')
-    RETURNING run_waits.id
+       AND run_waits.state IN ('live_waiting', 'checkpointing', 'checkpointed_waiting', 'resolved_live')
+    RETURNING run_waits.org_id, run_waits.run_id, run_waits.id
+),
+acknowledged_cancelled_worker_commands AS (
+    UPDATE worker_commands
+       SET acknowledged_at = COALESCE(worker_commands.acknowledged_at, now()),
+           delivery_locked_until = NULL,
+           updated_at = now()
+      FROM cancelled_run_waits
+     WHERE worker_commands.org_id = cancelled_run_waits.org_id
+       AND worker_commands.run_id = cancelled_run_waits.run_id
+       AND worker_commands.run_wait_id = cancelled_run_waits.id
+       AND worker_commands.acknowledged_at IS NULL
+    RETURNING worker_commands.id
 ),
 invalidated_runtime_checkpoints AS (
     UPDATE runtime_checkpoints
@@ -2397,36 +2687,47 @@ invalidated_runtime_checkpoints AS (
       FROM released
      WHERE runtime_checkpoints.org_id = sqlc.arg(org_id)
        AND runtime_checkpoints.run_id = released.id
-       AND runtime_checkpoints.state IN ('creating', 'restoring')
+       AND runtime_checkpoints.state = 'creating'
     RETURNING runtime_checkpoints.run_id, runtime_checkpoints.id
 ),
 completed_restore_runtime_checkpoint AS (
-    UPDATE runtime_checkpoints
-       SET state = 'ready',
-           error_message = NULL,
-           invalidated_at = NULL
+    SELECT released_run_lease.restore_runtime_checkpoint_id AS id
       FROM released
       JOIN released_run_lease ON true
-     WHERE runtime_checkpoints.org_id = sqlc.arg(org_id)
-       AND runtime_checkpoints.run_id = released.id
-       AND runtime_checkpoints.id = released_run_lease.restore_runtime_checkpoint_id
-       AND runtime_checkpoints.state = 'restoring'
+     WHERE released_run_lease.restore_runtime_checkpoint_id IS NOT NULL
        AND released.error_message IS NULL
-    RETURNING runtime_checkpoints.id
 ),
-failed_restore_runtime_checkpoint AS (
-    UPDATE runtime_checkpoints
-       SET state = 'invalid',
-           error_message = released.error_message,
-           invalidated_at = now()
+completed_runtime_checkpoint_restore AS (
+    UPDATE runtime_checkpoint_restores
+       SET status = 'restored',
+           error_message = NULL,
+           finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
+           updated_at = now()
       FROM released
       JOIN released_run_lease ON true
-     WHERE runtime_checkpoints.org_id = sqlc.arg(org_id)
-       AND runtime_checkpoints.run_id = released.id
-       AND runtime_checkpoints.id = released_run_lease.restore_runtime_checkpoint_id
-       AND runtime_checkpoints.state = 'restoring'
+     WHERE runtime_checkpoint_restores.org_id = sqlc.arg(org_id)
+       AND runtime_checkpoint_restores.run_id = released.id
+       AND runtime_checkpoint_restores.run_lease_id = released_run_lease.id
+       AND runtime_checkpoint_restores.runtime_checkpoint_id = released_run_lease.restore_runtime_checkpoint_id
+       AND runtime_checkpoint_restores.status = 'restoring'
+       AND released.error_message IS NULL
+    RETURNING runtime_checkpoint_restores.id
+),
+failed_runtime_checkpoint_restore AS (
+    UPDATE runtime_checkpoint_restores
+       SET status = 'failed',
+           error_message = released.error_message,
+           finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
+           updated_at = now()
+      FROM released
+      JOIN released_run_lease ON true
+     WHERE runtime_checkpoint_restores.org_id = sqlc.arg(org_id)
+       AND runtime_checkpoint_restores.run_id = released.id
+       AND runtime_checkpoint_restores.run_lease_id = released_run_lease.id
+       AND runtime_checkpoint_restores.runtime_checkpoint_id = released_run_lease.restore_runtime_checkpoint_id
+       AND runtime_checkpoint_restores.status = 'restoring'
        AND released.error_message IS NOT NULL
-    RETURNING runtime_checkpoints.run_id, runtime_checkpoints.id
+    RETURNING runtime_checkpoint_restores.id
 ),
 released_attempt AS (
     UPDATE run_attempts
@@ -2710,6 +3011,8 @@ cleanup AS (
         (SELECT count(*) FROM invalidated_runtime_checkpoints) AS invalidated_runtime_checkpoints,
         (SELECT count(*) FROM released_concurrency_slot) AS released_concurrency_slots,
         (SELECT count(*) FROM completed_restore_runtime_checkpoint) AS completed_restore_runtime_checkpoints,
+        (SELECT count(*) FROM completed_runtime_checkpoint_restore) AS completed_runtime_checkpoint_restores,
+        (SELECT count(*) FROM failed_runtime_checkpoint_restore) AS failed_runtime_checkpoint_restores,
         (SELECT count(*) FROM events WHERE kind <> 'run.retry_scheduled') AS terminal_events,
         (SELECT count(*) FROM retry_decision) AS retry_decisions,
         (SELECT count(*) FROM events WHERE kind = 'run.retry_scheduled') AS retry_events,
@@ -2718,7 +3021,8 @@ cleanup AS (
         (SELECT count(*) FROM output_usage_event) AS output_usage_events,
         (SELECT count(*) FROM published_workspace_version) AS workspace_versions,
         (SELECT count(*) FROM advanced_workspace) AS advanced_workspaces,
-        (SELECT count(*) FROM released_workspace_lease) AS released_workspace_leases
+        (SELECT count(*) FROM released_workspace_lease) AS released_workspace_leases,
+        (SELECT count(*) FROM waiting_runtime_instance) AS waiting_runtime_instances
 ),
 idempotent_released AS (
     SELECT runs.*
@@ -2775,7 +3079,7 @@ SELECT released.*
   JOIN completed_queue_entry ON true
   JOIN released_snapshot ON true
  WHERE (SELECT terminal_events FROM cleanup) > 0
-   AND (SELECT cancelled_run_waits + invalidated_runtime_checkpoints + released_concurrency_slots + completed_restore_runtime_checkpoints + terminal_events + retry_decisions + retry_events + event_outboxes + active_time_usage_events + output_usage_events + workspace_versions + advanced_workspaces + released_workspace_leases FROM cleanup) >= 0
+   AND (SELECT cancelled_run_waits + invalidated_runtime_checkpoints + released_concurrency_slots + completed_restore_runtime_checkpoints + completed_runtime_checkpoint_restores + failed_runtime_checkpoint_restores + terminal_events + retry_decisions + retry_events + event_outboxes + active_time_usage_events + output_usage_events + workspace_versions + advanced_workspaces + released_workspace_leases + waiting_runtime_instances FROM cleanup) >= 0
 UNION ALL
 SELECT *
   FROM idempotent_released;

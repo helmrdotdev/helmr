@@ -304,10 +304,10 @@ func (q *Queries) EnsureRuntimeReleaseSelection(ctx context.Context, runtimeID s
 }
 
 const getWorkerInstanceQueueCapacity = `-- name: GetWorkerInstanceQueueCapacity :one
-SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu - active_materializations.used_milli_cpu, 0)::bigint AS available_milli_cpu,
-       GREATEST(worker_instances.available_memory_mib - active.used_memory_mib - active_materializations.used_memory_mib, 0)::bigint AS available_memory_mib,
-       GREATEST(worker_instances.available_disk_mib - active.used_disk_mib - active_materializations.used_disk_mib, 0)::bigint AS available_disk_mib,
-       GREATEST(worker_instances.available_execution_slots - active.used_slots - active_materializations.used_slots, 0)::int AS available_execution_slots
+SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu - active_runtime_instances.used_milli_cpu, 0)::bigint AS available_milli_cpu,
+       GREATEST(worker_instances.available_memory_mib - active.used_memory_mib - active_runtime_instances.used_memory_mib, 0)::bigint AS available_memory_mib,
+       GREATEST(worker_instances.available_disk_mib - active.used_disk_mib - active_runtime_instances.used_disk_mib, 0)::bigint AS available_disk_mib,
+       GREATEST(worker_instances.available_execution_slots - active.used_slots - active_runtime_instances.used_slots, 0)::int AS available_execution_slots
   FROM worker_instances
   LEFT JOIN LATERAL (
       SELECT COALESCE(sum(run_runtime_requirements.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
@@ -315,35 +315,27 @@ SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu - a
              COALESCE(sum(run_runtime_requirements.requested_disk_mib), 0)::bigint AS used_disk_mib,
              COALESCE(sum(run_runtime_requirements.requested_execution_slots), 0)::int AS used_slots
         FROM run_leases
+        JOIN runs ON runs.org_id = run_leases.org_id
+                 AND runs.id = run_leases.run_id
+                 AND runs.workspace_mount_id IS NULL
         JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_leases.org_id
                              AND run_runtime_requirements.run_id = run_leases.run_id
        WHERE run_leases.worker_instance_id = worker_instances.id
          AND run_leases.status IN ('leased', 'running')
   ) active ON true
   LEFT JOIN LATERAL (
-      SELECT COALESCE(sum(workspace_materializations.reserved_cpu_millis), 0)::bigint AS used_milli_cpu,
-             COALESCE(sum(workspace_materializations.reserved_memory_mib), 0)::bigint AS used_memory_mib,
-             COALESCE(sum(workspace_materializations.reserved_disk_mib), 0)::bigint AS used_disk_mib,
-             COALESCE(sum(workspace_materializations.reserved_execution_slots), 0)::int AS used_slots
-        FROM workspace_materializations
-       WHERE workspace_materializations.worker_instance_id = worker_instances.id
-         AND workspace_materializations.state IN ('materializing', 'restoring', 'running', 'pausing', 'paused', 'capturing', 'stopping')
+      SELECT COALESCE(sum(runtime_instances.reserved_cpu_millis), 0)::bigint AS used_milli_cpu,
+             COALESCE(sum(runtime_instances.reserved_memory_mib), 0)::bigint AS used_memory_mib,
+             COALESCE(sum(runtime_instances.reserved_disk_mib), 0)::bigint AS used_disk_mib,
+             COALESCE(sum(runtime_instances.reserved_execution_slots), 0)::int AS used_slots
+        FROM runtime_instances
+       WHERE runtime_instances.worker_instance_id = worker_instances.id
+         AND runtime_instances.state IN ('preparing', 'ready', 'binding', 'running', 'waiting_hot', 'checkpointing', 'stopping')
          AND (
-             workspace_materializations.state NOT IN ('materializing', 'restoring')
-             OR workspace_materializations.reservation_expires_at IS NULL
-             OR workspace_materializations.reservation_expires_at > now()
+             runtime_instances.expires_at IS NULL
+             OR runtime_instances.expires_at > now()
          )
-         AND NOT EXISTS (
-             SELECT 1
-               FROM runs
-               JOIN run_leases ON run_leases.org_id = runs.org_id
-                              AND run_leases.run_id = runs.id
-              WHERE runs.org_id = workspace_materializations.org_id
-                AND runs.workspace_materialization_id = workspace_materializations.id
-                AND run_leases.worker_instance_id = worker_instances.id
-                AND run_leases.status IN ('leased', 'running')
-         )
-  ) active_materializations ON true
+  ) active_runtime_instances ON true
  WHERE worker_instances.id = $1
    AND worker_instances.status = 'active'
 `
@@ -368,10 +360,10 @@ func (q *Queries) GetWorkerInstanceQueueCapacity(ctx context.Context, id pgtype.
 }
 
 const getWorkerInstanceRunDispatchCapacity = `-- name: GetWorkerInstanceRunDispatchCapacity :one
-SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu, 0)::bigint AS available_milli_cpu,
-       GREATEST(worker_instances.available_memory_mib - active.used_memory_mib, 0)::bigint AS available_memory_mib,
-       GREATEST(worker_instances.available_disk_mib - active.used_disk_mib, 0)::bigint AS available_disk_mib,
-       GREATEST(worker_instances.available_execution_slots - active.used_slots, 0)::int AS available_execution_slots
+SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu - active_runtime_instances.used_milli_cpu, 0)::bigint AS available_milli_cpu,
+       GREATEST(worker_instances.available_memory_mib - active.used_memory_mib - active_runtime_instances.used_memory_mib, 0)::bigint AS available_memory_mib,
+       GREATEST(worker_instances.available_disk_mib - active.used_disk_mib - active_runtime_instances.used_disk_mib, 0)::bigint AS available_disk_mib,
+       GREATEST(worker_instances.available_execution_slots - active.used_slots - active_runtime_instances.used_slots, 0)::int AS available_execution_slots
   FROM worker_instances
   LEFT JOIN LATERAL (
       SELECT COALESCE(sum(run_runtime_requirements.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
@@ -379,11 +371,27 @@ SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu, 0)
              COALESCE(sum(run_runtime_requirements.requested_disk_mib), 0)::bigint AS used_disk_mib,
              COALESCE(sum(run_runtime_requirements.requested_execution_slots), 0)::int AS used_slots
         FROM run_leases
+        JOIN runs ON runs.org_id = run_leases.org_id
+                 AND runs.id = run_leases.run_id
+                 AND runs.workspace_mount_id IS NULL
         JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_leases.org_id
                              AND run_runtime_requirements.run_id = run_leases.run_id
        WHERE run_leases.worker_instance_id = worker_instances.id
          AND run_leases.status IN ('leased', 'running')
   ) active ON true
+  LEFT JOIN LATERAL (
+      SELECT COALESCE(sum(runtime_instances.reserved_cpu_millis), 0)::bigint AS used_milli_cpu,
+             COALESCE(sum(runtime_instances.reserved_memory_mib), 0)::bigint AS used_memory_mib,
+             COALESCE(sum(runtime_instances.reserved_disk_mib), 0)::bigint AS used_disk_mib,
+             COALESCE(sum(runtime_instances.reserved_execution_slots), 0)::int AS used_slots
+        FROM runtime_instances
+       WHERE runtime_instances.worker_instance_id = worker_instances.id
+         AND runtime_instances.state IN ('preparing', 'ready', 'binding', 'running', 'waiting_hot', 'checkpointing', 'stopping')
+         AND (
+             runtime_instances.expires_at IS NULL
+             OR runtime_instances.expires_at > now()
+         )
+  ) active_runtime_instances ON true
  WHERE worker_instances.id = $1
    AND worker_instances.status = 'active'
 `
@@ -959,6 +967,7 @@ WITH target_run AS (
            priority,
            queue_timestamp,
            queued_expires_at,
+           latest_runtime_checkpoint_id,
            created_at
       FROM runs
      WHERE runs.org_id = $1
@@ -1043,6 +1052,30 @@ requirements AS (
     SELECT run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at FROM inserted_requirements
     LIMIT 1
 ),
+source_worker_restore_scope AS (
+    SELECT 1
+      FROM target_run
+      JOIN run_waits
+        ON run_waits.org_id = target_run.org_id
+       AND run_waits.project_id = target_run.project_id
+       AND run_waits.environment_id = target_run.environment_id
+       AND run_waits.run_id = target_run.id
+       AND run_waits.state = 'resuming'
+       AND run_waits.resuming_at >= now() - interval '8 seconds'
+      JOIN runtime_checkpoints
+        ON runtime_checkpoints.org_id = target_run.org_id
+       AND runtime_checkpoints.project_id = target_run.project_id
+       AND runtime_checkpoints.environment_id = target_run.environment_id
+       AND runtime_checkpoints.run_id = target_run.id
+       AND runtime_checkpoints.id = target_run.latest_runtime_checkpoint_id
+       AND runtime_checkpoints.id = run_waits.runtime_checkpoint_id
+       AND runtime_checkpoints.state = 'ready'
+       AND (runtime_checkpoints.expires_at IS NULL OR runtime_checkpoints.expires_at > now())
+      JOIN worker_instances AS source_worker
+        ON source_worker.id = runtime_checkpoints.source_worker_instance_id
+       AND source_worker.status = 'active'
+     LIMIT 1
+),
 dispatch AS (
     INSERT INTO run_queue_items (
         run_id,
@@ -1077,6 +1110,7 @@ dispatch AS (
       FROM target_run
       JOIN requirements ON requirements.org_id = target_run.org_id
                        AND requirements.run_id = target_run.id
+     WHERE NOT EXISTS (SELECT 1 FROM source_worker_restore_scope)
     ON CONFLICT (run_id) DO UPDATE
        SET status = 'queued',
            priority = excluded.priority,
@@ -1311,6 +1345,302 @@ func (q *Queries) RequeueRunQueueItem(ctx context.Context, arg RequeueRunQueueIt
 	return i, err
 }
 
+const reserveCheckpointRestoreRunQueueItemForWorker = `-- name: ReserveCheckpointRestoreRunQueueItemForWorker :one
+WITH worker_scope AS MATERIALIZED (
+    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.runtime_id, worker_instances.runtime_arch, worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest, worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.worker_version, worker_instances.protocol_version, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at
+      FROM worker_instances
+     WHERE worker_instances.id = $1
+       AND worker_instances.status = 'active'
+     FOR UPDATE OF worker_instances
+),
+candidate AS MATERIALIZED (
+    SELECT run_queue_items.run_id, run_queue_items.org_id, run_queue_items.status, run_queue_items.priority, run_queue_items.queue_name, run_queue_items.concurrency_key, run_queue_items.queue_timestamp, run_queue_items.queued_expires_at, run_queue_items.dispatch_message_id, run_queue_items.reserved_by_worker_instance_id, run_queue_items.reservation_expires_at, run_queue_items.dispatch_generation, run_queue_items.last_error, run_queue_items.enqueued_at, run_queue_items.updated_at, run_queue_items.finished_at
+      FROM worker_scope
+      JOIN run_queue_items ON true
+      JOIN runs
+        ON runs.org_id = run_queue_items.org_id
+       AND runs.id = run_queue_items.run_id
+      JOIN sessions
+        ON sessions.org_id = runs.org_id
+       AND sessions.project_id = runs.project_id
+       AND sessions.environment_id = runs.environment_id
+       AND sessions.id = runs.session_id
+       AND sessions.current_run_id = runs.id
+       AND sessions.status = 'open'
+      JOIN deployments
+        ON deployments.org_id = runs.org_id
+       AND deployments.id = runs.deployment_id
+       AND deployments.worker_protocol_version = worker_scope.protocol_version
+      JOIN run_runtime_requirements
+        ON run_runtime_requirements.org_id = runs.org_id
+       AND run_runtime_requirements.run_id = runs.id
+       AND run_runtime_requirements.worker_group_id = worker_scope.worker_group_id
+       AND run_runtime_requirements.runtime_id = worker_scope.runtime_id
+       AND run_runtime_requirements.runtime_arch = worker_scope.runtime_arch
+       AND run_runtime_requirements.runtime_abi = worker_scope.runtime_abi
+       AND run_runtime_requirements.kernel_digest = worker_scope.kernel_digest
+       AND run_runtime_requirements.initramfs_digest = worker_scope.initramfs_digest
+       AND run_runtime_requirements.rootfs_digest = worker_scope.rootfs_digest
+       AND run_runtime_requirements.cni_profile = worker_scope.cni_profile
+      JOIN LATERAL (
+          SELECT COALESCE(NULLIF(run_runtime_requirements.placement->>'region', ''), NULLIF(run_runtime_requirements.placement->>'Region', ''), '') AS placement_region,
+                 COALESCE(run_runtime_requirements.placement->'tags', run_runtime_requirements.placement->'Tags') AS placement_tags,
+                 COALESCE(NULLIF(run_runtime_requirements.placement->>'dedicated_key', ''), NULLIF(run_runtime_requirements.placement->>'DedicatedKey', ''), '') AS dedicated_key,
+                 COALESCE(NULLIF(run_runtime_requirements.placement->>'snapshot_key', ''), NULLIF(run_runtime_requirements.placement->>'SnapshotKey', ''), '') AS snapshot_key
+      ) placement ON true
+      JOIN run_waits
+        ON run_waits.org_id = runs.org_id
+       AND run_waits.project_id = runs.project_id
+       AND run_waits.environment_id = runs.environment_id
+       AND run_waits.run_id = runs.id
+       AND run_waits.state = 'resuming'
+       AND run_waits.resuming_at >= now() - interval '8 seconds'
+      JOIN runtime_checkpoints
+        ON runtime_checkpoints.org_id = runs.org_id
+       AND runtime_checkpoints.project_id = runs.project_id
+       AND runtime_checkpoints.environment_id = runs.environment_id
+       AND runtime_checkpoints.run_id = runs.id
+       AND runtime_checkpoints.id = runs.latest_runtime_checkpoint_id
+       AND runtime_checkpoints.id = run_waits.runtime_checkpoint_id
+       AND runtime_checkpoints.source_worker_instance_id = worker_scope.id
+       AND runtime_checkpoints.state = 'ready'
+       AND (runtime_checkpoints.expires_at IS NULL OR runtime_checkpoints.expires_at > now())
+       AND runtime_checkpoints.runtime_id = worker_scope.runtime_id
+       AND runtime_checkpoints.runtime_arch = worker_scope.runtime_arch
+       AND runtime_checkpoints.runtime_abi = worker_scope.runtime_abi
+       AND runtime_checkpoints.kernel_digest = worker_scope.kernel_digest
+       AND runtime_checkpoints.initramfs_digest = worker_scope.initramfs_digest
+       AND runtime_checkpoints.rootfs_digest = worker_scope.rootfs_digest
+       AND (runtime_checkpoints.runtime_vcpus IS NULL OR runtime_checkpoints.runtime_vcpus = ((run_runtime_requirements.requested_milli_cpu + 999) / 1000))
+       AND (runtime_checkpoints.runtime_memory_mib IS NULL OR runtime_checkpoints.runtime_memory_mib = run_runtime_requirements.requested_memory_mib)
+       AND (
+           runtime_checkpoints.runtime_scratch_disk_mib IS NULL
+           OR runtime_checkpoints.runtime_scratch_disk_mib = CASE
+               WHEN run_runtime_requirements.requested_disk_mib > 0 THEN run_runtime_requirements.requested_disk_mib
+               ELSE worker_scope.total_disk_mib
+           END
+       )
+       AND runtime_checkpoints.cni_profile = worker_scope.cni_profile
+     WHERE runs.status = 'queued'
+       AND runs.current_run_lease_id IS NULL
+       AND runs.queue_timestamp <= now()
+       AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+       AND (
+           placement.placement_region = ''
+           OR placement.placement_region = worker_scope.region
+       )
+       AND (
+           placement.placement_tags IS NULL
+           OR placement.placement_tags = 'null'::jsonb
+           OR (
+               jsonb_typeof(placement.placement_tags) = 'object'
+               AND worker_scope.labels @> placement.placement_tags
+           )
+       )
+       AND (placement.dedicated_key = '' OR worker_scope.labels->>'dedicated_key' = placement.dedicated_key)
+       AND (placement.snapshot_key = '' OR worker_scope.labels->>'snapshot_key' = placement.snapshot_key)
+       AND (
+           run_queue_items.status = 'queued'
+           OR (
+               run_queue_items.status = 'published'
+               AND run_queue_items.enqueued_at <= now() - interval '1 second'
+           )
+           OR (
+               run_queue_items.status = 'reserved'
+               AND run_queue_items.reservation_expires_at <= now()
+           )
+       )
+     ORDER BY runs.priority DESC,
+              runs.queue_timestamp ASC,
+              runs.id ASC
+     LIMIT 1
+     FOR UPDATE OF run_queue_items SKIP LOCKED
+),
+reserved AS (
+    UPDATE run_queue_items
+       SET status = 'reserved',
+           dispatch_message_id = 'restore-source:' || candidate.run_id::text || ':' || (candidate.dispatch_generation + 1)::text,
+           reserved_by_worker_instance_id = $1,
+           reservation_expires_at = $2,
+           queued_expires_at = NULL,
+           dispatch_generation = candidate.dispatch_generation + 1,
+           last_error = '',
+           updated_at = now(),
+           finished_at = NULL
+      FROM candidate
+     WHERE run_queue_items.org_id = candidate.org_id
+       AND run_queue_items.run_id = candidate.run_id
+    RETURNING run_queue_items.run_id, run_queue_items.org_id, run_queue_items.status, run_queue_items.priority, run_queue_items.queue_name, run_queue_items.concurrency_key, run_queue_items.queue_timestamp, run_queue_items.queued_expires_at, run_queue_items.dispatch_message_id, run_queue_items.reserved_by_worker_instance_id, run_queue_items.reservation_expires_at, run_queue_items.dispatch_generation, run_queue_items.last_error, run_queue_items.enqueued_at, run_queue_items.updated_at, run_queue_items.finished_at
+)
+SELECT run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+  FROM reserved
+`
+
+type ReserveCheckpointRestoreRunQueueItemForWorkerParams struct {
+	WorkerInstanceID     pgtype.UUID        `json:"worker_instance_id"`
+	ReservationExpiresAt pgtype.Timestamptz `json:"reservation_expires_at"`
+}
+
+type ReserveCheckpointRestoreRunQueueItemForWorkerRow struct {
+	RunID                      pgtype.UUID        `json:"run_id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	Status                     RunQueueStatus     `json:"status"`
+	Priority                   int32              `json:"priority"`
+	QueueName                  string             `json:"queue_name"`
+	ConcurrencyKey             pgtype.Text        `json:"concurrency_key"`
+	QueueTimestamp             pgtype.Timestamptz `json:"queue_timestamp"`
+	QueuedExpiresAt            pgtype.Timestamptz `json:"queued_expires_at"`
+	DispatchMessageID          pgtype.Text        `json:"dispatch_message_id"`
+	ReservedByWorkerInstanceID pgtype.UUID        `json:"reserved_by_worker_instance_id"`
+	ReservationExpiresAt       pgtype.Timestamptz `json:"reservation_expires_at"`
+	DispatchGeneration         int64              `json:"dispatch_generation"`
+	LastError                  string             `json:"last_error"`
+	EnqueuedAt                 pgtype.Timestamptz `json:"enqueued_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt                 pgtype.Timestamptz `json:"finished_at"`
+}
+
+func (q *Queries) ReserveCheckpointRestoreRunQueueItemForWorker(ctx context.Context, arg ReserveCheckpointRestoreRunQueueItemForWorkerParams) (ReserveCheckpointRestoreRunQueueItemForWorkerRow, error) {
+	row := q.db.QueryRow(ctx, reserveCheckpointRestoreRunQueueItemForWorker, arg.WorkerInstanceID, arg.ReservationExpiresAt)
+	var i ReserveCheckpointRestoreRunQueueItemForWorkerRow
+	err := row.Scan(
+		&i.RunID,
+		&i.OrgID,
+		&i.Status,
+		&i.Priority,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueTimestamp,
+		&i.QueuedExpiresAt,
+		&i.DispatchMessageID,
+		&i.ReservedByWorkerInstanceID,
+		&i.ReservationExpiresAt,
+		&i.DispatchGeneration,
+		&i.LastError,
+		&i.EnqueuedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
+const reserveResidentRunQueueItemForWorker = `-- name: ReserveResidentRunQueueItemForWorker :one
+WITH candidate AS MATERIALIZED (
+    SELECT run_queue_items.run_id, run_queue_items.org_id, run_queue_items.status, run_queue_items.priority, run_queue_items.queue_name, run_queue_items.concurrency_key, run_queue_items.queue_timestamp, run_queue_items.queued_expires_at, run_queue_items.dispatch_message_id, run_queue_items.reserved_by_worker_instance_id, run_queue_items.reservation_expires_at, run_queue_items.dispatch_generation, run_queue_items.last_error, run_queue_items.enqueued_at, run_queue_items.updated_at, run_queue_items.finished_at
+      FROM run_queue_items
+      JOIN runs
+        ON runs.org_id = run_queue_items.org_id
+       AND runs.id = run_queue_items.run_id
+      JOIN sessions
+        ON sessions.org_id = runs.org_id
+       AND sessions.project_id = runs.project_id
+       AND sessions.environment_id = runs.environment_id
+       AND sessions.id = runs.session_id
+       AND sessions.current_run_id = runs.id
+       AND sessions.status = 'open'
+      JOIN workspace_mounts
+        ON workspace_mounts.org_id = runs.org_id
+       AND workspace_mounts.id = runs.workspace_mount_id
+       AND workspace_mounts.workspace_id = runs.workspace_id
+       AND workspace_mounts.state = 'mounted'
+      JOIN runtime_instances
+        ON runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.id = workspace_mounts.runtime_instance_id
+       AND runtime_instances.worker_instance_id = $1
+       AND runtime_instances.workspace_mount_id = workspace_mounts.id
+       AND runtime_instances.state IN ('running', 'waiting_hot')
+      JOIN worker_instances
+        ON worker_instances.id = runtime_instances.worker_instance_id
+       AND worker_instances.status = 'active'
+     WHERE runs.status = 'queued'
+       AND runs.current_run_lease_id IS NULL
+       AND runs.queue_timestamp <= now()
+       AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+       AND (
+           run_queue_items.status = 'queued'
+           OR (
+               run_queue_items.status = 'published'
+               AND run_queue_items.enqueued_at <= now() - interval '1 second'
+           )
+           OR (
+               run_queue_items.status = 'reserved'
+               AND run_queue_items.reservation_expires_at <= now()
+           )
+       )
+     ORDER BY runs.priority DESC,
+              runs.queue_timestamp ASC,
+              runs.id ASC
+     LIMIT 1
+     FOR UPDATE OF run_queue_items, runtime_instances SKIP LOCKED
+),
+reserved AS (
+    UPDATE run_queue_items
+       SET status = 'reserved',
+           dispatch_message_id = 'resident:' || candidate.run_id::text || ':' || (candidate.dispatch_generation + 1)::text,
+           reserved_by_worker_instance_id = $1,
+           reservation_expires_at = $2,
+           queued_expires_at = NULL,
+           dispatch_generation = candidate.dispatch_generation + 1,
+           last_error = '',
+           updated_at = now(),
+           finished_at = NULL
+      FROM candidate
+     WHERE run_queue_items.org_id = candidate.org_id
+       AND run_queue_items.run_id = candidate.run_id
+    RETURNING run_queue_items.run_id, run_queue_items.org_id, run_queue_items.status, run_queue_items.priority, run_queue_items.queue_name, run_queue_items.concurrency_key, run_queue_items.queue_timestamp, run_queue_items.queued_expires_at, run_queue_items.dispatch_message_id, run_queue_items.reserved_by_worker_instance_id, run_queue_items.reservation_expires_at, run_queue_items.dispatch_generation, run_queue_items.last_error, run_queue_items.enqueued_at, run_queue_items.updated_at, run_queue_items.finished_at
+)
+SELECT run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+  FROM reserved
+`
+
+type ReserveResidentRunQueueItemForWorkerParams struct {
+	WorkerInstanceID     pgtype.UUID        `json:"worker_instance_id"`
+	ReservationExpiresAt pgtype.Timestamptz `json:"reservation_expires_at"`
+}
+
+type ReserveResidentRunQueueItemForWorkerRow struct {
+	RunID                      pgtype.UUID        `json:"run_id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	Status                     RunQueueStatus     `json:"status"`
+	Priority                   int32              `json:"priority"`
+	QueueName                  string             `json:"queue_name"`
+	ConcurrencyKey             pgtype.Text        `json:"concurrency_key"`
+	QueueTimestamp             pgtype.Timestamptz `json:"queue_timestamp"`
+	QueuedExpiresAt            pgtype.Timestamptz `json:"queued_expires_at"`
+	DispatchMessageID          pgtype.Text        `json:"dispatch_message_id"`
+	ReservedByWorkerInstanceID pgtype.UUID        `json:"reserved_by_worker_instance_id"`
+	ReservationExpiresAt       pgtype.Timestamptz `json:"reservation_expires_at"`
+	DispatchGeneration         int64              `json:"dispatch_generation"`
+	LastError                  string             `json:"last_error"`
+	EnqueuedAt                 pgtype.Timestamptz `json:"enqueued_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt                 pgtype.Timestamptz `json:"finished_at"`
+}
+
+func (q *Queries) ReserveResidentRunQueueItemForWorker(ctx context.Context, arg ReserveResidentRunQueueItemForWorkerParams) (ReserveResidentRunQueueItemForWorkerRow, error) {
+	row := q.db.QueryRow(ctx, reserveResidentRunQueueItemForWorker, arg.WorkerInstanceID, arg.ReservationExpiresAt)
+	var i ReserveResidentRunQueueItemForWorkerRow
+	err := row.Scan(
+		&i.RunID,
+		&i.OrgID,
+		&i.Status,
+		&i.Priority,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueTimestamp,
+		&i.QueuedExpiresAt,
+		&i.DispatchMessageID,
+		&i.ReservedByWorkerInstanceID,
+		&i.ReservationExpiresAt,
+		&i.DispatchGeneration,
+		&i.LastError,
+		&i.EnqueuedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
 const reserveRunQueueItem = `-- name: ReserveRunQueueItem :one
 UPDATE run_queue_items
    SET status = 'reserved',
@@ -1464,53 +1794,57 @@ func (q *Queries) SetWorkerInstanceStatus(ctx context.Context, arg SetWorkerInst
 }
 
 const upsertRunQueueItemQueued = `-- name: UpsertRunQueueItemQueued :one
-INSERT INTO run_queue_items (
-    run_id,
-    org_id,
-    status,
-    priority,
-    queue_name,
-    concurrency_key,
-    queue_timestamp,
-    queued_expires_at,
-    dispatch_message_id,
-    reservation_expires_at,
-    last_error,
-    enqueued_at,
-    updated_at,
-    finished_at
-) VALUES (
-    $1,
-    $2,
-    'queued',
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    NULL,
-    '',
-    now(),
-    now(),
-    NULL
+WITH upserted AS (
+    INSERT INTO run_queue_items (
+        run_id,
+        org_id,
+        status,
+        priority,
+        queue_name,
+        concurrency_key,
+        queue_timestamp,
+        queued_expires_at,
+        dispatch_message_id,
+        reservation_expires_at,
+        last_error,
+        enqueued_at,
+        updated_at,
+        finished_at
+    ) VALUES (
+        $1,
+        $2,
+        'queued',
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8,
+        NULL,
+        '',
+        now(),
+        now(),
+        NULL
+    )
+    ON CONFLICT (run_id) DO UPDATE
+       SET status = 'queued',
+           priority = excluded.priority,
+           queue_name = excluded.queue_name,
+           concurrency_key = excluded.concurrency_key,
+           queue_timestamp = excluded.queue_timestamp,
+           queued_expires_at = excluded.queued_expires_at,
+           dispatch_message_id = excluded.dispatch_message_id,
+           reserved_by_worker_instance_id = NULL,
+           reservation_expires_at = NULL,
+           dispatch_generation = run_queue_items.dispatch_generation + 1,
+           last_error = '',
+           enqueued_at = now(),
+           updated_at = now(),
+           finished_at = NULL
+    RETURNING run_queue_items.run_id, run_queue_items.org_id, run_queue_items.status, run_queue_items.priority, run_queue_items.queue_name, run_queue_items.concurrency_key, run_queue_items.queue_timestamp, run_queue_items.queued_expires_at, run_queue_items.dispatch_message_id, run_queue_items.reserved_by_worker_instance_id, run_queue_items.reservation_expires_at, run_queue_items.dispatch_generation, run_queue_items.last_error, run_queue_items.enqueued_at, run_queue_items.updated_at, run_queue_items.finished_at
 )
-ON CONFLICT (run_id) DO UPDATE
-   SET status = 'queued',
-       priority = excluded.priority,
-       queue_name = excluded.queue_name,
-       concurrency_key = excluded.concurrency_key,
-       queue_timestamp = excluded.queue_timestamp,
-       queued_expires_at = excluded.queued_expires_at,
-       dispatch_message_id = excluded.dispatch_message_id,
-       reserved_by_worker_instance_id = NULL,
-       reservation_expires_at = NULL,
-       dispatch_generation = run_queue_items.dispatch_generation + 1,
-       last_error = '',
-       enqueued_at = now(),
-       updated_at = now(),
-       finished_at = NULL
-RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+SELECT run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+  FROM upserted
 `
 
 type UpsertRunQueueItemQueuedParams struct {
@@ -1524,7 +1858,26 @@ type UpsertRunQueueItemQueuedParams struct {
 	DispatchMessageID pgtype.Text        `json:"dispatch_message_id"`
 }
 
-func (q *Queries) UpsertRunQueueItemQueued(ctx context.Context, arg UpsertRunQueueItemQueuedParams) (RunQueueItem, error) {
+type UpsertRunQueueItemQueuedRow struct {
+	RunID                      pgtype.UUID        `json:"run_id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	Status                     RunQueueStatus     `json:"status"`
+	Priority                   int32              `json:"priority"`
+	QueueName                  string             `json:"queue_name"`
+	ConcurrencyKey             pgtype.Text        `json:"concurrency_key"`
+	QueueTimestamp             pgtype.Timestamptz `json:"queue_timestamp"`
+	QueuedExpiresAt            pgtype.Timestamptz `json:"queued_expires_at"`
+	DispatchMessageID          pgtype.Text        `json:"dispatch_message_id"`
+	ReservedByWorkerInstanceID pgtype.UUID        `json:"reserved_by_worker_instance_id"`
+	ReservationExpiresAt       pgtype.Timestamptz `json:"reservation_expires_at"`
+	DispatchGeneration         int64              `json:"dispatch_generation"`
+	LastError                  string             `json:"last_error"`
+	EnqueuedAt                 pgtype.Timestamptz `json:"enqueued_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt                 pgtype.Timestamptz `json:"finished_at"`
+}
+
+func (q *Queries) UpsertRunQueueItemQueued(ctx context.Context, arg UpsertRunQueueItemQueuedParams) (UpsertRunQueueItemQueuedRow, error) {
 	row := q.db.QueryRow(ctx, upsertRunQueueItemQueued,
 		arg.RunID,
 		arg.OrgID,
@@ -1535,7 +1888,7 @@ func (q *Queries) UpsertRunQueueItemQueued(ctx context.Context, arg UpsertRunQue
 		arg.QueuedExpiresAt,
 		arg.DispatchMessageID,
 	)
-	var i RunQueueItem
+	var i UpsertRunQueueItemQueuedRow
 	err := row.Scan(
 		&i.RunID,
 		&i.OrgID,

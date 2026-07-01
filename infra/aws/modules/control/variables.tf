@@ -184,6 +184,12 @@ variable "control_environment" {
   default     = {}
 }
 
+variable "dispatcher_environment" {
+  description = "Additional non-secret environment variables for helmr-dispatcher. Managed Helmr variables such as HELMR_REDIS_URL are owned by this module."
+  type        = map(string)
+  default     = {}
+}
+
 variable "secret_encryption_key_old_arn" {
   description = "Optional Secrets Manager ARN for HELMR_SECRET_ENCRYPTION_KEY_OLD during Helmr-managed secret re-encryption."
   type        = string

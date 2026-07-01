@@ -1,14 +1,14 @@
 import { HelmrClient, type SessionStartResult } from "../../../../sdk/typescript/src/index"
 import { assert, assertEqual } from "../assert"
 import { readConfig, requestScope } from "../config"
-import { currentDeployment, waitForRunningMaterialization } from "./common"
+import { currentDeployment, waitForRunningWorkspaceMount } from "./common"
 
 interface SmokeEvidence {
   readonly marker: string
   readonly deploymentId: string
   readonly deploymentSandboxId: string
   readonly directWorkspaceId: string
-  readonly directMaterializationId: string
+  readonly directWorkspaceMountId: string
   readonly firstSessionId: string
   readonly firstRunId: string
   readonly secondSessionId: string
@@ -93,12 +93,12 @@ async function runWorkspaceLifecycleSmoke(): Promise<SmokeEvidence> {
 
     const materialized = await handle.materialize(scope)
     const connected = await handle.connect(scope)
-    assertEqual(connected.id, materialized.id, "connect did not ensure the pending materialization")
-    const running = await waitForRunningMaterialization(client, handle.id, scope)
-    assertEqual(running.id, materialized.id, "running materialization id changed")
+    assertEqual(connected.id, materialized.id, "connect did not ensure the pending workspace mount")
+    const running = await waitForRunningWorkspaceMount(client, handle.id, scope)
+    assertEqual(running.id, materialized.id, "running workspace mount id changed")
 
     const sessionsBeforeAttach = await sessionsForTask(config.taskId)
-    assert(!sessionsBeforeAttach.some((session) => session.workspaceId === directWorkspace.id), "direct materialization created a session")
+    assert(!sessionsBeforeAttach.some((session) => session.workspaceId === directWorkspace.id), "direct workspace mount created a session")
 
     const first = await startAndWaitRuntime(`${config.marker}-first`, directWorkspace.id)
     const firstSession = await client.sessions.retrieve(first.sessionId, scope)
@@ -119,7 +119,7 @@ async function runWorkspaceLifecycleSmoke(): Promise<SmokeEvidence> {
       deploymentId: deployment.id,
       deploymentSandboxId: directWorkspace.deploymentSandboxId,
       directWorkspaceId: directWorkspace.id,
-      directMaterializationId: running.id,
+      directWorkspaceMountId: running.id,
       firstSessionId: first.sessionId,
       firstRunId: first.runId,
       secondSessionId: second.sessionId,

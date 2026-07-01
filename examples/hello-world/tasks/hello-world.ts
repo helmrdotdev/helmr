@@ -1,4 +1,4 @@
-import { cache, image, logger, sandbox, source, task } from "@helmr/sdk"
+import { cache, image, sandbox, source, task } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -30,7 +30,6 @@ export const helloWorld = task({
     const name = payload.name?.trim() || "Helmr"
     const greeting = `hello ${name}`
     await writeFile("hello.txt", `${greeting}\nrun=${ctx.run.id}\n`)
-    logger.info({ message: "wrote greeting", path: "hello.txt" })
     return { greeting, runId: ctx.run.id }
   },
 })

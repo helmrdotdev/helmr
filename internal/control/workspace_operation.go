@@ -3,6 +3,8 @@ package control
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,7 +25,7 @@ const (
 	maxWorkspaceOperationClaimAttempts = 3
 )
 
-func (s *Server) workerClaimWorkspaceMaterializationOperation(w http.ResponseWriter, r *http.Request) {
+func (s *Server) workerClaimWorkspaceOperation(w http.ResponseWriter, r *http.Request) {
 	var request api.WorkerWorkspaceOperationClaimRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace operation claim request JSON: %w", err)))
@@ -39,30 +41,30 @@ func (s *Server) workerClaimWorkspaceMaterializationOperation(w http.ResponseWri
 		writeError(w, badRequest(err))
 		return
 	}
-	materializationID, err := parseWorkspaceOperationStringUUID("materialization_id", request.MaterializationID)
+	workspaceMountID, err := parseWorkspaceOperationStringUUID("workspace_mount_id", request.WorkspaceMountID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	reservationToken := strings.TrimSpace(request.ReservationToken)
-	if reservationToken == "" {
-		writeError(w, badRequest(errors.New("reservation_token is required")))
+	runtimeInstanceToken := strings.TrimSpace(request.RuntimeInstanceToken)
+	if runtimeInstanceToken == "" {
+		writeError(w, badRequest(errors.New("runtime_instance_token is required")))
 		return
 	}
-	token, err := newWorkspaceMaterializationReservationToken()
+	token, err := newWorkspaceOperationClaimToken()
 	if err != nil {
 		writeError(w, errors.New("generate workspace operation claim token"))
 		return
 	}
 	worker := workerFromContext(r.Context())
-	row, err := s.db.ClaimWorkspaceMaterializationOperation(r.Context(), db.ClaimWorkspaceMaterializationOperationParams{
-		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
-		OrgID:             orgID,
-		MaterializationID: materializationID,
-		ReservationToken:  reservationToken,
-		ClaimToken:        token,
-		ClaimExpiresAt:    pgvalue.Timestamptz(time.Now().Add(ttl)),
-		MaxClaimAttempts:  maxWorkspaceOperationClaimAttempts,
+	row, err := s.db.ClaimWorkspaceOperation(r.Context(), db.ClaimWorkspaceOperationParams{
+		WorkerInstanceID:     pgvalue.UUID(worker.WorkerInstanceID),
+		OrgID:                orgID,
+		WorkspaceMountID:     workspaceMountID,
+		RuntimeInstanceToken: runtimeInstanceToken,
+		ClaimToken:           token,
+		ClaimExpiresAt:       pgvalue.Timestamptz(time.Now().Add(ttl)),
+		MaxClaimAttempts:     maxWorkspaceOperationClaimAttempts,
 	})
 	if isNoRows(err) {
 		writeJSON(w, http.StatusOK, api.WorkerWorkspaceOperationClaimResponse{})
@@ -82,7 +84,15 @@ func (s *Server) workerClaimWorkspaceMaterializationOperation(w http.ResponseWri
 	writeJSON(w, http.StatusOK, api.WorkerWorkspaceOperationClaimResponse{Operation: &operation})
 }
 
-func (s *Server) workerStartWorkspaceMaterializationOperation(w http.ResponseWriter, r *http.Request) {
+func newWorkspaceOperationClaimToken() (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+func (s *Server) workerStartWorkspaceOperation(w http.ResponseWriter, r *http.Request) {
 	var request api.WorkerWorkspaceOperationStartRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace operation start request JSON: %w", err)))
@@ -104,7 +114,7 @@ func (s *Server) workerStartWorkspaceMaterializationOperation(w http.ResponseWri
 		return
 	}
 	worker := workerFromContext(r.Context())
-	row, err := s.db.StartWorkspaceMaterializationOperation(r.Context(), db.StartWorkspaceMaterializationOperationParams{
+	row, err := s.db.StartWorkspaceOperation(r.Context(), db.StartWorkspaceOperationParams{
 		OrgID:            orgID,
 		ID:               operationID,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -122,7 +132,7 @@ func (s *Server) workerStartWorkspaceMaterializationOperation(w http.ResponseWri
 	writeJSON(w, http.StatusOK, workspaceOperationResponse(startedWorkspaceOperation(row)))
 }
 
-func (s *Server) workerCompleteWorkspaceMaterializationOperation(w http.ResponseWriter, r *http.Request) {
+func (s *Server) workerCompleteWorkspaceOperation(w http.ResponseWriter, r *http.Request) {
 	var request api.WorkerWorkspaceOperationCompleteRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace operation complete request JSON: %w", err)))
@@ -158,7 +168,7 @@ func (s *Server) workerCompleteWorkspaceMaterializationOperation(w http.Response
 		return
 	}
 	worker := workerFromContext(r.Context())
-	var row db.WorkspaceMaterializationOperation
+	var row db.WorkspaceOperation
 	if s.tx == nil {
 		writeError(w, errors.New("workspace operation complete requires transactional store"))
 		return
@@ -171,7 +181,7 @@ func (s *Server) workerCompleteWorkspaceMaterializationOperation(w http.Response
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	store := db.New(tx)
 	if len(failure) > 0 {
-		failed, failErr := store.FailWorkspaceMaterializationOperation(r.Context(), db.FailWorkspaceMaterializationOperationParams{
+		failed, failErr := store.FailWorkspaceOperation(r.Context(), db.FailWorkspaceOperationParams{
 			OrgID:            orgID,
 			ID:               operationID,
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -184,7 +194,7 @@ func (s *Server) workerCompleteWorkspaceMaterializationOperation(w http.Response
 			err = failWorkspacePrimitiveForOperation(r.Context(), store, row, failure)
 		}
 	} else {
-		completed, completeErr := store.CompleteWorkspaceMaterializationOperation(r.Context(), db.CompleteWorkspaceMaterializationOperationParams{
+		completed, completeErr := store.CompleteWorkspaceOperation(r.Context(), db.CompleteWorkspaceOperationParams{
 			OrgID:            orgID,
 			ID:               operationID,
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -225,7 +235,7 @@ type workspacePrimitiveCompletionStore interface {
 	MarkWorkspacePtyResizeApplied(context.Context, db.MarkWorkspacePtyResizeAppliedParams) (db.WorkspacePtySession, error)
 }
 
-func completeWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrimitiveCompletionStore, operation db.WorkspaceMaterializationOperation) error {
+func completeWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrimitiveCompletionStore, operation db.WorkspaceOperation) error {
 	switch operation.OperationKind {
 	case workspaceOperationKindResizePty:
 		return completeWorkspacePtyResizeOperation(ctx, store, operation)
@@ -234,7 +244,7 @@ func completeWorkspacePrimitiveForOperation(ctx context.Context, store workspace
 	}
 }
 
-func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrimitiveFailureStore, operation db.WorkspaceMaterializationOperation, failure []byte) error {
+func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrimitiveFailureStore, operation db.WorkspaceOperation, failure []byte) error {
 	if !operation.ResourceID.Valid {
 		return nil
 	}
@@ -244,16 +254,16 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 			return fmt.Errorf("StartExec operation resource_kind = %q, want %q", workspace.ResourceKindString(operation.ResourceKind), workspaceOperationResourceExec)
 		}
 		_, err := store.MarkWorkspaceExecExited(ctx, db.MarkWorkspaceExecExitedParams{
-			State:             db.WorkspaceExecStateFailed,
-			ExitCode:          pgtype.Int4{},
-			Signal:            "",
-			Error:             failure,
-			OrgID:             operation.OrgID,
-			ProjectID:         operation.ProjectID,
-			EnvironmentID:     operation.EnvironmentID,
-			WorkspaceID:       operation.WorkspaceID,
-			ID:                operation.ResourceID,
-			MaterializationID: operation.MaterializationID,
+			State:            db.WorkspaceExecStateFailed,
+			ExitCode:         pgtype.Int4{},
+			Signal:           "",
+			Error:            failure,
+			OrgID:            operation.OrgID,
+			ProjectID:        operation.ProjectID,
+			EnvironmentID:    operation.EnvironmentID,
+			WorkspaceID:      operation.WorkspaceID,
+			ID:               operation.ResourceID,
+			WorkspaceMountID: operation.WorkspaceMountID,
 		})
 		if isNoRows(err) {
 			return nil
@@ -264,13 +274,13 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 			return fmt.Errorf("CreatePty operation resource_kind = %q, want %q", workspace.ResourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
 		}
 		_, err := store.MarkWorkspacePtyFailed(ctx, db.MarkWorkspacePtyFailedParams{
-			Error:             failure,
-			OrgID:             operation.OrgID,
-			ProjectID:         operation.ProjectID,
-			EnvironmentID:     operation.EnvironmentID,
-			WorkspaceID:       operation.WorkspaceID,
-			ID:                operation.ResourceID,
-			MaterializationID: operation.MaterializationID,
+			Error:            failure,
+			OrgID:            operation.OrgID,
+			ProjectID:        operation.ProjectID,
+			EnvironmentID:    operation.EnvironmentID,
+			WorkspaceID:      operation.WorkspaceID,
+			ID:               operation.ResourceID,
+			WorkspaceMountID: operation.WorkspaceMountID,
 		})
 		if isNoRows(err) {
 			return nil
@@ -289,15 +299,15 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 			return err
 		}
 		_, err = store.RollbackWorkspacePtyControlOperation(ctx, db.RollbackWorkspacePtyControlOperationParams{
-			OrgID:             operation.OrgID,
-			ProjectID:         operation.ProjectID,
-			EnvironmentID:     operation.EnvironmentID,
-			WorkspaceID:       operation.WorkspaceID,
-			ID:                operation.ResourceID,
-			MaterializationID: operation.MaterializationID,
-			OperationKind:     operation.OperationKind,
-			Cols:              cols,
-			Rows:              rows,
+			OrgID:            operation.OrgID,
+			ProjectID:        operation.ProjectID,
+			EnvironmentID:    operation.EnvironmentID,
+			WorkspaceID:      operation.WorkspaceID,
+			ID:               operation.ResourceID,
+			WorkspaceMountID: operation.WorkspaceMountID,
+			OperationKind:    operation.OperationKind,
+			Cols:             cols,
+			Rows:             rows,
 		})
 		if isNoRows(err) {
 			return nil
@@ -308,7 +318,7 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 	}
 }
 
-func workspacePtyControlRollbackTarget(operation db.WorkspaceMaterializationOperation) (pgtype.Int4, pgtype.Int4, error) {
+func workspacePtyControlRollbackTarget(operation db.WorkspaceOperation) (pgtype.Int4, pgtype.Int4, error) {
 	if operation.OperationKind != workspaceOperationKindResizePty {
 		return pgtype.Int4{}, pgtype.Int4{}, nil
 	}
@@ -322,7 +332,7 @@ func workspacePtyControlRollbackTarget(operation db.WorkspaceMaterializationOper
 	return pgtype.Int4{Int32: request.Cols, Valid: true}, pgtype.Int4{Int32: request.Rows, Valid: true}, nil
 }
 
-func completeWorkspacePtyResizeOperation(ctx context.Context, store workspacePrimitiveCompletionStore, operation db.WorkspaceMaterializationOperation) error {
+func completeWorkspacePtyResizeOperation(ctx context.Context, store workspacePrimitiveCompletionStore, operation db.WorkspaceOperation) error {
 	if !operation.ResourceID.Valid {
 		return errors.New("ResizePty operation resource_id is required")
 	}
@@ -334,14 +344,14 @@ func completeWorkspacePtyResizeOperation(ctx context.Context, store workspacePri
 		return fmt.Errorf("decode ResizePty request: %w", err)
 	}
 	row, err := store.MarkWorkspacePtyResizeApplied(ctx, db.MarkWorkspacePtyResizeAppliedParams{
-		OrgID:             operation.OrgID,
-		ProjectID:         operation.ProjectID,
-		EnvironmentID:     operation.EnvironmentID,
-		WorkspaceID:       operation.WorkspaceID,
-		ID:                operation.ResourceID,
-		MaterializationID: operation.MaterializationID,
-		Cols:              pgtype.Int4{Int32: request.Cols, Valid: true},
-		Rows:              pgtype.Int4{Int32: request.Rows, Valid: true},
+		OrgID:            operation.OrgID,
+		ProjectID:        operation.ProjectID,
+		EnvironmentID:    operation.EnvironmentID,
+		WorkspaceID:      operation.WorkspaceID,
+		ID:               operation.ResourceID,
+		WorkspaceMountID: operation.WorkspaceMountID,
+		Cols:             pgtype.Int4{Int32: request.Cols, Valid: true},
+		Rows:             pgtype.Int4{Int32: request.Rows, Valid: true},
 	})
 	if err == nil {
 		if row.Cols != request.Cols || row.Rows != request.Rows {
@@ -359,7 +369,7 @@ func completeWorkspacePtyResizeOperation(ctx context.Context, store workspacePri
 		WorkspaceID:   operation.WorkspaceID,
 		ID:            operation.ResourceID,
 	})
-	if getErr == nil && workspacePtyResizeAppliedEventMatches(existing, operation.MaterializationID, request.Cols, request.Rows) {
+	if getErr == nil && workspacePtyResizeAppliedEventMatches(existing, operation.WorkspaceMountID, request.Cols, request.Rows) {
 		return nil
 	}
 	if getErr == nil {
@@ -368,19 +378,19 @@ func completeWorkspacePtyResizeOperation(ctx context.Context, store workspacePri
 	return getErr
 }
 
-func startedWorkspaceOperation(row db.StartWorkspaceMaterializationOperationRow) db.WorkspaceMaterializationOperation {
-	return db.WorkspaceMaterializationOperation(row)
+func startedWorkspaceOperation(row db.StartWorkspaceOperationRow) db.WorkspaceOperation {
+	return db.WorkspaceOperation(row)
 }
 
-func completedWorkspaceOperation(row db.CompleteWorkspaceMaterializationOperationRow) db.WorkspaceMaterializationOperation {
-	return db.WorkspaceMaterializationOperation(row)
+func completedWorkspaceOperation(row db.CompleteWorkspaceOperationRow) db.WorkspaceOperation {
+	return db.WorkspaceOperation(row)
 }
 
-func failedWorkspaceOperation(row db.FailWorkspaceMaterializationOperationRow) db.WorkspaceMaterializationOperation {
-	return db.WorkspaceMaterializationOperation(row)
+func failedWorkspaceOperation(row db.FailWorkspaceOperationRow) db.WorkspaceOperation {
+	return db.WorkspaceOperation(row)
 }
 
-func workerWorkspaceOperationResponse(row db.WorkspaceMaterializationOperation) (api.WorkerWorkspaceOperation, error) {
+func workerWorkspaceOperationResponse(row db.WorkspaceOperation) (api.WorkerWorkspaceOperation, error) {
 	response := api.WorkerWorkspaceOperation{
 		WorkspaceOperationResponse: workspaceOperationResponse(row),
 		ClaimToken:                 row.ClaimToken,
@@ -397,14 +407,14 @@ func workerWorkspaceOperationResponse(row db.WorkspaceMaterializationOperation) 
 	return response, nil
 }
 
-func workspaceOperationResponse(row db.WorkspaceMaterializationOperation) api.WorkspaceOperationResponse {
+func workspaceOperationResponse(row db.WorkspaceOperation) api.WorkspaceOperationResponse {
 	response := api.WorkspaceOperationResponse{
 		ID:                 pgvalue.MustUUIDValue(row.ID).String(),
 		OrgID:              pgvalue.MustUUIDValue(row.OrgID).String(),
 		ProjectID:          pgvalue.MustUUIDValue(row.ProjectID).String(),
 		EnvironmentID:      pgvalue.MustUUIDValue(row.EnvironmentID).String(),
 		WorkspaceID:        pgvalue.MustUUIDValue(row.WorkspaceID).String(),
-		MaterializationID:  pgvalue.MustUUIDValue(row.MaterializationID).String(),
+		WorkspaceMountID:   pgvalue.MustUUIDValue(row.WorkspaceMountID).String(),
 		OperationKind:      string(row.OperationKind),
 		ResourceKind:       workspace.ResourceKindString(row.ResourceKind),
 		RequestFingerprint: row.RequestFingerprint,
@@ -418,9 +428,9 @@ func workspaceOperationResponse(row db.WorkspaceMaterializationOperation) api.Wo
 		UpdatedAt:          row.UpdatedAt.Time,
 	}
 	switch row.State {
-	case db.WorkspaceMaterializationOperationStateCompleted:
+	case db.WorkspaceOperationStateCompleted:
 		response.Result = optionalRawMessage(row.Result)
-	case db.WorkspaceMaterializationOperationStateFailed, db.WorkspaceMaterializationOperationStateCancelled, db.WorkspaceMaterializationOperationStateLost, db.WorkspaceMaterializationOperationStateExpired:
+	case db.WorkspaceOperationStateFailed, db.WorkspaceOperationStateCancelled, db.WorkspaceOperationStateLost, db.WorkspaceOperationStateExpired:
 		response.Error = optionalRawMessage(row.Error)
 	}
 	if row.InstanceLeaseID.Valid {

@@ -421,9 +421,9 @@ func TestSessionStartRejectsOversizedExternalID(t *testing.T) {
 	}
 }
 
-func TestWorkspaceMaterializeEnsuresRunnableMaterializationCreated(t *testing.T) {
+func TestWorkspaceMaterializeEnsuresRunnableWorkspaceMountCreated(t *testing.T) {
 	workspaceID := uuid.Must(uuid.NewV7())
-	store := &fakeStore{ensureWorkspaceMaterializationInserted: true}
+	store := &fakeStore{ensureWorkspaceMountInserted: true}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/"+workspaceID.String()+"/materialize", strings.NewReader(`{}`))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -434,19 +434,16 @@ func TestWorkspaceMaterializeEnsuresRunnableMaterializationCreated(t *testing.T)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.ensureWorkspaceMaterializationCalls != 1 {
-		t.Fatalf("EnsureWorkspaceMaterializationRequested calls = %d, want 1", store.ensureWorkspaceMaterializationCalls)
+	if store.ensureWorkspaceMountCalls != 1 {
+		t.Fatalf("EnsureWorkspaceMountRequested calls = %d, want 1", store.ensureWorkspaceMountCalls)
 	}
-	if got := pgvalue.MustUUIDValue(store.ensureWorkspaceMaterialization.WorkspaceID); got != workspaceID {
-		t.Fatalf("materialization workspace_id = %s, want %s", got, workspaceID)
+	if got := pgvalue.MustUUIDValue(store.ensureWorkspaceMount.WorkspaceID); got != workspaceID {
+		t.Fatalf("mount workspace_id = %s, want %s", got, workspaceID)
 	}
-	if store.ensureWorkspaceMaterialization.Priority != 0 {
-		t.Fatalf("materialization priority = %d, want 0", store.ensureWorkspaceMaterialization.Priority)
+	if string(store.ensureWorkspaceMount.Request) != `{"source":"api"}` {
+		t.Fatalf("request = %s", string(store.ensureWorkspaceMount.Request))
 	}
-	if string(store.ensureWorkspaceMaterialization.Request) != `{"source":"api"}` {
-		t.Fatalf("request = %s", string(store.ensureWorkspaceMaterialization.Request))
-	}
-	var response api.WorkspaceMaterializationResponse
+	var response api.WorkspaceMountResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -456,8 +453,8 @@ func TestWorkspaceMaterializeEnsuresRunnableMaterializationCreated(t *testing.T)
 	if response.DeploymentSandboxID != pgvalue.MustUUIDValue(testDeploymentSandboxID()).String() {
 		t.Fatalf("response deployment_sandbox_id = %q, want %s", response.DeploymentSandboxID, pgvalue.MustUUIDValue(testDeploymentSandboxID()))
 	}
-	if response.State != string(db.WorkspaceMaterializationStateRequested) {
-		t.Fatalf("response state = %q, want %s", response.State, db.WorkspaceMaterializationStateRequested)
+	if response.State != string(db.WorkspaceMountStateMounting) {
+		t.Fatalf("response state = %q, want %s", response.State, db.WorkspaceMountStateMounting)
 	}
 }
 
@@ -472,7 +469,7 @@ func TestWorkspaceMaterializeAllowsPrimitiveReadPermissions(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			workspaceID := uuid.Must(uuid.NewV7())
-			store := &fakeStore{ensureWorkspaceMaterializationInserted: true}
+			store := &fakeStore{ensureWorkspaceMountInserted: true}
 			server := newTestServer(testServerConfig{
 				Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 				DB:          store,
@@ -490,8 +487,8 @@ func TestWorkspaceMaterializeAllowsPrimitiveReadPermissions(t *testing.T) {
 			if rec.Code != http.StatusCreated {
 				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 			}
-			if store.ensureWorkspaceMaterializationCalls != 1 {
-				t.Fatalf("EnsureWorkspaceMaterializationRequested calls = %d, want 1", store.ensureWorkspaceMaterializationCalls)
+			if store.ensureWorkspaceMountCalls != 1 {
+				t.Fatalf("EnsureWorkspaceMountRequested calls = %d, want 1", store.ensureWorkspaceMountCalls)
 			}
 		})
 	}
@@ -747,7 +744,7 @@ func TestWorkspaceStopIdempotencyResponseReplaysCompletedResponse(t *testing.T) 
 		t.Fatal(err)
 	}
 	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	response := api.WorkspaceStopResponse{WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String(), State: "no_active_materialization"}
+	response := api.WorkspaceStopResponse{WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String(), State: "no_active_mount"}
 	body, err := json.Marshal(response)
 	if err != nil {
 		t.Fatal(err)
@@ -784,7 +781,7 @@ func TestWorkspaceStopIdempotencyResponseRejectsPendingAndMismatch(t *testing.T)
 	_, replayed, err = workspaceStopIdempotencyResponse(db.EnsureWorkspaceOperationIdempotencyRow{
 		RequestFingerprint: "different",
 		ResponseResourceID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		ResponseBody:       []byte(`{"workspace_id":"w","state":"no_active_materialization"}`),
+		ResponseBody:       []byte(`{"workspace_id":"w","state":"no_active_mount"}`),
 		Inserted:           false,
 	}, fingerprint)
 	if !errors.Is(err, errWorkspaceOperationIdempotencyUsed) || replayed {
@@ -832,7 +829,7 @@ func TestWorkspaceCreateRejectsUndeployedSandboxAsConflict(t *testing.T) {
 
 func TestWorkspaceMaterializeRejectsPublicPriority(t *testing.T) {
 	workspaceID := uuid.Must(uuid.NewV7())
-	store := &fakeStore{ensureWorkspaceMaterializationInserted: true}
+	store := &fakeStore{ensureWorkspaceMountInserted: true}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/"+workspaceID.String()+"/materialize", strings.NewReader(`{"priority":5}`))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -846,14 +843,14 @@ func TestWorkspaceMaterializeRejectsPublicPriority(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "unknown field") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
-	if store.ensureWorkspaceMaterializationCalls != 0 {
-		t.Fatalf("EnsureWorkspaceMaterializationRequested calls = %d, want 0", store.ensureWorkspaceMaterializationCalls)
+	if store.ensureWorkspaceMountCalls != 0 {
+		t.Fatalf("EnsureWorkspaceMountRequested calls = %d, want 0", store.ensureWorkspaceMountCalls)
 	}
 }
 
-func TestWorkspaceConnectReturnsExistingRunnableMaterialization(t *testing.T) {
+func TestWorkspaceConnectReturnsExistingRunnableWorkspaceMount(t *testing.T) {
 	workspaceID := uuid.Must(uuid.NewV7())
-	store := &fakeStore{ensureWorkspaceMaterializationState: db.WorkspaceMaterializationStateRunning}
+	store := &fakeStore{ensureWorkspaceMountState: db.WorkspaceMountStateMounted}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/"+workspaceID.String()+"/connect", strings.NewReader(`{}`))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -864,27 +861,27 @@ func TestWorkspaceConnectReturnsExistingRunnableMaterialization(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.ensureWorkspaceMaterializationCalls != 1 {
-		t.Fatalf("EnsureWorkspaceMaterializationRequested calls = %d, want 1", store.ensureWorkspaceMaterializationCalls)
+	if store.ensureWorkspaceMountCalls != 1 {
+		t.Fatalf("EnsureWorkspaceMountRequested calls = %d, want 1", store.ensureWorkspaceMountCalls)
 	}
-	if got := pgvalue.MustUUIDValue(store.ensureWorkspaceMaterialization.WorkspaceID); got != workspaceID {
-		t.Fatalf("materialization workspace_id = %s, want %s", got, workspaceID)
+	if got := pgvalue.MustUUIDValue(store.ensureWorkspaceMount.WorkspaceID); got != workspaceID {
+		t.Fatalf("mount workspace_id = %s, want %s", got, workspaceID)
 	}
-	var response api.WorkspaceMaterializationResponse
+	var response api.WorkspaceMountResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
 	if response.WorkspaceID != workspaceID.String() {
 		t.Fatalf("response workspace_id = %q, want %s", response.WorkspaceID, workspaceID)
 	}
-	if response.State != string(db.WorkspaceMaterializationStateRunning) {
-		t.Fatalf("response state = %q, want %s", response.State, db.WorkspaceMaterializationStateRunning)
+	if response.State != string(db.WorkspaceMountStateMounted) {
+		t.Fatalf("response state = %q, want %s", response.State, db.WorkspaceMountStateMounted)
 	}
 }
 
 func TestWorkspaceMaterializeReturnsServerErrorWhenEnsureFails(t *testing.T) {
 	workspaceID := uuid.Must(uuid.NewV7())
-	store := &fakeStore{ensureWorkspaceMaterializationErr: errors.New("database unavailable")}
+	store := &fakeStore{ensureWorkspaceMountErr: errors.New("database unavailable")}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/"+workspaceID.String()+"/materialize", strings.NewReader(`{}`))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -895,10 +892,10 @@ func TestWorkspaceMaterializeReturnsServerErrorWhenEnsureFails(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.ensureWorkspaceMaterializationCalls != 1 {
-		t.Fatalf("EnsureWorkspaceMaterializationRequested calls = %d, want 1", store.ensureWorkspaceMaterializationCalls)
+	if store.ensureWorkspaceMountCalls != 1 {
+		t.Fatalf("EnsureWorkspaceMountRequested calls = %d, want 1", store.ensureWorkspaceMountCalls)
 	}
-	if !strings.Contains(rec.Body.String(), "ensure workspace materialization") {
+	if !strings.Contains(rec.Body.String(), "ensure workspace mount") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
@@ -932,20 +929,17 @@ func TestSessionStartAttachesCompatibleWorkspace(t *testing.T) {
 	if store.createWorkspaceCalls != 0 {
 		t.Fatalf("CreateWorkspace calls = %d, want 0", store.createWorkspaceCalls)
 	}
-	if store.ensureWorkspaceMaterializationCalls != 1 {
-		t.Fatalf("EnsureWorkspaceMaterializationRequested calls = %d, want 1", store.ensureWorkspaceMaterializationCalls)
+	if store.ensureWorkspaceMountCalls != 1 {
+		t.Fatalf("EnsureWorkspaceMountRequested calls = %d, want 1", store.ensureWorkspaceMountCalls)
 	}
-	if store.ensureWorkspaceMaterialization.WorkspaceID != workspaceID {
-		t.Fatalf("materialization workspace_id = %s, want %s", pgvalue.MustUUIDValue(store.ensureWorkspaceMaterialization.WorkspaceID), pgvalue.MustUUIDValue(workspaceID))
+	if store.ensureWorkspaceMount.WorkspaceID != workspaceID {
+		t.Fatalf("mount workspace_id = %s, want %s", pgvalue.MustUUIDValue(store.ensureWorkspaceMount.WorkspaceID), pgvalue.MustUUIDValue(workspaceID))
 	}
-	if store.ensureWorkspaceMaterialization.Priority != 0 {
-		t.Fatalf("materialization priority = %d, want 0", store.ensureWorkspaceMaterialization.Priority)
+	if store.setQueuedRunWorkspaceMountCalls != 1 {
+		t.Fatalf("SetQueuedRunWorkspaceMount calls = %d, want 1", store.setQueuedRunWorkspaceMountCalls)
 	}
-	if store.setQueuedRunWorkspaceMaterializationCalls != 1 {
-		t.Fatalf("SetQueuedRunWorkspaceMaterialization calls = %d, want 1", store.setQueuedRunWorkspaceMaterializationCalls)
-	}
-	if store.setQueuedRunWorkspaceMaterialization.WorkspaceMaterializationID != store.ensureWorkspaceMaterialization.ID {
-		t.Fatalf("run materialization_id = %s, want %s", pgvalue.MustUUIDValue(store.setQueuedRunWorkspaceMaterialization.WorkspaceMaterializationID), pgvalue.MustUUIDValue(store.ensureWorkspaceMaterialization.ID))
+	if store.setQueuedRunWorkspaceMount.WorkspaceMountID != store.ensureWorkspaceMount.ID {
+		t.Fatalf("run workspace_mount_id = %s, want %s", pgvalue.MustUUIDValue(store.setQueuedRunWorkspaceMount.WorkspaceMountID), pgvalue.MustUUIDValue(store.ensureWorkspaceMount.ID))
 	}
 }
 
@@ -993,17 +987,17 @@ func TestSessionStartCreatesArtifactBackedWorkspaceForColdStart(t *testing.T) {
 	if casEventIndex == -1 || artifactEventIndex == -1 || casEventIndex > artifactEventIndex {
 		t.Fatalf("artifact authority event order = %v, want %q before %q", store.artifactAuthorityEvents, casEvent, artifactEvent)
 	}
-	if store.ensureWorkspaceMaterializationCalls != 1 {
-		t.Fatalf("EnsureWorkspaceMaterializationRequested calls = %d, want 1", store.ensureWorkspaceMaterializationCalls)
+	if store.ensureWorkspaceMountCalls != 1 {
+		t.Fatalf("EnsureWorkspaceMountRequested calls = %d, want 1", store.ensureWorkspaceMountCalls)
 	}
-	if store.ensureWorkspaceMaterialization.WorkspaceID != store.workspace.ID {
-		t.Fatalf("materialization workspace_id = %s, want %s", pgvalue.MustUUIDValue(store.ensureWorkspaceMaterialization.WorkspaceID), pgvalue.MustUUIDValue(store.workspace.ID))
+	if store.ensureWorkspaceMount.WorkspaceID != store.workspace.ID {
+		t.Fatalf("mount workspace_id = %s, want %s", pgvalue.MustUUIDValue(store.ensureWorkspaceMount.WorkspaceID), pgvalue.MustUUIDValue(store.workspace.ID))
 	}
-	if store.setQueuedRunWorkspaceMaterializationCalls != 1 {
-		t.Fatalf("SetQueuedRunWorkspaceMaterialization calls = %d, want 1", store.setQueuedRunWorkspaceMaterializationCalls)
+	if store.setQueuedRunWorkspaceMountCalls != 1 {
+		t.Fatalf("SetQueuedRunWorkspaceMount calls = %d, want 1", store.setQueuedRunWorkspaceMountCalls)
 	}
-	if store.setQueuedRunWorkspaceMaterialization.WorkspaceMaterializationID != store.ensureWorkspaceMaterialization.ID {
-		t.Fatalf("run materialization_id = %s, want %s", pgvalue.MustUUIDValue(store.setQueuedRunWorkspaceMaterialization.WorkspaceMaterializationID), pgvalue.MustUUIDValue(store.ensureWorkspaceMaterialization.ID))
+	if store.setQueuedRunWorkspaceMount.WorkspaceMountID != store.ensureWorkspaceMount.ID {
+		t.Fatalf("run workspace_mount_id = %s, want %s", pgvalue.MustUUIDValue(store.setQueuedRunWorkspaceMount.WorkspaceMountID), pgvalue.MustUUIDValue(store.ensureWorkspaceMount.ID))
 	}
 }
 
@@ -1365,20 +1359,20 @@ func TestSessionStartExternalIDIgnoresMetadataTagsInFingerprint(t *testing.T) {
 func TestContinuationRunRequestRetriesTransientEnsureFailure(t *testing.T) {
 	store := continuationRunRequestFakeStore(db.RunStatusSucceeded)
 	previousRun := store.run
-	store.ensureWorkspaceMaterializationErr = errors.New("transient materialization failure")
+	store.ensureWorkspaceMountErr = errors.New("transient mount failure")
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store}
 	runID, err := server.reconcileClaimedSessionRunRequest(context.Background(), store.sessionRunRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runID.Valid || store.sessionRunRequest.Status != "accepted" || !strings.Contains(store.sessionRunRequest.LastError, "transient materialization failure") {
+	if runID.Valid || store.sessionRunRequest.Status != "accepted" || !strings.Contains(store.sessionRunRequest.LastError, "transient mount failure") {
 		t.Fatalf("first reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionRunRequest)
 	}
 	if len(store.sessionRuns) != 1 {
 		t.Fatalf("session runs after first reconcile = %d, want previous only", len(store.sessionRuns))
 	}
 
-	store.ensureWorkspaceMaterializationErr = nil
+	store.ensureWorkspaceMountErr = nil
 	store.run = previousRun
 	store.sessionRunRequest.Status = "claimed"
 	runID, err = server.reconcileClaimedSessionRunRequest(context.Background(), store.sessionRunRequest)
@@ -1391,8 +1385,8 @@ func TestContinuationRunRequestRetriesTransientEnsureFailure(t *testing.T) {
 	if len(store.sessionRuns) != 2 || store.sessionRuns[1].PreviousRunID != store.sessionRuns[0].RunID || store.sessionRuns[1].Reason != "input" {
 		t.Fatalf("session runs = %+v", store.sessionRuns)
 	}
-	if store.session.CurrentRunID != runID || store.ensureWorkspaceMaterializationCalls != 2 {
-		t.Fatalf("session current=%s materialization calls=%d", pgvalue.UUIDString(store.session.CurrentRunID), store.ensureWorkspaceMaterializationCalls)
+	if store.session.CurrentRunID != runID || store.ensureWorkspaceMountCalls != 2 {
+		t.Fatalf("session current=%s mount calls=%d", pgvalue.UUIDString(store.session.CurrentRunID), store.ensureWorkspaceMountCalls)
 	}
 }
 
@@ -2352,7 +2346,7 @@ func TestCancelSessionIsIdempotent(t *testing.T) {
 		},
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String()+"/cancel", strings.NewReader(`{"reason":"retry"}`))
 		req.Header.Set("authorization", "Bearer test-key")
 		rec := httptest.NewRecorder()
@@ -2545,100 +2539,111 @@ type fakeListRunsParams struct {
 
 type fakeStore struct {
 	db.Querier
-	createRun                                   db.CreateScopedRunParams
-	createRunStatus                             db.RunStatus
-	listRuns                                    fakeListRunsParams
-	listScopedRuns                              db.ListScopedRunSummariesParams
-	countScopedRuns                             db.CountScopedRunsByStatusParams
-	run                                         db.Run
-	createRunErr                                error
-	runOperation                                db.RunOperation
-	cancelRunErr                                error
-	cancelRunCalls                              int
-	deployment                                  db.Deployment
-	currentDeploymentTaskSecretDeclarations     []byte
-	currentDeploymentMissing                    bool
-	archivedTask                                bool
-	currentDeploymentTaskCalls                  int
-	getDeploymentTaskCalls                      int
-	deploymentPromotions                        []db.PromoteDeploymentParams
-	createDeploymentResult                      *db.Deployment
-	createDeploymentErr                         error
-	deploymentEvents                            []db.Event
-	deploymentTasks                             []db.DeploymentTask
-	deploymentStreams                           []db.DeploymentStream
-	ensuredSessionStreams                       []db.EnsureSessionStreamParams
-	artifacts                                   []db.Artifact
-	runEvent                                    db.AppendRunEventParams
-	events                                      []db.Event
-	stdout                                      []byte
-	stderr                                      []byte
-	runLogSnapshot                              db.GetRunLogSnapshotParams
-	runLogChunksAfter                           db.ListRunLogChunksAfterParams
-	runLogChunksAfterCalls                      int
-	firstRunLogChunksAfterSeq                   int64
-	deferLogChunksUntilSecondList               bool
-	logChunks                                   []db.RunLogChunk
-	logTruncated                                bool
-	updateRunMetadata                           db.UpdateRunMetadataForExecutionParams
-	secret                                      db.GetScopedSecretMetadataByNameRow
-	secrets                                     []db.ListScopedSecretsRow
-	deleteSecret                                db.DeleteScopedSecretParams
-	deleteSecretRows                            int64
-	defaultProjectID                            pgtype.UUID
-	defaultEnvironmentID                        pgtype.UUID
-	logCursor                                   int64
-	casObjects                                  []db.UpsertCasObjectParams
-	artifactAuthorityEvents                     []string
-	getCasObjectErr                             error
-	sessionID                                   pgtype.UUID
-	executionWorkerInstanceID                   pgtype.UUID
-	executionLeaseExpiresAt                     pgtype.Timestamptz
-	checkpoint                                  db.RuntimeCheckpoint
-	abandonedClaim                              bool
-	workerBootstrapTokenHash                    []byte
-	workerCredentialID                          pgtype.UUID
-	workerCredentialSecretHash                  []byte
-	dequeueRequest                              dispatch.DequeueRequest
-	ackedLeases                                 []dispatch.Lease
-	activeQueueLeaseMissing                     bool
-	renewErr                                    error
-	listQueueScopes                             db.ListQueueScopesParams
-	markStaleWorkspaceMaterializationsLostCalls int
-	workerQueueCapacity                         db.GetWorkerInstanceQueueCapacityRow
-	workerQueueCapacitySet                      bool
-	claimWorkspaceMaterialization               db.ClaimWorkspaceMaterializationParams
-	claimWorkspaceMaterializationCalls          int
-	session                                     db.Session
-	lockSession                                 db.Session
-	createSessionErr                            error
-	ensureWorkspaceMaterialization              db.EnsureWorkspaceMaterializationRequestedParams
-	ensureWorkspaceMaterializationCalls         int
-	ensureWorkspaceMaterializationInserted      bool
-	ensureWorkspaceMaterializationState         db.WorkspaceMaterializationState
-	ensureWorkspaceMaterializationErr           error
-	setQueuedRunWorkspaceMaterialization        db.SetQueuedRunWorkspaceMaterializationParams
-	setQueuedRunWorkspaceMaterializationCalls   int
-	resolveDeploymentSandbox                    db.ResolveDeploymentSandboxForWorkspaceCreateParams
-	resolveDeploymentSandboxCalls               int
-	workspaceOperationIdempotency               db.WorkspaceOperationIdempotency
-	createdWorkspaceOperationIdempotencies      []db.EnsureWorkspaceOperationIdempotencyParams
-	getSessionByExternalIDMisses                int
-	workspace                                   db.Workspace
-	workspaceVersions                           []db.WorkspaceVersion
-	getWorkspaceVersionCalls                    int
-	listWorkspaceVersionsCalls                  int
-	attachedWorkspace                           db.GetWorkspaceForSessionStartRow
-	createWorkspaceCalls                        int
-	startIdempotency                            db.GetSessionStartIdempotencyRow
-	sessionRuns                                 []db.SessionRun
-	streamRecord                                db.StreamRecord
-	sessionRunRequest                           db.SessionRunRequest
-	lockSessionCalls                            int
-	deploymentTaskRow                           db.GetDeploymentTaskRow
-	scheduleTriggerNotCurrent                   bool
-	closeSessionAttachesRun                     pgtype.UUID
-	closeSessionRetryRun                        db.Run
+	createRun                               db.CreateScopedRunParams
+	createRunStatus                         db.RunStatus
+	listRuns                                fakeListRunsParams
+	listScopedRuns                          db.ListScopedRunSummariesParams
+	countScopedRuns                         db.CountScopedRunsByStatusParams
+	run                                     db.Run
+	createRunErr                            error
+	runOperation                            db.RunOperation
+	cancelRunErr                            error
+	cancelRunCalls                          int
+	deployment                              db.Deployment
+	currentDeploymentTaskSecretDeclarations []byte
+	currentDeploymentMissing                bool
+	archivedTask                            bool
+	currentDeploymentTaskCalls              int
+	getDeploymentTaskCalls                  int
+	deploymentPromotions                    []db.PromoteDeploymentParams
+	createDeploymentResult                  *db.Deployment
+	createDeploymentErr                     error
+	deploymentEvents                        []db.Event
+	deploymentTasks                         []db.DeploymentTask
+	deploymentStreams                       []db.DeploymentStream
+	ensuredSessionStreams                   []db.EnsureSessionStreamParams
+	artifacts                               []db.Artifact
+	runEvent                                db.AppendRunEventParams
+	events                                  []db.Event
+	stdout                                  []byte
+	stderr                                  []byte
+	runLogSnapshot                          db.GetRunLogSnapshotParams
+	runLogChunksAfter                       db.ListRunLogChunksAfterParams
+	runLogChunksAfterCalls                  int
+	firstRunLogChunksAfterSeq               int64
+	deferLogChunksUntilSecondList           bool
+	logChunks                               []db.RunLogChunk
+	logTruncated                            bool
+	updateRunMetadata                       db.UpdateRunMetadataForExecutionParams
+	secret                                  db.GetScopedSecretMetadataByNameRow
+	secrets                                 []db.ListScopedSecretsRow
+	deleteSecret                            db.DeleteScopedSecretParams
+	deleteSecretRows                        int64
+	defaultProjectID                        pgtype.UUID
+	defaultEnvironmentID                    pgtype.UUID
+	logCursor                               int64
+	casObjects                              []db.UpsertCasObjectParams
+	artifactAuthorityEvents                 []string
+	getCasObjectErr                         error
+	sessionID                               pgtype.UUID
+	executionWorkerInstanceID               pgtype.UUID
+	executionLeaseExpiresAt                 pgtype.Timestamptz
+	releaseRunLeaseErr                      error
+	checkpoint                              db.RuntimeCheckpoint
+	abandonedClaim                          bool
+	workerBootstrapTokenHash                []byte
+	workerCredentialID                      pgtype.UUID
+	workerCredentialSecretHash              []byte
+	dequeueRequest                          dispatch.DequeueRequest
+	ackedLeases                             []dispatch.Lease
+	nackedLeases                            []dispatch.Lease
+	nackReasons                             []dispatch.NackReason
+	activeQueueLeaseMissing                 bool
+	renewErr                                error
+	listQueueScopes                         db.ListQueueScopesParams
+	markStaleWorkspaceMountsLostCalls       int
+	workerQueueCapacity                     db.GetWorkerInstanceQueueCapacityRow
+	workerQueueCapacitySet                  bool
+	claimWorkspaceMount                     db.ClaimWorkspaceMountParams
+	claimWorkspaceMountCalls                int
+	residentRunQueueItem                    db.ReserveResidentRunQueueItemForWorkerRow
+	residentRunQueueItemSet                 bool
+	residentRunQueueItemReservation         db.ReserveResidentRunQueueItemForWorkerParams
+	residentRunQueueItemReservationCalls    int
+	requestCapacityPressureStops            db.RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams
+	requestCapacityPressureStopsCalls       int
+	createCapacityPressureCheckpoints       db.CreateCapacityPressureLiveRuntimeCheckpointWaitCommandsForWorkerParams
+	createCapacityPressureCheckpointsCalls  int
+	session                                 db.Session
+	lockSession                             db.Session
+	createSessionErr                        error
+	ensureWorkspaceMount                    db.EnsureWorkspaceMountRequestedParams
+	ensureWorkspaceMountCalls               int
+	ensureWorkspaceMountInserted            bool
+	ensureWorkspaceMountState               db.WorkspaceMountState
+	ensureWorkspaceMountErr                 error
+	setQueuedRunWorkspaceMount              db.SetQueuedRunWorkspaceMountParams
+	setQueuedRunWorkspaceMountCalls         int
+	resolveDeploymentSandbox                db.ResolveDeploymentSandboxForWorkspaceCreateParams
+	resolveDeploymentSandboxCalls           int
+	workspaceOperationIdempotency           db.WorkspaceOperationIdempotency
+	createdWorkspaceOperationIdempotencies  []db.EnsureWorkspaceOperationIdempotencyParams
+	getSessionByExternalIDMisses            int
+	workspace                               db.Workspace
+	workspaceVersions                       []db.WorkspaceVersion
+	getWorkspaceVersionCalls                int
+	listWorkspaceVersionsCalls              int
+	attachedWorkspace                       db.GetWorkspaceForSessionStartRow
+	createWorkspaceCalls                    int
+	startIdempotency                        db.GetSessionStartIdempotencyRow
+	sessionRuns                             []db.SessionRun
+	streamRecord                            db.StreamRecord
+	sessionRunRequest                       db.SessionRunRequest
+	lockSessionCalls                        int
+	deploymentTaskRow                       db.GetDeploymentTaskRow
+	scheduleTriggerNotCurrent               bool
+	closeSessionAttachesRun                 pgtype.UUID
+	closeSessionRetryRun                    db.Run
 }
 
 type fakeControlTransaction struct {
@@ -2724,7 +2729,7 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		QueueName:             arg.QueueName,
 		QueueConcurrencyLimit: arg.QueueConcurrencyLimit,
 		ConcurrencyKey:        arg.ConcurrencyKey,
-		Priority:              arg.Priority,
+		Priority:              0,
 		QueueTimestamp:        arg.QueueTimestamp,
 		Ttl:                   arg.Ttl,
 		QueuedExpiresAt:       arg.QueuedExpiresAt,
@@ -2885,30 +2890,30 @@ func (f *fakeStore) CreateWorkspaceFromSandbox(_ context.Context, arg db.CreateW
 		UpdatedAt:           now,
 	}
 	return db.CreateWorkspaceFromSandboxRow{
-		ID:                    f.workspace.ID,
-		OrgID:                 f.workspace.OrgID,
-		ProjectID:             f.workspace.ProjectID,
-		EnvironmentID:         f.workspace.EnvironmentID,
-		DeploymentSandboxID:   f.workspace.DeploymentSandboxID,
-		SandboxID:             f.workspace.SandboxID,
-		SandboxFingerprint:    f.workspace.SandboxFingerprint,
-		ExternalID:            f.workspace.ExternalID,
-		CurrentVersionID:      f.workspace.CurrentVersionID,
-		State:                 f.workspace.State,
-		DesiredState:          f.workspace.DesiredState,
-		DirtyState:            f.workspace.DirtyState,
-		LastMaterializationID: f.workspace.LastMaterializationID,
-		Metadata:              f.workspace.Metadata,
-		Tags:                  f.workspace.Tags,
-		RetentionPolicy:       f.workspace.RetentionPolicy,
-		AutoStopAt:            f.workspace.AutoStopAt,
-		AutoArchiveAt:         f.workspace.AutoArchiveAt,
-		AutoDeleteAt:          f.workspace.AutoDeleteAt,
-		LastActivityAt:        f.workspace.LastActivityAt,
-		CreatedAt:             f.workspace.CreatedAt,
-		UpdatedAt:             f.workspace.UpdatedAt,
-		ArchivedAt:            f.workspace.ArchivedAt,
-		DeletedAt:             f.workspace.DeletedAt,
+		ID:                   f.workspace.ID,
+		OrgID:                f.workspace.OrgID,
+		ProjectID:            f.workspace.ProjectID,
+		EnvironmentID:        f.workspace.EnvironmentID,
+		DeploymentSandboxID:  f.workspace.DeploymentSandboxID,
+		SandboxID:            f.workspace.SandboxID,
+		SandboxFingerprint:   f.workspace.SandboxFingerprint,
+		ExternalID:           f.workspace.ExternalID,
+		CurrentVersionID:     f.workspace.CurrentVersionID,
+		State:                f.workspace.State,
+		DesiredState:         f.workspace.DesiredState,
+		DirtyState:           f.workspace.DirtyState,
+		LastWorkspaceMountID: f.workspace.LastWorkspaceMountID,
+		Metadata:             f.workspace.Metadata,
+		Tags:                 f.workspace.Tags,
+		RetentionPolicy:      f.workspace.RetentionPolicy,
+		AutoStopAt:           f.workspace.AutoStopAt,
+		AutoArchiveAt:        f.workspace.AutoArchiveAt,
+		AutoDeleteAt:         f.workspace.AutoDeleteAt,
+		LastActivityAt:       f.workspace.LastActivityAt,
+		CreatedAt:            f.workspace.CreatedAt,
+		UpdatedAt:            f.workspace.UpdatedAt,
+		ArchivedAt:           f.workspace.ArchivedAt,
+		DeletedAt:            f.workspace.DeletedAt,
 	}, nil
 }
 
@@ -3098,38 +3103,38 @@ func (f *fakeStore) GetWorkspaceForSessionStart(_ context.Context, arg db.GetWor
 	return db.GetWorkspaceForSessionStartRow{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) EnsureWorkspaceMaterializationRequested(_ context.Context, arg db.EnsureWorkspaceMaterializationRequestedParams) (db.EnsureWorkspaceMaterializationRequestedRow, error) {
-	f.ensureWorkspaceMaterialization = arg
-	f.ensureWorkspaceMaterializationCalls++
-	if f.ensureWorkspaceMaterializationErr != nil {
-		return db.EnsureWorkspaceMaterializationRequestedRow{}, f.ensureWorkspaceMaterializationErr
+func (f *fakeStore) EnsureWorkspaceMountRequested(_ context.Context, arg db.EnsureWorkspaceMountRequestedParams) (db.EnsureWorkspaceMountRequestedRow, error) {
+	f.ensureWorkspaceMount = arg
+	f.ensureWorkspaceMountCalls++
+	if f.ensureWorkspaceMountErr != nil {
+		return db.EnsureWorkspaceMountRequestedRow{}, f.ensureWorkspaceMountErr
 	}
-	state := f.ensureWorkspaceMaterializationState
+	state := f.ensureWorkspaceMountState
 	if state == "" {
-		state = db.WorkspaceMaterializationStateRequested
+		state = db.WorkspaceMountStateMounting
 	}
 	now := testTime()
-	return db.EnsureWorkspaceMaterializationRequestedRow{
+	return db.EnsureWorkspaceMountRequestedRow{
 		ID:                  arg.ID,
 		OrgID:               arg.OrgID,
 		ProjectID:           arg.ProjectID,
 		EnvironmentID:       arg.EnvironmentID,
 		WorkspaceID:         arg.WorkspaceID,
 		DeploymentSandboxID: testDeploymentSandboxID(),
-		Priority:            arg.Priority,
+		Priority:            0,
 		State:               state,
 		Request:             arg.Request,
 		RequestedAt:         now,
 		CreatedAt:           now,
 		UpdatedAt:           now,
-		Inserted:            f.ensureWorkspaceMaterializationInserted,
+		Inserted:            f.ensureWorkspaceMountInserted,
 	}, nil
 }
 
-func (f *fakeStore) SetQueuedRunWorkspaceMaterialization(_ context.Context, arg db.SetQueuedRunWorkspaceMaterializationParams) error {
-	f.setQueuedRunWorkspaceMaterialization = arg
-	f.setQueuedRunWorkspaceMaterializationCalls++
-	f.run.WorkspaceMaterializationID = arg.WorkspaceMaterializationID
+func (f *fakeStore) SetQueuedRunWorkspaceMount(_ context.Context, arg db.SetQueuedRunWorkspaceMountParams) error {
+	f.setQueuedRunWorkspaceMount = arg
+	f.setQueuedRunWorkspaceMountCalls++
+	f.run.WorkspaceMountID = arg.WorkspaceMountID
 	return nil
 }
 
@@ -3623,6 +3628,20 @@ func (f *fakeStore) RunLeaseDispatchAttemptsExhausted(context.Context, db.RunLea
 
 func (f *fakeStore) FailExpiredRunningRunLeases(context.Context, pgtype.UUID) error {
 	return nil
+}
+
+func (f *fakeStore) CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(context.Context, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams) ([]db.WorkerCommand, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(context.Context, db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams) ([]db.WorkerCommand, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) CreateCapacityPressureLiveRuntimeCheckpointWaitCommandsForWorker(_ context.Context, arg db.CreateCapacityPressureLiveRuntimeCheckpointWaitCommandsForWorkerParams) ([]db.WorkerCommand, error) {
+	f.createCapacityPressureCheckpoints = arg
+	f.createCapacityPressureCheckpointsCalls++
+	return nil, nil
 }
 
 func testTime() pgtype.Timestamptz {

@@ -43,6 +43,12 @@ variable "control_desired_count" {
   default     = 1
 }
 
+variable "control_environment" {
+  description = "Additional non-secret environment variables for helmr-control."
+  type        = map(string)
+  default     = {}
+}
+
 variable "dispatcher_desired_count" {
   description = "Desired ECS task count for helmr-dispatcher."
   type        = number
@@ -59,6 +65,12 @@ variable "control_health_check_path" {
   description = "HTTP path used by the control-plane target group health check. Use /readyz after the deployed image serves readiness checks."
   type        = string
   default     = "/healthz"
+}
+
+variable "dispatcher_environment" {
+  description = "Additional non-secret environment variables for helmr-dispatcher."
+  type        = map(string)
+  default     = {}
 }
 
 variable "email_provider" {
@@ -320,6 +332,12 @@ variable "worker_execution_slots" {
   type        = number
   default     = null
   nullable    = true
+}
+
+variable "worker_environment" {
+  description = "Additional non-secret environment variables written to the dev worker env file."
+  type        = map(string)
+  default     = {}
 }
 
 variable "secret_encryption_key_old_arn" {

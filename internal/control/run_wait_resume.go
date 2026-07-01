@@ -14,7 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const runWaitRequeueLimit = int32(1000)
+const (
+	runWaitRequeueLimit = int32(1000)
+)
 
 func (s *Server) requeueResolvedRunWaits(ctx context.Context, orgID pgtype.UUID) {
 	log := s.log
@@ -34,7 +36,7 @@ func (s *Server) requeueResolvedRunWaits(ctx context.Context, orgID pgtype.UUID)
 		_ = tx.Rollback(ctx)
 	}()
 	txStore := db.New(tx)
-	rows, err := requeueResolvedRunWaitsWithStore(ctx, txStore, orgID)
+	rows, err := requeueResolvedRunWaitsWithStore(ctx, txStore, orgID, log)
 	if err != nil {
 		log.Error("requeue resolved run waits failed", "org_id", pgvalue.UUIDString(orgID), "error", err)
 		return
@@ -55,17 +57,17 @@ func (s *Server) requeueResolvedRunWaits(ctx context.Context, orgID pgtype.UUID)
 
 type runWaitResumeStore interface {
 	RequeueResolvedRunWaits(context.Context, db.RequeueResolvedRunWaitsParams) ([]db.RequeueResolvedRunWaitsRow, error)
-	EnsureWorkspaceMaterializationRequested(context.Context, db.EnsureWorkspaceMaterializationRequestedParams) (db.EnsureWorkspaceMaterializationRequestedRow, error)
-	SetQueuedRunWorkspaceMaterialization(context.Context, db.SetQueuedRunWorkspaceMaterializationParams) error
+	EnsureWorkspaceMountRequested(context.Context, db.EnsureWorkspaceMountRequestedParams) (db.EnsureWorkspaceMountRequestedRow, error)
+	SetQueuedRunWorkspaceMount(context.Context, db.SetQueuedRunWorkspaceMountParams) error
 }
 
-type queuedRunWorkspaceMaterializationStore interface {
+type queuedRunWorkspaceMountStore interface {
 	GetRun(context.Context, db.GetRunParams) (db.Run, error)
-	EnsureWorkspaceMaterializationRequested(context.Context, db.EnsureWorkspaceMaterializationRequestedParams) (db.EnsureWorkspaceMaterializationRequestedRow, error)
-	SetQueuedRunWorkspaceMaterialization(context.Context, db.SetQueuedRunWorkspaceMaterializationParams) error
+	EnsureWorkspaceMountRequested(context.Context, db.EnsureWorkspaceMountRequestedParams) (db.EnsureWorkspaceMountRequestedRow, error)
+	SetQueuedRunWorkspaceMount(context.Context, db.SetQueuedRunWorkspaceMountParams) error
 }
 
-func requeueResolvedRunWaitsWithStore(ctx context.Context, store runWaitResumeStore, orgID pgtype.UUID) ([]db.RequeueResolvedRunWaitsRow, error) {
+func requeueResolvedRunWaitsWithStore(ctx context.Context, store runWaitResumeStore, orgID pgtype.UUID, log *slog.Logger) ([]db.RequeueResolvedRunWaitsRow, error) {
 	rows, err := store.RequeueResolvedRunWaits(ctx, db.RequeueResolvedRunWaitsParams{
 		OrgID:      orgID,
 		LimitCount: runWaitRequeueLimit,
@@ -75,14 +77,14 @@ func requeueResolvedRunWaitsWithStore(ctx context.Context, store runWaitResumeSt
 	}
 	for _, row := range rows {
 		request, err := json.Marshal(map[string]string{
-			"source":      "run_wait_resume",
+			"source":      "runtime_resume_wait",
 			"run_id":      pgvalue.MustUUIDValue(row.RunID).String(),
 			"run_wait_id": pgvalue.MustUUIDValue(row.ID).String(),
 		})
 		if err != nil {
 			return nil, err
 		}
-		materialization, err := ensureWorkspaceMaterializationForQueuedRun(ctx, store, queuedRunWorkspaceMaterializationTarget{
+		mount, err := ensureWorkspaceMountForQueuedRun(ctx, store, queuedRunWorkspaceMountTarget{
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:         row.OrgID,
 			ProjectID:     row.ProjectID,
@@ -92,21 +94,35 @@ func requeueResolvedRunWaitsWithStore(ctx context.Context, store runWaitResumeSt
 			Request:       request,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("ensure workspace materialization for resumed run %s: %w", pgvalue.UUIDString(row.RunID), err)
+			return nil, fmt.Errorf("ensure workspace mount for resumed run %s: %w", pgvalue.UUIDString(row.RunID), err)
 		}
-		if err := linkQueuedRunWorkspaceMaterialization(ctx, store, queuedRunWorkspaceMaterializationLink{
-			OrgID:                      row.OrgID,
-			RunID:                      row.RunID,
-			WorkspaceID:                row.WorkspaceID,
-			WorkspaceMaterializationID: materialization.ID,
+		if log != nil {
+			log.Debug("queued run workspace mount ensured",
+				"source", "runtime_resume_wait",
+				"org_id", pgvalue.UUIDString(row.OrgID),
+				"run_id", pgvalue.UUIDString(row.RunID),
+				"run_wait_id", pgvalue.UUIDString(row.ID),
+				"workspace_id", pgvalue.UUIDString(row.WorkspaceID),
+				"workspace_mount_id", pgvalue.UUIDString(mount.ID),
+				"state", mount.State,
+				"priority", mount.Priority,
+				"inserted", mount.Inserted,
+				"decision", mount.Decision,
+			)
+		}
+		if err := linkQueuedRunWorkspaceMount(ctx, store, queuedRunWorkspaceMountLink{
+			OrgID:            row.OrgID,
+			RunID:            row.RunID,
+			WorkspaceID:      row.WorkspaceID,
+			WorkspaceMountID: mount.ID,
 		}); err != nil {
-			return nil, fmt.Errorf("set workspace materialization for resumed run %s: %w", pgvalue.UUIDString(row.RunID), err)
+			return nil, fmt.Errorf("set workspace mount for resumed run %s: %w", pgvalue.UUIDString(row.RunID), err)
 		}
 	}
 	return rows, nil
 }
 
-type queuedRunWorkspaceMaterializationTarget struct {
+type queuedRunWorkspaceMountTarget struct {
 	ID            pgtype.UUID
 	OrgID         pgtype.UUID
 	ProjectID     pgtype.UUID
@@ -116,39 +132,39 @@ type queuedRunWorkspaceMaterializationTarget struct {
 	Request       []byte
 }
 
-type queuedRunWorkspaceMaterializationLink struct {
-	OrgID                      pgtype.UUID
-	RunID                      pgtype.UUID
-	WorkspaceID                pgtype.UUID
-	WorkspaceMaterializationID pgtype.UUID
+type queuedRunWorkspaceMountLink struct {
+	OrgID            pgtype.UUID
+	RunID            pgtype.UUID
+	WorkspaceID      pgtype.UUID
+	WorkspaceMountID pgtype.UUID
 }
 
-func ensureWorkspaceMaterializationForQueuedRun(ctx context.Context, store interface {
-	EnsureWorkspaceMaterializationRequested(context.Context, db.EnsureWorkspaceMaterializationRequestedParams) (db.EnsureWorkspaceMaterializationRequestedRow, error)
-}, target queuedRunWorkspaceMaterializationTarget) (db.EnsureWorkspaceMaterializationRequestedRow, error) {
-	return store.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
-		ID:            target.ID,
-		OrgID:         target.OrgID,
-		ProjectID:     target.ProjectID,
-		EnvironmentID: target.EnvironmentID,
-		WorkspaceID:   target.WorkspaceID,
-		Priority:      target.Priority,
-		Request:       target.Request,
+func ensureWorkspaceMountForQueuedRun(ctx context.Context, store interface {
+	EnsureWorkspaceMountRequested(context.Context, db.EnsureWorkspaceMountRequestedParams) (db.EnsureWorkspaceMountRequestedRow, error)
+}, target queuedRunWorkspaceMountTarget) (db.EnsureWorkspaceMountRequestedRow, error) {
+	return store.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
+		ID:              target.ID,
+		OrgID:           target.OrgID,
+		ProjectID:       target.ProjectID,
+		EnvironmentID:   target.EnvironmentID,
+		WorkspaceID:     target.WorkspaceID,
+		RequestPriority: target.Priority,
+		Request:         target.Request,
 	})
 }
 
-func linkQueuedRunWorkspaceMaterialization(ctx context.Context, store interface {
-	SetQueuedRunWorkspaceMaterialization(context.Context, db.SetQueuedRunWorkspaceMaterializationParams) error
-}, link queuedRunWorkspaceMaterializationLink) error {
-	return store.SetQueuedRunWorkspaceMaterialization(ctx, db.SetQueuedRunWorkspaceMaterializationParams{
-		OrgID:                      link.OrgID,
-		RunID:                      link.RunID,
-		WorkspaceID:                link.WorkspaceID,
-		WorkspaceMaterializationID: link.WorkspaceMaterializationID,
+func linkQueuedRunWorkspaceMount(ctx context.Context, store interface {
+	SetQueuedRunWorkspaceMount(context.Context, db.SetQueuedRunWorkspaceMountParams) error
+}, link queuedRunWorkspaceMountLink) error {
+	return store.SetQueuedRunWorkspaceMount(ctx, db.SetQueuedRunWorkspaceMountParams{
+		OrgID:            link.OrgID,
+		RunID:            link.RunID,
+		WorkspaceID:      link.WorkspaceID,
+		WorkspaceMountID: link.WorkspaceMountID,
 	})
 }
 
-func ensureQueuedRunWorkspaceMaterialization(ctx context.Context, store queuedRunWorkspaceMaterializationStore, orgID pgtype.UUID, runID pgtype.UUID, source string) (bool, error) {
+func ensureQueuedRunWorkspaceMount(ctx context.Context, store queuedRunWorkspaceMountStore, orgID pgtype.UUID, runID pgtype.UUID, source string, log *slog.Logger) (bool, error) {
 	run, err := store.GetRun(ctx, db.GetRunParams{OrgID: orgID, ID: runID})
 	if err != nil {
 		return false, err
@@ -163,7 +179,7 @@ func ensureQueuedRunWorkspaceMaterialization(ctx context.Context, store queuedRu
 	if err != nil {
 		return false, err
 	}
-	materialization, err := ensureWorkspaceMaterializationForQueuedRun(ctx, store, queuedRunWorkspaceMaterializationTarget{
+	mount, err := ensureWorkspaceMountForQueuedRun(ctx, store, queuedRunWorkspaceMountTarget{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         run.OrgID,
 		ProjectID:     run.ProjectID,
@@ -175,11 +191,24 @@ func ensureQueuedRunWorkspaceMaterialization(ctx context.Context, store queuedRu
 	if err != nil {
 		return false, err
 	}
-	if err := linkQueuedRunWorkspaceMaterialization(ctx, store, queuedRunWorkspaceMaterializationLink{
-		OrgID:                      run.OrgID,
-		RunID:                      run.ID,
-		WorkspaceID:                run.WorkspaceID,
-		WorkspaceMaterializationID: materialization.ID,
+	if log != nil {
+		log.Info("queued run workspace mount ensured",
+			"source", source,
+			"org_id", pgvalue.UUIDString(run.OrgID),
+			"run_id", pgvalue.UUIDString(run.ID),
+			"workspace_id", pgvalue.UUIDString(run.WorkspaceID),
+			"workspace_mount_id", pgvalue.UUIDString(mount.ID),
+			"state", mount.State,
+			"priority", mount.Priority,
+			"inserted", mount.Inserted,
+			"decision", mount.Decision,
+		)
+	}
+	if err := linkQueuedRunWorkspaceMount(ctx, store, queuedRunWorkspaceMountLink{
+		OrgID:            run.OrgID,
+		RunID:            run.ID,
+		WorkspaceID:      run.WorkspaceID,
+		WorkspaceMountID: mount.ID,
 	}); err != nil {
 		return false, err
 	}

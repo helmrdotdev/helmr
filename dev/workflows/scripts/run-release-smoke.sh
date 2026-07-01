@@ -7,15 +7,38 @@ PRODUCTION_ENV="${PRODUCTION_ENV:-production}"
 API_URL="${HELMR_API_URL:-https://dev.helmr.dev}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TOKEN_CHECKPOINT_OUTPUT_TIMEOUT_SECONDS="${TOKEN_CHECKPOINT_OUTPUT_TIMEOUT_SECONDS:-420}"
+ACTIVE_STREAM_ONCE_DELAY_SECONDS="${ACTIVE_STREAM_ONCE_DELAY_SECONDS:-0}"
+ACTIVE_STREAM_ON_DELAY_SECONDS="${ACTIVE_STREAM_ON_DELAY_SECONDS:-0}"
+STREAM_INPUT_APPROVAL_DELAY_SECONDS="${STREAM_INPUT_APPROVAL_DELAY_SECONDS:-5}"
+STREAM_INPUT_MESSAGE_DELAY_SECONDS="${STREAM_INPUT_MESSAGE_DELAY_SECONDS:-2}"
+TOKEN_CHECKPOINT_DECISION_DELAY_SECONDS="${TOKEN_CHECKPOINT_DECISION_DELAY_SECONDS:-0}"
+TOKEN_CHECKPOINT_REPLY_DELAY_SECONDS="${TOKEN_CHECKPOINT_REPLY_DELAY_SECONDS:-0}"
 
 session_ids=()
 run_ids=()
 stopped_workspace_ids=()
+executed_smoke_cases=()
+skipped_smoke_cases=()
 helmr_cmd=()
 staging_scope_args=()
 production_scope_args=()
 skip_production="${SKIP_PRODUCTION:-}"
 phase9_http_smoke_enabled=0
+selected_smoke_cases="${SMOKE_CASES:-}"
+all_smoke_cases=(
+  phase9-start-and-wait
+  runtime
+  session-continuation
+  stream-input
+  active-stream
+  timer
+  token-checkpoint
+  edge-workspace
+  missing-secrets
+  invalid-payload
+  expected-error
+  production-secrets
+)
 
 if [ -n "${HELMR_BIN:-}" ]; then
   helmr_cmd=("${HELMR_BIN}")
@@ -33,6 +56,116 @@ fi
 
 run_helmr() {
   HELMR_API_URL="${API_URL}" "${helmr_cmd[@]}" "$@"
+}
+
+sleep_seconds() {
+  local seconds=$1
+  if [[ ! "${seconds}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    printf 'invalid delay seconds: %s\n' "${seconds}" >&2
+    return 2
+  fi
+  if [[ "${seconds}" =~ ^0+([.]0+)?$ ]]; then
+    return 0
+  fi
+  sleep "${seconds}"
+}
+
+now_ms() {
+  python3 -c 'import time; print(int(time.time() * 1000))'
+}
+
+ux_timing() {
+  local case_name=$1
+  local event=$2
+  local session_id="${3:-}"
+  local run_id="${4:-}"
+  local detail="${5:-}"
+  printf 'ux_timing case=%s event=%s at_ms=%s session_id=%s run_id=%s detail=%s\n' \
+    "${case_name}" "${event}" "$(now_ms)" "${session_id}" "${run_id}" "${detail}"
+}
+
+mark_smoke_executed() {
+  executed_smoke_cases+=("$1")
+}
+
+mark_smoke_skipped() {
+  skipped_smoke_cases+=("$1")
+}
+
+smoke_case_enabled() {
+  local name=$1
+  if [ -z "${selected_smoke_cases}" ]; then
+    return 0
+  fi
+  case ",${selected_smoke_cases}," in
+    *",${name},"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_smoke_cases() {
+  local candidate
+  local known
+  local matched
+  local requested_smoke_cases
+  if [ -z "${selected_smoke_cases}" ]; then
+    return 0
+  fi
+  IFS=, read -r -a requested_smoke_cases <<<"${selected_smoke_cases}"
+  for candidate in "${requested_smoke_cases[@]}"; do
+    matched=0
+    for known in "${all_smoke_cases[@]}"; do
+      if [ "${candidate}" = "${known}" ]; then
+        matched=1
+        break
+      fi
+    done
+    if [ "${matched}" != "1" ]; then
+      printf 'unknown SMOKE_CASES entry: %s\n' "${candidate}" >&2
+      printf 'known SMOKE_CASES entries: %s\n' "${all_smoke_cases[*]}" >&2
+      return 2
+    fi
+  done
+}
+
+validate_selected_smoke_preconditions() {
+  if [ -z "${selected_smoke_cases}" ]; then
+    return 0
+  fi
+  if smoke_case_enabled phase9-start-and-wait && [ "${phase9_http_smoke_enabled}" != "1" ]; then
+    printf 'SMOKE_CASES=phase9-start-and-wait requires HELMR_API_KEY for root API checks\n' >&2
+    return 2
+  fi
+  if smoke_case_enabled production-secrets && [ "${skip_production}" = "1" ]; then
+    printf 'SMOKE_CASES=production-secrets cannot run while SKIP_PRODUCTION=1; HELMR_API_KEY mode defaults SKIP_PRODUCTION to 1\n' >&2
+    return 2
+  fi
+}
+
+print_smoke_summary() {
+  printf 'release smoke session ids: %s\n' "${session_ids[*]-}"
+  printf 'release smoke run ids: %s\n' "${run_ids[*]-}"
+  printf 'release smoke stopped workspace ids: %s\n' "${stopped_workspace_ids[*]-}"
+  printf 'release smoke executed cases: %s\n' "${executed_smoke_cases[*]-}"
+  printf 'release smoke skipped cases: %s\n' "${skipped_smoke_cases[*]-}"
+}
+
+production_smoke_enabled() {
+  [ "${skip_production}" != "1" ] && smoke_case_enabled production-secrets
+}
+
+validate_selected_smoke_execution() {
+  if [ -z "${selected_smoke_cases}" ]; then
+    return 0
+  fi
+  if [ "${#skipped_smoke_cases[@]}" -ne 0 ]; then
+    printf 'selected smoke cases were skipped: %s\n' "${skipped_smoke_cases[*]}" >&2
+    return 2
+  fi
+  if [ "${#executed_smoke_cases[@]}" -eq 0 ]; then
+    printf 'no selected smoke cases executed\n' >&2
+    return 2
+  fi
 }
 
 api_url() {
@@ -387,35 +520,46 @@ expect_session_continuation_success() {
   local status
   marker="release-smoke-${name}-$(date -u +%Y%m%d%H%M%S)"
   correlation_id="${marker}-corr"
+  ux_timing "${name}" "start_requested" "" "" "task=session-continuation-smoke"
   ids="$(start_capture_ids session-continuation-smoke "$@" --payload-json "$(jq -nc --arg marker "${marker}" --arg correlationId "${correlation_id}" '{marker:$marker,correlationId:$correlationId}')")"
   session_id="${ids%% *}"
   initial_run_id="${ids##* }"
   session_ids+=("${session_id}")
   run_ids+=("${initial_run_id}")
+  ux_timing "${name}" "start_returned" "${session_id}" "${initial_run_id}" "task=session-continuation-smoke"
 
   status="$(wait_status "${initial_run_id}")"
+  ux_timing "${name}" "initial_terminal_observed" "${session_id}" "${initial_run_id}" "status=${status}"
   if [ "${status}" != "succeeded" ]; then
     inspect_run "${initial_run_id}" >&2
     printf 'FAIL %s: expected initial run succeeded, got %s: %s\n' "${name}" "${status}" "${initial_run_id}" >&2
     return 1
   fi
   expect_session_open_idle "${name}" "${session_id}" "$@"
+  ux_timing "${name}" "initial_idle_wait_requested" "${session_id}" "${initial_run_id}" "phase=initial-idle"
   wait_for_stream_phase "${session_id}" session-continuation-smoke.report "${marker}" initial-idle "$@"
+  ux_timing "${name}" "initial_idle_visible" "${session_id}" "${initial_run_id}" "phase=initial-idle"
 
+  ux_timing "${name}" "input_send_requested" "${session_id}" "${initial_run_id}" "step=continuation"
   run_helmr session stream input send "${session_id}" session-continuation-smoke.input "$@" \
     --correlation-id "${correlation_id}" \
     --idempotency-key "${marker}:continuation" \
     --data-json "$(jq -nc --arg message "continue ${marker}" '{message:$message}')"
+  ux_timing "${name}" "input_send_accepted" "${session_id}" "${initial_run_id}" "step=continuation"
 
   continuation_run_id="$(wait_for_continuation_run "${session_id}" "${initial_run_id}" "$@")"
   run_ids+=("${continuation_run_id}")
+  ux_timing "${name}" "continuation_run_visible" "${session_id}" "${continuation_run_id}" "initial_run_id=${initial_run_id}"
   status="$(wait_status "${continuation_run_id}")"
+  ux_timing "${name}" "continuation_terminal_observed" "${session_id}" "${continuation_run_id}" "status=${status}"
   if [ "${status}" != "succeeded" ]; then
     inspect_run "${continuation_run_id}" >&2
     printf 'FAIL %s: expected continuation run succeeded, got %s: %s\n' "${name}" "${status}" "${continuation_run_id}" >&2
     return 1
   fi
+  ux_timing "${name}" "continuation_wait_requested" "${session_id}" "${continuation_run_id}" "phase=continuation"
   wait_for_stream_phase "${session_id}" session-continuation-smoke.report "${marker}" continuation "$@"
+  ux_timing "${name}" "continuation_visible" "${session_id}" "${continuation_run_id}" "phase=continuation"
   inspect_run "${initial_run_id}"
   inspect_run "${continuation_run_id}"
   run_helmr session stream output list "${session_id}" session-continuation-smoke.report "$@" --json
@@ -434,29 +578,46 @@ expect_active_stream_success() {
   local status
   marker="release-smoke-${name}-$(date -u +%Y%m%d%H%M%S)"
   correlation_id="${marker}-corr"
+  ux_timing "${name}" "start_requested" "" "" "task=active-stream-smoke"
   ids="$(start_capture_ids active-stream-smoke "$@" --payload-json "$(jq -nc --arg marker "${marker}" --arg correlationId "${correlation_id}" '{marker:$marker,correlationId:$correlationId,timeout:300}')")"
   session_id="${ids%% *}"
   run_id="${ids##* }"
   session_ids+=("${session_id}")
   run_ids+=("${run_id}")
+  ux_timing "${name}" "start_returned" "${session_id}" "${run_id}" "task=active-stream-smoke"
 
+  ux_timing "${name}" "phase_wait_requested" "${session_id}" "${run_id}" "phase=ready-for-empty-peek"
   wait_for_stream_phase "${session_id}" active-stream-smoke.report "${marker}" ready-for-empty-peek "$@"
+  ux_timing "${name}" "phase_visible" "${session_id}" "${run_id}" "phase=ready-for-empty-peek"
+  ux_timing "${name}" "phase_wait_requested" "${session_id}" "${run_id}" "phase=ready-for-once"
   wait_for_stream_phase "${session_id}" active-stream-smoke.report "${marker}" ready-for-once "$@"
+  ux_timing "${name}" "phase_visible" "${session_id}" "${run_id}" "phase=ready-for-once"
+  sleep_seconds "${ACTIVE_STREAM_ONCE_DELAY_SECONDS}"
+  ux_timing "${name}" "input_send_requested" "${session_id}" "${run_id}" "step=once"
   run_helmr session stream input send "${session_id}" active-stream-smoke.input "$@" \
     --correlation-id "${correlation_id}" \
     --idempotency-key "${marker}:once" \
     --data-json "$(jq -nc --arg value "once" '{step:"once",value:$value}')"
+  ux_timing "${name}" "input_send_accepted" "${session_id}" "${run_id}" "step=once"
+  ux_timing "${name}" "phase_wait_requested" "${session_id}" "${run_id}" "phase=ready-for-on"
   wait_for_stream_phase "${session_id}" active-stream-smoke.report "${marker}" ready-for-on "$@"
+  ux_timing "${name}" "phase_visible" "${session_id}" "${run_id}" "phase=ready-for-on"
+  sleep_seconds "${ACTIVE_STREAM_ON_DELAY_SECONDS}"
+  ux_timing "${name}" "input_send_requested" "${session_id}" "${run_id}" "step=on-one"
   run_helmr session stream input send "${session_id}" active-stream-smoke.input "$@" \
     --correlation-id "${correlation_id}" \
     --idempotency-key "${marker}:on-one" \
     --data-json "$(jq -nc --arg value "on-one" '{step:"on-one",value:$value}')"
+  ux_timing "${name}" "input_send_accepted" "${session_id}" "${run_id}" "step=on-one"
+  ux_timing "${name}" "input_send_requested" "${session_id}" "${run_id}" "step=on-two"
   run_helmr session stream input send "${session_id}" active-stream-smoke.input "$@" \
     --correlation-id "${correlation_id}" \
     --idempotency-key "${marker}:on-two" \
     --data-json "$(jq -nc --arg value "on-two" '{step:"on-two",value:$value}')"
+  ux_timing "${name}" "input_send_accepted" "${session_id}" "${run_id}" "step=on-two"
 
   status="$(wait_status "${run_id}")"
+  ux_timing "${name}" "terminal_observed" "${session_id}" "${run_id}" "status=${status}"
   if [ "${status}" != "succeeded" ]; then
     inspect_run "${run_id}" >&2
     printf 'FAIL %s: expected succeeded, got %s: %s\n' "${name}" "${status}" "${run_id}" >&2
@@ -479,22 +640,29 @@ expect_stream_input_success() {
   local status
   marker="release-smoke-${name}-$(date -u +%Y%m%d%H%M%S)"
   correlation_id="${marker}-corr"
+  ux_timing "${name}" "start_requested" "" "" "task=stream-input-smoke"
   ids="$(start_capture_ids stream-input-smoke "$@" --payload-json "$(jq -nc --arg marker "${marker}" --arg correlationId "${correlation_id}" '{marker:$marker,correlationId:$correlationId,firstTimeout:300,secondTimeout:300}')")"
   session_id="${ids%% *}"
   run_id="${ids##* }"
   session_ids+=("${session_id}")
   run_ids+=("${run_id}")
-  sleep 5
+  ux_timing "${name}" "start_returned" "${session_id}" "${run_id}" "task=stream-input-smoke"
+  sleep_seconds "${STREAM_INPUT_APPROVAL_DELAY_SECONDS}"
+  ux_timing "${name}" "input_send_requested" "${session_id}" "${run_id}" "step=approval"
   run_helmr session stream input send "${session_id}" input-smoke "$@" \
     --correlation-id "${correlation_id}" \
     --idempotency-key "${marker}:approval" \
     --data-json '{"step":"approve","approved":true}'
-  sleep 2
+  ux_timing "${name}" "input_send_accepted" "${session_id}" "${run_id}" "step=approval"
+  sleep_seconds "${STREAM_INPUT_MESSAGE_DELAY_SECONDS}"
+  ux_timing "${name}" "input_send_requested" "${session_id}" "${run_id}" "step=message"
   run_helmr session stream input send "${session_id}" input-smoke "$@" \
     --correlation-id "${correlation_id}" \
     --idempotency-key "${marker}:message" \
     --data-json "$(jq -nc --arg text "hello ${marker}" '{step:"message",text:$text}')"
+  ux_timing "${name}" "input_send_accepted" "${session_id}" "${run_id}" "step=message"
   status="$(wait_status "${run_id}")"
+  ux_timing "${name}" "terminal_observed" "${session_id}" "${run_id}" "status=${status}"
   if [ "${status}" != "succeeded" ]; then
     inspect_run "${run_id}" >&2
     printf 'FAIL %s: expected succeeded, got %s: %s\n' "${name}" "${status}" "${run_id}" >&2
@@ -516,18 +684,31 @@ expect_token_checkpoint_success() {
   local token_id
   local status
   marker="release-smoke-${name}-$(date -u +%Y%m%d%H%M%S)"
+  ux_timing "${name}" "start_requested" "" "" "task=token-checkpoint-smoke"
   ids="$(start_capture_ids token-checkpoint-smoke "$@" --payload-json "$(jq -nc --arg marker "${marker}" '{marker:$marker,approvalTimeout:300,messageTimeout:300}')")"
   session_id="${ids%% *}"
   run_id="${ids##* }"
   session_ids+=("${session_id}")
   run_ids+=("${run_id}")
+  ux_timing "${name}" "start_returned" "${session_id}" "${run_id}" "task=token-checkpoint-smoke"
 
+  ux_timing "${name}" "token_wait_requested" "${session_id}" "${run_id}" "step=decision"
   token_id="$(wait_for_token_checkpoint_token "${session_id}" "${marker}" decision "$@")"
+  ux_timing "${name}" "token_visible" "${session_id}" "${run_id}" "step=decision"
+  sleep_seconds "${TOKEN_CHECKPOINT_DECISION_DELAY_SECONDS}"
+  ux_timing "${name}" "token_complete_requested" "${session_id}" "${run_id}" "step=decision"
   run_helmr token complete "${token_id}" "$@" --data-json '{"approved":true}'
+  ux_timing "${name}" "token_complete_accepted" "${session_id}" "${run_id}" "step=decision"
+  ux_timing "${name}" "token_wait_requested" "${session_id}" "${run_id}" "step=reply"
   token_id="$(wait_for_token_checkpoint_token "${session_id}" "${marker}" reply "$@")"
+  ux_timing "${name}" "token_visible" "${session_id}" "${run_id}" "step=reply"
+  sleep_seconds "${TOKEN_CHECKPOINT_REPLY_DELAY_SECONDS}"
+  ux_timing "${name}" "token_complete_requested" "${session_id}" "${run_id}" "step=reply"
   run_helmr token complete "${token_id}" "$@" --data-json "$(jq -nc --arg text "checkpoint ${marker}" '{text:$text}')"
+  ux_timing "${name}" "token_complete_accepted" "${session_id}" "${run_id}" "step=reply"
 
   status="$(wait_status "${run_id}")"
+  ux_timing "${name}" "terminal_observed" "${session_id}" "${run_id}" "status=${status}"
   if [ "${status}" != "succeeded" ]; then
     inspect_run "${run_id}" >&2
     printf 'FAIL %s: expected succeeded, got %s: %s\n' "${name}" "${status}" "${run_id}" >&2
@@ -539,75 +720,95 @@ expect_token_checkpoint_success() {
 }
 
 cd "${ROOT}"
+validate_smoke_cases
+validate_selected_smoke_preconditions
 
 if [ "${SKIP_DEPLOY:-0}" != "1" ]; then
   dev/workflows/scripts/sync-local-sdk.sh
   run_helmr deploy ./dev/workflows "${staging_scope_args[@]}" --timeout 20m
-  if [ "${skip_production}" != "1" ]; then
+  if production_smoke_enabled; then
     run_helmr deploy ./dev/workflows "${production_scope_args[@]}" --timeout 20m
   fi
 fi
 
-if [ "${phase9_http_smoke_enabled}" = "1" ]; then
+if [ "${phase9_http_smoke_enabled}" = "1" ] && smoke_case_enabled phase9-start-and-wait; then
+  mark_smoke_executed phase9-start-and-wait
   expect_start_and_wait_success phase9-start-and-wait
-else
+elif [ "${phase9_http_smoke_enabled}" != "1" ] && smoke_case_enabled phase9-start-and-wait; then
   printf 'SKIP phase9 HTTP smoke: HELMR_API_KEY is required for root API checks\n'
+  mark_smoke_skipped phase9-start-and-wait
 fi
 
-if [ "${SMOKE_ONLY_ACTIVE_STREAM:-0}" = "1" ]; then
-  expect_active_stream_success staging-active-stream "${staging_scope_args[@]}"
-  printf 'release smoke session ids: %s\n' "${session_ids[*]}"
-  printf 'release smoke run ids: %s\n' "${run_ids[*]}"
-  printf 'release smoke stopped workspace ids: %s\n' "${stopped_workspace_ids[*]}"
-  exit 0
+if smoke_case_enabled runtime; then
+  mark_smoke_executed runtime
+  expect_run_success staging-runtime runtime-smoke \
+    "${staging_scope_args[@]}" \
+    --payload-json '{"scenario":"staging-runtime","expectedEnvironment":"staging"}'
 fi
 
-if [ "${SMOKE_ONLY_SESSION_CONTINUATION:-0}" = "1" ]; then
+if smoke_case_enabled session-continuation; then
+  mark_smoke_executed session-continuation
   expect_session_continuation_success staging-session-continuation "${staging_scope_args[@]}"
-  printf 'release smoke session ids: %s\n' "${session_ids[*]}"
-  printf 'release smoke run ids: %s\n' "${run_ids[*]}"
-  printf 'release smoke stopped workspace ids: %s\n' "${stopped_workspace_ids[*]}"
-  exit 0
 fi
 
-expect_run_success staging-runtime runtime-smoke \
-  "${staging_scope_args[@]}" \
-  --payload-json '{"scenario":"staging-runtime","expectedEnvironment":"staging"}'
+if smoke_case_enabled stream-input; then
+  mark_smoke_executed stream-input
+  expect_stream_input_success staging-stream-input "${staging_scope_args[@]}"
+fi
 
-expect_session_continuation_success staging-session-continuation "${staging_scope_args[@]}"
+if smoke_case_enabled active-stream; then
+  mark_smoke_executed active-stream
+  expect_active_stream_success staging-active-stream "${staging_scope_args[@]}"
+fi
 
-expect_stream_input_success staging-stream-input "${staging_scope_args[@]}"
+if smoke_case_enabled timer; then
+  mark_smoke_executed timer
+  expect_run_success staging-timer timer-smoke \
+    "${staging_scope_args[@]}" \
+    --payload-json '{"waitFor":"5s"}'
+fi
 
-expect_active_stream_success staging-active-stream "${staging_scope_args[@]}"
+if smoke_case_enabled token-checkpoint; then
+  mark_smoke_executed token-checkpoint
+  expect_token_checkpoint_success staging-token-checkpoint "${staging_scope_args[@]}"
+fi
 
-expect_run_success staging-timer timer-smoke \
-  "${staging_scope_args[@]}" \
-  --payload-json '{"waitFor":"5s"}'
+if smoke_case_enabled edge-workspace; then
+  mark_smoke_executed edge-workspace
+  expect_run_success staging-edge-workspace edge-smoke \
+    "${staging_scope_args[@]}" \
+    --payload-json '{"mode":"workspace-overwrite"}'
+fi
 
-expect_token_checkpoint_success staging-token-checkpoint "${staging_scope_args[@]}"
+if smoke_case_enabled missing-secrets; then
+  mark_smoke_executed missing-secrets
+  expect_run_rejected staging-missing-secrets missing-secret-smoke \
+    "${staging_scope_args[@]}" \
+    --payload-json '{"scenario":"staging-missing-secrets","expectedEnvironment":"staging"}'
+fi
 
-expect_run_success staging-edge-workspace edge-smoke \
-  "${staging_scope_args[@]}" \
-  --payload-json '{"mode":"workspace-overwrite"}'
+if smoke_case_enabled invalid-payload; then
+  mark_smoke_executed invalid-payload
+  expect_run_failure staging-invalid-payload runtime-smoke \
+    "${staging_scope_args[@]}" \
+    --payload-json '{"scenario":"bad-payload","unknown":true}'
+fi
 
-expect_run_rejected staging-missing-secrets missing-secret-smoke \
-  "${staging_scope_args[@]}" \
-  --payload-json '{"scenario":"staging-missing-secrets","expectedEnvironment":"staging"}'
+if smoke_case_enabled expected-error; then
+  mark_smoke_executed expected-error
+  expect_run_failure staging-expected-error edge-smoke \
+    "${staging_scope_args[@]}" \
+    --payload-json '{"mode":"expected-error"}'
+fi
 
-expect_run_failure staging-invalid-payload runtime-smoke \
-  "${staging_scope_args[@]}" \
-  --payload-json '{"scenario":"bad-payload","unknown":true}'
-
-expect_run_failure staging-expected-error edge-smoke \
-  "${staging_scope_args[@]}" \
-  --payload-json '{"mode":"expected-error"}'
-
-if [ "${skip_production}" != "1" ]; then
+if production_smoke_enabled; then
+  mark_smoke_executed production-secrets
   expect_run_success production-secrets secret-smoke \
     "${production_scope_args[@]}" \
     --payload-json '{"scenario":"production-secrets","expectedEnvironment":"production"}'
+elif smoke_case_enabled production-secrets; then
+  mark_smoke_skipped production-secrets
 fi
 
-printf 'release smoke session ids: %s\n' "${session_ids[*]}"
-printf 'release smoke run ids: %s\n' "${run_ids[*]}"
-printf 'release smoke stopped workspace ids: %s\n' "${stopped_workspace_ids[*]}"
+print_smoke_summary
+validate_selected_smoke_execution

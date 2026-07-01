@@ -11,7 +11,7 @@ type WorkspaceOperationResponse struct {
 	ProjectID          string          `json:"project_id"`
 	EnvironmentID      string          `json:"environment_id"`
 	WorkspaceID        string          `json:"workspace_id"`
-	MaterializationID  string          `json:"materialization_id"`
+	WorkspaceMountID   string          `json:"workspace_mount_id"`
 	OperationKind      string          `json:"operation_kind"`
 	ResourceKind       string          `json:"resource_kind,omitempty"`
 	ResourceID         string          `json:"resource_id,omitempty"`
@@ -41,8 +41,8 @@ type WorkerWorkspaceOperation struct {
 
 type WorkerWorkspaceOperationClaimRequest struct {
 	OrgID                 string `json:"org_id"`
-	MaterializationID     string `json:"materialization_id"`
-	ReservationToken      string `json:"reservation_token"`
+	WorkspaceMountID      string `json:"workspace_mount_id"`
+	RuntimeInstanceToken  string `json:"runtime_instance_token"`
 	ClaimExpiresInSeconds int32  `json:"claim_expires_in_seconds,omitempty"`
 }
 

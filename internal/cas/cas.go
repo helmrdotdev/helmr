@@ -12,6 +12,7 @@ const CheckpointVMStateMediaType = "application/vnd.helmr.checkpoint.vm-state"
 const CheckpointMemoryMediaType = "application/vnd.helmr.firecracker.memory.v0+filepack"
 const CheckpointScratchDiskMediaType = "application/vnd.helmr.firecracker.scratch-disk.v0+filepack"
 const CheckpointRuntimeConfigMediaType = "application/vnd.helmr.checkpoint.runtime-config"
+const RuntimeSubstrateMediaType = "application/vnd.helmr.runtime-substrate.v0.ext4"
 const DeploymentSourceArtifactMediaType = "application/vnd.helmr.deployment-source.v0.tar"
 
 const ExpirableTagKey = "helmr-expirable"

@@ -161,12 +161,12 @@ UPDATE workspaces
    AND workspaces.deleted_at IS NULL
    AND NOT EXISTS (
        SELECT 1
-         FROM workspace_materializations
-        WHERE workspace_materializations.org_id = workspaces.org_id
-          AND workspace_materializations.project_id = workspaces.project_id
-          AND workspace_materializations.environment_id = workspaces.environment_id
-          AND workspace_materializations.workspace_id = workspaces.id
-          AND workspace_materializations.state IN ('requested', 'materializing', 'restoring', 'running', 'pausing', 'paused', 'capturing', 'stopping')
+         FROM workspace_mounts
+        WHERE workspace_mounts.org_id = workspaces.org_id
+          AND workspace_mounts.project_id = workspaces.project_id
+          AND workspace_mounts.environment_id = workspaces.environment_id
+          AND workspace_mounts.workspace_id = workspaces.id
+          AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
    )
 RETURNING *;
 

@@ -7,12 +7,12 @@ import (
 )
 
 type WorkerWorkspacePrimitiveScope struct {
-	OrgID             string `json:"org_id"`
-	ProjectID         string `json:"project_id"`
-	EnvironmentID     string `json:"environment_id"`
-	WorkspaceID       string `json:"workspace_id"`
-	MaterializationID string `json:"materialization_id"`
-	ReservationToken  string `json:"reservation_token"`
+	OrgID                string `json:"org_id"`
+	ProjectID            string `json:"project_id"`
+	EnvironmentID        string `json:"environment_id"`
+	WorkspaceID          string `json:"workspace_id"`
+	WorkspaceMountID     string `json:"workspace_mount_id"`
+	RuntimeInstanceToken string `json:"runtime_instance_token"`
 }
 
 type WorkerWorkspaceExecStartedRequest struct {
@@ -115,14 +115,14 @@ type WorkerWorkspacePtyInputDeliveredRequest struct {
 }
 
 type WorkerWorkspaceMaterializerControlClient interface {
-	RenewWorkspaceMaterialization(context.Context, WorkerWorkspaceMaterializationRenewRequest) (WorkspaceMaterializationResponse, error)
-	MarkWorkspaceMaterializationRunning(context.Context, WorkerWorkspaceMaterializationRunningRequest) (WorkspaceMaterializationResponse, error)
-	CaptureWorkspaceMaterialization(context.Context, WorkerWorkspaceMaterializationCaptureRequest) (WorkerWorkspaceMaterializationCaptureResponse, error)
-	StopWorkspaceMaterialization(context.Context, WorkerWorkspaceMaterializationStopRequest) (WorkspaceMaterializationResponse, error)
-	FailWorkspaceMaterialization(context.Context, WorkerWorkspaceMaterializationFailRequest) (WorkspaceMaterializationResponse, error)
-	ClaimWorkspaceMaterializationOperation(context.Context, WorkerWorkspaceOperationClaimRequest) (WorkerWorkspaceOperationClaimResponse, error)
-	StartWorkspaceMaterializationOperation(context.Context, WorkerWorkspaceOperationStartRequest) (WorkspaceOperationResponse, error)
-	CompleteWorkspaceMaterializationOperation(context.Context, WorkerWorkspaceOperationCompleteRequest) (WorkspaceOperationResponse, error)
+	RenewWorkspaceMount(context.Context, WorkerWorkspaceMountRenewRequest) (WorkspaceMountResponse, error)
+	MarkWorkspaceMountMounted(context.Context, WorkerWorkspaceMountMountedRequest) (WorkspaceMountResponse, error)
+	CaptureWorkspaceMount(context.Context, WorkerWorkspaceMountCaptureRequest) (WorkerWorkspaceMountCaptureResponse, error)
+	StopWorkspaceMount(context.Context, WorkerWorkspaceMountStopRequest) (WorkspaceMountResponse, error)
+	FailWorkspaceMount(context.Context, WorkerWorkspaceMountFailRequest) (WorkspaceMountResponse, error)
+	ClaimWorkspaceOperation(context.Context, WorkerWorkspaceOperationClaimRequest) (WorkerWorkspaceOperationClaimResponse, error)
+	StartWorkspaceOperation(context.Context, WorkerWorkspaceOperationStartRequest) (WorkspaceOperationResponse, error)
+	CompleteWorkspaceOperation(context.Context, WorkerWorkspaceOperationCompleteRequest) (WorkspaceOperationResponse, error)
 	MarkWorkspaceExecStarted(context.Context, WorkerWorkspaceExecStartedRequest) (WorkspaceExecEnvelope, error)
 	AppendWorkspaceExecOutput(context.Context, WorkerWorkspaceExecOutputRequest) (ListWorkspaceExecStreamChunksResponse, error)
 	ListWorkspaceExecInput(context.Context, WorkerWorkspaceExecInputRequest) (WorkerWorkspaceExecInputResponse, error)

@@ -658,6 +658,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.registerChangedScheduleInstances(r.Context(), params.OrgID, params.ProjectID, changedSchedules)
+		s.reconcilePreparedRuntimeSupplyAsync(r.Context(), "deployment_promotion")
 		response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
 		if err != nil {
 			s.log.Error("get promoted deployment artifacts failed", "deployment", deploymentRef, "error", err)
@@ -680,6 +681,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.registerChangedScheduleInstances(r.Context(), params.OrgID, params.ProjectID, changedSchedules)
+	s.reconcilePreparedRuntimeSupplyAsync(r.Context(), "deployment_promotion")
 	response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
 	if err != nil {
 		s.log.Error("get promoted deployment artifacts failed", "deployment", deploymentRef, "error", err)

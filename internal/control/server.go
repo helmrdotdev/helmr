@@ -32,10 +32,11 @@ import (
 )
 
 const (
-	readinessTimeout          = 2 * time.Second
-	apiRequestBodyLimit       = int64(128 << 20)
-	workerLogRequestBodyLimit = int64(256 << 10)
-	maxControlPageSize        = int32(500)
+	readinessTimeout                      = 2 * time.Second
+	preparedRuntimeSupplyReconcileTimeout = 2 * time.Second
+	apiRequestBodyLimit                   = int64(128 << 20)
+	workerLogRequestBodyLimit             = int64(256 << 10)
+	maxControlPageSize                    = int32(500)
 )
 
 type SecretManager interface {
@@ -48,33 +49,35 @@ type SecretManager interface {
 }
 
 type Server struct {
-	log                 *slog.Logger
-	deploymentMode      string
-	db                  db.Querier
-	tx                  TxBeginner
-	readinessDB         db.DBTX
-	auth                auth.Authenticator
-	cas                 cas.Store
-	secrets             SecretManager
-	runEnqueuer         RunEnqueuer
-	dispatchQueue       dispatch.Queue
-	scheduleEngine      ScheduleRegistrar
-	eventStream         *EventStream
-	workspaceStreams    *WorkspaceStreamNotifier
-	workerLeaseScanSeed atomic.Uint64
-	workerTokenSecret   []byte
-	workerTokenTTL      time.Duration
-	workerRegisterToken string
-	setupToken          string
-	authSecret          []byte
-	publicURL           *url.URL
-	authProvider        AuthProvider
-	mailer              email.Sender
-	magicLinkDebugURLs  bool
-	sessionTTL          time.Duration
-	magicLinkTTL        time.Duration
-	deviceCodeTTL       time.Duration
-	devicePollEvery     time.Duration
+	log                   *slog.Logger
+	deploymentMode        string
+	db                    db.Querier
+	tx                    TxBeginner
+	readinessDB           db.DBTX
+	auth                  auth.Authenticator
+	cas                   cas.Store
+	secrets               SecretManager
+	runEnqueuer           RunEnqueuer
+	preparedRuntimeSupply PreparedRuntimeSupplyReconciler
+	dispatchQueue         dispatch.Queue
+	scheduleEngine        ScheduleRegistrar
+	eventStream           *EventStream
+	workspaceStreams      *WorkspaceStreamNotifier
+	workerCommandStream   *WorkerCommandStream
+	workerLeaseScanSeed   atomic.Uint64
+	workerTokenSecret     []byte
+	workerTokenTTL        time.Duration
+	workerRegisterToken   string
+	setupToken            string
+	authSecret            []byte
+	publicURL             *url.URL
+	authProvider          AuthProvider
+	mailer                email.Sender
+	magicLinkDebugURLs    bool
+	sessionTTL            time.Duration
+	magicLinkTTL          time.Duration
+	deviceCodeTTL         time.Duration
+	devicePollEvery       time.Duration
 }
 
 type apiVersionContextKey struct{}
@@ -93,6 +96,11 @@ const (
 
 type RunEnqueuer interface {
 	EnqueueRun(context.Context, pgtype.UUID, pgtype.UUID) (dispatch.EnqueueResult, error)
+}
+
+type PreparedRuntimeSupplyReconciler interface {
+	Reconcile(context.Context) error
+	ReconcileDeploymentSandbox(context.Context, pgtype.UUID) error
 }
 
 type ScheduleRegistrar interface {
@@ -117,16 +125,18 @@ type ServerConfig struct {
 	TX          TxBeginner
 	ReadinessDB db.DBTX
 
-	Auth             auth.Authenticator
-	CAS              cas.Store
-	Secrets          SecretManager
-	RunEnqueuer      RunEnqueuer
-	DispatchQueue    dispatch.Queue
-	ScheduleEngine   ScheduleRegistrar
-	EventStream      *EventStream
-	WorkspaceStreams *WorkspaceStreamNotifier
-	Mailer           email.Sender
-	AuthProvider     AuthProvider
+	Auth                  auth.Authenticator
+	CAS                   cas.Store
+	Secrets               SecretManager
+	RunEnqueuer           RunEnqueuer
+	PreparedRuntimeSupply PreparedRuntimeSupplyReconciler
+	DispatchQueue         dispatch.Queue
+	ScheduleEngine        ScheduleRegistrar
+	EventStream           *EventStream
+	WorkspaceStreams      *WorkspaceStreamNotifier
+	WorkerCommands        *WorkerCommandStream
+	Mailer                email.Sender
+	AuthProvider          AuthProvider
 
 	WorkerTokenSecret   []byte
 	WorkerTokenTTL      time.Duration
@@ -172,32 +182,34 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		workerTokenTTL = defaultWorkerTokenTTL
 	}
 	server := &Server{
-		log:                 log,
-		deploymentMode:      deploymentMode,
-		db:                  cfg.DB,
-		tx:                  cfg.TX,
-		readinessDB:         cfg.ReadinessDB,
-		auth:                cfg.Auth,
-		cas:                 cfg.CAS,
-		secrets:             cfg.Secrets,
-		runEnqueuer:         cfg.RunEnqueuer,
-		dispatchQueue:       cfg.DispatchQueue,
-		scheduleEngine:      cfg.ScheduleEngine,
-		eventStream:         cfg.EventStream,
-		workspaceStreams:    cfg.WorkspaceStreams,
-		workerTokenSecret:   cfg.WorkerTokenSecret,
-		workerTokenTTL:      workerTokenTTL,
-		workerRegisterToken: strings.TrimSpace(cfg.WorkerRegisterToken),
-		setupToken:          strings.TrimSpace(cfg.SetupToken),
-		authSecret:          cfg.AuthSecret,
-		publicURL:           cfg.PublicURL,
-		authProvider:        cfg.AuthProvider,
-		mailer:              mailer,
-		magicLinkDebugURLs:  cfg.MagicLinkDebugURLs,
-		sessionTTL:          cfg.SessionTTL,
-		magicLinkTTL:        cfg.MagicLinkTTL,
-		deviceCodeTTL:       cfg.DeviceCodeTTL,
-		devicePollEvery:     cfg.DevicePollEvery,
+		log:                   log,
+		deploymentMode:        deploymentMode,
+		db:                    cfg.DB,
+		tx:                    cfg.TX,
+		readinessDB:           cfg.ReadinessDB,
+		auth:                  cfg.Auth,
+		cas:                   cfg.CAS,
+		secrets:               cfg.Secrets,
+		runEnqueuer:           cfg.RunEnqueuer,
+		preparedRuntimeSupply: cfg.PreparedRuntimeSupply,
+		dispatchQueue:         cfg.DispatchQueue,
+		scheduleEngine:        cfg.ScheduleEngine,
+		eventStream:           cfg.EventStream,
+		workspaceStreams:      cfg.WorkspaceStreams,
+		workerCommandStream:   cfg.WorkerCommands,
+		workerTokenSecret:     cfg.WorkerTokenSecret,
+		workerTokenTTL:        workerTokenTTL,
+		workerRegisterToken:   strings.TrimSpace(cfg.WorkerRegisterToken),
+		setupToken:            strings.TrimSpace(cfg.SetupToken),
+		authSecret:            cfg.AuthSecret,
+		publicURL:             cfg.PublicURL,
+		authProvider:          cfg.AuthProvider,
+		mailer:                mailer,
+		magicLinkDebugURLs:    cfg.MagicLinkDebugURLs,
+		sessionTTL:            cfg.SessionTTL,
+		magicLinkTTL:          cfg.MagicLinkTTL,
+		deviceCodeTTL:         cfg.DeviceCodeTTL,
+		devicePollEvery:       cfg.DevicePollEvery,
 	}
 	if cfg.BackgroundContext != nil {
 		go server.RunSessionRunRequestReconciler(cfg.BackgroundContext)
@@ -381,7 +393,7 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.getWorkspace)
 		r.Patch("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.patchWorkspace)
 		r.Delete("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.deleteWorkspace)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/materialize", s.requestWorkspaceMaterialization)
+		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/materialize", s.requestWorkspaceMount)
 		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/connect", s.connectWorkspace)
 		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/stop", s.stopWorkspace)
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files", s.listWorkspaceFiles)
@@ -466,7 +478,7 @@ func (s *Server) mountRunRoutes(r chi.Router) {
 		r.Get("/workspaces/{workspaceID}", s.getWorkspace)
 		r.Patch("/workspaces/{workspaceID}", s.patchWorkspace)
 		r.Delete("/workspaces/{workspaceID}", s.deleteWorkspace)
-		r.Post("/workspaces/{workspaceID}/materialize", s.requestWorkspaceMaterialization)
+		r.Post("/workspaces/{workspaceID}/materialize", s.requestWorkspaceMount)
 		r.Post("/workspaces/{workspaceID}/connect", s.connectWorkspace)
 		r.Post("/workspaces/{workspaceID}/stop", s.stopWorkspace)
 		r.Get("/workspaces/{workspaceID}/files", s.listWorkspaceFiles)
@@ -532,6 +544,17 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Post("/activate", s.workerActivate)
 			r.Post("/drain", s.workerDrain)
 			r.Get("/status", s.workerStatus)
+			r.Get("/commands", s.workerReadCommands)
+			r.Post("/commands/accept", s.workerAcceptCommand)
+			r.Post("/commands/ack", s.workerAcknowledgeCommand)
+			r.Post("/runtime-instances/prepared-runtime", s.workerCreatePreparedRuntimeInstance)
+			r.Post("/runtime-instances/prepared-runtime-warm", s.workerCreateRuntimePrepareInstance)
+			r.Post("/runtime-instances/renew", s.workerRenewRuntimeInstance)
+			r.Post("/runtime-instances/ready", s.workerMarkRuntimeInstanceReady)
+			r.Post("/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)
+			r.Post("/runtime-instances/failed", s.workerMarkRuntimeInstanceFailed)
+			r.Post("/runtime-substrate-artifacts/register", s.workerRegisterRuntimeSubstrateArtifact)
+			r.Post("/runtime-substrate-artifacts/lookup", s.workerLookupRuntimeSubstrateArtifact)
 			r.Post("/deployments/lease", s.workerLeaseDeploymentBuild)
 			r.Post("/deployments/complete", s.workerCompleteDeploymentBuild)
 			r.Post("/leases/lease", s.workerLease)
@@ -544,20 +567,21 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Post("/leases/streams/input/read", s.workerReadInputStream)
 			r.Post("/leases/streams/output", s.workerAppendOutputStream)
 			r.Post("/leases/metadata", s.workerUpdateRunMetadata)
+			r.Post("/leases/checkpoints/claim", s.workerClaimRuntimeCheckpointWait)
 			r.Post("/leases/checkpoints/ready", s.workerMarkCheckpointReady)
 			r.Post("/leases/checkpoints/failed", s.workerMarkCheckpointFailed)
 			r.Post("/leases/restores/ack", s.workerAcknowledgeRestore)
 			r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/logs", s.workerAppendLogs)
 			r.Post("/leases/log-entries", s.workerRecordLogEntry)
-			r.Post("/workspaces/materializations/claim", s.workerClaimWorkspaceMaterialization)
-			r.Post("/workspaces/materializations/renew", s.workerRenewWorkspaceMaterialization)
-			r.Post("/workspaces/materializations/running", s.workerMarkWorkspaceMaterializationRunning)
-			r.Post("/workspaces/materializations/capture", s.workerCaptureWorkspaceMaterialization)
-			r.Post("/workspaces/materializations/fail", s.workerFailWorkspaceMaterialization)
-			r.Post("/workspaces/materializations/stop", s.workerStopWorkspaceMaterialization)
-			r.Post("/workspaces/materializations/operations/claim", s.workerClaimWorkspaceMaterializationOperation)
-			r.Post("/workspaces/materializations/operations/start", s.workerStartWorkspaceMaterializationOperation)
-			r.Post("/workspaces/materializations/operations/complete", s.workerCompleteWorkspaceMaterializationOperation)
+			r.Post("/workspaces/mounts/claim", s.workerClaimWorkspaceMount)
+			r.Post("/workspaces/mounts/renew", s.workerRenewWorkspaceMount)
+			r.Post("/workspaces/mounts/mounted", s.workerMarkWorkspaceMountMounted)
+			r.Post("/workspaces/mounts/capture", s.workerCaptureWorkspaceMount)
+			r.Post("/workspaces/mounts/fail", s.workerFailWorkspaceMount)
+			r.Post("/workspaces/mounts/stop", s.workerStopWorkspaceMount)
+			r.Post("/workspaces/mounts/operations/claim", s.workerClaimWorkspaceOperation)
+			r.Post("/workspaces/mounts/operations/start", s.workerStartWorkspaceOperation)
+			r.Post("/workspaces/mounts/operations/complete", s.workerCompleteWorkspaceOperation)
 			r.Post("/workspaces/execs/started", s.workerMarkWorkspaceExecStarted)
 			r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/workspaces/execs/output", s.workerAppendWorkspaceExecOutput)
 			r.Post("/workspaces/execs/input", s.workerListWorkspaceExecInput)

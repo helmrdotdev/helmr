@@ -1,7 +1,6 @@
 package guestd
 
 import (
-	"archive/tar"
 	"errors"
 	"fmt"
 	"io"
@@ -12,17 +11,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/safepath"
 )
-
-func tarEntryIsRootDir(header *tar.Header) bool {
-	if header == nil || header.Typeflag != tar.TypeDir {
-		return false
-	}
-	name := strings.TrimSpace(header.Name)
-	if name == "" || filepath.IsAbs(name) || strings.HasPrefix(filepath.FromSlash(name), string(filepath.Separator)) {
-		return false
-	}
-	return filepath.ToSlash(filepath.Clean(filepath.FromSlash(name))) == "."
-}
 
 func tarEntryPath(name string) (string, error) {
 	if strings.TrimSpace(name) == "" {

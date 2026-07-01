@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/mdlayher/vsock"
 )
@@ -49,7 +50,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	}
 	defer healthListener.Close()
 	var ready atomic.Bool
-	go serveHealth(healthListener, ready.Load)
+	go serveHealth(healthListener, ready.Load, logger)
 
 	runListener, err := vsock.Listen(uint32(cfg.VsockPort), nil)
 	if err != nil {
@@ -87,15 +88,45 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	}
 }
 
-func serveHealth(listener net.Listener, ready func() bool) {
+func serveHealth(listener net.Listener, ready func() bool, logger *slog.Logger) {
+	var requestSeq atomic.Uint64
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		requestID := requestSeq.Add(1)
+		started := time.Now()
+		isReady := ready()
+		if logger != nil {
+			logger.Info("guestd health request received", "request_id", requestID, "ready", isReady)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		if !ready() {
-			_, _ = io.WriteString(w, `{"status":"starting","component":"guestd"}`)
+		status := "ok"
+		if !isReady {
+			status = "starting"
+		}
+		body := `{"status":"ok","component":"guestd"}`
+		if status == "starting" {
+			body = `{"status":"starting","component":"guestd"}`
+		}
+		written, err := io.WriteString(w, body)
+		duration := time.Since(started)
+		if err != nil {
+			if logger != nil {
+				logger.Error("guestd health response failed", "request_id", requestID, "ready", isReady, "status", status, "duration_ms", duration.Milliseconds(), "bytes", written, "error", err)
+			}
 			return
 		}
-		_, _ = io.WriteString(w, `{"status":"ok","component":"guestd"}`)
+		flushStarted := time.Now()
+		flushErr := http.NewResponseController(w).Flush()
+		flushDuration := time.Since(flushStarted)
+		if flushErr != nil {
+			if logger != nil {
+				logger.Error("guestd health response failed", "request_id", requestID, "ready", isReady, "status", status, "duration_ms", duration.Milliseconds(), "flush_duration_ms", flushDuration.Milliseconds(), "bytes", written, "error", flushErr)
+			}
+			return
+		}
+		if logger != nil {
+			logger.Info("guestd health response written", "request_id", requestID, "ready", isReady, "status", status, "duration_ms", duration.Milliseconds(), "flush_duration_ms", flushDuration.Milliseconds(), "bytes", written)
+		}
 	})
 	_ = http.Serve(listener, mux)
 }

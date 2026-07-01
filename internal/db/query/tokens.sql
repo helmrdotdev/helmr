@@ -152,13 +152,17 @@ matched_token_wait AS (
 ),
 resolved_wait AS (
     UPDATE run_waits
-       SET state = 'resolved',
+       SET state = CASE
+             WHEN run_waits.state = 'live_waiting' THEN 'resolved_live'::run_wait_state
+             WHEN run_waits.state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
+             ELSE run_waits.state
+           END,
            resolved_at = now(),
            updated_at = now()
       FROM matched_token_wait
      WHERE run_waits.org_id = matched_token_wait.org_id
        AND run_waits.id = matched_token_wait.run_wait_id
-       AND run_waits.state = 'waiting'
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
 )
 SELECT selected_token.*,
@@ -201,13 +205,17 @@ matched_token_wait AS (
 ),
 resolved_cancelled_wait AS (
     UPDATE run_waits
-       SET state = 'resolved',
+       SET state = CASE
+             WHEN run_waits.state = 'live_waiting' THEN 'resolved_live'::run_wait_state
+             WHEN run_waits.state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
+             ELSE run_waits.state
+           END,
            resolved_at = now(),
            updated_at = now()
       FROM matched_token_wait
      WHERE run_waits.org_id = matched_token_wait.org_id
        AND run_waits.id = matched_token_wait.run_wait_id
-       AND run_waits.state = 'waiting'
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
 )
 SELECT cancelled.*, (SELECT count(*) FROM resolved_cancelled_wait)::bigint AS resolved_wait_count
@@ -237,13 +245,13 @@ matched_token_wait AS (
 ),
 expired_wait AS (
     UPDATE run_waits
-       SET state = 'expired',
+       SET state = 'expired'::run_wait_state,
            resolved_at = now(),
            updated_at = now()
       FROM matched_token_wait
      WHERE run_waits.org_id = matched_token_wait.org_id
        AND run_waits.id = matched_token_wait.run_wait_id
-       AND run_waits.state IN ('parking', 'waiting')
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
 )
 SELECT *

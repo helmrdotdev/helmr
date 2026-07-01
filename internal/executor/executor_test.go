@@ -33,17 +33,17 @@ func (p staticRunLeaseProvider) CurrentWorkerRunLease() api.WorkerRunLease {
 	return p.lease
 }
 
-func TestExecutorBuildsMaterializedSources(t *testing.T) {
+func TestExecutorRunsMaterializedWorkspace(t *testing.T) {
 	workDir := t.TempDir()
 
-	builder := &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4", ConfigPath: "/config.json"}}
+	build := &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4", ConfigPath: "/config.json"}}
 	runner := &fakeRunner{exitCode: 0, output: json.RawMessage(`{"ok":true}`)}
 	store := deploymentSourceCAS(t)
 	result := Executor{
 		WorkDir: workDir,
 		GitPath: fakeGit(t),
 		CAS:     store,
-		Builder: builder,
+		Builder: build,
 		Runner:  runner,
 	}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), validRun())
 
@@ -53,33 +53,17 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 	if string(result.Output) != `{"ok":true}` {
 		t.Fatalf("output = %s", result.Output)
 	}
-	if builder.request.RunID != "run-1" || builder.request.TaskID != "deploy" {
-		t.Fatalf("build request = %+v", builder.request)
+	if build.calls != 0 {
+		t.Fatalf("build calls = %d, want 0", build.calls)
 	}
-	if builder.request.CacheScope != validDeploymentSource().Digest+"/deploy" {
-		t.Fatalf("build cache scope = %q", builder.request.CacheScope)
-	}
-	if builder.request.Bundle == nil || builder.request.Bundle.Image == nil {
-		t.Fatalf("build bundle = %+v", builder.request.Bundle)
-	}
-	if builder.request.Source.SHA != validDeploymentSource().Digest || builder.request.Source.ProjectRoot == "" {
-		t.Fatalf("build source = %+v", builder.request.Source)
-	}
-	if runner.request.Artifact.ImageTarPath != "/rootfs.ext4" {
+	if runner.request.Artifact.ImageTarPath != "" {
 		t.Fatalf("runtime request = %+v", runner.request)
 	}
-	if runner.request.DeploymentSource.ProjectRoot == "" || runner.request.Workspace.Path == "" || runner.request.Workspace.Digest == "" {
+	if runner.request.DeploymentSource.ProjectRoot == "" || runner.request.Workspace.Path != "" || runner.request.Workspace.Digest == "" {
 		t.Fatalf("runtime inputs = task:%+v workspace:%+v", runner.request.DeploymentSource, runner.request.Workspace)
 	}
 	if runner.request.Workspace.MediaType == "" || runner.request.Workspace.Encoding != "tar" {
 		t.Fatalf("workspace artifact = %+v", runner.request.Workspace)
-	}
-	object, err := store.Stat(context.Background(), runner.request.Workspace.Digest)
-	if err != nil {
-		t.Fatalf("workspace artifact was not published to CAS: %+v", runner.request.Workspace)
-	}
-	if object.SizeBytes != runner.request.Workspace.SizeBytes || object.MediaType != runner.request.Workspace.MediaType {
-		t.Fatalf("workspace CAS object = %+v, workspace = %+v", object, runner.request.Workspace)
 	}
 	entries, err := os.ReadDir(workDir)
 	if err != nil {
@@ -90,14 +74,53 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 	}
 }
 
-func TestExecutorReturnsWorkspaceCommitForSessionRun(t *testing.T) {
+func TestExecutorSkipsRunImageBuildForMaterializedWorkspaceRun(t *testing.T) {
 	run := validRun()
 	run.Workspace = api.WorkerWorkspace{
 		ID:                "workspace-1",
+		WorkspaceMountID:  "mat-1",
+		FencingGeneration: 2,
 		WriteLeaseID:      "workspace-lease-1",
 		WriteFencingToken: "workspace-fence-1",
 		MountPath:         "/workspace",
+		Artifact: &api.WorkerWorkspaceArtifact{
+			Digest:     "sha256:" + strings.Repeat("a", 64),
+			MediaType:  workspace.ArtifactMediaType,
+			Encoding:   workspace.ArtifactEncoding,
+			SizeBytes:  1024,
+			EntryCount: 1,
+		},
 	}
+	finalWorkspace := &workspace.WorkspaceArtifact{
+		Digest:     "sha256:" + strings.Repeat("b", 64),
+		MediaType:  workspace.ArtifactMediaType,
+		Encoding:   workspace.ArtifactEncoding,
+		SizeBytes:  2048,
+		EntryCount: 2,
+	}
+	runner := &fakeRunner{workspace: finalWorkspace}
+
+	result := Executor{
+		WorkDir: t.TempDir(),
+		GitPath: fakeGit(t),
+		CAS:     deploymentSourceCAS(t),
+		Runner:  runner,
+	}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), run)
+
+	if result.Kind != "completed" || result.Workspace == nil {
+		t.Fatalf("result = %+v", result)
+	}
+	if runner.request.Artifact.ImageTarPath != "" {
+		t.Fatalf("materialized run artifact = %+v", runner.request.Artifact)
+	}
+	if runner.request.Workspace.Path != "" || runner.request.Workspace.Digest != run.Workspace.Artifact.Digest {
+		t.Fatalf("materialized run workspace artifact = %+v", runner.request.Workspace)
+	}
+}
+
+func TestExecutorReturnsWorkspaceCommitForSessionRun(t *testing.T) {
+	run := validRun()
+	run.Workspace = validWorkerWorkspace()
 	finalWorkspace := &workspace.WorkspaceArtifact{
 		Digest:     "sha256:" + strings.Repeat("b", 64),
 		MediaType:  workspace.ArtifactMediaType,
@@ -126,17 +149,13 @@ func TestExecutorReturnsWorkspaceCommitForSessionRun(t *testing.T) {
 
 func TestExecutorRejectsSuccessfulSessionRunWithoutWorkspaceCommit(t *testing.T) {
 	run := validRun()
-	run.Workspace = api.WorkerWorkspace{
-		ID:                "workspace-1",
-		WriteLeaseID:      "workspace-lease-1",
-		WriteFencingToken: "workspace-fence-1",
-	}
+	run.Workspace = validWorkerWorkspace()
 	result := Executor{
 		WorkDir: t.TempDir(),
 		GitPath: fakeGit(t),
 		CAS:     deploymentSourceCAS(t),
 		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
-		Runner:  &fakeRunner{},
+		Runner:  &fakeRunner{noWorkspace: true},
 	}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), run)
 
 	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, "did not publish a workspace artifact") {
@@ -144,7 +163,7 @@ func TestExecutorRejectsSuccessfulSessionRunWithoutWorkspaceCommit(t *testing.T)
 	}
 }
 
-func TestExecutorPassesResolvedSecretsToBuilder(t *testing.T) {
+func TestExecutorSkipsRunImageBuildWithResolvedSecrets(t *testing.T) {
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
 	build := &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}}
 	run := validRun()
@@ -159,8 +178,8 @@ func TestExecutorPassesResolvedSecretsToBuilder(t *testing.T) {
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
 	}
-	if string(build.request.BuildSecrets["TOKEN"]) != "secret-value" {
-		t.Fatalf("build secrets = %+v", build.request.BuildSecrets)
+	if build.calls != 0 {
+		t.Fatalf("build calls = %d, want 0", build.calls)
 	}
 }
 
@@ -209,7 +228,7 @@ func TestExecutorMaterializesDeploymentSourceArtifactFromCAS(t *testing.T) {
 	}
 
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
-	build := &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}}
+	runner := &fakeRunner{}
 	run := validRun()
 	run.DeploymentSource = api.DeploymentSourceArtifact{Digest: tarArchive.Digest}
 
@@ -217,15 +236,14 @@ func TestExecutorMaterializesDeploymentSourceArtifactFromCAS(t *testing.T) {
 		WorkDir: t.TempDir(),
 		GitPath: fakeGit(t),
 		CAS:     deploymentSourceCASWithObjects(t, map[string][]byte{tarArchive.Digest: content}),
-		Builder: build,
-		Runner:  &fakeRunner{},
+		Runner:  runner,
 	}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), run)
 
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
 	}
-	if build.request.CacheScope != tarArchive.Digest+"/deploy" {
-		t.Fatalf("cache scope = %q", build.request.CacheScope)
+	if runner.request.DeploymentSource.SHA != tarArchive.Digest || runner.request.DeploymentSource.ProjectRoot == "" {
+		t.Fatalf("deployment source = %+v", runner.request.DeploymentSource)
 	}
 }
 
@@ -253,11 +271,13 @@ func TestExecutorRestoresWithoutCheckoutOrBuild(t *testing.T) {
 	}
 }
 
-func TestExecutorReturnsBuildBoundaryError(t *testing.T) {
+func TestExecutorRequiresWorkspaceMount(t *testing.T) {
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
 
-	result := Executor{WorkDir: t.TempDir(), GitPath: fakeGit(t)}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), validRun())
-	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, ErrBuilderRequired.Error()) {
+	run := validRun()
+	run.Workspace.WorkspaceMountID = ""
+	result := Executor{WorkDir: t.TempDir(), GitPath: fakeGit(t)}.Execute(context.Background(), staticLease(api.WorkerRunLease{}), run)
+	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, "workspace mount id is required") {
 		t.Fatalf("result = %+v", result)
 	}
 }
@@ -296,9 +316,11 @@ type fakeBuilder struct {
 	request  builder.Request
 	artifact builder.Artifact
 	err      error
+	calls    int
 }
 
 func (b *fakeBuilder) Build(_ context.Context, request builder.Request) (builder.Artifact, error) {
+	b.calls++
 	b.request = request
 	if b.err != nil {
 		return builder.Artifact{}, b.err
@@ -307,11 +329,12 @@ func (b *fakeBuilder) Build(_ context.Context, request builder.Request) (builder
 }
 
 type fakeRunner struct {
-	request   Request
-	exitCode  int32
-	output    json.RawMessage
-	workspace *workspace.WorkspaceArtifact
-	err       error
+	request     Request
+	exitCode    int32
+	output      json.RawMessage
+	workspace   *workspace.WorkspaceArtifact
+	noWorkspace bool
+	err         error
 }
 
 func (r *fakeRunner) Run(_ context.Context, request Request) (Result, error) {
@@ -319,7 +342,17 @@ func (r *fakeRunner) Run(_ context.Context, request Request) (Result, error) {
 	if r.err != nil {
 		return Result{}, r.err
 	}
-	return Result{ExitCode: r.exitCode, Output: r.output, Workspace: r.workspace}, nil
+	resultWorkspace := r.workspace
+	if resultWorkspace == nil && !r.noWorkspace && strings.TrimSpace(request.Run.Workspace.ID) != "" {
+		resultWorkspace = &workspace.WorkspaceArtifact{
+			Digest:     request.Workspace.Digest,
+			MediaType:  request.Workspace.MediaType,
+			Encoding:   request.Workspace.Encoding,
+			SizeBytes:  request.Workspace.SizeBytes,
+			EntryCount: request.Workspace.EntryCount,
+		}
+	}
+	return Result{ExitCode: r.exitCode, Output: r.output, Workspace: resultWorkspace}, nil
 }
 
 type artifactCAS struct {

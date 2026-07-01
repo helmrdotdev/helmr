@@ -32,7 +32,9 @@ module "control" {
   create_control_repository                  = true
   create_control_service                     = var.create_control_service
   control_desired_count                      = var.control_desired_count
+  control_environment                        = var.control_environment
   dispatcher_desired_count                   = var.dispatcher_desired_count
+  dispatcher_environment                     = var.dispatcher_environment
   control_assign_public_ip                   = var.control_assign_public_ip
   control_health_check_path                  = var.control_health_check_path
   email_provider                             = var.email_provider
@@ -89,6 +91,7 @@ module "worker" {
   worker_capacity_vcpus        = var.worker_capacity_vcpus
   worker_capacity_memory_mib   = var.worker_capacity_memory_mib
   worker_execution_slots       = var.worker_execution_slots
+  worker_environment           = var.worker_environment
   buildkit_slirp_cidr          = var.worker_buildkit_slirp_cidr
   worker_control_url           = local.worker_control_url
   cas_uri                      = module.control.cas_uri

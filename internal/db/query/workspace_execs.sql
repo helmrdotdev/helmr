@@ -103,9 +103,9 @@ SELECT EXISTS (
        AND workspace_leases.state IN ('active', 'releasing')
 );
 
--- name: BindWorkspaceExecMaterialization :one
+-- name: BindWorkspaceExecWorkspaceMount :one
 UPDATE workspace_execs
-   SET materialization_id = sqlc.arg(materialization_id),
+   SET workspace_mount_id = sqlc.arg(workspace_mount_id),
        instance_lease_id = sqlc.narg(instance_lease_id),
        write_lease_id = sqlc.narg(write_lease_id),
        state = sqlc.arg(state)::workspace_exec_state,
@@ -121,19 +121,19 @@ RETURNING *;
 -- name: ListWorkspaceExecsAwaitingDispatch :many
 SELECT workspace_execs.*
   FROM workspace_execs
-  JOIN workspace_materializations
-    ON workspace_materializations.org_id = workspace_execs.org_id
-   AND workspace_materializations.project_id = workspace_execs.project_id
-   AND workspace_materializations.environment_id = workspace_execs.environment_id
-   AND workspace_materializations.workspace_id = workspace_execs.workspace_id
-   AND workspace_materializations.id = workspace_execs.materialization_id
+  JOIN workspace_mounts
+    ON workspace_mounts.org_id = workspace_execs.org_id
+   AND workspace_mounts.project_id = workspace_execs.project_id
+   AND workspace_mounts.environment_id = workspace_execs.environment_id
+   AND workspace_mounts.workspace_id = workspace_execs.workspace_id
+   AND workspace_mounts.id = workspace_execs.workspace_mount_id
  WHERE workspace_execs.org_id = sqlc.arg(org_id)
    AND workspace_execs.project_id = sqlc.arg(project_id)
    AND workspace_execs.environment_id = sqlc.arg(environment_id)
    AND workspace_execs.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_execs.materialization_id = sqlc.arg(materialization_id)
+   AND workspace_execs.workspace_mount_id = sqlc.arg(workspace_mount_id)
    AND workspace_execs.state IN ('materializing', 'queued')
-   AND workspace_materializations.state = 'running'
+   AND workspace_mounts.state = 'mounted'
  ORDER BY workspace_execs.created_at ASC, workspace_execs.id ASC
  LIMIT sqlc.arg(limit_count);
 
@@ -141,21 +141,21 @@ SELECT workspace_execs.*
 WITH target AS MATERIALIZED (
     SELECT workspace_execs.*
       FROM workspace_execs
-      JOIN workspace_materializations
-        ON workspace_materializations.org_id = workspace_execs.org_id
-       AND workspace_materializations.project_id = workspace_execs.project_id
-       AND workspace_materializations.environment_id = workspace_execs.environment_id
-       AND workspace_materializations.workspace_id = workspace_execs.workspace_id
-       AND workspace_materializations.id = workspace_execs.materialization_id
+      JOIN workspace_mounts
+        ON workspace_mounts.org_id = workspace_execs.org_id
+       AND workspace_mounts.project_id = workspace_execs.project_id
+       AND workspace_mounts.environment_id = workspace_execs.environment_id
+       AND workspace_mounts.workspace_id = workspace_execs.workspace_id
+       AND workspace_mounts.id = workspace_execs.workspace_mount_id
      WHERE workspace_execs.org_id = sqlc.arg(org_id)
        AND workspace_execs.project_id = sqlc.arg(project_id)
        AND workspace_execs.environment_id = sqlc.arg(environment_id)
        AND workspace_execs.workspace_id = sqlc.arg(workspace_id)
        AND workspace_execs.id = sqlc.arg(id)
-       AND workspace_execs.materialization_id = sqlc.arg(materialization_id)
+       AND workspace_execs.workspace_mount_id = sqlc.arg(workspace_mount_id)
        AND workspace_execs.state IN ('queued', 'materializing', 'running')
-       AND workspace_materializations.state = 'running'
-     FOR UPDATE OF workspace_execs, workspace_materializations
+       AND workspace_mounts.state = 'mounted'
+     FOR UPDATE OF workspace_execs, workspace_mounts
 ),
 updated_exec AS (
     UPDATE workspace_execs
@@ -171,9 +171,9 @@ updated_exec AS (
        AND workspace_execs.id = target.id
     RETURNING workspace_execs.*
 ),
-dirtied_materialization AS (
-    UPDATE workspace_materializations
-       SET dirty_generation = workspace_materializations.dirty_generation + 1,
+dirtied_mount AS (
+    UPDATE workspace_mounts
+       SET dirty_generation = workspace_mounts.dirty_generation + 1,
            updated_at = now()
       FROM target
       JOIN updated_exec ON updated_exec.id = target.id
@@ -188,23 +188,23 @@ dirtied_materialization AS (
        AND workspace_leases.state = 'active'
      WHERE target.state <> 'running'
        AND updated_exec.filesystem_mode = 'write'
-       AND workspace_materializations.org_id = updated_exec.org_id
-       AND workspace_materializations.project_id = updated_exec.project_id
-       AND workspace_materializations.environment_id = updated_exec.environment_id
-       AND workspace_materializations.workspace_id = updated_exec.workspace_id
-       AND workspace_materializations.id = updated_exec.materialization_id
-       AND workspace_materializations.fencing_generation = workspace_leases.acquired_fencing_generation
-    RETURNING workspace_materializations.*
+       AND workspace_mounts.org_id = updated_exec.org_id
+       AND workspace_mounts.project_id = updated_exec.project_id
+       AND workspace_mounts.environment_id = updated_exec.environment_id
+       AND workspace_mounts.workspace_id = updated_exec.workspace_id
+       AND workspace_mounts.id = updated_exec.workspace_mount_id
+       AND workspace_mounts.fencing_generation = workspace_leases.acquired_fencing_generation
+    RETURNING workspace_mounts.*
 ),
 updated_workspace AS (
     UPDATE workspaces
        SET dirty_state = 'dirty',
            updated_at = now()
-      FROM dirtied_materialization
-     WHERE workspaces.org_id = dirtied_materialization.org_id
-       AND workspaces.project_id = dirtied_materialization.project_id
-       AND workspaces.environment_id = dirtied_materialization.environment_id
-       AND workspaces.id = dirtied_materialization.workspace_id
+      FROM dirtied_mount
+     WHERE workspaces.org_id = dirtied_mount.org_id
+       AND workspaces.project_id = dirtied_mount.project_id
+       AND workspaces.environment_id = dirtied_mount.environment_id
+       AND workspaces.id = dirtied_mount.workspace_id
     RETURNING workspaces.id
 )
 SELECT *
@@ -237,7 +237,7 @@ WITH updated_exec AS (
        AND workspace_execs.environment_id = sqlc.arg(environment_id)
        AND workspace_execs.workspace_id = sqlc.arg(workspace_id)
        AND workspace_execs.id = sqlc.arg(id)
-       AND workspace_execs.materialization_id = sqlc.arg(materialization_id)
+       AND workspace_execs.workspace_mount_id = sqlc.arg(workspace_mount_id)
        AND workspace_execs.state IN ('queued', 'materializing', 'running')
     RETURNING *
 ),

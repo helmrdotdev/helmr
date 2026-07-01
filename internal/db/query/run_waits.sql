@@ -1,32 +1,102 @@
--- name: CreateRunWait :one
-INSERT INTO run_waits (
-    id,
-    org_id,
-    project_id,
-    environment_id,
-    run_id,
-    kind,
-    correlation_id,
-    timeout_at,
-    workspace_version_id,
-    active_elapsed_ms_at_park
+-- name: CreateHotRunWait :one
+WITH scope AS MATERIALIZED (
+    SELECT runs.org_id,
+           runs.project_id,
+           runs.environment_id,
+           runs.id AS run_id,
+           runs.state_version,
+           run_leases.id AS run_lease_id,
+           run_leases.worker_instance_id,
+           workspace_mounts.runtime_instance_id,
+           runtime_instances.runtime_epoch
+      FROM runs
+      JOIN run_leases ON run_leases.org_id = runs.org_id
+                     AND run_leases.run_id = runs.id
+                     AND run_leases.id = runs.current_run_lease_id
+      JOIN workspace_mounts
+        ON workspace_mounts.org_id = runs.org_id
+       AND workspace_mounts.project_id = runs.project_id
+       AND workspace_mounts.environment_id = runs.environment_id
+       AND workspace_mounts.id = runs.workspace_mount_id
+      JOIN runtime_instances
+        ON runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.id = workspace_mounts.runtime_instance_id
+       AND runtime_instances.worker_instance_id = run_leases.worker_instance_id
+       AND runtime_instances.workspace_mount_id = workspace_mounts.id
+       AND runtime_instances.state IN ('running', 'waiting_hot')
+     WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.project_id = sqlc.arg(project_id)
+       AND runs.environment_id = sqlc.arg(environment_id)
+       AND runs.id = sqlc.arg(run_id)
+       AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
+       AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND runs.status = 'running'
+       AND runs.execution_status = 'executing'
+       AND run_leases.status IN ('leased', 'running')
+       AND run_leases.lease_expires_at > now()
+     FOR UPDATE OF runtime_instances
+),
+inserted_wait AS (
+    INSERT INTO run_waits (
+        id,
+        org_id,
+        project_id,
+        environment_id,
+        run_id,
+        kind,
+        correlation_id,
+        state,
+        timeout_at,
+        runtime_checkpoint_due_at,
+        live_wait_started_at,
+        owner_runtime_instance_id,
+        owner_runtime_epoch,
+        owner_run_id,
+        owner_run_lease_id,
+        owner_worker_instance_id,
+        owner_run_state_version
+    )
+    SELECT sqlc.arg(id),
+           scope.org_id,
+           scope.project_id,
+           scope.environment_id,
+           scope.run_id,
+           sqlc.arg(kind)::run_wait_kind,
+           COALESCE(sqlc.arg(correlation_id)::text, ''),
+           'live_waiting'::run_wait_state,
+           sqlc.narg(timeout_at)::timestamptz,
+           CASE
+             WHEN sqlc.arg(checkpoint_delay)::interval <= interval '0 seconds' THEN now()
+             ELSE now() + sqlc.arg(checkpoint_delay)::interval
+           END,
+           now(),
+           scope.runtime_instance_id,
+           scope.runtime_epoch,
+           scope.run_id,
+           scope.run_lease_id,
+           scope.worker_instance_id,
+           scope.state_version
+      FROM scope
+    RETURNING *
+),
+waiting_runtime_instance AS (
+    UPDATE runtime_instances
+       SET state = 'waiting_hot',
+           owner_run_id = inserted_wait.run_id,
+           owner_run_lease_id = inserted_wait.owner_run_lease_id,
+           owner_run_wait_id = inserted_wait.id,
+           owner_run_state_version = inserted_wait.owner_run_state_version,
+           waiting_at = now(),
+           updated_at = now()
+      FROM scope, inserted_wait
+     WHERE runtime_instances.org_id = scope.org_id
+       AND runtime_instances.id = scope.runtime_instance_id
+       AND runtime_instances.state IN ('running', 'waiting_hot')
+    RETURNING runtime_instances.id
 )
-SELECT sqlc.arg(id),
-       runs.org_id,
-       runs.project_id,
-       runs.environment_id,
-       runs.id,
-       sqlc.arg(kind)::run_wait_kind,
-       COALESCE(sqlc.arg(correlation_id)::text, ''),
-       sqlc.narg(timeout_at)::timestamptz,
-       sqlc.narg(workspace_version_id)::uuid,
-       sqlc.narg(active_elapsed_ms_at_park)::bigint
-  FROM runs
- WHERE runs.org_id = sqlc.arg(org_id)
-   AND runs.project_id = sqlc.arg(project_id)
-   AND runs.environment_id = sqlc.arg(environment_id)
-   AND runs.id = sqlc.arg(run_id)
-RETURNING *;
+SELECT inserted_wait.*
+  FROM inserted_wait
+ WHERE EXISTS (SELECT 1 FROM waiting_runtime_instance);
 
 -- name: GetRunWait :one
 SELECT *
@@ -34,6 +104,13 @@ SELECT *
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id);
+
+-- name: GetRunWaitByRun :one
+SELECT *
+  FROM run_waits
+ WHERE org_id = sqlc.arg(org_id)
+   AND run_id = sqlc.arg(run_id)
    AND id = sqlc.arg(id);
 
 -- name: ListRunWaits :many
@@ -61,31 +138,313 @@ SELECT *
 
 -- name: ResolveRunWait :one
 UPDATE run_waits
-   SET state = 'resolved',
+   SET state = CASE
+         WHEN state = 'live_waiting' THEN 'resolved_live'::run_wait_state
+         WHEN state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
+         ELSE state
+       END,
        resolved_at = COALESCE(run_waits.resolved_at, now()),
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
-   AND state = 'waiting'
+   AND state IN ('live_waiting', 'checkpointed_waiting')
 RETURNING *;
 
--- name: MarkRunWaitResumed :one
-UPDATE run_waits
-   SET resumed_at = COALESCE(run_waits.resumed_at, now()),
-       state = 'resumed',
-       updated_at = now()
-  FROM runs
- WHERE run_waits.org_id = sqlc.arg(org_id)
-   AND run_waits.id = sqlc.arg(id)
-   AND run_waits.run_id = sqlc.arg(run_id)
-   AND run_waits.runtime_checkpoint_id = sqlc.arg(runtime_checkpoint_id)
-   AND run_waits.state = 'resuming'
-   AND runs.org_id = run_waits.org_id
-   AND runs.id = run_waits.run_id
-   AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
-   AND runs.status = 'running'
-   AND runs.execution_status = 'executing'
-RETURNING *;
+-- name: ClaimRuntimeCheckpointWait :one
+WITH scope AS (
+    SELECT run_waits.*,
+           runs.workspace_id,
+           workspace_leases.id AS workspace_lease_id,
+           workspace_leases.workspace_mount_id,
+           workspace_mounts.runtime_instance_id,
+           workspace_mounts.dirty_generation,
+           workspaces.current_version_id AS current_workspace_version_id,
+           worker_instances.runtime_id,
+           worker_instances.runtime_arch,
+           worker_instances.runtime_abi,
+           worker_instances.kernel_digest,
+           worker_instances.initramfs_digest,
+           worker_instances.rootfs_digest,
+           worker_instances.cni_profile,
+           runtime_instances.runtime_key_hash
+      FROM run_waits
+      JOIN runs ON runs.org_id = run_waits.org_id
+               AND runs.project_id = run_waits.project_id
+               AND runs.environment_id = run_waits.environment_id
+               AND runs.id = run_waits.run_id
+      JOIN workspaces ON workspaces.org_id = runs.org_id
+                     AND workspaces.project_id = runs.project_id
+                     AND workspaces.environment_id = runs.environment_id
+                     AND workspaces.id = runs.workspace_id
+      JOIN run_leases ON run_leases.org_id = run_waits.org_id
+                     AND run_leases.run_id = run_waits.run_id
+                     AND run_leases.id = run_waits.owner_run_lease_id
+      JOIN worker_instances ON worker_instances.id = run_leases.worker_instance_id
+                           AND worker_instances.runtime_id <> ''
+                           AND worker_instances.runtime_arch <> ''
+                           AND worker_instances.runtime_abi <> ''
+                           AND worker_instances.kernel_digest <> ''
+                           AND worker_instances.initramfs_digest <> ''
+                           AND worker_instances.rootfs_digest <> ''
+                           AND worker_instances.cni_profile <> ''
+      JOIN workspace_leases ON workspace_leases.org_id = runs.org_id
+                           AND workspace_leases.project_id = runs.project_id
+                           AND workspace_leases.environment_id = runs.environment_id
+                           AND workspace_leases.workspace_id = runs.workspace_id
+                           AND workspace_leases.owner_run_id = runs.id
+                           AND workspace_leases.lease_kind = 'write'
+                           AND workspace_leases.state = 'active'
+                           AND workspace_leases.released_at IS NULL
+                           AND workspace_leases.expires_at > now()
+      JOIN workspace_mounts ON workspace_mounts.org_id = workspace_leases.org_id
+                                     AND workspace_mounts.project_id = workspace_leases.project_id
+                                     AND workspace_mounts.environment_id = workspace_leases.environment_id
+                                     AND workspace_mounts.workspace_id = workspace_leases.workspace_id
+                                     AND workspace_mounts.id = workspace_leases.workspace_mount_id
+      JOIN runtime_instances
+        ON runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.id = workspace_mounts.runtime_instance_id
+       AND runtime_instances.worker_instance_id = run_waits.owner_worker_instance_id
+       AND runtime_instances.id = run_waits.owner_runtime_instance_id
+       AND runtime_instances.runtime_epoch = run_waits.owner_runtime_epoch
+       AND runtime_instances.owner_run_id = run_waits.run_id
+       AND runtime_instances.owner_run_lease_id = run_waits.owner_run_lease_id
+       AND runtime_instances.owner_run_wait_id = run_waits.id
+       AND runtime_instances.owner_run_state_version = run_waits.owner_run_state_version
+       AND runtime_instances.workspace_mount_id = workspace_mounts.id
+       AND runtime_instances.state IN ('waiting_hot', 'checkpointing')
+     WHERE run_waits.org_id = sqlc.arg(org_id)
+       AND run_waits.project_id = sqlc.arg(project_id)
+       AND run_waits.environment_id = sqlc.arg(environment_id)
+       AND run_waits.run_id = sqlc.arg(run_id)
+       AND run_waits.id = sqlc.arg(run_wait_id)
+       AND run_waits.owner_run_lease_id = sqlc.arg(run_lease_id)
+       AND run_waits.owner_worker_instance_id = sqlc.arg(worker_instance_id)
+       AND run_waits.state IN ('live_waiting', 'checkpointing')
+       AND runs.status = 'running'
+       AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
+       AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND run_leases.status IN ('leased', 'running')
+       AND run_leases.lease_expires_at > now()
+     FOR UPDATE OF run_waits, runs, workspace_leases, workspace_mounts, runtime_instances
+),
+claimed_checkpoint AS (
+    INSERT INTO runtime_checkpoints (
+        id,
+        org_id,
+        project_id,
+        environment_id,
+        workspace_id,
+        run_id,
+        source_workspace_lease_id,
+        workspace_mount_id,
+        base_workspace_version_id,
+        state,
+        runtime_backend,
+        runtime_id,
+        runtime_arch,
+        runtime_abi,
+        kernel_digest,
+        initramfs_digest,
+        rootfs_digest,
+        runtime_config_digest,
+        owner_runtime_instance_id,
+        owner_runtime_epoch,
+        owner_run_id,
+        owner_run_wait_id,
+        owner_run_lease_id,
+        owner_worker_instance_id,
+        source_worker_instance_id,
+        cni_profile,
+        manifest,
+        creation_expires_at
+    )
+    SELECT sqlc.arg(runtime_checkpoint_id),
+           scope.org_id,
+           scope.project_id,
+           scope.environment_id,
+           scope.workspace_id,
+           scope.run_id,
+           scope.workspace_lease_id,
+           scope.workspace_mount_id,
+           COALESCE(scope.workspace_version_id, scope.current_workspace_version_id),
+           'creating',
+           'firecracker',
+           scope.runtime_id,
+           scope.runtime_arch,
+           scope.runtime_abi,
+           scope.kernel_digest,
+           scope.initramfs_digest,
+           scope.rootfs_digest,
+           scope.runtime_key_hash,
+           scope.owner_runtime_instance_id,
+           scope.owner_runtime_epoch,
+           scope.run_id,
+           scope.id,
+           scope.owner_run_lease_id,
+           scope.owner_worker_instance_id,
+           scope.owner_worker_instance_id,
+           scope.cni_profile,
+           '{}'::jsonb,
+           scope.runtime_checkpoint_due_at + interval '5 minutes'
+      FROM scope
+     WHERE scope.state = 'live_waiting'
+       AND COALESCE(scope.workspace_version_id, scope.current_workspace_version_id) IS NOT NULL
+    ON CONFLICT (id) DO NOTHING
+    RETURNING *
+),
+claimed_wait AS (
+    UPDATE run_waits
+       SET state = 'checkpointing',
+           runtime_checkpoint_started_at = COALESCE(run_waits.runtime_checkpoint_started_at, now()),
+           runtime_checkpoint_id = sqlc.arg(runtime_checkpoint_id),
+           updated_at = now()
+      FROM scope
+     WHERE run_waits.org_id = scope.org_id
+       AND run_waits.id = scope.id
+       AND scope.state = 'live_waiting'
+       AND EXISTS (SELECT 1 FROM claimed_checkpoint)
+    RETURNING run_waits.*
+),
+selected_wait AS (
+    SELECT claimed_wait.*
+      FROM claimed_wait
+    UNION ALL
+    SELECT run_waits.*
+      FROM run_waits
+      JOIN scope ON scope.org_id = run_waits.org_id
+                AND scope.id = run_waits.id
+     WHERE scope.state = 'checkpointing'
+       AND run_waits.runtime_checkpoint_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM claimed_wait)
+),
+selected_checkpoint AS (
+    SELECT claimed_checkpoint.id
+      FROM claimed_checkpoint
+    UNION ALL
+    SELECT runtime_checkpoints.id
+      FROM runtime_checkpoints
+      JOIN scope ON scope.org_id = runtime_checkpoints.org_id
+                AND scope.project_id = runtime_checkpoints.project_id
+                AND scope.environment_id = runtime_checkpoints.environment_id
+                AND scope.run_id = runtime_checkpoints.run_id
+      JOIN selected_wait ON selected_wait.org_id = scope.org_id
+                        AND selected_wait.id = scope.id
+                        AND selected_wait.runtime_checkpoint_id = runtime_checkpoints.id
+     WHERE scope.state = 'checkpointing'
+       AND runtime_checkpoints.state = 'creating'
+       AND runtime_checkpoints.owner_runtime_instance_id = scope.owner_runtime_instance_id
+       AND runtime_checkpoints.owner_runtime_epoch = scope.owner_runtime_epoch
+       AND runtime_checkpoints.owner_run_id = scope.run_id
+       AND runtime_checkpoints.owner_run_wait_id = scope.id
+       AND runtime_checkpoints.owner_run_lease_id = scope.owner_run_lease_id
+       AND runtime_checkpoints.owner_worker_instance_id = scope.owner_worker_instance_id
+       AND runtime_checkpoints.source_worker_instance_id = scope.owner_worker_instance_id
+       AND NOT EXISTS (SELECT 1 FROM claimed_checkpoint)
+),
+checkpointing_runtime_instance AS (
+    UPDATE runtime_instances
+       SET state = 'checkpointing',
+           owner_run_id = selected_wait.run_id,
+           owner_run_lease_id = selected_wait.owner_run_lease_id,
+           owner_run_wait_id = selected_wait.id,
+           owner_run_state_version = selected_wait.owner_run_state_version,
+           checkpointing_at = COALESCE(runtime_instances.checkpointing_at, now()),
+           updated_at = now()
+      FROM scope, selected_wait
+     WHERE runtime_instances.org_id = scope.org_id
+       AND runtime_instances.id = scope.runtime_instance_id
+       AND runtime_instances.id = scope.owner_runtime_instance_id
+       AND runtime_instances.runtime_epoch = scope.owner_runtime_epoch
+       AND runtime_instances.owner_run_id = scope.run_id
+       AND runtime_instances.owner_run_lease_id = scope.owner_run_lease_id
+       AND runtime_instances.owner_run_wait_id = scope.id
+       AND runtime_instances.owner_run_state_version = scope.owner_run_state_version
+       AND runtime_instances.state IN ('waiting_hot', 'checkpointing')
+    RETURNING runtime_instances.id
+)
+SELECT selected_checkpoint.id AS runtime_checkpoint_id,
+       scope.org_id,
+       scope.project_id,
+       scope.environment_id,
+       scope.run_id,
+       scope.id AS run_wait_id,
+       scope.owner_run_lease_id AS run_lease_id,
+       scope.owner_worker_instance_id AS worker_instance_id,
+       scope.owner_run_state_version AS run_state_version,
+       scope.owner_runtime_instance_id AS runtime_instance_id,
+       scope.owner_runtime_epoch AS runtime_epoch,
+       scope.workspace_version_id,
+       scope.dirty_generation
+  FROM scope
+  JOIN selected_wait ON selected_wait.org_id = scope.org_id
+                    AND selected_wait.id = scope.id
+  JOIN selected_checkpoint ON true
+  JOIN checkpointing_runtime_instance ON true
+ LIMIT 1;
+
+-- name: MarkRuntimeResumeWaitResumed :one
+WITH current_wait AS (
+    SELECT run_waits.*
+      FROM run_waits
+      JOIN runs ON runs.org_id = run_waits.org_id
+               AND runs.project_id = run_waits.project_id
+               AND runs.environment_id = run_waits.environment_id
+               AND runs.id = run_waits.run_id
+     WHERE run_waits.org_id = sqlc.arg(org_id)
+       AND run_waits.id = sqlc.arg(id)
+       AND run_waits.run_id = sqlc.arg(run_id)
+       AND run_waits.runtime_checkpoint_id = sqlc.arg(runtime_checkpoint_id)
+       AND run_waits.state = 'resuming'
+       AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
+       AND runs.status = 'running'
+       AND runs.execution_status = 'executing'
+     FOR UPDATE OF run_waits
+),
+restore_phase_payload AS (
+    SELECT CASE
+             WHEN jsonb_typeof(COALESCE(sqlc.arg(restore_phases)::jsonb, '[]'::jsonb)) = 'array'
+             THEN COALESCE(sqlc.arg(restore_phases)::jsonb, '[]'::jsonb)
+             ELSE '[]'::jsonb
+           END AS phases
+),
+updated_restore AS (
+    UPDATE runtime_checkpoint_restores
+       SET status = 'restored',
+           phases = restore_phase_payload.phases,
+           error_message = NULL,
+           acknowledged_at = COALESCE(runtime_checkpoint_restores.acknowledged_at, now()),
+           finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
+           updated_at = now()
+      FROM current_wait
+      JOIN restore_phase_payload ON true
+     WHERE runtime_checkpoint_restores.org_id = sqlc.arg(org_id)
+       AND runtime_checkpoint_restores.project_id = current_wait.project_id
+       AND runtime_checkpoint_restores.environment_id = current_wait.environment_id
+       AND runtime_checkpoint_restores.run_id = sqlc.arg(run_id)
+       AND runtime_checkpoint_restores.runtime_checkpoint_id = sqlc.arg(runtime_checkpoint_id)
+       AND runtime_checkpoint_restores.run_wait_id = current_wait.id
+       AND runtime_checkpoint_restores.run_lease_id = sqlc.arg(run_lease_id)
+       AND runtime_checkpoint_restores.status = 'restoring'
+    RETURNING runtime_checkpoint_restores.id,
+              runtime_checkpoint_restores.org_id,
+              runtime_checkpoint_restores.project_id,
+              runtime_checkpoint_restores.environment_id,
+              runtime_checkpoint_restores.run_id
+),
+updated_wait AS (
+    UPDATE run_waits
+       SET resumed_at = COALESCE(run_waits.resumed_at, now()),
+           state = 'resumed',
+           updated_at = now()
+      FROM current_wait
+      JOIN updated_restore ON true
+     WHERE run_waits.org_id = current_wait.org_id
+       AND run_waits.id = current_wait.id
+    RETURNING run_waits.*
+)
+SELECT updated_wait.*
+  FROM updated_wait;
 
 -- name: RequeueResolvedRunWaits :many
 WITH eligible_waits AS (
@@ -110,7 +469,7 @@ WITH eligible_waits AS (
                      AND workspaces.id = runs.workspace_id
                      AND workspaces.current_version_id = runtime_checkpoints.base_workspace_version_id
      WHERE run_waits.org_id = sqlc.arg(org_id)
-       AND run_waits.state IN ('resolved', 'expired')
+       AND run_waits.state IN ('resolved_live', 'resolved_checkpointed', 'expired')
        AND run_waits.runtime_checkpoint_id IS NOT NULL
        AND runs.status = 'waiting'
        AND runs.current_run_lease_id IS NULL
@@ -123,11 +482,12 @@ WITH eligible_waits AS (
 updated_waits AS (
     UPDATE run_waits
        SET state = 'resuming',
+           resuming_at = COALESCE(run_waits.resuming_at, now()),
            updated_at = now()
       FROM eligible_waits
      WHERE run_waits.org_id = eligible_waits.org_id
        AND run_waits.id = eligible_waits.id
-       AND run_waits.state IN ('resolved', 'expired')
+       AND run_waits.state IN ('resolved_live', 'resolved_checkpointed', 'expired')
     RETURNING run_waits.*
 ),
 updated_runs AS (
@@ -169,7 +529,9 @@ updated_queue AS (
            updated_at = now(),
            finished_at = NULL
       FROM updated_runs
-     WHERE run_queue_items.org_id = updated_runs.org_id
+      JOIN eligible_waits ON eligible_waits.org_id = updated_runs.org_id
+                         AND eligible_waits.run_id = updated_runs.id
+    WHERE run_queue_items.org_id = updated_runs.org_id
        AND run_queue_items.run_id = updated_runs.id
        AND run_queue_items.status = 'parked'
     RETURNING run_queue_items.run_id
@@ -234,7 +596,7 @@ WITH stale_waits AS MATERIALIZED (
                      AND workspaces.id = runs.workspace_id
      WHERE run_waits.org_id = sqlc.arg(org_id)
        AND (
-           (run_waits.state IN ('resolved', 'expired') AND runs.status = 'waiting')
+           (run_waits.state IN ('resolved_live', 'resolved_checkpointed', 'expired') AND runs.status = 'waiting')
            OR (run_waits.state = 'resuming' AND runs.status = 'queued')
        )
        AND run_waits.runtime_checkpoint_id IS NOT NULL
@@ -345,7 +707,7 @@ failed_snapshots AS (
            failed_runs.current_attempt_id,
            'run.failed',
            jsonb_build_object(
-               'origin', 'run_wait_resume',
+               'origin', 'runtime_resume_wait',
                'reason', failed_runs.failure_reason,
                'message', failed_runs.error_message,
                'runtime_checkpoint_id', failed_runs.runtime_checkpoint_id,
@@ -385,7 +747,7 @@ failed_events AS (
            'run.failed',
            'run.failed',
            jsonb_build_object(
-               'origin', 'run_wait_resume',
+               'origin', 'runtime_resume_wait',
                'reason', failed_runs.failure_reason,
                'message', failed_runs.error_message,
                'runtime_checkpoint_id', failed_runs.runtime_checkpoint_id,
@@ -437,7 +799,7 @@ UPDATE run_waits
    AND run_waits.environment_id = sqlc.arg(environment_id)
    AND run_waits.id = sqlc.arg(id)
    AND run_waits.run_id = sqlc.arg(run_id)
-   AND run_waits.state = 'parking'
+   AND run_waits.state IN ('live_waiting', 'checkpointing')
    AND run_waits.workspace_version_id IS NULL
    AND runs.org_id = run_waits.org_id
    AND runs.project_id = run_waits.project_id
@@ -452,7 +814,7 @@ UPDATE run_waits
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
-   AND state = 'waiting'
+   AND state = 'checkpointed_waiting'
 RETURNING *;
 
 -- name: CancelRunWaitsForRun :many
@@ -462,16 +824,19 @@ UPDATE run_waits
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
-   AND state = 'waiting'
+   AND state = 'checkpointed_waiting'
 RETURNING *;
 
 -- name: ExpireDueRunWaits :many
 UPDATE run_waits
-   SET state = 'expired',
+   SET state = CASE
+         WHEN state = 'live_waiting' THEN 'resolved_live'::run_wait_state
+         ELSE 'expired'::run_wait_state
+       END,
        resolved_at = COALESCE(run_waits.resolved_at, now()),
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
-   AND state = 'waiting'
+   AND state IN ('live_waiting', 'checkpointed_waiting')
    AND timeout_at IS NOT NULL
    AND timeout_at <= now()
 RETURNING *;
@@ -489,10 +854,10 @@ SELECT runs.org_id,
        run_leases.worker_instance_id,
        workspace_leases.id AS workspace_lease_id,
        workspace_leases.fencing_token AS workspace_fencing_token,
-       workspace_leases.materialization_id,
+       workspace_leases.workspace_mount_id,
        workspace_leases.base_version_id AS workspace_base_version_id,
        workspaces.current_version_id AS workspace_current_version_id,
-       workspace_materializations.dirty_generation,
+       workspace_mounts.dirty_generation,
        worker_instances.cni_profile AS worker_cni_profile
   FROM runs
   JOIN run_leases ON run_leases.org_id = runs.org_id
@@ -513,11 +878,11 @@ SELECT runs.org_id,
                        AND workspace_leases.state = 'active'
                        AND workspace_leases.released_at IS NULL
                        AND workspace_leases.expires_at > now()
-  JOIN workspace_materializations ON workspace_materializations.org_id = workspace_leases.org_id
-                                 AND workspace_materializations.project_id = workspace_leases.project_id
-                                 AND workspace_materializations.environment_id = workspace_leases.environment_id
-                                 AND workspace_materializations.workspace_id = workspace_leases.workspace_id
-                                 AND workspace_materializations.id = workspace_leases.materialization_id
+  JOIN workspace_mounts ON workspace_mounts.org_id = workspace_leases.org_id
+                                 AND workspace_mounts.project_id = workspace_leases.project_id
+                                 AND workspace_mounts.environment_id = workspace_leases.environment_id
+                                 AND workspace_mounts.workspace_id = workspace_leases.workspace_id
+                                 AND workspace_mounts.id = workspace_leases.workspace_mount_id
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.id = sqlc.arg(run_id)
    AND runs.current_run_lease_id = sqlc.arg(run_lease_id)

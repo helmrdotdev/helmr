@@ -105,7 +105,26 @@ func validRun() api.WorkerRun {
 		TaskID:             "deploy",
 		DeploymentSource:   validDeploymentSource(),
 		DeploymentTask:     api.WorkerDeploymentTask{ID: "task-1", FilePath: "src/task.ts", ExportName: "deploy", BundleDigest: validTaskBundleDigest()},
+		Workspace:          validWorkerWorkspace(),
 		MaxDurationSeconds: 30,
+	}
+}
+
+func validWorkerWorkspace() api.WorkerWorkspace {
+	return api.WorkerWorkspace{
+		ID:                "workspace-1",
+		WorkspaceMountID:  "mat-1",
+		FencingGeneration: 2,
+		WriteLeaseID:      "workspace-lease-1",
+		WriteFencingToken: "workspace-fence-1",
+		MountPath:         "/workspace",
+		Artifact: &api.WorkerWorkspaceArtifact{
+			Digest:     "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			MediaType:  "application/vnd.helmr.workspace.v0.tar",
+			Encoding:   "tar",
+			SizeBytes:  1024,
+			EntryCount: 1,
+		},
 	}
 }
 

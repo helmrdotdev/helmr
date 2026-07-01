@@ -534,6 +534,24 @@ SELECT deployment_sandboxes.*
    AND deployment_sandboxes.sandbox_id = sqlc.arg(sandbox_id)
  LIMIT 1;
 
+-- name: GetDeploymentSandboxByID :one
+SELECT *
+  FROM deployment_sandboxes
+ WHERE id = sqlc.arg(id)
+ LIMIT 1;
+
+-- name: GetDeploymentSandboxForWorkerGroup :one
+SELECT deployment_sandboxes.*
+  FROM deployment_sandboxes
+  JOIN deployments
+    ON deployments.org_id = deployment_sandboxes.org_id
+   AND deployments.project_id = deployment_sandboxes.project_id
+   AND deployments.environment_id = deployment_sandboxes.environment_id
+   AND deployments.id = deployment_sandboxes.deployment_id
+   AND deployments.worker_group_id = sqlc.arg(worker_group_id)
+ WHERE deployment_sandboxes.id = sqlc.arg(id)
+ LIMIT 1;
+
 -- name: GetCurrentDeploymentTask :one
 SELECT deployment_tasks.*,
        deployment_sandboxes.sandbox_id,

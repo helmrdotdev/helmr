@@ -27,7 +27,7 @@ func GuestVerb(operationKind string) (string, error) {
 	case "close_pty":
 		return GuestVerbClosePty, nil
 	default:
-		return "", fmt.Errorf("unsupported workspace materialization operation kind %q", strings.TrimSpace(operationKind))
+		return "", fmt.Errorf("unsupported workspace operation kind %q", strings.TrimSpace(operationKind))
 	}
 }
 

@@ -120,10 +120,7 @@ func (s *Server) listWorkspaceFiles(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Path < entries[j].Path
 	})
-	capacity := len(entries)
-	if capacity > int(limit) {
-		capacity = int(limit)
-	}
+	capacity := min(len(entries), int(limit))
 	responses := make([]api.WorkspaceFileEntryResponse, 0, capacity)
 	var nextCursor string
 	for _, entry := range entries {

@@ -49,6 +49,8 @@ type Control struct {
 	GitHubOAuthClientID     string
 	GitHubOAuthClientSecret string
 	ScheduleJitter          time.Duration
+	RuntimePrepareTarget    int
+	RuntimePrepareLimit     int
 }
 
 type Dispatcher struct {
@@ -72,6 +74,9 @@ type Dispatcher struct {
 	ScheduleLease              time.Duration
 	ScheduleMaxAttempts        int
 	ScheduleJitter             time.Duration
+	RuntimePrepareTarget       int
+	RuntimePrepareLimit        int
+	RuntimePrepareEvery        time.Duration
 }
 
 type Database struct {
@@ -115,9 +120,14 @@ type Worker struct {
 	WorkerCapacityVCPUs          int64
 	WorkerCapacityMemoryMiB      int64
 	WorkerDiskMiB                int64
+	SubstrateCacheMaxMiB         int64
+	ArtifactCacheMaxMiB          int64
 	WorkerExecutionSlots         int32
 	VMHealthTimeout              time.Duration
-	WorkspaceMaterializeTimeout  time.Duration
+	VMHealthAttemptTimeout       time.Duration
+	WorkspaceMountStartupTimeout time.Duration
+	PreparedBasePoolSize         int
+	PreparedRuntimePoolSize      int
 	PollEvery                    time.Duration
 }
 

@@ -299,10 +299,7 @@ func (s *Server) waitSessionInputStreamWakeup(ctx context.Context, orgID pgtype.
 	if s.eventStream == nil || s.eventStream.redis == nil {
 		return cursor, errActiveStreamUnavailable
 	}
-	blockFor := maxWait
-	if blockFor > activeStreamWakeupBlockEvery {
-		blockFor = activeStreamWakeupBlockEvery
-	}
+	blockFor := min(maxWait, activeStreamWakeupBlockEvery)
 	if blockFor <= 0 {
 		return cursor, nil
 	}

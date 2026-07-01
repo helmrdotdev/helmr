@@ -5845,7 +5845,7 @@ function workspaceFileSourceQuery(query, opts) {
       return;
     case "live":
       if (opts.materializationId !== undefined) {
-        query.set("materialization_id", opts.materializationId);
+        query.set("workspace_mount_id", opts.materializationId);
       }
       return;
     default:
@@ -5956,7 +5956,7 @@ function workspaceFromResponse(response) {
     state: response.state,
     desiredState: response.desired_state,
     dirtyState: response.dirty_state,
-    lastMaterializationId: response.last_materialization_id ?? null,
+    lastMaterializationId: response.last_workspace_mount_id ?? null,
     metadata: response.metadata ?? {},
     tags: response.tags ?? [],
     autoStopAt: response.auto_stop_at ?? null,
@@ -5991,7 +5991,7 @@ function workspaceStopFromResponse(response) {
   return {
     workspaceId: response.workspace_id,
     state: response.state,
-    materialization: response.materialization == null ? null : workspaceMaterializationFromResponse(response.materialization)
+    materialization: response.mount == null ? null : workspaceMaterializationFromResponse(response.mount)
   };
 }
 function workspaceFileEntryFromResponse(response) {
@@ -6032,7 +6032,7 @@ function workspaceExecFromResponse(response) {
   return {
     id: response.id,
     workspaceId: response.workspace_id,
-    materializationId: response.materialization_id ?? null,
+    materializationId: response.workspace_mount_id ?? null,
     command: response.command,
     cwd: response.cwd,
     envShape: response.env_shape ?? {},
@@ -6057,7 +6057,7 @@ function workspacePtyFromResponse(response) {
   return {
     id: response.id,
     workspaceId: response.workspace_id,
-    materializationId: response.materialization_id ?? null,
+    materializationId: response.workspace_mount_id ?? null,
     cwd: response.cwd,
     cols: response.cols,
     rows: response.rows,

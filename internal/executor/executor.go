@@ -115,9 +115,8 @@ func (e Executor) Execute(ctx context.Context, leases api.WorkerRunLeaseProvider
 	if resolved.Restore != nil {
 		return e.runRuntime(ctx, leases, resolved, builder.Artifact{}, builder.Source{}, workspace.WorkspaceArtifact{})
 	}
-	buildEngine := e.Builder
-	if buildEngine == nil {
-		return failedResult(ErrBuilderRequired)
+	if strings.TrimSpace(resolved.Workspace.WorkspaceMountID) == "" {
+		return failedResult(errors.New("workspace mount id is required for worker run execution"))
 	}
 	deploymentSource, cleanupDeploymentSource, err := e.materializeSourceArtifact(ctx, resolved.DeploymentSource, "deployment")
 	if err != nil {
@@ -134,33 +133,13 @@ func (e Executor) Execute(ctx context.Context, leases api.WorkerRunLeaseProvider
 	if err := validateDeploymentTaskMetadata(resolved, bundle); err != nil {
 		return failedResult(err)
 	}
-	buildSecrets, err := builder.BuildSecretValues(resolved.Bundle, resolved.Secrets)
-	if err != nil {
-		return failedResult(err)
-	}
-	artifact, err := buildEngine.Build(ctx, builder.Request{
-		RunID:        resolved.RunID,
-		TaskID:       resolved.TaskID,
-		CacheScope:   taskBuildCacheScope(resolved),
-		Payload:      resolved.Payload,
-		BuildSecrets: buildSecrets,
-		Bundle:       resolved.Bundle,
-		Source:       deploymentSource,
-		MaxDuration:  resolved.MaxDuration,
-	})
-	if err != nil {
-		return failedResult(fmt.Errorf("build run: %w", err))
-	}
-	workspaceArtifact, cleanupWorkspaceArtifact, err := e.materializeWorkspaceArtifact(ctx, resolved.Workspace)
+
+	workspaceArtifact, cleanupWorkspaceArtifact, err := e.runtimeWorkspaceArtifact(ctx, resolved.Workspace, true)
 	if err != nil {
 		return failedResult(err)
 	}
 	defer cleanupWorkspaceArtifact()
-	return e.runRuntime(ctx, leases, resolved, artifact, deploymentSource, workspaceArtifact)
-}
-
-func taskBuildCacheScope(resolved ResolvedRun) string {
-	return buildCacheScope(resolved.DeploymentSource.Digest, resolved.TaskID)
+	return e.runRuntime(ctx, leases, resolved, builder.Artifact{}, deploymentSource, workspaceArtifact)
 }
 
 func validateDeploymentTaskMetadata(resolved ResolvedRun, bundle *bundlev0.Bundle) error {
@@ -194,18 +173,6 @@ func (e Executor) loadTaskBundle(ctx context.Context, digest string) (*bundlev0.
 		return nil, fmt.Errorf("close task bundle artifact: %w", closeErr)
 	}
 	return task.DecodeBundle(content)
-}
-
-func buildCacheScope(repository string, taskID string) string {
-	repository = strings.TrimSpace(repository)
-	taskID = strings.TrimSpace(taskID)
-	if repository == "" {
-		return taskID
-	}
-	if taskID == "" {
-		return repository
-	}
-	return repository + "/" + taskID
 }
 
 func (e Executor) runRuntime(ctx context.Context, leases api.WorkerRunLeaseProvider, resolved ResolvedRun, artifact builder.Artifact, deploymentSource builder.Source, ws workspace.WorkspaceArtifact) api.WorkerReleaseResult {
@@ -336,6 +303,49 @@ func (e Executor) materializeWorkspaceArtifact(ctx context.Context, base api.Wor
 		SizeBytes:  base.Artifact.SizeBytes,
 		EntryCount: int(base.Artifact.EntryCount),
 	}, cleanup, nil
+}
+
+func (e Executor) runtimeWorkspaceArtifact(ctx context.Context, base api.WorkerWorkspace, materializedRun bool) (workspace.WorkspaceArtifact, func(), error) {
+	if materializedRun {
+		artifact, err := workspaceArtifactMetadata(base)
+		return artifact, func() {}, err
+	}
+	return e.materializeWorkspaceArtifact(ctx, base)
+}
+
+func workspaceArtifactMetadata(base api.WorkerWorkspace) (workspace.WorkspaceArtifact, error) {
+	if base.Artifact == nil {
+		return workspace.WorkspaceArtifact{}, errors.New("materialized workspace run requires workspace artifact metadata")
+	}
+	artifact := base.Artifact
+	digest := strings.TrimSpace(artifact.Digest)
+	if digest == "" {
+		return workspace.WorkspaceArtifact{}, errors.New("materialized workspace run requires workspace artifact digest")
+	}
+	mediaType := strings.TrimSpace(artifact.MediaType)
+	if mediaType != workspace.ArtifactMediaType {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("unsupported workspace artifact media_type %q", artifact.MediaType)
+	}
+	encoding := strings.TrimSpace(artifact.Encoding)
+	if encoding != workspace.ArtifactEncoding {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("unsupported workspace artifact encoding %q", artifact.Encoding)
+	}
+	if artifact.SizeBytes <= 0 {
+		return workspace.WorkspaceArtifact{}, errors.New("materialized workspace run requires workspace artifact size_bytes")
+	}
+	if artifact.SizeBytes > workspace.MaxArtifactArchiveBytes {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace artifact size_bytes %d exceeds max %d", artifact.SizeBytes, workspace.MaxArtifactArchiveBytes)
+	}
+	if artifact.EntryCount > workspace.MaxArtifactEntries {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace artifact entry_count %d exceeds max %d", artifact.EntryCount, workspace.MaxArtifactEntries)
+	}
+	return workspace.WorkspaceArtifact{
+		Digest:     digest,
+		MediaType:  mediaType,
+		Encoding:   encoding,
+		SizeBytes:  artifact.SizeBytes,
+		EntryCount: int(artifact.EntryCount),
+	}, nil
 }
 
 func (e Executor) publishWorkspaceArtifact(ctx context.Context, artifact workspace.WorkspaceArtifact) error {

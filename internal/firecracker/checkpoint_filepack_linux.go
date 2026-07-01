@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"syscall"
 
+	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/klauspost/compress/zstd"
 	"golang.org/x/sys/unix"
 )
@@ -37,19 +39,23 @@ type filepackHeader struct {
 	Codec       string `json:"codec"`
 }
 
-func packRuntimeFile(ctx context.Context, sourcePath string, targetPath string, role string) error {
+func packRuntimeFile(ctx context.Context, sourcePath string, targetPath string, role string) (vm.FilepackStats, error) {
 	source, err := os.Open(sourcePath)
 	if err != nil {
-		return err
+		return vm.FilepackStats{}, err
 	}
 	defer source.Close()
 	info, err := source.Stat()
 	if err != nil {
-		return err
+		return vm.FilepackStats{}, err
+	}
+	stats := vm.FilepackStats{
+		LogicalBytes:   info.Size(),
+		AllocatedBytes: fileInfoAllocatedBytes(info),
 	}
 	target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return err
+		return vm.FilepackStats{}, err
 	}
 	targetClosed := false
 	cleanupTarget := true
@@ -68,50 +74,51 @@ func packRuntimeFile(ctx context.Context, sourcePath string, targetPath string, 
 		ChunkSize:   filepackChunkSize,
 		Codec:       filepackCodecZstd,
 	}); err != nil {
-		return err
+		return vm.FilepackStats{}, err
 	}
 	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
 	if err != nil {
-		return err
+		return vm.FilepackStats{}, err
 	}
 	defer encoder.Close()
-	if err := writeFilepackData(ctx, source, target, encoder, info.Size()); err != nil {
-		return err
+	if err := writeFilepackData(ctx, source, target, encoder, &stats, info.Size()); err != nil {
+		return vm.FilepackStats{}, err
 	}
 	if _, err := target.Write([]byte{filepackRecordEnd}); err != nil {
-		return err
+		return vm.FilepackStats{}, err
 	}
 	if err := target.Close(); err != nil {
 		targetClosed = true
-		return err
+		return vm.FilepackStats{}, err
 	}
 	targetClosed = true
 	cleanupTarget = false
-	return nil
+	return stats, nil
 }
 
-func unpackRuntimeFile(ctx context.Context, sourcePath string, targetPath string, expectedRole string, expectedLogicalSize int64) error {
+func unpackRuntimeFile(ctx context.Context, sourcePath string, targetPath string, expectedRole string, expectedLogicalSize int64) (vm.FilepackStats, error) {
 	source, err := os.Open(sourcePath)
 	if err != nil {
-		return err
+		return vm.FilepackStats{}, err
 	}
 	defer source.Close()
 	header, err := readFilepackHeader(source)
 	if err != nil {
-		return err
+		return vm.FilepackStats{}, err
 	}
 	if err := validateFilepackHeader(header, expectedRole); err != nil {
-		return err
+		return vm.FilepackStats{}, err
 	}
 	if expectedLogicalSize < 0 {
-		return errors.New("expected firecracker filepack logical size must be non-negative")
+		return vm.FilepackStats{}, errors.New("expected firecracker filepack logical size must be non-negative")
 	}
 	if header.LogicalSize != expectedLogicalSize {
-		return fmt.Errorf("firecracker filepack logical size %d does not match expected %d", header.LogicalSize, expectedLogicalSize)
+		return vm.FilepackStats{}, fmt.Errorf("firecracker filepack logical size %d does not match expected %d", header.LogicalSize, expectedLogicalSize)
 	}
+	stats := vm.FilepackStats{LogicalBytes: header.LogicalSize}
 	target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 	if err != nil {
-		return err
+		return stats, err
 	}
 	targetClosed := false
 	cleanupTarget := true
@@ -124,36 +131,36 @@ func unpackRuntimeFile(ctx context.Context, sourcePath string, targetPath string
 		}
 	}()
 	if err := target.Truncate(header.LogicalSize); err != nil {
-		return err
+		return stats, err
 	}
 	decoder, err := zstd.NewReader(nil)
 	if err != nil {
-		return err
+		return stats, err
 	}
 	defer decoder.Close()
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return stats, err
 		}
 		var recordType [1]byte
 		if _, err := io.ReadFull(source, recordType[:]); err != nil {
-			return err
+			return stats, err
 		}
 		switch recordType[0] {
 		case filepackRecordEnd:
 			if err := target.Close(); err != nil {
 				targetClosed = true
-				return err
+				return stats, err
 			}
 			targetClosed = true
 			cleanupTarget = false
-			return nil
+			return stats, nil
 		case filepackRecordData:
-			if err := readFilepackDataRecord(source, target, decoder, header.LogicalSize); err != nil {
-				return err
+			if err := readFilepackDataRecord(source, target, decoder, &stats, header.LogicalSize); err != nil {
+				return stats, err
 			}
 		default:
-			return fmt.Errorf("unsupported firecracker filepack record type %d", recordType[0])
+			return stats, fmt.Errorf("unsupported firecracker filepack record type %d", recordType[0])
 		}
 	}
 }
@@ -224,7 +231,7 @@ func validateFilepackHeader(header filepackHeader, expectedRole string) error {
 	return nil
 }
 
-func writeFilepackData(ctx context.Context, source *os.File, target io.Writer, encoder *zstd.Encoder, logicalSize int64) error {
+func writeFilepackData(ctx context.Context, source *os.File, target io.Writer, encoder *zstd.Encoder, stats *vm.FilepackStats, logicalSize int64) error {
 	offset := int64(0)
 	for offset < logicalSize {
 		if err := ctx.Err(); err != nil {
@@ -235,13 +242,25 @@ func writeFilepackData(ctx context.Context, source *os.File, target io.Writer, e
 			return err
 		}
 		if !sparse {
-			return scanAndWriteFilepackRange(ctx, source, target, encoder, offset, logicalSize)
+			if stats != nil {
+				stats.SparseSupported = boolPtr(false)
+				stats.SparseDataRanges = 1
+				stats.SparseDataBytes = logicalSize - offset
+			}
+			return scanAndWriteFilepackRange(ctx, source, target, encoder, stats, offset, logicalSize)
+		}
+		if stats != nil {
+			stats.SparseSupported = boolPtr(true)
 		}
 		if dataStart >= dataEnd {
 			offset = nextOffset
 			continue
 		}
-		if err := scanAndWriteFilepackRange(ctx, source, target, encoder, dataStart, dataEnd); err != nil {
+		if stats != nil {
+			stats.SparseDataRanges++
+			stats.SparseDataBytes += dataEnd - dataStart
+		}
+		if err := scanAndWriteFilepackRange(ctx, source, target, encoder, stats, dataStart, dataEnd); err != nil {
 			return err
 		}
 		offset = nextOffset
@@ -276,7 +295,7 @@ func nextDataRange(file *os.File, offset int64, logicalSize int64) (int64, int64
 	return dataStart, holeStart, holeStart, true, nil
 }
 
-func scanAndWriteFilepackRange(ctx context.Context, source *os.File, target io.Writer, encoder *zstd.Encoder, start int64, end int64) error {
+func scanAndWriteFilepackRange(ctx context.Context, source *os.File, target io.Writer, encoder *zstd.Encoder, stats *vm.FilepackStats, start int64, end int64) error {
 	buffer := make([]byte, int(filepackChunkSize))
 	for offset := start; offset < end; {
 		if err := ctx.Err(); err != nil {
@@ -293,8 +312,16 @@ func scanAndWriteFilepackRange(ctx context.Context, source *os.File, target io.W
 		}
 		if !allZero(read) {
 			compressed := encoder.EncodeAll(read, nil)
+			if stats != nil {
+				stats.EncodedChunks++
+				stats.CompressedBytes += int64(len(compressed))
+			}
 			if err := writeFilepackDataRecord(target, offset, int(n), compressed); err != nil {
 				return err
+			}
+		} else {
+			if stats != nil {
+				stats.ZeroChunksSkipped++
 			}
 		}
 		offset += n
@@ -330,7 +357,7 @@ func writeFilepackDataRecord(w io.Writer, offset int64, rawSize int, compressed 
 	return err
 }
 
-func readFilepackDataRecord(r io.Reader, target *os.File, decoder *zstd.Decoder, logicalSize int64) error {
+func readFilepackDataRecord(r io.Reader, target *os.File, decoder *zstd.Decoder, stats *vm.FilepackStats, logicalSize int64) error {
 	var header [20]byte
 	if _, err := io.ReadFull(r, header[:]); err != nil {
 		return err
@@ -356,8 +383,22 @@ func readFilepackDataRecord(r io.Reader, target *os.File, decoder *zstd.Decoder,
 	if int64(len(decoded)) != rawSize {
 		return errors.New("firecracker filepack decoded chunk size mismatch")
 	}
-	_, err = target.WriteAt(decoded, offset)
-	return err
+	if _, err = target.WriteAt(decoded, offset); err != nil {
+		return err
+	}
+	if stats != nil {
+		stats.EncodedChunks++
+		stats.CompressedBytes += compressedSize
+		stats.UnpackWrittenBytes += rawSize
+	}
+	return nil
+}
+
+func fileInfoAllocatedBytes(info os.FileInfo) int64 {
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		return stat.Blocks * 512
+	}
+	return 0
 }
 
 func readFullAt(file *os.File, data []byte, offset int64) error {
@@ -372,4 +413,8 @@ func readFullAt(file *os.File, data []byte, offset int64) error {
 		return io.ErrUnexpectedEOF
 	}
 	return err
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }

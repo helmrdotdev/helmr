@@ -1,14 +1,14 @@
 import { HelmrClient, type WorkspaceStopResult } from "../../../../sdk/typescript/src/index"
 import { assert, assertEqual } from "../assert"
 import { readConfig, requestScope } from "../config"
-import { chunksText, currentDeployment, delay, waitForRunningMaterialization } from "./common"
+import { chunksText, currentDeployment, delay, waitForRunningWorkspaceMount } from "./common"
 
 interface StopSmokeEvidence {
   readonly marker: string
   readonly deploymentId: string
   readonly workspaceId: string
-  readonly firstMaterializationId: string
-  readonly secondMaterializationId: string
+  readonly firstWorkspaceMountId: string
+  readonly secondWorkspaceMountId: string
   readonly writeExecId: string
   readonly readExecId: string
   readonly versionBeforeStop: string | null
@@ -53,7 +53,7 @@ async function runWorkspaceStopSmoke(): Promise<StopSmokeEvidence> {
 
   const firstMaterializeStarted = Date.now()
   const requested = await handle.materialize(scope)
-  const firstRunning = await waitForRunningMaterialization(client, workspace.id, scope, requested.id)
+  const firstRunning = await waitForRunningWorkspaceMount(client, workspace.id, scope, requested.id)
   const firstMaterializedAt = Date.now()
 
   const markerPath = `/workspace/stop-smoke-${config.marker}.txt`
@@ -77,7 +77,7 @@ async function runWorkspaceStopSmoke(): Promise<StopSmokeEvidence> {
   const stopStates: string[] = []
   const stopped = await waitForStoppedWorkspace(handle, stopStates, `workspace-stop:${config.marker}`)
   const stoppedAt = Date.now()
-  assertEqual(stopped.state, "no_active_materialization", "workspace stop did not become idempotent no-active success")
+  assertEqual(stopped.state, "no_active_mount", "workspace stop did not become idempotent no-active success")
 
   const afterStop = await client.workspaces.retrieve(workspace.id, scope)
   assert(afterStop.currentVersionId !== null, "workspace stop lost current version")
@@ -85,9 +85,9 @@ async function runWorkspaceStopSmoke(): Promise<StopSmokeEvidence> {
 
   const secondMaterializeStarted = Date.now()
   const secondRequested = await handle.connect(scope)
-  const secondRunning = await waitForRunningMaterialization(client, workspace.id, scope, secondRequested.id)
+  const secondRunning = await waitForRunningWorkspaceMount(client, workspace.id, scope, secondRequested.id)
   const secondMaterializedAt = Date.now()
-  assert(secondRunning.id !== firstRunning.id, "connect after stop reused the stopped materialization")
+  assert(secondRunning.id !== firstRunning.id, "connect after stop reused the stopped workspace mount")
 
   const readExec = await handle.exec(["bash", "-lc", `set -euo pipefail; cat ${shellQuote(markerPath)}`], {
     ...scope,
@@ -98,7 +98,7 @@ async function runWorkspaceStopSmoke(): Promise<StopSmokeEvidence> {
   assertEqual(readTerminal.state, "exited", "read exec did not exit")
   assertEqual(readTerminal.exitCode, 0, "read exec exit code mismatch")
   const persistedText = chunksText(await readExec.stdout.list({ ...scope, cursor: 0, limit: 100 }))
-  assert(persistedText.includes(expectedText), "rematerialized workspace did not contain stopped capture marker")
+  assert(persistedText.includes(expectedText), "remounted workspace did not contain stopped capture marker")
 
   const finalStopStarted = Date.now()
   const finalStopStates: string[] = []
@@ -113,8 +113,8 @@ async function runWorkspaceStopSmoke(): Promise<StopSmokeEvidence> {
     marker: config.marker,
     deploymentId: deployment.id,
     workspaceId: workspace.id,
-    firstMaterializationId: firstRunning.id,
-    secondMaterializationId: secondRunning.id,
+    firstWorkspaceMountId: firstRunning.id,
+    secondWorkspaceMountId: secondRunning.id,
     writeExecId: writeExec.id,
     readExecId: readExec.id,
     versionBeforeStop: beforeStop.currentVersionId,
@@ -142,7 +142,7 @@ async function waitForStoppedWorkspace(
     idempotencyKeyTTL: "24h",
   })
   states.push(first.state)
-  if (first.state === "no_active_materialization") {
+  if (first.state === "no_active_mount") {
     return first
   }
   assert(
@@ -154,7 +154,7 @@ async function waitForStoppedWorkspace(
     await delay(2_000)
     const result = await handle.stop(scope)
     states.push(result.state)
-    if (result.state === "no_active_materialization") {
+    if (result.state === "no_active_mount") {
       return result
     }
     assert(

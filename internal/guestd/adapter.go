@@ -571,7 +571,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 					recordControlErr(fmt.Errorf("write wait request event: %w", err))
 					return
 				}
-				runWaitID, err := checkpointAndAttachAdapterRun(ctx, runStream, registry, stdin, request.RunId, workspaceRoot, workspaceSecretPaths)
+				runWaitID, err := checkpointAndAttachAdapterRun(ctx, runStream, registry, stdin, request.RunId, imageRoot, workspaceRoot, workspaceSecretPaths)
 				if err != nil {
 					recordControlErr(err)
 					return
@@ -722,7 +722,7 @@ func readAdapterControlEvents(conn io.Reader, events chan<- adapterControlEvent)
 	}
 }
 
-func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream, registry *waitingRunRegistry, stdin io.Writer, runID string, workspaceRoot string, workspaceSecretPaths []string) (string, error) {
+func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream, registry *waitingRunRegistry, stdin io.Writer, runID string, imageRoot string, workspaceRoot string, workspaceSecretPaths []string) (string, error) {
 	header, bodyLen, err := stream.readControlFrame()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "helmr checkpoint: read suspend failed: %v\n", err)
@@ -752,6 +752,11 @@ func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream
 	registration := registry.register(suspend.RunWaitId, suspend.CheckpointId)
 	defer registration.unregister()
 	syscall.Sync()
+	if checkpointStorageTelemetryEnabled() {
+		if err := stream.writeCheckpointStorageTelemetry(runID, suspend.RunWaitId, suspend.CheckpointId, imageRoot, workspaceRoot); err != nil {
+			fmt.Fprintf(os.Stderr, "helmr checkpoint: write storage telemetry failed: %v\n", err)
+		}
+	}
 	if suspend.GetCaptureWorkspace() {
 		if err := stream.writeWorkspaceArtifactBeforePauseReady(runID, workspaceRoot, workspaceSecretPaths); err != nil {
 			fmt.Fprintf(os.Stderr, "helmr checkpoint: capture workspace failed: %v\n", err)
@@ -764,6 +769,7 @@ func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream
 		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("write checkpoint pause ready: %v", err))
 		return "", fmt.Errorf("write checkpoint pause ready: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "helmr checkpoint: pause ready written run_wait_id=%s checkpoint_id=%s\n", suspend.RunWaitId, suspend.CheckpointId)
 	fmt.Fprintf(os.Stderr, "helmr checkpoint: waiting for resume attach run_wait_id=%s checkpoint_id=%s\n", suspend.RunWaitId, suspend.CheckpointId)
 	attachCtx, cancelAttach := context.WithTimeout(ctx, resumeAttachTimeout)
 	attached, err := registration.wait(attachCtx)
@@ -860,6 +866,144 @@ func (s *adapterRunStream) currentConn() io.ReadWriter {
 
 func (s *adapterRunStream) writeCheckpointDiagnostic(message string) error {
 	return s.writeEvent(&runv0.RunEvent{Event: &runv0.RunEvent_LogEntry{LogEntry: "checkpoint: " + message}})
+}
+
+func checkpointStorageTelemetryEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("HELMR_CHECKPOINT_STORAGE_TELEMETRY")), "1")
+}
+
+func (s *adapterRunStream) writeCheckpointStorageTelemetry(runID string, runWaitID string, checkpointID string, imageRoot string, workspaceRoot string) error {
+	telemetry := checkpointStorageTelemetry{
+		RunID:        runID,
+		RunWaitID:    runWaitID,
+		CheckpointID: checkpointID,
+		ImageRoot:    collectPathUsage(imageRoot),
+		Workspace:    collectPathUsage(workspaceRoot),
+		GuestdTemp:   collectPathUsage(guestdTempRoot()),
+	}
+	if telemetry.ImageRoot.Present && telemetry.Workspace.Present && telemetry.ImageRoot.Error == "" && telemetry.Workspace.Error == "" {
+		telemetry.WorkspaceWithinImageRoot = pathWithinOrEqual(imageRoot, workspaceRoot)
+		if telemetry.WorkspaceWithinImageRoot && telemetry.ImageRoot.ApparentBytes >= telemetry.Workspace.ApparentBytes {
+			telemetry.ImageRootExcludingWorkspaceApparentBytes = telemetry.ImageRoot.ApparentBytes - telemetry.Workspace.ApparentBytes
+		}
+		if telemetry.WorkspaceWithinImageRoot && telemetry.ImageRoot.AllocatedBytes >= telemetry.Workspace.AllocatedBytes {
+			telemetry.ImageRootExcludingWorkspaceAllocatedBytes = telemetry.ImageRoot.AllocatedBytes - telemetry.Workspace.AllocatedBytes
+		}
+	}
+	if telemetry.GuestdTemp.Present && telemetry.ImageRoot.Present && telemetry.GuestdTemp.Error == "" && telemetry.ImageRoot.Error == "" {
+		telemetry.ImageRootWithinGuestdTemp = pathWithinOrEqual(guestdTempRoot(), imageRoot)
+		if telemetry.ImageRootWithinGuestdTemp && telemetry.GuestdTemp.ApparentBytes >= telemetry.ImageRoot.ApparentBytes {
+			telemetry.GuestdTempExcludingImageRootApparentBytes = telemetry.GuestdTemp.ApparentBytes - telemetry.ImageRoot.ApparentBytes
+		}
+		if telemetry.ImageRootWithinGuestdTemp && telemetry.GuestdTemp.AllocatedBytes >= telemetry.ImageRoot.AllocatedBytes {
+			telemetry.GuestdTempExcludingImageRootAllocatedBytes = telemetry.GuestdTemp.AllocatedBytes - telemetry.ImageRoot.AllocatedBytes
+		}
+	}
+	if telemetry.GuestdTemp.Present && telemetry.Workspace.Present && telemetry.GuestdTemp.Error == "" && telemetry.Workspace.Error == "" {
+		telemetry.WorkspaceWithinGuestdTemp = pathWithinOrEqual(guestdTempRoot(), workspaceRoot)
+	}
+	payload, err := json.Marshal(telemetry)
+	if err != nil {
+		return fmt.Errorf("encode checkpoint storage telemetry: %w", err)
+	}
+	return s.writeEvent(&runv0.RunEvent{Event: &runv0.RunEvent_LogEntry{LogEntry: "checkpoint_storage_telemetry " + string(payload)}})
+}
+
+type checkpointStorageTelemetry struct {
+	RunID                                      string    `json:"run_id"`
+	RunWaitID                                  string    `json:"run_wait_id"`
+	CheckpointID                               string    `json:"checkpoint_id"`
+	ImageRoot                                  pathUsage `json:"image_root"`
+	Workspace                                  pathUsage `json:"workspace"`
+	GuestdTemp                                 pathUsage `json:"guestd_temp"`
+	WorkspaceWithinImageRoot                   bool      `json:"workspace_within_image_root"`
+	ImageRootWithinGuestdTemp                  bool      `json:"image_root_within_guestd_temp"`
+	WorkspaceWithinGuestdTemp                  bool      `json:"workspace_within_guestd_temp"`
+	ImageRootExcludingWorkspaceApparentBytes   int64     `json:"image_root_excluding_workspace_apparent_bytes,omitempty"`
+	ImageRootExcludingWorkspaceAllocatedBytes  int64     `json:"image_root_excluding_workspace_allocated_bytes,omitempty"`
+	GuestdTempExcludingImageRootApparentBytes  int64     `json:"guestd_temp_excluding_image_root_apparent_bytes,omitempty"`
+	GuestdTempExcludingImageRootAllocatedBytes int64     `json:"guestd_temp_excluding_image_root_allocated_bytes,omitempty"`
+}
+
+type pathUsage struct {
+	Present        bool   `json:"present"`
+	ApparentBytes  int64  `json:"apparent_bytes"`
+	AllocatedBytes int64  `json:"allocated_bytes"`
+	Entries        int64  `json:"entries"`
+	Dirs           int64  `json:"dirs"`
+	Files          int64  `json:"files"`
+	Symlinks       int64  `json:"symlinks"`
+	Other          int64  `json:"other"`
+	Error          string `json:"error,omitempty"`
+}
+
+func collectPathUsage(root string) pathUsage {
+	cleanRoot := filepath.Clean(strings.TrimSpace(root))
+	if cleanRoot == "" || cleanRoot == "." {
+		return pathUsage{Error: "path is required"}
+	}
+	var usage pathUsage
+	err := filepath.WalkDir(cleanRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		usage.Present = true
+		usage.Entries++
+		usage.ApparentBytes += info.Size()
+		usage.AllocatedBytes += fileAllocatedBytes(info)
+		mode := info.Mode()
+		switch {
+		case mode.IsDir():
+			usage.Dirs++
+		case mode.IsRegular():
+			usage.Files++
+		case mode&os.ModeSymlink != 0:
+			usage.Symlinks++
+		default:
+			usage.Other++
+		}
+		return nil
+	})
+	if err != nil {
+		if os.IsNotExist(err) {
+			return pathUsage{}
+		}
+		usage.Error = err.Error()
+	}
+	return usage
+}
+
+func fileAllocatedBytes(info os.FileInfo) int64 {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat == nil {
+		return 0
+	}
+	return int64(stat.Blocks) * 512
+}
+
+func guestdTempRoot() string {
+	root := os.Getenv("HELMR_GUESTD_TMPDIR")
+	if root == "" {
+		root = defaultGuestdTempRoot
+	}
+	return root
+}
+
+func pathWithinOrEqual(parent string, child string) bool {
+	parent = filepath.Clean(parent)
+	child = filepath.Clean(child)
+	if parent == child {
+		return true
+	}
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func (s *adapterRunStream) writeWorkspaceArtifact(runID string, workspaceRoot string, workspaceSecretPaths []string) error {

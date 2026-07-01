@@ -22,7 +22,7 @@ func (s *Server) workerMarkWorkspaceExecStarted(w http.ResponseWriter, r *http.R
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace exec started request JSON: %w", err)))
 		return
 	}
-	materialization, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
+	mount, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "validate workspace exec event scope", err)
 		return
@@ -33,24 +33,24 @@ func (s *Server) workerMarkWorkspaceExecStarted(w http.ResponseWriter, r *http.R
 		return
 	}
 	row, err := s.db.MarkWorkspaceExecStarted(r.Context(), db.MarkWorkspaceExecStartedParams{
-		ProcessID:         strings.TrimSpace(request.ProcessID),
-		OrgID:             materialization.OrgID,
-		ProjectID:         materialization.ProjectID,
-		EnvironmentID:     materialization.EnvironmentID,
-		WorkspaceID:       materialization.WorkspaceID,
-		ID:                execID,
-		MaterializationID: materialization.ID,
+		ProcessID:        strings.TrimSpace(request.ProcessID),
+		OrgID:            mount.OrgID,
+		ProjectID:        mount.ProjectID,
+		EnvironmentID:    mount.EnvironmentID,
+		WorkspaceID:      mount.WorkspaceID,
+		ID:               execID,
+		WorkspaceMountID: mount.ID,
 	})
 	if err != nil {
 		if isNoRows(err) {
 			existing, getErr := s.db.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
-				OrgID:         materialization.OrgID,
-				ProjectID:     materialization.ProjectID,
-				EnvironmentID: materialization.EnvironmentID,
-				WorkspaceID:   materialization.WorkspaceID,
+				OrgID:         mount.OrgID,
+				ProjectID:     mount.ProjectID,
+				EnvironmentID: mount.EnvironmentID,
+				WorkspaceID:   mount.WorkspaceID,
 				ID:            execID,
 			})
-			if getErr == nil && workerPrimitiveMaterializationMatches(existing.MaterializationID, materialization.ID) && workspace.ExecStateTerminal(existing.State) {
+			if getErr == nil && workerPrimitiveWorkspaceMountMatches(existing.WorkspaceMountID, mount.ID) && workspace.ExecStateTerminal(existing.State) {
 				writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(existing)})
 				return
 			}
@@ -67,7 +67,7 @@ func (s *Server) workerAppendWorkspaceExecOutput(w http.ResponseWriter, r *http.
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace exec output request JSON: %w", err)))
 		return
 	}
-	materialization, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
+	mount, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "validate workspace exec output scope", err)
 		return
@@ -78,18 +78,18 @@ func (s *Server) workerAppendWorkspaceExecOutput(w http.ResponseWriter, r *http.
 		return
 	}
 	exec, err := s.db.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
-		OrgID:         materialization.OrgID,
-		ProjectID:     materialization.ProjectID,
-		EnvironmentID: materialization.EnvironmentID,
-		WorkspaceID:   materialization.WorkspaceID,
+		OrgID:         mount.OrgID,
+		ProjectID:     mount.ProjectID,
+		EnvironmentID: mount.EnvironmentID,
+		WorkspaceID:   mount.WorkspaceID,
 		ID:            execID,
 	})
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "get workspace exec", err)
 		return
 	}
-	if !exec.MaterializationID.Valid || pgvalue.MustUUIDValue(exec.MaterializationID) != pgvalue.MustUUIDValue(materialization.ID) {
-		writeError(w, conflict(errors.New("workspace exec is not bound to this materialization")))
+	if !exec.WorkspaceMountID.Valid || pgvalue.MustUUIDValue(exec.WorkspaceMountID) != pgvalue.MustUUIDValue(mount.ID) {
+		writeError(w, conflict(errors.New("workspace exec is not bound to this workspace mount")))
 		return
 	}
 	out := make([]api.WorkspaceExecStreamChunkResponse, 0, len(request.Chunks))
@@ -115,9 +115,9 @@ func (s *Server) workerListWorkspaceExecInput(w http.ResponseWriter, r *http.Req
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace exec input request JSON: %w", err)))
 		return
 	}
-	materialization, exec, ok := s.loadWorkerWorkspaceExecBoundToMaterialization(w, r, request.WorkerWorkspacePrimitiveScope, request.ExecID)
+	mount, exec, ok := s.loadWorkerWorkspaceExecBoundToWorkspaceMount(w, r, request.WorkerWorkspacePrimitiveScope, request.ExecID)
 	if !ok {
-		_ = materialization
+		_ = mount
 		return
 	}
 	limit := request.Limit
@@ -125,10 +125,10 @@ func (s *Server) workerListWorkspaceExecInput(w http.ResponseWriter, r *http.Req
 		limit = 100
 	}
 	rows, err := s.db.ListWorkspaceExecStdinChunksAfterDelivered(r.Context(), db.ListWorkspaceExecStdinChunksAfterDeliveredParams{
-		OrgID:         materialization.OrgID,
-		ProjectID:     materialization.ProjectID,
-		EnvironmentID: materialization.EnvironmentID,
-		WorkspaceID:   materialization.WorkspaceID,
+		OrgID:         mount.OrgID,
+		ProjectID:     mount.ProjectID,
+		EnvironmentID: mount.EnvironmentID,
+		WorkspaceID:   mount.WorkspaceID,
 		ExecID:        exec.ID,
 		LimitCount:    limit,
 	})
@@ -155,9 +155,9 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace exec input delivered request JSON: %w", err)))
 		return
 	}
-	materialization, exec, ok := s.loadWorkerWorkspaceExecBoundToMaterialization(w, r, request.WorkerWorkspacePrimitiveScope, request.ExecID)
+	mount, exec, ok := s.loadWorkerWorkspaceExecBoundToWorkspaceMount(w, r, request.WorkerWorkspacePrimitiveScope, request.ExecID)
 	if !ok {
-		_ = materialization
+		_ = mount
 		return
 	}
 	if s.tx == nil {
@@ -172,10 +172,10 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	store := db.New(tx)
 	deliveredChunk, err := store.GetWorkspaceExecStreamChunkAtOffset(r.Context(), db.GetWorkspaceExecStreamChunkAtOffsetParams{
-		OrgID:         materialization.OrgID,
-		ProjectID:     materialization.ProjectID,
-		EnvironmentID: materialization.EnvironmentID,
-		WorkspaceID:   materialization.WorkspaceID,
+		OrgID:         mount.OrgID,
+		ProjectID:     mount.ProjectID,
+		EnvironmentID: mount.EnvironmentID,
+		WorkspaceID:   mount.WorkspaceID,
 		ExecID:        exec.ID,
 		Stream:        db.WorkspaceExecStreamStdin,
 		OffsetStart:   request.OffsetStart,
@@ -183,10 +183,10 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 	if err != nil {
 		if isNoRows(err) {
 			current, getErr := store.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
-				OrgID:         materialization.OrgID,
-				ProjectID:     materialization.ProjectID,
-				EnvironmentID: materialization.EnvironmentID,
-				WorkspaceID:   materialization.WorkspaceID,
+				OrgID:         mount.OrgID,
+				ProjectID:     mount.ProjectID,
+				EnvironmentID: mount.EnvironmentID,
+				WorkspaceID:   mount.WorkspaceID,
 				ID:            exec.ID,
 			})
 			if getErr == nil && current.StdinDeliveredCursor >= request.OffsetEnd {
@@ -203,10 +203,10 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 	}
 	deliveredDigest := workspace.StreamDataSHA256(deliveredChunk.Data)
 	if _, err := store.InsertWorkspaceExecStreamChunkReceipt(r.Context(), db.InsertWorkspaceExecStreamChunkReceiptParams{
-		OrgID:         materialization.OrgID,
-		ProjectID:     materialization.ProjectID,
-		EnvironmentID: materialization.EnvironmentID,
-		WorkspaceID:   materialization.WorkspaceID,
+		OrgID:         mount.OrgID,
+		ProjectID:     mount.ProjectID,
+		EnvironmentID: mount.EnvironmentID,
+		WorkspaceID:   mount.WorkspaceID,
 		ExecID:        exec.ID,
 		Stream:        db.WorkspaceExecStreamStdin,
 		OffsetStart:   deliveredChunk.OffsetStart,
@@ -217,10 +217,10 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 	}); err != nil {
 		if isNoRows(err) {
 			receipt, getErr := store.GetWorkspaceExecStreamChunkReceiptAtOffset(r.Context(), db.GetWorkspaceExecStreamChunkReceiptAtOffsetParams{
-				OrgID:         materialization.OrgID,
-				ProjectID:     materialization.ProjectID,
-				EnvironmentID: materialization.EnvironmentID,
-				WorkspaceID:   materialization.WorkspaceID,
+				OrgID:         mount.OrgID,
+				ProjectID:     mount.ProjectID,
+				EnvironmentID: mount.EnvironmentID,
+				WorkspaceID:   mount.WorkspaceID,
 				ExecID:        exec.ID,
 				Stream:        db.WorkspaceExecStreamStdin,
 				OffsetStart:   deliveredChunk.OffsetStart,
@@ -239,20 +239,20 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 	}
 	row, err := store.AdvanceWorkspaceExecStdinDeliveredCursor(r.Context(), db.AdvanceWorkspaceExecStdinDeliveredCursorParams{
 		OffsetEnd:     request.OffsetEnd,
-		OrgID:         materialization.OrgID,
-		ProjectID:     materialization.ProjectID,
-		EnvironmentID: materialization.EnvironmentID,
-		WorkspaceID:   materialization.WorkspaceID,
+		OrgID:         mount.OrgID,
+		ProjectID:     mount.ProjectID,
+		EnvironmentID: mount.EnvironmentID,
+		WorkspaceID:   mount.WorkspaceID,
 		ExecID:        exec.ID,
 		OffsetStart:   request.OffsetStart,
 	})
 	if err != nil {
 		if isNoRows(err) {
 			current, getErr := store.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
-				OrgID:         materialization.OrgID,
-				ProjectID:     materialization.ProjectID,
-				EnvironmentID: materialization.EnvironmentID,
-				WorkspaceID:   materialization.WorkspaceID,
+				OrgID:         mount.OrgID,
+				ProjectID:     mount.ProjectID,
+				EnvironmentID: mount.EnvironmentID,
+				WorkspaceID:   mount.WorkspaceID,
 				ID:            exec.ID,
 			})
 			if getErr == nil && current.StdinDeliveredCursor >= request.OffsetEnd {
@@ -264,10 +264,10 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 		return
 	}
 	if err := store.DeleteWorkspaceExecStreamChunksBefore(r.Context(), db.DeleteWorkspaceExecStreamChunksBeforeParams{
-		OrgID:             materialization.OrgID,
-		ProjectID:         materialization.ProjectID,
-		EnvironmentID:     materialization.EnvironmentID,
-		WorkspaceID:       materialization.WorkspaceID,
+		OrgID:             mount.OrgID,
+		ProjectID:         mount.ProjectID,
+		EnvironmentID:     mount.EnvironmentID,
+		WorkspaceID:       mount.WorkspaceID,
 		ExecID:            exec.ID,
 		Stream:            db.WorkspaceExecStreamStdin,
 		RetainAfterOffset: request.OffsetEnd,
@@ -288,7 +288,7 @@ func (s *Server) workerMarkWorkspaceExecExited(w http.ResponseWriter, r *http.Re
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace exec exited request JSON: %w", err)))
 		return
 	}
-	materialization, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
+	mount, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "validate workspace exec terminal scope", err)
 		return
@@ -316,27 +316,27 @@ func (s *Server) workerMarkWorkspaceExecExited(w http.ResponseWriter, r *http.Re
 		errJSON = []byte(`{}`)
 	}
 	row, err := s.db.MarkWorkspaceExecExited(r.Context(), db.MarkWorkspaceExecExitedParams{
-		State:             state,
-		ExitCode:          exitCode,
-		Signal:            strings.TrimSpace(request.Signal),
-		Error:             errJSON,
-		OrgID:             materialization.OrgID,
-		ProjectID:         materialization.ProjectID,
-		EnvironmentID:     materialization.EnvironmentID,
-		WorkspaceID:       materialization.WorkspaceID,
-		ID:                execID,
-		MaterializationID: materialization.ID,
+		State:            state,
+		ExitCode:         exitCode,
+		Signal:           strings.TrimSpace(request.Signal),
+		Error:            errJSON,
+		OrgID:            mount.OrgID,
+		ProjectID:        mount.ProjectID,
+		EnvironmentID:    mount.EnvironmentID,
+		WorkspaceID:      mount.WorkspaceID,
+		ID:               execID,
+		WorkspaceMountID: mount.ID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			existing, getErr := s.db.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
-				OrgID:         materialization.OrgID,
-				ProjectID:     materialization.ProjectID,
-				EnvironmentID: materialization.EnvironmentID,
-				WorkspaceID:   materialization.WorkspaceID,
+				OrgID:         mount.OrgID,
+				ProjectID:     mount.ProjectID,
+				EnvironmentID: mount.EnvironmentID,
+				WorkspaceID:   mount.WorkspaceID,
 				ID:            execID,
 			})
-			if getErr == nil && workspaceExecTerminalEventMatches(existing, materialization.ID, state, exitCode, strings.TrimSpace(request.Signal), errJSON) {
+			if getErr == nil && workspaceExecTerminalEventMatches(existing, mount.ID, state, exitCode, strings.TrimSpace(request.Signal), errJSON) {
 				writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(existing)})
 				return
 			}
@@ -351,8 +351,8 @@ func (s *Server) workerMarkWorkspaceExecExited(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(workspaceExecFromExitedRow(row))})
 }
 
-func workspaceExecTerminalEventMatches(row db.WorkspaceExec, materializationID pgtype.UUID, state db.WorkspaceExecState, exitCode pgtype.Int4, signal string, errorJSON []byte) bool {
-	if !workerPrimitiveMaterializationMatches(row.MaterializationID, materializationID) {
+func workspaceExecTerminalEventMatches(row db.WorkspaceExec, workspaceMountID pgtype.UUID, state db.WorkspaceExecState, exitCode pgtype.Int4, signal string, errorJSON []byte) bool {
+	if !workerPrimitiveWorkspaceMountMatches(row.WorkspaceMountID, workspaceMountID) {
 		return false
 	}
 	if row.State == db.WorkspaceExecStateLost || row.State == db.WorkspaceExecStateTerminated {
@@ -370,33 +370,33 @@ func workspaceExecTerminalEventMatches(row db.WorkspaceExec, materializationID p
 	return workerPrimitiveJSONEqual(row.Error, errorJSON)
 }
 
-func (s *Server) loadWorkerWorkspaceExecBoundToMaterialization(w http.ResponseWriter, r *http.Request, scope api.WorkerWorkspacePrimitiveScope, rawExecID string) (db.WorkspaceMaterialization, db.WorkspaceExec, bool) {
-	materialization, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), scope)
+func (s *Server) loadWorkerWorkspaceExecBoundToWorkspaceMount(w http.ResponseWriter, r *http.Request, scope api.WorkerWorkspacePrimitiveScope, rawExecID string) (db.WorkspaceMount, db.WorkspaceExec, bool) {
+	mount, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), scope)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "validate workspace exec scope", err)
-		return db.WorkspaceMaterialization{}, db.WorkspaceExec{}, false
+		return db.WorkspaceMount{}, db.WorkspaceExec{}, false
 	}
 	execID, err := parseWorkerPrimitiveUUID("exec_id", rawExecID)
 	if err != nil {
 		writeError(w, badRequest(err))
-		return db.WorkspaceMaterialization{}, db.WorkspaceExec{}, false
+		return db.WorkspaceMount{}, db.WorkspaceExec{}, false
 	}
 	exec, err := s.db.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
-		OrgID:         materialization.OrgID,
-		ProjectID:     materialization.ProjectID,
-		EnvironmentID: materialization.EnvironmentID,
-		WorkspaceID:   materialization.WorkspaceID,
+		OrgID:         mount.OrgID,
+		ProjectID:     mount.ProjectID,
+		EnvironmentID: mount.EnvironmentID,
+		WorkspaceID:   mount.WorkspaceID,
 		ID:            execID,
 	})
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "get workspace exec", err)
-		return db.WorkspaceMaterialization{}, db.WorkspaceExec{}, false
+		return db.WorkspaceMount{}, db.WorkspaceExec{}, false
 	}
-	if !exec.MaterializationID.Valid || pgvalue.MustUUIDValue(exec.MaterializationID) != pgvalue.MustUUIDValue(materialization.ID) {
-		writeError(w, conflict(errors.New("workspace exec is not bound to this materialization")))
-		return db.WorkspaceMaterialization{}, db.WorkspaceExec{}, false
+	if !exec.WorkspaceMountID.Valid || pgvalue.MustUUIDValue(exec.WorkspaceMountID) != pgvalue.MustUUIDValue(mount.ID) {
+		writeError(w, conflict(errors.New("workspace exec is not bound to this workspace mount")))
+		return db.WorkspaceMount{}, db.WorkspaceExec{}, false
 	}
-	return materialization, exec, true
+	return mount, exec, true
 }
 
 func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec db.WorkspaceExec, stream db.WorkspaceExecStream, requestedOffset *int64, data []byte) (db.WorkspaceExecStreamChunk, error) {

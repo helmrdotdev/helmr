@@ -10,7 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -66,7 +66,7 @@ type workspacePtyCloseRequest struct {
 	PtyID string `json:"pty_id"`
 }
 
-func (entry *workspaceMaterializationEntry) startWorkspaceExec(envelope *workspacev0.WorkspaceOperationEnvelope, requestJSON string) error {
+func (entry *workspaceMountEntry) startWorkspaceExec(envelope *workspacev0.WorkspaceOperationEnvelope, requestJSON string) error {
 	var request workspaceExecStartRequest
 	if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
 		return fmt.Errorf("decode StartExec request: %w", err)
@@ -148,7 +148,7 @@ func (entry *workspaceMaterializationEntry) startWorkspaceExec(envelope *workspa
 	return nil
 }
 
-func (entry *workspaceMaterializationEntry) createWorkspacePty(envelope *workspacev0.WorkspaceOperationEnvelope, requestJSON string) error {
+func (entry *workspaceMountEntry) createWorkspacePty(envelope *workspacev0.WorkspaceOperationEnvelope, requestJSON string) error {
 	var request workspacePtyCreateRequest
 	if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
 		return fmt.Errorf("decode CreatePty request: %w", err)
@@ -207,7 +207,7 @@ func (entry *workspaceMaterializationEntry) createWorkspacePty(envelope *workspa
 	return nil
 }
 
-func (entry *workspaceMaterializationEntry) resizeWorkspacePty(requestJSON string) error {
+func (entry *workspaceMountEntry) resizeWorkspacePty(requestJSON string) error {
 	var request workspacePtyResizeRequest
 	if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
 		return fmt.Errorf("decode ResizePty request: %w", err)
@@ -226,7 +226,7 @@ func (entry *workspaceMaterializationEntry) resizeWorkspacePty(requestJSON strin
 	return nil
 }
 
-func (entry *workspaceMaterializationEntry) closeWorkspacePty(requestJSON string) error {
+func (entry *workspaceMountEntry) closeWorkspacePty(requestJSON string) error {
 	var request workspacePtyCloseRequest
 	if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
 		return fmt.Errorf("decode ClosePty request: %w", err)
@@ -263,7 +263,7 @@ func handleWorkspaceInputConnection(ctx context.Context, conn io.ReadWriter, reg
 	if err := transport.ReadProtoFrame(conn, &envelope); err != nil {
 		return fmt.Errorf("read workspace input envelope: %w", err)
 	}
-	entry, release, ok := registry.acquire(envelope.MaterializationId, envelope.WorkspaceId, envelope.ChannelToken, envelope.FencingGeneration)
+	entry, release, ok := registry.acquire(envelope.WorkspaceMountId, envelope.WorkspaceId, envelope.ChannelToken, envelope.FencingGeneration)
 	if !ok {
 		return errors.New("workspace input channel token or fencing generation is invalid")
 	}
@@ -326,7 +326,7 @@ func handleWorkspaceInputConnection(ctx context.Context, conn io.ReadWriter, reg
 	}
 }
 
-func (entry *workspaceMaterializationEntry) writeWorkspaceInput(kind string, id string, offset uint64, data []byte) (uint64, error) {
+func (entry *workspaceMountEntry) writeWorkspaceInput(kind string, id string, offset uint64, data []byte) (uint64, error) {
 	process := entry.getWorkspaceProcess(workspaceInputProcessKind(kind), id)
 	if process == nil || process.stdin == nil {
 		return offset, errors.New("workspace input target is not available")
@@ -334,7 +334,7 @@ func (entry *workspaceMaterializationEntry) writeWorkspaceInput(kind string, id 
 	return process.writeInput(offset, data)
 }
 
-func (entry *workspaceMaterializationEntry) closeWorkspaceInput(kind string, id string, offset uint64) error {
+func (entry *workspaceMountEntry) closeWorkspaceInput(kind string, id string, offset uint64) error {
 	if workspaceInputProcessKind(kind) == "pty" {
 		return errors.New("workspace pty input close is unsupported")
 	}
@@ -394,7 +394,7 @@ func (process *workspaceProcess) trimInputChunksLocked() {
 	for offset := range process.inputChunks {
 		offsets = append(offsets, offset)
 	}
-	sort.Slice(offsets, func(i, j int) bool { return offsets[i] < offsets[j] })
+	slices.Sort(offsets)
 	for _, offset := range offsets {
 		delete(process.inputChunks, offset)
 		if len(process.inputChunks) <= retainedInputChunks {
@@ -414,7 +414,7 @@ func workspaceInputProcessKind(kind string) string {
 	}
 }
 
-func (entry *workspaceMaterializationEntry) copyExecOutput(envelope *workspacev0.WorkspaceOperationEnvelope, process *workspaceProcess, reader io.Reader, stdout bool) {
+func (entry *workspaceMountEntry) copyExecOutput(envelope *workspacev0.WorkspaceOperationEnvelope, process *workspaceProcess, reader io.Reader, stdout bool) {
 	defer process.outputDone.Done()
 	buf := make([]byte, workspaceProcessChunkBytes)
 	for {
@@ -433,7 +433,7 @@ func (entry *workspaceMaterializationEntry) copyExecOutput(envelope *workspacev0
 	}
 }
 
-func (entry *workspaceMaterializationEntry) copyPtyOutput(envelope *workspacev0.WorkspaceOperationEnvelope, process *workspaceProcess, reader io.Reader) {
+func (entry *workspaceMountEntry) copyPtyOutput(envelope *workspacev0.WorkspaceOperationEnvelope, process *workspaceProcess, reader io.Reader) {
 	defer process.outputDone.Done()
 	buf := make([]byte, workspaceProcessChunkBytes)
 	for {
@@ -450,7 +450,7 @@ func (entry *workspaceMaterializationEntry) copyPtyOutput(envelope *workspacev0.
 	}
 }
 
-func (entry *workspaceMaterializationEntry) waitExec(envelope *workspacev0.WorkspaceOperationEnvelope, process *workspaceProcess) {
+func (entry *workspaceMountEntry) waitExec(envelope *workspacev0.WorkspaceOperationEnvelope, process *workspaceProcess) {
 	process.outputDone.Wait()
 	err := process.cmd.Wait()
 	entry.unregisterWorkspaceProcess(process)
@@ -464,7 +464,7 @@ func (entry *workspaceMaterializationEntry) waitExec(envelope *workspacev0.Works
 	close(process.done)
 }
 
-func (entry *workspaceMaterializationEntry) waitPty(envelope *workspacev0.WorkspaceOperationEnvelope, process *workspaceProcess) {
+func (entry *workspaceMountEntry) waitPty(envelope *workspacev0.WorkspaceOperationEnvelope, process *workspaceProcess) {
 	process.outputDone.Wait()
 	err := process.cmd.Wait()
 	if process.pty != nil {
@@ -485,7 +485,7 @@ func (entry *workspaceMaterializationEntry) waitPty(envelope *workspacev0.Worksp
 	close(process.done)
 }
 
-func (entry *workspaceMaterializationEntry) registerWorkspaceProcess(process *workspaceProcess) error {
+func (entry *workspaceMountEntry) registerWorkspaceProcess(process *workspaceProcess) error {
 	entry.processesMu.Lock()
 	defer entry.processesMu.Unlock()
 	if entry.processes == nil {
@@ -499,19 +499,19 @@ func (entry *workspaceMaterializationEntry) registerWorkspaceProcess(process *wo
 	return nil
 }
 
-func (entry *workspaceMaterializationEntry) getWorkspaceProcess(kind string, id string) *workspaceProcess {
+func (entry *workspaceMountEntry) getWorkspaceProcess(kind string, id string) *workspaceProcess {
 	entry.processesMu.Lock()
 	defer entry.processesMu.Unlock()
 	return entry.processes[workspaceProcessKey(kind, id)]
 }
 
-func (entry *workspaceMaterializationEntry) unregisterWorkspaceProcess(process *workspaceProcess) {
+func (entry *workspaceMountEntry) unregisterWorkspaceProcess(process *workspaceProcess) {
 	entry.processesMu.Lock()
 	defer entry.processesMu.Unlock()
 	delete(entry.processes, workspaceProcessKey(process.resourceKind, process.resourceID))
 }
 
-func (entry *workspaceMaterializationEntry) stopWorkspaceProcesses() {
+func (entry *workspaceMountEntry) stopWorkspaceProcesses() {
 	entry.processesMu.Lock()
 	processes := make([]*workspaceProcess, 0, len(entry.processes))
 	for _, process := range entry.processes {
@@ -552,11 +552,11 @@ func closeReadCloser(reader io.Reader) error {
 	return closer.Close()
 }
 
-func (entry *workspaceMaterializationEntry) workspaceLaunchCwd(raw string) (string, error) {
+func (entry *workspaceMountEntry) workspaceLaunchCwd(raw string) (string, error) {
 	return resolveLaunchCwd(raw, entry.workspaceMount)
 }
 
-func (entry *workspaceMaterializationEntry) workspaceProcessEnv(launchCwd string, userEnv map[string]string) ([]string, error) {
+func (entry *workspaceMountEntry) workspaceProcessEnv(launchCwd string, userEnv map[string]string) ([]string, error) {
 	if entry.runtimeUser == nil {
 		return nil, errors.New("workspace runtime user is not resolved")
 	}
@@ -570,7 +570,7 @@ func (entry *workspaceMaterializationEntry) workspaceProcessEnv(launchCwd string
 	return env, nil
 }
 
-func (entry *workspaceMaterializationEntry) prepareWorkspaceOwner() error {
+func (entry *workspaceMountEntry) prepareWorkspaceOwner() error {
 	if entry.runtimeUser == nil || os.Geteuid() != 0 {
 		return nil
 	}
@@ -580,7 +580,7 @@ func (entry *workspaceMaterializationEntry) prepareWorkspaceOwner() error {
 	return nil
 }
 
-func (entry *workspaceMaterializationEntry) workspaceRuntimePath(command string, launchCwd string, env []string) (string, error) {
+func (entry *workspaceMountEntry) workspaceRuntimePath(command string, launchCwd string, env []string) (string, error) {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return "", errors.New("command is required")
@@ -598,7 +598,7 @@ func (entry *workspaceMaterializationEntry) workspaceRuntimePath(command string,
 	if strings.TrimSpace(searchPath) == "" {
 		searchPath = defaultRuntimePath
 	}
-	for _, dir := range strings.Split(searchPath, ":") {
+	for dir := range strings.SplitSeq(searchPath, ":") {
 		if dir == "" {
 			dir = "."
 		}
@@ -665,15 +665,15 @@ func workspaceOperationErrorJSON(err error) string {
 	return string(body)
 }
 
-func (entry *workspaceMaterializationEntry) emitExecError(envelope *workspacev0.WorkspaceOperationEnvelope, execID string, err error) {
+func (entry *workspaceMountEntry) emitExecError(envelope *workspacev0.WorkspaceOperationEnvelope, execID string, err error) {
 	entry.emit(&workspacev0.WorkspaceOperationEvent{Envelope: envelope, Event: &workspacev0.WorkspaceOperationEvent_ExecError{ExecError: &workspacev0.WorkspaceExecError{ExecId: execID, ErrorJson: workspaceOperationErrorJSON(err)}}})
 }
 
-func (entry *workspaceMaterializationEntry) emitPtyError(envelope *workspacev0.WorkspaceOperationEnvelope, ptyID string, err error) {
+func (entry *workspaceMountEntry) emitPtyError(envelope *workspacev0.WorkspaceOperationEnvelope, ptyID string, err error) {
 	entry.emit(&workspacev0.WorkspaceOperationEvent{Envelope: envelope, Event: &workspacev0.WorkspaceOperationEvent_PtyError{PtyError: &workspacev0.WorkspacePtyError{PtyId: ptyID, ErrorJson: workspaceOperationErrorJSON(err)}}})
 }
 
-func (entry *workspaceMaterializationEntry) emit(event *workspacev0.WorkspaceOperationEvent) {
+func (entry *workspaceMountEntry) emit(event *workspacev0.WorkspaceOperationEvent) {
 	if entry.events == nil {
 		return
 	}
@@ -683,7 +683,7 @@ func (entry *workspaceMaterializationEntry) emit(event *workspacev0.WorkspaceOpe
 	}
 }
 
-func (entry *workspaceMaterializationEntry) closeEvents() {
+func (entry *workspaceMountEntry) closeEvents() {
 	if entry.eventsDone == nil {
 		return
 	}

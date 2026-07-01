@@ -3,6 +3,7 @@ package firecracker
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestConfigDefaults(t *testing.T) {
@@ -19,11 +20,18 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.CNIProfile != "helmr/v0" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.GuestPort != DefaultGuestPort || cfg.HealthPort != HealthPort || cfg.StateDir == "" || cfg.HealthTimeout == 0 {
+	if cfg.GuestPort != DefaultGuestPort || cfg.HealthPort != HealthPort || cfg.StateDir == "" || cfg.HealthTimeout != DefaultHealthTimeout || cfg.HealthAttemptTimeout != DefaultHealthAttemptTimeout {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.NetworkBlockedIPv4CIDRs != nil || cfg.NetworkBlockedIPv6CIDRs != nil {
 		t.Fatalf("config = %+v", cfg)
+	}
+}
+
+func TestConfigDefaultsClampHealthAttemptToShortHealthTimeout(t *testing.T) {
+	cfg := (Config{HealthTimeout: time.Second}).WithDefaults()
+	if cfg.HealthAttemptTimeout != time.Second {
+		t.Fatalf("HealthAttemptTimeout = %s, want 1s", cfg.HealthAttemptTimeout)
 	}
 }
 
@@ -55,6 +63,22 @@ func TestConfigValidateRequiresNetworkPolicy(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("error %q does not contain %q", text, want)
 		}
+	}
+}
+
+func TestConfigValidateRejectsHealthAttemptLongerThanHealthTimeout(t *testing.T) {
+	cfg := (Config{
+		HealthTimeout:           time.Second,
+		HealthAttemptTimeout:    2 * time.Second,
+		NetworkBlockedIPv4CIDRs: []string{},
+		NetworkBlockedIPv6CIDRs: []string{},
+	}).WithDefaults()
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation errors")
+	}
+	if got, want := err.Error(), "guest health attempt timeout"; !strings.Contains(got, want) {
+		t.Fatalf("error = %q, want %q", got, want)
 	}
 }
 

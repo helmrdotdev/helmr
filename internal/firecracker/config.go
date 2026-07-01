@@ -14,20 +14,22 @@ const (
 	DefaultGuestPort = uint32(5000)
 	HealthPort       = uint32(5001)
 
-	DefaultFirecrackerPath = "firecracker"
-	DefaultJailerPath      = "jailer"
-	DefaultCNINetworkName  = "helmr"
-	DefaultCNIConfDir      = "/etc/cni/conf.d"
-	DefaultCNIBinDir       = "/opt/cni/bin"
-	DefaultCNIIfName       = "veth0"
-	DefaultCNIVMIfName     = "eth0"
-	DefaultIPPath          = "ip"
-	DefaultNFTPath         = "nft"
-	DefaultKVMPath         = "/dev/kvm"
-	DefaultVCPUs           = int64(2)
-	DefaultMemoryMiB       = int64(2048)
-	DefaultScratchDiskMiB  = int64(8192)
-	DefaultCgroupVersion   = "2"
+	DefaultFirecrackerPath      = "firecracker"
+	DefaultJailerPath           = "jailer"
+	DefaultCNINetworkName       = "helmr"
+	DefaultCNIConfDir           = "/etc/cni/conf.d"
+	DefaultCNIBinDir            = "/opt/cni/bin"
+	DefaultCNIIfName            = "veth0"
+	DefaultCNIVMIfName          = "eth0"
+	DefaultIPPath               = "ip"
+	DefaultNFTPath              = "nft"
+	DefaultKVMPath              = "/dev/kvm"
+	DefaultVCPUs                = int64(2)
+	DefaultMemoryMiB            = int64(2048)
+	DefaultScratchDiskMiB       = int64(8192)
+	DefaultCgroupVersion        = "2"
+	DefaultHealthTimeout        = 30 * time.Second
+	DefaultHealthAttemptTimeout = 5 * time.Second
 )
 
 type Config struct {
@@ -61,6 +63,7 @@ type Config struct {
 	GuestPort               uint32
 	HealthPort              uint32
 	HealthTimeout           time.Duration
+	HealthAttemptTimeout    time.Duration
 }
 
 type RuntimeCapabilities struct {
@@ -137,7 +140,13 @@ func (cfg Config) WithDefaults() Config {
 		cfg.HealthPort = HealthPort
 	}
 	if cfg.HealthTimeout == 0 {
-		cfg.HealthTimeout = 30 * time.Second
+		cfg.HealthTimeout = DefaultHealthTimeout
+	}
+	if cfg.HealthAttemptTimeout == 0 {
+		cfg.HealthAttemptTimeout = DefaultHealthAttemptTimeout
+		if cfg.HealthTimeout > 0 && cfg.HealthAttemptTimeout > cfg.HealthTimeout {
+			cfg.HealthAttemptTimeout = cfg.HealthTimeout
+		}
 	}
 	return cfg
 }
@@ -221,6 +230,15 @@ func (cfg Config) Validate() error {
 	}
 	if err := validateNetworkPolicyCIDRs("firecracker network blocked IPv6 CIDR", cfg.NetworkBlockedIPv6CIDRs, false); err != nil {
 		problems = append(problems, err)
+	}
+	if cfg.HealthTimeout <= 0 {
+		problems = append(problems, fmt.Errorf("guest health timeout must be positive, got %s", cfg.HealthTimeout))
+	}
+	if cfg.HealthAttemptTimeout <= 0 {
+		problems = append(problems, fmt.Errorf("guest health attempt timeout must be positive, got %s", cfg.HealthAttemptTimeout))
+	}
+	if cfg.HealthAttemptTimeout > cfg.HealthTimeout {
+		problems = append(problems, fmt.Errorf("guest health attempt timeout %s must be less than or equal to guest health timeout %s", cfg.HealthAttemptTimeout, cfg.HealthTimeout))
 	}
 	return errors.Join(problems...)
 }

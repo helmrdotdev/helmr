@@ -221,7 +221,7 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		ID:            current.ID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("workspace has an active materialization")))
+		writeError(w, conflict(errors.New("workspace has an active workspace mount")))
 		return
 	}
 	if err != nil {
@@ -232,7 +232,7 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) connectWorkspace(w http.ResponseWriter, r *http.Request) {
-	s.requestWorkspaceMaterialization(w, r)
+	s.requestWorkspaceMount(w, r)
 }
 
 func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor, projectID pgtype.UUID, environmentID pgtype.UUID, request api.WorkspaceCreateRequest) (db.Workspace, bool, error) {
@@ -502,8 +502,8 @@ func workspaceResponse(row db.Workspace) api.WorkspaceResponse {
 	if row.CurrentVersionID.Valid {
 		response.CurrentVersionID = pgvalue.MustUUIDValue(row.CurrentVersionID).String()
 	}
-	if row.LastMaterializationID.Valid {
-		response.LastMaterializationID = pgvalue.MustUUIDValue(row.LastMaterializationID).String()
+	if row.LastWorkspaceMountID.Valid {
+		response.LastWorkspaceMountID = pgvalue.MustUUIDValue(row.LastWorkspaceMountID).String()
 	}
 	response.AutoStopAt = optionalWorkspaceTime(row.AutoStopAt)
 	response.AutoArchiveAt = optionalWorkspaceTime(row.AutoArchiveAt)

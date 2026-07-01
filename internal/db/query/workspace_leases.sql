@@ -5,7 +5,7 @@ INSERT INTO workspace_leases (
     project_id,
     environment_id,
     workspace_id,
-    materialization_id,
+    workspace_mount_id,
     lease_kind,
     owner_exec_id,
     base_version_id,
@@ -16,44 +16,44 @@ INSERT INTO workspace_leases (
     expires_at
 )
 SELECT sqlc.arg(id),
-       workspace_materializations.org_id,
-       workspace_materializations.project_id,
-       workspace_materializations.environment_id,
-       workspace_materializations.workspace_id,
-       workspace_materializations.id,
+       workspace_mounts.org_id,
+       workspace_mounts.project_id,
+       workspace_mounts.environment_id,
+       workspace_mounts.workspace_id,
+       workspace_mounts.id,
        'instance',
        sqlc.arg(owner_exec_id),
-       workspace_materializations.base_version_id,
+       workspace_mounts.base_version_id,
        workspaces.current_version_id,
-       workspace_materializations.fencing_generation,
+       workspace_mounts.fencing_generation,
        sqlc.arg(fencing_token),
        sqlc.arg(heartbeat_token),
        sqlc.arg(expires_at)
-  FROM workspace_materializations
+  FROM workspace_mounts
   JOIN workspaces
-    ON workspaces.org_id = workspace_materializations.org_id
-   AND workspaces.project_id = workspace_materializations.project_id
-   AND workspaces.environment_id = workspace_materializations.environment_id
-   AND workspaces.id = workspace_materializations.workspace_id
- WHERE workspace_materializations.org_id = sqlc.arg(org_id)
-   AND workspace_materializations.project_id = sqlc.arg(project_id)
-   AND workspace_materializations.environment_id = sqlc.arg(environment_id)
-   AND workspace_materializations.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_materializations.id = sqlc.arg(materialization_id)
-   AND workspace_materializations.state IN ('running', 'paused')
+    ON workspaces.org_id = workspace_mounts.org_id
+   AND workspaces.project_id = workspace_mounts.project_id
+   AND workspaces.environment_id = workspace_mounts.environment_id
+   AND workspaces.id = workspace_mounts.workspace_id
+ WHERE workspace_mounts.org_id = sqlc.arg(org_id)
+   AND workspace_mounts.project_id = sqlc.arg(project_id)
+   AND workspace_mounts.environment_id = sqlc.arg(environment_id)
+   AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_mounts.id = sqlc.arg(workspace_mount_id)
+   AND workspace_mounts.state = 'mounted'
 RETURNING *;
 
 -- name: AcquireWorkspaceWriteLease :one
-WITH fenced_materialization AS (
-    UPDATE workspace_materializations
-       SET fencing_generation = workspace_materializations.fencing_generation + 1,
+WITH fenced_mount AS (
+    UPDATE workspace_mounts
+       SET fencing_generation = workspace_mounts.fencing_generation + 1,
            updated_at = now()
-     WHERE workspace_materializations.org_id = sqlc.arg(org_id)
-       AND workspace_materializations.project_id = sqlc.arg(project_id)
-       AND workspace_materializations.environment_id = sqlc.arg(environment_id)
-       AND workspace_materializations.workspace_id = sqlc.arg(workspace_id)
-       AND workspace_materializations.id = sqlc.arg(materialization_id)
-       AND workspace_materializations.state IN ('running', 'paused')
+     WHERE workspace_mounts.org_id = sqlc.arg(org_id)
+       AND workspace_mounts.project_id = sqlc.arg(project_id)
+       AND workspace_mounts.environment_id = sqlc.arg(environment_id)
+       AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
+       AND workspace_mounts.id = sqlc.arg(workspace_mount_id)
+       AND workspace_mounts.state = 'mounted'
     RETURNING *
 )
 INSERT INTO workspace_leases (
@@ -62,7 +62,7 @@ INSERT INTO workspace_leases (
     project_id,
     environment_id,
     workspace_id,
-    materialization_id,
+    workspace_mount_id,
     lease_kind,
     owner_exec_id,
     owner_pty_session_id,
@@ -74,26 +74,26 @@ INSERT INTO workspace_leases (
     expires_at
 )
 SELECT sqlc.arg(id),
-       fenced_materialization.org_id,
-       fenced_materialization.project_id,
-       fenced_materialization.environment_id,
-       fenced_materialization.workspace_id,
-       fenced_materialization.id,
+       fenced_mount.org_id,
+       fenced_mount.project_id,
+       fenced_mount.environment_id,
+       fenced_mount.workspace_id,
+       fenced_mount.id,
        'write',
        sqlc.arg(owner_exec_id),
        sqlc.arg(owner_pty_session_id),
-       fenced_materialization.base_version_id,
+       fenced_mount.base_version_id,
        workspaces.current_version_id,
-       fenced_materialization.fencing_generation,
+       fenced_mount.fencing_generation,
        sqlc.arg(fencing_token),
        sqlc.arg(heartbeat_token),
        sqlc.arg(expires_at)
-  FROM fenced_materialization
+  FROM fenced_mount
   JOIN workspaces
-    ON workspaces.org_id = fenced_materialization.org_id
-   AND workspaces.project_id = fenced_materialization.project_id
-   AND workspaces.environment_id = fenced_materialization.environment_id
-   AND workspaces.id = fenced_materialization.workspace_id
+    ON workspaces.org_id = fenced_mount.org_id
+   AND workspaces.project_id = fenced_mount.project_id
+   AND workspaces.environment_id = fenced_mount.environment_id
+   AND workspaces.id = fenced_mount.workspace_id
 RETURNING *;
 
 -- name: GetWorkspaceLease :one
@@ -111,7 +111,7 @@ WITH active_writer AS (
            workspace_leases.project_id,
            workspace_leases.environment_id,
            workspace_leases.workspace_id,
-           workspace_leases.materialization_id,
+           workspace_leases.workspace_mount_id,
            workspace_leases.acquired_fencing_generation
       FROM workspace_leases
      WHERE workspace_leases.org_id = sqlc.arg(org_id)
@@ -121,31 +121,31 @@ WITH active_writer AS (
        AND workspace_leases.state = 'active'
        AND workspace_leases.expires_at > now()
 ),
-updated_materialization AS (
-    UPDATE workspace_materializations
+updated_mount AS (
+    UPDATE workspace_mounts
        SET dirty_generation = dirty_generation + 1,
            updated_at = now()
       FROM active_writer
-     WHERE workspace_materializations.org_id = active_writer.org_id
-       AND workspace_materializations.project_id = active_writer.project_id
-       AND workspace_materializations.environment_id = active_writer.environment_id
-       AND workspace_materializations.workspace_id = active_writer.workspace_id
-       AND workspace_materializations.id = active_writer.materialization_id
-       AND workspace_materializations.fencing_generation = active_writer.acquired_fencing_generation
-    RETURNING workspace_materializations.*
+     WHERE workspace_mounts.org_id = active_writer.org_id
+       AND workspace_mounts.project_id = active_writer.project_id
+       AND workspace_mounts.environment_id = active_writer.environment_id
+       AND workspace_mounts.workspace_id = active_writer.workspace_id
+       AND workspace_mounts.id = active_writer.workspace_mount_id
+       AND workspace_mounts.fencing_generation = active_writer.acquired_fencing_generation
+    RETURNING workspace_mounts.*
 ),
 updated_workspace AS (
     UPDATE workspaces
        SET dirty_state = 'dirty',
            updated_at = now()
-      FROM updated_materialization
-     WHERE workspaces.org_id = updated_materialization.org_id
-       AND workspaces.project_id = updated_materialization.project_id
-       AND workspaces.environment_id = updated_materialization.environment_id
-       AND workspaces.id = updated_materialization.workspace_id
+      FROM updated_mount
+     WHERE workspaces.org_id = updated_mount.org_id
+       AND workspaces.project_id = updated_mount.project_id
+       AND workspaces.environment_id = updated_mount.environment_id
+       AND workspaces.id = updated_mount.workspace_id
     RETURNING workspaces.id
 )
-SELECT * FROM updated_materialization;
+SELECT * FROM updated_mount;
 
 -- name: PromoteWorkspaceCapture :one
 WITH active_writer AS (
@@ -158,17 +158,17 @@ WITH active_writer AS (
        AND workspace_leases.state = 'active'
        AND workspace_leases.expires_at > now()
 ),
-active_materialization AS (
-    SELECT workspace_materializations.*
-      FROM workspace_materializations
+active_mount AS (
+    SELECT workspace_mounts.*
+      FROM workspace_mounts
       JOIN active_writer
-        ON active_writer.org_id = workspace_materializations.org_id
-       AND active_writer.project_id = workspace_materializations.project_id
-       AND active_writer.environment_id = workspace_materializations.environment_id
-       AND active_writer.workspace_id = workspace_materializations.workspace_id
-       AND active_writer.materialization_id = workspace_materializations.id
-       AND active_writer.acquired_fencing_generation = workspace_materializations.fencing_generation
-     WHERE workspace_materializations.dirty_generation = sqlc.arg(dirty_generation)
+        ON active_writer.org_id = workspace_mounts.org_id
+       AND active_writer.project_id = workspace_mounts.project_id
+       AND active_writer.environment_id = workspace_mounts.environment_id
+       AND active_writer.workspace_id = workspace_mounts.workspace_id
+       AND active_writer.workspace_mount_id = workspace_mounts.id
+       AND active_writer.acquired_fencing_generation = workspace_mounts.fencing_generation
+     WHERE workspace_mounts.dirty_generation = sqlc.arg(dirty_generation)
 ),
 verified_artifact AS (
     SELECT artifacts.id
@@ -191,7 +191,7 @@ created_version AS (
         environment_id,
         workspace_id,
         parent_version_id,
-        source_materialization_id,
+        source_workspace_mount_id,
         source_write_lease_id,
         kind,
         state,
@@ -209,7 +209,7 @@ created_version AS (
            active_writer.environment_id,
            active_writer.workspace_id,
            active_writer.acquired_version_id,
-           active_writer.materialization_id,
+           active_writer.workspace_mount_id,
            active_writer.id,
            sqlc.arg(kind),
            'ready',
@@ -221,7 +221,7 @@ created_version AS (
            sqlc.arg(message),
            now()
       FROM active_writer
-      JOIN active_materialization ON active_materialization.id = active_writer.materialization_id
+      JOIN active_mount ON active_mount.id = active_writer.workspace_mount_id
       JOIN verified_artifact ON verified_artifact.id = sqlc.arg(artifact_id)
     RETURNING *
 ),
@@ -238,23 +238,23 @@ promoted_workspace AS (
        AND workspaces.current_version_id IS NOT DISTINCT FROM created_version.parent_version_id
     RETURNING workspaces.id
 ),
-cleaned_materialization AS (
-    UPDATE workspace_materializations
+cleaned_mount AS (
+    UPDATE workspace_mounts
        SET dirty_generation = 0,
            updated_at = now()
       FROM created_version
-     WHERE workspace_materializations.org_id = created_version.org_id
-       AND workspace_materializations.project_id = created_version.project_id
-       AND workspace_materializations.environment_id = created_version.environment_id
-       AND workspace_materializations.workspace_id = created_version.workspace_id
-       AND workspace_materializations.id = created_version.source_materialization_id
-       AND workspace_materializations.dirty_generation = sqlc.arg(dirty_generation)
-    RETURNING workspace_materializations.id
+     WHERE workspace_mounts.org_id = created_version.org_id
+       AND workspace_mounts.project_id = created_version.project_id
+       AND workspace_mounts.environment_id = created_version.environment_id
+       AND workspace_mounts.workspace_id = created_version.workspace_id
+       AND workspace_mounts.id = created_version.source_workspace_mount_id
+       AND workspace_mounts.dirty_generation = sqlc.arg(dirty_generation)
+    RETURNING workspace_mounts.id
 )
 SELECT created_version.*
   FROM created_version
   JOIN promoted_workspace ON promoted_workspace.id = created_version.workspace_id
-  JOIN cleaned_materialization ON cleaned_materialization.id = created_version.source_materialization_id;
+  JOIN cleaned_mount ON cleaned_mount.id = created_version.source_workspace_mount_id;
 
 -- name: ReleaseWorkspaceLease :one
 UPDATE workspace_leases

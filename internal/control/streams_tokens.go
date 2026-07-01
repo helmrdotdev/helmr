@@ -373,6 +373,14 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 			return appendedStreamRecord{}, err
 		}
 		appended.resolvedWaitCount = len(resolved)
+		if appended.resolvedWaitCount > 0 {
+			if _, err := store.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
+				OrgID:      session.OrgID,
+				LimitCount: int32(appended.resolvedWaitCount),
+			}); err != nil {
+				return appendedStreamRecord{}, err
+			}
+		}
 		if !row.IsCached && appended.resolvedWaitCount == 0 {
 			if _, err := store.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
 				ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -704,33 +712,33 @@ func (s *Server) tryCreateContinuationRunForRequest(ctx context.Context, store d
 	if err != nil {
 		return pgtype.UUID{}, "", err
 	}
-	materializationRequest, err := json.Marshal(map[string]string{
+	workspaceMountRequest, err := json.Marshal(map[string]string{
 		"source": "session_input",
 		"run_id": pgvalue.MustUUIDValue(run.ID).String(),
 	})
 	if err != nil {
 		return pgtype.UUID{}, "", err
 	}
-	materialization, err := store.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         locked.OrgID,
-		ProjectID:     locked.ProjectID,
-		EnvironmentID: locked.EnvironmentID,
-		WorkspaceID:   locked.WorkspaceID,
-		Priority:      scheduling.priority,
-		Request:       materializationRequest,
+	mount, err := store.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           locked.OrgID,
+		ProjectID:       locked.ProjectID,
+		EnvironmentID:   locked.EnvironmentID,
+		WorkspaceID:     locked.WorkspaceID,
+		RequestPriority: scheduling.priority,
+		Request:         workspaceMountRequest,
 	})
 	if err != nil {
 		if isNoRows(err) {
-			return pgtype.UUID{}, "", s.workspaceMaterializationPrerequisiteErrorWithStore(ctx, store, locked.OrgID, locked.ProjectID, locked.EnvironmentID, locked.WorkspaceID)
+			return pgtype.UUID{}, "", s.workspaceMountPrerequisiteErrorWithStore(ctx, store, locked.OrgID, locked.ProjectID, locked.EnvironmentID, locked.WorkspaceID)
 		}
 		return pgtype.UUID{}, "", err
 	}
-	if err := store.SetQueuedRunWorkspaceMaterialization(ctx, db.SetQueuedRunWorkspaceMaterializationParams{
-		OrgID:                      locked.OrgID,
-		RunID:                      run.ID,
-		WorkspaceID:                locked.WorkspaceID,
-		WorkspaceMaterializationID: materialization.ID,
+	if err := store.SetQueuedRunWorkspaceMount(ctx, db.SetQueuedRunWorkspaceMountParams{
+		OrgID:            locked.OrgID,
+		RunID:            run.ID,
+		WorkspaceID:      locked.WorkspaceID,
+		WorkspaceMountID: mount.ID,
 	}); err != nil {
 		return pgtype.UUID{}, "", err
 	}
@@ -1275,6 +1283,15 @@ func (s *Server) cancelToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("cancel token"))
 		return
 	}
+	if cancelled.ResolvedWaitCount > 0 {
+		if _, err := s.db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(r.Context(), db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
+			OrgID:      token.OrgID,
+			LimitCount: int32(cancelled.ResolvedWaitCount),
+		}); err != nil {
+			writeError(w, errors.New("publish hot token cancellation"))
+			return
+		}
+	}
 	s.requeueResolvedRunWaits(r.Context(), token.OrgID)
 	writeJSON(w, http.StatusOK, tokenResponse(tokenFromCancelRow(cancelled), "", ""))
 }
@@ -1450,6 +1467,14 @@ func (s *Server) completeTokenRecord(ctx context.Context, store db.Querier, toke
 	}
 	if completed.CompletionConflict {
 		return completed, conflict(errTokenCompletionConflict)
+	}
+	if completed.ResolvedWaitCount > 0 {
+		if _, err := store.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
+			OrgID:      token.OrgID,
+			LimitCount: int32(completed.ResolvedWaitCount),
+		}); err != nil {
+			return db.CompleteTokenRow{}, err
+		}
 	}
 	return completed, nil
 }

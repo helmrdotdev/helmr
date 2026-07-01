@@ -18,12 +18,12 @@ type WorkspaceStopRequest struct {
 }
 
 type WorkspaceStopResponse struct {
-	WorkspaceID     string                            `json:"workspace_id"`
-	State           string                            `json:"state"`
-	Materialization *WorkspaceMaterializationResponse `json:"materialization,omitempty"`
+	WorkspaceID string                  `json:"workspace_id"`
+	State       string                  `json:"state"`
+	Mount       *WorkspaceMountResponse `json:"mount,omitempty"`
 }
 
-type WorkspaceMaterializationResponse struct {
+type WorkspaceMountResponse struct {
 	ID                   string     `json:"id"`
 	ProjectID            string     `json:"project_id"`
 	EnvironmentID        string     `json:"environment_id"`
@@ -41,15 +41,15 @@ type WorkspaceMaterializationResponse struct {
 	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
-type WorkerWorkspaceMaterializationClaimRequest struct {
+type WorkerWorkspaceMountClaimRequest struct {
 	Capabilities WorkerCapabilities `json:"capabilities"`
 }
 
-type WorkerWorkspaceMaterializationClaimResponse struct {
-	Materialization *WorkerWorkspaceMaterialization `json:"materialization,omitempty"`
+type WorkerWorkspaceMountClaimResponse struct {
+	Mount *WorkerWorkspaceMount `json:"mount,omitempty"`
 }
 
-type WorkerWorkspaceMaterialization struct {
+type WorkerWorkspaceMount struct {
 	ID                         string                  `json:"id"`
 	OrgID                      string                  `json:"org_id"`
 	ProjectID                  string                  `json:"project_id"`
@@ -57,7 +57,9 @@ type WorkerWorkspaceMaterialization struct {
 	WorkspaceID                string                  `json:"workspace_id"`
 	DeploymentSandboxID        string                  `json:"deployment_sandbox_id"`
 	BaseVersionID              string                  `json:"base_version_id,omitempty"`
-	ReservationToken           string                  `json:"reservation_token"`
+	RuntimeInstanceToken       string                  `json:"runtime_instance_token"`
+	RuntimeInstanceID          string                  `json:"runtime_instance_id,omitempty"`
+	RuntimeEpoch               int64                   `json:"runtime_epoch"`
 	GuestdChannelToken         string                  `json:"guestd_channel_token"`
 	GuestdChannelTokenHash     string                  `json:"guestd_channel_token_hash"`
 	State                      string                  `json:"state"`
@@ -69,6 +71,10 @@ type WorkerWorkspaceMaterialization struct {
 	ImageFormat                string                  `json:"image_format"`
 	WorkspaceArtifact          WorkerWorkspaceArtifact `json:"workspace_artifact"`
 	WorkspaceMountPath         string                  `json:"workspace_mount_path"`
+	RequestedMilliCPU          int64                   `json:"requested_milli_cpu"`
+	RequestedMemoryMiB         int64                   `json:"requested_memory_mib"`
+	RequestedDiskMiB           int64                   `json:"requested_disk_mib"`
+	RequestedExecutionSlots    int32                   `json:"requested_execution_slots"`
 	RuntimeABI                 string                  `json:"runtime_abi"`
 	GuestdABI                  string                  `json:"guestd_abi"`
 	AdapterABI                 string                  `json:"adapter_abi"`
@@ -76,45 +82,45 @@ type WorkerWorkspaceMaterialization struct {
 	ExpiresAt                  time.Time               `json:"expires_at"`
 }
 
-type WorkerWorkspaceMaterializationRenewRequest struct {
-	OrgID             string `json:"org_id"`
-	MaterializationID string `json:"materialization_id"`
-	ReservationToken  string `json:"reservation_token"`
+type WorkerWorkspaceMountRenewRequest struct {
+	OrgID                string `json:"org_id"`
+	WorkspaceMountID     string `json:"workspace_mount_id"`
+	RuntimeInstanceToken string `json:"runtime_instance_token"`
 }
 
-type WorkerWorkspaceMaterializationRunningRequest struct {
-	OrgID             string `json:"org_id"`
-	MaterializationID string `json:"materialization_id"`
-	ReservationToken  string `json:"reservation_token"`
+type WorkerWorkspaceMountMountedRequest struct {
+	OrgID                string `json:"org_id"`
+	WorkspaceMountID     string `json:"workspace_mount_id"`
+	RuntimeInstanceToken string `json:"runtime_instance_token"`
 }
 
-type WorkerWorkspaceMaterializationStopRequest struct {
-	OrgID             string `json:"org_id"`
-	MaterializationID string `json:"materialization_id"`
-	ReservationToken  string `json:"reservation_token"`
+type WorkerWorkspaceMountStopRequest struct {
+	OrgID                string `json:"org_id"`
+	WorkspaceMountID     string `json:"workspace_mount_id"`
+	RuntimeInstanceToken string `json:"runtime_instance_token"`
 }
 
-type WorkerWorkspaceMaterializationCaptureRequest struct {
-	OrgID              string `json:"org_id"`
-	ProjectID          string `json:"project_id"`
-	EnvironmentID      string `json:"environment_id"`
-	WorkspaceID        string `json:"workspace_id"`
-	MaterializationID  string `json:"materialization_id"`
-	ReservationToken   string `json:"reservation_token"`
-	ArtifactDigest     string `json:"artifact_digest"`
-	ArtifactSizeBytes  int64  `json:"artifact_size_bytes"`
-	ArtifactMediaType  string `json:"artifact_media_type"`
-	ArtifactEncoding   string `json:"artifact_encoding"`
-	ArtifactEntryCount int32  `json:"artifact_entry_count"`
+type WorkerWorkspaceMountCaptureRequest struct {
+	OrgID                string `json:"org_id"`
+	ProjectID            string `json:"project_id"`
+	EnvironmentID        string `json:"environment_id"`
+	WorkspaceID          string `json:"workspace_id"`
+	WorkspaceMountID     string `json:"workspace_mount_id"`
+	RuntimeInstanceToken string `json:"runtime_instance_token"`
+	ArtifactDigest       string `json:"artifact_digest"`
+	ArtifactSizeBytes    int64  `json:"artifact_size_bytes"`
+	ArtifactMediaType    string `json:"artifact_media_type"`
+	ArtifactEncoding     string `json:"artifact_encoding"`
+	ArtifactEntryCount   int32  `json:"artifact_entry_count"`
 }
 
-type WorkerWorkspaceMaterializationCaptureResponse struct {
+type WorkerWorkspaceMountCaptureResponse struct {
 	VersionID string `json:"version_id"`
 }
 
-type WorkerWorkspaceMaterializationFailRequest struct {
-	OrgID             string          `json:"org_id"`
-	MaterializationID string          `json:"materialization_id"`
-	ReservationToken  string          `json:"reservation_token"`
-	Error             json.RawMessage `json:"error"`
+type WorkerWorkspaceMountFailRequest struct {
+	OrgID                string          `json:"org_id"`
+	WorkspaceMountID     string          `json:"workspace_mount_id"`
+	RuntimeInstanceToken string          `json:"runtime_instance_token"`
+	Error                json.RawMessage `json:"error"`
 }

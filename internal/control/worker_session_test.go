@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -95,8 +96,8 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	if store.listQueueScopes.WorkerGroupID != testWorkerGroupID() {
 		t.Fatalf("list queue scopes worker group = %+v", store.listQueueScopes.WorkerGroupID)
 	}
-	if store.markStaleWorkspaceMaterializationsLostCalls != 1 {
-		t.Fatalf("stale materialization sweeper calls = %d", store.markStaleWorkspaceMaterializationsLostCalls)
+	if store.markStaleWorkspaceMountsLostCalls != 1 {
+		t.Fatalf("stale mount sweeper calls = %d", store.markStaleWorkspaceMountsLostCalls)
 	}
 	if claimResponse.Run.DeploymentSource.Digest != "sha256:"+strings.Repeat("a", 64) {
 		t.Fatalf("deployment source = %+v", claimResponse.Run.DeploymentSource)
@@ -186,6 +187,51 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	}
 	if string(runBody["output"]) != string(output) {
 		t.Fatalf("response output = %s", runBody["output"])
+	}
+}
+
+func TestWorkerRunLeaseRequeuesPayloadFailureWhenDurableReleaseFails(t *testing.T) {
+	store := &fakeStore{
+		run: db.Run{
+			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			DeploymentID:        testDeploymentID(),
+			DeploymentTaskID:    testDeploymentTaskID(),
+			TaskID:              "deploy",
+			Status:              db.RunStatusQueued,
+			Output:              []byte(`{"env":"prod"}`),
+			MaxActiveDurationMs: 3600_000,
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
+		},
+		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
+		releaseRunLeaseErr:                      errors.New("release unavailable"),
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour})
+	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
+
+	body, err := json.Marshal(api.WorkerRunLeaseRequest{Capabilities: testWorkerCapabilities()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/lease", bytes.NewReader(body))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.ackedLeases) != 0 {
+		t.Fatalf("acked leases = %+v", store.ackedLeases)
+	}
+	if len(store.nackedLeases) != 1 || store.nackedLeases[0].ID != "lease-1" {
+		t.Fatalf("nacked leases = %+v", store.nackedLeases)
+	}
+	if len(store.nackReasons) != 1 || store.nackReasons[0] != dispatch.NackReasonInvalid {
+		t.Fatalf("nack reasons = %+v", store.nackReasons)
 	}
 }
 
@@ -677,7 +723,7 @@ func TestWorkerRunLeaseRejectsMismatchedProtocolVersion(t *testing.T) {
 	}
 }
 
-func TestWorkerWorkspaceMaterializationClaimSkipsWhenDiskUnavailable(t *testing.T) {
+func TestWorkerWorkspaceMountClaimAttemptsWhenQueueCapacityIsUnavailable(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		workerQueueCapacitySet: true,
@@ -690,26 +736,149 @@ func TestWorkerWorkspaceMaterializationClaimSkipsWhenDiskUnavailable(t *testing.
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour})
 	workerBearer := mintTestWorkerToken(t, server, workerID.String())
-	body, err := json.Marshal(api.WorkerWorkspaceMaterializationClaimRequest{Capabilities: testWorkerCapabilities()})
+	body, err := json.Marshal(api.WorkerWorkspaceMountClaimRequest{Capabilities: testWorkerCapabilities()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/workspaces/materializations/claim", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/workspaces/mounts/claim", bytes.NewReader(body))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var response api.WorkerWorkspaceMaterializationClaimResponse
+	var response api.WorkerWorkspaceMountClaimResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Materialization != nil {
-		t.Fatalf("materialization = %+v, want nil", response.Materialization)
+	if response.Mount != nil {
+		t.Fatalf("mount = %+v, want nil", response.Mount)
 	}
-	if store.claimWorkspaceMaterializationCalls != 0 {
-		t.Fatalf("workspace materialization claims = %d, want 0", store.claimWorkspaceMaterializationCalls)
+	if store.claimWorkspaceMountCalls != 1 {
+		t.Fatalf("workspace mount claims = %d, want 1", store.claimWorkspaceMountCalls)
+	}
+}
+
+func TestWorkerRunLeaseRequestsCapacityPressureWhenDispatchCapacityIsUnavailable(t *testing.T) {
+	workerID := uuid.Must(uuid.NewV7())
+	store := &fakeStore{
+		workerQueueCapacitySet: true,
+		workerQueueCapacity: db.GetWorkerInstanceQueueCapacityRow{
+			AvailableMilliCpu:       2000,
+			AvailableMemoryMib:      2048,
+			AvailableDiskMib:        20480,
+			AvailableExecutionSlots: 0,
+		},
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour})
+	workerBearer := mintTestWorkerToken(t, server, workerID.String())
+	body, err := json.Marshal(api.WorkerRunLeaseRequest{Capabilities: testWorkerCapabilities()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/lease", bytes.NewReader(body))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.WorkerRunLeaseResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Lease != nil || response.Run != nil {
+		t.Fatalf("response = %+v, want no lease", response)
+	}
+	if store.requestCapacityPressureStopsCalls != 1 {
+		t.Fatalf("capacity pressure stop calls = %d, want 1", store.requestCapacityPressureStopsCalls)
+	}
+	if store.createCapacityPressureCheckpointsCalls != 1 {
+		t.Fatalf("capacity pressure checkpoint calls = %d, want 1", store.createCapacityPressureCheckpointsCalls)
+	}
+	if got := pgvalue.MustUUIDValue(store.requestCapacityPressureStops.WorkerInstanceID); got != workerID {
+		t.Fatalf("stop worker id = %s, want %s", got, workerID)
+	}
+	if got := pgvalue.MustUUIDValue(store.createCapacityPressureCheckpoints.WorkerInstanceID); got != workerID {
+		t.Fatalf("checkpoint worker id = %s, want %s", got, workerID)
+	}
+	if store.dequeueRequest.WorkerInstanceID != "" {
+		t.Fatalf("dequeue worker id = %q, want empty", store.dequeueRequest.WorkerInstanceID)
+	}
+}
+
+func TestWorkerRunLeaseClaimsResidentRunWhenDispatchCapacityIsUnavailable(t *testing.T) {
+	runID := uuid.Must(uuid.NewV7())
+	workerID := uuid.Must(uuid.NewV7())
+	store := &fakeStore{
+		run: db.Run{
+			ID:                  pgvalue.UUID(runID),
+			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:           testProjectID(),
+			EnvironmentID:       testEnvironmentID(),
+			DeploymentID:        testDeploymentID(),
+			DeploymentTaskID:    testDeploymentTaskID(),
+			TaskID:              "deploy",
+			Status:              db.RunStatusQueued,
+			Output:              []byte(`{"ok":true}`),
+			MaxActiveDurationMs: 3600_000,
+			CreatedAt:           testTime(),
+			UpdatedAt:           testTime(),
+		},
+		workerQueueCapacitySet: true,
+		workerQueueCapacity: db.GetWorkerInstanceQueueCapacityRow{
+			AvailableMilliCpu:       0,
+			AvailableMemoryMib:      0,
+			AvailableDiskMib:        0,
+			AvailableExecutionSlots: 0,
+		},
+		residentRunQueueItemSet: true,
+		residentRunQueueItem: db.ReserveResidentRunQueueItemForWorkerRow{
+			RunID:             pgvalue.UUID(runID),
+			OrgID:             pgvalue.UUID(dbtest.DefaultOrgID),
+			Status:            db.RunQueueStatusReserved,
+			QueueName:         "queue-a",
+			DispatchMessageID: pgtype.Text{String: "resident-message-1", Valid: true},
+			EnqueuedAt:        testTime(),
+			UpdatedAt:         testTime(),
+		},
+		currentDeploymentTaskSecretDeclarations: []byte(`[]`),
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour})
+	workerBearer := mintTestWorkerToken(t, server, workerID.String())
+	body, err := json.Marshal(api.WorkerRunLeaseRequest{Capabilities: testWorkerCapabilities()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/lease", bytes.NewReader(body))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.WorkerRunLeaseResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Lease == nil || response.Run == nil {
+		t.Fatalf("response = %+v, want resident lease", response)
+	}
+	if response.Lease.DispatchMessageID != "resident-message-1" {
+		t.Fatalf("dispatch message = %q, want resident-message-1", response.Lease.DispatchMessageID)
+	}
+	if store.residentRunQueueItemReservationCalls != 1 {
+		t.Fatalf("resident reservation calls = %d, want 1", store.residentRunQueueItemReservationCalls)
+	}
+	if store.requestCapacityPressureStopsCalls != 0 || store.createCapacityPressureCheckpointsCalls != 0 {
+		t.Fatalf("capacity pressure calls = stops:%d checkpoints:%d, want none", store.requestCapacityPressureStopsCalls, store.createCapacityPressureCheckpointsCalls)
+	}
+	if store.dequeueRequest.WorkerInstanceID != "" {
+		t.Fatalf("dequeue worker id = %q, want empty", store.dequeueRequest.WorkerInstanceID)
 	}
 }
 
@@ -869,8 +1038,8 @@ func (f *fakeStore) EnsureRuntimeReleaseSelection(context.Context, string) error
 	return nil
 }
 
-func (f *fakeStore) MarkStaleWorkspaceMaterializationsLost(context.Context, pgtype.Timestamptz) ([]db.MarkStaleWorkspaceMaterializationsLostRow, error) {
-	f.markStaleWorkspaceMaterializationsLostCalls++
+func (f *fakeStore) MarkStaleWorkspaceMountsLost(context.Context, pgtype.Timestamptz) ([]db.MarkStaleWorkspaceMountsLostRow, error) {
+	f.markStaleWorkspaceMountsLostCalls++
 	return nil, nil
 }
 
@@ -912,10 +1081,47 @@ func (f *fakeStore) GetWorkerInstanceRunDispatchCapacity(context.Context, pgtype
 	}, nil
 }
 
-func (f *fakeStore) ClaimWorkspaceMaterialization(_ context.Context, arg db.ClaimWorkspaceMaterializationParams) (db.ClaimWorkspaceMaterializationRow, error) {
-	f.claimWorkspaceMaterialization = arg
-	f.claimWorkspaceMaterializationCalls++
-	return db.ClaimWorkspaceMaterializationRow{}, pgx.ErrNoRows
+func (f *fakeStore) ReserveResidentRunQueueItemForWorker(_ context.Context, arg db.ReserveResidentRunQueueItemForWorkerParams) (db.ReserveResidentRunQueueItemForWorkerRow, error) {
+	f.residentRunQueueItemReservation = arg
+	f.residentRunQueueItemReservationCalls++
+	if !f.residentRunQueueItemSet {
+		return db.ReserveResidentRunQueueItemForWorkerRow{}, pgx.ErrNoRows
+	}
+	row := f.residentRunQueueItem
+	row.ReservedByWorkerInstanceID = arg.WorkerInstanceID
+	row.ReservationExpiresAt = arg.ReservationExpiresAt
+	if !row.DispatchMessageID.Valid {
+		row.DispatchMessageID = pgtype.Text{String: "resident-message-1", Valid: true}
+	}
+	return row, nil
+}
+
+func (f *fakeStore) ReserveCheckpointRestoreRunQueueItemForWorker(context.Context, db.ReserveCheckpointRestoreRunQueueItemForWorkerParams) (db.ReserveCheckpointRestoreRunQueueItemForWorkerRow, error) {
+	return db.ReserveCheckpointRestoreRunQueueItemForWorkerRow{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ClaimWorkspaceMount(_ context.Context, arg db.ClaimWorkspaceMountParams) (db.ClaimWorkspaceMountRow, error) {
+	f.claimWorkspaceMount = arg
+	f.claimWorkspaceMountCalls++
+	return db.ClaimWorkspaceMountRow{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ReserveWorkspaceMountPreparingRuntime(context.Context, db.ReserveWorkspaceMountPreparingRuntimeParams) (db.ReserveWorkspaceMountPreparingRuntimeRow, error) {
+	return db.ReserveWorkspaceMountPreparingRuntimeRow{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) GetAwaitingPreparedRuntimeMountForWorker(context.Context, db.GetAwaitingPreparedRuntimeMountForWorkerParams) (db.GetAwaitingPreparedRuntimeMountForWorkerRow, error) {
+	return db.GetAwaitingPreparedRuntimeMountForWorkerRow{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ReleaseExpiredPreparedRuntimeReservations(context.Context, pgtype.Timestamptz) ([]db.ReleaseExpiredPreparedRuntimeReservationsRow, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) RequestCapacityPressureIdleWorkspaceMountStopsForWorker(_ context.Context, arg db.RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams) ([]db.RequestCapacityPressureIdleWorkspaceMountStopsForWorkerRow, error) {
+	f.requestCapacityPressureStops = arg
+	f.requestCapacityPressureStopsCalls++
+	return nil, nil
 }
 
 func (f *fakeStore) SetWorkerInstanceStatus(_ context.Context, arg db.SetWorkerInstanceStatusParams) (db.WorkerInstance, error) {
@@ -958,7 +1164,9 @@ func (f *fakeStore) Ack(_ context.Context, lease dispatch.Lease) error {
 	return nil
 }
 
-func (f *fakeStore) Nack(context.Context, dispatch.Lease, dispatch.NackReason) error {
+func (f *fakeStore) Nack(_ context.Context, lease dispatch.Lease, reason dispatch.NackReason) error {
+	f.nackedLeases = append(f.nackedLeases, lease)
+	f.nackReasons = append(f.nackReasons, reason)
 	return nil
 }
 
@@ -1135,7 +1343,6 @@ func (f *fakeStore) LeaseRunLease(_ context.Context, arg db.LeaseRunLeaseParams)
 	f.run.StateVersion++
 	restoreCheckpointID := pgtype.UUID{}
 	if f.run.LatestRuntimeCheckpointID.Valid && f.run.LatestRuntimeCheckpointID == f.checkpoint.ID && f.checkpoint.State == db.RuntimeCheckpointStateReady {
-		f.checkpoint.State = db.RuntimeCheckpointStateRestoring
 		restoreCheckpointID = f.checkpoint.ID
 	}
 	projectID := f.run.ProjectID
@@ -1193,7 +1400,7 @@ func (f *fakeStore) LeaseRunLease(_ context.Context, arg db.LeaseRunLeaseParams)
 		RunLeaseExpiresAt:                  f.executionLeaseExpiresAt,
 		RunLeaseWorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
 		RunLeaseRestoreRuntimeCheckpointID: restoreCheckpointID,
-		WorkspaceFencingToken:              pgvalue.Text("workspace-fence-1"),
+		WorkspaceFencingToken:              "workspace-fence-1",
 	}, nil
 }
 
@@ -1225,6 +1432,14 @@ func (f *fakeStore) RequeueResolvedRunWaits(context.Context, db.RequeueResolvedR
 	return nil, nil
 }
 
+func (f *fakeStore) CreateExpiredRuntimeStopCommands(context.Context, pgtype.Timestamptz) ([]db.WorkerCommand, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) MarkExpiredRuntimeInstancesLost(context.Context, pgtype.Timestamptz) ([]db.RuntimeInstance, error) {
+	return nil, nil
+}
+
 func (f *fakeStore) AbandonLeasedRunLease(_ context.Context, arg db.AbandonLeasedRunLeaseParams) error {
 	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID || f.run.Status != db.RunStatusRunning {
 		return nil
@@ -1232,9 +1447,6 @@ func (f *fakeStore) AbandonLeasedRunLease(_ context.Context, arg db.AbandonLease
 	f.abandonedClaim = true
 	f.run.Status = db.RunStatusQueued
 	f.run.CurrentRunLeaseID = pgtype.UUID{}
-	if f.checkpoint.State == db.RuntimeCheckpointStateRestoring && f.run.LatestRuntimeCheckpointID == f.checkpoint.ID {
-		f.checkpoint.State = db.RuntimeCheckpointStateReady
-	}
 	return nil
 }
 
@@ -1242,7 +1454,7 @@ func (f *fakeStore) GetRunRestorePayload(_ context.Context, arg db.GetRunRestore
 	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
 	}
-	if !f.run.LatestRuntimeCheckpointID.Valid || f.checkpoint.ID != f.run.LatestRuntimeCheckpointID || f.checkpoint.State != db.RuntimeCheckpointStateRestoring {
+	if !f.run.LatestRuntimeCheckpointID.Valid || f.checkpoint.ID != f.run.LatestRuntimeCheckpointID || f.checkpoint.State != db.RuntimeCheckpointStateReady {
 		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
 	}
 	return db.GetRunRestorePayloadRow{
@@ -1282,6 +1494,9 @@ func (f *fakeStore) RenewRunLease(_ context.Context, arg db.RenewRunLeaseParams)
 }
 
 func (f *fakeStore) ReleaseRunLease(_ context.Context, arg db.ReleaseRunLeaseParams) (db.ReleaseRunLeaseRow, error) {
+	if f.releaseRunLeaseErr != nil {
+		return db.ReleaseRunLeaseRow{}, f.releaseRunLeaseErr
+	}
 	if f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.DispatchMessageID != "message-1" || arg.DispatchLeaseID != "lease-1" {
 		return db.ReleaseRunLeaseRow{}, pgx.ErrNoRows
 	}
@@ -1322,16 +1537,5 @@ func (f *fakeStore) ReleaseRunLease(_ context.Context, arg db.ReleaseRunLeasePar
 		Payload:   arg.TerminalEventPayload,
 		CreatedAt: testTime(),
 	})
-	if f.checkpoint.State == db.RuntimeCheckpointStateRestoring && f.run.LatestRuntimeCheckpointID == f.checkpoint.ID {
-		if arg.ErrorMessage.Valid {
-			f.checkpoint.State = db.RuntimeCheckpointStateInvalid
-			f.checkpoint.ErrorMessage = arg.ErrorMessage
-			f.checkpoint.InvalidatedAt = testTime()
-		} else {
-			f.checkpoint.State = db.RuntimeCheckpointStateReady
-			f.checkpoint.ErrorMessage = pgtype.Text{}
-			f.checkpoint.InvalidatedAt = pgtype.Timestamptz{}
-		}
-	}
 	return releaseRow(), nil
 }
