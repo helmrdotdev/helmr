@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -306,6 +305,8 @@ func taskGetCommand() *cobra.Command {
 }
 
 func runCancelCommand() *cobra.Command {
+	var projectID string
+	var environmentID string
 	var reason string
 	var force bool
 	var idempotencyKey string
@@ -319,7 +320,7 @@ func runCancelCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := resolveRunScope(cmd.Context(), control, args[0])
+			scope, err := runScopeForClient(control, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -334,10 +335,11 @@ func runCancelCommand() *cobra.Command {
 			if jsonOutput {
 				return format.JSON(cmd.OutOrStdout(), response)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", response.Run.ID, response.Run.Status)
+			writeRunOperationLifecycleResult(cmd, response.Run, response.Operation)
 			return nil
 		},
 	}
+	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().StringVar(&reason, "reason", "", "Reason for the cancellation.")
 	cmd.Flags().BoolVar(&force, "force", false, "Force cancellation without waiting for graceful shutdown.")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
@@ -386,6 +388,8 @@ func runListCommand() *cobra.Command {
 }
 
 func runGetCommand() *cobra.Command {
+	var projectID string
+	var environmentID string
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "get RUN",
@@ -396,7 +400,7 @@ func runGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := resolveRunScope(cmd.Context(), control, args[0])
+			scope, err := runScopeForClient(control, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -411,6 +415,7 @@ func runGetCommand() *cobra.Command {
 			return nil
 		},
 	}
+	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
@@ -425,6 +430,8 @@ func runCommand() *cobra.Command {
 }
 
 func runLogsCommand() *cobra.Command {
+	var projectID string
+	var environmentID string
 	var follow bool
 	cmd := &cobra.Command{
 		Use:   "logs RUN",
@@ -435,7 +442,7 @@ func runLogsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := resolveRunScope(cmd.Context(), control, args[0])
+			scope, err := runScopeForClient(control, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -456,6 +463,7 @@ func runLogsCommand() *cobra.Command {
 			return nil
 		},
 	}
+	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().BoolVar(&follow, "follow", false, "Continue streaming new logs.")
 	return cmd
 }
@@ -479,6 +487,8 @@ func writeRunLogSnapshot(cmd *cobra.Command, logs api.LogSnapshotResponse) error
 }
 
 func runEventsCommand() *cobra.Command {
+	var projectID string
+	var environmentID string
 	var cursor int64
 	var limit int32
 	var follow bool
@@ -491,7 +501,7 @@ func runEventsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := resolveRunScope(cmd.Context(), control, args[0])
+			scope, err := runScopeForClient(control, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -505,6 +515,7 @@ func runEventsCommand() *cobra.Command {
 			return followRunEvents(cmd, control, args[0], cursor, scope)
 		},
 	}
+	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().Int64Var(&cursor, "cursor", 0, "Return events after this cursor.")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum events to return.")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Continue streaming new events.")
@@ -512,6 +523,8 @@ func runEventsCommand() *cobra.Command {
 }
 
 func runWaitCommand() *cobra.Command {
+	var projectID string
+	var environmentID string
 	var timeout string
 	var jsonOutput bool
 	cmd := &cobra.Command{
@@ -533,7 +546,7 @@ func runWaitCommand() *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, waitTimeout)
 				defer cancel()
 			}
-			scope, err := resolveRunScope(ctx, control, args[0])
+			scope, err := runScopeForClient(control, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -544,10 +557,11 @@ func runWaitCommand() *cobra.Command {
 			if jsonOutput {
 				return format.JSON(cmd.OutOrStdout(), run)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", run.ID, run.Status)
+			writeRunLifecycleResult(cmd, run)
 			return nil
 		},
 	}
+	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().StringVar(&timeout, "timeout", "", "Maximum wait duration, for example 10m or 1h.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
@@ -597,33 +611,18 @@ func sessionScopeForClient(control *client.Client, projectID string, environment
 	return client.SessionScopeOptions{ProjectID: environmentScope.ProjectID, EnvironmentID: environmentScope.EnvironmentID}, err
 }
 
-func resolveRunScope(ctx context.Context, control *client.Client, runID string) (client.RunScopeOptions, error) {
-	if !control.UsesSessionScopedRoutes() {
-		return client.RunScopeOptions{}, nil
+func writeRunLifecycleResult(cmd *cobra.Command, run api.RunResponse) {
+	fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", run.ID)
+	fmt.Fprintf(cmd.OutOrStdout(), "run_status: %s\n", run.Status)
+	if run.SessionID != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", run.SessionID)
 	}
-	projects, err := control.ListProjects(ctx)
-	if err != nil {
-		return client.RunScopeOptions{}, err
-	}
-	for _, project := range projects.Projects {
-		environments := project.Environments
-		if len(environments) == 0 {
-			detail, err := control.GetProject(ctx, project.ID)
-			if err != nil {
-				return client.RunScopeOptions{}, err
-			}
-			environments = detail.Environments
-		}
-		for _, environment := range environments {
-			scope := client.RunScopeOptions{ProjectID: project.ID, EnvironmentID: environment.ID}
-			if _, err := control.GetRun(ctx, runID, scope); err == nil {
-				return scope, nil
-			} else if !client.IsStatus(err, http.StatusNotFound) {
-				return client.RunScopeOptions{}, err
-			}
-		}
-	}
-	return client.RunScopeOptions{}, fmt.Errorf("run %s was not found in any accessible project environment", runID)
+}
+
+func writeRunOperationLifecycleResult(cmd *cobra.Command, run api.RunResponse, operation api.RunOperationResponse) {
+	writeRunLifecycleResult(cmd, run)
+	fmt.Fprintf(cmd.OutOrStdout(), "operation_id: %s\n", operation.ID)
+	fmt.Fprintf(cmd.OutOrStdout(), "operation_status: %s\n", operation.Status)
 }
 
 func parsePayload(file string, raw string, pairs []string) (json.RawMessage, error) {

@@ -110,6 +110,7 @@ func tokenCompleteCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
 	var dataJSON string
+	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "complete TOKEN --data-json JSON",
 		Short: "Complete an external token with JSON data.",
@@ -123,15 +124,22 @@ func tokenCompleteCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := control.CompleteToken(cmd.Context(), args[0], api.CompleteTokenRequest{Data: data}, client.TokenScopeOptions{ProjectID: projectID, EnvironmentID: environmentID}); err != nil {
+			response, err := control.CompleteToken(cmd.Context(), args[0], api.CompleteTokenRequest{Data: data}, client.TokenScopeOptions{ProjectID: projectID, EnvironmentID: environmentID})
+			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s completed\n", args[0])
+			if jsonOutput {
+				return format.JSON(cmd.OutOrStdout(), response)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "token_id: %s\n", response.Token.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "token_status: %s\n", response.Token.Status)
+			fmt.Fprintf(cmd.OutOrStdout(), "completion_status: %s\n", response.Status)
 			return nil
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().StringVar(&dataJSON, "data-json", "", "JSON completion payload.")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	_ = cmd.MarkFlagRequired("data-json")
 	return cmd
 }

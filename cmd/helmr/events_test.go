@@ -52,7 +52,7 @@ func TestWaitCommandFollowsEventsUntilTerminal(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out.String()) != "run-1 succeeded" {
+	if !strings.Contains(out.String(), "run_id: run-1") || !strings.Contains(out.String(), "run_status: succeeded") {
 		t.Fatalf("output = %q", out.String())
 	}
 	if requests != 2 {
@@ -129,7 +129,7 @@ func TestWaitCommandChecksStatusAfterStreamDisconnect(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out.String()) != "run-1 succeeded" {
+	if !strings.Contains(out.String(), "run_id: run-1") || !strings.Contains(out.String(), "run_status: succeeded") {
 		t.Fatalf("output = %q", out.String())
 	}
 	if requests != 2 {
@@ -180,7 +180,7 @@ func TestWaitCommandReconnectsAfterTransientEventStreamError(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out.String()) != "run-1 succeeded" {
+	if !strings.Contains(out.String(), "run_id: run-1") || !strings.Contains(out.String(), "run_status: succeeded") {
 		t.Fatalf("output = %q", out.String())
 	}
 	if eventRequests != 2 {

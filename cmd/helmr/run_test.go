@@ -125,8 +125,15 @@ func TestCancelCommandCancelsRun(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out.String()) != "run-1 cancelled" {
-		t.Fatalf("output = %q", out.String())
+	expected := strings.Join([]string{
+		"run_id: run-1",
+		"run_status: cancelled",
+		"operation_id: op-1",
+		"operation_status: applied",
+		"",
+	}, "\n")
+	if out.String() != expected {
+		t.Fatalf("output = %q, want %q", out.String(), expected)
 	}
 	if request.Reason != "cleanup" || !request.Force || request.IdempotencyKey != "cancel-1" {
 		t.Fatalf("request = %+v", request)
