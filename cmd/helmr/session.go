@@ -20,6 +20,7 @@ func sessionCommand() *cobra.Command {
 		sessionStartCommand(),
 		sessionListCommand(),
 		sessionGetCommand(),
+		sessionCloseCommand(),
 		sessionCancelCommand(),
 		sessionStreamCommand(),
 	)
@@ -129,12 +130,47 @@ func sessionCancelCommand() *cobra.Command {
 			if jsonOutput {
 				return format.JSON(cmd.OutOrStdout(), session)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", session.ID, session.Status)
+			writeSessionLifecycleResult(cmd, "cancel", session)
 			return nil
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().StringVar(&reason, "reason", "", "Cancellation reason.")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	return cmd
+}
+
+func sessionCloseCommand() *cobra.Command {
+	var projectID string
+	var environmentID string
+	var reason string
+	var jsonOutput bool
+	cmd := &cobra.Command{
+		Use:   "close SESSION",
+		Short: "Close a session.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			control, err := controlClient(cmd)
+			if err != nil {
+				return err
+			}
+			scope, err := sessionScopeForClient(control, projectID, environmentID)
+			if err != nil {
+				return err
+			}
+			session, err := control.CloseSession(cmd.Context(), args[0], api.CloseSessionRequest{Reason: strings.TrimSpace(reason)}, scope)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return format.JSON(cmd.OutOrStdout(), session)
+			}
+			writeSessionLifecycleResult(cmd, "close", session)
+			return nil
+		},
+	}
+	addScopeFlags(cmd, &projectID, &environmentID)
+	cmd.Flags().StringVar(&reason, "reason", "", "Close reason.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
@@ -363,6 +399,16 @@ func writeSessionSummary(cmd *cobra.Command, session api.SessionResponse) {
 	fmt.Fprintf(cmd.OutOrStdout(), "Activity:  %s\n", session.Activity)
 	fmt.Fprintf(cmd.OutOrStdout(), "Run:       %s\n", session.CurrentRunID)
 	fmt.Fprintf(cmd.OutOrStdout(), "Workspace: %s\n", session.WorkspaceID)
+}
+
+func writeSessionLifecycleResult(cmd *cobra.Command, operation string, session api.SessionResponse) {
+	fmt.Fprintf(cmd.OutOrStdout(), "operation: %s\n", operation)
+	fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", session.ID)
+	fmt.Fprintf(cmd.OutOrStdout(), "session_status: %s\n", session.Status)
+	fmt.Fprintf(cmd.OutOrStdout(), "session_activity: %s\n", session.Activity)
+	if session.CurrentRunID != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", session.CurrentRunID)
+	}
 }
 
 func addScopeFlags(cmd *cobra.Command, projectID *string, environmentID *string) {

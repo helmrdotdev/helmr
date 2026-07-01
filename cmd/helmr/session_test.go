@@ -102,6 +102,109 @@ func TestSessionGetByExternalIDUsesCollectionFilter(t *testing.T) {
 	}
 }
 
+func TestSessionCloseUsesCloseEndpoint(t *testing.T) {
+	var request api.CloseSessionRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions/session-1/close" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(api.SessionResponse{ID: "session-1", Status: "closed", Activity: "idle", CurrentRunID: "run-1"})
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"session", "close", "session-1", "--reason", "done"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if request.Reason != "done" {
+		t.Fatalf("request = %+v", request)
+	}
+	for _, want := range []string{
+		"operation: close",
+		"session_id: session-1",
+		"session_status: closed",
+		"session_activity: idle",
+		"run_id: run-1",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("output = %q, missing %q", out.String(), want)
+		}
+	}
+}
+
+func TestSessionCloseWithSavedLoginUsesScopedEndpoint(t *testing.T) {
+	state, _ := installTestCLIConfig(t)
+	var request api.CloseSessionRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("authorization"); got != "Bearer stored-key" {
+			t.Fatalf("auth = %s", got)
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-1/environments/env-1/sessions/session-1/close" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(api.SessionResponse{ID: "session-1", Status: "closed", Activity: "idle"})
+	}))
+	defer server.Close()
+	if err := state.SaveLogin(server.URL, "stored-key"); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"session", "close", "session-1", "--project", "project-1", "--env", "env-1", "--reason", "done"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if request.Reason != "done" {
+		t.Fatalf("request = %+v", request)
+	}
+}
+
+func TestSessionCancelPrintsLifecycleFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions/session-1/cancel" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(api.SessionResponse{ID: "session-1", Status: "cancelled", Activity: "idle", CurrentRunID: "run-1"})
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"session", "cancel", "session-1"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"operation: cancel",
+		"session_id: session-1",
+		"session_status: cancelled",
+		"session_activity: idle",
+		"run_id: run-1",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("output = %q, missing %q", out.String(), want)
+		}
+	}
+}
+
 func TestSessionStreamListUsesCanonicalCommand(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/sessions/session-1/streams" {

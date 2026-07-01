@@ -589,6 +589,18 @@ func (c *Client) CancelSession(ctx context.Context, sessionID string, input api.
 	return response, nil
 }
 
+func (c *Client) CloseSession(ctx context.Context, sessionID string, input api.CloseSessionRequest, opts SessionScopeOptions) (api.SessionResponse, error) {
+	path, err := c.sessionItemPath(sessionID, "/close", opts)
+	if err != nil {
+		return api.SessionResponse{}, err
+	}
+	var response api.SessionResponse
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
+		return api.SessionResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) AppendSessionInput(ctx context.Context, sessionID string, stream string, input api.AppendStreamRecordRequest, opts SessionScopeOptions) (api.AppendStreamRecordResponse, error) {
 	path, err := c.sessionItemPath(sessionID, "/inputs/"+url.PathEscape(stream), opts)
 	if err != nil {
@@ -719,12 +731,16 @@ func (c *Client) GetToken(ctx context.Context, tokenID string, opts TokenScopeOp
 	return response, nil
 }
 
-func (c *Client) CompleteToken(ctx context.Context, tokenID string, input api.CompleteTokenRequest, opts TokenScopeOptions) error {
+func (c *Client) CompleteToken(ctx context.Context, tokenID string, input api.CompleteTokenRequest, opts TokenScopeOptions) (api.CompleteTokenResponse, error) {
 	path, err := c.tokenItemPath(tokenID, "/complete", opts)
 	if err != nil {
-		return err
+		return api.CompleteTokenResponse{}, err
 	}
-	return c.postJSON(ctx, path, input, nil)
+	var response api.CompleteTokenResponse
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
+		return api.CompleteTokenResponse{}, err
+	}
+	return response, nil
 }
 
 func (c *Client) CancelToken(ctx context.Context, tokenID string, opts TokenScopeOptions) (api.TokenResponse, error) {

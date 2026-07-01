@@ -108,7 +108,10 @@ func TestTokenCompleteSendsData(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		w.WriteHeader(http.StatusNoContent)
+		_ = json.NewEncoder(w).Encode(api.CompleteTokenResponse{
+			Status: "completed",
+			Token:  api.TokenResponse{ID: "token-1", Status: "completed"},
+		})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -125,7 +128,40 @@ func TestTokenCompleteSendsData(t *testing.T) {
 	if string(request.Data) != `{"approved":true}` {
 		t.Fatalf("request = %+v", request)
 	}
-	if got := strings.TrimSpace(out.String()); got != "token-1 completed" {
+	for _, want := range []string{
+		"token_id: token-1",
+		"token_status: completed",
+		"completion_status: completed",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("output = %q, missing %q", out.String(), want)
+		}
+	}
+}
+
+func TestTokenCompleteJSONEmitsResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens/token-1/complete" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(api.CompleteTokenResponse{
+			Status: "completed",
+			Token:  api.TokenResponse{ID: "token-1", Status: "completed"},
+		})
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"token", "complete", "token-1", "--data-json", `{"approved":true}`, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"status":"completed"`) || !strings.Contains(out.String(), `"id":"token-1"`) {
 		t.Fatalf("output = %q", out.String())
 	}
 }

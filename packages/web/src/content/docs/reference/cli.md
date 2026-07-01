@@ -19,18 +19,23 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr task list [--json]` | List deployed task definitions. |
 | `helmr task get TASK [--json]` | Show a deployed task definition. |
 | `helmr session start TASK [-p PROJECT] [-e ENV] [--wait] [--follow] [--json]` | Start a session for a deployed task. |
-| `helmr session list [--external-id EXTERNAL_ID]` | List sessions. |
-| `helmr session get SESSION` | Show session details by session id. |
-| `helmr session get --external-id EXTERNAL_ID` | Show session details by external id. |
-| `helmr session cancel SESSION` | Cancel a session. |
-| `helmr session input send SESSION STREAM --data-json JSON` | Append a session input record. |
-| `helmr session output list SESSION STREAM` | List retained session stream output. |
-| `helmr run list [--session SESSION] [--json]` | List run attempts. |
-| `helmr run get RUN [--json]` | Show run details. |
-| `helmr run logs RUN [--follow]` | Print latest stdout/stderr snapshots and optionally stream new log chunks. |
-| `helmr run events RUN [--cursor N] [--limit N] [--follow]` | Print run events as JSON lines. |
-| `helmr run wait RUN [--timeout DURATION] [--json]` | Wait for a run to finish using the run event stream. |
-| `helmr run cancel RUN [--idempotency-key KEY]` | Cancel a run attempt. |
+| `helmr session list [-p PROJECT] [-e ENV] [--external-id EXTERNAL_ID]` | List sessions. |
+| `helmr session get SESSION [-p PROJECT] [-e ENV]` | Show session details by session id. |
+| `helmr session get --external-id EXTERNAL_ID [-p PROJECT] [-e ENV]` | Show session details by external id. |
+| `helmr session close SESSION [-p PROJECT] [-e ENV] [--reason TEXT] [--json]` | Close a session normally. |
+| `helmr session cancel SESSION [-p PROJECT] [-e ENV] [--reason TEXT] [--json]` | Cancel a session. |
+| `helmr session stream input send SESSION STREAM [-p PROJECT] [-e ENV] --data-json JSON` | Append a session input record. |
+| `helmr session stream output list SESSION STREAM [-p PROJECT] [-e ENV]` | List retained session stream output. |
+| `helmr run list [-p PROJECT] [-e ENV] [--session SESSION] [--json]` | List run attempts. |
+| `helmr run get RUN [-p PROJECT] [-e ENV] [--json]` | Show run details. |
+| `helmr run logs RUN [-p PROJECT] [-e ENV] [--follow]` | Print latest stdout/stderr snapshots and optionally stream new log chunks. |
+| `helmr run events RUN [-p PROJECT] [-e ENV] [--cursor N] [--limit N] [--follow]` | Print run events as JSON lines. |
+| `helmr run wait RUN [-p PROJECT] [-e ENV] [--timeout DURATION] [--json]` | Wait for a run to finish using the run event stream. |
+| `helmr run cancel RUN [-p PROJECT] [-e ENV] [--reason TEXT] [--force] [--idempotency-key KEY] [--json]` | Cancel a run attempt. |
+| `helmr token create [-p PROJECT] [-e ENV] [--timeout DURATION] [--json]` | Create an external completion token. |
+| `helmr token get TOKEN [-p PROJECT] [-e ENV] [--json]` | Show an external completion token. |
+| `helmr token complete TOKEN [-p PROJECT] [-e ENV] --data-json JSON [--json]` | Complete an external token. |
+| `helmr token cancel TOKEN [-p PROJECT] [-e ENV] [--json]` | Cancel a pending external token. |
 | `helmr workspace create` | Create a durable workspace. |
 | `helmr workspace list` | List durable workspaces. |
 | `helmr workspace get WORKSPACE` | Show workspace details. |
@@ -70,10 +75,14 @@ Common options:
 
 `helmr session start` accepts payloads from `--payload-file`, `--payload-json`, or repeated `--payload KEY=VALUE`. `-p` is reserved for `--project`. Use `--workspace WORKSPACE_ID` to attach the new session to an existing durable workspace. Secrets are declared by deployed task source and resolved from the selected project environment at run time. `--wait` waits for the initial run to finish; it does not wait for the session lifecycle to close.
 
+With saved login auth, environment-scoped commands require both `--project` and `--env`. With `HELMR_API_KEY`, the key is already bound to one environment and project/environment flags are rejected.
+
+`helmr session close` is normal lifecycle completion. `helmr session cancel` aborts the session and cancels active work when the control plane can do so. `helmr run cancel` is a lower-level operator primitive for a specific run attempt.
+
 `helmr run wait` follows durable run events and reconnects with the last event cursor. It no longer polls on an interval.
 
 `helmr run logs --follow` prints the current log snapshot, then follows the dedicated run log stream. It reconnects with the last log cursor and exits after the run reaches a terminal state.
 
 `helmr workspace exec` uses `--` before the remote command. Foreground exec streams stdout/stderr and exits with the remote process exit code. `--detach` returns the exec handle without waiting.
 
-`helmr session input send SESSION STREAM --data-json JSON` appends a record to a named session input stream. `helmr session output list SESSION STREAM` reads retained output records.
+`helmr session stream input send SESSION STREAM --data-json JSON` appends a record to a named session input stream. `helmr session stream output list SESSION STREAM` reads retained output records.

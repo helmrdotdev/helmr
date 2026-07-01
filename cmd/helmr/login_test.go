@@ -128,16 +128,6 @@ func TestCommandUsesSavedLoginWhenEnvIsUnset(t *testing.T) {
 			t.Fatalf("auth = %s", got)
 		}
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/projects":
-			_ = json.NewEncoder(w).Encode(api.ListProjectsResponse{Projects: []api.ProjectSummary{{
-				ID: "project-1",
-				Environments: []api.EnvironmentSummary{{
-					ID:        "env-1",
-					ProjectID: "project-1",
-				}},
-			}}})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/project-1/environments/env-1/runs/run-1":
-			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", ProjectID: "project-1", EnvironmentID: "env-1"})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/project-1/environments/env-1/runs/run-1/logs":
 			_ = json.NewEncoder(w).Encode(api.LogSnapshotResponse{
 				StdoutBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
@@ -156,11 +146,49 @@ func TestCommandUsesSavedLoginWhenEnvIsUnset(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "logs", "run-1"})
+	cmd.SetArgs([]string{"run", "logs", "run-1", "--project", "project-1", "--env", "env-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "hello\n" {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestRunCommandWithSavedLoginRequiresExplicitScope(t *testing.T) {
+	state, _ := installTestCLIConfig(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+	if err := state.SaveLogin(server.URL, "stored-key"); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "logs", "run-1"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--project and --env are required with helmr login") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRunCommandWithAPIKeyRejectsExplicitScope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "get", "run-1", "--project", "project-1", "--env", "env-1"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "API keys are already environment scoped") {
+		t.Fatalf("err = %v", err)
 	}
 }

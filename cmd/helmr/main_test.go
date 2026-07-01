@@ -233,6 +233,7 @@ func TestGreenfieldCommandSurface(t *testing.T) {
 		{"deployment"},
 		{"sandbox"},
 		{"token"},
+		{"session", "close"},
 		{"session", "stream"},
 		{"session", "stream", "input", "send"},
 		{"session", "stream", "input", "list"},
