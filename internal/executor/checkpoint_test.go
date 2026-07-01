@@ -29,17 +29,21 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 		CheckpointId: "checkpoint-1",
 	})
 	artifact := checkpointArtifact(t)
+	addCheckpointRuntimeSubstrate(t, &artifact)
 	session := &checkpointSession{stream: stream, artifact: artifact}
 	store := &checkpointCAS{}
 	encryptor := testCheckpointEncryptor(t)
+	registrar := &checkpointRuntimeSubstrateRegistrar{id: "019f1790-0000-7000-8000-000000000001"}
 
 	result, err := runtimeCheckpointer{
-		session:   session,
-		cas:       store,
-		encryptor: encryptor,
-		tempDir:   t.TempDir(),
-		stream:    stream,
-		workspace: testCheckpointWorkspaceBase(),
+		session:           session,
+		cas:               store,
+		encryptor:         encryptor,
+		tempDir:           t.TempDir(),
+		stream:            stream,
+		workspace:         testCheckpointWorkspaceBase(),
+		substrateSource:   &api.WorkerRuntimeSubstrateSource{DeploymentSandboxID: "019f1790-0000-7000-8000-000000000002"},
+		runtimeSubstrates: registrar,
 	}.CreateCheckpoint(context.Background(), CheckpointRequest{
 		RunWaitID:    "run-wait-id-1",
 		CheckpointID: "checkpoint-1",
@@ -56,12 +60,13 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 		t.Fatalf("stream closed %d times", stream.closed)
 	}
 	assertSuspendFrame(t, stream.written.Bytes(), "run-wait-id-1", "checkpoint-1")
-	if len(store.puts) != 4 {
+	if len(store.puts) != 5 {
 		t.Fatalf("puts = %+v", store.puts)
 	}
 	manifestPut := checkpointPutByMediaType(t, store, cas.CheckpointRuntimeConfigMediaType)
 	vmStatePut := checkpointPutByMediaType(t, store, cas.CheckpointVMStateMediaType)
 	scratchPut := checkpointPutByMediaType(t, store, cas.CheckpointScratchDiskMediaType)
+	substratePut := checkpointPutByMediaType(t, store, cas.RuntimeSubstrateMediaType)
 	memoryPut := checkpointPutByMediaType(t, store, cas.CheckpointMemoryMediaType)
 	if manifest.RecoveryPoint.Runtime.Backend != "firecracker" || manifest.RecoveryPoint.Runtime.Arch != "arm64" || manifest.RecoveryPoint.Runtime.ABI != "helmr.firecracker.snapshot.v0" {
 		t.Fatalf("manifest identity = %+v", manifest)
@@ -75,6 +80,9 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	if manifest.RecoveryPoint.Runtime.ConfigDigest != "sha256:runtime-config" {
 		t.Fatalf("runtime config digest = %+v", manifest.RecoveryPoint.Runtime.ConfigDigest)
 	}
+	if manifest.RecoveryPoint.Runtime.Substrate == nil || manifest.RecoveryPoint.Runtime.Substrate.Digest != sha256sum.DigestBytes([]byte("substrate")) {
+		t.Fatalf("runtime substrate = %+v", manifest.RecoveryPoint.Runtime.Substrate)
+	}
 	if manifest.RuntimeState.ConfigArtifact.Digest != manifestPut.object.Digest {
 		t.Fatalf("manifest artifact = %+v puts=%+v", manifest.RuntimeState.ConfigArtifact, store.puts)
 	}
@@ -83,6 +91,12 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	}
 	if manifest.RuntimeState.ScratchDiskArtifact.Digest != scratchPut.object.Digest {
 		t.Fatalf("scratch disk artifact = %+v puts=%+v", manifest.RuntimeState.ScratchDiskArtifact, store.puts)
+	}
+	if manifest.RuntimeState.RuntimeSubstrateArtifact == nil || manifest.RuntimeState.RuntimeSubstrateArtifact.ID != registrar.id || manifest.RuntimeState.RuntimeSubstrateArtifact.Artifact.Digest != substratePut.object.Digest {
+		t.Fatalf("runtime substrate artifact = %+v puts=%+v", manifest.RuntimeState.RuntimeSubstrateArtifact, store.puts)
+	}
+	if len(registrar.requests) != 1 || registrar.requests[0].SubstrateDigest != manifest.RecoveryPoint.Runtime.Substrate.Digest {
+		t.Fatalf("runtime substrate register requests = %+v", registrar.requests)
 	}
 	if len(manifest.RuntimeState.MemoryArtifacts) != 1 || manifest.RuntimeState.MemoryArtifacts[0].Digest != memoryPut.object.Digest {
 		t.Fatalf("memory artifacts = %+v puts=%+v", manifest.RuntimeState.MemoryArtifacts, store.puts)
@@ -93,8 +107,12 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	if string(manifest.RuntimeState.Config) != `{"runtime":{"backend":"firecracker"}}` {
 		t.Fatalf("raw manifest = %s", manifest.RuntimeState.Config)
 	}
+	if !checkpointPhaseHasFilepackStats(manifest.Phases, "pack_scratch_filepack") {
+		t.Fatalf("manifest phases missing scratch filepack stats: %+v", manifest.Phases)
+	}
 	assertRemoved(t, artifact.VMState.Path)
 	assertRemoved(t, artifact.ScratchDisk.Path)
+	assertRemoved(t, artifact.Substrate.Path)
 	assertRemoved(t, artifact.Memory[0].Path)
 }
 
@@ -356,7 +374,7 @@ func TestRuntimeCheckpointerReleaseBorrowedSourceDoesNotCloseControlStreamTwice(
 	}
 	parent := &borrowedParentSession{stream: discardReadWriteCloser{}}
 	parent.artifact = checkpointArtifact(t)
-	session, ok := newBorrowedRunSession(parent, stream).(vm.CheckpointableSession)
+	session, ok := newBorrowedRunSession(parent, stream, nil).(vm.CheckpointableSession)
 	if !ok {
 		t.Fatal("borrowed session is not checkpointable")
 	}
@@ -576,6 +594,27 @@ func checkpointPutByMediaType(t *testing.T, store *checkpointCAS, mediaType stri
 	return checkpointCASPut{}
 }
 
+type checkpointRuntimeSubstrateRegistrar struct {
+	id       string
+	requests []api.WorkerRuntimeSubstrateArtifactRegisterRequest
+}
+
+func (r *checkpointRuntimeSubstrateRegistrar) RegisterRuntimeSubstrateArtifact(_ context.Context, request api.WorkerRuntimeSubstrateArtifactRegisterRequest) (api.WorkerRuntimeSubstrateArtifactRegisterResponse, error) {
+	r.requests = append(r.requests, request)
+	return api.WorkerRuntimeSubstrateArtifactRegisterResponse{
+		RuntimeSubstrateArtifact: api.WorkerRuntimeSubstrateArtifact{
+			ID:                  r.id,
+			DeploymentSandboxID: request.DeploymentSandboxID,
+			Artifact:            request.Artifact,
+			SubstrateDigest:     request.SubstrateDigest,
+			Format:              request.Format,
+			BuilderABI:          request.BuilderABI,
+			LayoutABI:           request.LayoutABI,
+			SizeBytes:           request.SizeBytes,
+		},
+	}, nil
+}
+
 type checkpointCASStage struct {
 	store     *checkpointCAS
 	mediaType string
@@ -642,10 +681,55 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 		RootfsDigest:        "sha256:rootfs",
 		RuntimeConfigDigest: "sha256:runtime-config",
 		VMState:             vm.SnapshotFile{Path: state, MediaType: cas.CheckpointVMStateMediaType},
-		ScratchDisk:         vm.SnapshotFile{Path: scratch, MediaType: cas.CheckpointScratchDiskMediaType},
-		Memory:              []vm.SnapshotFile{{Path: memory, MediaType: cas.CheckpointMemoryMediaType}},
-		Manifest:            []byte(`{"runtime":{"backend":"firecracker"}}`),
+		ScratchDisk: vm.SnapshotFile{Path: scratch, MediaType: cas.CheckpointScratchDiskMediaType, Filepack: &vm.FilepackStats{
+			LogicalBytes:      1024,
+			SparseSupported:   new(true),
+			SparseDataRanges:  1,
+			ZeroChunksSkipped: 2,
+			EncodedChunks:     1,
+			CompressedBytes:   64,
+		}},
+		Memory: []vm.SnapshotFile{{Path: memory, MediaType: cas.CheckpointMemoryMediaType}},
+		Phases: []vm.RuntimePhase{{
+			Name:      "pack_scratch_filepack",
+			Role:      "scratch-disk",
+			MediaType: cas.CheckpointScratchDiskMediaType,
+			Filepack: &vm.FilepackStats{
+				LogicalBytes:      1024,
+				SparseSupported:   new(true),
+				SparseDataRanges:  1,
+				ZeroChunksSkipped: 2,
+				EncodedChunks:     1,
+				CompressedBytes:   64,
+			},
+		}},
+		Manifest: []byte(`{"runtime":{"backend":"firecracker"}}`),
 	}
+}
+
+func addCheckpointRuntimeSubstrate(t *testing.T, artifact *vm.SnapshotArtifact) {
+	t.Helper()
+	path := filepath.Join(filepath.Dir(artifact.VMState.Path), "substrate.ext4")
+	if err := os.WriteFile(path, []byte("substrate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact.Substrate = &vm.RuntimeSubstrate{
+		Path:       path,
+		Digest:     sha256sum.DigestBytes([]byte("substrate")),
+		Format:     "ext4",
+		BuilderABI: "helmr.runtime-substrate.builder.v0",
+		LayoutABI:  "helmr.runtime-substrate.layout.v0",
+	}
+}
+
+func checkpointPhaseHasFilepackStats(phases []api.WorkerCheckpointPhase, name string) bool {
+	for _, phase := range phases {
+		if phase.Name == name && phase.Filepack != nil && phase.Filepack.LogicalBytes > 0 &&
+			phase.Filepack.SparseSupported != nil && *phase.Filepack.SparseSupported {
+			return true
+		}
+	}
+	return false
 }
 
 func assertSuspendFrame(t *testing.T, body []byte, runWaitID string, checkpointID string) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -21,6 +22,8 @@ const (
 type ExpirySweepStore interface {
 	ExpirySweepOrgStore
 	ListOrganizationIDsPage(context.Context, db.ListOrganizationIDsPageParams) ([]pgtype.UUID, error)
+	CreateExpiredRuntimeStopCommands(ctx context.Context, expiredBefore pgtype.Timestamptz) ([]db.WorkerCommand, error)
+	MarkExpiredRuntimeInstancesLost(ctx context.Context, expiredBefore pgtype.Timestamptz) ([]db.RuntimeInstance, error)
 }
 
 type ExpirySweepOrgStore interface {
@@ -30,6 +33,8 @@ type ExpirySweepOrgStore interface {
 	ExpireDueSessions(ctx context.Context, orgID pgtype.UUID) ([]db.Session, error)
 	ExpireDueTokens(ctx context.Context, orgID pgtype.UUID) ([]db.ExpireDueTokensRow, error)
 	ResolveDueTimerWaits(ctx context.Context, arg db.ResolveDueTimerWaitsParams) ([]db.ResolveDueTimerWaitsRow, error)
+	CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx context.Context, arg db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams) ([]db.WorkerCommand, error)
+	CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx context.Context, arg db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams) ([]db.WorkerCommand, error)
 	ExpireDueRunWaits(ctx context.Context, orgID pgtype.UUID) ([]db.RunWait, error)
 	FailStaleResolvedRunWaits(ctx context.Context, arg db.FailStaleResolvedRunWaitsParams) ([]db.FailStaleResolvedRunWaitsRow, error)
 	RequeueResolvedRunWaits(ctx context.Context, arg db.RequeueResolvedRunWaitsParams) ([]db.RequeueResolvedRunWaitsRow, error)
@@ -168,6 +173,13 @@ func (s *ExpirySweeper) sweep(ctx context.Context) error {
 
 func sweepOnce(ctx context.Context, store ExpirySweepStore, orgLimit int32) error {
 	var problems []error
+	expiredBefore := pgvalue.Timestamptz(time.Now())
+	if _, err := store.CreateExpiredRuntimeStopCommands(ctx, expiredBefore); err != nil {
+		problems = append(problems, err)
+	}
+	if _, err := store.MarkExpiredRuntimeInstancesLost(ctx, expiredBefore); err != nil {
+		problems = append(problems, err)
+	}
 	var afterID pgtype.UUID
 	for {
 		orgIDs, err := store.ListOrganizationIDsPage(ctx, db.ListOrganizationIDsPageParams{
@@ -213,6 +225,18 @@ func SweepExpiredForOrg(ctx context.Context, store ExpirySweepOrgStore, orgID pg
 		return err
 	}
 	if _, err := store.ExpireDueRunWaits(ctx, orgID); err != nil {
+		return err
+	}
+	if _, err := store.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
+		OrgID:      orgID,
+		LimitCount: 1000,
+	}); err != nil {
+		return err
+	}
+	if _, err := store.CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx, db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams{
+		OrgID:      orgID,
+		LimitCount: 1000,
+	}); err != nil {
 		return err
 	}
 	if _, err := store.FailStaleResolvedRunWaits(ctx, db.FailStaleResolvedRunWaitsParams{

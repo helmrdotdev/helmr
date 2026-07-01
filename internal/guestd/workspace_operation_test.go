@@ -55,11 +55,11 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	defer materializeServer.Close()
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- handleWorkspaceMaterializeConnection(context.Background(), materializeServer, registry)
+		errCh <- handleWorkspaceMaterializeConnection(context.Background(), materializeServer, slogDiscard(), registry)
 	}()
 	if err := transport.WriteProtoFrame(materializeClient, &workspacev0.MaterializeWorkspaceRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
-			MaterializationId: "mat-1",
+			WorkspaceMountId:  "mat-1",
 			WorkspaceId:       "workspace-1",
 			ChannelToken:      "channel-token",
 			FencingGeneration: 1,
@@ -101,12 +101,18 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	if response.State != "running" || response.GuestdChannelTokenHash != sha256sum.HexBytes([]byte("channel-token")) {
 		t.Fatalf("response state=%q guestd_channel_token_hash=%q", response.State, response.GuestdChannelTokenHash)
 	}
+	if !workspaceMountPhaseNames(response.Phases, "guest_sandbox_image_restore", "guest_workspace_artifact_restore", "guest_register") {
+		t.Fatalf("response phases = %+v", response.Phases)
+	}
 	if err := <-errCh; err != nil {
 		t.Fatal(err)
 	}
 	registry.mu.RLock()
 	workspaceRoot := registry.entries["mat-1"].workspaceRoot
 	registry.mu.RUnlock()
+	if tempRoot := os.Getenv("HELMR_GUESTD_TMPDIR"); tempRoot != "" && !strings.HasPrefix(workspaceRoot, tempRoot+string(os.PathSeparator)) {
+		t.Fatalf("workspace root = %q, want under HELMR_GUESTD_TMPDIR %q", workspaceRoot, tempRoot)
+	}
 	body, err := os.ReadFile(filepath.Join(workspaceRoot, "hello.txt"))
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +133,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	if err := transport.WriteProtoFrame(operationClient, &workspacev0.WorkspaceOperationRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			OperationId:                "op-1",
-			MaterializationId:          "mat-1",
+			WorkspaceMountId:           "mat-1",
 			WorkspaceId:                "workspace-1",
 			ChannelToken:               "channel-token",
 			FencingGeneration:          1,
@@ -160,7 +166,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	if err := transport.WriteProtoFrame(mismatchClient, &workspacev0.WorkspaceOperationRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			OperationId:                "op-mismatch",
-			MaterializationId:          "mat-1",
+			WorkspaceMountId:           "mat-1",
 			WorkspaceId:                "workspace-other",
 			ChannelToken:               "channel-token",
 			FencingGeneration:          1,
@@ -192,7 +198,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	if err := transport.WriteProtoFrame(advanceFenceClient, &workspacev0.WorkspaceOperationRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			OperationId:                "op-advance-fence",
-			MaterializationId:          "mat-1",
+			WorkspaceMountId:           "mat-1",
 			WorkspaceId:                "workspace-1",
 			ChannelToken:               "channel-token",
 			FencingGeneration:          2,
@@ -224,7 +230,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	if err := transport.WriteProtoFrame(staleFenceClient, &workspacev0.WorkspaceOperationRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			OperationId:                "op-stale-fence",
-			MaterializationId:          "mat-1",
+			WorkspaceMountId:           "mat-1",
 			WorkspaceId:                "workspace-1",
 			ChannelToken:               "channel-token",
 			FencingGeneration:          1,
@@ -247,6 +253,67 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	}
 }
 
+func TestWorkspaceMaterializeReturnsFailureResponse(t *testing.T) {
+	registry := newWorkspaceOperationRegistry()
+	materializeClient, materializeServer := net.Pipe()
+	defer materializeClient.Close()
+	defer materializeServer.Close()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- handleWorkspaceMaterializeConnection(context.Background(), materializeServer, slogDiscard(), registry)
+	}()
+	if err := transport.WriteProtoFrame(materializeClient, &workspacev0.MaterializeWorkspaceRequest{
+		Envelope: &workspacev0.WorkspaceOperationEnvelope{
+			WorkspaceMountId:  "mat-1",
+			WorkspaceId:       "workspace-1",
+			ChannelToken:      "channel-token",
+			FencingGeneration: 1,
+		},
+		MountPath:     "relative",
+		BaseVersionId: "version-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var response workspacev0.MaterializeWorkspaceResponse
+	if err := transport.ReadProtoFrame(materializeClient, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.State != "failed" {
+		t.Fatalf("response state = %q, want failed", response.State)
+	}
+	if got := testWorkspaceMountPhaseError(response.Phases); !strings.Contains(got, "mount_path") {
+		t.Fatalf("phase error = %q, want mount_path", got)
+	}
+	if err := <-errCh; err == nil || !strings.Contains(err.Error(), "mount_path") {
+		t.Fatalf("handler error = %v, want mount_path", err)
+	}
+}
+
+func testWorkspaceMountPhaseError(phases []*workspacev0.WorkspaceMountPhase) string {
+	for i := len(phases) - 1; i >= 0; i-- {
+		if phases[i] != nil && strings.TrimSpace(phases[i].GetError()) != "" {
+			return strings.TrimSpace(phases[i].GetError())
+		}
+	}
+	return ""
+}
+
+func workspaceMountPhaseNames(phases []*workspacev0.WorkspaceMountPhase, expected ...string) bool {
+	seen := map[string]bool{}
+	for _, phase := range phases {
+		if phase == nil {
+			continue
+		}
+		seen[phase.Name] = true
+	}
+	for _, name := range expected {
+		if !seen[name] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestWorkspaceOperationRegistryDefersRetiredCleanupUntilRelease(t *testing.T) {
 	tempRoot := t.TempDir()
 	oldRoot := filepath.Join(tempRoot, "old")
@@ -254,7 +321,7 @@ func TestWorkspaceOperationRegistryDefersRetiredCleanupUntilRelease(t *testing.T
 		t.Fatal(err)
 	}
 	registry := newWorkspaceOperationRegistry()
-	registry.register("mat-1", &workspaceMaterializationEntry{
+	registry.register("mat-1", &workspaceMountEntry{
 		workspaceID:       "workspace-1",
 		channelToken:      "token-1",
 		fencingGeneration: 1,
@@ -265,7 +332,7 @@ func TestWorkspaceOperationRegistryDefersRetiredCleanupUntilRelease(t *testing.T
 	if !ok {
 		t.Fatal("expected registry acquire")
 	}
-	registry.register("mat-1", &workspaceMaterializationEntry{
+	registry.register("mat-1", &workspaceMountEntry{
 		workspaceID:       "workspace-1",
 		channelToken:      "token-2",
 		fencingGeneration: 2,

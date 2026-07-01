@@ -17,10 +17,10 @@ const (
 	workspacePrimitiveWriteLeaseTTL = 24 * time.Hour
 	workspaceDispatchListLimit      = int32(1000)
 
-	workspaceOperationKindStartExec = db.WorkspaceMaterializationOperationKindStartExec
-	workspaceOperationKindCreatePty = db.WorkspaceMaterializationOperationKindCreatePty
-	workspaceOperationKindResizePty = db.WorkspaceMaterializationOperationKindResizePty
-	workspaceOperationKindClosePty  = db.WorkspaceMaterializationOperationKindClosePty
+	workspaceOperationKindStartExec = db.WorkspaceOperationKindStartExec
+	workspaceOperationKindCreatePty = db.WorkspaceOperationKindCreatePty
+	workspaceOperationKindResizePty = db.WorkspaceOperationKindResizePty
+	workspaceOperationKindClosePty  = db.WorkspaceOperationKindClosePty
 
 	workspaceOperationResourceExec = db.WorkspaceResourceKindWorkspaceExec
 	workspaceOperationResourcePty  = db.WorkspaceResourceKindWorkspacePty
@@ -39,27 +39,27 @@ type workspacePrimitiveResourceScope struct {
 }
 
 type workspacePrimitiveControlTarget struct {
-	name              string
-	scope             workspacePrimitiveResourceScope
-	materializationID pgtype.UUID
-	resourceKind      db.WorkspaceResourceKind
-	resourceID        pgtype.UUID
+	name             string
+	scope            workspacePrimitiveResourceScope
+	workspaceMountID pgtype.UUID
+	resourceKind     db.WorkspaceResourceKind
+	resourceID       pgtype.UUID
 }
 
-func enqueuePendingWorkspacePrimitiveOperations(ctx context.Context, store db.Querier, materialization db.WorkspaceMaterialization) error {
+func enqueuePendingWorkspacePrimitiveOperations(ctx context.Context, store db.Querier, mount db.WorkspaceMount) error {
 	execs, err := store.ListWorkspaceExecsAwaitingDispatch(ctx, db.ListWorkspaceExecsAwaitingDispatchParams{
-		OrgID:             materialization.OrgID,
-		ProjectID:         materialization.ProjectID,
-		EnvironmentID:     materialization.EnvironmentID,
-		WorkspaceID:       materialization.WorkspaceID,
-		MaterializationID: materialization.ID,
-		LimitCount:        workspaceDispatchListLimit,
+		OrgID:            mount.OrgID,
+		ProjectID:        mount.ProjectID,
+		EnvironmentID:    mount.EnvironmentID,
+		WorkspaceID:      mount.WorkspaceID,
+		WorkspaceMountID: mount.ID,
+		LimitCount:       workspaceDispatchListLimit,
 	})
 	if err != nil {
 		return err
 	}
 	for _, exec := range execs {
-		exec, lease, err := ensureWorkspaceExecWriteLease(ctx, store, materialization, exec)
+		exec, lease, err := ensureWorkspaceExecWriteLease(ctx, store, mount, exec)
 		if err != nil {
 			return err
 		}
@@ -67,23 +67,23 @@ func enqueuePendingWorkspacePrimitiveOperations(ctx context.Context, store db.Qu
 		if err != nil {
 			return err
 		}
-		if err := requestWorkspacePrimitiveOperation(ctx, store, materialization, workspaceOperationKindStartExec, workspaceOperationResourceExec, exec.ID, request, lease); err != nil {
+		if err := requestWorkspacePrimitiveOperation(ctx, store, mount, workspaceOperationKindStartExec, workspaceOperationResourceExec, exec.ID, request, lease); err != nil {
 			return err
 		}
 	}
 	ptys, err := store.ListWorkspacePtySessionsAwaitingDispatch(ctx, db.ListWorkspacePtySessionsAwaitingDispatchParams{
-		OrgID:             materialization.OrgID,
-		ProjectID:         materialization.ProjectID,
-		EnvironmentID:     materialization.EnvironmentID,
-		WorkspaceID:       materialization.WorkspaceID,
-		MaterializationID: materialization.ID,
-		LimitCount:        workspaceDispatchListLimit,
+		OrgID:            mount.OrgID,
+		ProjectID:        mount.ProjectID,
+		EnvironmentID:    mount.EnvironmentID,
+		WorkspaceID:      mount.WorkspaceID,
+		WorkspaceMountID: mount.ID,
+		LimitCount:       workspaceDispatchListLimit,
 	})
 	if err != nil {
 		return err
 	}
 	for _, pty := range ptys {
-		pty, lease, err := ensureWorkspacePtyWriteLease(ctx, store, materialization, pty)
+		pty, lease, err := ensureWorkspacePtyWriteLease(ctx, store, mount, pty)
 		if err != nil {
 			return err
 		}
@@ -91,15 +91,15 @@ func enqueuePendingWorkspacePrimitiveOperations(ctx context.Context, store db.Qu
 		if err != nil {
 			return err
 		}
-		if err := requestWorkspacePrimitiveOperation(ctx, store, materialization, workspaceOperationKindCreatePty, workspaceOperationResourcePty, pty.ID, request, lease); err != nil {
+		if err := requestWorkspacePrimitiveOperation(ctx, store, mount, workspaceOperationKindCreatePty, workspaceOperationResourcePty, pty.ID, request, lease); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func materializationFromEnsureRow(row db.EnsureWorkspaceMaterializationRequestedRow) db.WorkspaceMaterialization {
-	return db.WorkspaceMaterialization{
+func workspaceMountFromEnsureRow(row db.EnsureWorkspaceMountRequestedRow) db.WorkspaceMount {
+	return db.WorkspaceMount{
 		ID:                          row.ID,
 		OrgID:                       row.OrgID,
 		ProjectID:                   row.ProjectID,
@@ -108,24 +108,11 @@ func materializationFromEnsureRow(row db.EnsureWorkspaceMaterializationRequested
 		DeploymentSandboxID:         row.DeploymentSandboxID,
 		SandboxFingerprint:          row.SandboxFingerprint,
 		BaseVersionID:               row.BaseVersionID,
-		WorkerInstanceID:            row.WorkerInstanceID,
-		ReservationToken:            row.ReservationToken,
-		ReservationExpiresAt:        row.ReservationExpiresAt,
 		ClaimAttempt:                row.ClaimAttempt,
-		DeadLetteredAt:              row.DeadLetteredAt,
 		Priority:                    row.Priority,
-		RequestedCpuMillis:          row.RequestedCpuMillis,
-		RequestedMemoryMib:          row.RequestedMemoryMib,
-		RequestedDiskMib:            row.RequestedDiskMib,
-		RequestedExecutionSlots:     row.RequestedExecutionSlots,
-		ReservedCpuMillis:           row.ReservedCpuMillis,
-		ReservedMemoryMib:           row.ReservedMemoryMib,
-		ReservedDiskMib:             row.ReservedDiskMib,
-		ReservedExecutionSlots:      row.ReservedExecutionSlots,
-		CapacityReservationID:       row.CapacityReservationID,
+		RuntimeInstanceID:           row.RuntimeInstanceID,
 		GuestdChannelTokenHash:      row.GuestdChannelTokenHash,
 		GuestdChannelTokenExpiresAt: row.GuestdChannelTokenExpiresAt,
-		RuntimeID:                   row.RuntimeID,
 		State:                       row.State,
 		Request:                     row.Request,
 		LeaseGeneration:             row.LeaseGeneration,
@@ -150,7 +137,8 @@ func materializationFromEnsureRow(row db.EnsureWorkspaceMaterializationRequested
 		AdapterAbi:                  row.AdapterAbi,
 		LastHeartbeatAt:             row.LastHeartbeatAt,
 		RequestedAt:                 row.RequestedAt,
-		MaterializedAt:              row.MaterializedAt,
+		MountedAt:                   row.MountedAt,
+		UnmountedAt:                 row.UnmountedAt,
 		StoppedAt:                   row.StoppedAt,
 		LostAt:                      row.LostAt,
 		FailedAt:                    row.FailedAt,
@@ -160,12 +148,12 @@ func materializationFromEnsureRow(row db.EnsureWorkspaceMaterializationRequested
 	}
 }
 
-func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, materialization db.WorkspaceMaterialization, operationKind db.WorkspaceMaterializationOperationKind, resourceKind db.WorkspaceResourceKind, resourceID pgtype.UUID, request []byte, lease workspacePrimitiveOperationLease) error {
+func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, mount db.WorkspaceMount, operationKind db.WorkspaceOperationKind, resourceKind db.WorkspaceResourceKind, resourceID pgtype.UUID, request []byte, lease workspacePrimitiveOperationLease) error {
 	fingerprint, err := workspace.OperationFingerprint(operationKind, request)
 	if err != nil {
 		return err
 	}
-	_, err = store.RequestWorkspaceMaterializationOperation(ctx, db.RequestWorkspaceMaterializationOperationParams{
+	_, err = store.RequestWorkspaceOperation(ctx, db.RequestWorkspaceOperationParams{
 		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OperationKind:      operationKind,
 		ResourceKind:       resourceKind,
@@ -177,11 +165,11 @@ func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, m
 		WriteLeaseID:       lease.writeLeaseID,
 		FencingToken:       lease.fencingToken,
 		Request:            request,
-		OrgID:              materialization.OrgID,
-		ProjectID:          materialization.ProjectID,
-		EnvironmentID:      materialization.EnvironmentID,
-		WorkspaceID:        materialization.WorkspaceID,
-		MaterializationID:  materialization.ID,
+		OrgID:              mount.OrgID,
+		ProjectID:          mount.ProjectID,
+		EnvironmentID:      mount.EnvironmentID,
+		WorkspaceID:        mount.WorkspaceID,
+		WorkspaceMountID:   mount.ID,
 	})
 	if err == nil {
 		return nil
@@ -189,15 +177,15 @@ func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, m
 	if !isUniqueViolation(err) {
 		return err
 	}
-	existing, getErr := store.GetActiveWorkspaceMaterializationOperationByResource(ctx, db.GetActiveWorkspaceMaterializationOperationByResourceParams{
-		OrgID:             materialization.OrgID,
-		ProjectID:         materialization.ProjectID,
-		EnvironmentID:     materialization.EnvironmentID,
-		WorkspaceID:       materialization.WorkspaceID,
-		MaterializationID: materialization.ID,
-		OperationKind:     operationKind,
-		ResourceKind:      resourceKind,
-		ResourceID:        resourceID,
+	existing, getErr := store.GetActiveWorkspaceOperationByResource(ctx, db.GetActiveWorkspaceOperationByResourceParams{
+		OrgID:            mount.OrgID,
+		ProjectID:        mount.ProjectID,
+		EnvironmentID:    mount.EnvironmentID,
+		WorkspaceID:      mount.WorkspaceID,
+		WorkspaceMountID: mount.ID,
+		OperationKind:    operationKind,
+		ResourceKind:     resourceKind,
+		ResourceID:       resourceID,
 	})
 	if getErr != nil {
 		return getErr
@@ -267,7 +255,7 @@ func getWorkspacePrimitiveWriteLease(ctx context.Context, store db.Querier, scop
 	return workspacePrimitiveOperationLease{writeLeaseID: lease.ID, fencingToken: lease.FencingToken}, nil
 }
 
-func acquireWorkspacePrimitiveWriteLease(ctx context.Context, store db.Querier, materialization db.WorkspaceMaterialization, scope workspacePrimitiveResourceScope, ownerExecID pgtype.UUID, ownerPtySessionID pgtype.UUID) (workspacePrimitiveOperationLease, error) {
+func acquireWorkspacePrimitiveWriteLease(ctx context.Context, store db.Querier, mount db.WorkspaceMount, scope workspacePrimitiveResourceScope, ownerExecID pgtype.UUID, ownerPtySessionID pgtype.UUID) (workspacePrimitiveOperationLease, error) {
 	lease, err := store.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
 		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OwnerExecID:       ownerExecID,
@@ -279,7 +267,7 @@ func acquireWorkspacePrimitiveWriteLease(ctx context.Context, store db.Querier, 
 		ProjectID:         scope.projectID,
 		EnvironmentID:     scope.environmentID,
 		WorkspaceID:       scope.workspaceID,
-		MaterializationID: materialization.ID,
+		WorkspaceMountID:  mount.ID,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -290,7 +278,7 @@ func acquireWorkspacePrimitiveWriteLease(ctx context.Context, store db.Querier, 
 	return workspacePrimitiveOperationLease{writeLeaseID: lease.ID, fencingToken: lease.FencingToken}, nil
 }
 
-func ensureWorkspaceExecWriteLease(ctx context.Context, store db.Querier, materialization db.WorkspaceMaterialization, row db.WorkspaceExec) (db.WorkspaceExec, workspacePrimitiveOperationLease, error) {
+func ensureWorkspaceExecWriteLease(ctx context.Context, store db.Querier, mount db.WorkspaceMount, row db.WorkspaceExec) (db.WorkspaceExec, workspacePrimitiveOperationLease, error) {
 	scope := workspacePrimitiveScopeForExec(row)
 	if row.WriteLeaseID.Valid {
 		lease, err := getWorkspacePrimitiveWriteLease(ctx, store, scope, row.WriteLeaseID)
@@ -299,20 +287,20 @@ func ensureWorkspaceExecWriteLease(ctx context.Context, store db.Querier, materi
 		}
 		return row, lease, nil
 	}
-	lease, err := acquireWorkspacePrimitiveWriteLease(ctx, store, materialization, scope, row.ID, pgtype.UUID{})
+	lease, err := acquireWorkspacePrimitiveWriteLease(ctx, store, mount, scope, row.ID, pgtype.UUID{})
 	if err != nil {
 		return db.WorkspaceExec{}, workspacePrimitiveOperationLease{}, err
 	}
-	row, err = store.BindWorkspaceExecMaterialization(ctx, db.BindWorkspaceExecMaterializationParams{
-		MaterializationID: materialization.ID,
-		InstanceLeaseID:   row.InstanceLeaseID,
-		WriteLeaseID:      lease.writeLeaseID,
-		State:             db.WorkspaceExecStateQueued,
-		OrgID:             row.OrgID,
-		ProjectID:         row.ProjectID,
-		EnvironmentID:     row.EnvironmentID,
-		WorkspaceID:       row.WorkspaceID,
-		ID:                row.ID,
+	row, err = store.BindWorkspaceExecWorkspaceMount(ctx, db.BindWorkspaceExecWorkspaceMountParams{
+		WorkspaceMountID: mount.ID,
+		InstanceLeaseID:  row.InstanceLeaseID,
+		WriteLeaseID:     lease.writeLeaseID,
+		State:            db.WorkspaceExecStateQueued,
+		OrgID:            row.OrgID,
+		ProjectID:        row.ProjectID,
+		EnvironmentID:    row.EnvironmentID,
+		WorkspaceID:      row.WorkspaceID,
+		ID:               row.ID,
 	})
 	if err != nil {
 		return db.WorkspaceExec{}, workspacePrimitiveOperationLease{}, err
@@ -320,7 +308,7 @@ func ensureWorkspaceExecWriteLease(ctx context.Context, store db.Querier, materi
 	return row, lease, nil
 }
 
-func ensureWorkspacePtyWriteLease(ctx context.Context, store db.Querier, materialization db.WorkspaceMaterialization, row db.WorkspacePtySession) (db.WorkspacePtySession, workspacePrimitiveOperationLease, error) {
+func ensureWorkspacePtyWriteLease(ctx context.Context, store db.Querier, mount db.WorkspaceMount, row db.WorkspacePtySession) (db.WorkspacePtySession, workspacePrimitiveOperationLease, error) {
 	scope := workspacePrimitiveScopeForPty(row)
 	if row.WriteLeaseID.Valid {
 		lease, err := getWorkspacePrimitiveWriteLease(ctx, store, scope, row.WriteLeaseID)
@@ -329,20 +317,20 @@ func ensureWorkspacePtyWriteLease(ctx context.Context, store db.Querier, materia
 		}
 		return row, lease, nil
 	}
-	lease, err := acquireWorkspacePrimitiveWriteLease(ctx, store, materialization, scope, pgtype.UUID{}, row.ID)
+	lease, err := acquireWorkspacePrimitiveWriteLease(ctx, store, mount, scope, pgtype.UUID{}, row.ID)
 	if err != nil {
 		return db.WorkspacePtySession{}, workspacePrimitiveOperationLease{}, err
 	}
-	row, err = store.BindWorkspacePtyMaterialization(ctx, db.BindWorkspacePtyMaterializationParams{
-		MaterializationID: materialization.ID,
-		InstanceLeaseID:   row.InstanceLeaseID,
-		WriteLeaseID:      lease.writeLeaseID,
-		State:             db.WorkspacePtyStateCreating,
-		OrgID:             row.OrgID,
-		ProjectID:         row.ProjectID,
-		EnvironmentID:     row.EnvironmentID,
-		WorkspaceID:       row.WorkspaceID,
-		ID:                row.ID,
+	row, err = store.BindWorkspacePtyWorkspaceMount(ctx, db.BindWorkspacePtyWorkspaceMountParams{
+		WorkspaceMountID: mount.ID,
+		InstanceLeaseID:  row.InstanceLeaseID,
+		WriteLeaseID:     lease.writeLeaseID,
+		State:            db.WorkspacePtyStateCreating,
+		OrgID:            row.OrgID,
+		ProjectID:        row.ProjectID,
+		EnvironmentID:    row.EnvironmentID,
+		WorkspaceID:      row.WorkspaceID,
+		ID:               row.ID,
 	})
 	if err != nil {
 		return db.WorkspacePtySession{}, workspacePrimitiveOperationLease{}, err
@@ -350,40 +338,40 @@ func ensureWorkspacePtyWriteLease(ctx context.Context, store db.Querier, materia
 	return row, lease, nil
 }
 
-func requestWorkspacePrimitiveControlOperation(ctx context.Context, store db.Querier, target workspacePrimitiveControlTarget, operationKind db.WorkspaceMaterializationOperationKind, request []byte, ensureWriteLease func(context.Context, db.Querier, db.WorkspaceMaterialization) (workspacePrimitiveOperationLease, error)) error {
-	if !target.materializationID.Valid {
-		return conflict(codedError{code: "workspace_materialization_not_runnable", message: target.name + " is not bound to a runnable materialization"})
+func requestWorkspacePrimitiveControlOperation(ctx context.Context, store db.Querier, target workspacePrimitiveControlTarget, operationKind db.WorkspaceOperationKind, request []byte, ensureWriteLease func(context.Context, db.Querier, db.WorkspaceMount) (workspacePrimitiveOperationLease, error)) error {
+	if !target.workspaceMountID.Valid {
+		return conflict(codedError{code: "workspace_mount_not_runnable", message: target.name + " is not bound to a runnable mount"})
 	}
-	materialization, err := store.GetWorkspaceMaterialization(ctx, db.GetWorkspaceMaterializationParams{
+	mount, err := store.GetWorkspaceMount(ctx, db.GetWorkspaceMountParams{
 		OrgID:         target.scope.orgID,
 		ProjectID:     target.scope.projectID,
 		EnvironmentID: target.scope.environmentID,
 		WorkspaceID:   target.scope.workspaceID,
-		ID:            target.materializationID,
+		ID:            target.workspaceMountID,
 	})
 	if err != nil {
 		return err
 	}
-	if materialization.State != db.WorkspaceMaterializationStateRunning {
+	if mount.State != db.WorkspaceMountStateMounted {
 		return nil
 	}
-	lease, err := ensureWriteLease(ctx, store, materialization)
+	lease, err := ensureWriteLease(ctx, store, mount)
 	if err != nil {
 		return err
 	}
-	return requestWorkspacePrimitiveOperation(ctx, store, materialization, operationKind, target.resourceKind, target.resourceID, request, lease)
+	return requestWorkspacePrimitiveOperation(ctx, store, mount, operationKind, target.resourceKind, target.resourceID, request, lease)
 }
 
-func requestWorkspacePtyControlOperation(ctx context.Context, store db.Querier, row db.WorkspacePtySession, operationKind db.WorkspaceMaterializationOperationKind, request []byte) error {
+func requestWorkspacePtyControlOperation(ctx context.Context, store db.Querier, row db.WorkspacePtySession, operationKind db.WorkspaceOperationKind, request []byte) error {
 	target := workspacePrimitiveControlTarget{
-		name:              "workspace pty",
-		scope:             workspacePrimitiveScopeForPty(row),
-		materializationID: row.MaterializationID,
-		resourceKind:      workspaceOperationResourcePty,
-		resourceID:        row.ID,
+		name:             "workspace pty",
+		scope:            workspacePrimitiveScopeForPty(row),
+		workspaceMountID: row.WorkspaceMountID,
+		resourceKind:     workspaceOperationResourcePty,
+		resourceID:       row.ID,
 	}
-	return requestWorkspacePrimitiveControlOperation(ctx, store, target, operationKind, request, func(ctx context.Context, store db.Querier, materialization db.WorkspaceMaterialization) (workspacePrimitiveOperationLease, error) {
-		_, lease, err := ensureWorkspacePtyWriteLease(ctx, store, materialization, row)
+	return requestWorkspacePrimitiveControlOperation(ctx, store, target, operationKind, request, func(ctx context.Context, store db.Querier, mount db.WorkspaceMount) (workspacePrimitiveOperationLease, error) {
+		_, lease, err := ensureWorkspacePtyWriteLease(ctx, store, mount, row)
 		return lease, err
 	})
 }

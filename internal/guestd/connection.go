@@ -14,9 +14,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
@@ -47,7 +49,11 @@ func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logge
 	case transport.StreamTypeRunImage:
 		return false, handleRunConnection(ctx, conn, cfg, logger, registry, start.streamHeader, start.bodyLen)
 	case transport.StreamTypeWorkspaceMaterialize:
-		return false, handleWorkspaceMaterializeConnection(ctx, conn, workspaceRegistry)
+		return false, handleWorkspaceMaterializeConnection(ctx, conn, logger, workspaceRegistry)
+	case transport.StreamTypeWorkspaceRuntimePrepare:
+		return false, handleWorkspaceRuntimePrepareConnection(ctx, conn, logger, workspaceRegistry)
+	case transport.StreamTypeWorkspaceRun:
+		return false, handleWorkspaceRunConnection(ctx, conn, cfg, logger, registry, workspaceRegistry, start.streamHeader, start.bodyLen)
 	case transport.StreamTypeWorkspaceOperation:
 		return false, handleWorkspaceOperationConnection(ctx, conn, workspaceRegistry)
 	case transport.StreamTypeWorkspaceEvents:
@@ -200,7 +206,13 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 		return fmt.Errorf("unsupported runtime input type %q", header.Type)
 	}
 	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	image, err = unpackOCIImage(body, imageRoot)
+	cleanupImage := func() {}
+	defer func() { cleanupImage() }()
+	if substrateRoot := guestdSubstrateRoot(); substrateRoot != "" {
+		image, cleanupImage, err = imageFromMountedSubstrate(body, substrateRoot)
+	} else {
+		image, err = unpackOCIImage(body, imageRoot)
+	}
 	if err != nil {
 		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
 			return errors.Join(fmt.Errorf("unpack run image: %w", err), fmt.Errorf("drain run image: %w", drainErr))
@@ -279,6 +291,121 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 	return runAdapter(ctx, conn, cfg, image.RootfsDir, deploymentSourceRoot, workspaceRoot, runCwd, image.Config, true, &request, registry)
 }
 
+func handleWorkspaceRunConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, workspaceRegistry *workspaceOperationRegistry, header transport.StreamHeader, bodyLen uint64) error {
+	if err := handleWorkspaceRunStream(ctx, conn, cfg, logger, registry, workspaceRegistry, header, bodyLen); err != nil {
+		if reportErr := writeRunSetupFailure(conn, err); reportErr != nil {
+			return errors.Join(err, fmt.Errorf("write workspace run setup failure: %w", reportErr))
+		}
+	}
+	return nil
+}
+
+func handleWorkspaceRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, workspaceRegistry *workspaceOperationRegistry, header transport.StreamHeader, bodyLen uint64) error {
+	totalStarted := time.Now()
+	if bodyLen != 0 {
+		drainStreamBody(conn, bodyLen)
+		return fmt.Errorf("workspace run header body length %d is invalid", bodyLen)
+	}
+	runID := strings.TrimSpace(header.RunID)
+	if runID == "" {
+		return errors.New("workspace run run_id is required")
+	}
+	if header.Type != transport.StreamTypeWorkspaceRun {
+		return fmt.Errorf("unsupported runtime input type %q", header.Type)
+	}
+	workspaceMountID := strings.TrimSpace(header.WorkspaceMountID)
+	if workspaceMountID == "" {
+		return errors.New("workspace run workspace_mount_id is required")
+	}
+	workspaceID := strings.TrimSpace(header.WorkspaceID)
+	if workspaceID == "" {
+		return errors.New("workspace run workspace_id is required")
+	}
+	var envelope workspacev0.WorkspaceOperationEnvelope
+	if err := transport.ReadProtoFrame(conn, &envelope); err != nil {
+		return fmt.Errorf("read workspace run envelope: %w", err)
+	}
+	if strings.TrimSpace(envelope.GetWorkspaceMountId()) != workspaceMountID {
+		return fmt.Errorf("workspace run envelope workspace_mount_id %q does not match header workspace_mount_id %q", envelope.GetWorkspaceMountId(), workspaceMountID)
+	}
+	if strings.TrimSpace(envelope.GetWorkspaceId()) != workspaceID {
+		return fmt.Errorf("workspace run envelope workspace_id %q does not match header workspace_id %q", envelope.GetWorkspaceId(), workspaceID)
+	}
+	if strings.TrimSpace(envelope.GetWriteLeaseId()) == "" {
+		return errors.New("workspace run write_lease_id is required")
+	}
+	if strings.TrimSpace(envelope.GetFencingToken()) == "" {
+		return errors.New("workspace run fencing_token is required")
+	}
+	phaseStarted := time.Now()
+	entry, release, ok := workspaceRegistry.acquire(workspaceMountID, workspaceID, envelope.GetChannelToken(), envelope.GetFencingGeneration())
+	logger.Info("workspace run mount acquired", "run_id", runID, "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "ok", ok)
+	if !ok {
+		return errors.New("workspace run channel token or fencing generation is invalid")
+	}
+	defer release()
+	runRoot, err := mkdirGuestdTemp("helmr-run-*")
+	if err != nil {
+		return fmt.Errorf("create run temp dir: %w", err)
+	}
+	defer os.RemoveAll(runRoot)
+	deploymentSourceRoot := filepath.Join(runRoot, "deployment-source")
+	if err := os.MkdirAll(deploymentSourceRoot, 0o755); err != nil {
+		return fmt.Errorf("create deployment source dir: %w", err)
+	}
+	header, bodyLen, err = transport.ReadStreamFrameHeader(conn)
+	if err != nil {
+		return fmt.Errorf("read deployment source stream header: %w", err)
+	}
+	if header.RunID != runID {
+		return fmt.Errorf("deployment source run_id %q does not match workspace run run_id %q", header.RunID, runID)
+	}
+	if header.Type != transport.StreamTypeDeploymentSource {
+		return fmt.Errorf("unsupported runtime input type %q", header.Type)
+	}
+	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
+	phaseStarted = time.Now()
+	if err := archive.ExtractTar(body, deploymentSourceRoot); err != nil {
+		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
+			return errors.Join(fmt.Errorf("extract deployment source: %w", err), fmt.Errorf("drain deployment source: %w", drainErr))
+		}
+		drainRunRequest(conn)
+		return fmt.Errorf("extract deployment source: %w", err)
+	}
+	logger.Info("workspace run deployment source extracted", "run_id", runID, "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", bodyLen)
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		return fmt.Errorf("drain deployment source: %w", err)
+	}
+	var request runv0.RunTaskRequest
+	phaseStarted = time.Now()
+	if err := transport.ReadProtoFrame(conn, &request); err != nil {
+		return fmt.Errorf("read run request: %w", err)
+	}
+	logger.Info("workspace run request read", "run_id", runID, "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds())
+	if request.RunId != runID {
+		return fmt.Errorf("run request run_id %q does not match workspace run run_id %q", request.RunId, runID)
+	}
+	mountPath, err := workspaceMountPath(&request)
+	if err != nil {
+		return err
+	}
+	if filepath.Clean(mountPath) != filepath.Clean(entry.workspaceMount) {
+		return fmt.Errorf("run workspace path %q does not match materialized workspace mount %q", mountPath, entry.workspaceMount)
+	}
+	if err := validateMaterializedRunWorkspace(&request); err != nil {
+		return err
+	}
+	runCwd := request.Cwd
+	if strings.TrimSpace(runCwd) == "" {
+		runCwd = mountPath
+	}
+	logger.Info("running task", "run_id", request.RunId, "task_id", request.TaskId, "workspace_mount_id", workspaceMountID)
+	phaseStarted = time.Now()
+	err = runAdapter(ctx, conn, cfg, entry.imageRoot, deploymentSourceRoot, entry.workspaceRoot, runCwd, entry.imageConfig, true, &request, registry)
+	logger.Info("workspace run adapter returned", "run_id", runID, "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "total_duration_ms", time.Since(totalStarted).Milliseconds(), "error", errorString(err))
+	return err
+}
+
 func restoreRunWorkspaceArtifact(conn io.Reader, request *runv0.RunTaskRequest, workspaceRoot string, bodyLen uint64) error {
 	workspaceParent := filepath.Dir(workspaceRoot)
 	if err := os.MkdirAll(workspaceParent, 0o755); err != nil {
@@ -320,6 +447,42 @@ func restoreRunWorkspaceArtifact(conn io.Reader, request *runv0.RunTaskRequest, 
 	if err := replaceWorkspaceRoot(workspaceRoot, stagingRoot); err != nil {
 		cleanupStaging()
 		return fmt.Errorf("replace workspace mount: %w", err)
+	}
+	return nil
+}
+
+func validateMaterializedRunWorkspace(request *runv0.RunTaskRequest) error {
+	workspaceSpec := request.GetWorkspace()
+	if workspaceSpec == nil {
+		return errors.New("workspace volume is required")
+	}
+	artifact := workspaceSpec.GetArtifact()
+	if artifact == nil {
+		return errors.New("workspace artifact is required")
+	}
+	if strings.TrimSpace(artifact.Digest) == "" {
+		return errors.New("workspace artifact digest is required")
+	}
+	if artifact.SizeBytes == 0 {
+		return errors.New("workspace artifact size_bytes is required")
+	}
+	if artifact.SizeBytes > uint64(workspace.MaxArtifactArchiveBytes) {
+		return fmt.Errorf("workspace artifact size_bytes %d exceeds max %d", artifact.SizeBytes, workspace.MaxArtifactArchiveBytes)
+	}
+	if artifact.EntryCount > uint32(workspace.MaxArtifactEntries) {
+		return fmt.Errorf("workspace artifact entry_count %d exceeds max %d", artifact.EntryCount, workspace.MaxArtifactEntries)
+	}
+	if strings.TrimSpace(artifact.MediaType) != workspace.ArtifactMediaType {
+		return fmt.Errorf("unsupported workspace artifact media_type %q", artifact.MediaType)
+	}
+	if strings.TrimSpace(artifact.Encoding) != workspace.ArtifactEncoding {
+		return fmt.Errorf("unsupported workspace artifact encoding %q", artifact.Encoding)
+	}
+	if strings.TrimSpace(workspaceSpec.ProjectPath) != strings.TrimSpace(workspaceSpec.Path) {
+		return fmt.Errorf("workspace project_path %q must match workspace path %q", workspaceSpec.ProjectPath, workspaceSpec.Path)
+	}
+	if !workspaceSpec.Writable {
+		return errors.New("workspace volume must be writable")
 	}
 	return nil
 }
@@ -442,4 +605,11 @@ func (r *digestingReader) Read(p []byte) (int, error) {
 
 func (r *digestingReader) Digest() string {
 	return "sha256:" + hex.EncodeToString(r.hash.Sum(nil))
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

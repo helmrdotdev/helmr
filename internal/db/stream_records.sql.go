@@ -372,7 +372,7 @@ WITH candidate_raw AS (
        AND stream_waits.run_wait_id = $4
        AND stream_waits.matched_record_id IS NULL
        AND run_waits.kind = 'stream'
-       AND run_waits.state = 'waiting'
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
      FOR UPDATE OF stream_waits, run_waits
 ),
 matched_wait AS (
@@ -395,14 +395,18 @@ matched_wait AS (
 ),
 resolved_wait AS (
     UPDATE run_waits
-       SET state = 'resolved',
+       SET state = CASE
+             WHEN run_waits.state = 'live_waiting' THEN 'resolved_live'::run_wait_state
+             WHEN run_waits.state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
+             ELSE run_waits.state
+           END,
            resolved_at = now(),
            updated_at = now()
       FROM matched_wait
      WHERE run_waits.org_id = matched_wait.org_id
        AND run_waits.id = matched_wait.run_wait_id
-       AND run_waits.state = 'waiting'
-    RETURNING run_waits.id, run_waits.org_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
+    RETURNING run_waits.id, run_waits.org_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
 )
 SELECT resolved_wait.id AS run_wait_id,
        resolved_wait.org_id,
@@ -493,7 +497,7 @@ WITH candidate_raw AS (
        AND stream_waits.stream_id = $4
        AND stream_waits.matched_record_id IS NULL
        AND run_waits.kind = 'stream'
-       AND run_waits.state = 'waiting'
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
      ORDER BY stream_waits.created_at ASC, stream_waits.id ASC
      FOR UPDATE OF stream_waits, run_waits
 ),
@@ -517,14 +521,18 @@ matched_wait AS (
 ),
 resolved_wait AS (
     UPDATE run_waits
-       SET state = 'resolved',
+       SET state = CASE
+             WHEN run_waits.state = 'live_waiting' THEN 'resolved_live'::run_wait_state
+             WHEN run_waits.state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
+             ELSE run_waits.state
+           END,
            resolved_at = now(),
            updated_at = now()
       FROM matched_wait
      WHERE run_waits.org_id = matched_wait.org_id
        AND run_waits.id = matched_wait.run_wait_id
-       AND run_waits.state = 'waiting'
-    RETURNING run_waits.id, run_waits.org_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
+    RETURNING run_waits.id, run_waits.org_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
 )
 SELECT resolved_wait.id AS run_wait_id,
        resolved_wait.org_id,

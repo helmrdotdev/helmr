@@ -14,6 +14,13 @@ scripts/security-checks.sh
 bash tests/install_test.sh
 bash tests/release_manifest_test.sh
 bash tests/release_workflow_test.sh
+bash tests/db_query_service_file_test.sh
+bash tests/run_path_report_local_test.sh
+bash tests/path_report_wrapper_test.sh
+bash tests/surface_attestation_test.sh
+bash tests/measurement_report_summary_test.sh
+bash tests/release_smoke_selector_test.sh
+bash tests/measurement_preflight_guard_test.sh
 bash tests/release_worker_ami_cleanup_test.sh
 bash tests/release_worker_image_identity_test.sh
 bun run typecheck

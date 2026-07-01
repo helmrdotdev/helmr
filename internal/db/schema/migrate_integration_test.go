@@ -146,8 +146,8 @@ func assertWorkspaceStreamSchema(t *testing.T, ctx context.Context, pool *pgxpoo
 			SELECT 1
 			  FROM pg_indexes
 			 WHERE schemaname = 'public'
-			   AND tablename = 'workspace_materialization_operations'
-			   AND indexname = 'workspace_materialization_operations_active_resource_idx'
+			   AND tablename = 'workspace_operations'
+			   AND indexname = 'workspace_operations_active_resource_idx'
 			   AND indexdef ILIKE '%WHERE%state%queued%'
 			   AND indexdef ILIKE '%resource_id IS NOT NULL%'
 		)
@@ -155,7 +155,7 @@ func assertWorkspaceStreamSchema(t *testing.T, ctx context.Context, pool *pgxpoo
 		t.Fatal(err)
 	}
 	if !hasActiveResourceIndex {
-		t.Fatal("workspace materialization operations must prevent duplicate active resource dispatch")
+		t.Fatal("workspace operations must prevent duplicate active resource dispatch")
 	}
 }
 

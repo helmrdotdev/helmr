@@ -31,12 +31,12 @@ const (
 )
 
 var (
-	errWorkspaceSourceLiveUnsupported       = codedError{code: "workspace_source_live_unsupported", message: "source=live is not implemented"}
-	errWorkspaceVersionIDRequired           = codedError{code: "workspace_version_id_required", message: "version_id is required when source=version"}
-	errWorkspaceVersionIDUnexpected         = codedError{code: "workspace_version_id_unexpected", message: "version_id is only valid when source=version"}
-	errWorkspaceMaterializationIDUnexpected = codedError{code: "workspace_materialization_id_unexpected", message: "materialization_id is only valid when source=live"}
-	errWorkspaceNoCurrentVersion            = codedError{code: "workspace_no_current_version", message: "workspace has no current version"}
-	errWorkspaceVersionNotReadable          = codedError{code: "workspace_version_not_readable", message: "workspace version is not readable"}
+	errWorkspaceSourceLiveUnsupported = codedError{code: "workspace_source_live_unsupported", message: "source=live is not implemented"}
+	errWorkspaceVersionIDRequired     = codedError{code: "workspace_version_id_required", message: "version_id is required when source=version"}
+	errWorkspaceVersionIDUnexpected   = codedError{code: "workspace_version_id_unexpected", message: "version_id is only valid when source=version"}
+	errWorkspaceMountIDUnexpected     = codedError{code: "workspace_mount_id_unexpected", message: "workspace_mount_id is only valid when source=live"}
+	errWorkspaceNoCurrentVersion      = codedError{code: "workspace_no_current_version", message: "workspace has no current version"}
+	errWorkspaceVersionNotReadable    = codedError{code: "workspace_version_not_readable", message: "workspace version is not readable"}
 )
 
 func parseWorkspaceFileSource(r *http.Request) (workspaceFileSource, pgtype.UUID, error) {
@@ -45,22 +45,22 @@ func parseWorkspaceFileSource(r *http.Request) (workspaceFileSource, pgtype.UUID
 		source = string(workspaceFileSourceCurrent)
 	}
 	versionIDRaw := strings.TrimSpace(r.URL.Query().Get("version_id"))
-	materializationIDRaw := strings.TrimSpace(r.URL.Query().Get("materialization_id"))
+	workspaceMountIDRaw := strings.TrimSpace(r.URL.Query().Get("workspace_mount_id"))
 	switch workspaceFileSource(source) {
 	case workspaceFileSourceCurrent:
 		if versionIDRaw != "" {
 			return "", pgtype.UUID{}, errWorkspaceVersionIDUnexpected
 		}
-		if materializationIDRaw != "" {
-			return "", pgtype.UUID{}, errWorkspaceMaterializationIDUnexpected
+		if workspaceMountIDRaw != "" {
+			return "", pgtype.UUID{}, errWorkspaceMountIDUnexpected
 		}
 		return workspaceFileSourceCurrent, pgtype.UUID{}, nil
 	case workspaceFileSourceVersion:
 		if versionIDRaw == "" {
 			return "", pgtype.UUID{}, errWorkspaceVersionIDRequired
 		}
-		if materializationIDRaw != "" {
-			return "", pgtype.UUID{}, errWorkspaceMaterializationIDUnexpected
+		if workspaceMountIDRaw != "" {
+			return "", pgtype.UUID{}, errWorkspaceMountIDUnexpected
 		}
 		parsed, err := uuid.Parse(versionIDRaw)
 		if err != nil {

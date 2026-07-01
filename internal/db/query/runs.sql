@@ -316,9 +316,9 @@ SELECT expired_event.*
   FROM expired_event
   JOIN expired_event_outbox ON true;
 
--- name: SetQueuedRunWorkspaceMaterialization :exec
+-- name: SetQueuedRunWorkspaceMount :exec
 UPDATE runs
-   SET workspace_materialization_id = sqlc.arg(workspace_materialization_id),
+   SET workspace_mount_id = sqlc.arg(workspace_mount_id),
        updated_at = now()
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.id = sqlc.arg(run_id)
@@ -326,12 +326,12 @@ UPDATE runs
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL;
 
--- name: ListQueuedRunsForWorkspaceMaterialization :many
+-- name: ListQueuedRunsForWorkspaceMount :many
 SELECT runs.id
   FROM runs
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.workspace_id = sqlc.arg(workspace_id)
-   AND runs.workspace_materialization_id = sqlc.arg(workspace_materialization_id)
+   AND runs.workspace_mount_id = sqlc.arg(workspace_mount_id)
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
  ORDER BY runs.queue_timestamp ASC, runs.id ASC;
@@ -681,7 +681,7 @@ cancelled_run_waits AS (
       FROM updated
      WHERE run_waits.org_id = updated.org_id
        AND run_waits.run_id = updated.id
-       AND run_waits.state IN ('parking', 'waiting')
+       AND run_waits.state IN ('live_waiting', 'checkpointing', 'checkpointed_waiting', 'resolved_live', 'resolved_checkpointed', 'resuming')
     RETURNING run_waits.id
 ),
 terminal_session_runs AS (

@@ -37,8 +37,8 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr workspace update WORKSPACE` | Update workspace metadata. |
 | `helmr workspace delete WORKSPACE` | Delete a workspace. |
 | `helmr workspace open WORKSPACE` | Print the workspace console URL. |
-| `helmr workspace materialize WORKSPACE` | Ensure a live workspace materialization exists. |
-| `helmr workspace connect WORKSPACE` | Connect to a live workspace materialization. |
+| `helmr workspace materialize WORKSPACE` | Ensure a live workspace mount exists. |
+| `helmr workspace connect WORKSPACE` | Connect to a live workspace mount. |
 | `helmr workspace stop WORKSPACE` | Stop the live materialization while keeping the durable workspace. |
 | `helmr workspace exec WORKSPACE -- COMMAND [ARGS...]` | Run a command in a workspace. |
 | `helmr workspace exec list WORKSPACE` | List workspace exec records. |

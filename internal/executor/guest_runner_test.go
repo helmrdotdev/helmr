@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -24,7 +25,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -68,7 +71,7 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 		TempDir:   t.TempDir(),
 		Stdout:    &stdout,
 		Stderr:    &stderr,
-	}.Run(context.Background(), Request{
+	}.runDirect(context.Background(), Request{
 		Leases: staticLease(claim),
 		Run: ResolvedRun{
 			RunID:     "run-1",
@@ -166,26 +169,22 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	}
 }
 
-func TestGuestRunnerUsesLiveWorkspaceMaterializationSession(t *testing.T) {
+func TestGuestRunnerUsesLiveWorkspaceMountSession(t *testing.T) {
 	sourceRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(sourceRoot, "main.ts"), []byte("export default {}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	imagePath := filepath.Join(t.TempDir(), "image.oci.tar")
-	if err := os.WriteFile(imagePath, []byte("oci"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	stream := newScriptedCheckpointGuestStream(t, &runv0.RunEvent{
 		Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{ExitCode: 0}},
 	})
-	sessions := NewWorkspaceMaterializationSessions()
-	unregister := sessions.RegisterWorkspaceMaterializationSession("mat-1", fakeGuestSession{stream: stream})
+	sessions := NewWorkspaceMountSessions()
+	unregister := sessions.RegisterWorkspaceMountSession(api.WorkerWorkspaceMount{ID: "mat-1"}, fakeGuestSession{stream: stream}, "channel-token")
 	defer unregister()
 	connector := &fakeGuestConnector{}
 	result, err := GuestRunner{
-		Connector:        connector,
-		Materializations: sessions,
-		TempDir:          t.TempDir(),
+		Connector:       connector,
+		WorkspaceMounts: sessions,
+		TempDir:         t.TempDir(),
 	}.Run(context.Background(), Request{
 		Leases: staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"}),
 		Run: ResolvedRun{
@@ -196,11 +195,13 @@ func TestGuestRunnerUsesLiveWorkspaceMaterializationSession(t *testing.T) {
 			Payload:   []byte(`{"ok":true}`),
 			Workspace: api.WorkerWorkspace{
 				ID:                "workspace-1",
-				MaterializationID: "mat-1",
+				WorkspaceMountID:  "mat-1",
+				FencingGeneration: 2,
+				WriteLeaseID:      "write-lease-1",
+				WriteFencingToken: "write-token-1",
 				MountPath:         "/workspace",
 			},
 		},
-		Artifact:         builder.Artifact{ImageTarPath: imagePath},
 		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
 		Workspace:        testWorkspaceArtifact(t, sourceRoot, sourceRoot),
 	})
@@ -212,6 +213,39 @@ func TestGuestRunnerUsesLiveWorkspaceMaterializationSession(t *testing.T) {
 	}
 	if connector.connectCalls != 0 {
 		t.Fatalf("connector Connect calls = %d, want 0", connector.connectCalls)
+	}
+	written := bytes.NewReader(stream.written.Bytes())
+	header, bodyLen, err := transport.ReadStreamFrameHeader(written)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header.Type != transport.StreamTypeWorkspaceRun || header.RunID != "run-1" || header.WorkspaceID != "workspace-1" || header.WorkspaceMountID != "mat-1" || bodyLen != 0 {
+		t.Fatalf("workspace run header = %+v bodyLen=%d", header, bodyLen)
+	}
+	var envelope workspacev0.WorkspaceOperationEnvelope
+	if err := transport.ReadProtoFrame(written, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.GetWorkspaceMountId() != "mat-1" || envelope.GetWorkspaceId() != "workspace-1" || envelope.GetChannelToken() != "channel-token" || envelope.GetFencingGeneration() != 2 || envelope.GetWriteLeaseId() != "write-lease-1" || envelope.GetFencingToken() != "write-token-1" {
+		t.Fatalf("workspace run envelope = %+v", &envelope)
+	}
+	sourceHeader, sourceLen, err := transport.ReadStreamFrameHeader(written)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceHeader.Type != transport.StreamTypeDeploymentSource || sourceHeader.RunID != "run-1" {
+		t.Fatalf("deployment source header = %+v", sourceHeader)
+	}
+	_ = readExactly(t, written, sourceLen)
+	var request runv0.RunTaskRequest
+	if err := transport.ReadProtoFrame(written, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.RunId != "run-1" || request.Workspace == nil || request.Workspace.Path != "/workspace" {
+		t.Fatalf("request = %+v", &request)
+	}
+	if written.Len() != 0 {
+		t.Fatalf("unexpected extra materialized run input bytes = %d", written.Len())
 	}
 }
 
@@ -235,7 +269,7 @@ func TestGuestRunnerCreatesToken(t *testing.T) {
 	result := (GuestRunner{Events: events}).createToken(context.Background(), api.WorkerRunLease{ID: "session-1", RunID: "run-1"}, &runv0.TokenCreateRequested{
 		TimeoutAt:    &timeout,
 		Tags:         []string{"approval"},
-		MetadataJson: ptrString(`{"bridge":"slack"}`),
+		MetadataJson: new(`{"bridge":"slack"}`),
 	})
 	if result.GetErrorMessage() != "" {
 		t.Fatalf("result error = %s", result.GetErrorMessage())
@@ -271,7 +305,7 @@ func TestGuestRunnerCarriesTaskOutput(t *testing.T) {
 	result, err := GuestRunner{
 		Connector: &fakeGuestConnector{stream: stream},
 		TempDir:   t.TempDir(),
-	}.Run(context.Background(), Request{
+	}.runDirect(context.Background(), Request{
 		Leases: staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"}),
 		Run: ResolvedRun{
 			RunID:     "run-1",
@@ -319,7 +353,7 @@ func TestGuestRunnerProvidesCheckpointableWaitHandler(t *testing.T) {
 		CAS:                 store,
 		CheckpointEncryptor: testCheckpointEncryptor(t),
 		TempDir:             t.TempDir(),
-	}.Run(context.Background(), Request{
+	}.runDirect(context.Background(), Request{
 		Leases: staticLease(api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"}),
 		Run: ResolvedRun{
 			RunID:      "run-1",
@@ -357,7 +391,7 @@ func TestRuntimeWaitRequestRejectsInvalidMetadataJSON(t *testing.T) {
 		CorrelationId: "approval-1",
 		Kind:          "token",
 		ParamsJson:    `{}`,
-		MetadataJson:  testStringPtr(`[]`),
+		MetadataJson:  new(`[]`),
 	})
 	if err == nil || !strings.Contains(err.Error(), "metadata_json must be a JSON object") {
 		t.Fatalf("err = %v", err)
@@ -392,7 +426,7 @@ func TestRuntimeWaitRequestRejectsOversizedMetadataJSON(t *testing.T) {
 		CorrelationId: "approval-1",
 		Kind:          "token",
 		ParamsJson:    `{}`,
-		MetadataJson:  testStringPtr(`{"value":"` + strings.Repeat("x", waitMetadataJSONMaxBytes) + `"}`),
+		MetadataJson:  new(`{"value":"` + strings.Repeat("x", waitMetadataJSONMaxBytes) + `"}`),
 	})
 	if err == nil || !strings.Contains(err.Error(), "metadata_json is") || !strings.Contains(err.Error(), "exceeds max") {
 		t.Fatalf("err = %v", err)
@@ -425,10 +459,6 @@ func TestRuntimeWaitRequestRejectsOversizedTag(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "exceeds max") {
 		t.Fatalf("err = %v", err)
 	}
-}
-
-func testStringPtr(value string) *string {
-	return &value
 }
 
 func TestGuestRunnerProcessesRunEventsBeforeCheckpointPauseReady(t *testing.T) {
@@ -465,7 +495,7 @@ func TestGuestRunnerProcessesRunEventsBeforeCheckpointPauseReady(t *testing.T) {
 		TempDir:             t.TempDir(),
 		Events:              events,
 		Stdout:              &stdout,
-	}.Run(context.Background(), Request{
+	}.runDirect(context.Background(), Request{
 		Leases: staticLease(api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"}),
 		Run: ResolvedRun{
 			RunID:     "run-1",
@@ -503,25 +533,71 @@ func TestGuestRunnerProcessesRunEventsBeforeCheckpointPauseReady(t *testing.T) {
 func TestGuestRunnerRestoresCheckpointAndAttachesRunWait(t *testing.T) {
 	state := []byte("state")
 	scratch := []byte("scratch")
+	substrate := []byte("substrate")
 	memory := []byte("memory")
 	manifest := []byte(`{"checkpoint_id":"checkpoint-1","runtime":{"backend":"firecracker"}}`)
 	encryptor := testCheckpointEncryptor(t)
 	manifestObject := encryptedCheckpointObject(t, encryptor, manifest, "manifest")
 	stateObject := encryptedCheckpointObject(t, encryptor, state, "vmstate")
 	scratchObject := encryptedCheckpointObject(t, encryptor, scratch, "scratch-disk")
+	substrateDigest := sha256sum.DigestBytes(substrate)
+	substrateObject := encryptedRuntimeSubstrateObject(t, encryptor, substrate, substrateDigest)
 	memoryObject := encryptedCheckpointObject(t, encryptor, memory, "memory")
 	stream := newScriptedCheckpointGuestStream(t, &runv0.ResumeAck{
 		RunWaitId: "run-wait-id-1",
 	}, &runv0.RunEvent{
 		Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{ExitCode: 0}},
 	})
-	connector := &fakeGuestConnector{stream: stream}
+	connector := &fakeGuestConnector{
+		stream: stream,
+		restorePhases: []vm.RuntimePhase{{
+			Name:       "restore_unpack_scratch_filepack",
+			DurationMs: 12,
+			Role:       "scratch-disk",
+			MediaType:  cas.CheckpointScratchDiskMediaType,
+			Filepack: &vm.FilepackStats{
+				LogicalBytes:       1024,
+				SparseSupported:    new(true),
+				EncodedChunks:      1,
+				UnpackWrittenBytes: 512,
+			},
+		}, {
+			Name:       "restore_unpack_memory_filepack",
+			DurationMs: 34,
+			Role:       "memory",
+			MediaType:  cas.CheckpointMemoryMediaType,
+		}},
+		concurrentRestorePhases: true,
+	}
 	waiter := &capturingRunWaitHandler{}
+	checkpoint := testRestoreCheckpointManifest(manifest, manifestObject, stateObject, scratchObject, memoryObject, testCheckpointWorkspaceBase())
+	checkpoint.RecoveryPoint.Runtime.Substrate = &api.WorkerCheckpointRuntimeSubstrate{
+		Digest:     substrateDigest,
+		Format:     "ext4",
+		BuilderABI: "helmr.runtime-substrate.builder.v0",
+		LayoutABI:  "helmr.runtime-substrate.layout.v0",
+	}
+	checkpoint.RuntimeState.RuntimeSubstrateArtifact = &api.WorkerRuntimeSubstrateArtifact{
+		ID:                  "019f1790-0000-7000-8000-000000000003",
+		DeploymentSandboxID: "019f1790-0000-7000-8000-000000000004",
+		Artifact: api.CASObject{
+			Digest:    substrateObject.digest,
+			SizeBytes: int64(len(substrateObject.body)),
+			MediaType: cas.RuntimeSubstrateMediaType,
+		},
+		SubstrateDigest: substrateDigest,
+		Format:          "ext4",
+		BuilderABI:      "helmr.runtime-substrate.builder.v0",
+		LayoutABI:       "helmr.runtime-substrate.layout.v0",
+		SizeBytes:       int64(len(substrate)),
+	}
+	var logBuffer bytes.Buffer
 	result, err := GuestRunner{
 		Connector:           connector,
-		CAS:                 &fakeCAS{objects: map[string][]byte{manifestObject.digest: manifestObject.body, stateObject.digest: stateObject.body, scratchObject.digest: scratchObject.body, memoryObject.digest: memoryObject.body}},
+		CAS:                 &fakeCAS{objects: map[string][]byte{manifestObject.digest: manifestObject.body, stateObject.digest: stateObject.body, scratchObject.digest: scratchObject.body, substrateObject.digest: substrateObject.body, memoryObject.digest: memoryObject.body}},
 		CheckpointEncryptor: encryptor,
 		TempDir:             t.TempDir(),
+		Log:                 slog.New(slog.NewJSONHandler(&logBuffer, nil)),
 	}.Run(context.Background(), Request{
 		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"}),
 		WaitHandler: waiter,
@@ -529,7 +605,7 @@ func TestGuestRunnerRestoresCheckpointAndAttachesRunWait(t *testing.T) {
 			RunID: "run-1",
 			Restore: &api.WorkerRestore{
 				CheckpointID: "checkpoint-1",
-				Checkpoint:   testRestoreCheckpointManifest(manifest, manifestObject, stateObject, scratchObject, memoryObject, testCheckpointWorkspaceBase()),
+				Checkpoint:   checkpoint,
 				RunWait: api.WorkerRestoreRunWait{
 					ID:                "run-wait-id-1",
 					ResumeKind:        "completed",
@@ -546,6 +622,30 @@ func TestGuestRunnerRestoresCheckpointAndAttachesRunWait(t *testing.T) {
 	}
 	if !bytes.Equal(connector.restoreRequest.Manifest, manifest) {
 		t.Fatalf("restore manifest = %s", connector.restoreRequest.Manifest)
+	}
+	if connector.restoreRequest.Topology.Substrate == nil {
+		t.Fatal("restore request missing runtime substrate")
+	}
+	if connector.restoreRequest.Topology.Substrate.Digest != sha256sum.DigestBytes(substrate) ||
+		connector.restoreRequest.Topology.Substrate.Format != "ext4" ||
+		connector.restoreRequest.Topology.Substrate.Path == "" {
+		t.Fatalf("restore substrate = %+v", connector.restoreRequest.Topology.Substrate)
+	}
+	if connector.restoreRequest.RecordPhase == nil {
+		t.Fatal("restore request missing phase recorder")
+	}
+	logBody := logBuffer.String()
+	for _, want := range []string{
+		"checkpoint restore telemetry",
+		"restore_materialize_manifest",
+		"restore_materialize_substrate_cas",
+		"restore_materialize_scratch_filepack",
+		"restore_unpack_scratch_filepack",
+		"restore_attach_guest_resume",
+	} {
+		if !strings.Contains(logBody, want) {
+			t.Fatalf("restore telemetry log missing %q: %s", want, logBody)
+		}
 	}
 	written := bytes.NewReader(stream.written.Bytes())
 	var attach runv0.ResumeAttach
@@ -565,6 +665,181 @@ func TestGuestRunnerRestoresCheckpointAndAttachesRunWait(t *testing.T) {
 	if waiter.acknowledged.RunWaitID != "run-wait-id-1" || waiter.acknowledged.CheckpointID != "checkpoint-1" {
 		t.Fatalf("acknowledged = %+v", waiter.acknowledged)
 	}
+	if !checkpointPhaseHasFilepackStats(waiter.acknowledged.Phases, "restore_unpack_scratch_filepack") ||
+		!checkpointPhaseNamed(waiter.acknowledged.Phases, "restore_attach_guest_resume") {
+		t.Fatalf("acknowledged phases = %+v", waiter.acknowledged.Phases)
+	}
+}
+
+func TestGuestRunnerRestoresCheckpointSubstrateFromLocalCache(t *testing.T) {
+	state := []byte("state")
+	scratch := []byte("scratch")
+	substrateBytes := []byte("substrate")
+	memory := []byte("memory")
+	manifest := []byte(`{"checkpoint_id":"checkpoint-1","runtime":{"backend":"firecracker"}}`)
+	encryptor := testCheckpointEncryptor(t)
+	manifestObject := encryptedCheckpointObject(t, encryptor, manifest, "manifest")
+	stateObject := encryptedCheckpointObject(t, encryptor, state, "vmstate")
+	scratchObject := encryptedCheckpointObject(t, encryptor, scratch, "scratch-disk")
+	substrateDigest := sha256sum.DigestBytes(substrateBytes)
+	substrateObject := encryptedRuntimeSubstrateObject(t, encryptor, substrateBytes, substrateDigest)
+	memoryObject := encryptedCheckpointObject(t, encryptor, memory, "memory")
+	cacheDir := t.TempDir()
+	cachedSubstratePath := filepath.Join(cacheDir, "cached-substrate.ext4")
+	if err := os.WriteFile(cachedSubstratePath, substrateBytes, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	stream := newScriptedCheckpointGuestStream(t, &runv0.ResumeAck{
+		RunWaitId: "run-wait-id-1",
+	}, &runv0.RunEvent{
+		Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{ExitCode: 0}},
+	})
+	connector := &fakeGuestConnector{stream: stream}
+	waiter := &capturingRunWaitHandler{}
+	checkpoint := testRestoreCheckpointManifest(manifest, manifestObject, stateObject, scratchObject, memoryObject, testCheckpointWorkspaceBase())
+	checkpoint.RecoveryPoint.Runtime.Substrate = &api.WorkerCheckpointRuntimeSubstrate{
+		Digest:     substrateDigest,
+		Format:     "ext4",
+		BuilderABI: "helmr.runtime-substrate.builder.v0",
+		LayoutABI:  "helmr.runtime-substrate.layout.v0",
+	}
+	checkpoint.RuntimeState.RuntimeSubstrateArtifact = &api.WorkerRuntimeSubstrateArtifact{
+		ID:                  "019f1790-0000-7000-8000-000000000003",
+		DeploymentSandboxID: "019f1790-0000-7000-8000-000000000004",
+		Artifact: api.CASObject{
+			Digest:    substrateObject.digest,
+			SizeBytes: int64(len(substrateObject.body)),
+			MediaType: cas.RuntimeSubstrateMediaType,
+		},
+		SubstrateDigest: substrateDigest,
+		Format:          "ext4",
+		BuilderABI:      "helmr.runtime-substrate.builder.v0",
+		LayoutABI:       "helmr.runtime-substrate.layout.v0",
+		SizeBytes:       int64(len(substrateBytes)),
+	}
+	store := &fakeCAS{objects: map[string][]byte{
+		manifestObject.digest:  manifestObject.body,
+		stateObject.digest:     stateObject.body,
+		scratchObject.digest:   scratchObject.body,
+		substrateObject.digest: substrateObject.body,
+		memoryObject.digest:    memoryObject.body,
+	}}
+	lookup := &fakeRuntimeSubstrateLookup{
+		digest: substrateDigest,
+		path:   cachedSubstratePath,
+	}
+	result, err := GuestRunner{
+		Connector:           connector,
+		CAS:                 store,
+		CheckpointEncryptor: encryptor,
+		TempDir:             t.TempDir(),
+		Substrates:          lookup,
+	}.Run(context.Background(), Request{
+		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"}),
+		WaitHandler: waiter,
+		Run: ResolvedRun{
+			RunID: "run-1",
+			Restore: &api.WorkerRestore{
+				CheckpointID: "checkpoint-1",
+				Checkpoint:   checkpoint,
+				RunWait: api.WorkerRestoreRunWait{
+					ID:                "run-wait-id-1",
+					ResumeKind:        "completed",
+					ResumePayloadJSON: json.RawMessage(`{"approved":true}`),
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 0 || connector.restoreRequest.Topology.Substrate == nil {
+		t.Fatalf("result=%+v restore=%+v", result, connector.restoreRequest)
+	}
+	if lookup.calls != 1 {
+		t.Fatalf("lookup calls = %d, want 1", lookup.calls)
+	}
+	if store.getCalls[substrateObject.digest] != 0 {
+		t.Fatalf("substrate CAS get calls = %d, want 0", store.getCalls[substrateObject.digest])
+	}
+	if connector.restoreRequest.Topology.Substrate.Path == cachedSubstratePath {
+		t.Fatal("restore substrate path should be staged into checkpoint jail path, not passed directly from cache")
+	}
+	if connector.restoreRequest.Topology.Substrate.Digest != substrateDigest {
+		t.Fatalf("restore substrate = %+v", connector.restoreRequest.Topology.Substrate)
+	}
+	if waiter.acknowledged.RunWaitID != "run-wait-id-1" || waiter.acknowledged.CheckpointID != "checkpoint-1" {
+		t.Fatalf("acknowledged = %+v", waiter.acknowledged)
+	}
+	if !checkpointPhaseNamed(waiter.acknowledged.Phases, "restore_lookup_substrate_cache_hit") ||
+		!checkpointPhaseNamed(waiter.acknowledged.Phases, "restore_materialize_substrate_cache") ||
+		checkpointPhaseNamed(waiter.acknowledged.Phases, "restore_materialize_substrate_cas") {
+		t.Fatalf("acknowledged phases = %+v", waiter.acknowledged.Phases)
+	}
+}
+
+func TestGuestRunnerRejectsCheckpointSubstrateArtifactDigestMismatch(t *testing.T) {
+	state := []byte("state")
+	scratch := []byte("scratch")
+	substrate := []byte("substrate")
+	memory := []byte("memory")
+	manifest := []byte(`{"checkpoint_id":"checkpoint-1","runtime":{"backend":"firecracker"}}`)
+	encryptor := testCheckpointEncryptor(t)
+	manifestObject := encryptedCheckpointObject(t, encryptor, manifest, "manifest")
+	stateObject := encryptedCheckpointObject(t, encryptor, state, "vmstate")
+	scratchObject := encryptedCheckpointObject(t, encryptor, scratch, "scratch-disk")
+	expectedSubstrateDigest := sha256sum.DigestBytes([]byte("different substrate"))
+	substrateObject := encryptedRuntimeSubstrateObject(t, encryptor, substrate, expectedSubstrateDigest)
+	memoryObject := encryptedCheckpointObject(t, encryptor, memory, "memory")
+	checkpoint := testRestoreCheckpointManifest(manifest, manifestObject, stateObject, scratchObject, memoryObject, testCheckpointWorkspaceBase())
+	checkpoint.RecoveryPoint.Runtime.Substrate = &api.WorkerCheckpointRuntimeSubstrate{
+		Digest:     expectedSubstrateDigest,
+		Format:     "ext4",
+		BuilderABI: "helmr.runtime-substrate.builder.v0",
+		LayoutABI:  "helmr.runtime-substrate.layout.v0",
+	}
+	checkpoint.RuntimeState.RuntimeSubstrateArtifact = &api.WorkerRuntimeSubstrateArtifact{
+		ID:                  "019f1790-0000-7000-8000-000000000005",
+		DeploymentSandboxID: "019f1790-0000-7000-8000-000000000006",
+		Artifact: api.CASObject{
+			Digest:    substrateObject.digest,
+			SizeBytes: int64(len(substrateObject.body)),
+			MediaType: cas.RuntimeSubstrateMediaType,
+		},
+		SubstrateDigest: expectedSubstrateDigest,
+		Format:          "ext4",
+		BuilderABI:      "helmr.runtime-substrate.builder.v0",
+		LayoutABI:       "helmr.runtime-substrate.layout.v0",
+		SizeBytes:       int64(len(substrate)),
+	}
+	connector := &fakeGuestConnector{stream: newScriptedCheckpointGuestStream(t)}
+	_, err := GuestRunner{
+		Connector:           connector,
+		CAS:                 &fakeCAS{objects: map[string][]byte{manifestObject.digest: manifestObject.body, stateObject.digest: stateObject.body, scratchObject.digest: scratchObject.body, substrateObject.digest: substrateObject.body, memoryObject.digest: memoryObject.body}},
+		CheckpointEncryptor: encryptor,
+		TempDir:             t.TempDir(),
+	}.Run(context.Background(), Request{
+		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"}),
+		WaitHandler: &capturingRunWaitHandler{},
+		Run: ResolvedRun{
+			RunID: "run-1",
+			Restore: &api.WorkerRestore{
+				CheckpointID: "checkpoint-1",
+				Checkpoint:   checkpoint,
+				RunWait: api.WorkerRestoreRunWait{
+					ID:                "run-wait-id-1",
+					ResumeKind:        "completed",
+					ResumePayloadJSON: json.RawMessage(`{"approved":true}`),
+				},
+			},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "checkpoint runtime substrate artifact digest mismatch") {
+		t.Fatalf("err = %v, want substrate digest mismatch", err)
+	}
+	if connector.restoreRequest.ID != "" {
+		t.Fatalf("restore connector was called: %+v", connector.restoreRequest)
+	}
 }
 
 func TestGuestRunnerRequiresRestoreAcknowledgerBeforeResumeAttach(t *testing.T) {
@@ -583,13 +858,22 @@ func TestGuestRunnerRequiresRestoreAcknowledgerBeforeResumeAttach(t *testing.T) 
 				},
 			},
 		},
-	})
+	}, &runtimePhaseCollector{})
 	if err == nil || !strings.Contains(err.Error(), "restore acknowledger is required") {
 		t.Fatalf("err = %v, want restore acknowledger", err)
 	}
 	if stream.written.Len() != 0 {
 		t.Fatalf("resume attach was written before acknowledger validation: %x", stream.written.Bytes())
 	}
+}
+
+func checkpointPhaseNamed(phases []api.WorkerCheckpointPhase, name string) bool {
+	for _, phase := range phases {
+		if phase.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 type waitOnlyHandler struct{}
@@ -730,7 +1014,7 @@ func TestGuestRunnerEnforcesMaxDuration(t *testing.T) {
 	_, err := GuestRunner{
 		Connector: &fakeGuestConnector{stream: stream},
 		TempDir:   t.TempDir(),
-	}.Run(context.Background(), Request{
+	}.runDirect(context.Background(), Request{
 		Leases: staticLease(api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"}),
 		Run: ResolvedRun{
 			RunID:       "run-1",
@@ -774,7 +1058,7 @@ func TestGuestRunnerEnforcesMaxDurationDuringActiveStreamRead(t *testing.T) {
 		Connector: &fakeGuestConnector{stream: stream},
 		Events:    events,
 		TempDir:   t.TempDir(),
-	}.Run(context.Background(), Request{
+	}.runDirect(context.Background(), Request{
 		Leases: staticLease(api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"}),
 		Run: ResolvedRun{
 			RunID:       "run-1",
@@ -815,7 +1099,7 @@ func TestGuestRunnerTreatsTaskResultErrorMessageAsRuntimeFailure(t *testing.T) {
 	_, err := GuestRunner{
 		Connector: &fakeGuestConnector{stream: stream},
 		TempDir:   t.TempDir(),
-	}.Run(context.Background(), Request{
+	}.runDirect(context.Background(), Request{
 		Leases: staticLease(api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"}),
 		Run: ResolvedRun{
 			RunID:     "run-1",
@@ -860,7 +1144,7 @@ func TestGuestRunnerReadCancellationClosesSession(t *testing.T) {
 		_, err := GuestRunner{
 			Connector: &fakeGuestConnector{stream: stream},
 			TempDir:   t.TempDir(),
-		}.Run(ctx, Request{
+		}.runDirect(ctx, Request{
 			Leases: staticLease(api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"}),
 			Run: ResolvedRun{
 				RunID:       "run-1",
@@ -917,7 +1201,7 @@ func TestGuestRunnerArchivesProjectRootForSubpath(t *testing.T) {
 	_, err := GuestRunner{
 		Connector: &fakeGuestConnector{stream: stream},
 		TempDir:   t.TempDir(),
-	}.Run(context.Background(), Request{
+	}.runDirect(context.Background(), Request{
 		Leases: staticLease(api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"}),
 		Run: ResolvedRun{
 			RunID:     "run-1",
@@ -1019,16 +1303,18 @@ func TestCreateSourceTarCreatesTempDir(t *testing.T) {
 }
 
 type fakeGuestConnector struct {
-	stream         io.ReadWriteCloser
-	checkpointable bool
-	network        compute.NetworkPolicy
-	restoreRequest vm.RestoreRequest
-	connectCalls   int
+	stream                  io.ReadWriteCloser
+	checkpointable          bool
+	network                 compute.NetworkPolicy
+	restoreRequest          vm.RestoreRequest
+	restorePhases           []vm.RuntimePhase
+	concurrentRestorePhases bool
+	connectCalls            int
 }
 
-func (c *fakeGuestConnector) Connect(_ context.Context, network compute.NetworkPolicy) (vm.Session, error) {
+func (c *fakeGuestConnector) Connect(_ context.Context, request vm.ConnectRequest) (vm.Session, error) {
 	c.connectCalls++
-	c.network = network
+	c.network = request.Network
 	if c.checkpointable {
 		return fakeCheckpointableGuestSession{fakeGuestSession{stream: c.stream}}, nil
 	}
@@ -1037,6 +1323,21 @@ func (c *fakeGuestConnector) Connect(_ context.Context, network compute.NetworkP
 
 func (c *fakeGuestConnector) Restore(_ context.Context, request vm.RestoreRequest) (vm.Session, error) {
 	c.restoreRequest = request
+	if request.RecordPhase != nil && len(c.restorePhases) > 0 {
+		if c.concurrentRestorePhases {
+			var group sync.WaitGroup
+			for _, phase := range c.restorePhases {
+				group.Go(func() {
+					request.RecordPhase(phase)
+				})
+			}
+			group.Wait()
+		} else {
+			for _, phase := range c.restorePhases {
+				request.RecordPhase(phase)
+			}
+		}
+	}
 	if c.checkpointable {
 		return fakeCheckpointableGuestSession{fakeGuestSession{stream: c.stream}}, nil
 	}
@@ -1045,6 +1346,39 @@ func (c *fakeGuestConnector) Restore(_ context.Context, request vm.RestoreReques
 
 type fakeGuestSession struct {
 	stream io.ReadWriteCloser
+}
+
+type fakeRuntimeSubstrateLookup struct {
+	digest string
+	path   string
+	calls  int
+	err    error
+}
+
+func (f *fakeRuntimeSubstrateLookup) Resolve(context.Context, string, substrate.Source) (substrate.Result, error) {
+	return substrate.Result{}, errors.New("unexpected substrate source resolve")
+}
+
+func (f *fakeRuntimeSubstrateLookup) LookupDigest(_ context.Context, digest string) (substrate.Result, error) {
+	f.calls++
+	if f.err != nil {
+		return substrate.Result{}, f.err
+	}
+	if digest != f.digest {
+		return substrate.Result{}, os.ErrNotExist
+	}
+	info, err := os.Stat(f.path)
+	if err != nil {
+		return substrate.Result{}, err
+	}
+	return substrate.Result{
+		Path:       f.path,
+		Digest:     digest,
+		Format:     substrate.Format,
+		BuilderABI: substrate.BuilderABI,
+		LayoutABI:  substrate.LayoutABI,
+		SizeBytes:  info.Size(),
+	}, nil
 }
 
 func (s fakeGuestSession) Stream() io.ReadWriteCloser {
@@ -1134,9 +1468,8 @@ func (h *capturingRunWaitHandler) Wait(_ context.Context, request WaitRequest) e
 func (h *capturingRunWaitHandler) AddRunWait(_ context.Context, request WaitRequest) (api.WorkerCreateRunWaitResponse, error) {
 	h.added = append(h.added, request)
 	return api.WorkerCreateRunWaitResponse{
-		RunID:        request.Lease.RunID,
-		RunWaitID:    fmt.Sprintf("run-wait-id-%d", len(h.added)+1),
-		CheckpointID: "checkpoint-1",
+		RunID:     request.Lease.RunID,
+		RunWaitID: fmt.Sprintf("run-wait-id-%d", len(h.added)+1),
 	}, nil
 }
 
@@ -1348,6 +1681,7 @@ type fakeCAS struct {
 	content   []byte
 	objects   map[string][]byte
 	metadata  map[string]cas.Object
+	getCalls  map[string]int
 }
 
 func (f *fakeCAS) Put(_ context.Context, mediaType string, body io.Reader) (cas.Object, error) {
@@ -1420,6 +1754,10 @@ func (f *fakeCAS) Stat(_ context.Context, digest string) (cas.Object, error) {
 func (f *fakeCAS) Get(_ context.Context, digest string) (io.ReadCloser, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.getCalls == nil {
+		f.getCalls = map[string]int{}
+	}
+	f.getCalls[digest]++
 	return io.NopCloser(bytes.NewReader(append([]byte(nil), f.objects[digest]...))), nil
 }
 
@@ -1473,6 +1811,16 @@ func encryptedCheckpointObject(t *testing.T, encryptor *checkpoint.Encryptor, pl
 	t.Helper()
 	var body bytes.Buffer
 	if err := encryptor.Encrypt(context.Background(), bytes.NewReader(plaintext), &body, checkpointPurpose(suffix)); err != nil {
+		t.Fatal(err)
+	}
+	encrypted := body.Bytes()
+	return encryptedCheckpoint{digest: sha256sum.DigestBytes(encrypted), body: encrypted}
+}
+
+func encryptedRuntimeSubstrateObject(t *testing.T, encryptor *checkpoint.Encryptor, plaintext []byte, rawDigest string) encryptedCheckpoint {
+	t.Helper()
+	var body bytes.Buffer
+	if err := encryptor.Encrypt(context.Background(), bytes.NewReader(plaintext), &body, runtimeSubstratePurpose(rawDigest)); err != nil {
 		t.Fatal(err)
 	}
 	encrypted := body.Bytes()

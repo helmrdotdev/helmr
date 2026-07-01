@@ -19,15 +19,15 @@ const defaultDeploymentBuildCompletionGrace = 30 * time.Second
 type ControlClient interface {
 	LeaseDeploymentBuild(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerDeploymentBuildLeaseResponse, error)
 	CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result api.WorkerDeploymentBuildResult) (api.WorkerDeploymentBuildResponse, error)
-	ClaimWorkspaceMaterialization(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerWorkspaceMaterializationClaimResponse, error)
-	RenewWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationRenewRequest) (api.WorkspaceMaterializationResponse, error)
-	MarkWorkspaceMaterializationRunning(ctx context.Context, request api.WorkerWorkspaceMaterializationRunningRequest) (api.WorkspaceMaterializationResponse, error)
-	CaptureWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationCaptureRequest) (api.WorkerWorkspaceMaterializationCaptureResponse, error)
-	StopWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationStopRequest) (api.WorkspaceMaterializationResponse, error)
-	FailWorkspaceMaterialization(ctx context.Context, request api.WorkerWorkspaceMaterializationFailRequest) (api.WorkspaceMaterializationResponse, error)
-	ClaimWorkspaceMaterializationOperation(ctx context.Context, request api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error)
-	StartWorkspaceMaterializationOperation(ctx context.Context, request api.WorkerWorkspaceOperationStartRequest) (api.WorkspaceOperationResponse, error)
-	CompleteWorkspaceMaterializationOperation(ctx context.Context, request api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error)
+	ClaimWorkspaceMount(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerWorkspaceMountClaimResponse, error)
+	RenewWorkspaceMount(ctx context.Context, request api.WorkerWorkspaceMountRenewRequest) (api.WorkspaceMountResponse, error)
+	MarkWorkspaceMountMounted(ctx context.Context, request api.WorkerWorkspaceMountMountedRequest) (api.WorkspaceMountResponse, error)
+	CaptureWorkspaceMount(ctx context.Context, request api.WorkerWorkspaceMountCaptureRequest) (api.WorkerWorkspaceMountCaptureResponse, error)
+	StopWorkspaceMount(ctx context.Context, request api.WorkerWorkspaceMountStopRequest) (api.WorkspaceMountResponse, error)
+	FailWorkspaceMount(ctx context.Context, request api.WorkerWorkspaceMountFailRequest) (api.WorkspaceMountResponse, error)
+	ClaimWorkspaceOperation(ctx context.Context, request api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error)
+	StartWorkspaceOperation(ctx context.Context, request api.WorkerWorkspaceOperationStartRequest) (api.WorkspaceOperationResponse, error)
+	CompleteWorkspaceOperation(ctx context.Context, request api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error)
 	MarkWorkspaceExecStarted(ctx context.Context, request api.WorkerWorkspaceExecStartedRequest) (api.WorkspaceExecEnvelope, error)
 	AppendWorkspaceExecOutput(ctx context.Context, request api.WorkerWorkspaceExecOutputRequest) (api.ListWorkspaceExecStreamChunksResponse, error)
 	ListWorkspaceExecInput(ctx context.Context, request api.WorkerWorkspaceExecInputRequest) (api.WorkerWorkspaceExecInputResponse, error)
@@ -54,7 +54,7 @@ type DeploymentBuilder interface {
 }
 
 type Materializer interface {
-	RunWorkspaceMaterialization(ctx context.Context, materialization api.WorkerWorkspaceMaterialization, client api.WorkerWorkspaceMaterializerControlClient) error
+	RunWorkspaceMount(ctx context.Context, mount api.WorkerWorkspaceMount, client api.WorkerWorkspaceMaterializerControlClient) error
 }
 
 type runLeaseState struct {
@@ -92,7 +92,7 @@ type Runner struct {
 	log                            *slog.Logger
 	deploymentBuildMu              sync.Mutex
 	deploymentBuildActive          bool
-	materializationWG              sync.WaitGroup
+	mountWG                        sync.WaitGroup
 }
 
 type Option func(*Runner)
@@ -179,7 +179,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			r.waitForMaterializations()
+			r.waitForMounts()
 			return ctx.Err()
 		case <-timer.C:
 		}
@@ -197,8 +197,8 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 }
 
-func (r *Runner) waitForMaterializations() {
-	r.materializationWG.Wait()
+func (r *Runner) waitForMounts() {
+	r.mountWG.Wait()
 }
 
 func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
@@ -228,20 +228,18 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 		}
 	}
 	if r.materializer != nil {
-		claimed, err := r.client.ClaimWorkspaceMaterialization(ctx, r.capabilities)
+		claimed, err := r.client.ClaimWorkspaceMount(ctx, r.capabilities)
 		if err != nil {
-			return false, fmt.Errorf("claim workspace materialization: %w", err)
+			return false, fmt.Errorf("claim workspace mount: %w", err)
 		}
-		if claimed.Materialization != nil {
-			materialization := *claimed.Materialization
-			r.log.Info("worker claimed workspace materialization", "workspace_id", materialization.WorkspaceID, "materialization_id", materialization.ID)
-			r.materializationWG.Add(1)
-			go func() {
-				defer r.materializationWG.Done()
-				if err := r.materializer.RunWorkspaceMaterialization(ctx, materialization, r.client); err != nil && ctx.Err() == nil {
-					r.log.Error("workspace materialization failed", "workspace_id", materialization.WorkspaceID, "materialization_id", materialization.ID, "error", err)
+		if claimed.Mount != nil {
+			mount := *claimed.Mount
+			r.log.Info("worker claimed workspace mount", "workspace_id", mount.WorkspaceID, "workspace_mount_id", mount.ID)
+			r.mountWG.Go(func() {
+				if err := r.materializer.RunWorkspaceMount(ctx, mount, r.client); err != nil && ctx.Err() == nil {
+					r.log.Error("workspace mount failed", "workspace_id", mount.WorkspaceID, "workspace_mount_id", mount.ID, "error", err)
 				}
-			}()
+			})
 			return true, nil
 		}
 	}

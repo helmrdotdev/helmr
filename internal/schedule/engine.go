@@ -291,10 +291,7 @@ func (e *Engine) markTriggerFailed(ctx context.Context, lease IndexLease, row db
 }
 
 func (e *Engine) deferTrigger(ctx context.Context, lease IndexLease, row db.GetScheduleTriggerCandidateRow) error {
-	indexAttempt := lease.Attempt
-	if indexAttempt < 1 {
-		indexAttempt = 1
-	}
+	indexAttempt := max(lease.Attempt, 1)
 	retryAt := e.now().Add(RetryDelay(row.TriggerAttemptCount + indexAttempt))
 	affected, err := e.db.DeferScheduleInstanceTrigger(ctx, db.DeferScheduleInstanceTriggerParams{
 		RetryAfter:  pgvalue.TimestamptzUTCZeroInvalid(retryAt),

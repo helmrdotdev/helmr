@@ -36,8 +36,12 @@ func TestRuntimeFilepackRoundTripsSparseFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := packRuntimeFile(context.Background(), source, target, filepackScratchRole); err != nil {
+	stats, err := packRuntimeFile(context.Background(), source, target, filepackScratchRole)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if stats.LogicalBytes != 64<<20 || stats.EncodedChunks == 0 || stats.CompressedBytes == 0 {
+		t.Fatalf("pack stats = %+v", stats)
 	}
 	sourceInfo, err := os.Stat(source)
 	if err != nil {
@@ -50,8 +54,12 @@ func TestRuntimeFilepackRoundTripsSparseFile(t *testing.T) {
 	if targetInfo.Size() >= sourceInfo.Size()/8 {
 		t.Fatalf("packed sparse file size = %d, source = %d", targetInfo.Size(), sourceInfo.Size())
 	}
-	if err := unpackRuntimeFile(context.Background(), target, restored, filepackScratchRole, sourceInfo.Size()); err != nil {
+	restoreStats, err := unpackRuntimeFile(context.Background(), target, restored, filepackScratchRole, sourceInfo.Size())
+	if err != nil {
 		t.Fatal(err)
+	}
+	if restoreStats.LogicalBytes != sourceInfo.Size() || restoreStats.UnpackWrittenBytes == 0 || restoreStats.EncodedChunks != stats.EncodedChunks {
+		t.Fatalf("unpack stats = %+v pack=%+v", restoreStats, stats)
 	}
 	assertFileByteRange(t, restored, 4096, []byte("begin"))
 	assertFileByteRange(t, restored, 40<<20, bytes.Repeat([]byte{0x5a}, 1024))
@@ -71,10 +79,10 @@ func TestRuntimeFilepackRejectsRoleMismatch(t *testing.T) {
 	if err := os.WriteFile(source, []byte("memory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := packRuntimeFile(context.Background(), source, target, filepackMemoryRole); err != nil {
+	if _, err := packRuntimeFile(context.Background(), source, target, filepackMemoryRole); err != nil {
 		t.Fatal(err)
 	}
-	err := unpackRuntimeFile(context.Background(), target, filepath.Join(dir, "restored.raw"), filepackScratchRole, int64(len("memory")))
+	_, err := unpackRuntimeFile(context.Background(), target, filepath.Join(dir, "restored.raw"), filepackScratchRole, int64(len("memory")))
 	if err == nil {
 		t.Fatal("unpack succeeded with mismatched role")
 	}
@@ -87,10 +95,10 @@ func TestRuntimeFilepackRejectsLogicalSizeMismatch(t *testing.T) {
 	if err := os.WriteFile(source, []byte("memory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := packRuntimeFile(context.Background(), source, target, filepackMemoryRole); err != nil {
+	if _, err := packRuntimeFile(context.Background(), source, target, filepackMemoryRole); err != nil {
 		t.Fatal(err)
 	}
-	err := unpackRuntimeFile(context.Background(), target, filepath.Join(dir, "restored.raw"), filepackMemoryRole, 1<<20)
+	_, err := unpackRuntimeFile(context.Background(), target, filepath.Join(dir, "restored.raw"), filepackMemoryRole, 1<<20)
 	if err == nil {
 		t.Fatal("unpack succeeded with mismatched logical size")
 	}
@@ -123,7 +131,7 @@ func TestRuntimeFilepackRejectsOverflowingDataRecord(t *testing.T) {
 	record.Write(header[:])
 	record.Write(compressed)
 
-	err = readFilepackDataRecord(&record, file, decoder, maxInt64)
+	err = readFilepackDataRecord(&record, file, decoder, nil, maxInt64)
 	if err == nil || !strings.Contains(err.Error(), "invalid firecracker filepack data record") {
 		t.Fatalf("err = %v, want invalid data record", err)
 	}
@@ -152,7 +160,7 @@ func TestScanAndWriteFilepackRangeRejectsShortRead(t *testing.T) {
 	}
 	defer encoder.Close()
 
-	err = scanAndWriteFilepackRange(context.Background(), source, target, encoder, 0, 16)
+	err = scanAndWriteFilepackRange(context.Background(), source, target, encoder, nil, 0, 16)
 	if err == nil {
 		t.Fatal("scan succeeded with short read")
 	}

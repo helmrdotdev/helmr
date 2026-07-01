@@ -149,7 +149,7 @@ WITH candidate_raw AS (
        AND stream_waits.stream_id = sqlc.arg(stream_id)
        AND stream_waits.matched_record_id IS NULL
        AND run_waits.kind = 'stream'
-       AND run_waits.state = 'waiting'
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
      ORDER BY stream_waits.created_at ASC, stream_waits.id ASC
      FOR UPDATE OF stream_waits, run_waits
 ),
@@ -173,13 +173,17 @@ matched_wait AS (
 ),
 resolved_wait AS (
     UPDATE run_waits
-       SET state = 'resolved',
+       SET state = CASE
+             WHEN run_waits.state = 'live_waiting' THEN 'resolved_live'::run_wait_state
+             WHEN run_waits.state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
+             ELSE run_waits.state
+           END,
            resolved_at = now(),
            updated_at = now()
       FROM matched_wait
      WHERE run_waits.org_id = matched_wait.org_id
        AND run_waits.id = matched_wait.run_wait_id
-       AND run_waits.state = 'waiting'
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.*
 )
 SELECT resolved_wait.id AS run_wait_id,
@@ -228,7 +232,7 @@ WITH candidate_raw AS (
        AND stream_waits.run_wait_id = sqlc.arg(run_wait_id)
        AND stream_waits.matched_record_id IS NULL
        AND run_waits.kind = 'stream'
-       AND run_waits.state = 'waiting'
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
      FOR UPDATE OF stream_waits, run_waits
 ),
 matched_wait AS (
@@ -251,13 +255,17 @@ matched_wait AS (
 ),
 resolved_wait AS (
     UPDATE run_waits
-       SET state = 'resolved',
+       SET state = CASE
+             WHEN run_waits.state = 'live_waiting' THEN 'resolved_live'::run_wait_state
+             WHEN run_waits.state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
+             ELSE run_waits.state
+           END,
            resolved_at = now(),
            updated_at = now()
       FROM matched_wait
      WHERE run_waits.org_id = matched_wait.org_id
        AND run_waits.id = matched_wait.run_wait_id
-       AND run_waits.state = 'waiting'
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.*
 )
 SELECT resolved_wait.id AS run_wait_id,

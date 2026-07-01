@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
@@ -291,7 +292,7 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		RunLeaseSpanID:    "4444444444444444",
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("LeaseRunLease without live materialization error = %v, want pgx.ErrNoRows", err)
+		t.Fatalf("LeaseRunLease without live workspaceMount error = %v, want pgx.ErrNoRows", err)
 	}
 	var activeConcurrencySlots int
 	if err := pool.QueryRow(ctx, `
@@ -304,59 +305,56 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if activeConcurrencySlots != 0 {
-		t.Fatalf("LeaseRunLease without live materialization active concurrency slots = %d, want 0", activeConcurrencySlots)
+		t.Fatalf("LeaseRunLease without live workspaceMount active concurrency slots = %d, want 0", activeConcurrencySlots)
 	}
-	var materializationCount int
+	var workspaceMountCount int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
-		  FROM workspace_materializations
+		  FROM workspace_mounts
 		 WHERE org_id = $1
 		   AND workspace_id = $2
-	`, ids.orgID, ids.workspaceID).Scan(&materializationCount); err != nil {
+	`, ids.orgID, ids.workspaceID).Scan(&workspaceMountCount); err != nil {
 		t.Fatal(err)
 	}
-	if materializationCount != 0 {
-		t.Fatalf("LeaseRunLease created materializations = %d, want 0", materializationCount)
+	if workspaceMountCount != 0 {
+		t.Fatalf("LeaseRunLease created workspaceMounts = %d, want 0", workspaceMountCount)
 	}
-	requestedMaterialization, err := requestWorkspaceMaterializationForTest(ctx, queries, db.EnsureWorkspaceMaterializationRequestedParams{
+	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
-		Priority:      0,
 		Request:       []byte(`{"source":"test"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimedMaterialization, err := queries.ClaimWorkspaceMaterialization(ctx, db.ClaimWorkspaceMaterializationParams{
-		AvailableCpuMillis:      1000,
-		AvailableMemoryMib:      1024,
-		AvailableDiskMib:        4096,
-		AvailableExecutionSlots: 1,
-		RootfsDigest:            "sha256:rootfs",
-		RuntimeABI:              "test",
-		GuestdAbi:               "guestd-test",
-		AdapterAbi:              "adapter-test",
-		WorkerInstanceID:        pgvalue.UUID(workerID),
-		ReservationToken:        "materialization-reservation-token",
-		ReservationExpiresAt:    pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
-		GuestdChannelTokenHash:  "materialization-channel-token-hash",
-		RuntimeID:               runtimeID,
+	claimedMount, err := queries.ClaimWorkspaceMount(ctx, db.ClaimWorkspaceMountParams{
+		RootfsDigest:                "sha256:rootfs",
+		RuntimeABI:                  "test",
+		GuestdAbi:                   "guestd-test",
+		AdapterAbi:                  "adapter-test",
+		NetworkPolicy:               []byte(`{"internet":true}`),
+		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		RuntimeInstanceToken:        "runtime-instance-token",
+		WorkerInstanceID:            pgvalue.UUID(workerID),
+		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+		GuestdChannelTokenHash:      "workspace-mount-channel-token-hash",
+		RuntimeID:                   runtimeID,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requestedMaterialization.ID != claimedMaterialization.ID {
-		t.Fatalf("claimed materialization id = %v, want %v", claimedMaterialization.ID, requestedMaterialization.ID)
+	if requestedMount.ID != claimedMount.ID {
+		t.Fatalf("claimed workspace mount id = %v, want %v", claimedMount.ID, requestedMount.ID)
 	}
-	if _, err := queries.MarkWorkspaceMaterializationRunning(ctx, db.MarkWorkspaceMaterializationRunningParams{
-		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
-		OrgID:                pgvalue.UUID(ids.orgID),
-		ID:                   claimedMaterialization.ID,
-		WorkerInstanceID:     pgvalue.UUID(workerID),
-		ReservationToken:     "materialization-reservation-token",
+	if _, err := queries.MarkWorkspaceMountMounted(ctx, db.MarkWorkspaceMountMountedParams{
+		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+		OrgID:                       pgvalue.UUID(ids.orgID),
+		ID:                          claimedMount.ID,
+		WorkerInstanceID:            pgvalue.UUID(workerID),
+		RuntimeInstanceToken:        claimedMount.RuntimeInstanceToken,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +378,19 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	if !leasedWinner.WorkspaceID.Valid || !leasedWinner.WorkspaceLeaseID.Valid {
 		t.Fatalf("leased winner workspace = id:%+v lease:%+v, want write lease", leasedWinner.WorkspaceID, leasedWinner.WorkspaceLeaseID)
 	}
-	if !leasedWinner.WorkspaceFencingToken.Valid || strings.TrimSpace(leasedWinner.WorkspaceFencingToken.String) == "" {
+	var leasedRuntimeEpoch int64
+	if err := pool.QueryRow(ctx, `
+		SELECT runtime_epoch
+		  FROM runtime_instances
+		 WHERE org_id = $1
+		   AND id = $2
+		`, ids.orgID, pgvalue.MustUUIDValue(claimedMount.RuntimeInstanceID)).Scan(&leasedRuntimeEpoch); err != nil {
+		t.Fatal(err)
+	}
+	if leasedRuntimeEpoch != 2 {
+		t.Fatalf("leased runtime epoch = %d, want 2", leasedRuntimeEpoch)
+	}
+	if strings.TrimSpace(leasedWinner.WorkspaceFencingToken) == "" {
 		t.Fatalf("leased winner workspace fencing token = %+v, want token", leasedWinner.WorkspaceFencingToken)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -402,21 +412,21 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		t.Fatal(err)
 	}
 	var acquiredFencingGeneration int64
-	var materializationFencingGeneration int64
+	var workspaceMountFencingGeneration int64
 	if err := pool.QueryRow(ctx, `
 		SELECT workspace_leases.acquired_fencing_generation,
-		       workspace_materializations.fencing_generation
+		       workspace_mounts.fencing_generation
 		  FROM workspace_leases
-		  JOIN workspace_materializations
-		    ON workspace_materializations.org_id = workspace_leases.org_id
-		   AND workspace_materializations.id = workspace_leases.materialization_id
+		  JOIN workspace_mounts
+		    ON workspace_mounts.org_id = workspace_leases.org_id
+		   AND workspace_mounts.id = workspace_leases.workspace_mount_id
 		 WHERE workspace_leases.org_id = $1
 		   AND workspace_leases.id = $2
-	`, ids.orgID, pgvalue.MustUUIDValue(leasedWinner.WorkspaceLeaseID)).Scan(&acquiredFencingGeneration, &materializationFencingGeneration); err != nil {
+	`, ids.orgID, pgvalue.MustUUIDValue(leasedWinner.WorkspaceLeaseID)).Scan(&acquiredFencingGeneration, &workspaceMountFencingGeneration); err != nil {
 		t.Fatal(err)
 	}
-	if acquiredFencingGeneration != materializationFencingGeneration || acquiredFencingGeneration <= 1 {
-		t.Fatalf("workspace fencing generations lease=%d materialization=%d, want matching incremented generation", acquiredFencingGeneration, materializationFencingGeneration)
+	if acquiredFencingGeneration != workspaceMountFencingGeneration || acquiredFencingGeneration <= 1 {
+		t.Fatalf("workspace fencing generations lease=%d workspaceMount=%d, want matching incremented generation", acquiredFencingGeneration, workspaceMountFencingGeneration)
 	}
 	renewedExpiresAt := pgtype.Timestamptz{Time: time.Now().Add(2 * time.Hour), Valid: true}
 	if _, err := queries.RenewRunLease(ctx, db.RenewRunLeaseParams{
@@ -478,7 +488,7 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		DispatchLeaseID:             "lease-current",
 		RunStatus:                   db.RunStatusSucceeded,
 		WorkspaceLeaseID:            leasedWinner.WorkspaceLeaseID,
-		WorkspaceFencingToken:       leasedWinner.WorkspaceFencingToken,
+		WorkspaceFencingToken:       pgvalue.Text(leasedWinner.WorkspaceFencingToken),
 		WorkspaceArtifactDigest:     pgvalue.Text(workspaceDigest),
 		WorkspaceArtifactSizeBytes:  pgtype.Int8{Int64: 123, Valid: true},
 		WorkspaceArtifactMediaType:  pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
@@ -504,7 +514,7 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		DispatchLeaseID:             "lease-current",
 		RunStatus:                   db.RunStatusSucceeded,
 		WorkspaceLeaseID:            leasedWinner.WorkspaceLeaseID,
-		WorkspaceFencingToken:       leasedWinner.WorkspaceFencingToken,
+		WorkspaceFencingToken:       pgvalue.Text(leasedWinner.WorkspaceFencingToken),
 		WorkspaceArtifactDigest:     pgvalue.Text(workspaceDigest),
 		WorkspaceArtifactSizeBytes:  pgtype.Int8{Int64: 123, Valid: true},
 		WorkspaceArtifactMediaType:  pgvalue.Text("application/vnd.helmr.workspace.v0.tar"),
@@ -529,6 +539,20 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	if released.ActiveStartedAt.Valid {
 		t.Fatalf("active_started_at = %+v, want closed active interval", released.ActiveStartedAt)
+	}
+	var runtimeState db.RuntimeInstanceState
+	var ownerRunID pgtype.UUID
+	var ownerRunLeaseID pgtype.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT state, owner_run_id, owner_run_lease_id
+		  FROM runtime_instances
+		 WHERE org_id = $1
+		   AND id = $2
+		`, ids.orgID, pgvalue.MustUUIDValue(claimedMount.RuntimeInstanceID)).Scan(&runtimeState, &ownerRunID, &ownerRunLeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeState != db.RuntimeInstanceStateWaitingHot || ownerRunID.Valid || ownerRunLeaseID.Valid {
+		t.Fatalf("runtime after terminal release = state %s owner_run_valid=%v owner_lease_valid=%v, want waiting_hot/no owner", runtimeState, ownerRunID.Valid, ownerRunLeaseID.Valid)
 	}
 	var leaseState db.WorkspaceLeaseState
 	var leaseReleasedAt pgtype.Timestamptz
@@ -584,7 +608,7 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 	runLeaseID := uuid.Must(uuid.NewV7())
 	attemptID := uuid.Must(uuid.NewV7())
 	workerID := uuid.Must(uuid.NewV7())
-	materializationID := uuid.Must(uuid.NewV7())
+	workspaceMountID := uuid.Must(uuid.NewV7())
 	sourceWorkspaceLeaseID := uuid.Must(uuid.NewV7())
 	staleCheckpointID := uuid.Must(uuid.NewV7())
 	staleArtifactID := seedWorkspaceVersionArtifact(t, ctx, pool, ids)
@@ -639,24 +663,22 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO workspace_materializations (
+		INSERT INTO workspace_mounts (
 			id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
-			worker_instance_id, reservation_expires_at, requested_cpu_millis, requested_memory_mib,
-			requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib,
-			reserved_disk_mib, reserved_execution_slots, image_artifact_id, image_artifact_format,
-			rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding,
+			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
+			workspace_artifact_id, workspace_artifact_encoding,
 			workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes,
-			workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, state
+			workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, state,
+			mounted_at
 		)
 		SELECT $1, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
 		       deployment_sandboxes.id, workspaces.sandbox_fingerprint,
-		       $2, now() + interval '1 hour', 1000, 1024, 4096, 1, 0, 0, 0, 0,
 		       image_artifact.id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest,
 		       deployment_sandboxes.image_digest, deployment_sandboxes.image_format,
 		       workspace_artifact.id, workspace_versions.artifact_encoding, workspace_versions.artifact_entry_count,
 		       workspace_artifact.digest, workspace_artifact.size_bytes, workspace_artifact.media_type,
 		       deployment_sandboxes.workspace_mount_path, deployment_sandboxes.runtime_abi,
-		       deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, 'running'
+		       deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, 'mounted', now()
 		  FROM workspaces
 		  JOIN deployment_sandboxes
 		    ON deployment_sandboxes.org_id = workspaces.org_id
@@ -679,33 +701,33 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 		   AND workspace_artifact.project_id = workspace_versions.project_id
 		   AND workspace_artifact.environment_id = workspace_versions.environment_id
 		   AND workspace_artifact.id = workspace_versions.artifact_id
-		 WHERE workspaces.org_id = $3
-		   AND workspaces.id = $4
-	`, materializationID, workerID, ids.orgID, ids.workspaceID); err != nil {
+		 WHERE workspaces.org_id = $2
+		   AND workspaces.id = $3
+	`, workspaceMountID, ids.orgID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_leases (
-			id, org_id, project_id, environment_id, workspace_id, materialization_id,
+			id, org_id, project_id, environment_id, workspace_id, workspace_mount_id,
 			lease_kind, state, owner_run_id, base_version_id, acquired_version_id,
 			acquired_fencing_generation, fencing_token, expires_at, released_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, 'write', 'released', $7, $8, $8, 1,
 		        'stale-checkpoint-source-lease', now() + interval '1 hour', now())
-	`, sourceWorkspaceLeaseID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, materializationID, ids.runID, staleVersionID); err != nil {
+	`, sourceWorkspaceLeaseID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, workspaceMountID, ids.runID, staleVersionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_checkpoints (
 			id, org_id, project_id, environment_id, workspace_id, run_id,
-			source_workspace_lease_id, materialization_id, base_workspace_version_id,
+			source_workspace_lease_id, workspace_mount_id, base_workspace_version_id,
 			state, runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, runtime_config_digest, cni_profile, manifest, ready_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
 		        'ready', 'test', $10, 'arm64', 'test', 'sha256:kernel',
 		        'sha256:initramfs', 'sha256:rootfs', 'sha256:config', 'default', '{}', now())
-	`, staleCheckpointID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, ids.runID, sourceWorkspaceLeaseID, materializationID, staleVersionID, runtimeID); err != nil {
+	`, staleCheckpointID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, ids.runID, sourceWorkspaceLeaseID, workspaceMountID, staleVersionID, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -791,6 +813,300 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 	}
 	if activeWorkspaceLeases != 0 {
 		t.Fatalf("active workspace write leases after stale checkpoint lease failure = %d, want 0", activeWorkspaceLeases)
+	}
+}
+
+func TestLeaseRunLeaseCreditsResidentRuntimeOnOneSlotWorker(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	workerID := seedRuntimePressureWorker(t, ctx, pool, ids, 1000, 1024, 4096, 1)
+	dispatchMessageID := "dispatch-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	attemptID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
+		VALUES ($1, $2, $3, 1, 'queued')
+	`, attemptID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET status = 'queued',
+		       execution_status = 'queued',
+		       queue_timestamp = now(),
+		       current_attempt_id = $3,
+		       current_attempt_number = 1
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID, attemptID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_runtime_requirements (
+			run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
+			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
+			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
+		)
+		SELECT $1, $2, 1000, 1024, 4096, 1, worker_instances.runtime_id, worker_instances.runtime_arch,
+		       worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest,
+		       worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.worker_group_id
+		  FROM worker_instances
+		 WHERE worker_instances.id = $3
+	`, ids.runID, ids.orgID, workerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_queue_items (
+			run_id, org_id, status, queue_name, dispatch_message_id,
+			reserved_by_worker_instance_id, reservation_expires_at
+		)
+		VALUES ($1, $2, 'reserved', 'default', $3, $4, now() + interval '1 hour')
+	`, ids.runID, ids.orgID, dispatchMessageID, workerID); err != nil {
+		t.Fatal(err)
+	}
+
+	workspaceMountID := uuid.Must(uuid.NewV7())
+	seedResidentRuntimeWorkspaceMount(t, ctx, pool, ids, ids.workspaceID, workspaceMountID, workerID, 1000, 1024, 4096, 1)
+	leased, err := queries.LeaseRunLease(ctx, db.LeaseRunLeaseParams{
+		OrgID:             pgvalue.UUID(ids.orgID),
+		RunID:             pgvalue.UUID(ids.runID),
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		RunLeaseID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		DispatchMessageID: pgtype.Text{String: dispatchMessageID, Valid: true},
+		DispatchLeaseID:   "lease-with-resident",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+		RunLeaseSpanID:    "4444444444444444",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leased.WorkspaceMountID != pgvalue.UUID(workspaceMountID) {
+		t.Fatalf("workspace mount id = %v, want resident %s", leased.WorkspaceMountID, workspaceMountID)
+	}
+	if leased.RunLeaseWorkerInstanceID != pgvalue.UUID(workerID) {
+		t.Fatalf("run lease worker = %v, want %s", leased.RunLeaseWorkerInstanceID, workerID)
+	}
+	if !leased.WorkspaceLeaseID.Valid || strings.TrimSpace(leased.WorkspaceFencingToken) == "" {
+		t.Fatalf("workspace lease id/token = %+v/%q, want resident write lease", leased.WorkspaceLeaseID, leased.WorkspaceFencingToken)
+	}
+}
+
+func TestLeaseRunLeaseDoesNotReclaimCheckpointingResidentRuntime(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	workerID := seedRuntimePressureWorker(t, ctx, pool, ids, 1000, 1024, 4096, 1)
+	dispatchMessageID := "dispatch-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	attemptID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
+		VALUES ($1, $2, $3, 1, 'queued')
+	`, attemptID, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET status = 'queued',
+		       execution_status = 'queued',
+		       queue_timestamp = now(),
+		       current_attempt_id = $3,
+		       current_attempt_number = 1
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID, attemptID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_runtime_requirements (
+			run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
+			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
+			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
+		)
+		SELECT $1, $2, 1000, 1024, 4096, 1, worker_instances.runtime_id, worker_instances.runtime_arch,
+		       worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest,
+		       worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.worker_group_id
+		  FROM worker_instances
+		 WHERE worker_instances.id = $3
+	`, ids.runID, ids.orgID, workerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_queue_items (
+			run_id, org_id, status, queue_name, dispatch_message_id,
+			reserved_by_worker_instance_id, reservation_expires_at
+		)
+		VALUES ($1, $2, 'reserved', 'default', $3, $4, now() + interval '1 hour')
+	`, ids.runID, ids.orgID, dispatchMessageID, workerID); err != nil {
+		t.Fatal(err)
+	}
+	workspaceMountID := uuid.Must(uuid.NewV7())
+	seedResidentRuntimeWorkspaceMount(t, ctx, pool, ids, ids.workspaceID, workspaceMountID, workerID, 1000, 1024, 4096, 1)
+	if _, err := pool.Exec(ctx, `
+		UPDATE runtime_instances
+		   SET state = 'checkpointing',
+		       checkpointing_at = now()
+		 WHERE org_id = $1
+		   AND workspace_mount_id = $2
+	`, ids.orgID, workspaceMountID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := queries.LeaseRunLease(ctx, db.LeaseRunLeaseParams{
+		OrgID:             pgvalue.UUID(ids.orgID),
+		RunID:             pgvalue.UUID(ids.runID),
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		RunLeaseID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		DispatchMessageID: pgtype.Text{String: dispatchMessageID, Valid: true},
+		DispatchLeaseID:   "lease-checkpointing-resident",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+		RunLeaseSpanID:    "5555555555555555",
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("LeaseRunLease checkpointing resident error = %v, want pgx.ErrNoRows", err)
+	}
+	var state db.RuntimeInstanceState
+	if err := pool.QueryRow(ctx, `
+		SELECT state
+		  FROM runtime_instances
+		 WHERE org_id = $1
+		   AND workspace_mount_id = $2
+	`, ids.orgID, workspaceMountID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != db.RuntimeInstanceStateCheckpointing {
+		t.Fatalf("runtime state after rejected lease = %s, want checkpointing", state)
+	}
+}
+
+func seedRuntimePressureWorker(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, cpu int, memory int, disk int64, slots int) uuid.UUID {
+	t.Helper()
+	workerID := uuid.Must(uuid.NewV7())
+	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	workerResourceID := "worker-" + shortUUID(workerID)
+	var workerGroupID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_releases (runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
+		VALUES ($1, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE deployments
+		   SET worker_protocol_version = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, api.CurrentWorkerProtocolVersion, ids.orgID, ids.deploymentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO worker_instances (
+			id, resource_id, worker_group_id, status, protocol_version,
+			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
+			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
+			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
+		)
+		VALUES ($1, $2, $3, 'active', $4,
+			$5, $6, $7, $8, $5, $6, $7, $8,
+			$9, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, workerID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, cpu, memory, disk, slots, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	return workerID
+}
+
+func seedResidentRuntimeWorkspaceMount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, workspaceID uuid.UUID, workspaceMountID uuid.UUID, workerID uuid.UUID, cpu int, memory int, disk int64, slots int) {
+	t.Helper()
+	runtimeInstanceID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		WITH mounted AS (
+			INSERT INTO workspace_mounts (
+				id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
+				base_version_id,
+				image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
+				workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count,
+				workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type,
+				workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, state, mounted_at
+			)
+			SELECT $1, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
+			       deployment_sandboxes.id, workspaces.sandbox_fingerprint,
+			       workspaces.current_version_id,
+			       image_artifact.id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest,
+			       deployment_sandboxes.image_digest, deployment_sandboxes.image_format,
+			       workspace_artifact.id, workspace_versions.artifact_encoding, workspace_versions.artifact_entry_count,
+			       workspace_artifact.digest, workspace_artifact.size_bytes, workspace_artifact.media_type,
+			       deployment_sandboxes.workspace_mount_path, deployment_sandboxes.runtime_abi,
+			       deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, 'mounted', now()
+			  FROM workspaces
+			  JOIN deployment_sandboxes
+			    ON deployment_sandboxes.org_id = workspaces.org_id
+			   AND deployment_sandboxes.project_id = workspaces.project_id
+			   AND deployment_sandboxes.environment_id = workspaces.environment_id
+			   AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
+			  JOIN artifacts AS image_artifact
+			    ON image_artifact.org_id = deployment_sandboxes.org_id
+			   AND image_artifact.project_id = deployment_sandboxes.project_id
+			   AND image_artifact.environment_id = deployment_sandboxes.environment_id
+			   AND image_artifact.id = deployment_sandboxes.image_artifact_id
+			  JOIN workspace_versions
+			    ON workspace_versions.org_id = workspaces.org_id
+			   AND workspace_versions.project_id = workspaces.project_id
+			   AND workspace_versions.environment_id = workspaces.environment_id
+			   AND workspace_versions.workspace_id = workspaces.id
+			   AND workspace_versions.id = workspaces.current_version_id
+			  JOIN artifacts AS workspace_artifact
+			    ON workspace_artifact.org_id = workspace_versions.org_id
+			   AND workspace_artifact.project_id = workspace_versions.project_id
+			   AND workspace_artifact.environment_id = workspace_versions.environment_id
+			   AND workspace_artifact.id = workspace_versions.artifact_id
+				 WHERE workspaces.org_id = $2
+				   AND workspaces.id = $3
+			RETURNING *
+		),
+		runtime AS (
+			INSERT INTO runtime_instances (
+				id, org_id, project_id, environment_id, worker_instance_id, runtime_release_id,
+				deployment_sandbox_id, runtime_key_hash, runtime_key, sandbox_fingerprint,
+				rootfs_digest, image_digest, image_format, sandbox_image_artifact_id,
+				sandbox_image_artifact_digest, sandbox_image_artifact_format, workspace_mount_path,
+				runtime_abi, guestd_abi, adapter_abi, reserved_cpu_millis, reserved_memory_mib,
+				reserved_disk_mib, reserved_execution_slots, workspace_mount_id, owner_workspace_id,
+				owner_workspace_version_id, state, instance_token, last_heartbeat_at, running_at
+			)
+				SELECT $4, mounted.org_id, mounted.project_id, mounted.environment_id, $5, worker_instances.runtime_id,
+				       mounted.deployment_sandbox_id, 'resident-runtime-' || ($4::uuid)::text, '{}'::jsonb, mounted.sandbox_fingerprint,
+				       mounted.rootfs_digest, mounted.image_digest, mounted.image_format, mounted.image_artifact_id,
+				       mounted.image_digest, mounted.image_artifact_format, mounted.workspace_mount_path,
+				       mounted.runtime_abi, mounted.guestd_abi, mounted.adapter_abi, $6, $7, $8, $9,
+				       mounted.id, mounted.workspace_id, mounted.base_version_id, 'running', 'resident-runtime-token-' || ($4::uuid)::text,
+				       now(), now()
+				  FROM mounted
+				  JOIN worker_instances ON worker_instances.id = $5
+			RETURNING id
+		)
+		UPDATE workspace_mounts
+		   SET runtime_instance_id = runtime.id,
+		       updated_at = now()
+		  FROM runtime
+			 WHERE workspace_mounts.org_id = $2
+			   AND workspace_mounts.id = $1
+		`, workspaceMountID, ids.orgID, workspaceID, runtimeInstanceID, workerID, cpu, memory, disk, slots); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_mounts
+		   SET runtime_instance_id = $1,
+		       updated_at = now()
+		 WHERE org_id = $2
+		   AND id = $3
+	`, runtimeInstanceID, ids.orgID, workspaceMountID); err != nil {
+		t.Fatal(err)
 	}
 }
 

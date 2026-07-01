@@ -6,7 +6,7 @@ option go_package = "github.com/helmrdotdev/helmr/internal/proto/workspace/v0;wo
 
 message WorkspaceOperationEnvelope {
   string operation_id = 1;
-  string materialization_id = 2;
+  string workspace_mount_id = 2;
   string workspace_id = 3;
   string channel_token = 4;
   uint64 fencing_generation = 5;
@@ -31,11 +31,34 @@ message MaterializeWorkspaceRequest {
   string base_version_id = 3;
   WorkspaceArtifact base_artifact = 4;
   WorkspaceArtifact sandbox_artifact = 5;
+  bool use_prepared_runtime = 6;
+  string runtime_key = 7;
+}
+
+message WorkspaceMountPhase {
+  string name = 1;
+  uint64 duration_ms = 2;
+  uint64 size_bytes = 3;
+  uint32 entry_count = 4;
+  string error = 5;
 }
 
 message MaterializeWorkspaceResponse {
   string state = 1;
   string guestd_channel_token_hash = 2;
+  repeated WorkspaceMountPhase phases = 3;
+}
+
+message PrepareWorkspaceRuntimeRequest {
+  string runtime_key = 1;
+  string mount_path = 2;
+  WorkspaceArtifact sandbox_artifact = 3;
+}
+
+message PrepareWorkspaceRuntimeResponse {
+  string state = 1;
+  string runtime_key = 2;
+  repeated WorkspaceMountPhase phases = 3;
 }
 
 message HeartbeatWorkspaceRequest {

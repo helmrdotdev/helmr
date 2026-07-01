@@ -73,10 +73,11 @@ locals {
   reserved_secret_rotation_keys     = toset(["HELMR_SECRET_ENCRYPTION_KEY_OLD"])
   reserved_control_keys             = setunion(local.reserved_control_environment_keys, local.reserved_control_secret_keys, local.reserved_email_keys, local.reserved_secret_rotation_keys)
   control_environment_conflicts     = setintersection(keys(var.control_environment), local.reserved_control_keys)
+  dispatcher_environment_conflicts  = setintersection(keys(var.dispatcher_environment), local.reserved_control_keys)
   control_environment               = merge(var.control_environment, local.managed_control_environment)
   control_secrets                   = local.managed_control_secrets
 
-  dispatcher_environment = merge({
+  managed_dispatcher_environment = merge({
     HELMR_ASYNC_BUS_URI                = "sqs+${aws_sqs_queue.async.url}"
     HELMR_PUBLIC_URL                   = local.control_url
     HELMR_REDIS_URL                    = local.redis_url
@@ -88,6 +89,7 @@ locals {
     HELMR_SCHEDULE_MAX_ATTEMPTS        = tostring(var.schedule_max_attempts)
     HELMR_SCHEDULE_JITTER              = var.schedule_jitter
   }, local.email_environment)
+  dispatcher_environment = merge(var.dispatcher_environment, local.managed_dispatcher_environment)
 
   dispatcher_secrets = merge({
     HELMR_AUTH_SECRET           = aws_secretsmanager_secret.auth_secret.arn
@@ -109,19 +111,25 @@ data "aws_vpc" "control" {
 
 resource "terraform_data" "bootstrap_preconditions" {
   input = {
-    certificate_arn        = var.certificate_arn
-    cloudfront_origin      = var.cloudfront_origin_domain_name
-    enable_cloudfront      = var.enable_cloudfront
-    private_control_dns    = var.private_control_dns_name
-    public_url             = var.public_url
-    reserved_env_conflicts = local.control_environment_conflicts
-    email_provider         = var.email_provider
+    certificate_arn                   = var.certificate_arn
+    cloudfront_origin                 = var.cloudfront_origin_domain_name
+    enable_cloudfront                 = var.enable_cloudfront
+    private_control_dns               = var.private_control_dns_name
+    public_url                        = var.public_url
+    reserved_env_conflicts            = local.control_environment_conflicts
+    reserved_dispatcher_env_conflicts = local.dispatcher_environment_conflicts
+    email_provider                    = var.email_provider
   }
 
   lifecycle {
     precondition {
       condition     = length(local.control_environment_conflicts) == 0
       error_message = "control_environment must not set managed Helmr variables. Use explicit module inputs and secret containers for managed settings."
+    }
+
+    precondition {
+      condition     = length(local.dispatcher_environment_conflicts) == 0
+      error_message = "dispatcher_environment must not set managed Helmr variables. Use explicit module inputs and secret containers for managed settings."
     }
 
     precondition {

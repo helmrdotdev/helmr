@@ -81,7 +81,7 @@ func (p GuestIndexer) Index(ctx context.Context, request IndexRequest) (Catalog,
 	}
 	defer cleanup()
 
-	session, err := p.Connector.Connect(ctx, compute.DefaultNetworkPolicy())
+	session, err := p.Connector.Connect(ctx, vm.ConnectRequest{Network: compute.DefaultNetworkPolicy()})
 	if err != nil {
 		return Catalog{}, fmt.Errorf("connect deployment indexer guest: %w", err)
 	}

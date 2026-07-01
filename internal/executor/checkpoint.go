@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"runtime"
 	"strings"
@@ -27,6 +29,10 @@ import (
 )
 
 func (r GuestRunner) materializeCheckpointObject(ctx context.Context, digest string, suffix string) (string, error) {
+	return r.materializeEncryptedObject(ctx, digest, suffix, checkpointPurpose(suffix))
+}
+
+func (r GuestRunner) materializeEncryptedObject(ctx context.Context, digest string, suffix string, purpose string) (string, error) {
 	if r.CheckpointEncryptor == nil {
 		return "", errors.New("checkpoint encryption is required")
 	}
@@ -45,7 +51,7 @@ func (r GuestRunner) materializeCheckpointObject(ctx context.Context, digest str
 	}
 	path := file.Name()
 	hash := sha256.New()
-	copyErr := r.CheckpointEncryptor.Decrypt(ctx, io.TeeReader(body, hash), file, checkpointPurpose(suffix))
+	copyErr := r.CheckpointEncryptor.Decrypt(ctx, io.TeeReader(body, hash), file, purpose)
 	bodyCloseErr := body.Close()
 	closeErr := file.Close()
 	if copyErr != nil {
@@ -66,6 +72,19 @@ func (r GuestRunner) materializeCheckpointObject(ctx context.Context, digest str
 		return "", fmt.Errorf("checkpoint object digest mismatch: expected %s, got %s", digest, actual)
 	}
 	return path, nil
+}
+
+func checkpointFileDigest(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return sha256sum.DigestHash(hash), nil
 }
 
 func validateRestoreIdentity(checkpoint api.WorkerCheckpointManifest) error {
@@ -94,6 +113,33 @@ func validateRestoreIdentity(checkpoint api.WorkerCheckpointManifest) error {
 	if err := requireCheckpointDigest("recovery_point.runtime.config_digest", runtimeInfo.ConfigDigest); err != nil {
 		return err
 	}
+	if runtimeInfo.Substrate != nil {
+		if err := requireCheckpointDigest("recovery_point.runtime.substrate.digest", runtimeInfo.Substrate.Digest); err != nil {
+			return err
+		}
+		if strings.TrimSpace(runtimeInfo.Substrate.Format) == "" {
+			return errors.New("restore checkpoint recovery_point.runtime.substrate.format is required")
+		}
+		if strings.TrimSpace(runtimeInfo.Substrate.BuilderABI) == "" {
+			return errors.New("restore checkpoint recovery_point.runtime.substrate.builder_abi is required")
+		}
+		if strings.TrimSpace(runtimeInfo.Substrate.LayoutABI) == "" {
+			return errors.New("restore checkpoint recovery_point.runtime.substrate.layout_abi is required")
+		}
+		if checkpoint.RuntimeState.RuntimeSubstrateArtifact == nil {
+			return errors.New("restore checkpoint runtime_state.runtime_substrate_artifact is required")
+		}
+		substrateArtifact := checkpoint.RuntimeState.RuntimeSubstrateArtifact
+		if strings.TrimSpace(substrateArtifact.ID) == "" {
+			return errors.New("restore checkpoint runtime_state.runtime_substrate_artifact.id is required")
+		}
+		if strings.TrimSpace(substrateArtifact.Artifact.Digest) == "" {
+			return errors.New("restore checkpoint runtime_state.runtime_substrate_artifact.artifact.digest is required")
+		}
+		if strings.TrimSpace(substrateArtifact.Artifact.MediaType) == "" {
+			return errors.New("restore checkpoint runtime_state.runtime_substrate_artifact.artifact.media_type is required")
+		}
+	}
 	return requireCheckpointArtifact(checkpoint.RuntimeState.ConfigArtifact, "runtime_state.config_artifact")
 }
 
@@ -115,13 +161,15 @@ func requireCheckpointArtifact(artifact api.WorkerCheckpointArtifact, field stri
 }
 
 type runtimeCheckpointer struct {
-	session   vm.CheckpointableSession
-	cas       cas.Store
-	encryptor *checkpoint.Encryptor
-	tempDir   string
-	stream    io.ReadWriteCloser
-	workspace api.WorkerCheckpointWorkspaceBase
-	runEvent  func(context.Context, *runv0.RunEvent) error
+	session           vm.CheckpointableSession
+	cas               cas.Store
+	encryptor         *checkpoint.Encryptor
+	tempDir           string
+	stream            io.ReadWriteCloser
+	workspace         api.WorkerCheckpointWorkspaceBase
+	substrateSource   *api.WorkerRuntimeSubstrateSource
+	runtimeSubstrates RuntimeSubstrateArtifactRegistrar
+	runEvent          func(context.Context, *runv0.RunEvent) error
 }
 
 func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request CheckpointRequest) (CheckpointResult, error) {
@@ -157,6 +205,7 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 		return CheckpointResult{}, err
 	}
 	recordPhase("create_runtime_snapshot", started)
+	phases = append(phases, workerCheckpointPhases(artifact.Phases)...)
 	defer func() {
 		cleanupSnapshotArtifact(artifact)
 	}()
@@ -299,6 +348,7 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 	var manifest storedCheckpointArtifact
 	var state storedCheckpointArtifact
 	var scratchDisk storedCheckpointArtifact
+	var substrate *api.WorkerRuntimeSubstrateArtifact
 	memory := make([]api.WorkerCheckpointArtifact, len(artifact.Memory))
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(4)
@@ -326,6 +376,16 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 		scratchDisk = stored
 		return nil
 	})
+	if artifact.Substrate != nil {
+		group.Go(func() error {
+			stored, err := c.ensureRuntimeSubstrateArtifact(groupCtx, artifact.Substrate)
+			if err != nil {
+				return fmt.Errorf("ensure runtime substrate artifact: %w", err)
+			}
+			substrate = stored
+			return nil
+		})
+	}
 	for i, file := range artifact.Memory {
 		group.Go(func() error {
 			stored, err := c.storeSnapshotFile(groupCtx, file, "memory")
@@ -358,14 +418,16 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 				InitramfsDigest: artifact.InitramfsDigest,
 				RootfsDigest:    artifact.RootfsDigest,
 				ConfigDigest:    artifact.RuntimeConfigDigest,
+				Substrate:       checkpointRuntimeSubstrate(artifact.Substrate),
 			},
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{
-			ConfigArtifact:      manifest.artifact,
-			VMStateArtifact:     state.artifact,
-			ScratchDiskArtifact: scratchDisk.artifact,
-			MemoryArtifacts:     memory,
-			Config:              artifact.Manifest,
+			ConfigArtifact:           manifest.artifact,
+			VMStateArtifact:          state.artifact,
+			ScratchDiskArtifact:      scratchDisk.artifact,
+			RuntimeSubstrateArtifact: substrate,
+			MemoryArtifacts:          memory,
+			Config:                   artifact.Manifest,
 		},
 		WorkspaceState: api.WorkerCheckpointWorkspaceState{
 			Base: c.workspace,
@@ -373,11 +435,151 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 	}, nil
 }
 
+func checkpointRuntimeSubstrate(substrate *vm.RuntimeSubstrate) *api.WorkerCheckpointRuntimeSubstrate {
+	if substrate == nil {
+		return nil
+	}
+	return &api.WorkerCheckpointRuntimeSubstrate{
+		Digest:     strings.TrimSpace(substrate.Digest),
+		Format:     strings.TrimSpace(substrate.Format),
+		BuilderABI: strings.TrimSpace(substrate.BuilderABI),
+		LayoutABI:  strings.TrimSpace(substrate.LayoutABI),
+	}
+}
+
+func (c runtimeCheckpointer) ensureRuntimeSubstrateArtifact(ctx context.Context, substrate *vm.RuntimeSubstrate) (*api.WorkerRuntimeSubstrateArtifact, error) {
+	if substrate == nil {
+		return nil, nil
+	}
+	if c.substrateSource != nil && runtimeSubstrateArtifactMatches(c.substrateSource.RuntimeSubstrateArtifact, substrate) {
+		return c.substrateSource.RuntimeSubstrateArtifact, nil
+	}
+	if c.runtimeSubstrates == nil {
+		return nil, errors.New("runtime substrate artifact registrar is required")
+	}
+	if c.substrateSource == nil || strings.TrimSpace(c.substrateSource.DeploymentSandboxID) == "" {
+		return nil, errors.New("runtime substrate source deployment_sandbox_id is required")
+	}
+	if lookup, ok := c.runtimeSubstrates.(RuntimeSubstrateArtifactLookup); ok {
+		response, err := lookup.LookupRuntimeSubstrateArtifact(ctx, api.WorkerRuntimeSubstrateArtifactLookupRequest{
+			DeploymentSandboxID: strings.TrimSpace(c.substrateSource.DeploymentSandboxID),
+			SubstrateDigest:     strings.TrimSpace(substrate.Digest),
+			Format:              strings.TrimSpace(substrate.Format),
+			BuilderABI:          strings.TrimSpace(substrate.BuilderABI),
+			LayoutABI:           strings.TrimSpace(substrate.LayoutABI),
+		})
+		if err == nil {
+			artifact := response.RuntimeSubstrateArtifact
+			return &artifact, nil
+		}
+		if !isHTTPStatus(err, 404) {
+			return nil, fmt.Errorf("lookup runtime substrate artifact: %w", err)
+		}
+	}
+	if strings.TrimSpace(substrate.Path) == "" {
+		return nil, errors.New("runtime substrate path is required")
+	}
+	body, err := os.Open(substrate.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	info, err := body.Stat()
+	if err != nil {
+		return nil, err
+	}
+	encryptStarted := time.Now()
+	stage, err := c.cas.Stage(ctx, cas.RuntimeSubstrateMediaType)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.encryptor.Encrypt(ctx, body, stage, runtimeSubstratePurpose(substrate.Digest)); err != nil {
+		_ = stage.Abort(context.Background())
+		return nil, err
+	}
+	encryptDuration := time.Since(encryptStarted)
+	storeStarted := time.Now()
+	object, err := stage.Commit(ctx)
+	if err != nil {
+		_ = stage.Abort(context.Background())
+		return nil, err
+	}
+	source, err := runtimeSubstrateArtifactSource(c.substrateSource, map[string]any{
+		"producer":            "checkpoint",
+		"encrypt_duration_ms": durationMilliseconds(encryptDuration),
+		"store_duration_ms":   durationMilliseconds(time.Since(storeStarted)),
+	})
+	if err != nil {
+		return nil, err
+	}
+	response, err := c.runtimeSubstrates.RegisterRuntimeSubstrateArtifact(ctx, api.WorkerRuntimeSubstrateArtifactRegisterRequest{
+		DeploymentSandboxID: strings.TrimSpace(c.substrateSource.DeploymentSandboxID),
+		Artifact: api.CASObject{
+			Digest:    object.Digest,
+			SizeBytes: object.SizeBytes,
+			MediaType: object.MediaType,
+		},
+		SubstrateDigest: strings.TrimSpace(substrate.Digest),
+		Format:          strings.TrimSpace(substrate.Format),
+		BuilderABI:      strings.TrimSpace(substrate.BuilderABI),
+		LayoutABI:       strings.TrimSpace(substrate.LayoutABI),
+		SizeBytes:       info.Size(),
+		Source:          source,
+	})
+	if err != nil {
+		return nil, err
+	}
+	artifact := response.RuntimeSubstrateArtifact
+	return &artifact, nil
+}
+
+func runtimeSubstrateArtifactSource(source *api.WorkerRuntimeSubstrateSource, metadata map[string]any) ([]byte, error) {
+	body := map[string]any{}
+	maps.Copy(body, metadata)
+	if source != nil {
+		body["substrate_source"] = map[string]string{
+			"sandbox_artifact_digest": strings.TrimSpace(source.SandboxImageArtifact.Digest),
+			"sandbox_artifact_format": strings.TrimSpace(source.SandboxImageArtifactFormat),
+			"image_digest":            strings.TrimSpace(source.ImageDigest),
+			"rootfs_digest":           strings.TrimSpace(source.RootfsDigest),
+			"runtime_abi":             strings.TrimSpace(source.RuntimeABI),
+			"guestd_abi":              strings.TrimSpace(source.GuestdABI),
+			"adapter_abi":             strings.TrimSpace(source.AdapterABI),
+			"workspace_mount_path":    strings.TrimSpace(source.WorkspaceMountPath),
+		}
+	}
+	return json.Marshal(body)
+}
+
+type httpStatusError interface {
+	HTTPStatusCode() int
+}
+
+func isHTTPStatus(err error, statusCode int) bool {
+	var statusErr httpStatusError
+	return errors.As(err, &statusErr) && statusErr.HTTPStatusCode() == statusCode
+}
+
+func runtimeSubstrateArtifactMatches(artifact *api.WorkerRuntimeSubstrateArtifact, substrate *vm.RuntimeSubstrate) bool {
+	if artifact == nil || substrate == nil {
+		return false
+	}
+	return strings.TrimSpace(artifact.SubstrateDigest) == strings.TrimSpace(substrate.Digest) &&
+		strings.TrimSpace(artifact.Format) == strings.TrimSpace(substrate.Format) &&
+		strings.TrimSpace(artifact.BuilderABI) == strings.TrimSpace(substrate.BuilderABI) &&
+		strings.TrimSpace(artifact.LayoutABI) == strings.TrimSpace(substrate.LayoutABI) &&
+		strings.TrimSpace(artifact.ID) != "" &&
+		strings.TrimSpace(artifact.Artifact.Digest) != ""
+}
+
 type storedCheckpointArtifact struct {
 	artifact api.WorkerCheckpointArtifact
 }
 
 func (c runtimeCheckpointer) storeSnapshotFile(ctx context.Context, file vm.SnapshotFile, suffix string) (storedCheckpointArtifact, error) {
+	if strings.TrimSpace(file.Path) == "" {
+		return storedCheckpointArtifact{}, fmt.Errorf("checkpoint %s path is required", suffix)
+	}
 	body, err := os.Open(file.Path)
 	if err != nil {
 		return storedCheckpointArtifact{}, err
@@ -416,9 +618,55 @@ func checkpointPurpose(suffix string) string {
 	return "helmr.checkpoint." + suffix
 }
 
+func runtimeSubstratePurpose(rawDigest string) string {
+	return "helmr.runtime-substrate." + strings.TrimSpace(rawDigest)
+}
+
+func workerCheckpointPhases(phases []vm.RuntimePhase) []api.WorkerCheckpointPhase {
+	if len(phases) == 0 {
+		return nil
+	}
+	result := make([]api.WorkerCheckpointPhase, 0, len(phases))
+	for _, phase := range phases {
+		result = append(result, workerCheckpointPhase(phase))
+	}
+	return result
+}
+
+func workerCheckpointPhase(phase vm.RuntimePhase) api.WorkerCheckpointPhase {
+	return api.WorkerCheckpointPhase{
+		Name:       phase.Name,
+		DurationMs: phase.DurationMs,
+		Role:       phase.Role,
+		MediaType:  phase.MediaType,
+		ErrorClass: phase.ErrorClass,
+		Filepack:   workerCheckpointFilepackStats(phase.Filepack),
+	}
+}
+
+func workerCheckpointFilepackStats(stats *vm.FilepackStats) *api.WorkerCheckpointFilepackStats {
+	if stats == nil {
+		return nil
+	}
+	return &api.WorkerCheckpointFilepackStats{
+		LogicalBytes:       stats.LogicalBytes,
+		AllocatedBytes:     stats.AllocatedBytes,
+		SparseSupported:    stats.SparseSupported,
+		SparseDataRanges:   stats.SparseDataRanges,
+		SparseDataBytes:    stats.SparseDataBytes,
+		ZeroChunksSkipped:  stats.ZeroChunksSkipped,
+		EncodedChunks:      stats.EncodedChunks,
+		CompressedBytes:    stats.CompressedBytes,
+		UnpackWrittenBytes: stats.UnpackWrittenBytes,
+	}
+}
+
 func cleanupSnapshotArtifact(artifact vm.SnapshotArtifact) {
 	_ = os.Remove(artifact.VMState.Path)
 	_ = os.Remove(artifact.ScratchDisk.Path)
+	if artifact.Substrate != nil {
+		_ = os.Remove(artifact.Substrate.Path)
+	}
 	for _, file := range artifact.Memory {
 		_ = os.Remove(file.Path)
 	}

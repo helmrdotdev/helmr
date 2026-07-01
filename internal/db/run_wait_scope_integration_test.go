@@ -34,7 +34,7 @@ func TestGetWorkerRunWaitScopeUsesWorkerGroupIdentity(t *testing.T) {
 	if got := scope.WorkerCniProfile; got != "default" {
 		t.Fatalf("worker cni profile = %q, want default", got)
 	}
-	if !scope.MaterializationID.Valid {
-		t.Fatal("materialization id is invalid")
+	if !scope.WorkspaceMountID.Valid {
+		t.Fatal("workspaceMount id is invalid")
 	}
 }

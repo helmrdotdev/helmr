@@ -12,31 +12,34 @@ var streamFrameMagic = [4]byte{'H', 'M', 'S', '2'}
 type StreamType string
 
 const (
-	StreamTypeCatalogDeployment      StreamType = "catalog-deployment"
-	StreamTypeCompileTaskBundle      StreamType = "compile-task-bundle"
-	StreamTypeRunImage               StreamType = "run-image"
-	StreamTypeDeploymentSource       StreamType = "deployment-source"
-	StreamTypeWorkspaceArtifact      StreamType = "workspace-artifact"
-	StreamTypeCheckpointPauseRequest StreamType = "checkpoint-pause-request"
-	StreamTypeCheckpointPauseReady   StreamType = "checkpoint-pause-ready"
-	StreamTypeResumeDecision         StreamType = "resume-decision"
-	StreamTypeWorkspaceMaterialize   StreamType = "workspace-materialize"
-	StreamTypeWorkspaceOperation     StreamType = "workspace-operation"
-	StreamTypeWorkspaceEvents        StreamType = "workspace-events"
-	StreamTypeWorkspaceInput         StreamType = "workspace-input"
-	StreamTypeWorkspaceStop          StreamType = "workspace-stop"
+	StreamTypeCatalogDeployment       StreamType = "catalog-deployment"
+	StreamTypeCompileTaskBundle       StreamType = "compile-task-bundle"
+	StreamTypeRunImage                StreamType = "run-image"
+	StreamTypeDeploymentSource        StreamType = "deployment-source"
+	StreamTypeWorkspaceArtifact       StreamType = "workspace-artifact"
+	StreamTypeCheckpointPauseRequest  StreamType = "checkpoint-pause-request"
+	StreamTypeCheckpointPauseReady    StreamType = "checkpoint-pause-ready"
+	StreamTypeResumeDecision          StreamType = "resume-decision"
+	StreamTypeWorkspaceMaterialize    StreamType = "workspace-materialize"
+	StreamTypeWorkspaceRuntimePrepare StreamType = "workspace-runtime-prepare"
+	StreamTypeWorkspaceRun            StreamType = "workspace-run"
+	StreamTypeWorkspaceOperation      StreamType = "workspace-operation"
+	StreamTypeWorkspaceEvents         StreamType = "workspace-events"
+	StreamTypeWorkspaceInput          StreamType = "workspace-input"
+	StreamTypeWorkspaceStop           StreamType = "workspace-stop"
 )
 
 type StreamHeader struct {
-	Type         StreamType `json:"type"`
-	RunID        string     `json:"run_id,omitempty"`
-	TaskID       string     `json:"task_id,omitempty"`
-	RunWaitID    string     `json:"run_wait_id,omitempty"`
-	CheckpointID string     `json:"checkpoint_id,omitempty"`
-	WorkspaceID  string     `json:"workspace_id,omitempty"`
-	OperationID  string     `json:"operation_id,omitempty"`
-	BodyDigest   *string    `json:"body_digest,omitempty"`
-	EntryCount   *int       `json:"entry_count,omitempty"`
+	Type             StreamType `json:"type"`
+	RunID            string     `json:"run_id,omitempty"`
+	TaskID           string     `json:"task_id,omitempty"`
+	RunWaitID        string     `json:"run_wait_id,omitempty"`
+	CheckpointID     string     `json:"checkpoint_id,omitempty"`
+	WorkspaceID      string     `json:"workspace_id,omitempty"`
+	WorkspaceMountID string     `json:"workspace_mount_id,omitempty"`
+	OperationID      string     `json:"operation_id,omitempty"`
+	BodyDigest       *string    `json:"body_digest,omitempty"`
+	EntryCount       *int       `json:"entry_count,omitempty"`
 }
 
 func WriteStreamFrameHeader(w io.Writer, header StreamHeader, bodyLen uint64) error {

@@ -40,7 +40,10 @@ func LoadWorker() (Worker, error) {
 		VMMemoryMiB:                  2048,
 		VMScratchDiskMiB:             8192,
 		VMHealthTimeout:              30 * time.Second,
-		WorkspaceMaterializeTimeout:  20 * time.Minute,
+		VMHealthAttemptTimeout:       5 * time.Second,
+		WorkspaceMountStartupTimeout: 20 * time.Minute,
+		PreparedBasePoolSize:         0,
+		PreparedRuntimePoolSize:      0,
 		PollEvery:                    2 * time.Second,
 	}
 	var err error
@@ -83,6 +86,18 @@ func LoadWorker() (Worker, error) {
 	if cfg.WorkerDiskMiB < 0 {
 		return cfg, errors.New("HELMR_WORKER_DISK_MIB must be non-negative")
 	}
+	if cfg.SubstrateCacheMaxMiB, err = envInt64("HELMR_WORKER_SUBSTRATE_CACHE_MAX_MIB", cfg.SubstrateCacheMaxMiB); err != nil {
+		return cfg, err
+	}
+	if cfg.SubstrateCacheMaxMiB < 0 {
+		return cfg, errors.New("HELMR_WORKER_SUBSTRATE_CACHE_MAX_MIB must be non-negative")
+	}
+	if cfg.ArtifactCacheMaxMiB, err = envInt64("HELMR_WORKER_ARTIFACT_CACHE_MAX_MIB", cfg.ArtifactCacheMaxMiB); err != nil {
+		return cfg, err
+	}
+	if cfg.ArtifactCacheMaxMiB < 0 {
+		return cfg, errors.New("HELMR_WORKER_ARTIFACT_CACHE_MAX_MIB must be non-negative")
+	}
 	var workerExecutionSlots int
 	if workerExecutionSlots, err = envInt("HELMR_WORKER_EXECUTION_SLOTS", int(cfg.WorkerExecutionSlots)); err != nil {
 		return cfg, err
@@ -100,11 +115,39 @@ func LoadWorker() (Worker, error) {
 	if cfg.VMHealthTimeout, err = envDuration("HELMR_VM_HEALTH_TIMEOUT", cfg.VMHealthTimeout); err != nil {
 		return cfg, err
 	}
-	if cfg.WorkspaceMaterializeTimeout, err = envDuration("HELMR_WORKSPACE_MATERIALIZATION_STARTUP_TIMEOUT", cfg.WorkspaceMaterializeTimeout); err != nil {
+	if cfg.VMHealthTimeout <= 0 {
+		return cfg, errors.New("HELMR_VM_HEALTH_TIMEOUT must be positive")
+	}
+	healthAttemptTimeoutExplicit := envString("HELMR_VM_HEALTH_ATTEMPT_TIMEOUT") != ""
+	if cfg.VMHealthAttemptTimeout, err = envDuration("HELMR_VM_HEALTH_ATTEMPT_TIMEOUT", cfg.VMHealthAttemptTimeout); err != nil {
 		return cfg, err
 	}
-	if cfg.WorkspaceMaterializeTimeout <= 0 {
-		return cfg, errors.New("HELMR_WORKSPACE_MATERIALIZATION_STARTUP_TIMEOUT must be positive")
+	if !healthAttemptTimeoutExplicit && cfg.VMHealthAttemptTimeout > cfg.VMHealthTimeout {
+		cfg.VMHealthAttemptTimeout = cfg.VMHealthTimeout
+	}
+	if cfg.VMHealthAttemptTimeout <= 0 {
+		return cfg, errors.New("HELMR_VM_HEALTH_ATTEMPT_TIMEOUT must be positive")
+	}
+	if cfg.VMHealthAttemptTimeout > cfg.VMHealthTimeout {
+		return cfg, errors.New("HELMR_VM_HEALTH_ATTEMPT_TIMEOUT must be less than or equal to HELMR_VM_HEALTH_TIMEOUT")
+	}
+	if cfg.WorkspaceMountStartupTimeout, err = envDuration("HELMR_WORKSPACE_MOUNT_STARTUP_TIMEOUT", cfg.WorkspaceMountStartupTimeout); err != nil {
+		return cfg, err
+	}
+	if cfg.WorkspaceMountStartupTimeout <= 0 {
+		return cfg, errors.New("HELMR_WORKSPACE_MOUNT_STARTUP_TIMEOUT must be positive")
+	}
+	if cfg.PreparedBasePoolSize, err = envInt("HELMR_WORKER_PREPARED_BASE_POOL_SIZE", cfg.PreparedBasePoolSize); err != nil {
+		return cfg, err
+	}
+	if cfg.PreparedBasePoolSize < 0 {
+		return cfg, errors.New("HELMR_WORKER_PREPARED_BASE_POOL_SIZE must be non-negative")
+	}
+	if cfg.PreparedRuntimePoolSize, err = envInt("HELMR_WORKER_PREPARED_RUNTIME_POOL_SIZE", cfg.PreparedRuntimePoolSize); err != nil {
+		return cfg, err
+	}
+	if cfg.PreparedRuntimePoolSize < 0 {
+		return cfg, errors.New("HELMR_WORKER_PREPARED_RUNTIME_POOL_SIZE must be non-negative")
 	}
 	if cfg.JailerUID, err = envInt("HELMR_WORKER_FIRECRACKER_JAILER_UID", cfg.JailerUID); err != nil {
 		return cfg, err

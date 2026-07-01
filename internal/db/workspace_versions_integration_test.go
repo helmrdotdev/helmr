@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestWorkspaceMaterializationRequiresReadyCurrentVersion(t *testing.T) {
+func TestWorkspaceMountRequiresReadyCurrentVersion(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)

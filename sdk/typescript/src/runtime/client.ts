@@ -1255,7 +1255,7 @@ export class HelmrClient {
         return workspaceFromResponse(response.workspace)
       },
       materialize: async (opts = {}) => {
-        const response = await this.#json<WorkspaceMaterializationResponse>(
+        const response = await this.#json<WorkspaceMountResponse>(
           `${workspaceResourcePath(id, opts)}/materialize`,
           {
             method: "POST",
@@ -1267,7 +1267,7 @@ export class HelmrClient {
         return workspaceMaterializationFromResponse(response)
       },
       connect: async (opts = {}) => {
-        const response = await this.#json<WorkspaceMaterializationResponse>(
+        const response = await this.#json<WorkspaceMountResponse>(
           `${workspaceResourcePath(id, opts)}/connect`,
           {
             method: "POST",
@@ -2242,7 +2242,7 @@ interface WorkspaceResponse {
   readonly state: WorkspaceState
   readonly desired_state: WorkspaceDesiredState
   readonly dirty_state: WorkspaceDirtyState
-  readonly last_materialization_id?: string | null
+  readonly last_workspace_mount_id?: string | null
   readonly metadata?: Record<string, unknown>
   readonly tags?: readonly string[]
   readonly auto_stop_at?: string | null
@@ -2264,7 +2264,7 @@ interface ListWorkspacesResponse {
   readonly workspaces: readonly WorkspaceResponse[]
 }
 
-interface WorkspaceMaterializationResponse {
+interface WorkspaceMountResponse {
   readonly id: string
   readonly project_id: string
   readonly environment_id: string
@@ -2284,7 +2284,7 @@ interface WorkspaceMaterializationResponse {
 interface WorkspaceStopResponse {
   readonly workspace_id: string
   readonly state: string
-  readonly materialization?: WorkspaceMaterializationResponse | null
+  readonly mount?: WorkspaceMountResponse | null
 }
 
 interface WorkspaceFileEntryResponse {
@@ -2333,7 +2333,7 @@ interface ListWorkspaceVersionsResponse {
 interface WorkspaceExecResponse {
   readonly id: string
   readonly workspace_id: string
-  readonly materialization_id?: string | null
+  readonly workspace_mount_id?: string | null
   readonly command: readonly string[]
   readonly cwd: string
   readonly env_shape?: Record<string, string>
@@ -2366,7 +2366,7 @@ interface ListWorkspaceExecsResponse {
 interface WorkspacePtyResponse {
   readonly id: string
   readonly workspace_id: string
-  readonly materialization_id?: string | null
+  readonly workspace_mount_id?: string | null
   readonly cwd: string
   readonly cols: number
   readonly rows: number
@@ -2904,7 +2904,7 @@ function workspaceFileSourceQuery(query: URLSearchParams, opts: WorkspaceFileSou
       return
     case "live":
       if (opts.materializationId !== undefined) {
-        query.set("materialization_id", opts.materializationId)
+        query.set("workspace_mount_id", opts.materializationId)
       }
       return
     default:
@@ -3018,7 +3018,7 @@ function workspaceFromResponse(response: WorkspaceResponse): Workspace {
     state: response.state,
     desiredState: response.desired_state,
     dirtyState: response.dirty_state,
-    lastMaterializationId: response.last_materialization_id ?? null,
+    lastMaterializationId: response.last_workspace_mount_id ?? null,
     metadata: response.metadata ?? {},
     tags: response.tags ?? [],
     autoStopAt: response.auto_stop_at ?? null,
@@ -3032,7 +3032,7 @@ function workspaceFromResponse(response: WorkspaceResponse): Workspace {
   }
 }
 
-function workspaceMaterializationFromResponse(response: WorkspaceMaterializationResponse): WorkspaceMaterialization {
+function workspaceMaterializationFromResponse(response: WorkspaceMountResponse): WorkspaceMaterialization {
   return {
     id: response.id,
     projectId: response.project_id,
@@ -3055,7 +3055,7 @@ function workspaceStopFromResponse(response: WorkspaceStopResponse): WorkspaceSt
   return {
     workspaceId: response.workspace_id,
     state: response.state,
-    materialization: response.materialization == null ? null : workspaceMaterializationFromResponse(response.materialization),
+    materialization: response.mount == null ? null : workspaceMaterializationFromResponse(response.mount),
   }
 }
 
@@ -3100,7 +3100,7 @@ function workspaceExecFromResponse(response: WorkspaceExecResponse): WorkspaceEx
   return {
     id: response.id,
     workspaceId: response.workspace_id,
-    materializationId: response.materialization_id ?? null,
+    materializationId: response.workspace_mount_id ?? null,
     command: response.command,
     cwd: response.cwd,
     envShape: response.env_shape ?? {},
@@ -3126,7 +3126,7 @@ function workspacePtyFromResponse(response: WorkspacePtyResponse): WorkspacePty 
   return {
     id: response.id,
     workspaceId: response.workspace_id,
-    materializationId: response.materialization_id ?? null,
+    materializationId: response.workspace_mount_id ?? null,
     cwd: response.cwd,
     cols: response.cols,
     rows: response.rows,

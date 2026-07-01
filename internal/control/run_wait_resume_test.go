@@ -12,14 +12,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestRequeueResolvedRunWaitsEnsuresWorkspaceMaterialization(t *testing.T) {
+func TestRequeueResolvedRunWaitsEnsuresWorkspaceMount(t *testing.T) {
 	orgID := uuid.Must(uuid.NewV7())
 	projectID := uuid.Must(uuid.NewV7())
 	environmentID := uuid.Must(uuid.NewV7())
 	workspaceID := uuid.Must(uuid.NewV7())
 	runID := uuid.Must(uuid.NewV7())
 	runWaitID := uuid.Must(uuid.NewV7())
-	materializationID := uuid.Must(uuid.NewV7())
+	workspaceMountID := uuid.Must(uuid.NewV7())
 	store := &runWaitResumeFakeStore{
 		rows: []db.RequeueResolvedRunWaitsRow{{
 			ID:            pgvalue.UUID(runWaitID),
@@ -30,10 +30,9 @@ func TestRequeueResolvedRunWaitsEnsuresWorkspaceMaterialization(t *testing.T) {
 			WorkspaceID:   pgvalue.UUID(workspaceID),
 			Priority:      17,
 		}},
-		materializationID: pgvalue.UUID(materializationID),
+		workspaceMountID: pgvalue.UUID(workspaceMountID),
 	}
-
-	rows, err := requeueResolvedRunWaitsWithStore(context.Background(), store, pgvalue.UUID(orgID))
+	rows, err := requeueResolvedRunWaitsWithStore(context.Background(), store, pgvalue.UUID(orgID), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,17 +45,17 @@ func TestRequeueResolvedRunWaitsEnsuresWorkspaceMaterialization(t *testing.T) {
 	if store.ensureParams.WorkspaceID != pgvalue.UUID(workspaceID) {
 		t.Fatalf("ensure workspace = %s, want %s", pgvalue.UUIDString(store.ensureParams.WorkspaceID), workspaceID)
 	}
-	if store.ensureParams.Priority != 17 {
-		t.Fatalf("ensure priority = %d, want 17", store.ensureParams.Priority)
+	if store.ensureParams.RequestPriority != 17 {
+		t.Fatalf("ensure priority = %d, want 17", store.ensureParams.RequestPriority)
 	}
 	var request map[string]string
 	if err := json.Unmarshal(store.ensureParams.Request, &request); err != nil {
 		t.Fatal(err)
 	}
-	if request["source"] != "run_wait_resume" || request["run_id"] != runID.String() || request["run_wait_id"] != runWaitID.String() {
+	if request["source"] != "runtime_resume_wait" || request["run_id"] != runID.String() || request["run_wait_id"] != runWaitID.String() {
 		t.Fatalf("ensure request = %+v", request)
 	}
-	if store.linkParams.RunID != pgvalue.UUID(runID) || store.linkParams.WorkspaceMaterializationID != pgvalue.UUID(materializationID) {
+	if store.linkParams.RunID != pgvalue.UUID(runID) || store.linkParams.WorkspaceMountID != pgvalue.UUID(workspaceMountID) {
 		t.Fatalf("link params = %+v", store.linkParams)
 	}
 }
@@ -72,10 +71,10 @@ func TestRequeueResolvedRunWaitsReturnsEnsureFailure(t *testing.T) {
 			RunID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			WorkspaceID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		}},
-		ensureErr: errors.New("materialization prerequisites missing"),
+		ensureErr: errors.New("mount prerequisites missing"),
 	}
 
-	_, err := requeueResolvedRunWaitsWithStore(context.Background(), store, pgvalue.UUID(orgID))
+	_, err := requeueResolvedRunWaitsWithStore(context.Background(), store, pgvalue.UUID(orgID), nil)
 	if err == nil || !errors.Is(err, store.ensureErr) {
 		t.Fatalf("err = %v, want ensure error", err)
 	}
@@ -84,13 +83,13 @@ func TestRequeueResolvedRunWaitsReturnsEnsureFailure(t *testing.T) {
 	}
 }
 
-func TestEnsureQueuedRunWorkspaceMaterializationRelinksQueuedRun(t *testing.T) {
+func TestEnsureQueuedRunWorkspaceMountRelinksQueuedRun(t *testing.T) {
 	orgID := uuid.Must(uuid.NewV7())
 	projectID := uuid.Must(uuid.NewV7())
 	environmentID := uuid.Must(uuid.NewV7())
 	workspaceID := uuid.Must(uuid.NewV7())
 	runID := uuid.Must(uuid.NewV7())
-	materializationID := uuid.Must(uuid.NewV7())
+	workspaceMountID := uuid.Must(uuid.NewV7())
 	store := &runWaitResumeFakeStore{
 		run: db.Run{
 			ID:            pgvalue.UUID(runID),
@@ -101,10 +100,10 @@ func TestEnsureQueuedRunWorkspaceMaterializationRelinksQueuedRun(t *testing.T) {
 			Status:        db.RunStatusQueued,
 			Priority:      23,
 		},
-		materializationID: pgvalue.UUID(materializationID),
+		workspaceMountID: pgvalue.UUID(workspaceMountID),
 	}
 
-	ensured, err := ensureQueuedRunWorkspaceMaterialization(context.Background(), store, pgvalue.UUID(orgID), pgvalue.UUID(runID), "run_lease_conflict")
+	ensured, err := ensureQueuedRunWorkspaceMount(context.Background(), store, pgvalue.UUID(orgID), pgvalue.UUID(runID), "run_lease_conflict", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,8 +113,11 @@ func TestEnsureQueuedRunWorkspaceMaterializationRelinksQueuedRun(t *testing.T) {
 	if store.getRunOrgID != pgvalue.UUID(orgID) || store.getRunID != pgvalue.UUID(runID) {
 		t.Fatalf("get run org/run = %s/%s", pgvalue.UUIDString(store.getRunOrgID), pgvalue.UUIDString(store.getRunID))
 	}
-	if store.ensureParams.WorkspaceID != pgvalue.UUID(workspaceID) || store.ensureParams.Priority != 23 {
+	if store.ensureParams.WorkspaceID != pgvalue.UUID(workspaceID) {
 		t.Fatalf("ensure params = %+v", store.ensureParams)
+	}
+	if store.ensureParams.RequestPriority != 23 {
+		t.Fatalf("ensure priority = %d, want 23", store.ensureParams.RequestPriority)
 	}
 	var request map[string]string
 	if err := json.Unmarshal(store.ensureParams.Request, &request); err != nil {
@@ -124,12 +126,12 @@ func TestEnsureQueuedRunWorkspaceMaterializationRelinksQueuedRun(t *testing.T) {
 	if request["source"] != "run_lease_conflict" || request["run_id"] != runID.String() {
 		t.Fatalf("ensure request = %+v", request)
 	}
-	if store.linkParams.RunID != pgvalue.UUID(runID) || store.linkParams.WorkspaceMaterializationID != pgvalue.UUID(materializationID) {
+	if store.linkParams.RunID != pgvalue.UUID(runID) || store.linkParams.WorkspaceMountID != pgvalue.UUID(workspaceMountID) {
 		t.Fatalf("link params = %+v", store.linkParams)
 	}
 }
 
-func TestEnsureQueuedRunWorkspaceMaterializationSkipsNonQueuedRun(t *testing.T) {
+func TestEnsureQueuedRunWorkspaceMountSkipsNonQueuedRun(t *testing.T) {
 	orgID := uuid.Must(uuid.NewV7())
 	runID := uuid.Must(uuid.NewV7())
 	store := &runWaitResumeFakeStore{
@@ -140,7 +142,7 @@ func TestEnsureQueuedRunWorkspaceMaterializationSkipsNonQueuedRun(t *testing.T) 
 		},
 	}
 
-	ensured, err := ensureQueuedRunWorkspaceMaterialization(context.Background(), store, pgvalue.UUID(orgID), pgvalue.UUID(runID), "run_lease_conflict")
+	ensured, err := ensureQueuedRunWorkspaceMount(context.Background(), store, pgvalue.UUID(orgID), pgvalue.UUID(runID), "run_lease_conflict", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,21 +150,21 @@ func TestEnsureQueuedRunWorkspaceMaterializationSkipsNonQueuedRun(t *testing.T) 
 		t.Fatal("ensured = true, want false")
 	}
 	if store.ensureParams.WorkspaceID.Valid || store.linkParams.RunID.Valid {
-		t.Fatalf("unexpected materialization calls: ensure=%+v link=%+v", store.ensureParams, store.linkParams)
+		t.Fatalf("unexpected mount calls: ensure=%+v link=%+v", store.ensureParams, store.linkParams)
 	}
 }
 
 type runWaitResumeFakeStore struct {
-	rows              []db.RequeueResolvedRunWaitsRow
-	run               db.Run
-	getRunOrgID       pgtype.UUID
-	getRunID          pgtype.UUID
-	materializationID pgtype.UUID
-	ensureErr         error
-	linkErr           error
-	requeueParams     db.RequeueResolvedRunWaitsParams
-	ensureParams      db.EnsureWorkspaceMaterializationRequestedParams
-	linkParams        db.SetQueuedRunWorkspaceMaterializationParams
+	rows             []db.RequeueResolvedRunWaitsRow
+	run              db.Run
+	getRunOrgID      pgtype.UUID
+	getRunID         pgtype.UUID
+	workspaceMountID pgtype.UUID
+	ensureErr        error
+	linkErr          error
+	requeueParams    db.RequeueResolvedRunWaitsParams
+	ensureParams     db.EnsureWorkspaceMountRequestedParams
+	linkParams       db.SetQueuedRunWorkspaceMountParams
 }
 
 func (s *runWaitResumeFakeStore) RequeueResolvedRunWaits(_ context.Context, arg db.RequeueResolvedRunWaitsParams) ([]db.RequeueResolvedRunWaitsRow, error) {
@@ -176,15 +178,15 @@ func (s *runWaitResumeFakeStore) GetRun(_ context.Context, arg db.GetRunParams) 
 	return s.run, nil
 }
 
-func (s *runWaitResumeFakeStore) EnsureWorkspaceMaterializationRequested(_ context.Context, arg db.EnsureWorkspaceMaterializationRequestedParams) (db.EnsureWorkspaceMaterializationRequestedRow, error) {
+func (s *runWaitResumeFakeStore) EnsureWorkspaceMountRequested(_ context.Context, arg db.EnsureWorkspaceMountRequestedParams) (db.EnsureWorkspaceMountRequestedRow, error) {
 	s.ensureParams = arg
 	if s.ensureErr != nil {
-		return db.EnsureWorkspaceMaterializationRequestedRow{}, s.ensureErr
+		return db.EnsureWorkspaceMountRequestedRow{}, s.ensureErr
 	}
-	return db.EnsureWorkspaceMaterializationRequestedRow{ID: s.materializationID}, nil
+	return db.EnsureWorkspaceMountRequestedRow{ID: s.workspaceMountID}, nil
 }
 
-func (s *runWaitResumeFakeStore) SetQueuedRunWorkspaceMaterialization(_ context.Context, arg db.SetQueuedRunWorkspaceMaterializationParams) error {
+func (s *runWaitResumeFakeStore) SetQueuedRunWorkspaceMount(_ context.Context, arg db.SetQueuedRunWorkspaceMountParams) error {
 	s.linkParams = arg
 	return s.linkErr
 }

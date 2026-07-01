@@ -276,18 +276,18 @@ func workspaceOpenCommand() *cobra.Command {
 }
 
 func workspaceMaterializeCommand() *cobra.Command {
-	return workspaceMaterializationCommand("materialize", "Ensure a workspace materialization exists.", func(ctx context.Context, control *client.Client, workspaceID string, scope client.WorkspaceScopeOptions) (api.WorkspaceMaterializationResponse, error) {
+	return workspaceMountCommand("materialize", "Ensure a workspace mount exists.", func(ctx context.Context, control *client.Client, workspaceID string, scope client.WorkspaceScopeOptions) (api.WorkspaceMountResponse, error) {
 		return control.MaterializeWorkspace(ctx, workspaceID, scope)
 	})
 }
 
 func workspaceConnectCommand() *cobra.Command {
-	return workspaceMaterializationCommand("connect", "Connect to a workspace materialization.", func(ctx context.Context, control *client.Client, workspaceID string, scope client.WorkspaceScopeOptions) (api.WorkspaceMaterializationResponse, error) {
+	return workspaceMountCommand("connect", "Connect to a workspace mount.", func(ctx context.Context, control *client.Client, workspaceID string, scope client.WorkspaceScopeOptions) (api.WorkspaceMountResponse, error) {
 		return control.ConnectWorkspace(ctx, workspaceID, scope)
 	})
 }
 
-func workspaceMaterializationCommand(use string, short string, call func(context.Context, *client.Client, string, client.WorkspaceScopeOptions) (api.WorkspaceMaterializationResponse, error)) *cobra.Command {
+func workspaceMountCommand(use string, short string, call func(context.Context, *client.Client, string, client.WorkspaceScopeOptions) (api.WorkspaceMountResponse, error)) *cobra.Command {
 	var projectID string
 	var environmentID string
 	var jsonOutput bool
@@ -328,7 +328,7 @@ func workspaceStopCommand() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "stop WORKSPACE",
-		Short: "Stop the live materialization for a workspace.",
+		Short: "Stop the live workspace mount for a workspace.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			control, err := controlClient(cmd)

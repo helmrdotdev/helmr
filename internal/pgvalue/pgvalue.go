@@ -76,6 +76,13 @@ func Int4Response(value pgtype.Int4) *int32 {
 	return &value.Int32
 }
 
+func Int8Value(value pgtype.Int8) int64 {
+	if !value.Valid {
+		return 0
+	}
+	return value.Int64
+}
+
 func UUID(value uuid.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: value, Valid: true}
 }

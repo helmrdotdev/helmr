@@ -44,98 +44,98 @@ func TestWorkspacePrimitiveOperationFingerprintIgnoresJSONRepresentation(t *test
 }
 
 func TestWorkspaceExecTerminalEventMatchesOnlySamePayload(t *testing.T) {
-	materializationID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	workspaceMountID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	row := db.WorkspaceExec{
-		MaterializationID: materializationID,
-		State:             db.WorkspaceExecStateExited,
-		ExitCode:          pgtype.Int4{Int32: 7, Valid: true},
-		Signal:            "",
-		Error:             []byte(`{"message":"done"}`),
+		WorkspaceMountID: workspaceMountID,
+		State:            db.WorkspaceExecStateExited,
+		ExitCode:         pgtype.Int4{Int32: 7, Valid: true},
+		Signal:           "",
+		Error:            []byte(`{"message":"done"}`),
 	}
-	if !workspaceExecTerminalEventMatches(row, materializationID, db.WorkspaceExecStateExited, pgtype.Int4{Int32: 7, Valid: true}, "", []byte(`{"message":"done"}`)) {
+	if !workspaceExecTerminalEventMatches(row, workspaceMountID, db.WorkspaceExecStateExited, pgtype.Int4{Int32: 7, Valid: true}, "", []byte(`{"message":"done"}`)) {
 		t.Fatal("same exec terminal event did not match")
 	}
-	if workspaceExecTerminalEventMatches(row, materializationID, db.WorkspaceExecStateExited, pgtype.Int4{Int32: 8, Valid: true}, "", []byte(`{"message":"done"}`)) {
+	if workspaceExecTerminalEventMatches(row, workspaceMountID, db.WorkspaceExecStateExited, pgtype.Int4{Int32: 8, Valid: true}, "", []byte(`{"message":"done"}`)) {
 		t.Fatal("different exit code matched")
 	}
-	if workspaceExecTerminalEventMatches(row, materializationID, db.WorkspaceExecStateFailed, pgtype.Int4{Int32: 7, Valid: true}, "", []byte(`{"message":"done"}`)) {
+	if workspaceExecTerminalEventMatches(row, workspaceMountID, db.WorkspaceExecStateFailed, pgtype.Int4{Int32: 7, Valid: true}, "", []byte(`{"message":"done"}`)) {
 		t.Fatal("different terminal state matched")
 	}
 	if workspaceExecTerminalEventMatches(row, pgvalue.UUID(uuid.Must(uuid.NewV7())), db.WorkspaceExecStateExited, pgtype.Int4{Int32: 7, Valid: true}, "", []byte(`{"message":"done"}`)) {
-		t.Fatal("different materialization matched")
+		t.Fatal("different mount matched")
 	}
 	lost := db.WorkspaceExec{
-		MaterializationID: materializationID,
-		State:             db.WorkspaceExecStateLost,
+		WorkspaceMountID: workspaceMountID,
+		State:            db.WorkspaceExecStateLost,
 	}
-	if !workspaceExecTerminalEventMatches(lost, materializationID, db.WorkspaceExecStateExited, pgtype.Int4{Int32: 0, Valid: true}, "", nil) {
+	if !workspaceExecTerminalEventMatches(lost, workspaceMountID, db.WorkspaceExecStateExited, pgtype.Int4{Int32: 0, Valid: true}, "", nil) {
 		t.Fatal("late exec terminal event did not match lost row")
 	}
 }
 
 func TestWorkspacePtyLifecycleEventMatchesOnlySamePayload(t *testing.T) {
-	materializationID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	workspaceMountID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	resized := db.WorkspacePtySession{
-		MaterializationID: materializationID,
-		State:             db.WorkspacePtyStateOpen,
-		Cols:              120,
-		Rows:              40,
+		WorkspaceMountID: workspaceMountID,
+		State:            db.WorkspacePtyStateOpen,
+		Cols:             120,
+		Rows:             40,
 	}
-	if !workspacePtyResizeAppliedEventMatches(resized, materializationID, 120, 40) {
+	if !workspacePtyResizeAppliedEventMatches(resized, workspaceMountID, 120, 40) {
 		t.Fatal("same pty resize-applied event did not match")
 	}
-	if workspacePtyResizeAppliedEventMatches(resized, materializationID, 80, 24) {
+	if workspacePtyResizeAppliedEventMatches(resized, workspaceMountID, 80, 24) {
 		t.Fatal("different pty size matched")
 	}
 	failed := db.WorkspacePtySession{
-		MaterializationID: materializationID,
-		State:             db.WorkspacePtyStateFailed,
-		Error:             []byte(`{"message":"closed"}`),
+		WorkspaceMountID: workspaceMountID,
+		State:            db.WorkspacePtyStateFailed,
+		Error:            []byte(`{"message":"closed"}`),
 	}
-	if !workspacePtyTerminalEventMatches(failed, materializationID, true, []byte(`{"message":"closed"}`)) {
+	if !workspacePtyTerminalEventMatches(failed, workspaceMountID, true, []byte(`{"message":"closed"}`)) {
 		t.Fatal("same failed pty event did not match")
 	}
-	if workspacePtyTerminalEventMatches(failed, materializationID, true, []byte(`{"message":"other"}`)) {
+	if workspacePtyTerminalEventMatches(failed, workspaceMountID, true, []byte(`{"message":"other"}`)) {
 		t.Fatal("different pty error matched")
 	}
 	closed := db.WorkspacePtySession{
-		MaterializationID: materializationID,
-		State:             db.WorkspacePtyStateClosed,
+		WorkspaceMountID: workspaceMountID,
+		State:            db.WorkspacePtyStateClosed,
 	}
-	if !workspacePtyTerminalEventMatches(closed, materializationID, false, nil) {
+	if !workspacePtyTerminalEventMatches(closed, workspaceMountID, false, nil) {
 		t.Fatal("same closed pty event did not match")
 	}
 	if workspacePtyTerminalEventMatches(closed, pgvalue.UUID(uuid.Must(uuid.NewV7())), false, nil) {
-		t.Fatal("different materialization matched")
+		t.Fatal("different mount matched")
 	}
 	lost := db.WorkspacePtySession{
-		MaterializationID: materializationID,
-		State:             db.WorkspacePtyStateLost,
+		WorkspaceMountID: workspaceMountID,
+		State:            db.WorkspacePtyStateLost,
 	}
-	if !workspacePtyTerminalEventMatches(lost, materializationID, false, nil) {
+	if !workspacePtyTerminalEventMatches(lost, workspaceMountID, false, nil) {
 		t.Fatal("late pty closed event did not match lost row")
 	}
-	if !workspacePtyTerminalEventMatches(lost, materializationID, true, []byte(`{"message":"late"}`)) {
+	if !workspacePtyTerminalEventMatches(lost, workspaceMountID, true, []byte(`{"message":"late"}`)) {
 		t.Fatal("late pty error event did not match lost row")
 	}
 }
 
 func TestWorkspacePtyResizeAppliedEventMatchesCloseRace(t *testing.T) {
-	materializationID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	workspaceMountID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	row := db.WorkspacePtySession{
-		MaterializationID: materializationID,
-		State:             db.WorkspacePtyStateClosing,
-		Cols:              100,
-		Rows:              30,
+		WorkspaceMountID: workspaceMountID,
+		State:            db.WorkspacePtyStateClosing,
+		Cols:             100,
+		Rows:             30,
 	}
-	if !workspacePtyResizeAppliedEventMatches(row, materializationID, 100, 30) {
+	if !workspacePtyResizeAppliedEventMatches(row, workspaceMountID, 100, 30) {
 		t.Fatal("resize-applied close race did not match")
 	}
-	if workspacePtyResizeAppliedEventMatches(row, materializationID, 101, 30) {
+	if workspacePtyResizeAppliedEventMatches(row, workspaceMountID, 101, 30) {
 		t.Fatal("different resize dimensions matched")
 	}
 	if workspacePtyResizeAppliedEventMatches(row, pgvalue.UUID(uuid.Must(uuid.NewV7())), 100, 30) {
-		t.Fatal("different materialization matched")
+		t.Fatal("different mount matched")
 	}
 }
 

@@ -30,6 +30,9 @@ func LoadDispatcher() (Dispatcher, error) {
 		ScheduleLease:              5 * time.Minute,
 		ScheduleMaxAttempts:        10,
 		ScheduleJitter:             30 * time.Second,
+		RuntimePrepareTarget:       0,
+		RuntimePrepareLimit:        20,
+		RuntimePrepareEvery:        5 * time.Second,
 	}
 	var err error
 	if cfg.ScheduleRepairEvery, err = envDuration("HELMR_SCHEDULE_REPAIR_EVERY", cfg.ScheduleRepairEvery); err != nil {
@@ -53,6 +56,24 @@ func LoadDispatcher() (Dispatcher, error) {
 	}
 	if cfg.ScheduleMaxAttempts, err = envInt("HELMR_SCHEDULE_MAX_ATTEMPTS", cfg.ScheduleMaxAttempts); err != nil {
 		return cfg, err
+	}
+	if cfg.RuntimePrepareTarget, err = envInt("HELMR_PREPARED_RUNTIME_WARM_TARGET", cfg.RuntimePrepareTarget); err != nil {
+		return cfg, err
+	}
+	if cfg.RuntimePrepareTarget < 0 {
+		return cfg, errors.New("HELMR_PREPARED_RUNTIME_WARM_TARGET must be non-negative")
+	}
+	if cfg.RuntimePrepareLimit, err = envInt("HELMR_PREPARED_RUNTIME_WARM_LIMIT", cfg.RuntimePrepareLimit); err != nil {
+		return cfg, err
+	}
+	if cfg.RuntimePrepareLimit <= 0 {
+		return cfg, errors.New("HELMR_PREPARED_RUNTIME_WARM_LIMIT must be positive")
+	}
+	if cfg.RuntimePrepareEvery, err = envDuration("HELMR_PREPARED_RUNTIME_WARM_EVERY", cfg.RuntimePrepareEvery); err != nil {
+		return cfg, err
+	}
+	if cfg.RuntimePrepareEvery <= 0 {
+		return cfg, errors.New("HELMR_PREPARED_RUNTIME_WARM_EVERY must be positive")
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")

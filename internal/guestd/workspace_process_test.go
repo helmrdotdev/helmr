@@ -61,7 +61,7 @@ func TestWorkspaceProcessInputDedupeRetainsNewestOffsets(t *testing.T) {
 	stdin := &recordingWriteCloser{}
 	process := &workspaceProcess{resourceKind: "exec", resourceID: "exec-1", stdin: stdin}
 
-	for offset := uint64(0); offset < 1100; offset++ {
+	for offset := range uint64(1100) {
 		ack, err := process.writeInput(offset, []byte("x"))
 		if err != nil {
 			t.Fatalf("write input at %d: %v", offset, err)
@@ -86,7 +86,7 @@ func TestWorkspaceProcessInputDedupeRetainsNewestOffsets(t *testing.T) {
 }
 
 func TestWorkspaceInputMissingProcessDoesNotAckDelivery(t *testing.T) {
-	entry := &workspaceMaterializationEntry{}
+	entry := &workspaceMountEntry{}
 	if ack, err := entry.writeWorkspaceInput("exec", "missing-exec", 0, []byte("hello")); err == nil {
 		t.Fatalf("missing process ack = %d, want error", ack)
 	}
@@ -112,7 +112,7 @@ func TestWorkspaceInputMissingProcessDoesNotAckDelivery(t *testing.T) {
 }
 
 func TestWorkspacePtyControlMissingProcessFails(t *testing.T) {
-	entry := &workspaceMaterializationEntry{}
+	entry := &workspaceMountEntry{}
 	if err := entry.resizeWorkspacePty(`{"pty_id":"missing-pty","cols":120,"rows":40}`); err == nil || !strings.Contains(err.Error(), "missing-pty") {
 		t.Fatalf("missing pty resize error = %v, want target error", err)
 	}
@@ -122,7 +122,7 @@ func TestWorkspacePtyControlMissingProcessFails(t *testing.T) {
 }
 
 func TestWorkspacePtyInputCloseIsUnsupported(t *testing.T) {
-	entry := &workspaceMaterializationEntry{}
+	entry := &workspaceMountEntry{}
 	stdin := &recordingWriteCloser{}
 	process := &workspaceProcess{resourceKind: "pty", resourceID: "pty-1", stdin: stdin}
 	if err := entry.registerWorkspaceProcess(process); err != nil {

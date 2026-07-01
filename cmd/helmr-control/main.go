@@ -88,6 +88,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure dispatch enqueuer: %w", err)
 	}
+	preparedRuntimeWarmLock, err := dispatch.NewRuntimePrepareAdvisoryLock(pool)
+	if err != nil {
+		return fmt.Errorf("configure prepared runtime supply lock: %w", err)
+	}
+	preparedRuntimeSupply, err := dispatch.NewRuntimePreparer(
+		queries,
+		dispatch.WithRuntimePrepareLogger(log),
+		dispatch.WithRuntimePrepareLock(preparedRuntimeWarmLock),
+		dispatch.WithRuntimePrepareTarget(int32(cfg.RuntimePrepareTarget)),
+		dispatch.WithRuntimePrepareLimit(int32(cfg.RuntimePrepareLimit)),
+	)
+	if err != nil {
+		return fmt.Errorf("configure prepared runtime supply reconciler: %w", err)
+	}
 	scheduleIndex, err := schedule.NewRedisIndex(redisClient)
 	if err != nil {
 		return fmt.Errorf("configure schedule index: %w", err)
@@ -105,6 +119,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure workspace stream notifier: %w", err)
 	}
+	workerCommands, err := control.NewWorkerCommandStream(log, queries, redisClient)
+	if err != nil {
+		return fmt.Errorf("configure worker command stream: %w", err)
+	}
 	go func() {
 		if err := eventStream.RunPublisher(backgroundCtx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("event stream publisher stopped", "error", err)
@@ -114,6 +132,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go func() {
 		if err := workspaceStreams.RunPublisher(backgroundCtx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("workspace stream notifier stopped", "error", err)
+			cancelServer()
+		}
+	}()
+	go func() {
+		if err := workerCommands.RunPublisher(backgroundCtx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("worker command stream publisher stopped", "error", err)
 			cancelServer()
 		}
 	}()
@@ -144,28 +168,30 @@ func run(ctx context.Context, log *slog.Logger) error {
 		authProvider = control.NewGitHubOAuthProvider(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
 	}
 	handler, err := control.NewServer(control.ServerConfig{
-		Log:                 log,
-		DeploymentMode:      cfg.DeploymentMode,
-		DB:                  queries,
-		TX:                  pool,
-		ReadinessDB:         pool,
-		Auth:                auth.NewDBAuthenticator(queries),
-		CAS:                 casStore,
-		Secrets:             secretStore,
-		RunEnqueuer:         runEnqueuer,
-		DispatchQueue:       dispatchQueue,
-		ScheduleEngine:      scheduleEngine,
-		EventStream:         eventStream,
-		WorkspaceStreams:    workspaceStreams,
-		Mailer:              mailer,
-		AuthProvider:        authProvider,
-		WorkerTokenSecret:   []byte(cfg.WorkerTokenSigningKey),
-		WorkerRegisterToken: cfg.WorkerBootstrapToken,
-		SetupToken:          cfg.SetupToken,
-		AuthSecret:          []byte(cfg.AuthSecret),
-		PublicURL:           publicURL,
-		MagicLinkDebugURLs:  cfg.MagicLinkDebugURLs,
-		BackgroundContext:   backgroundCtx,
+		Log:                   log,
+		DeploymentMode:        cfg.DeploymentMode,
+		DB:                    queries,
+		TX:                    pool,
+		ReadinessDB:           pool,
+		Auth:                  auth.NewDBAuthenticator(queries),
+		CAS:                   casStore,
+		Secrets:               secretStore,
+		RunEnqueuer:           runEnqueuer,
+		PreparedRuntimeSupply: preparedRuntimeSupply,
+		DispatchQueue:         dispatchQueue,
+		ScheduleEngine:        scheduleEngine,
+		EventStream:           eventStream,
+		WorkspaceStreams:      workspaceStreams,
+		WorkerCommands:        workerCommands,
+		Mailer:                mailer,
+		AuthProvider:          authProvider,
+		WorkerTokenSecret:     []byte(cfg.WorkerTokenSigningKey),
+		WorkerRegisterToken:   cfg.WorkerBootstrapToken,
+		SetupToken:            cfg.SetupToken,
+		AuthSecret:            []byte(cfg.AuthSecret),
+		PublicURL:             publicURL,
+		MagicLinkDebugURLs:    cfg.MagicLinkDebugURLs,
+		BackgroundContext:     backgroundCtx,
 	})
 	if err != nil {
 		return fmt.Errorf("configure control server: %w", err)

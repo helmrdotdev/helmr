@@ -28,29 +28,29 @@ export async function currentDeployment(config: ClientSmokeConfig): Promise<Curr
   return body.deployment
 }
 
-export async function waitForRunningMaterialization(
+export async function waitForRunningWorkspaceMount(
   client: HelmrClient,
   workspaceId: string,
   scope: WorkspaceRequestScope = {},
   expectedID?: string,
 ) {
   for (let attempt = 0; attempt < 180; attempt += 1) {
-    const materialization = await client.workspaces.connect(workspaceId, scope)
+    const mount = await client.workspaces.connect(workspaceId, scope)
     if (expectedID !== undefined) {
-      assertEqual(materialization.id, expectedID, "connect returned a different materialization")
+      assertEqual(mount.id, expectedID, "connect returned a different workspace mount")
     }
-    if (materialization.state === "running") {
-      return materialization
+    if (mount.state === "running") {
+      return mount
     }
     assert(
-      materialization.state === "requested" ||
-        materialization.state === "materializing" ||
-        materialization.state === "restoring",
-      `unexpected materialization state ${materialization.state}`,
+      mount.state === "requested" ||
+        mount.state === "materializing" ||
+        mount.state === "restoring",
+      `unexpected workspace mount state ${mount.state}`,
     )
     await delay(2_000)
   }
-  throw new Error(`workspace ${workspaceId} materialization did not reach running`)
+  throw new Error(`workspace ${workspaceId} workspace mount did not reach running`)
 }
 
 export async function waitForStreamText(

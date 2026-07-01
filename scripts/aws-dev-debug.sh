@@ -51,7 +51,10 @@ Common optional environment:
   STATE_DIR          Local scratch directory. Defaults to .helmr-aws-dev-smoke.
   DEBUG_ARTIFACT_BUCKET
                      S3 bucket for hotpatch artifacts. Defaults to SOURCE_BUNDLE_BUCKET,
-                     bootstrap output, or the dev stack source artifact bucket when available.
+                     the last dev source bundle bucket, or bootstrap output.
+  DEBUG_CHECKPOINT_STORAGE_TELEMETRY
+                     Set to 1 with hotpatch-guestd to create the guest rootfs marker
+                     that enables aggregate checkpoint storage telemetry.
   DEBUG_ARTIFACT_PREFIX
                      S3 key prefix for hotpatch artifacts. Defaults to helmr/debug.
   WORKER_INSTANCE_ID Override worker discovery.
@@ -183,11 +186,6 @@ artifact_bucket() {
     printf '%s\n' "${SOURCE_BUNDLE_BUCKET}"
     return 0
   fi
-  value="$(bootstrap_output_raw source_artifact_bucket_name)"
-  if [ -n "${value}" ]; then
-    printf '%s\n' "${value}"
-    return 0
-  fi
   if [ -f "${SOURCE_BUNDLE_URI_FILE}" ]; then
     uri="$(cat "${SOURCE_BUNDLE_URI_FILE}")"
     bucket="${uri#s3://}"
@@ -196,6 +194,11 @@ artifact_bucket() {
       printf '%s\n' "${bucket}"
       return 0
     fi
+  fi
+  value="$(bootstrap_output_raw source_artifact_bucket_name)"
+  if [ -n "${value}" ]; then
+    printf '%s\n' "${value}"
+    return 0
   fi
   die "DEBUG_ARTIFACT_BUCKET or SOURCE_BUNDLE_BUCKET is required; bootstrap output was unavailable"
 }
@@ -736,7 +739,7 @@ EOF
 
   instance_id="$(worker_instance_id)"
   commands="$(
-    jq -cn --arg guestd_url "${guestd_url}" --arg init_url "${init_url}" --arg adapter_url "${adapter_url}" '[
+    jq -cn --arg guestd_url "${guestd_url}" --arg init_url "${init_url}" --arg adapter_url "${adapter_url}" --arg telemetry "${DEBUG_CHECKPOINT_STORAGE_TELEMETRY:-0}" '[
       "set -eu",
       "if [ -r /etc/helmr/worker.env ]; then set -a; . /etc/helmr/worker.env; set +a; fi",
       ": \"${GUEST_ROOTFS_PATH:=${HELMR_WORKER_IMAGES_DIR:-/var/lib/helmr/images}/guest/out/rootfs.ext4}\"",
@@ -757,6 +760,7 @@ EOF
       "install -d /tmp/helmr-rootfs-mnt/opt/helmr /tmp/helmr-rootfs-mnt/opt/helmr-adapter",
       "tar -xf /tmp/helmr-adapter-bundle.tar -C /tmp/helmr-rootfs-mnt/opt/helmr",
       "tar -xf /tmp/helmr-adapter-bundle.tar -C /tmp/helmr-rootfs-mnt/opt/helmr-adapter",
+      "if [ " + @sh "\($telemetry)" + " = 1 ]; then install -d /tmp/helmr-rootfs-mnt/etc/helmr; touch /tmp/helmr-rootfs-mnt/etc/helmr/checkpoint-storage-telemetry; else rm -f /tmp/helmr-rootfs-mnt/etc/helmr/checkpoint-storage-telemetry; fi",
       "sync",
       "umount /tmp/helmr-rootfs-mnt",
       "trap - EXIT",

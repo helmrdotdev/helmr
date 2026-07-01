@@ -38,13 +38,17 @@ matched_token_wait AS (
 ),
 resolved_cancelled_wait AS (
     UPDATE run_waits
-       SET state = 'resolved',
+       SET state = CASE
+             WHEN run_waits.state = 'live_waiting' THEN 'resolved_live'::run_wait_state
+             WHEN run_waits.state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
+             ELSE run_waits.state
+           END,
            resolved_at = now(),
            updated_at = now()
       FROM matched_token_wait
      WHERE run_waits.org_id = matched_token_wait.org_id
        AND run_waits.id = matched_token_wait.run_wait_id
-       AND run_waits.state = 'waiting'
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
 )
 SELECT cancelled.id, cancelled.org_id, cancelled.project_id, cancelled.environment_id, cancelled.state, cancelled.timeout_at, cancelled.idempotency_key, cancelled.idempotency_key_expires_at, cancelled.create_request_fingerprint, cancelled.callback_key_id, cancelled.callback_secret_fingerprint, cancelled.callback_secret_created_at, cancelled.completion_fingerprint, cancelled.completion_data, cancelled.completion_content_type, cancelled.metadata, cancelled.tags, cancelled.created_at, cancelled.updated_at, cancelled.completed_at, cancelled.expired_at, cancelled.cancelled_at, (SELECT count(*) FROM resolved_cancelled_wait)::bigint AS resolved_wait_count
@@ -170,13 +174,17 @@ matched_token_wait AS (
 ),
 resolved_wait AS (
     UPDATE run_waits
-       SET state = 'resolved',
+       SET state = CASE
+             WHEN run_waits.state = 'live_waiting' THEN 'resolved_live'::run_wait_state
+             WHEN run_waits.state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
+             ELSE run_waits.state
+           END,
            resolved_at = now(),
            updated_at = now()
       FROM matched_token_wait
      WHERE run_waits.org_id = matched_token_wait.org_id
        AND run_waits.id = matched_token_wait.run_wait_id
-       AND run_waits.state = 'waiting'
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
 )
 SELECT selected_token.id, selected_token.org_id, selected_token.project_id, selected_token.environment_id, selected_token.state, selected_token.timeout_at, selected_token.idempotency_key, selected_token.idempotency_key_expires_at, selected_token.create_request_fingerprint, selected_token.callback_key_id, selected_token.callback_secret_fingerprint, selected_token.callback_secret_created_at, selected_token.completion_fingerprint, selected_token.completion_data, selected_token.completion_content_type, selected_token.metadata, selected_token.tags, selected_token.created_at, selected_token.updated_at, selected_token.completed_at, selected_token.expired_at, selected_token.cancelled_at, selected_token.was_already_completed, selected_token.is_expired,
@@ -449,13 +457,13 @@ matched_token_wait AS (
 ),
 expired_wait AS (
     UPDATE run_waits
-       SET state = 'expired',
+       SET state = 'expired'::run_wait_state,
            resolved_at = now(),
            updated_at = now()
       FROM matched_token_wait
      WHERE run_waits.org_id = matched_token_wait.org_id
        AND run_waits.id = matched_token_wait.run_wait_id
-       AND run_waits.state IN ('parking', 'waiting')
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
 )
 SELECT id, org_id, project_id, environment_id, state, timeout_at, idempotency_key, idempotency_key_expires_at, create_request_fingerprint, callback_key_id, callback_secret_fingerprint, callback_secret_created_at, completion_fingerprint, completion_data, completion_content_type, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at

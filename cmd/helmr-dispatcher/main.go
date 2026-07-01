@@ -105,6 +105,21 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure queue reconciler: %w", err)
 	}
+	preparedRuntimeWarmLock, err := dispatch.NewRuntimePrepareAdvisoryLock(pool)
+	if err != nil {
+		return fmt.Errorf("configure prepared runtime warm lock: %w", err)
+	}
+	preparedRuntimeWarmer, err := dispatch.NewRuntimePreparer(
+		queries,
+		dispatch.WithRuntimePrepareLogger(log),
+		dispatch.WithRuntimePrepareLock(preparedRuntimeWarmLock),
+		dispatch.WithRuntimePrepareTarget(int32(cfg.RuntimePrepareTarget)),
+		dispatch.WithRuntimePrepareLimit(int32(cfg.RuntimePrepareLimit)),
+		dispatch.WithRuntimePrepareInterval(cfg.RuntimePrepareEvery),
+	)
+	if err != nil {
+		return fmt.Errorf("configure prepared runtime warmer: %w", err)
+	}
 	scheduleReconcileLock, err := schedule.NewReconcileAdvisoryLock(pool)
 	if err != nil {
 		return fmt.Errorf("configure schedule reconcile lock: %w", err)
@@ -143,9 +158,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errc := make(chan error, 3)
+	errc := make(chan error, 4)
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
 		errc <- sweeper.Run(runCtx)
@@ -153,6 +168,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go func() {
 		defer wg.Done()
 		errc <- queueReconciler.Run(runCtx)
+	}()
+	go func() {
+		defer wg.Done()
+		errc <- preparedRuntimeWarmer.Run(runCtx)
 	}()
 	go func() {
 		defer wg.Done()

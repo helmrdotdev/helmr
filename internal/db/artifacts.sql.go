@@ -166,3 +166,70 @@ func (q *Queries) ListArtifactsByIDs(ctx context.Context, arg ListArtifactsByIDs
 	}
 	return items, nil
 }
+
+const upsertRuntimeSubstrateArtifactBlob = `-- name: UpsertRuntimeSubstrateArtifactBlob :one
+INSERT INTO artifacts (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    digest,
+    kind,
+    size_bytes,
+    media_type,
+    created_by_worker_instance_id
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    'runtime_substrate',
+    $6,
+    $7,
+    $8
+)
+ON CONFLICT (org_id, project_id, environment_id, digest, kind)
+WHERE kind = 'runtime_substrate'
+DO UPDATE
+   SET created_by_worker_instance_id = COALESCE(artifacts.created_by_worker_instance_id, excluded.created_by_worker_instance_id)
+RETURNING id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_instance_id, created_at
+`
+
+type UpsertRuntimeSubstrateArtifactBlobParams struct {
+	ID                        pgtype.UUID `json:"id"`
+	OrgID                     pgtype.UUID `json:"org_id"`
+	ProjectID                 pgtype.UUID `json:"project_id"`
+	EnvironmentID             pgtype.UUID `json:"environment_id"`
+	Digest                    string      `json:"digest"`
+	SizeBytes                 int64       `json:"size_bytes"`
+	MediaType                 string      `json:"media_type"`
+	CreatedByWorkerInstanceID pgtype.UUID `json:"created_by_worker_instance_id"`
+}
+
+func (q *Queries) UpsertRuntimeSubstrateArtifactBlob(ctx context.Context, arg UpsertRuntimeSubstrateArtifactBlobParams) (Artifact, error) {
+	row := q.db.QueryRow(ctx, upsertRuntimeSubstrateArtifactBlob,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Digest,
+		arg.SizeBytes,
+		arg.MediaType,
+		arg.CreatedByWorkerInstanceID,
+	)
+	var i Artifact
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Digest,
+		&i.Kind,
+		&i.SizeBytes,
+		&i.MediaType,
+		&i.CreatedByWorkerInstanceID,
+		&i.CreatedAt,
+	)
+	return i, err
+}

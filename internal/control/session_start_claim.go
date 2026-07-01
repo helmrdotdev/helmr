@@ -75,7 +75,7 @@ func (s *Server) claimSessionStart(ctx context.Context, orgID uuid.UUID, project
 }
 
 func claimSessionStartKey(ctx context.Context, redisClient redis.Cmdable, key string, owner string, ttl time.Duration) (sessionStartClaimKeyStatus, error) {
-	for attempt := 0; attempt < 2; attempt++ {
+	for range 2 {
 		claimed, err := redisClient.SetNX(ctx, key, "pending:"+owner, ttl).Result()
 		if err != nil {
 			return sessionStartClaimKeyPending, errSessionStartCoordinationUnavailable

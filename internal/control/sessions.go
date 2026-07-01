@@ -511,33 +511,33 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		}
 		return sessionStartResult{}, err
 	}
-	materializationRequest, err := json.Marshal(map[string]string{
+	workspaceMountRequest, err := json.Marshal(map[string]string{
 		"source": "session_start",
 		"run_id": pgvalue.MustUUIDValue(run.ID).String(),
 	})
 	if err != nil {
 		return sessionStartResult{}, err
 	}
-	materialization, err := store.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		WorkspaceID:   workspace.ID,
-		Priority:      scheduling.priority,
-		Request:       materializationRequest,
+	mount, err := store.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(actor.OrgID),
+		ProjectID:       projectID,
+		EnvironmentID:   environmentID,
+		WorkspaceID:     workspace.ID,
+		RequestPriority: scheduling.priority,
+		Request:         workspaceMountRequest,
 	})
 	if err != nil {
 		if isNoRows(err) {
-			return sessionStartResult{}, s.workspaceMaterializationPrerequisiteErrorWithStore(ctx, store, pgvalue.UUID(actor.OrgID), projectID, environmentID, workspace.ID)
+			return sessionStartResult{}, s.workspaceMountPrerequisiteErrorWithStore(ctx, store, pgvalue.UUID(actor.OrgID), projectID, environmentID, workspace.ID)
 		}
 		return sessionStartResult{}, err
 	}
-	if err := store.SetQueuedRunWorkspaceMaterialization(ctx, db.SetQueuedRunWorkspaceMaterializationParams{
-		OrgID:                      pgvalue.UUID(actor.OrgID),
-		RunID:                      run.ID,
-		WorkspaceID:                workspace.ID,
-		WorkspaceMaterializationID: materialization.ID,
+	if err := store.SetQueuedRunWorkspaceMount(ctx, db.SetQueuedRunWorkspaceMountParams{
+		OrgID:            pgvalue.UUID(actor.OrgID),
+		RunID:            run.ID,
+		WorkspaceID:      workspace.ID,
+		WorkspaceMountID: mount.ID,
 	}); err != nil {
 		return sessionStartResult{}, err
 	}
@@ -588,6 +588,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	tx = nil
 	startClaim.resolve(context.WithoutCancel(ctx))
 	claimResolved = true
+	s.reconcilePreparedRuntimeSupplyForSandboxAsync(ctx, deploymentTask.DeploymentSandboxID, "session_start")
 	if s.runEnqueuer != nil {
 		if _, err := s.runEnqueuer.EnqueueRun(ctx, run.OrgID, run.ID); err != nil {
 			s.log.Error("enqueue session run failed", "run_id", pgvalue.MustUUIDValue(run.ID).String(), "error", err)

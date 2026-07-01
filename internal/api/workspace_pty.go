@@ -23,22 +23,22 @@ type WorkspacePtyInputWriteRequest struct {
 }
 
 type WorkspacePtyResponse struct {
-	ID                string          `json:"id"`
-	WorkspaceID       string          `json:"workspace_id"`
-	MaterializationID string          `json:"materialization_id,omitempty"`
-	Cwd               string          `json:"cwd"`
-	Cols              int32           `json:"cols"`
-	Rows              int32           `json:"rows"`
-	FilesystemMode    string          `json:"filesystem_mode"`
-	State             string          `json:"state"`
-	ProcessID         string          `json:"process_id,omitempty"`
-	OutputCursor      int64           `json:"output_cursor"`
-	InputCursor       int64           `json:"input_cursor"`
-	Error             json.RawMessage `json:"error,omitempty"`
-	CreatedAt         time.Time       `json:"created_at"`
-	StartedAt         *time.Time      `json:"started_at,omitempty"`
-	ClosedAt          *time.Time      `json:"closed_at,omitempty"`
-	UpdatedAt         time.Time       `json:"updated_at"`
+	ID               string          `json:"id"`
+	WorkspaceID      string          `json:"workspace_id"`
+	WorkspaceMountID string          `json:"workspace_mount_id,omitempty"`
+	Cwd              string          `json:"cwd"`
+	Cols             int32           `json:"cols"`
+	Rows             int32           `json:"rows"`
+	FilesystemMode   string          `json:"filesystem_mode"`
+	State            string          `json:"state"`
+	ProcessID        string          `json:"process_id,omitempty"`
+	OutputCursor     int64           `json:"output_cursor"`
+	InputCursor      int64           `json:"input_cursor"`
+	Error            json.RawMessage `json:"error,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	StartedAt        *time.Time      `json:"started_at,omitempty"`
+	ClosedAt         *time.Time      `json:"closed_at,omitempty"`
+	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
 type WorkspacePtyEnvelope struct {

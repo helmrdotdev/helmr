@@ -161,8 +161,8 @@ func TestWorkspaceFilesReadListStatAndVersionsFromReadyArtifacts(t *testing.T) {
 		request.handler(rec, req)
 		request.check(t, rec)
 	}
-	if store.ensureWorkspaceMaterializationCalls != 0 || store.claimWorkspaceMaterializationCalls != 0 {
-		t.Fatalf("materialization calls = ensure %d claim %d", store.ensureWorkspaceMaterializationCalls, store.claimWorkspaceMaterializationCalls)
+	if store.ensureWorkspaceMountCalls != 0 || store.claimWorkspaceMountCalls != 0 {
+		t.Fatalf("mount calls = ensure %d claim %d", store.ensureWorkspaceMountCalls, store.claimWorkspaceMountCalls)
 	}
 }
 
@@ -301,14 +301,14 @@ func TestWorkspaceFilesRejectInvalidSourceContracts(t *testing.T) {
 			code:       "workspace_version_id_required",
 		},
 		{
-			path:       "/files/stat?path=helmr.config.ts&materialization_id=00000000-0000-0000-0000-000000000501",
+			path:       "/files/stat?path=helmr.config.ts&workspace_mount_id=00000000-0000-0000-0000-000000000501",
 			statusCode: http.StatusBadRequest,
-			code:       "workspace_materialization_id_unexpected",
+			code:       "workspace_mount_id_unexpected",
 		},
 		{
-			path:       "/files/stat?path=helmr.config.ts&source=version&version_id=00000000-0000-0000-0000-000000000401&materialization_id=00000000-0000-0000-0000-000000000501",
+			path:       "/files/stat?path=helmr.config.ts&source=version&version_id=00000000-0000-0000-0000-000000000401&workspace_mount_id=00000000-0000-0000-0000-000000000501",
 			statusCode: http.StatusBadRequest,
-			code:       "workspace_materialization_id_unexpected",
+			code:       "workspace_mount_id_unexpected",
 		},
 		{
 			path:       "/files/stat?path=helmr.config.ts&source=live",

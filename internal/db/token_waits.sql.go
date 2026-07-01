@@ -124,18 +124,22 @@ WITH target_wait AS (
      WHERE token_waits.org_id = $1
        AND token_waits.id = $2
        AND token_waits.matched_completion_at IS NOT NULL
-       AND run_waits.state IN ('parking', 'waiting')
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
      FOR UPDATE OF run_waits
 ),
 resolved_wait AS (
     UPDATE run_waits
-       SET state = CASE WHEN target_wait.token_state IN ('completed', 'cancelled') THEN 'resolved'::run_wait_state ELSE target_wait.token_state::text::run_wait_state END,
+       SET state = CASE
+             WHEN run_waits.state = 'live_waiting' AND target_wait.token_state IN ('completed', 'cancelled', 'expired') THEN 'resolved_live'::run_wait_state
+             WHEN run_waits.state = 'checkpointed_waiting' AND target_wait.token_state IN ('completed', 'cancelled', 'expired') THEN 'resolved_checkpointed'::run_wait_state
+             ELSE run_waits.state
+           END,
            resolved_at = CASE WHEN target_wait.token_state IN ('completed', 'expired', 'cancelled') THEN now() ELSE run_waits.resolved_at END,
            updated_at = now()
       FROM target_wait
      WHERE run_waits.org_id = target_wait.org_id
        AND run_waits.id = target_wait.run_wait_id
-       AND run_waits.state IN ('parking', 'waiting')
+       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
 )
 SELECT target_wait.id, target_wait.org_id, target_wait.project_id, target_wait.environment_id, target_wait.run_wait_id, target_wait.token_id, target_wait.matched_completion_at, target_wait.created_at, target_wait.token_state

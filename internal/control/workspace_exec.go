@@ -348,39 +348,39 @@ func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.A
 	if err != nil {
 		return db.WorkspaceExec{}, false, err
 	}
-	materialization, err := store.EnsureWorkspaceMaterializationRequested(ctx, db.EnsureWorkspaceMaterializationRequestedParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     ws.ProjectID,
-		EnvironmentID: ws.EnvironmentID,
-		WorkspaceID:   ws.ID,
-		Priority:      0,
-		Request:       []byte(`{"reason":"workspace_exec"}`),
+	mount, err := store.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(actor.OrgID),
+		ProjectID:       ws.ProjectID,
+		EnvironmentID:   ws.EnvironmentID,
+		WorkspaceID:     ws.ID,
+		RequestPriority: 0,
+		Request:         []byte(`{"reason":"workspace_exec"}`),
 	})
 	if err != nil {
 		return db.WorkspaceExec{}, false, err
 	}
 	nextState := db.WorkspaceExecStateMaterializing
-	if materialization.State == db.WorkspaceMaterializationStateRunning {
+	if mount.State == db.WorkspaceMountStateMounted {
 		nextState = db.WorkspaceExecStateQueued
 	}
-	row, err = store.BindWorkspaceExecMaterialization(ctx, db.BindWorkspaceExecMaterializationParams{
-		MaterializationID: materialization.ID,
-		InstanceLeaseID:   pgtype.UUID{},
-		WriteLeaseID:      pgtype.UUID{},
-		State:             nextState,
-		OrgID:             pgvalue.UUID(actor.OrgID),
-		ProjectID:         ws.ProjectID,
-		EnvironmentID:     ws.EnvironmentID,
-		WorkspaceID:       ws.ID,
-		ID:                row.ID,
+	row, err = store.BindWorkspaceExecWorkspaceMount(ctx, db.BindWorkspaceExecWorkspaceMountParams{
+		WorkspaceMountID: mount.ID,
+		InstanceLeaseID:  pgtype.UUID{},
+		WriteLeaseID:     pgtype.UUID{},
+		State:            nextState,
+		OrgID:            pgvalue.UUID(actor.OrgID),
+		ProjectID:        ws.ProjectID,
+		EnvironmentID:    ws.EnvironmentID,
+		WorkspaceID:      ws.ID,
+		ID:               row.ID,
 	})
 	if err != nil {
 		return db.WorkspaceExec{}, false, err
 	}
-	if materialization.State == db.WorkspaceMaterializationStateRunning {
+	if mount.State == db.WorkspaceMountStateMounted {
 		var lease workspacePrimitiveOperationLease
-		row, lease, err = ensureWorkspaceExecWriteLease(ctx, store, materializationFromEnsureRow(materialization), row)
+		row, lease, err = ensureWorkspaceExecWriteLease(ctx, store, workspaceMountFromEnsureRow(mount), row)
 		if err != nil {
 			return db.WorkspaceExec{}, false, err
 		}
@@ -388,7 +388,7 @@ func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.A
 		if err != nil {
 			return db.WorkspaceExec{}, false, err
 		}
-		if err := requestWorkspacePrimitiveOperation(ctx, store, materializationFromEnsureRow(materialization), workspaceOperationKindStartExec, workspaceOperationResourceExec, row.ID, request, lease); err != nil {
+		if err := requestWorkspacePrimitiveOperation(ctx, store, workspaceMountFromEnsureRow(mount), workspaceOperationKindStartExec, workspaceOperationResourceExec, row.ID, request, lease); err != nil {
 			return db.WorkspaceExec{}, false, err
 		}
 	}
@@ -562,27 +562,27 @@ func (s *Server) loadWorkspaceExecForRequest(w http.ResponseWriter, r *http.Requ
 
 func workspaceExecResponse(row db.WorkspaceExec) api.WorkspaceExecResponse {
 	return api.WorkspaceExecResponse{
-		ID:                pgvalue.MustUUIDValue(row.ID).String(),
-		WorkspaceID:       pgvalue.MustUUIDValue(row.WorkspaceID).String(),
-		MaterializationID: optionalUUIDString(row.MaterializationID),
-		Command:           json.RawMessage(row.Command),
-		Cwd:               row.Cwd,
-		EnvShape:          json.RawMessage(row.EnvShape),
-		FilesystemMode:    string(row.FilesystemMode),
-		State:             string(row.State),
-		Detached:          row.Detached,
-		ProcessID:         row.ProcessID,
-		ExitCode:          pgvalue.Int4Response(row.ExitCode),
-		Signal:            row.Signal,
-		Error:             json.RawMessage(row.Error),
-		StdoutCursor:      row.StdoutCursor,
-		StderrCursor:      row.StderrCursor,
-		StdinCursor:       row.StdinCursor,
-		StdinClosedAt:     pgvalue.TimePtr(row.StdinClosedAt),
-		CreatedAt:         pgvalue.Time(row.CreatedAt),
-		StartedAt:         pgvalue.TimePtr(row.StartedAt),
-		ExitedAt:          pgvalue.TimePtr(row.ExitedAt),
-		UpdatedAt:         pgvalue.Time(row.UpdatedAt),
+		ID:               pgvalue.MustUUIDValue(row.ID).String(),
+		WorkspaceID:      pgvalue.MustUUIDValue(row.WorkspaceID).String(),
+		WorkspaceMountID: optionalUUIDString(row.WorkspaceMountID),
+		Command:          json.RawMessage(row.Command),
+		Cwd:              row.Cwd,
+		EnvShape:         json.RawMessage(row.EnvShape),
+		FilesystemMode:   string(row.FilesystemMode),
+		State:            string(row.State),
+		Detached:         row.Detached,
+		ProcessID:        row.ProcessID,
+		ExitCode:         pgvalue.Int4Response(row.ExitCode),
+		Signal:           row.Signal,
+		Error:            json.RawMessage(row.Error),
+		StdoutCursor:     row.StdoutCursor,
+		StderrCursor:     row.StderrCursor,
+		StdinCursor:      row.StdinCursor,
+		StdinClosedAt:    pgvalue.TimePtr(row.StdinClosedAt),
+		CreatedAt:        pgvalue.Time(row.CreatedAt),
+		StartedAt:        pgvalue.TimePtr(row.StartedAt),
+		ExitedAt:         pgvalue.TimePtr(row.ExitedAt),
+		UpdatedAt:        pgvalue.Time(row.UpdatedAt),
 	}
 }
 

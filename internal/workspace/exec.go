@@ -39,7 +39,7 @@ func NormalizeExecCwd(cwd string) (string, error) {
 	if strings.Contains(cwd, "\x00") {
 		return "", errors.New("cwd cannot contain NUL")
 	}
-	for _, segment := range strings.Split(cwd, "/") {
+	for segment := range strings.SplitSeq(cwd, "/") {
 		if segment == ".." {
 			return "", errors.New("cwd cannot contain '..'")
 		}

@@ -55,9 +55,9 @@ SELECT *
  ORDER BY created_at DESC, id DESC
  LIMIT sqlc.arg(limit_count);
 
--- name: BindWorkspacePtyMaterialization :one
+-- name: BindWorkspacePtyWorkspaceMount :one
 UPDATE workspace_pty_sessions
-   SET materialization_id = sqlc.arg(materialization_id),
+   SET workspace_mount_id = sqlc.arg(workspace_mount_id),
        instance_lease_id = sqlc.narg(instance_lease_id),
        write_lease_id = sqlc.narg(write_lease_id),
        state = sqlc.arg(state)::workspace_pty_state,
@@ -73,19 +73,19 @@ RETURNING *;
 -- name: ListWorkspacePtySessionsAwaitingDispatch :many
 SELECT workspace_pty_sessions.*
   FROM workspace_pty_sessions
-  JOIN workspace_materializations
-    ON workspace_materializations.org_id = workspace_pty_sessions.org_id
-   AND workspace_materializations.project_id = workspace_pty_sessions.project_id
-   AND workspace_materializations.environment_id = workspace_pty_sessions.environment_id
-   AND workspace_materializations.workspace_id = workspace_pty_sessions.workspace_id
-   AND workspace_materializations.id = workspace_pty_sessions.materialization_id
+  JOIN workspace_mounts
+    ON workspace_mounts.org_id = workspace_pty_sessions.org_id
+   AND workspace_mounts.project_id = workspace_pty_sessions.project_id
+   AND workspace_mounts.environment_id = workspace_pty_sessions.environment_id
+   AND workspace_mounts.workspace_id = workspace_pty_sessions.workspace_id
+   AND workspace_mounts.id = workspace_pty_sessions.workspace_mount_id
  WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
    AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
    AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
    AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_pty_sessions.materialization_id = sqlc.arg(materialization_id)
+   AND workspace_pty_sessions.workspace_mount_id = sqlc.arg(workspace_mount_id)
    AND workspace_pty_sessions.state IN ('creating')
-   AND workspace_materializations.state = 'running'
+   AND workspace_mounts.state = 'mounted'
  ORDER BY workspace_pty_sessions.created_at ASC, workspace_pty_sessions.id ASC
  LIMIT sqlc.arg(limit_count);
 
@@ -93,21 +93,21 @@ SELECT workspace_pty_sessions.*
 WITH target AS MATERIALIZED (
     SELECT workspace_pty_sessions.*
       FROM workspace_pty_sessions
-      JOIN workspace_materializations
-        ON workspace_materializations.org_id = workspace_pty_sessions.org_id
-       AND workspace_materializations.project_id = workspace_pty_sessions.project_id
-       AND workspace_materializations.environment_id = workspace_pty_sessions.environment_id
-       AND workspace_materializations.workspace_id = workspace_pty_sessions.workspace_id
-       AND workspace_materializations.id = workspace_pty_sessions.materialization_id
+      JOIN workspace_mounts
+        ON workspace_mounts.org_id = workspace_pty_sessions.org_id
+       AND workspace_mounts.project_id = workspace_pty_sessions.project_id
+       AND workspace_mounts.environment_id = workspace_pty_sessions.environment_id
+       AND workspace_mounts.workspace_id = workspace_pty_sessions.workspace_id
+       AND workspace_mounts.id = workspace_pty_sessions.workspace_mount_id
      WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
        AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
        AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
        AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
        AND workspace_pty_sessions.id = sqlc.arg(id)
-       AND workspace_pty_sessions.materialization_id = sqlc.arg(materialization_id)
+       AND workspace_pty_sessions.workspace_mount_id = sqlc.arg(workspace_mount_id)
        AND workspace_pty_sessions.state IN ('creating', 'open')
-       AND workspace_materializations.state = 'running'
-     FOR UPDATE OF workspace_pty_sessions, workspace_materializations
+       AND workspace_mounts.state = 'mounted'
+     FOR UPDATE OF workspace_pty_sessions, workspace_mounts
 ),
 updated_pty AS (
     UPDATE workspace_pty_sessions
@@ -123,9 +123,9 @@ updated_pty AS (
        AND workspace_pty_sessions.id = target.id
     RETURNING workspace_pty_sessions.*
 ),
-dirtied_materialization AS (
-    UPDATE workspace_materializations
-       SET dirty_generation = workspace_materializations.dirty_generation + 1,
+dirtied_mount AS (
+    UPDATE workspace_mounts
+       SET dirty_generation = workspace_mounts.dirty_generation + 1,
            updated_at = now()
       FROM target
       JOIN updated_pty ON updated_pty.id = target.id
@@ -140,23 +140,23 @@ dirtied_materialization AS (
        AND workspace_leases.state = 'active'
      WHERE target.state <> 'open'
        AND updated_pty.filesystem_mode = 'write'
-       AND workspace_materializations.org_id = updated_pty.org_id
-       AND workspace_materializations.project_id = updated_pty.project_id
-       AND workspace_materializations.environment_id = updated_pty.environment_id
-       AND workspace_materializations.workspace_id = updated_pty.workspace_id
-       AND workspace_materializations.id = updated_pty.materialization_id
-       AND workspace_materializations.fencing_generation = workspace_leases.acquired_fencing_generation
-    RETURNING workspace_materializations.*
+       AND workspace_mounts.org_id = updated_pty.org_id
+       AND workspace_mounts.project_id = updated_pty.project_id
+       AND workspace_mounts.environment_id = updated_pty.environment_id
+       AND workspace_mounts.workspace_id = updated_pty.workspace_id
+       AND workspace_mounts.id = updated_pty.workspace_mount_id
+       AND workspace_mounts.fencing_generation = workspace_leases.acquired_fencing_generation
+    RETURNING workspace_mounts.*
 ),
 updated_workspace AS (
     UPDATE workspaces
        SET dirty_state = 'dirty',
            updated_at = now()
-      FROM dirtied_materialization
-     WHERE workspaces.org_id = dirtied_materialization.org_id
-       AND workspaces.project_id = dirtied_materialization.project_id
-       AND workspaces.environment_id = dirtied_materialization.environment_id
-       AND workspaces.id = dirtied_materialization.workspace_id
+      FROM dirtied_mount
+     WHERE workspaces.org_id = dirtied_mount.org_id
+       AND workspaces.project_id = dirtied_mount.project_id
+       AND workspaces.environment_id = dirtied_mount.environment_id
+       AND workspaces.id = dirtied_mount.workspace_id
     RETURNING workspaces.id
 )
 SELECT *
@@ -190,7 +190,7 @@ UPDATE workspace_pty_sessions
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
-   AND materialization_id = sqlc.arg(materialization_id)
+   AND workspace_mount_id = sqlc.arg(workspace_mount_id)
    AND state IN ('resizing', 'closing')
    AND resize_cols = sqlc.arg(cols)
    AND resize_rows = sqlc.arg(rows)
@@ -213,19 +213,19 @@ RETURNING *;
 -- name: RollbackWorkspacePtyControlOperation :one
 UPDATE workspace_pty_sessions
    SET state = CASE
-           WHEN sqlc.arg(operation_kind)::workspace_materialization_operation_kind = 'close_pty'
+           WHEN sqlc.arg(operation_kind)::workspace_operation_kind = 'close_pty'
                 AND resize_cols IS NOT NULL
                 AND resize_rows IS NOT NULL
                THEN 'resizing'::workspace_pty_state
            ELSE 'open'::workspace_pty_state
        END,
        resize_cols = CASE
-           WHEN sqlc.arg(operation_kind)::workspace_materialization_operation_kind = 'close_pty'
+           WHEN sqlc.arg(operation_kind)::workspace_operation_kind = 'close_pty'
                THEN resize_cols
            ELSE NULL
        END,
        resize_rows = CASE
-           WHEN sqlc.arg(operation_kind)::workspace_materialization_operation_kind = 'close_pty'
+           WHEN sqlc.arg(operation_kind)::workspace_operation_kind = 'close_pty'
                THEN resize_rows
            ELSE NULL
        END,
@@ -235,16 +235,16 @@ UPDATE workspace_pty_sessions
    AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
    AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
    AND workspace_pty_sessions.id = sqlc.arg(id)
-   AND workspace_pty_sessions.materialization_id = sqlc.arg(materialization_id)
+   AND workspace_pty_sessions.workspace_mount_id = sqlc.arg(workspace_mount_id)
    AND (
        (
-           sqlc.arg(operation_kind)::workspace_materialization_operation_kind = 'resize_pty'
+           sqlc.arg(operation_kind)::workspace_operation_kind = 'resize_pty'
            AND workspace_pty_sessions.state = 'resizing'
            AND workspace_pty_sessions.resize_cols = sqlc.narg(cols)
            AND workspace_pty_sessions.resize_rows = sqlc.narg(rows)
        )
        OR (
-           sqlc.arg(operation_kind)::workspace_materialization_operation_kind = 'close_pty'
+           sqlc.arg(operation_kind)::workspace_operation_kind = 'close_pty'
            AND workspace_pty_sessions.state = 'closing'
        )
    )
@@ -263,7 +263,7 @@ WITH updated_pty AS (
        AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
        AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
        AND workspace_pty_sessions.id = sqlc.arg(id)
-       AND workspace_pty_sessions.materialization_id = sqlc.arg(materialization_id)
+       AND workspace_pty_sessions.workspace_mount_id = sqlc.arg(workspace_mount_id)
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
     RETURNING *
 ),
@@ -315,7 +315,7 @@ WITH updated_pty AS (
        AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
        AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
        AND workspace_pty_sessions.id = sqlc.arg(id)
-       AND workspace_pty_sessions.materialization_id = sqlc.arg(materialization_id)
+       AND workspace_pty_sessions.workspace_mount_id = sqlc.arg(workspace_mount_id)
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
     RETURNING *
 ),

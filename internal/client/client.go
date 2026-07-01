@@ -24,6 +24,13 @@ type HTTPError struct {
 	Message    string
 }
 
+func (e *HTTPError) HTTPStatusCode() int {
+	if e == nil {
+		return 0
+	}
+	return e.StatusCode
+}
+
 func (e *HTTPError) Error() string {
 	if e.Message == "" {
 		return e.Status

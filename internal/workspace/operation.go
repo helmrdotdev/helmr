@@ -5,7 +5,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
 )
 
-func OperationFingerprint(operationKind db.WorkspaceMaterializationOperationKind, request []byte) (string, error) {
+func OperationFingerprint(operationKind db.WorkspaceOperationKind, request []byte) (string, error) {
 	guestVerb, err := OperationGuestVerb(operationKind)
 	if err != nil {
 		return "", err
@@ -13,7 +13,7 @@ func OperationFingerprint(operationKind db.WorkspaceMaterializationOperationKind
 	return protocol.RequestFingerprint(guestVerb, request)
 }
 
-func OperationGuestVerb(operationKind db.WorkspaceMaterializationOperationKind) (string, error) {
+func OperationGuestVerb(operationKind db.WorkspaceOperationKind) (string, error) {
 	return protocol.GuestVerb(string(operationKind))
 }
 

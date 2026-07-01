@@ -18,7 +18,7 @@ INSERT INTO workspace_leases (
     project_id,
     environment_id,
     workspace_id,
-    materialization_id,
+    workspace_mount_id,
     lease_kind,
     owner_exec_id,
     base_version_id,
@@ -29,45 +29,45 @@ INSERT INTO workspace_leases (
     expires_at
 )
 SELECT $1,
-       workspace_materializations.org_id,
-       workspace_materializations.project_id,
-       workspace_materializations.environment_id,
-       workspace_materializations.workspace_id,
-       workspace_materializations.id,
+       workspace_mounts.org_id,
+       workspace_mounts.project_id,
+       workspace_mounts.environment_id,
+       workspace_mounts.workspace_id,
+       workspace_mounts.id,
        'instance',
        $2,
-       workspace_materializations.base_version_id,
+       workspace_mounts.base_version_id,
        workspaces.current_version_id,
-       workspace_materializations.fencing_generation,
+       workspace_mounts.fencing_generation,
        $3,
        $4,
        $5
-  FROM workspace_materializations
+  FROM workspace_mounts
   JOIN workspaces
-    ON workspaces.org_id = workspace_materializations.org_id
-   AND workspaces.project_id = workspace_materializations.project_id
-   AND workspaces.environment_id = workspace_materializations.environment_id
-   AND workspaces.id = workspace_materializations.workspace_id
- WHERE workspace_materializations.org_id = $6
-   AND workspace_materializations.project_id = $7
-   AND workspace_materializations.environment_id = $8
-   AND workspace_materializations.workspace_id = $9
-   AND workspace_materializations.id = $10
-   AND workspace_materializations.state IN ('running', 'paused')
-RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
+    ON workspaces.org_id = workspace_mounts.org_id
+   AND workspaces.project_id = workspace_mounts.project_id
+   AND workspaces.environment_id = workspace_mounts.environment_id
+   AND workspaces.id = workspace_mounts.workspace_id
+ WHERE workspace_mounts.org_id = $6
+   AND workspace_mounts.project_id = $7
+   AND workspace_mounts.environment_id = $8
+   AND workspace_mounts.workspace_id = $9
+   AND workspace_mounts.id = $10
+   AND workspace_mounts.state = 'mounted'
+RETURNING id, org_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
 `
 
 type AcquireWorkspaceInstanceLeaseParams struct {
-	ID                pgtype.UUID        `json:"id"`
-	OwnerExecID       pgtype.UUID        `json:"owner_exec_id"`
-	FencingToken      string             `json:"fencing_token"`
-	HeartbeatToken    string             `json:"heartbeat_token"`
-	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
-	OrgID             pgtype.UUID        `json:"org_id"`
-	ProjectID         pgtype.UUID        `json:"project_id"`
-	EnvironmentID     pgtype.UUID        `json:"environment_id"`
-	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
-	MaterializationID pgtype.UUID        `json:"materialization_id"`
+	ID               pgtype.UUID        `json:"id"`
+	OwnerExecID      pgtype.UUID        `json:"owner_exec_id"`
+	FencingToken     string             `json:"fencing_token"`
+	HeartbeatToken   string             `json:"heartbeat_token"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	WorkspaceMountID pgtype.UUID        `json:"workspace_mount_id"`
 }
 
 func (q *Queries) AcquireWorkspaceInstanceLease(ctx context.Context, arg AcquireWorkspaceInstanceLeaseParams) (WorkspaceLease, error) {
@@ -81,7 +81,7 @@ func (q *Queries) AcquireWorkspaceInstanceLease(ctx context.Context, arg Acquire
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
-		arg.MaterializationID,
+		arg.WorkspaceMountID,
 	)
 	var i WorkspaceLease
 	err := row.Scan(
@@ -90,7 +90,7 @@ func (q *Queries) AcquireWorkspaceInstanceLease(ctx context.Context, arg Acquire
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
-		&i.MaterializationID,
+		&i.WorkspaceMountID,
 		&i.LeaseKind,
 		&i.State,
 		&i.OwnerRunID,
@@ -114,17 +114,17 @@ func (q *Queries) AcquireWorkspaceInstanceLease(ctx context.Context, arg Acquire
 }
 
 const acquireWorkspaceWriteLease = `-- name: AcquireWorkspaceWriteLease :one
-WITH fenced_materialization AS (
-    UPDATE workspace_materializations
-       SET fencing_generation = workspace_materializations.fencing_generation + 1,
+WITH fenced_mount AS (
+    UPDATE workspace_mounts
+       SET fencing_generation = workspace_mounts.fencing_generation + 1,
            updated_at = now()
-     WHERE workspace_materializations.org_id = $7
-       AND workspace_materializations.project_id = $8
-       AND workspace_materializations.environment_id = $9
-       AND workspace_materializations.workspace_id = $10
-       AND workspace_materializations.id = $11
-       AND workspace_materializations.state IN ('running', 'paused')
-    RETURNING id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, worker_instance_id, reservation_token, reservation_expires_at, claim_attempt, dead_lettered_at, priority, requested_cpu_millis, requested_memory_mib, requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots, capacity_reservation_id, guestd_channel_token_hash, guestd_channel_token_expires_at, runtime_id, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, materialized_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
+     WHERE workspace_mounts.org_id = $7
+       AND workspace_mounts.project_id = $8
+       AND workspace_mounts.environment_id = $9
+       AND workspace_mounts.workspace_id = $10
+       AND workspace_mounts.id = $11
+       AND workspace_mounts.state = 'mounted'
+    RETURNING id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
 )
 INSERT INTO workspace_leases (
     id,
@@ -132,7 +132,7 @@ INSERT INTO workspace_leases (
     project_id,
     environment_id,
     workspace_id,
-    materialization_id,
+    workspace_mount_id,
     lease_kind,
     owner_exec_id,
     owner_pty_session_id,
@@ -144,27 +144,27 @@ INSERT INTO workspace_leases (
     expires_at
 )
 SELECT $1,
-       fenced_materialization.org_id,
-       fenced_materialization.project_id,
-       fenced_materialization.environment_id,
-       fenced_materialization.workspace_id,
-       fenced_materialization.id,
+       fenced_mount.org_id,
+       fenced_mount.project_id,
+       fenced_mount.environment_id,
+       fenced_mount.workspace_id,
+       fenced_mount.id,
        'write',
        $2,
        $3,
-       fenced_materialization.base_version_id,
+       fenced_mount.base_version_id,
        workspaces.current_version_id,
-       fenced_materialization.fencing_generation,
+       fenced_mount.fencing_generation,
        $4,
        $5,
        $6
-  FROM fenced_materialization
+  FROM fenced_mount
   JOIN workspaces
-    ON workspaces.org_id = fenced_materialization.org_id
-   AND workspaces.project_id = fenced_materialization.project_id
-   AND workspaces.environment_id = fenced_materialization.environment_id
-   AND workspaces.id = fenced_materialization.workspace_id
-RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
+    ON workspaces.org_id = fenced_mount.org_id
+   AND workspaces.project_id = fenced_mount.project_id
+   AND workspaces.environment_id = fenced_mount.environment_id
+   AND workspaces.id = fenced_mount.workspace_id
+RETURNING id, org_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
 `
 
 type AcquireWorkspaceWriteLeaseParams struct {
@@ -178,7 +178,7 @@ type AcquireWorkspaceWriteLeaseParams struct {
 	ProjectID         pgtype.UUID        `json:"project_id"`
 	EnvironmentID     pgtype.UUID        `json:"environment_id"`
 	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
-	MaterializationID pgtype.UUID        `json:"materialization_id"`
+	WorkspaceMountID  pgtype.UUID        `json:"workspace_mount_id"`
 }
 
 func (q *Queries) AcquireWorkspaceWriteLease(ctx context.Context, arg AcquireWorkspaceWriteLeaseParams) (WorkspaceLease, error) {
@@ -193,7 +193,7 @@ func (q *Queries) AcquireWorkspaceWriteLease(ctx context.Context, arg AcquireWor
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
-		arg.MaterializationID,
+		arg.WorkspaceMountID,
 	)
 	var i WorkspaceLease
 	err := row.Scan(
@@ -202,7 +202,7 @@ func (q *Queries) AcquireWorkspaceWriteLease(ctx context.Context, arg AcquireWor
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
-		&i.MaterializationID,
+		&i.WorkspaceMountID,
 		&i.LeaseKind,
 		&i.State,
 		&i.OwnerRunID,
@@ -226,7 +226,7 @@ func (q *Queries) AcquireWorkspaceWriteLease(ctx context.Context, arg AcquireWor
 }
 
 const getWorkspaceLease = `-- name: GetWorkspaceLease :one
-SELECT id, org_id, project_id, environment_id, workspace_id, materialization_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
+SELECT id, org_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
   FROM workspace_leases
  WHERE org_id = $1
    AND project_id = $2
@@ -258,7 +258,7 @@ func (q *Queries) GetWorkspaceLease(ctx context.Context, arg GetWorkspaceLeasePa
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
-		&i.MaterializationID,
+		&i.WorkspaceMountID,
 		&i.LeaseKind,
 		&i.State,
 		&i.OwnerRunID,
@@ -287,7 +287,7 @@ WITH active_writer AS (
            workspace_leases.project_id,
            workspace_leases.environment_id,
            workspace_leases.workspace_id,
-           workspace_leases.materialization_id,
+           workspace_leases.workspace_mount_id,
            workspace_leases.acquired_fencing_generation
       FROM workspace_leases
      WHERE workspace_leases.org_id = $1
@@ -297,31 +297,31 @@ WITH active_writer AS (
        AND workspace_leases.state = 'active'
        AND workspace_leases.expires_at > now()
 ),
-updated_materialization AS (
-    UPDATE workspace_materializations
+updated_mount AS (
+    UPDATE workspace_mounts
        SET dirty_generation = dirty_generation + 1,
            updated_at = now()
       FROM active_writer
-     WHERE workspace_materializations.org_id = active_writer.org_id
-       AND workspace_materializations.project_id = active_writer.project_id
-       AND workspace_materializations.environment_id = active_writer.environment_id
-       AND workspace_materializations.workspace_id = active_writer.workspace_id
-       AND workspace_materializations.id = active_writer.materialization_id
-       AND workspace_materializations.fencing_generation = active_writer.acquired_fencing_generation
-    RETURNING workspace_materializations.id, workspace_materializations.org_id, workspace_materializations.project_id, workspace_materializations.environment_id, workspace_materializations.workspace_id, workspace_materializations.deployment_sandbox_id, workspace_materializations.sandbox_fingerprint, workspace_materializations.base_version_id, workspace_materializations.worker_instance_id, workspace_materializations.reservation_token, workspace_materializations.reservation_expires_at, workspace_materializations.claim_attempt, workspace_materializations.dead_lettered_at, workspace_materializations.priority, workspace_materializations.requested_cpu_millis, workspace_materializations.requested_memory_mib, workspace_materializations.requested_disk_mib, workspace_materializations.requested_execution_slots, workspace_materializations.reserved_cpu_millis, workspace_materializations.reserved_memory_mib, workspace_materializations.reserved_disk_mib, workspace_materializations.reserved_execution_slots, workspace_materializations.capacity_reservation_id, workspace_materializations.guestd_channel_token_hash, workspace_materializations.guestd_channel_token_expires_at, workspace_materializations.runtime_id, workspace_materializations.state, workspace_materializations.request, workspace_materializations.lease_generation, workspace_materializations.dirty_generation, workspace_materializations.fencing_generation, workspace_materializations.network_namespace, workspace_materializations.port_namespace, workspace_materializations.image_artifact_id, workspace_materializations.image_artifact_format, workspace_materializations.rootfs_digest, workspace_materializations.image_digest, workspace_materializations.image_format, workspace_materializations.workspace_artifact_id, workspace_materializations.workspace_artifact_encoding, workspace_materializations.workspace_artifact_entry_count, workspace_materializations.workspace_artifact_digest, workspace_materializations.workspace_artifact_size_bytes, workspace_materializations.workspace_artifact_media_type, workspace_materializations.workspace_mount_path, workspace_materializations.runtime_abi, workspace_materializations.guestd_abi, workspace_materializations.adapter_abi, workspace_materializations.last_heartbeat_at, workspace_materializations.requested_at, workspace_materializations.materialized_at, workspace_materializations.stopped_at, workspace_materializations.lost_at, workspace_materializations.failed_at, workspace_materializations.error, workspace_materializations.created_at, workspace_materializations.updated_at
+     WHERE workspace_mounts.org_id = active_writer.org_id
+       AND workspace_mounts.project_id = active_writer.project_id
+       AND workspace_mounts.environment_id = active_writer.environment_id
+       AND workspace_mounts.workspace_id = active_writer.workspace_id
+       AND workspace_mounts.id = active_writer.workspace_mount_id
+       AND workspace_mounts.fencing_generation = active_writer.acquired_fencing_generation
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
 ),
 updated_workspace AS (
     UPDATE workspaces
        SET dirty_state = 'dirty',
            updated_at = now()
-      FROM updated_materialization
-     WHERE workspaces.org_id = updated_materialization.org_id
-       AND workspaces.project_id = updated_materialization.project_id
-       AND workspaces.environment_id = updated_materialization.environment_id
-       AND workspaces.id = updated_materialization.workspace_id
+      FROM updated_mount
+     WHERE workspaces.org_id = updated_mount.org_id
+       AND workspaces.project_id = updated_mount.project_id
+       AND workspaces.environment_id = updated_mount.environment_id
+       AND workspaces.id = updated_mount.workspace_id
     RETURNING workspaces.id
 )
-SELECT id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, worker_instance_id, reservation_token, reservation_expires_at, claim_attempt, dead_lettered_at, priority, requested_cpu_millis, requested_memory_mib, requested_disk_mib, requested_execution_slots, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots, capacity_reservation_id, guestd_channel_token_hash, guestd_channel_token_expires_at, runtime_id, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, materialized_at, stopped_at, lost_at, failed_at, error, created_at, updated_at FROM updated_materialization
+SELECT id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at FROM updated_mount
 `
 
 type MarkWorkspaceWriteLeaseDirtyParams struct {
@@ -331,63 +331,51 @@ type MarkWorkspaceWriteLeaseDirtyParams struct {
 }
 
 type MarkWorkspaceWriteLeaseDirtyRow struct {
-	ID                          pgtype.UUID                   `json:"id"`
-	OrgID                       pgtype.UUID                   `json:"org_id"`
-	ProjectID                   pgtype.UUID                   `json:"project_id"`
-	EnvironmentID               pgtype.UUID                   `json:"environment_id"`
-	WorkspaceID                 pgtype.UUID                   `json:"workspace_id"`
-	DeploymentSandboxID         pgtype.UUID                   `json:"deployment_sandbox_id"`
-	SandboxFingerprint          string                        `json:"sandbox_fingerprint"`
-	BaseVersionID               pgtype.UUID                   `json:"base_version_id"`
-	WorkerInstanceID            pgtype.UUID                   `json:"worker_instance_id"`
-	ReservationToken            string                        `json:"reservation_token"`
-	ReservationExpiresAt        pgtype.Timestamptz            `json:"reservation_expires_at"`
-	ClaimAttempt                int32                         `json:"claim_attempt"`
-	DeadLetteredAt              pgtype.Timestamptz            `json:"dead_lettered_at"`
-	Priority                    int32                         `json:"priority"`
-	RequestedCpuMillis          int32                         `json:"requested_cpu_millis"`
-	RequestedMemoryMib          int32                         `json:"requested_memory_mib"`
-	RequestedDiskMib            int64                         `json:"requested_disk_mib"`
-	RequestedExecutionSlots     int32                         `json:"requested_execution_slots"`
-	ReservedCpuMillis           int32                         `json:"reserved_cpu_millis"`
-	ReservedMemoryMib           int32                         `json:"reserved_memory_mib"`
-	ReservedDiskMib             int64                         `json:"reserved_disk_mib"`
-	ReservedExecutionSlots      int32                         `json:"reserved_execution_slots"`
-	CapacityReservationID       pgtype.UUID                   `json:"capacity_reservation_id"`
-	GuestdChannelTokenHash      string                        `json:"guestd_channel_token_hash"`
-	GuestdChannelTokenExpiresAt pgtype.Timestamptz            `json:"guestd_channel_token_expires_at"`
-	RuntimeID                   string                        `json:"runtime_id"`
-	State                       WorkspaceMaterializationState `json:"state"`
-	Request                     []byte                        `json:"request"`
-	LeaseGeneration             int64                         `json:"lease_generation"`
-	DirtyGeneration             int64                         `json:"dirty_generation"`
-	FencingGeneration           int64                         `json:"fencing_generation"`
-	NetworkNamespace            string                        `json:"network_namespace"`
-	PortNamespace               string                        `json:"port_namespace"`
-	ImageArtifactID             pgtype.UUID                   `json:"image_artifact_id"`
-	ImageArtifactFormat         string                        `json:"image_artifact_format"`
-	RootfsDigest                string                        `json:"rootfs_digest"`
-	ImageDigest                 string                        `json:"image_digest"`
-	ImageFormat                 string                        `json:"image_format"`
-	WorkspaceArtifactID         pgtype.UUID                   `json:"workspace_artifact_id"`
-	WorkspaceArtifactEncoding   string                        `json:"workspace_artifact_encoding"`
-	WorkspaceArtifactEntryCount int32                         `json:"workspace_artifact_entry_count"`
-	WorkspaceArtifactDigest     string                        `json:"workspace_artifact_digest"`
-	WorkspaceArtifactSizeBytes  int64                         `json:"workspace_artifact_size_bytes"`
-	WorkspaceArtifactMediaType  string                        `json:"workspace_artifact_media_type"`
-	WorkspaceMountPath          string                        `json:"workspace_mount_path"`
-	RuntimeABI                  string                        `json:"runtime_abi"`
-	GuestdAbi                   string                        `json:"guestd_abi"`
-	AdapterAbi                  string                        `json:"adapter_abi"`
-	LastHeartbeatAt             pgtype.Timestamptz            `json:"last_heartbeat_at"`
-	RequestedAt                 pgtype.Timestamptz            `json:"requested_at"`
-	MaterializedAt              pgtype.Timestamptz            `json:"materialized_at"`
-	StoppedAt                   pgtype.Timestamptz            `json:"stopped_at"`
-	LostAt                      pgtype.Timestamptz            `json:"lost_at"`
-	FailedAt                    pgtype.Timestamptz            `json:"failed_at"`
-	Error                       []byte                        `json:"error"`
-	CreatedAt                   pgtype.Timestamptz            `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz            `json:"updated_at"`
+	ID                          pgtype.UUID         `json:"id"`
+	OrgID                       pgtype.UUID         `json:"org_id"`
+	ProjectID                   pgtype.UUID         `json:"project_id"`
+	EnvironmentID               pgtype.UUID         `json:"environment_id"`
+	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
+	DeploymentSandboxID         pgtype.UUID         `json:"deployment_sandbox_id"`
+	SandboxFingerprint          string              `json:"sandbox_fingerprint"`
+	BaseVersionID               pgtype.UUID         `json:"base_version_id"`
+	RuntimeInstanceID           pgtype.UUID         `json:"runtime_instance_id"`
+	ClaimAttempt                int32               `json:"claim_attempt"`
+	Priority                    int32               `json:"priority"`
+	GuestdChannelTokenHash      string              `json:"guestd_channel_token_hash"`
+	GuestdChannelTokenExpiresAt pgtype.Timestamptz  `json:"guestd_channel_token_expires_at"`
+	State                       WorkspaceMountState `json:"state"`
+	Request                     []byte              `json:"request"`
+	LeaseGeneration             int64               `json:"lease_generation"`
+	DirtyGeneration             int64               `json:"dirty_generation"`
+	FencingGeneration           int64               `json:"fencing_generation"`
+	NetworkNamespace            string              `json:"network_namespace"`
+	PortNamespace               string              `json:"port_namespace"`
+	ImageArtifactID             pgtype.UUID         `json:"image_artifact_id"`
+	ImageArtifactFormat         string              `json:"image_artifact_format"`
+	RootfsDigest                string              `json:"rootfs_digest"`
+	ImageDigest                 string              `json:"image_digest"`
+	ImageFormat                 string              `json:"image_format"`
+	WorkspaceArtifactID         pgtype.UUID         `json:"workspace_artifact_id"`
+	WorkspaceArtifactEncoding   string              `json:"workspace_artifact_encoding"`
+	WorkspaceArtifactEntryCount int32               `json:"workspace_artifact_entry_count"`
+	WorkspaceArtifactDigest     string              `json:"workspace_artifact_digest"`
+	WorkspaceArtifactSizeBytes  int64               `json:"workspace_artifact_size_bytes"`
+	WorkspaceArtifactMediaType  string              `json:"workspace_artifact_media_type"`
+	WorkspaceMountPath          string              `json:"workspace_mount_path"`
+	RuntimeABI                  string              `json:"runtime_abi"`
+	GuestdAbi                   string              `json:"guestd_abi"`
+	AdapterAbi                  string              `json:"adapter_abi"`
+	LastHeartbeatAt             pgtype.Timestamptz  `json:"last_heartbeat_at"`
+	RequestedAt                 pgtype.Timestamptz  `json:"requested_at"`
+	MountedAt                   pgtype.Timestamptz  `json:"mounted_at"`
+	UnmountedAt                 pgtype.Timestamptz  `json:"unmounted_at"`
+	StoppedAt                   pgtype.Timestamptz  `json:"stopped_at"`
+	LostAt                      pgtype.Timestamptz  `json:"lost_at"`
+	FailedAt                    pgtype.Timestamptz  `json:"failed_at"`
+	Error                       []byte              `json:"error"`
+	CreatedAt                   pgtype.Timestamptz  `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz  `json:"updated_at"`
 }
 
 func (q *Queries) MarkWorkspaceWriteLeaseDirty(ctx context.Context, arg MarkWorkspaceWriteLeaseDirtyParams) (MarkWorkspaceWriteLeaseDirtyRow, error) {
@@ -402,24 +390,11 @@ func (q *Queries) MarkWorkspaceWriteLeaseDirty(ctx context.Context, arg MarkWork
 		&i.DeploymentSandboxID,
 		&i.SandboxFingerprint,
 		&i.BaseVersionID,
-		&i.WorkerInstanceID,
-		&i.ReservationToken,
-		&i.ReservationExpiresAt,
+		&i.RuntimeInstanceID,
 		&i.ClaimAttempt,
-		&i.DeadLetteredAt,
 		&i.Priority,
-		&i.RequestedCpuMillis,
-		&i.RequestedMemoryMib,
-		&i.RequestedDiskMib,
-		&i.RequestedExecutionSlots,
-		&i.ReservedCpuMillis,
-		&i.ReservedMemoryMib,
-		&i.ReservedDiskMib,
-		&i.ReservedExecutionSlots,
-		&i.CapacityReservationID,
 		&i.GuestdChannelTokenHash,
 		&i.GuestdChannelTokenExpiresAt,
-		&i.RuntimeID,
 		&i.State,
 		&i.Request,
 		&i.LeaseGeneration,
@@ -444,7 +419,8 @@ func (q *Queries) MarkWorkspaceWriteLeaseDirty(ctx context.Context, arg MarkWork
 		&i.AdapterAbi,
 		&i.LastHeartbeatAt,
 		&i.RequestedAt,
-		&i.MaterializedAt,
+		&i.MountedAt,
+		&i.UnmountedAt,
 		&i.StoppedAt,
 		&i.LostAt,
 		&i.FailedAt,
@@ -457,7 +433,7 @@ func (q *Queries) MarkWorkspaceWriteLeaseDirty(ctx context.Context, arg MarkWork
 
 const promoteWorkspaceCapture = `-- name: PromoteWorkspaceCapture :one
 WITH active_writer AS (
-    SELECT workspace_leases.id, workspace_leases.org_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.workspace_id, workspace_leases.materialization_id, workspace_leases.lease_kind, workspace_leases.state, workspace_leases.owner_run_id, workspace_leases.owner_exec_id, workspace_leases.owner_pty_session_id, workspace_leases.owner_port_id, workspace_leases.base_version_id, workspace_leases.acquired_version_id, workspace_leases.acquired_fencing_generation, workspace_leases.fencing_token, workspace_leases.heartbeat_token, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.error
+    SELECT workspace_leases.id, workspace_leases.org_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.lease_kind, workspace_leases.state, workspace_leases.owner_run_id, workspace_leases.owner_exec_id, workspace_leases.owner_pty_session_id, workspace_leases.owner_port_id, workspace_leases.base_version_id, workspace_leases.acquired_version_id, workspace_leases.acquired_fencing_generation, workspace_leases.fencing_token, workspace_leases.heartbeat_token, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.error
       FROM workspace_leases
      WHERE workspace_leases.org_id = $1
        AND workspace_leases.id = $2
@@ -466,17 +442,17 @@ WITH active_writer AS (
        AND workspace_leases.state = 'active'
        AND workspace_leases.expires_at > now()
 ),
-active_materialization AS (
-    SELECT workspace_materializations.id, workspace_materializations.org_id, workspace_materializations.project_id, workspace_materializations.environment_id, workspace_materializations.workspace_id, workspace_materializations.deployment_sandbox_id, workspace_materializations.sandbox_fingerprint, workspace_materializations.base_version_id, workspace_materializations.worker_instance_id, workspace_materializations.reservation_token, workspace_materializations.reservation_expires_at, workspace_materializations.claim_attempt, workspace_materializations.dead_lettered_at, workspace_materializations.priority, workspace_materializations.requested_cpu_millis, workspace_materializations.requested_memory_mib, workspace_materializations.requested_disk_mib, workspace_materializations.requested_execution_slots, workspace_materializations.reserved_cpu_millis, workspace_materializations.reserved_memory_mib, workspace_materializations.reserved_disk_mib, workspace_materializations.reserved_execution_slots, workspace_materializations.capacity_reservation_id, workspace_materializations.guestd_channel_token_hash, workspace_materializations.guestd_channel_token_expires_at, workspace_materializations.runtime_id, workspace_materializations.state, workspace_materializations.request, workspace_materializations.lease_generation, workspace_materializations.dirty_generation, workspace_materializations.fencing_generation, workspace_materializations.network_namespace, workspace_materializations.port_namespace, workspace_materializations.image_artifact_id, workspace_materializations.image_artifact_format, workspace_materializations.rootfs_digest, workspace_materializations.image_digest, workspace_materializations.image_format, workspace_materializations.workspace_artifact_id, workspace_materializations.workspace_artifact_encoding, workspace_materializations.workspace_artifact_entry_count, workspace_materializations.workspace_artifact_digest, workspace_materializations.workspace_artifact_size_bytes, workspace_materializations.workspace_artifact_media_type, workspace_materializations.workspace_mount_path, workspace_materializations.runtime_abi, workspace_materializations.guestd_abi, workspace_materializations.adapter_abi, workspace_materializations.last_heartbeat_at, workspace_materializations.requested_at, workspace_materializations.materialized_at, workspace_materializations.stopped_at, workspace_materializations.lost_at, workspace_materializations.failed_at, workspace_materializations.error, workspace_materializations.created_at, workspace_materializations.updated_at
-      FROM workspace_materializations
+active_mount AS (
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+      FROM workspace_mounts
       JOIN active_writer
-        ON active_writer.org_id = workspace_materializations.org_id
-       AND active_writer.project_id = workspace_materializations.project_id
-       AND active_writer.environment_id = workspace_materializations.environment_id
-       AND active_writer.workspace_id = workspace_materializations.workspace_id
-       AND active_writer.materialization_id = workspace_materializations.id
-       AND active_writer.acquired_fencing_generation = workspace_materializations.fencing_generation
-     WHERE workspace_materializations.dirty_generation = $4
+        ON active_writer.org_id = workspace_mounts.org_id
+       AND active_writer.project_id = workspace_mounts.project_id
+       AND active_writer.environment_id = workspace_mounts.environment_id
+       AND active_writer.workspace_id = workspace_mounts.workspace_id
+       AND active_writer.workspace_mount_id = workspace_mounts.id
+       AND active_writer.acquired_fencing_generation = workspace_mounts.fencing_generation
+     WHERE workspace_mounts.dirty_generation = $4
 ),
 verified_artifact AS (
     SELECT artifacts.id
@@ -499,7 +475,7 @@ created_version AS (
         environment_id,
         workspace_id,
         parent_version_id,
-        source_materialization_id,
+        source_workspace_mount_id,
         source_write_lease_id,
         kind,
         state,
@@ -517,7 +493,7 @@ created_version AS (
            active_writer.environment_id,
            active_writer.workspace_id,
            active_writer.acquired_version_id,
-           active_writer.materialization_id,
+           active_writer.workspace_mount_id,
            active_writer.id,
            $10,
            'ready',
@@ -529,9 +505,9 @@ created_version AS (
            $12,
            now()
       FROM active_writer
-      JOIN active_materialization ON active_materialization.id = active_writer.materialization_id
+      JOIN active_mount ON active_mount.id = active_writer.workspace_mount_id
       JOIN verified_artifact ON verified_artifact.id = $5
-    RETURNING id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_materialization_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
+    RETURNING id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
 ),
 promoted_workspace AS (
     UPDATE workspaces
@@ -546,23 +522,23 @@ promoted_workspace AS (
        AND workspaces.current_version_id IS NOT DISTINCT FROM created_version.parent_version_id
     RETURNING workspaces.id
 ),
-cleaned_materialization AS (
-    UPDATE workspace_materializations
+cleaned_mount AS (
+    UPDATE workspace_mounts
        SET dirty_generation = 0,
            updated_at = now()
       FROM created_version
-     WHERE workspace_materializations.org_id = created_version.org_id
-       AND workspace_materializations.project_id = created_version.project_id
-       AND workspace_materializations.environment_id = created_version.environment_id
-       AND workspace_materializations.workspace_id = created_version.workspace_id
-       AND workspace_materializations.id = created_version.source_materialization_id
-       AND workspace_materializations.dirty_generation = $4
-    RETURNING workspace_materializations.id
+     WHERE workspace_mounts.org_id = created_version.org_id
+       AND workspace_mounts.project_id = created_version.project_id
+       AND workspace_mounts.environment_id = created_version.environment_id
+       AND workspace_mounts.workspace_id = created_version.workspace_id
+       AND workspace_mounts.id = created_version.source_workspace_mount_id
+       AND workspace_mounts.dirty_generation = $4
+    RETURNING workspace_mounts.id
 )
-SELECT created_version.id, created_version.org_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_materialization_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_exec_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
+SELECT created_version.id, created_version.org_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_exec_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
   FROM created_version
   JOIN promoted_workspace ON promoted_workspace.id = created_version.workspace_id
-  JOIN cleaned_materialization ON cleaned_materialization.id = created_version.source_materialization_id
+  JOIN cleaned_mount ON cleaned_mount.id = created_version.source_workspace_mount_id
 `
 
 type PromoteWorkspaceCaptureParams struct {
@@ -581,29 +557,29 @@ type PromoteWorkspaceCaptureParams struct {
 }
 
 type PromoteWorkspaceCaptureRow struct {
-	ID                      pgtype.UUID           `json:"id"`
-	OrgID                   pgtype.UUID           `json:"org_id"`
-	ProjectID               pgtype.UUID           `json:"project_id"`
-	EnvironmentID           pgtype.UUID           `json:"environment_id"`
-	WorkspaceID             pgtype.UUID           `json:"workspace_id"`
-	ParentVersionID         pgtype.UUID           `json:"parent_version_id"`
-	SourceMaterializationID pgtype.UUID           `json:"source_materialization_id"`
-	SourceWriteLeaseID      pgtype.UUID           `json:"source_write_lease_id"`
-	ProducedByRunID         pgtype.UUID           `json:"produced_by_run_id"`
-	ProducedByExecID        pgtype.UUID           `json:"produced_by_exec_id"`
-	Kind                    WorkspaceVersionKind  `json:"kind"`
-	State                   WorkspaceVersionState `json:"state"`
-	ArtifactID              pgtype.UUID           `json:"artifact_id"`
-	ArtifactEncoding        string                `json:"artifact_encoding"`
-	ArtifactEntryCount      int32                 `json:"artifact_entry_count"`
-	ContentDigest           string                `json:"content_digest"`
-	SizeBytes               int64                 `json:"size_bytes"`
-	Message                 string                `json:"message"`
-	Error                   []byte                `json:"error"`
-	PromotedAt              pgtype.Timestamptz    `json:"promoted_at"`
-	CreatedBySubjectType    string                `json:"created_by_subject_type"`
-	CreatedBySubjectID      string                `json:"created_by_subject_id"`
-	CreatedAt               pgtype.Timestamptz    `json:"created_at"`
+	ID                     pgtype.UUID           `json:"id"`
+	OrgID                  pgtype.UUID           `json:"org_id"`
+	ProjectID              pgtype.UUID           `json:"project_id"`
+	EnvironmentID          pgtype.UUID           `json:"environment_id"`
+	WorkspaceID            pgtype.UUID           `json:"workspace_id"`
+	ParentVersionID        pgtype.UUID           `json:"parent_version_id"`
+	SourceWorkspaceMountID pgtype.UUID           `json:"source_workspace_mount_id"`
+	SourceWriteLeaseID     pgtype.UUID           `json:"source_write_lease_id"`
+	ProducedByRunID        pgtype.UUID           `json:"produced_by_run_id"`
+	ProducedByExecID       pgtype.UUID           `json:"produced_by_exec_id"`
+	Kind                   WorkspaceVersionKind  `json:"kind"`
+	State                  WorkspaceVersionState `json:"state"`
+	ArtifactID             pgtype.UUID           `json:"artifact_id"`
+	ArtifactEncoding       string                `json:"artifact_encoding"`
+	ArtifactEntryCount     int32                 `json:"artifact_entry_count"`
+	ContentDigest          string                `json:"content_digest"`
+	SizeBytes              int64                 `json:"size_bytes"`
+	Message                string                `json:"message"`
+	Error                  []byte                `json:"error"`
+	PromotedAt             pgtype.Timestamptz    `json:"promoted_at"`
+	CreatedBySubjectType   string                `json:"created_by_subject_type"`
+	CreatedBySubjectID     string                `json:"created_by_subject_id"`
+	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
 }
 
 func (q *Queries) PromoteWorkspaceCapture(ctx context.Context, arg PromoteWorkspaceCaptureParams) (PromoteWorkspaceCaptureRow, error) {
@@ -629,7 +605,7 @@ func (q *Queries) PromoteWorkspaceCapture(ctx context.Context, arg PromoteWorksp
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,
-		&i.SourceMaterializationID,
+		&i.SourceWorkspaceMountID,
 		&i.SourceWriteLeaseID,
 		&i.ProducedByRunID,
 		&i.ProducedByExecID,
@@ -659,7 +635,7 @@ UPDATE workspace_leases
    AND id = $2
    AND fencing_token = $3
    AND state = 'active'
-RETURNING id, org_id, project_id, environment_id, workspace_id, materialization_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
+RETURNING id, org_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
 `
 
 type ReleaseWorkspaceLeaseParams struct {
@@ -677,7 +653,7 @@ func (q *Queries) ReleaseWorkspaceLease(ctx context.Context, arg ReleaseWorkspac
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
-		&i.MaterializationID,
+		&i.WorkspaceMountID,
 		&i.LeaseKind,
 		&i.State,
 		&i.OwnerRunID,

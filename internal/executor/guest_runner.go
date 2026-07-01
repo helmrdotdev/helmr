@@ -8,9 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -18,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/runprotocol"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -38,14 +42,19 @@ const (
 )
 
 type GuestRunner struct {
-	Connector           vm.Connector
-	CAS                 cas.Store
-	CheckpointEncryptor *checkpoint.Encryptor
-	Materializations    WorkspaceMaterializationSessionRegistry
-	Events              RuntimeEventSink
-	TempDir             string
-	Stdout              io.Writer
-	Stderr              io.Writer
+	Connector             vm.Connector
+	CAS                   cas.Store
+	CheckpointEncryptor   *checkpoint.Encryptor
+	WorkspaceMounts       WorkspaceMountSessionRegistry
+	Events                RuntimeEventSink
+	TempDir               string
+	ArtifactCacheDir      string
+	ArtifactCacheMaxBytes int64
+	Substrates            RuntimeSubstrateResolver
+	RuntimeSubstrates     RuntimeSubstrateArtifactRegistrar
+	Log                   *slog.Logger
+	Stdout                io.Writer
+	Stderr                io.Writer
 }
 
 type RuntimeEventSink interface {
@@ -67,9 +76,6 @@ func (r GuestRunner) Run(ctx context.Context, request Request) (Result, error) {
 	if request.Run.Restore != nil {
 		return r.restore(ctx, request)
 	}
-	if strings.TrimSpace(request.Artifact.ImageTarPath) == "" {
-		return Result{}, errors.New("runtime image artifact is required")
-	}
 	if strings.TrimSpace(request.DeploymentSource.ProjectRoot) == "" {
 		return Result{}, errors.New("checked-out deployment source project root is required")
 	}
@@ -77,39 +83,68 @@ func (r GuestRunner) Run(ctx context.Context, request Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if strings.TrimSpace(request.Workspace.Path) == "" {
-		return Result{}, errors.New("workspace artifact path is required")
-	}
 	if strings.TrimSpace(request.Workspace.Digest) == "" {
 		return Result{}, errors.New("workspace artifact digest is required")
 	}
-	if materializationID := strings.TrimSpace(request.Run.Workspace.MaterializationID); materializationID != "" {
-		if r.Materializations == nil {
-			return Result{}, errors.New("workspace materialization session registry is required")
+	if workspaceMountID := strings.TrimSpace(request.Run.Workspace.WorkspaceMountID); workspaceMountID != "" {
+		if r.WorkspaceMounts == nil {
+			return Result{}, errors.New("workspace mount session registry is required")
 		}
-		session, err := r.Materializations.OpenWorkspaceMaterializationSession(ctx, materializationID)
+		phaseStarted := time.Now()
+		workspaceMountSession, err := r.WorkspaceMounts.OpenWorkspaceMountSession(ctx, workspaceMountID)
+		r.logRunPhase(request, "guest run workspace mount stream opened", "duration_ms", time.Since(phaseStarted).Milliseconds(), "workspace_mount_id", workspaceMountID, "error", errorString(err))
 		if err != nil {
 			return Result{}, err
 		}
+		session := workspaceMountSession.Session
 		defer session.Close(context.Background())
 		stream := session.Stream()
-		inputMetadata, err := r.writeRuntimeInput(ctx, stream, request, deploymentSourceRoot)
+		phaseStarted = time.Now()
+		inputMetadata, err := r.writeWorkspaceRunInput(ctx, stream, request, deploymentSourceRoot, workspaceMountSession.ChannelToken)
+		r.logRunPhase(request, "guest run input written", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
 		if err != nil {
 			return Result{}, err
 		}
-		return r.readRunEvents(ctx, session, request, inputMetadata)
+		phaseStarted = time.Now()
+		result, err := r.readRunEvents(ctx, session, request, inputMetadata)
+		r.logRunPhase(request, "guest run events read", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
+		return result, err
 	}
-	session, err := r.Connector.Connect(ctx, request.Run.Requirements.Network)
+	return Result{}, errors.New("workspace mount id is required for worker run execution")
+}
+
+func (r GuestRunner) runDirect(ctx context.Context, request Request) (Result, error) {
+	if strings.TrimSpace(request.DeploymentSource.ProjectRoot) == "" {
+		return Result{}, errors.New("checked-out deployment source project root is required")
+	}
+	deploymentSourceRoot, err := runtimeSourceRoot(request.DeploymentSource)
+	if err != nil {
+		return Result{}, err
+	}
+	if strings.TrimSpace(request.Artifact.ImageTarPath) == "" {
+		return Result{}, errors.New("runtime image artifact is required")
+	}
+	if strings.TrimSpace(request.Workspace.Path) == "" {
+		return Result{}, errors.New("workspace artifact path is required")
+	}
+	phaseStarted := time.Now()
+	session, err := r.Connector.Connect(ctx, vm.ConnectRequest{Network: request.Run.Requirements.Network})
+	r.logRunPhase(request, "guest run connector opened", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		return Result{}, fmt.Errorf("connect guest runtime: %w", err)
 	}
 	defer session.Close(context.Background())
 	stream := session.Stream()
+	phaseStarted = time.Now()
 	inputMetadata, err := r.writeRuntimeInput(ctx, stream, request, deploymentSourceRoot)
+	r.logRunPhase(request, "guest run input written", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		return Result{}, err
 	}
-	return r.readRunEvents(ctx, session, request, inputMetadata)
+	phaseStarted = time.Now()
+	result, err := r.readRunEvents(ctx, session, request, inputMetadata)
+	r.logRunPhase(request, "guest run events read", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
+	return result, err
 }
 
 func (r GuestRunner) restore(ctx context.Context, request Request) (Result, error) {
@@ -146,6 +181,13 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 	if err := requireCheckpointArtifact(runtimeState.MemoryArtifacts[0], "runtime_state.memory_artifacts[0]"); err != nil {
 		return Result{}, err
 	}
+	restorePhases := &runtimePhaseCollector{}
+	topology, cleanupTopology, err := r.restoreRuntimeTopology(ctx, request, restorePhases)
+	if err != nil {
+		r.logCheckpointRestorePhases(request, restorePhases.Snapshot(), "failed", vm.RuntimeErrorClass(err))
+		return Result{}, err
+	}
+	defer cleanupTopology()
 	configArtifact := runtimeState.ConfigArtifact
 	stateArtifact := runtimeState.VMStateArtifact
 	scratchArtifact := runtimeState.ScratchDiskArtifact
@@ -157,7 +199,7 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(4)
 	group.Go(func() error {
-		path, err := r.materializeCheckpointObject(groupCtx, configArtifact.Digest, "manifest")
+		path, err := r.materializeCheckpointObjectPhase(groupCtx, restorePhases, configArtifact.Digest, "manifest", "restore_materialize_manifest", "manifest", configArtifact.MediaType)
 		if err != nil {
 			return err
 		}
@@ -165,7 +207,7 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 		return nil
 	})
 	group.Go(func() error {
-		path, err := r.materializeCheckpointObject(groupCtx, stateArtifact.Digest, "vmstate")
+		path, err := r.materializeCheckpointObjectPhase(groupCtx, restorePhases, stateArtifact.Digest, "vmstate", "restore_materialize_vm_state", "vmstate", stateArtifact.MediaType)
 		if err != nil {
 			return err
 		}
@@ -173,7 +215,7 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 		return nil
 	})
 	group.Go(func() error {
-		path, err := r.materializeCheckpointObject(groupCtx, scratchArtifact.Digest, "scratch-disk")
+		path, err := r.materializeCheckpointObjectPhase(groupCtx, restorePhases, scratchArtifact.Digest, "scratch-disk", "restore_materialize_scratch_filepack", "scratch-disk", scratchArtifact.MediaType)
 		if err != nil {
 			return err
 		}
@@ -181,7 +223,7 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 		return nil
 	})
 	group.Go(func() error {
-		path, err := r.materializeCheckpointObject(groupCtx, memoryArtifact.Digest, "memory")
+		path, err := r.materializeCheckpointObjectPhase(groupCtx, restorePhases, memoryArtifact.Digest, "memory", "restore_materialize_memory_filepack", "memory", memoryArtifact.MediaType)
 		if err != nil {
 			return err
 		}
@@ -190,11 +232,14 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 	})
 	if err := group.Wait(); err != nil {
 		removeFiles([]string{manifestPath, state, scratchDisk, memory})
+		r.logCheckpointRestorePhases(request, restorePhases.Snapshot(), "failed", vm.RuntimeErrorClass(err))
 		return Result{}, err
 	}
 	defer removeFiles([]string{manifestPath, state, scratchDisk, memory})
 	manifest, err := os.ReadFile(manifestPath)
 	if err != nil {
+		restorePhases.Record(vm.RuntimePhase{Name: "restore_read_manifest", ErrorClass: vm.RuntimeErrorClass(err)})
+		r.logCheckpointRestorePhases(request, restorePhases.Snapshot(), "failed", vm.RuntimeErrorClass(err))
 		return Result{}, fmt.Errorf("read checkpoint manifest: %w", err)
 	}
 	runtimeInfo := restore.Checkpoint.RecoveryPoint.Runtime
@@ -217,16 +262,229 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 			RootfsDigest:        runtimeInfo.RootfsDigest,
 			RuntimeConfigDigest: runtimeInfo.ConfigDigest,
 		},
-		Network: request.Run.Requirements.Network,
+		Network:     request.Run.Requirements.Network,
+		Topology:    topology,
+		RecordPhase: restorePhases.Record,
 	})
 	if err != nil {
+		r.logCheckpointRestorePhases(request, restorePhases.Snapshot(), "failed", vm.RuntimeErrorClass(err))
 		return Result{}, fmt.Errorf("restore guest runtime: %w", err)
 	}
 	defer session.Close(context.Background())
-	if err := r.attachAndAcknowledgeRestore(ctx, session, request); err != nil {
+	if err := r.attachAndAcknowledgeRestore(ctx, session, request, restorePhases); err != nil {
+		r.logCheckpointRestorePhases(request, restorePhases.Snapshot(), "failed", vm.RuntimeErrorClass(err))
 		return Result{}, err
 	}
+	r.logCheckpointRestorePhases(request, restorePhases.Snapshot(), "restored", "")
 	return r.readRunEvents(ctx, session, request, runtimeInputMetadata{workspaceBase: restore.Checkpoint.WorkspaceState.Base})
+}
+
+func (r GuestRunner) restoreRuntimeTopology(ctx context.Context, request Request, phases *runtimePhaseCollector) (vm.RuntimeTopology, func(), error) {
+	cleanup := func() {}
+	restore := request.Run.Restore
+	if restore == nil || restore.Checkpoint.RecoveryPoint.Runtime.Substrate == nil {
+		return vm.RuntimeTopology{}, cleanup, nil
+	}
+	substrateInfo := restore.Checkpoint.RecoveryPoint.Runtime.Substrate
+	substrateArtifact := restore.Checkpoint.RuntimeState.RuntimeSubstrateArtifact
+	if substrateArtifact == nil {
+		return vm.RuntimeTopology{}, cleanup, errors.New("checkpoint runtime substrate artifact is required for restore")
+	}
+	if strings.TrimSpace(substrateArtifact.Artifact.MediaType) != cas.RuntimeSubstrateMediaType {
+		return vm.RuntimeTopology{}, cleanup, fmt.Errorf("checkpoint runtime substrate media type %q is not supported", substrateArtifact.Artifact.MediaType)
+	}
+	if lookup, ok := r.Substrates.(RuntimeSubstrateDigestLookup); ok {
+		started := time.Now()
+		result, err := lookup.LookupDigest(ctx, substrateInfo.Digest)
+		if err == nil {
+			phases.Record(vm.RuntimePhase{
+				Name:       "restore_lookup_substrate_cache_hit",
+				DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)),
+				Role:       "substrate",
+				MediaType:  substrateArtifact.Artifact.MediaType,
+			})
+			started = time.Now()
+			topology, cleanup, stageErr := linkCheckpointRuntimeSubstrate(result.Path, substrateInfo, r.tempDir())
+			phases.Record(vm.RuntimePhase{
+				Name:       "restore_materialize_substrate_cache",
+				DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)),
+				Role:       "substrate",
+				MediaType:  substrateArtifact.Artifact.MediaType,
+				ErrorClass: vm.RuntimeErrorClass(stageErr),
+			})
+			if stageErr != nil {
+				cleanup()
+			} else {
+				return topology, cleanup, nil
+			}
+		} else {
+			phaseName := "restore_lookup_substrate_cache_miss"
+			errorClass := ""
+			if !errors.Is(err, os.ErrNotExist) {
+				phaseName = "restore_lookup_substrate_cache_error"
+				errorClass = vm.RuntimeErrorClass(err)
+			}
+			phases.Record(vm.RuntimePhase{
+				Name:       phaseName,
+				DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)),
+				Role:       "substrate",
+				MediaType:  substrateArtifact.Artifact.MediaType,
+				ErrorClass: errorClass,
+			})
+		}
+	}
+	started := time.Now()
+	path, err := r.materializeEncryptedObject(ctx, substrateArtifact.Artifact.Digest, "substrate", runtimeSubstratePurpose(substrateInfo.Digest))
+	phases.Record(vm.RuntimePhase{
+		Name:       "restore_materialize_substrate_cas",
+		DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)),
+		Role:       "substrate",
+		MediaType:  substrateArtifact.Artifact.MediaType,
+		ErrorClass: vm.RuntimeErrorClass(err),
+	})
+	if err != nil {
+		return vm.RuntimeTopology{}, cleanup, err
+	}
+	cleanup = func() { removeFiles([]string{path}) }
+	actualDigest, err := checkpointFileDigest(path)
+	if err != nil {
+		cleanup()
+		return vm.RuntimeTopology{}, func() {}, fmt.Errorf("digest checkpoint runtime substrate: %w", err)
+	}
+	if actualDigest != strings.TrimSpace(substrateInfo.Digest) {
+		cleanup()
+		return vm.RuntimeTopology{}, func() {}, fmt.Errorf("checkpoint runtime substrate artifact digest mismatch: manifest %s, artifact %s", substrateInfo.Digest, actualDigest)
+	}
+	topology, stagedCleanup, err := renameCheckpointRuntimeSubstrate(path, substrateInfo, r.tempDir())
+	if err != nil {
+		cleanup()
+		return vm.RuntimeTopology{}, func() {}, err
+	}
+	cleanup = stagedCleanup
+	return topology, cleanup, nil
+}
+
+func linkCheckpointRuntimeSubstrate(sourcePath string, substrateInfo *api.WorkerCheckpointRuntimeSubstrate, tempDir string) (vm.RuntimeTopology, func(), error) {
+	actualDigest := strings.TrimSpace(substrateInfo.Digest)
+	substrateDir, substratePath, err := checkpointSubstrateJailPath(tempDir, actualDigest)
+	if err != nil {
+		return vm.RuntimeTopology{}, func() {}, err
+	}
+	if err := os.Link(sourcePath, substratePath); err != nil {
+		_ = os.RemoveAll(substrateDir)
+		return vm.RuntimeTopology{}, func() {}, fmt.Errorf("stage checkpoint runtime substrate: %w", err)
+	}
+	return vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
+		Path:       substratePath,
+		Digest:     strings.TrimSpace(substrateInfo.Digest),
+		Format:     strings.TrimSpace(substrateInfo.Format),
+		BuilderABI: strings.TrimSpace(substrateInfo.BuilderABI),
+		LayoutABI:  strings.TrimSpace(substrateInfo.LayoutABI),
+	}}, func() { _ = os.RemoveAll(substrateDir) }, nil
+}
+
+func renameCheckpointRuntimeSubstrate(sourcePath string, substrateInfo *api.WorkerCheckpointRuntimeSubstrate, tempDir string) (vm.RuntimeTopology, func(), error) {
+	actualDigest := strings.TrimSpace(substrateInfo.Digest)
+	substrateDir, substratePath, err := checkpointSubstrateJailPath(tempDir, actualDigest)
+	if err != nil {
+		return vm.RuntimeTopology{}, func() {}, err
+	}
+	if err := os.Rename(sourcePath, substratePath); err != nil {
+		_ = os.RemoveAll(substrateDir)
+		return vm.RuntimeTopology{}, func() {}, fmt.Errorf("stage checkpoint runtime substrate: %w", err)
+	}
+	return vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
+		Path:       substratePath,
+		Digest:     strings.TrimSpace(substrateInfo.Digest),
+		Format:     strings.TrimSpace(substrateInfo.Format),
+		BuilderABI: strings.TrimSpace(substrateInfo.BuilderABI),
+		LayoutABI:  strings.TrimSpace(substrateInfo.LayoutABI),
+	}}, func() { _ = os.RemoveAll(substrateDir) }, nil
+}
+
+func checkpointSubstrateJailPath(tempDir string, digest string) (string, string, error) {
+	hexDigest, ok := strings.CutPrefix(strings.TrimSpace(digest), "sha256:")
+	if !ok || len(hexDigest) != 64 {
+		return "", "", fmt.Errorf("checkpoint runtime substrate digest %q is not a sha256 digest", digest)
+	}
+	for _, r := range hexDigest {
+		if !(r >= 'a' && r <= 'f' || r >= '0' && r <= '9') {
+			return "", "", fmt.Errorf("checkpoint runtime substrate digest %q is not lowercase sha256", digest)
+		}
+	}
+	dir, err := os.MkdirTemp(tempDir, "checkpoint-substrate-*")
+	if err != nil {
+		return "", "", fmt.Errorf("create checkpoint substrate temp dir: %w", err)
+	}
+	return dir, filepath.Join(dir, hexDigest+".ext4"), nil
+}
+
+func (r GuestRunner) materializeCheckpointObjectPhase(ctx context.Context, phases *runtimePhaseCollector, digest string, suffix string, phaseName string, role string, mediaType string) (string, error) {
+	started := time.Now()
+	path, err := r.materializeCheckpointObject(ctx, digest, suffix)
+	phase := vm.RuntimePhase{
+		Name:       phaseName,
+		DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)),
+		Role:       role,
+		MediaType:  mediaType,
+	}
+	if err != nil {
+		phase.ErrorClass = vm.RuntimeErrorClass(err)
+	}
+	phases.Record(phase)
+	return path, err
+}
+
+type runtimePhaseCollector struct {
+	mu     sync.Mutex
+	phases []vm.RuntimePhase
+}
+
+func (c *runtimePhaseCollector) Record(phase vm.RuntimePhase) {
+	if c == nil || strings.TrimSpace(phase.Name) == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.phases = append(c.phases, phase)
+}
+
+func (c *runtimePhaseCollector) Snapshot() []api.WorkerCheckpointPhase {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	result := make([]api.WorkerCheckpointPhase, 0, len(c.phases))
+	for _, phase := range c.phases {
+		result = append(result, workerCheckpointPhase(phase))
+	}
+	return result
+}
+
+func (r GuestRunner) logCheckpointRestorePhases(request Request, phases []api.WorkerCheckpointPhase, status string, errorClass string) {
+	if len(phases) == 0 && strings.TrimSpace(errorClass) == "" {
+		return
+	}
+	log := r.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	restore := request.Run.Restore
+	checkpointID := ""
+	if restore != nil {
+		checkpointID = restore.CheckpointID
+	}
+	attrs := []any{
+		"run_id", request.Run.RunID,
+		"checkpoint_id", checkpointID,
+		"status", status,
+		"phases", phases,
+	}
+	if strings.TrimSpace(errorClass) != "" {
+		attrs = append(attrs, "error_class", errorClass)
+	}
+	log.Info("checkpoint restore telemetry", attrs...)
 }
 
 func (r GuestRunner) tempDir() string {
@@ -236,7 +494,7 @@ func (r GuestRunner) tempDir() string {
 	return os.TempDir()
 }
 
-func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm.Session, request Request) error {
+func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm.Session, request Request, phases *runtimePhaseCollector) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -246,11 +504,13 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 	}
 	stream := session.Stream()
 	restore := request.Run.Restore
+	started := time.Now()
 	if err := transport.WriteProtoFrame(stream, &runv0.ResumeAttach{
 		CheckpointId: restore.CheckpointID,
 		RunWaitId:    restore.RunWait.ID,
 		RunLeaseId:   currentRunLease(request).ID,
 	}); err != nil {
+		phases.Record(vm.RuntimePhase{Name: "restore_attach_guest_resume", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: vm.RuntimeErrorClass(err)})
 		return fmt.Errorf("write resume attach: %w", err)
 	}
 	if err := transport.WriteProtoFrame(stream, &runv0.ResumeDecision{
@@ -259,21 +519,26 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 		DataJson:           string(restore.RunWait.ResumePayloadJSON),
 		RequireConsumedAck: true,
 	}); err != nil {
+		phases.Record(vm.RuntimePhase{Name: "restore_attach_guest_resume", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: vm.RuntimeErrorClass(err)})
 		return fmt.Errorf("write resume decision: %w", err)
 	}
 	ackCtx, cancelAck := context.WithTimeout(ctx, restoreAttachTimeout)
 	ack, err := readResumeAck(ackCtx, session)
 	cancelAck()
 	if err != nil {
+		phases.Record(vm.RuntimePhase{Name: "restore_attach_guest_resume", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: vm.RuntimeErrorClass(err)})
 		return fmt.Errorf("read resume ack: %w", err)
 	}
 	if ack.RunWaitId != restore.RunWait.ID {
+		phases.Record(vm.RuntimePhase{Name: "restore_attach_guest_resume", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: "resume_ack_mismatch"})
 		return fmt.Errorf("resume ack run wait %q did not match expected %q", ack.RunWaitId, restore.RunWait.ID)
 	}
+	phases.Record(vm.RuntimePhase{Name: "restore_attach_guest_resume", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started))})
 	if err := acknowledger.AcknowledgeRestore(ctx, RestoreAcknowledgement{
 		Lease:        currentRunLease(request),
 		RunWaitID:    restore.RunWait.ID,
 		CheckpointID: restore.CheckpointID,
+		Phases:       phases.Snapshot(),
 	}); err != nil {
 		return fmt.Errorf("acknowledge restore: %w", err)
 	}
@@ -404,30 +669,141 @@ func (r GuestRunner) writeRuntimeInput(ctx context.Context, stream io.Writer, re
 	if err := ctx.Err(); err != nil {
 		return runtimeInputMetadata{}, err
 	}
+	phaseStarted := time.Now()
 	protocolRequest, err := runTaskRequest(request)
+	r.logRunPhase(request, "guest run request built", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		return runtimeInputMetadata{}, err
 	}
+	phaseStarted = time.Now()
 	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: request.Run.RunID}, request.Artifact.ImageTarPath); err != nil {
+		r.logRunPhase(request, "guest run image sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		return runtimeInputMetadata{}, fmt.Errorf("write run image: %w", err)
 	}
+	r.logRunPhase(request, "guest run image sent", "duration_ms", time.Since(phaseStarted).Milliseconds())
+	phaseStarted = time.Now()
 	deploymentSourceTar, cleanupDeploymentSource, err := archive.CreateTarWithOptions(deploymentSourceRoot, r.TempDir, archive.TarOptions{
 		ExcludePatterns: []string{"**/.git/**"},
 	})
+	r.logRunPhase(request, "guest run deployment source archived", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		return runtimeInputMetadata{}, err
 	}
 	defer cleanupDeploymentSource()
+	phaseStarted = time.Now()
 	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: request.Run.RunID}, deploymentSourceTar.Path); err != nil {
+		r.logRunPhase(request, "guest run deployment source sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		return runtimeInputMetadata{}, fmt.Errorf("write deployment source: %w", err)
 	}
+	r.logRunPhase(request, "guest run deployment source sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", deploymentSourceTar.SizeBytes)
+	phaseStarted = time.Now()
 	if err := transport.WriteProtoFrame(stream, protocolRequest); err != nil {
+		r.logRunPhase(request, "guest run request sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		return runtimeInputMetadata{}, fmt.Errorf("write run request: %w", err)
 	}
+	r.logRunPhase(request, "guest run request sent", "duration_ms", time.Since(phaseStarted).Milliseconds())
+	phaseStarted = time.Now()
 	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: request.Run.RunID}, request.Workspace.Path); err != nil {
+		r.logRunPhase(request, "guest run workspace artifact sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		return runtimeInputMetadata{}, fmt.Errorf("write workspace artifact: %w", err)
 	}
+	r.logRunPhase(request, "guest run workspace artifact sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", request.Workspace.SizeBytes)
 	return runtimeInputMetadata{workspaceBase: checkpointWorkspaceBase(request, protocolRequest)}, nil
+}
+
+func (r GuestRunner) writeWorkspaceRunInput(ctx context.Context, stream io.Writer, request Request, deploymentSourceRoot string, channelToken string) (runtimeInputMetadata, error) {
+	if err := ctx.Err(); err != nil {
+		return runtimeInputMetadata{}, err
+	}
+	workspace := request.Run.Workspace
+	workspaceMountID := strings.TrimSpace(workspace.WorkspaceMountID)
+	if workspaceMountID == "" {
+		return runtimeInputMetadata{}, errors.New("workspace mount id is required")
+	}
+	if strings.TrimSpace(workspace.ID) == "" {
+		return runtimeInputMetadata{}, errors.New("workspace id is required")
+	}
+	channelToken = strings.TrimSpace(channelToken)
+	if channelToken == "" {
+		return runtimeInputMetadata{}, errors.New("workspace mount guest channel token is required")
+	}
+	if workspace.FencingGeneration <= 0 {
+		return runtimeInputMetadata{}, errors.New("workspace mount fencing generation is required")
+	}
+	if strings.TrimSpace(workspace.WriteLeaseID) == "" {
+		return runtimeInputMetadata{}, errors.New("workspace write lease id is required")
+	}
+	if strings.TrimSpace(workspace.WriteFencingToken) == "" {
+		return runtimeInputMetadata{}, errors.New("workspace write fencing token is required")
+	}
+	phaseStarted := time.Now()
+	protocolRequest, err := runTaskRequest(request)
+	r.logRunPhase(request, "guest run request built", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
+	if err != nil {
+		return runtimeInputMetadata{}, err
+	}
+	phaseStarted = time.Now()
+	if err := transport.WriteStreamFrameHeader(stream, transport.StreamHeader{
+		Type:             transport.StreamTypeWorkspaceRun,
+		RunID:            request.Run.RunID,
+		WorkspaceID:      workspace.ID,
+		WorkspaceMountID: workspaceMountID,
+	}, 0); err != nil {
+		r.logRunPhase(request, "guest workspace run header sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
+		return runtimeInputMetadata{}, fmt.Errorf("write workspace run header: %w", err)
+	}
+	r.logRunPhase(request, "guest workspace run header sent", "duration_ms", time.Since(phaseStarted).Milliseconds())
+	r.logRunPhase(request, "guest workspace run reusing materialized runtime", "h7_enabled", true, "run_image_sent_bytes", 0, "workspace_artifact_sent_bytes", 0)
+	phaseStarted = time.Now()
+	if err := transport.WriteProtoFrame(stream, &workspacev0.WorkspaceOperationEnvelope{
+		WorkspaceMountId:  workspaceMountID,
+		WorkspaceId:       workspace.ID,
+		ChannelToken:      channelToken,
+		FencingGeneration: uint64(workspace.FencingGeneration),
+		WriteLeaseId:      workspace.WriteLeaseID,
+		FencingToken:      workspace.WriteFencingToken,
+	}); err != nil {
+		r.logRunPhase(request, "guest workspace run envelope sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
+		return runtimeInputMetadata{}, fmt.Errorf("write workspace run envelope: %w", err)
+	}
+	r.logRunPhase(request, "guest workspace run envelope sent", "duration_ms", time.Since(phaseStarted).Milliseconds())
+	phaseStarted = time.Now()
+	deploymentSourceTar, cleanupDeploymentSource, err := archive.CreateTarWithOptions(deploymentSourceRoot, r.TempDir, archive.TarOptions{
+		ExcludePatterns: []string{"**/.git/**"},
+	})
+	r.logRunPhase(request, "guest run deployment source archived", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
+	if err != nil {
+		return runtimeInputMetadata{}, err
+	}
+	defer cleanupDeploymentSource()
+	phaseStarted = time.Now()
+	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: request.Run.RunID}, deploymentSourceTar.Path); err != nil {
+		r.logRunPhase(request, "guest run deployment source sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
+		return runtimeInputMetadata{}, fmt.Errorf("write deployment source: %w", err)
+	}
+	r.logRunPhase(request, "guest run deployment source sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", deploymentSourceTar.SizeBytes)
+	phaseStarted = time.Now()
+	if err := transport.WriteProtoFrame(stream, protocolRequest); err != nil {
+		r.logRunPhase(request, "guest run request sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
+		return runtimeInputMetadata{}, fmt.Errorf("write run request: %w", err)
+	}
+	r.logRunPhase(request, "guest run request sent", "duration_ms", time.Since(phaseStarted).Milliseconds())
+	return runtimeInputMetadata{workspaceBase: checkpointWorkspaceBase(request, protocolRequest)}, nil
+}
+
+func (r GuestRunner) logRunPhase(request Request, message string, attrs ...any) {
+	log := r.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	base := []any{
+		"run_id", strings.TrimSpace(request.Run.RunID),
+		"task_id", strings.TrimSpace(request.Run.TaskID),
+		"session_id", strings.TrimSpace(request.Run.SessionID),
+		"workspace_mount_id", strings.TrimSpace(request.Run.Workspace.WorkspaceMountID),
+	}
+	base = append(base, attrs...)
+	log.Info(message, base...)
 }
 
 func checkpointWorkspaceBase(request Request, protocolRequest *runv0.RunTaskRequest) api.WorkerCheckpointWorkspaceBase {
@@ -674,14 +1050,14 @@ func (r GuestRunner) readInputStream(ctx context.Context, lease api.WorkerRunLea
 		correlationID = request.GetCorrelationId()
 	}
 	if r.Events == nil {
-		return &runv0.ActiveStreamReadResult{CorrelationId: correlationID, ErrorMessage: ptrString("runtime event sink is required")}, nil
+		return &runv0.ActiveStreamReadResult{CorrelationId: correlationID, ErrorMessage: new("runtime event sink is required")}, nil
 	}
 	if request == nil {
-		return &runv0.ActiveStreamReadResult{ErrorMessage: ptrString("guest active_stream_read_requested is empty")}, nil
+		return &runv0.ActiveStreamReadResult{ErrorMessage: new("guest active_stream_read_requested is empty")}, nil
 	}
 	stream := strings.TrimSpace(request.GetStream())
 	if stream == "" {
-		return &runv0.ActiveStreamReadResult{CorrelationId: correlationID, ErrorMessage: ptrString("active stream read stream is required")}, nil
+		return &runv0.ActiveStreamReadResult{CorrelationId: correlationID, ErrorMessage: new("active stream read stream is required")}, nil
 	}
 	response, err := r.Events.ReadInputStream(ctx, api.WorkerActiveStreamReadRequest{
 		Lease:          lease,
@@ -695,7 +1071,7 @@ func (r GuestRunner) readInputStream(ctx context.Context, lease api.WorkerRunLea
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
-		return &runv0.ActiveStreamReadResult{CorrelationId: correlationID, ErrorMessage: ptrString(err.Error())}, nil
+		return &runv0.ActiveStreamReadResult{CorrelationId: correlationID, ErrorMessage: new(err.Error())}, nil
 	}
 	result := &runv0.ActiveStreamReadResult{
 		CorrelationId: correlationID,
@@ -733,23 +1109,23 @@ func protoUint32ToInt32Ptr(value *uint32) *int32 {
 
 func (r GuestRunner) createToken(ctx context.Context, lease api.WorkerRunLease, request *runv0.TokenCreateRequested) *runv0.TokenCreateResult {
 	if r.Events == nil {
-		return &runv0.TokenCreateResult{ErrorMessage: ptrString("runtime event sink is required")}
+		return &runv0.TokenCreateResult{ErrorMessage: new("runtime event sink is required")}
 	}
 	if request == nil {
-		return &runv0.TokenCreateResult{ErrorMessage: ptrString("guest token_create_requested is empty")}
+		return &runv0.TokenCreateResult{ErrorMessage: new("guest token_create_requested is empty")}
 	}
 	var timeoutAt *time.Time
 	if strings.TrimSpace(request.GetTimeoutAt()) != "" {
 		parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(request.GetTimeoutAt()))
 		if err != nil {
-			return &runv0.TokenCreateResult{ErrorMessage: ptrString("token timeout_at must be an RFC3339 timestamp")}
+			return &runv0.TokenCreateResult{ErrorMessage: new("token timeout_at must be an RFC3339 timestamp")}
 		}
 		timeoutAt = &parsed
 	}
 	var timeoutInSeconds *int32
 	if request.TimeoutInSeconds != nil {
 		if request.GetTimeoutInSeconds() > math.MaxInt32 {
-			return &runv0.TokenCreateResult{ErrorMessage: ptrString("token timeout_in_seconds is too large")}
+			return &runv0.TokenCreateResult{ErrorMessage: new("token timeout_in_seconds is too large")}
 		}
 		value := int32(request.GetTimeoutInSeconds())
 		timeoutInSeconds = &value
@@ -759,7 +1135,7 @@ func (r GuestRunner) createToken(ctx context.Context, lease api.WorkerRunLease, 
 		metadata = json.RawMessage(`{}`)
 	}
 	if !json.Valid(metadata) {
-		return &runv0.TokenCreateResult{ErrorMessage: ptrString("token metadata_json must be valid JSON")}
+		return &runv0.TokenCreateResult{ErrorMessage: new("token metadata_json must be valid JSON")}
 	}
 	token, err := r.Events.CreateRuntimeToken(ctx, api.WorkerCreateTokenRequest{
 		Lease:            lease,
@@ -769,7 +1145,7 @@ func (r GuestRunner) createToken(ctx context.Context, lease api.WorkerRunLease, 
 		Metadata:         metadata,
 	})
 	if err != nil {
-		return &runv0.TokenCreateResult{ErrorMessage: ptrString(err.Error())}
+		return &runv0.TokenCreateResult{ErrorMessage: new(err.Error())}
 	}
 	result := &runv0.TokenCreateResult{
 		Id:          token.ID,
@@ -779,16 +1155,12 @@ func (r GuestRunner) createToken(ctx context.Context, lease api.WorkerRunLease, 
 		Tags:        token.Tags,
 	}
 	if strings.TrimSpace(token.PublicAccessToken) != "" {
-		result.PublicAccessToken = ptrString(token.PublicAccessToken)
+		result.PublicAccessToken = new(token.PublicAccessToken)
 	}
 	if len(token.Metadata) > 0 {
-		result.MetadataJson = ptrString(string(token.Metadata))
+		result.MetadataJson = new(string(token.Metadata))
 	}
 	return result
-}
-
-func ptrString(value string) *string {
-	return &value
 }
 
 func optionalString(value string) *string {
@@ -875,12 +1247,14 @@ func (r GuestRunner) handleRunWaitRequested(ctx context.Context, stream io.ReadW
 	}
 	if checkpointable, ok := session.(vm.CheckpointableSession); ok {
 		runtimeWait.Checkpointer = runtimeCheckpointer{
-			session:   checkpointable,
-			cas:       r.CAS,
-			encryptor: r.CheckpointEncryptor,
-			tempDir:   r.tempDir(),
-			stream:    stream,
-			workspace: inputMetadata.workspaceBase,
+			session:           checkpointable,
+			cas:               r.CAS,
+			encryptor:         r.CheckpointEncryptor,
+			tempDir:           r.tempDir(),
+			stream:            stream,
+			workspace:         inputMetadata.workspaceBase,
+			substrateSource:   request.Run.Workspace.SubstrateSource,
+			runtimeSubstrates: r.RuntimeSubstrates,
 			runEvent: func(eventCtx context.Context, event *runv0.RunEvent) error {
 				return r.processCheckpointRunEvent(eventCtx, request, observedSeq, event)
 			},

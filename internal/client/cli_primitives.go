@@ -205,26 +205,26 @@ func (c *Client) DeleteWorkspace(ctx context.Context, workspaceID string, opts W
 	return c.doJSON(req, nil)
 }
 
-func (c *Client) MaterializeWorkspace(ctx context.Context, workspaceID string, opts WorkspaceScopeOptions) (api.WorkspaceMaterializationResponse, error) {
+func (c *Client) MaterializeWorkspace(ctx context.Context, workspaceID string, opts WorkspaceScopeOptions) (api.WorkspaceMountResponse, error) {
 	path, err := c.workspaceItemPath(workspaceID, "/materialize", opts)
 	if err != nil {
-		return api.WorkspaceMaterializationResponse{}, err
+		return api.WorkspaceMountResponse{}, err
 	}
-	var response api.WorkspaceMaterializationResponse
+	var response api.WorkspaceMountResponse
 	if err := c.postJSON(ctx, path, api.WorkspaceMaterializeRequest{}, &response); err != nil {
-		return api.WorkspaceMaterializationResponse{}, err
+		return api.WorkspaceMountResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) ConnectWorkspace(ctx context.Context, workspaceID string, opts WorkspaceScopeOptions) (api.WorkspaceMaterializationResponse, error) {
+func (c *Client) ConnectWorkspace(ctx context.Context, workspaceID string, opts WorkspaceScopeOptions) (api.WorkspaceMountResponse, error) {
 	path, err := c.workspaceItemPath(workspaceID, "/connect", opts)
 	if err != nil {
-		return api.WorkspaceMaterializationResponse{}, err
+		return api.WorkspaceMountResponse{}, err
 	}
-	var response api.WorkspaceMaterializationResponse
+	var response api.WorkspaceMountResponse
 	if err := c.postJSON(ctx, path, api.WorkspaceMaterializeRequest{}, &response); err != nil {
-		return api.WorkspaceMaterializationResponse{}, err
+		return api.WorkspaceMountResponse{}, err
 	}
 	return response, nil
 }

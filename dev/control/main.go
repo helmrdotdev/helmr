@@ -100,6 +100,11 @@ func main() {
 		log.Error("configure workspace stream notifier", "error", err)
 		os.Exit(1)
 	}
+	workerCommands, err := control.NewWorkerCommandStream(log, queries, redisClient)
+	if err != nil {
+		log.Error("configure worker command stream", "error", err)
+		os.Exit(1)
+	}
 	go func() {
 		if err := eventStream.RunPublisher(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("event stream publisher stopped", "error", err)
@@ -108,6 +113,11 @@ func main() {
 	go func() {
 		if err := workspaceStreams.RunPublisher(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("workspace stream notifier stopped", "error", err)
+		}
+	}()
+	go func() {
+		if err := workerCommands.RunPublisher(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("worker command stream publisher stopped", "error", err)
 		}
 	}()
 	keyring, err := secret.KeyringFromBase64(cfg.secretEncryptionKey, cfg.secretEncryptionKeyOld)
@@ -152,6 +162,7 @@ func main() {
 		PublicURL:           publicURL,
 		EventStream:         eventStream,
 		WorkspaceStreams:    workspaceStreams,
+		WorkerCommands:      workerCommands,
 	})
 	if err != nil {
 		log.Error("configure control server", "error", err)

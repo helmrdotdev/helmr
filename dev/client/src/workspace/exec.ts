@@ -1,7 +1,7 @@
 import { HelmrClient, type WorkspaceExec } from "../../../../sdk/typescript/src/index"
 import { assert, assertEqual } from "../assert"
 import { readConfig, requestScope } from "../config"
-import { byteLength, chunksText, collectStream, currentDeployment, waitForCollectedText, waitForRunningMaterialization, waitForStreamDone } from "./common"
+import { byteLength, chunksText, collectStream, currentDeployment, waitForCollectedText, waitForRunningWorkspaceMount, waitForStreamDone } from "./common"
 
 interface ExecSmokeEvidence {
   readonly marker: string
@@ -54,7 +54,7 @@ async function runWorkspaceExecSmoke(): Promise<ExecSmokeEvidence> {
 
     const materializeStarted = Date.now()
     const requested = await handle.materialize(scope)
-    const running = await waitForRunningMaterialization(client, workspace.id, scope, requested.id)
+    const running = await waitForRunningWorkspaceMount(client, workspace.id, scope, requested.id)
     const materializedAt = Date.now()
 
     const command = [
