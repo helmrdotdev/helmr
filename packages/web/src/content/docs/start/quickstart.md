@@ -78,4 +78,14 @@ helmr run logs RUN_ID
 helmr run events RUN_ID
 ```
 
-If a task is waiting on a token, complete it from an authenticated app or bridge with `client.tokens.complete(token, data)`, or call `/api/v1/tokens/{tokenId}/complete` with the token's `publicAccessToken` bearer. Server-to-server providers can use the `callbackUrl` returned at token creation time.
+If a task is waiting for human input, append to the session input stream from a
+trusted app, webhook handler, or operator tool:
+
+```ts
+await client.sessions.open(sessionId).input("approval").send({
+  decision: "approve",
+})
+```
+
+Use an external callback token instead when the integration should complete a
+one-shot callback URL, such as an email link or third party webhook.

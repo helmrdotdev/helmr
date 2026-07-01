@@ -56,4 +56,4 @@ Image builders support `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, and 
 
 Sandbox builders support `image`, `workspace`, and `resources`. The default workspace mount is `/workspace`.
 
-At runtime, `ctx` is intentionally small: `ctx.signal`, `ctx.run`, `ctx.task`, `ctx.workspace`, and `ctx.session`. Stream helpers declare typed session input and output lanes. Use module-level stream handles for durable session input/output, `tokens.create(...)` and token handles for externally completed waits, `timers.waitFor(...)` / `timers.waitUntil(...)` for time waits, and `logger.info(...)` for logs.
+At runtime, `ctx` is intentionally small: `ctx.signal`, `ctx.run`, `ctx.task`, `ctx.workspace`, and `ctx.session`. Stream helpers declare typed session input and output lanes. Use module-level stream handles for durable session input/output, `tokens.create(...)` and token handles for externally completed callback waits, `timers.waitFor(...)` / `timers.waitUntil(...)` for time waits, and `logger.info(...)` for logs.

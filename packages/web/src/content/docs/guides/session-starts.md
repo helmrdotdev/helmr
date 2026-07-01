@@ -1,12 +1,12 @@
 ---
-title: TypeScript session starts
-description: Start and observe Helmr sessions from TypeScript.
+title: Session starts
+description: Start, reuse, and observe Helmr sessions from TypeScript.
 section: Guides
 sidebarLabel: Session starts
 order: 370
 ---
 
-# TypeScript session starts
+# Session starts
 
 Use the SDK from external TypeScript code when another service should start a Helmr session. The selected task, whether passed as an imported task definition or a string id, must already exist in a deployment task source.
 
@@ -57,11 +57,16 @@ for (const record of reportRecords) {
 }
 ```
 
-## Completing tokens
+## External callback tokens
 
-Tokens are the external completion primitive. Task code creates a token and waits for it:
+Most follow-up data should be sent to session input streams. Use an external
+callback token only when the outside system should receive a one-shot completion
+capability instead of a session stream address. Task code creates a token and
+waits for it:
 
 ```ts
+import { tokens } from "@helmr/sdk"
+
 const token = await tokens.create({ timeout: "1h" })
 await sendReviewEmail({
   tokenId: token.id,
@@ -92,7 +97,9 @@ await fetch(`${process.env.HELMR_API_URL}/api/v1/tokens/${token.id}/complete`, {
 })
 ```
 
-Keep the public access token scoped to the external action that should be able to resume the session.
+Keep the public access token scoped to the external action that should be able
+to resume the run. If the response should appear as part of the agent session's
+input history, use `sessions.open(session).input(stream).send(...)` instead.
 
 The client also reads `HELMR_API_URL` and `HELMR_API_KEY` from the environment when options are omitted. Authenticated SDK calls require an API key. Plain HTTP is accepted only for loopback hosts.
 
