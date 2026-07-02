@@ -28,6 +28,8 @@ const (
 	workerRunWaitPolicyDefaultCheckpointDelay  workerRunWaitPolicyReason = "default_checkpoint_delay"
 )
 
+var errWorkerTokenWaitResolvedRollback = errors.New("worker token wait resolved inline")
+
 type workerRunWaitPolicy struct {
 	CheckpointDelay time.Duration
 	Reason          workerRunWaitPolicyReason
@@ -184,6 +186,7 @@ func (s *Server) createWorkerRunWait(ctx context.Context, scope db.GetWorkerRunW
 					ResolutionKind: resolutionKind,
 					Resolution:     resolution,
 				}
+				return errWorkerTokenWaitResolvedRollback
 			}
 		case api.WorkerRunWaitKindTimer:
 			if err := s.createWorkerTimerWait(ctx, work.q, scope, runWait, request); err != nil {
@@ -192,10 +195,38 @@ func (s *Server) createWorkerRunWait(ctx context.Context, scope db.GetWorkerRunW
 		}
 		return nil
 	})
+	if errorIsOnly(err, errWorkerTokenWaitResolvedRollback) {
+		return response, nil
+	}
 	if err != nil {
 		return api.WorkerCreateRunWaitResponse{}, err
 	}
 	return response, nil
+}
+
+func errorIsOnly(err error, target error) bool {
+	if err == nil || target == nil {
+		return false
+	}
+	if err == target {
+		return true
+	}
+	if unwrapped, ok := err.(interface{ Unwrap() []error }); ok {
+		children := unwrapped.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !errorIsOnly(child, target) {
+				return false
+			}
+		}
+		return true
+	}
+	if unwrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return errorIsOnly(unwrapped.Unwrap(), target)
+	}
+	return errors.Is(err, target) && err.Error() == target.Error()
 }
 
 func runWaitFromCreateHotRunWait(row db.CreateHotRunWaitRow) db.RunWait {

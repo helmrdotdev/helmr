@@ -312,7 +312,7 @@ func preparedRuntimeKeyFromSource(source api.WorkerPreparedRuntimeSource, networ
 }
 
 func preparedRuntimeSubstrateCacheKey(source api.WorkerPreparedRuntimeSource) string {
-	key, err := substrate.CacheKey(substrate.Source{
+	return substrate.OptionalCacheKey(substrate.Source{
 		SandboxArtifactDigest: source.SandboxImageArtifact.Digest,
 		SandboxArtifactFormat: source.SandboxImageArtifactFormat,
 		ImageDigest:           source.ImageDigest,
@@ -322,10 +322,6 @@ func preparedRuntimeSubstrateCacheKey(source api.WorkerPreparedRuntimeSource) st
 		AdapterABI:            source.AdapterABI,
 		WorkspaceMountPath:    source.WorkspaceMountPath,
 	})
-	if err != nil {
-		return ""
-	}
-	return key
 }
 
 func (w *RuntimePreparer) markPrecreatedRuntimeFailed(ctx context.Context, store RuntimePreparerStore, row db.CreateRuntimeInstanceForDeploymentSandboxRow, message string) {

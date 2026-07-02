@@ -13,7 +13,6 @@ func LoadDispatcher() (Dispatcher, error) {
 	cfg := Dispatcher{
 		DatabaseURL:                envString("HELMR_DATABASE_URL"),
 		RedisURL:                   env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
-		AsyncBusURI:                envString("HELMR_ASYNC_BUS_URI"),
 		AuthSecret:                 envString("HELMR_AUTH_SECRET"),
 		SecretEncryptionKey:        envString("HELMR_SECRET_ENCRYPTION_KEY"),
 		SecretEncryptionKeyOld:     envString("HELMR_SECRET_ENCRYPTION_KEY_OLD"),

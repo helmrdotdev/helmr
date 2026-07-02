@@ -11,7 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
-func NormalizeExecCommand(command []string) ([]string, error) {
+func normalizeExecCommand(command []string) ([]string, error) {
 	if len(command) == 0 {
 		return nil, errors.New("command is required")
 	}
@@ -28,7 +28,7 @@ func NormalizeExecCommand(command []string) ([]string, error) {
 	return normalized, nil
 }
 
-func NormalizeExecCwd(cwd string) (string, error) {
+func normalizeExecCwd(cwd string) (string, error) {
 	cwd = strings.TrimSpace(cwd)
 	if cwd == "" {
 		return "", nil
@@ -47,7 +47,7 @@ func NormalizeExecCwd(cwd string) (string, error) {
 	return cwd, nil
 }
 
-func ExecEnvShape(env map[string]string) ([]byte, error) {
+func execEnvShape(env map[string]string) ([]byte, error) {
 	if env == nil {
 		return []byte(`{}`), nil
 	}
@@ -63,7 +63,7 @@ func ExecEnvShape(env map[string]string) ([]byte, error) {
 	return out, nil
 }
 
-func ExecCreateFingerprint(command []string, cwd string, envShape []byte, detached bool, filesystemMode db.WorkspaceFilesystemMode) (string, error) {
+func execCreateFingerprint(command []string, cwd string, envShape []byte, detached bool, filesystemMode db.WorkspaceFilesystemMode) (string, error) {
 	payload, err := json.Marshal(struct {
 		Command  []string        `json:"command"`
 		Cwd      string          `json:"cwd"`
@@ -77,7 +77,7 @@ func ExecCreateFingerprint(command []string, cwd string, envShape []byte, detach
 	return wire.RequestFingerprint(string(db.WorkspaceOperationIdempotencyKindWorkspaceExecCreate), payload)
 }
 
-func ExecStateTerminal(state db.WorkspaceExecState) bool {
+func execStateTerminal(state db.WorkspaceExecState) bool {
 	switch state {
 	case db.WorkspaceExecStateExited, db.WorkspaceExecStateLost, db.WorkspaceExecStateFailed, db.WorkspaceExecStateTerminated:
 		return true
@@ -86,7 +86,7 @@ func ExecStateTerminal(state db.WorkspaceExecState) bool {
 	}
 }
 
-func ExecStreamCursor(row db.LockWorkspaceExecForStreamAppendRow, stream db.WorkspaceExecStream) int64 {
+func execStreamCursor(row db.LockWorkspaceExecForStreamAppendRow, stream db.WorkspaceExecStream) int64 {
 	switch stream {
 	case db.WorkspaceExecStreamStdin:
 		return row.StdinCursor
@@ -99,7 +99,7 @@ func ExecStreamCursor(row db.LockWorkspaceExecForStreamAppendRow, stream db.Work
 	}
 }
 
-func ExecStreamCursorFromRow(row db.WorkspaceExec, stream db.WorkspaceExecStream) int64 {
+func execStreamCursorFromRow(row db.WorkspaceExec, stream db.WorkspaceExecStream) int64 {
 	switch stream {
 	case db.WorkspaceExecStreamStdout:
 		return row.StdoutCursor
@@ -110,7 +110,7 @@ func ExecStreamCursorFromRow(row db.WorkspaceExec, stream db.WorkspaceExecStream
 	}
 }
 
-func ExecStartOperationRequest(row db.WorkspaceExec) ([]byte, error) {
+func execStartOperationRequest(row db.WorkspaceExec) ([]byte, error) {
 	return json.Marshal(struct {
 		ExecID         string          `json:"exec_id"`
 		Command        json.RawMessage `json:"command"`

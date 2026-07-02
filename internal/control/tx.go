@@ -3,7 +3,6 @@ package control
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 )
@@ -19,15 +18,33 @@ type queryTransactionBeginner interface {
 
 type txWork struct {
 	q           db.Querier
-	afterCommit []func(context.Context) error
+	afterCommit []func(context.Context)
 }
 
-// AfterCommit registers a post-commit effect for the current unit of work.
-// Effects run synchronously after Commit succeeds, in registration order, with
-// context cancellation detached from the request. Each caller owns the effect's
-// durability semantics: return an error for required follow-up work, or log and
-// return nil for best-effort wakeups/enqueues that should not fail the request.
-func (work *txWork) AfterCommit(fn func(context.Context) error) {
+type txLifecycleError struct {
+	stage string
+	err   error
+}
+
+func (e txLifecycleError) Error() string {
+	return e.stage
+}
+
+func (e txLifecycleError) Unwrap() error {
+	return e.err
+}
+
+func txError(stage string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return txLifecycleError{stage: stage, err: err}
+}
+
+// AfterCommit registers a best-effort post-commit effect for the current unit
+// of work. Effects run synchronously after Commit succeeds, in registration
+// order, with context cancellation detached from the request.
+func (work *txWork) AfterCommit(fn func(context.Context)) {
 	if fn == nil {
 		return
 	}
@@ -49,7 +66,7 @@ func inTxWith(ctx context.Context, store db.Querier, txb TxBeginner, fn func(*tx
 	if beginner, ok := store.(queryTransactionBeginner); ok {
 		q, tx, err := beginner.BeginQuerier(ctx)
 		if err != nil {
-			return err
+			return txError("begin transaction", err)
 		}
 		return runControlTransaction(ctx, q, tx, fn)
 	}
@@ -58,7 +75,7 @@ func inTxWith(ctx context.Context, store db.Querier, txb TxBeginner, fn func(*tx
 	}
 	tx, err := txb.Begin(ctx)
 	if err != nil {
-		return err
+		return txError("begin transaction", err)
 	}
 	return runControlTransaction(ctx, db.New(tx), tx, fn)
 }
@@ -75,28 +92,23 @@ func runControlTransaction(ctx context.Context, q db.Querier, tx controlTransact
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			if !committed {
-				err = errors.Join(err, tx.Rollback(context.WithoutCancel(ctx)))
+				err = errors.Join(err, txError("rollback transaction", tx.Rollback(context.WithoutCancel(ctx))))
 			}
 			panic(recovered)
 		}
 		if err != nil && !committed {
-			err = errors.Join(err, tx.Rollback(context.WithoutCancel(ctx)))
+			err = errors.Join(err, txError("rollback transaction", tx.Rollback(context.WithoutCancel(ctx))))
 		}
 	}()
 	if err := fn(work); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return err
+		return txError("commit transaction", err)
 	}
 	committed = true
 	for _, effect := range work.afterCommit {
-		if effectErr := effect(context.WithoutCancel(ctx)); effectErr != nil {
-			err = errors.Join(err, effectErr)
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("run post-commit effects: %w", err)
+		effect(context.WithoutCancel(ctx))
 	}
 	return nil
 }

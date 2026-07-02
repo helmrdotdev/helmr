@@ -373,10 +373,9 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 			s.log.Error("promote deployment failed", "deployment", deploymentRef, "error", err)
 			return errors.New("promote deployment")
 		}
-		work.AfterCommit(func(ctx context.Context) error {
+		work.AfterCommit(func(ctx context.Context) {
 			s.registerChangedScheduleInstances(ctx, params.OrgID, params.ProjectID, changedSchedules)
 			s.reconcilePreparedRuntimeSupplyAsync(ctx, "deployment_promotion")
-			return nil
 		})
 		return nil
 	})

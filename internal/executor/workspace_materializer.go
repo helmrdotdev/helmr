@@ -441,7 +441,7 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 	if mount.RuntimeInstanceToken == "" {
 		return nil, "", "", func() {}, "", false, workspaceMountFailure{code: "runtime_instance_token_unavailable", err: errors.New("workspace mount claim must include a runtime instance token")}
 	}
-	runtimeKey := preparedRuntimeKeyFromWorkspaceMount(*mount, m.Network)
+	runtimeKey := preparedRuntimeKeyFromWorkspaceMount(*mount, m.networkPolicy())
 	m.logWorkspaceMountPhase(*mount, "workspace mount runtime instance claimed", "runtime_instance_id", mount.RuntimeInstanceID, "runtime_key_id", runtime.ID(runtimeKey))
 	workspaceArtifact := api.CASObject{
 		Digest:    strings.TrimSpace(mount.WorkspaceArtifact.Digest),

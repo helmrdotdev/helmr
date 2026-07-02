@@ -77,6 +77,32 @@ func TestCreateWorkerRunWaitRollsBackWhenTypedWaitCreateFails(t *testing.T) {
 	}
 }
 
+func TestCreateWorkerRunWaitRollsBackWhenTokenCompletesAfterInitialCheck(t *testing.T) {
+	store := newRunWaitControlStore()
+	txStore := newRunWaitControlStore()
+	txStore.token = store.token
+	txStore.token.State = db.TokenStateCompleted
+	txStore.token.CompletionData = []byte(`{"ok":true}`)
+	txStore.resolveImmediateTokenWaitMatched = true
+	store.txStore = txStore
+	server := &Server{db: store}
+
+	response, err := server.createWorkerRunWait(context.Background(), store.scope, tokenWaitRequest(t, pgvalue.MustUUIDValue(store.token.ID)))
+
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if response.RunWaitID != "" || response.ResolutionKind != "completed" || string(response.Resolution) != `{"ok":true}` {
+		t.Fatalf("response = %+v, want inline completed resolution without parked wait", response)
+	}
+	if txStore.createHotRunWaitCalls != 1 || txStore.createTokenWaitCalls != 1 || txStore.resolveImmediateTokenWaitCalls != 1 {
+		t.Fatalf("tx side effects = create_hot_run_wait %d create_token_wait %d resolve_immediate %d, want one each", txStore.createHotRunWaitCalls, txStore.createTokenWaitCalls, txStore.resolveImmediateTokenWaitCalls)
+	}
+	if txStore.commitCalls != 0 || txStore.rollbackCalls != 1 {
+		t.Fatalf("tx finalization = commit %d rollback %d, want rollback only", txStore.commitCalls, txStore.rollbackCalls)
+	}
+}
+
 func TestCreateWorkerRunWaitRequiresWorkspaceCaptureBeforeCheckpointReady(t *testing.T) {
 	store := newRunWaitControlStore()
 	store.scope.DirtyGeneration = 1
@@ -680,6 +706,8 @@ type runWaitControlStore struct {
 	createStreamWaitCalls                 int
 	createTimerWaitCalls                  int
 	createTimerWaitParams                 db.CreateTimerWaitParams
+	resolveImmediateTokenWaitCalls        int
+	resolveImmediateTokenWaitMatched      bool
 	setRunWaitWorkspaceVersionCalls       int
 	failRuntimeCheckpointAttemptCalls     int
 	failRuntimeCheckpointAttemptParams    db.FailRuntimeCheckpointAttemptParams
@@ -823,7 +851,19 @@ func (s *runWaitControlStore) CreateTimerWait(_ context.Context, arg db.CreateTi
 	return db.TimerWait{ID: pgvalue.UUID(uuid.Must(uuid.NewV7()))}, nil
 }
 
-func (s *runWaitControlStore) ResolveImmediateTokenWait(context.Context, db.ResolveImmediateTokenWaitParams) (db.ResolveImmediateTokenWaitRow, error) {
+func (s *runWaitControlStore) ResolveImmediateTokenWait(_ context.Context, arg db.ResolveImmediateTokenWaitParams) (db.ResolveImmediateTokenWaitRow, error) {
+	s.resolveImmediateTokenWaitCalls++
+	if s.resolveImmediateTokenWaitMatched {
+		return db.ResolveImmediateTokenWaitRow{
+			ID:            arg.ID,
+			OrgID:         s.scope.OrgID,
+			ProjectID:     s.scope.ProjectID,
+			EnvironmentID: s.scope.EnvironmentID,
+			RunWaitID:     s.createHotRunWaitParams.ID,
+			TokenID:       s.token.ID,
+			TokenState:    s.token.State,
+		}, nil
+	}
 	return db.ResolveImmediateTokenWaitRow{}, pgx.ErrNoRows
 }
 

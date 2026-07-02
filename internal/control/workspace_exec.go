@@ -52,23 +52,23 @@ func (s *Server) createWorkspaceExec(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid workspace exec request JSON: %w", err)))
 		return
 	}
-	command, err := NormalizeExecCommand(request.Command)
+	command, err := normalizeExecCommand(request.Command)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	cwd, err := NormalizeExecCwd(request.Cwd)
+	cwd, err := normalizeExecCwd(request.Cwd)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	envShape, err := ExecEnvShape(request.Env)
+	envShape, err := execEnvShape(request.Env)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	filesystemMode := db.WorkspaceFilesystemModeWrite
-	fingerprint, err := ExecCreateFingerprint(command, cwd, envShape, request.Detached, filesystemMode)
+	fingerprint, err := execCreateFingerprint(command, cwd, envShape, request.Detached, filesystemMode)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -235,7 +235,7 @@ func (s *Server) listWorkspaceExecStream(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Server) requestWorkspaceExecStdinClose(ctx context.Context, exec db.WorkspaceExec) (db.WorkspaceExec, error) {
-	if ExecStateTerminal(exec.State) {
+	if execStateTerminal(exec.State) {
 		return db.WorkspaceExec{}, conflict(errWorkspaceExecTerminal)
 	}
 	var row db.WorkspaceExec
@@ -257,7 +257,7 @@ func (s *Server) requestWorkspaceExecStdinClose(ctx context.Context, exec db.Wor
 					WorkspaceID:   exec.WorkspaceID,
 					ID:            exec.ID,
 				})
-				if getErr == nil && ExecStateTerminal(current.State) {
+				if getErr == nil && execStateTerminal(current.State) {
 					return conflict(errWorkspaceExecTerminal)
 				}
 			}
@@ -374,7 +374,7 @@ func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.A
 			if err != nil {
 				return err
 			}
-			request, err := ExecStartOperationRequest(row)
+			request, err := execStartOperationRequest(row)
 			if err != nil {
 				return err
 			}
@@ -429,13 +429,13 @@ func (s *Server) appendWorkspaceExecStreamChunk(ctx context.Context, exec db.Wor
 		if err != nil {
 			return err
 		}
-		if ExecStateTerminal(locked.State) {
+		if execStateTerminal(locked.State) {
 			return conflict(errWorkspaceExecTerminal)
 		}
 		if stream == db.WorkspaceExecStreamStdin && locked.StdinClosedAt.Valid {
 			return conflict(errWorkspaceExecStdinClosed)
 		}
-		want := ExecStreamCursor(locked, stream)
+		want := execStreamCursor(locked, stream)
 		if offset != want {
 			existing, getErr := work.q.GetWorkspaceExecStreamChunkAtOffset(ctx, db.GetWorkspaceExecStreamChunkAtOffsetParams{
 				OrgID:         exec.OrgID,
@@ -459,8 +459,8 @@ func (s *Server) appendWorkspaceExecStreamChunk(ctx context.Context, exec db.Wor
 				Stream:        stream,
 				OffsetStart:   offset,
 			})
-			if receiptErr == nil && receipt.OffsetEnd == offset+int64(len(data)) && receipt.DataSize == int32(len(data)) && bytes.Equal(receipt.DataSha256, StreamDataSHA256(data)) {
-				chunk = ExecChunkFromReceipt(receipt, data)
+			if receiptErr == nil && receipt.OffsetEnd == offset+int64(len(data)) && receipt.DataSize == int32(len(data)) && bytes.Equal(receipt.DataSha256, streamDataSHA256(data)) {
+				chunk = execChunkFromReceipt(receipt, data)
 				return nil
 			}
 			return conflict(errWorkspaceStreamOffsetConflict)

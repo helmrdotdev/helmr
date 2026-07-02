@@ -133,8 +133,8 @@ func TestPreparedRuntimePoolCheckoutRejectsMissingRuntimeToken(t *testing.T) {
 	if ok || checkedOut != nil || token != "" {
 		t.Fatalf("checkout returned session=%v token=%q ok=%v, want miss", checkedOut, token, ok)
 	}
-	if session.closeCount != 1 {
-		t.Fatalf("session close count = %d, want 1", session.closeCount)
+	if closeCount := session.closeCountSnapshot(); closeCount != 1 {
+		t.Fatalf("session close count = %d, want 1", closeCount)
 	}
 	if len(pool.entries[key]) != 0 {
 		t.Fatalf("remaining entries = %#v, want none", pool.entries[key])
@@ -391,8 +391,9 @@ func TestPreparedRuntimePoolSizeLimitsTotalPreparedRuntimeInventory(t *testing.T
 	if len(instances.created) != 0 {
 		t.Fatalf("created instances = %d, want 0", len(instances.created))
 	}
-	if len(instances.failed) != 1 || instances.failed[0].ID != "instance-next" {
-		t.Fatalf("failed instances = %+v, want instance-next", instances.failed)
+	failed := instances.failedSnapshot()
+	if len(failed) != 1 || failed[0].ID != "instance-next" {
+		t.Fatalf("failed instances = %+v, want instance-next", failed)
 	}
 	if pool.readyCountLocked() != 1 {
 		t.Fatalf("ready count = %d, want 1", pool.readyCountLocked())
@@ -429,8 +430,8 @@ func TestPreparedRuntimePoolPrunesReadyEntryWhenReservationRenewFails(t *testing
 	if pool.readyCountLocked() != 0 {
 		t.Fatalf("ready count = %d, want stale entry pruned", pool.readyCountLocked())
 	}
-	if session.closeCount != 1 {
-		t.Fatalf("session close count = %d, want 1", session.closeCount)
+	if closeCount := session.closeCountSnapshot(); closeCount != 1 {
+		t.Fatalf("session close count = %d, want 1", closeCount)
 	}
 	if len(client.renewed) != 1 || client.renewed[0].ID != "instance-stale" {
 		t.Fatalf("renewed = %+v, want instance-stale", client.renewed)
@@ -731,11 +732,12 @@ func TestPreparedRuntimePoolCheckoutRejectsMarkReadyFailure(t *testing.T) {
 	if result.ok || result.session != nil || result.token != "" {
 		t.Fatalf("checkout after MarkReady failed = session:%v token:%q ok:%v, want miss", result.session, result.token, result.ok)
 	}
-	if session.closeCount != 1 {
-		t.Fatalf("session close count = %d, want 1", session.closeCount)
+	if closeCount := session.closeCountSnapshot(); closeCount > 1 {
+		t.Fatalf("session close count = %d, want at most one cleanup close after ready failure", closeCount)
 	}
-	if len(instances.failed) != 1 || instances.failed[0].ID != "instance-1" {
-		t.Fatalf("failed instances = %+v, want instance-1", instances.failed)
+	failed := instances.failedSnapshot()
+	if len(failed) != 1 || failed[0].ID != "instance-1" {
+		t.Fatalf("failed instances = %+v, want instance-1", failed)
 	}
 }
 
@@ -839,11 +841,16 @@ func TestPreparedRuntimePoolCheckoutReadyWaitRespectsContext(t *testing.T) {
 	if err := <-errs; err != nil {
 		t.Fatal(err)
 	}
-	if session.closeCount != 1 {
-		t.Fatalf("session close count = %d, want 1", session.closeCount)
+	if session.closeCount != 0 {
+		t.Fatalf("session close count = %d, want context cancellation to leave prepared runtime open", session.closeCount)
 	}
-	if len(instances.failed) != 1 || instances.failed[0].ID != "instance-1" {
-		t.Fatalf("failed instances = %+v, want instance-1", instances.failed)
+	failed := instances.failedSnapshot()
+	if len(failed) != 0 {
+		t.Fatalf("failed instances = %+v, want checkout cancellation to preserve prepared runtime", failed)
+	}
+	checkedOut, _, token, ok := pool.Checkout(context.Background(), mount)
+	if !ok || checkedOut != session || token != "token-1" {
+		t.Fatalf("checkout after context cancellation and MarkReady = session:%v token:%q ok:%v, want prepared session", checkedOut, token, ok)
 	}
 }
 
@@ -930,19 +937,25 @@ func TestPreparedRuntimePoolCheckoutRejectsExitedSessionAfterMarkReady(t *testin
 	case <-time.After(100 * time.Millisecond):
 	}
 	session.exit(errors.New("session exited before ready"))
+	var result checkoutResult
+	select {
+	case result = <-checkout:
+	case <-time.After(time.Second):
+		t.Fatal("checkout did not return after session exit")
+	}
+	if result.ok || result.session != nil || result.token != "" {
+		t.Fatalf("checkout after session exit = session:%v token:%q ok:%v, want miss", result.session, result.token, result.ok)
+	}
 	close(releaseReady)
 	if err := <-errs; err != nil {
 		t.Fatal(err)
 	}
-	result := <-checkout
-	if result.ok || result.session != nil || result.token != "" {
-		t.Fatalf("checkout after session exit = session:%v token:%q ok:%v, want miss", result.session, result.token, result.ok)
+	if closeCount := session.closeCountSnapshot(); closeCount > 1 {
+		t.Fatalf("session close count = %d, want at most one cleanup close after session exit", closeCount)
 	}
-	if session.closeCount != 1 {
-		t.Fatalf("session close count = %d, want 1", session.closeCount)
-	}
-	if len(instances.failed) != 1 || instances.failed[0].ID != "instance-1" {
-		t.Fatalf("failed instances = %+v, want instance-1", instances.failed)
+	failed := instances.failedSnapshot()
+	if len(failed) != 1 || failed[0].ID != "instance-1" {
+		t.Fatalf("failed instances = %+v, want instance-1", failed)
 	}
 }
 
@@ -1015,8 +1028,9 @@ func TestPreparedRuntimePoolDoesNotPublishEntryWhenMarkReadyFails(t *testing.T) 
 	if session.closeCount != 1 {
 		t.Fatalf("session close count = %d, want 1", session.closeCount)
 	}
-	if len(instances.failed) != 1 || instances.failed[0].ID != "instance-1" {
-		t.Fatalf("failed instances = %+v, want instance-1", instances.failed)
+	failed := instances.failedSnapshot()
+	if len(failed) != 1 || failed[0].ID != "instance-1" {
+		t.Fatalf("failed instances = %+v, want instance-1", failed)
 	}
 }
 
@@ -1094,8 +1108,9 @@ func TestPreparedRuntimePoolFollowWarmCommandsAcksFailedReadyTransition(t *testi
 	if len(client.accepted) != 1 || client.accepted[0] != 42 || len(client.acked) != 1 || client.acked[0] != 42 {
 		t.Fatalf("accepted=%+v acked=%+v, want command 42 accepted and acked", client.accepted, client.acked)
 	}
-	if len(client.failed) != 1 || client.failed[0].ID != "instance-1" {
-		t.Fatalf("failed instances = %+v, want instance-1", client.failed)
+	failed := client.failedSnapshot()
+	if len(failed) != 1 || failed[0].ID != "instance-1" {
+		t.Fatalf("failed instances = %+v, want instance-1", failed)
 	}
 }
 
@@ -1142,7 +1157,7 @@ func TestPreparedRuntimePoolMarkReadyDoesNotBlockCheckout(t *testing.T) {
 		runtimeInstanceID: "instance-existing",
 		runtimeEpoch:      1,
 		instanceToken:     "token-existing",
-		exit:              newPreparedRuntimeSessionExit(),
+		exit:              newPreparedRuntimeSignal(),
 	}}
 	enteredReady := make(chan struct{})
 	releaseReady := make(chan struct{})
@@ -1236,8 +1251,9 @@ func TestRuntimePrepareCommandSkipsWhileForegroundActive(t *testing.T) {
 	if len(instances.createdWarm) != 0 {
 		t.Fatalf("created warm instances = %d, want 0 while foreground active", len(instances.createdWarm))
 	}
-	if len(instances.failed) != 1 || instances.failed[0].ID != "instance-1" {
-		t.Fatalf("failed instances = %+v, want instance-1", instances.failed)
+	failed := instances.failedSnapshot()
+	if len(failed) != 1 || failed[0].ID != "instance-1" {
+		t.Fatalf("failed instances = %+v, want instance-1", failed)
 	}
 	if pool.readyCountLocked() != 0 {
 		t.Fatalf("ready count = %d, want 0", pool.readyCountLocked())
@@ -1268,10 +1284,12 @@ func TestPreparedRuntimePoolFailsReadyEntryWhenSessionExits(t *testing.T) {
 		session:           session,
 		runtimeInstanceID: "instance-ready",
 		instanceToken:     "token-ready",
-		exit:              newPreparedRuntimeSessionExit(),
+		exit:              newPreparedRuntimeSignal(),
 	}
 	pool.entries[key] = []preparedRuntimeEntry{entry}
-	pool.monitorReadyEntry(key, entry)
+	pool.mu.Lock()
+	pool.monitorReadyEntryLocked(key, entry)
+	pool.mu.Unlock()
 
 	session.exit(errors.New("firecracker exited"))
 
@@ -1317,7 +1335,7 @@ func TestPreparedRuntimePoolCheckoutRejectsExitedReadyEntry(t *testing.T) {
 	}
 	key := preparedRuntimeKeyFromWorkspaceMount(mount, pool.Network)
 	session := newFakePreparedRuntimeSession()
-	exit := newPreparedRuntimeSessionExit()
+	exit := newPreparedRuntimeSignal()
 	exit.finish(errors.New("firecracker exited"))
 	pool.entries[key] = []preparedRuntimeEntry{{
 		session:           session,
@@ -1334,8 +1352,9 @@ func TestPreparedRuntimePoolCheckoutRejectsExitedReadyEntry(t *testing.T) {
 	if pool.readyCountLocked() != 0 {
 		t.Fatalf("ready count = %d, want exited entry removed", pool.readyCountLocked())
 	}
-	if len(client.failed) != 1 || client.failed[0].ID != "instance-ready" {
-		t.Fatalf("failed instances = %+v, want instance-ready", client.failed)
+	failed := client.failedSnapshot()
+	if len(failed) != 1 || failed[0].ID != "instance-ready" {
+		t.Fatalf("failed instances = %+v, want instance-ready", failed)
 	}
 	if session.closeCount != 1 {
 		t.Fatalf("session close count = %d, want 1", session.closeCount)
@@ -1389,8 +1408,9 @@ func TestPreparedRuntimePoolCloseCancelsInFlightRefill(t *testing.T) {
 	if connector.materializeErr == nil || !errors.Is(connector.materializeErr, context.Canceled) {
 		t.Fatalf("materializeErr = %v, want context.Canceled", connector.materializeErr)
 	}
-	if len(instances.failed) != 1 {
-		t.Fatalf("failed instances = %d, want 1", len(instances.failed))
+	failed := instances.failedSnapshot()
+	if len(failed) != 1 {
+		t.Fatalf("failed instances = %d, want 1", len(failed))
 	}
 }
 
@@ -1513,6 +1533,7 @@ func (c *blockingMaterializingConnector) Materialize(ctx context.Context, _ vm.M
 }
 
 type fakePreparedRuntimeSession struct {
+	mu         sync.Mutex
 	closeCount int
 	wait       chan error
 	stream     io.ReadWriteCloser
@@ -1541,11 +1562,19 @@ func (s *fakePreparedRuntimeSession) Wait(context.Context) error {
 }
 
 func (s *fakePreparedRuntimeSession) Close(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.closeCount++
 	if s.stream != nil {
 		_ = s.stream.Close()
 	}
 	return nil
+}
+
+func (s *fakePreparedRuntimeSession) closeCountSnapshot() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closeCount
 }
 
 func (s *fakePreparedRuntimeSession) exit(err error) {

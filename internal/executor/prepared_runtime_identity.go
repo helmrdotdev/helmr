@@ -24,24 +24,20 @@ func preparedRuntimeIdentityFromWorkspaceMount(mount api.WorkerWorkspaceMount, n
 		WorkspaceMountPath:         mount.WorkspaceMountPath,
 		SandboxImageArtifactDigest: mount.SandboxImageArtifact.Digest,
 		SandboxImageArtifactFormat: mount.SandboxImageArtifactFormat,
-		RuntimeSubstrateCacheKey:   preparedRuntimeSubstrateCacheKey(mount.SandboxImageArtifact.Digest, mount.SandboxImageArtifactFormat, mount.ImageDigest, mount.RootfsDigest, mount.RuntimeABI, mount.GuestdABI, mount.AdapterABI, mount.WorkspaceMountPath),
+		RuntimeSubstrateCacheKey:   preparedRuntimeSubstrateCacheKey(mount),
 		Network:                    compute.NetworkPolicyJSON(network),
 	}
 }
 
-func preparedRuntimeSubstrateCacheKey(sandboxDigest string, sandboxFormat string, imageDigest string, rootfsDigest string, runtimeABI string, guestdABI string, adapterABI string, workspaceMountPath string) string {
-	key, err := substrate.CacheKey(substrate.Source{
-		SandboxArtifactDigest: sandboxDigest,
-		SandboxArtifactFormat: sandboxFormat,
-		ImageDigest:           imageDigest,
-		RootfsDigest:          rootfsDigest,
-		RuntimeABI:            runtimeABI,
-		GuestdABI:             guestdABI,
-		AdapterABI:            adapterABI,
-		WorkspaceMountPath:    workspaceMountPath,
+func preparedRuntimeSubstrateCacheKey(mount api.WorkerWorkspaceMount) string {
+	return substrate.OptionalCacheKey(substrate.Source{
+		SandboxArtifactDigest: mount.SandboxImageArtifact.Digest,
+		SandboxArtifactFormat: mount.SandboxImageArtifactFormat,
+		ImageDigest:           mount.ImageDigest,
+		RootfsDigest:          mount.RootfsDigest,
+		RuntimeABI:            mount.RuntimeABI,
+		GuestdABI:             mount.GuestdABI,
+		AdapterABI:            mount.AdapterABI,
+		WorkspaceMountPath:    mount.WorkspaceMountPath,
 	})
-	if err != nil {
-		return ""
-	}
-	return key
 }

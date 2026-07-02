@@ -158,6 +158,14 @@ func CacheKey(source Source) (string, error) {
 	return sha256sum.Prefix + hex.EncodeToString(sum[:]), nil
 }
 
+func OptionalCacheKey(source Source) string {
+	key, err := CacheKey(source)
+	if err != nil {
+		return ""
+	}
+	return key
+}
+
 func (r *Resolver) resolveLocked(ctx context.Context, imagePath string, source Source, key string, cacheDir string, mkfs string) (Result, error) {
 	identity := cacheIdentity{
 		Source:     normalizeSource(source),

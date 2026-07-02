@@ -49,7 +49,7 @@ func (s *Server) workerMarkWorkspaceExecStarted(w http.ResponseWriter, r *http.R
 				WorkspaceID:   mount.WorkspaceID,
 				ID:            execID,
 			})
-			if getErr == nil && workerPrimitiveWorkspaceMountMatches(existing.WorkspaceMountID, mount.ID) && ExecStateTerminal(existing.State) {
+			if getErr == nil && workerPrimitiveWorkspaceMountMatches(existing.WorkspaceMountID, mount.ID) && execStateTerminal(existing.State) {
 				writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(existing)})
 				return
 			}
@@ -189,7 +189,7 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 		if deliveredChunk.OffsetEnd != request.OffsetEnd {
 			return conflict(errWorkspaceStreamOffsetConflict)
 		}
-		deliveredDigest := StreamDataSHA256(deliveredChunk.Data)
+		deliveredDigest := streamDataSHA256(deliveredChunk.Data)
 		if _, err := work.q.InsertWorkspaceExecStreamChunkReceipt(r.Context(), db.InsertWorkspaceExecStreamChunkReceiptParams{
 			OrgID:         mount.OrgID,
 			ProjectID:     mount.ProjectID,
@@ -409,7 +409,7 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 		if err != nil {
 			return err
 		}
-		tail := ExecStreamCursor(locked, stream)
+		tail := execStreamCursor(locked, stream)
 		offset := *requestedOffset
 		if offset != tail {
 			existing, getErr := work.q.GetWorkspaceExecStreamChunkAtOffset(ctx, db.GetWorkspaceExecStreamChunkAtOffsetParams{
@@ -472,7 +472,7 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 		if err != nil {
 			return err
 		}
-		retainAfter := ExecStreamCursorFromRow(row, stream) - workspaceStreamRetainedMaxBytes
+		retainAfter := execStreamCursorFromRow(row, stream) - workspaceStreamRetainedMaxBytes
 		if retainAfter > 0 {
 			if err := work.q.DeleteWorkspaceExecStreamChunksBefore(ctx, db.DeleteWorkspaceExecStreamChunksBeforeParams{
 				OrgID:             exec.OrgID,

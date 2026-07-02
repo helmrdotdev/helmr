@@ -231,7 +231,7 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 	switch operation.OperationKind {
 	case workspaceOperationKindStartExec:
 		if operation.ResourceKind != workspaceOperationResourceExec {
-			return fmt.Errorf("StartExec operation resource_kind = %q, want %q", ResourceKindString(operation.ResourceKind), workspaceOperationResourceExec)
+			return fmt.Errorf("StartExec operation resource_kind = %q, want %q", resourceKindString(operation.ResourceKind), workspaceOperationResourceExec)
 		}
 		_, err := store.MarkWorkspaceExecExited(ctx, db.MarkWorkspaceExecExitedParams{
 			State:            db.WorkspaceExecStateFailed,
@@ -251,7 +251,7 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 		return err
 	case workspaceOperationKindCreatePty:
 		if operation.ResourceKind != workspaceOperationResourcePty {
-			return fmt.Errorf("CreatePty operation resource_kind = %q, want %q", ResourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
+			return fmt.Errorf("CreatePty operation resource_kind = %q, want %q", resourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
 		}
 		_, err := store.MarkWorkspacePtyFailed(ctx, db.MarkWorkspacePtyFailedParams{
 			Error:            failure,
@@ -268,11 +268,11 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 		return err
 	case workspaceOperationKindResizePty, workspaceOperationKindClosePty:
 		if operation.ResourceKind != workspaceOperationResourcePty {
-			operationKind, err := OperationGuestVerb(operation.OperationKind)
+			operationKind, err := operationGuestVerb(operation.OperationKind)
 			if err != nil {
 				return err
 			}
-			return fmt.Errorf("%s operation resource_kind = %q, want %q", operationKind, ResourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
+			return fmt.Errorf("%s operation resource_kind = %q, want %q", operationKind, resourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
 		}
 		cols, rows, err := workspacePtyControlRollbackTarget(operation)
 		if err != nil {
@@ -375,7 +375,7 @@ func workerWorkspaceOperationResponse(row db.WorkspaceOperation) (api.WorkerWork
 		WorkspaceOperationResponse: workspaceOperationResponse(row),
 		ClaimToken:                 row.ClaimToken,
 	}
-	operationKind, err := OperationGuestVerb(row.OperationKind)
+	operationKind, err := operationGuestVerb(row.OperationKind)
 	if err != nil {
 		return api.WorkerWorkspaceOperation{}, err
 	}
@@ -396,7 +396,7 @@ func workspaceOperationResponse(row db.WorkspaceOperation) api.WorkspaceOperatio
 		WorkspaceID:        pgvalue.MustUUIDValue(row.WorkspaceID).String(),
 		WorkspaceMountID:   pgvalue.MustUUIDValue(row.WorkspaceMountID).String(),
 		OperationKind:      string(row.OperationKind),
-		ResourceKind:       ResourceKindString(row.ResourceKind),
+		ResourceKind:       resourceKindString(row.ResourceKind),
 		RequestFingerprint: row.RequestFingerprint,
 		OperationExpiresAt: row.OperationExpiresAt.Time,
 		State:              string(row.State),

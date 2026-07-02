@@ -423,9 +423,8 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 		if err := acknowledgeCheckpointWorkerCommand(r.Context(), work.q, scope, request.WorkerCommandID, runID, runWaitID, runLeaseID, worker.WorkerInstanceID); err != nil {
 			return err
 		}
-		work.AfterCommit(func(ctx context.Context) error {
+		work.AfterCommit(func(ctx context.Context) {
 			s.requeueResolvedRunWaits(ctx, scope.OrgID)
-			return nil
 		})
 		return nil
 	})

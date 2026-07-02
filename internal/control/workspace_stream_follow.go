@@ -78,7 +78,7 @@ func (s *Server) followWorkspaceExecStream(w http.ResponseWriter, r *http.Reques
 			WorkspaceID:   exec.WorkspaceID,
 			ID:            exec.ID,
 		})
-		if err == nil && ExecStateTerminal(current.State) {
+		if err == nil && execStateTerminal(current.State) {
 			if err := s.drainWorkspaceExecTerminal(ctx, w, flusher, encoder, current, stream, cursor, limit); err != nil {
 				s.log.Debug("write workspace exec terminal stream failed", "exec_id", pgvalue.MustUUIDValue(exec.ID).String(), "stream", string(stream), "error", err)
 			}
@@ -201,7 +201,7 @@ func (s *Server) followWorkspacePtyOutput(w http.ResponseWriter, r *http.Request
 			WorkspaceID:   pty.WorkspaceID,
 			ID:            pty.ID,
 		})
-		if err == nil && PtyStateTerminal(current.State) {
+		if err == nil && ptyStateTerminal(current.State) {
 			if err := s.drainWorkspacePtyTerminal(ctx, w, flusher, encoder, current, cursor, limit); err != nil {
 				s.log.Debug("write workspace pty terminal stream failed", "pty_id", pgvalue.MustUUIDValue(pty.ID).String(), "error", err)
 			}

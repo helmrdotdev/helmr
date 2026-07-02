@@ -562,22 +562,22 @@ func TestWorkspaceListAndGetRejectUnrelatedPermission(t *testing.T) {
 
 func TestWorkspacePrimitiveCreateFingerprintsUseCanonicalProtocol(t *testing.T) {
 	envShape := []byte(`{"B":"2","A":"1"}`)
-	execFingerprint, err := ExecCreateFingerprint([]string{"echo", "ok"}, "/workspace", envShape, false, db.WorkspaceFilesystemModeWrite)
+	execFingerprint, err := execCreateFingerprint([]string{"echo", "ok"}, "/workspace", envShape, false, db.WorkspaceFilesystemModeWrite)
 	if err != nil {
 		t.Fatal(err)
 	}
-	execFingerprintAgain, err := ExecCreateFingerprint([]string{"echo", "ok"}, "/workspace", []byte(`{"A":"1","B":"2"}`), false, db.WorkspaceFilesystemModeWrite)
+	execFingerprintAgain, err := execCreateFingerprint([]string{"echo", "ok"}, "/workspace", []byte(`{"A":"1","B":"2"}`), false, db.WorkspaceFilesystemModeWrite)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if execFingerprint != execFingerprintAgain {
 		t.Fatalf("exec fingerprint changed with JSON field order: %q != %q", execFingerprint, execFingerprintAgain)
 	}
-	ptyFingerprint, err := PtyCreateFingerprint("/workspace", 80, 24, db.WorkspaceFilesystemModeWrite)
+	ptyFingerprint, err := ptyCreateFingerprint("/workspace", 80, 24, db.WorkspaceFilesystemModeWrite)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ptyFingerprintAgain, err := PtyCreateFingerprint("/workspace", 80, 24, db.WorkspaceFilesystemModeWrite)
+	ptyFingerprintAgain, err := ptyCreateFingerprint("/workspace", 80, 24, db.WorkspaceFilesystemModeWrite)
 	if err != nil {
 		t.Fatal(err)
 	}

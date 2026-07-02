@@ -77,80 +77,57 @@ type preparedRuntimeEntry struct {
 	runtimeInstanceID string
 	runtimeEpoch      int64
 	instanceToken     string
-	exit              *preparedRuntimeSessionExit
-	ready             *preparedRuntimeReady
+	exit              *preparedRuntimeSignal
+	ready             *preparedRuntimeSignal
 }
 
-type preparedRuntimeReady struct {
+type preparedRuntimeSignal struct {
 	done chan struct{}
 	once sync.Once
 	mu   sync.Mutex
 	err  error
 }
 
-func newPreparedRuntimeReady() *preparedRuntimeReady {
-	return &preparedRuntimeReady{done: make(chan struct{})}
+func newPreparedRuntimeSignal() *preparedRuntimeSignal {
+	return &preparedRuntimeSignal{done: make(chan struct{})}
 }
 
-func (r *preparedRuntimeReady) finish(err error) {
-	if r == nil {
+func (s *preparedRuntimeSignal) finish(err error) {
+	if s == nil {
 		return
 	}
-	r.once.Do(func() {
-		r.mu.Lock()
-		r.err = err
-		r.mu.Unlock()
-		close(r.done)
+	s.once.Do(func() {
+		s.mu.Lock()
+		s.err = err
+		s.mu.Unlock()
+		close(s.done)
 	})
 }
 
-func (r *preparedRuntimeReady) wait(ctx context.Context) error {
-	if r == nil {
-		return nil
+func (s *preparedRuntimeSignal) wait(ctx context.Context) (error, bool) {
+	if s == nil {
+		return nil, true
 	}
 	select {
-	case <-r.done:
+	case <-s.done:
 	case <-ctx.Done():
-		return ctx.Err()
+		return ctx.Err(), false
 	}
-	r.mu.Lock()
-	err := r.err
-	r.mu.Unlock()
-	return err
+	s.mu.Lock()
+	err := s.err
+	s.mu.Unlock()
+	return err, true
 }
 
-type preparedRuntimeSessionExit struct {
-	done chan struct{}
-	once sync.Once
-	mu   sync.Mutex
-	err  error
-}
-
-func newPreparedRuntimeSessionExit() *preparedRuntimeSessionExit {
-	return &preparedRuntimeSessionExit{done: make(chan struct{})}
-}
-
-func (e *preparedRuntimeSessionExit) finish(err error) {
-	if e == nil {
-		return
-	}
-	e.once.Do(func() {
-		e.mu.Lock()
-		e.err = err
-		e.mu.Unlock()
-		close(e.done)
-	})
-}
-
-func (e *preparedRuntimeSessionExit) exited() (error, bool) {
-	if e == nil {
+func (s *preparedRuntimeSignal) finished() (error, bool) {
+	if s == nil {
 		return nil, false
 	}
 	select {
-	case <-e.done:
-		e.mu.Lock()
-		err := e.err
-		e.mu.Unlock()
+	case <-s.done:
+		s.mu.Lock()
+		err := s.err
+		s.mu.Unlock()
 		return err, true
 	default:
 		return nil, false
@@ -209,7 +186,7 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount api.WorkerWork
 		return nil, key, "", false
 	}
 	entry := entries[index]
-	if err, exited := entry.exit.exited(); exited {
+	if err, exited := entry.exit.finished(); exited {
 		p.mu.Unlock()
 		p.removeReadyEntryAndFail(key, entry, preparedRuntimeExitCause(err), true)
 		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "reason", "reserved_session_exited")
@@ -221,29 +198,51 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount api.WorkerWork
 		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "reason", "runtime_instance_token_missing")
 		return nil, key, "", false
 	}
-	p.removeReadyEntryAtLocked(key, entries, index)
-	available := p.readyCountLocked()
 	p.mu.Unlock()
-	if err := entry.ready.wait(ctx); err != nil {
-		p.closeSession(context.Background(), entry.session)
-		stateCtx, cancelState := preparedRuntimeControlContext(context.Background())
-		defer cancelState()
-		if failErr := p.markRuntimeInstanceFailed(stateCtx, entry.runtimeInstanceID, entry.instanceToken, err); failErr != nil {
-			p.logInfo("prepared runtime pool instance fail transition failed", "runtime_key_id", keyID, "runtime_instance_id", entry.runtimeInstanceID, "error", failErr.Error())
+	if err, readyFinished := entry.ready.wait(ctx); err != nil {
+		reason := "runtime_ready_failed"
+		if readyFinished {
+			if p.forgetReadyEntry(key, entry) {
+				p.cleanupClaimedEntryAsync(key, entry, err)
+			}
+		} else {
+			reason = "runtime_ready_wait_canceled"
 		}
-		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "reason", "runtime_ready_failed", "error", err.Error())
+		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "reason", reason, "error", err.Error())
 		return nil, key, "", false
 	}
-	if err, exited := entry.exit.exited(); exited {
-		p.closeSession(context.Background(), entry.session)
-		stateCtx, cancelState := preparedRuntimeControlContext(context.Background())
-		defer cancelState()
-		if failErr := p.markRuntimeInstanceFailed(stateCtx, entry.runtimeInstanceID, entry.instanceToken, preparedRuntimeExitCause(err)); failErr != nil {
-			p.logInfo("prepared runtime pool instance fail transition failed", "runtime_key_id", keyID, "runtime_instance_id", entry.runtimeInstanceID, "error", failErr.Error())
+	if err, exited := entry.exit.finished(); exited {
+		if p.forgetReadyEntry(key, entry) {
+			p.cleanupClaimedEntryAsync(key, entry, preparedRuntimeExitCause(err))
 		}
 		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "reason", "reserved_session_exited", "error", errorString(err))
 		return nil, key, "", false
 	}
+	p.mu.Lock()
+	entries = p.entries[key]
+	index = -1
+	for i := range entries {
+		if entries[i].runtimeInstanceID == runtimeInstanceID && entries[i].runtimeEpoch == mount.RuntimeEpoch && entries[i].instanceToken == entry.instanceToken {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		p.mu.Unlock()
+		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "runtime_epoch", mount.RuntimeEpoch, "reason", "reserved_session_claimed")
+		return nil, key, "", false
+	}
+	entry = entries[index]
+	if err, exited := entry.exit.finished(); exited {
+		p.removeReadyEntryAtLocked(key, entries, index)
+		p.mu.Unlock()
+		p.cleanupClaimedEntryAsync(key, entry, preparedRuntimeExitCause(err))
+		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "reason", "reserved_session_exited", "error", errorString(err))
+		return nil, key, "", false
+	}
+	p.removeReadyEntryAtLocked(key, entries, index)
+	available := p.readyCountLocked()
+	p.mu.Unlock()
 	p.logInfo("prepared runtime pool hit", "runtime_key_id", keyID, "available", available)
 	return entry.session, key, entry.instanceToken, true
 }
@@ -519,7 +518,7 @@ func (p *PreparedRuntimePool) WarmFromCommand(ctx context.Context, client Prepar
 	p.mu.Unlock()
 	defer func() {
 		p.mu.Lock()
-		p.filling[key]--
+		p.decrementFillingLocked(key)
 		p.mu.Unlock()
 	}()
 	return p.prepareAndStore(refillCtx, key, mount, runtimeInstanceID, runtimeEpoch, instanceToken)
@@ -561,7 +560,7 @@ func (p *PreparedRuntimePool) refillOne(ctx context.Context, key string, mount a
 	keyID := runtime.ID(key)
 	defer func() {
 		p.mu.Lock()
-		p.filling[key]--
+		p.decrementFillingLocked(key)
 		p.mu.Unlock()
 	}()
 	runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
@@ -697,10 +696,9 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		runtimeInstanceID: runtimeInstanceID,
 		runtimeEpoch:      runtimeEpoch,
 		instanceToken:     instanceToken,
-		exit:              newPreparedRuntimeSessionExit(),
-		ready:             newPreparedRuntimeReady(),
+		exit:              newPreparedRuntimeSignal(),
+		ready:             newPreparedRuntimeSignal(),
 	}
-	p.monitorReadyEntry(key, entry)
 	p.mu.Lock()
 	if p.closed || p.readyCountLocked() >= p.Size {
 		p.mu.Unlock()
@@ -713,9 +711,11 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		return nil
 	}
 	p.entries[key] = append(p.entries[key], entry)
+	p.monitorReadyEntryLocked(key, entry)
 	p.mu.Unlock()
 	keepSession = true
-	if err, exited := entry.exit.exited(); exited {
+	if err, exited := entry.exit.finished(); exited {
+		entry.ready.finish(preparedRuntimeExitCause(err))
 		if failErr := p.removeReadyEntryAndFail(key, entry, preparedRuntimeExitCause(err), true); failErr != nil {
 			return errors.Join(preparedRuntimeExitCause(err), failErr)
 		}
@@ -779,18 +779,21 @@ func (p *PreparedRuntimePool) restoreSandboxImageAndRuntimeSubstrate(ctx context
 	return sandboxImagePath, cleanupSandboxImage, topology, nil
 }
 
-func (p *PreparedRuntimePool) monitorReadyEntry(key string, entry preparedRuntimeEntry) {
-	if p == nil || entry.session == nil || entry.exit == nil {
+func (p *PreparedRuntimePool) monitorReadyEntryLocked(key string, entry preparedRuntimeEntry) {
+	if p == nil || p.closed || entry.session == nil || entry.exit == nil {
 		return
 	}
-	p.wg.Go(func() {
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
 		err := entry.session.Wait(p.ctx)
 		entry.exit.finish(err)
+		entry.ready.finish(preparedRuntimeExitCause(err))
 		if p.ctx != nil && p.ctx.Err() != nil && errors.Is(err, context.Canceled) {
 			return
 		}
 		p.removeReadyEntryAndFail(key, entry, preparedRuntimeExitCause(err), false)
-	})
+	}()
 }
 
 func preparedRuntimeExitCause(err error) error {
@@ -814,6 +817,15 @@ func (p *PreparedRuntimePool) fillingCountLocked() int {
 		total += count
 	}
 	return total
+}
+
+func (p *PreparedRuntimePool) decrementFillingLocked(key string) {
+	count := p.filling[key] - 1
+	if count <= 0 {
+		delete(p.filling, key)
+		return
+	}
+	p.filling[key] = count
 }
 
 func (p *PreparedRuntimePool) reservedCountLocked() int {
@@ -880,6 +892,38 @@ func (p *PreparedRuntimePool) removeReadyEntryAndFail(key string, entry prepared
 	}
 	p.logInfo("prepared runtime pool entry failed", "runtime_key_id", keyID, "runtime_instance_id", entry.runtimeInstanceID, "error", errorString(cause))
 	return nil
+}
+
+func (p *PreparedRuntimePool) cleanupClaimedEntryAsync(key string, entry preparedRuntimeEntry, cause error) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		p.cleanupClaimedEntry(key, entry, cause)
+		return
+	}
+	p.wg.Add(1)
+	p.mu.Unlock()
+	go func() {
+		defer p.wg.Done()
+		p.cleanupClaimedEntry(key, entry, cause)
+	}()
+}
+
+func (p *PreparedRuntimePool) cleanupClaimedEntry(key string, entry preparedRuntimeEntry, cause error) {
+	keyID := runtime.ID(key)
+	if entry.session != nil {
+		p.closeSession(context.Background(), entry.session)
+	}
+	stateCtx, cancelState := preparedRuntimeControlContext(context.Background())
+	defer cancelState()
+	if err := p.markRuntimeInstanceFailed(stateCtx, entry.runtimeInstanceID, entry.instanceToken, cause); err != nil {
+		p.logInfo("prepared runtime pool instance fail transition failed", "runtime_key_id", keyID, "runtime_instance_id", entry.runtimeInstanceID, "error", err.Error())
+		return
+	}
+	p.logInfo("prepared runtime pool claimed entry failed", "runtime_key_id", keyID, "runtime_instance_id", entry.runtimeInstanceID, "error", errorString(cause))
 }
 
 func (p *PreparedRuntimePool) forgetReadyEntry(key string, entry preparedRuntimeEntry) bool {

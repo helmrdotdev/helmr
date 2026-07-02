@@ -85,16 +85,8 @@ func (s *Server) appendSessionStreamRecord(w http.ResponseWriter, r *http.Reques
 			if err != nil {
 				return err
 			}
-			work.AfterCommit(func(ctx context.Context) error {
-				s.publishSessionInputStreamWakeup(ctx, session.OrgID, stream.ID, appended.record.Sequence)
-				if appended.resolvedWaitCount > 0 {
-					s.requeueResolvedRunWaits(ctx, session.OrgID)
-				}
-				for _, runID := range s.sessionRunRequestWorkflow().reconcileAccepted(ctx, session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
-					appended.continuationRunID = runID
-					appended.continuationStatus = "created"
-				}
-				return nil
+			work.AfterCommit(func(ctx context.Context) {
+				s.afterInputStreamRecordCommit(ctx, session, stream, &appended)
 			})
 			return nil
 		})
@@ -118,6 +110,20 @@ type appendedStreamRecord struct {
 	resolvedWaitCount  int
 	continuationRunID  pgtype.UUID
 	continuationStatus string
+}
+
+func (s *Server) afterInputStreamRecordCommit(ctx context.Context, session db.Session, stream db.Stream, appended *appendedStreamRecord) {
+	if appended == nil {
+		return
+	}
+	s.publishSessionInputStreamWakeup(ctx, session.OrgID, stream.ID, appended.record.Sequence)
+	if appended.resolvedWaitCount > 0 {
+		s.requeueResolvedRunWaits(ctx, session.OrgID)
+	}
+	for _, runID := range s.sessionRunRequestWorkflow().reconcileAccepted(ctx, session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
+		appended.continuationRunID = runID
+		appended.continuationStatus = "created"
+	}
 }
 
 func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, session db.Session, stream db.Stream, direction db.StreamDirection, sourceType db.StreamRecordSourceType, sourceID string, publicAccessTokenID pgtype.UUID, request api.AppendStreamRecordRequest) (appendedStreamRecord, error) {

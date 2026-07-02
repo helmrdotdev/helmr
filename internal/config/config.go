@@ -30,7 +30,6 @@ type Control struct {
 	DeploymentMode          string
 	DatabaseURL             string
 	RedisURL                string
-	AsyncBusURI             string
 	CASURI                  string
 	WorkerTokenSigningKey   string
 	WorkerBootstrapToken    string
@@ -56,7 +55,6 @@ type Control struct {
 type Dispatcher struct {
 	DatabaseURL                string
 	RedisURL                   string
-	AsyncBusURI                string
 	AuthSecret                 string
 	SecretEncryptionKey        string
 	SecretEncryptionKeyOld     string

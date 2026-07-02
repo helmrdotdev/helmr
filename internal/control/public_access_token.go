@@ -42,16 +42,8 @@ func (s *Server) appendSessionInputStreamWithPublicAccessToken(w http.ResponseWr
 		if err != nil {
 			return err
 		}
-		work.AfterCommit(func(ctx context.Context) error {
-			s.publishSessionInputStreamWakeup(ctx, session.OrgID, stream.ID, appended.record.Sequence)
-			if appended.resolvedWaitCount > 0 {
-				s.requeueResolvedRunWaits(ctx, session.OrgID)
-			}
-			for _, runID := range s.sessionRunRequestWorkflow().reconcileAccepted(ctx, session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
-				appended.continuationRunID = runID
-				appended.continuationStatus = "created"
-			}
-			return nil
+		work.AfterCommit(func(ctx context.Context) {
+			s.afterInputStreamRecordCommit(ctx, session, stream, &appended)
 		})
 		return nil
 	})
@@ -275,9 +267,8 @@ func (s *Server) completeTokenWithPublicAccessToken(w http.ResponseWriter, r *ht
 				return err
 			}
 		}
-		work.AfterCommit(func(ctx context.Context) error {
+		work.AfterCommit(func(ctx context.Context) {
 			s.requeueResolvedRunWaits(ctx, token.OrgID)
-			return nil
 		})
 		return nil
 	})

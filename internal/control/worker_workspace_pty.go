@@ -183,7 +183,7 @@ func (s *Server) workerAdvanceWorkspacePtyInputDelivered(w http.ResponseWriter, 
 		if deliveredChunk.OffsetEnd != request.OffsetEnd {
 			return conflict(errWorkspaceStreamOffsetConflict)
 		}
-		deliveredDigest := StreamDataSHA256(deliveredChunk.Data)
+		deliveredDigest := streamDataSHA256(deliveredChunk.Data)
 		if _, err := work.q.InsertWorkspacePtyStreamChunkReceipt(r.Context(), db.InsertWorkspacePtyStreamChunkReceiptParams{
 			OrgID:         mount.OrgID,
 			ProjectID:     mount.ProjectID,
@@ -455,7 +455,7 @@ func (s *Server) appendWorkspacePtyOutputStreamChunk(ctx context.Context, pty db
 		if err != nil {
 			return err
 		}
-		tail := PtyStreamCursor(locked, db.WorkspacePtyStreamOutput)
+		tail := ptyStreamCursor(locked, db.WorkspacePtyStreamOutput)
 		offset := *requestedOffset
 		if offset != tail {
 			existing, getErr := work.q.GetWorkspacePtyStreamChunkAtOffset(ctx, db.GetWorkspacePtyStreamChunkAtOffsetParams{

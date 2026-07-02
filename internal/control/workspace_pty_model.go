@@ -10,7 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
-func NormalizePtySize(cols int32, rows int32) (int32, int32, error) {
+func normalizePtySize(cols int32, rows int32) (int32, int32, error) {
 	if cols <= 0 {
 		cols = 80
 	}
@@ -23,7 +23,7 @@ func NormalizePtySize(cols int32, rows int32) (int32, int32, error) {
 	return cols, rows, nil
 }
 
-func PtyCreateFingerprint(cwd string, cols int32, rows int32, filesystemMode db.WorkspaceFilesystemMode) (string, error) {
+func ptyCreateFingerprint(cwd string, cols int32, rows int32, filesystemMode db.WorkspaceFilesystemMode) (string, error) {
 	payload, err := json.Marshal(struct {
 		Cwd  string `json:"cwd"`
 		Cols int32  `json:"cols"`
@@ -36,7 +36,7 @@ func PtyCreateFingerprint(cwd string, cols int32, rows int32, filesystemMode db.
 	return wire.RequestFingerprint(string(db.WorkspaceOperationIdempotencyKindWorkspacePtyCreate), payload)
 }
 
-func PtyStateTerminal(state db.WorkspacePtyState) bool {
+func ptyStateTerminal(state db.WorkspacePtyState) bool {
 	switch state {
 	case db.WorkspacePtyStateClosed, db.WorkspacePtyStateLost, db.WorkspacePtyStateFailed:
 		return true
@@ -45,7 +45,7 @@ func PtyStateTerminal(state db.WorkspacePtyState) bool {
 	}
 }
 
-func PtyStreamCursor(row db.LockWorkspacePtyForStreamAppendRow, stream db.WorkspacePtyStream) int64 {
+func ptyStreamCursor(row db.LockWorkspacePtyForStreamAppendRow, stream db.WorkspacePtyStream) int64 {
 	switch stream {
 	case db.WorkspacePtyStreamInput:
 		return row.InputCursor
@@ -56,7 +56,7 @@ func PtyStreamCursor(row db.LockWorkspacePtyForStreamAppendRow, stream db.Worksp
 	}
 }
 
-func PtyCreateOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
+func ptyCreateOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
 	return json.Marshal(struct {
 		PtyID          string `json:"pty_id"`
 		Cwd            string `json:"cwd"`
@@ -72,7 +72,7 @@ func PtyCreateOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
 	})
 }
 
-func PtyResizeOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
+func ptyResizeOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
 	if !row.ResizeCols.Valid || !row.ResizeRows.Valid {
 		return nil, errors.New("workspace pty resize target is required")
 	}
@@ -87,7 +87,7 @@ func PtyResizeOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
 	})
 }
 
-func PtyCloseOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
+func ptyCloseOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
 	return json.Marshal(struct {
 		PtyID string `json:"pty_id"`
 	}{

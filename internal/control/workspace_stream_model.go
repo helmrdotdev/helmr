@@ -6,12 +6,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 )
 
-func StreamDataSHA256(data []byte) []byte {
+func streamDataSHA256(data []byte) []byte {
 	sum := sha256.Sum256(data)
 	return sum[:]
 }
 
-func ExecChunkFromReceipt(receipt db.WorkspaceExecStreamChunkReceipt, data []byte) db.WorkspaceExecStreamChunk {
+func execChunkFromReceipt(receipt db.WorkspaceExecStreamChunkReceipt, data []byte) db.WorkspaceExecStreamChunk {
 	return db.WorkspaceExecStreamChunk{
 		ID:            receipt.ID,
 		OrgID:         receipt.OrgID,
@@ -28,7 +28,7 @@ func ExecChunkFromReceipt(receipt db.WorkspaceExecStreamChunkReceipt, data []byt
 	}
 }
 
-func PtyChunkFromReceipt(receipt db.WorkspacePtyStreamChunkReceipt, data []byte) db.WorkspacePtyStreamChunk {
+func ptyChunkFromReceipt(receipt db.WorkspacePtyStreamChunkReceipt, data []byte) db.WorkspacePtyStreamChunk {
 	return db.WorkspacePtyStreamChunk{
 		ID:            receipt.ID,
 		OrgID:         receipt.OrgID,

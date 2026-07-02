@@ -399,10 +399,9 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 				if err != nil {
 					return err
 				}
-				work.AfterCommit(func(postCommitCtx context.Context) error {
+				work.AfterCommit(func(postCommitCtx context.Context) {
 					startClaim.resolve(postCommitCtx)
 					claimResolved = true
-					return nil
 				})
 				result = sessionStartResult{session: existing, run: getRunSummary(runRow), idempotencyHit: idempotency.key.Valid, sessionReused: true}
 				return nil
@@ -552,7 +551,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 				return errSessionStartExistingHitRollback
 			}
 		}
-		work.AfterCommit(func(postCommitCtx context.Context) error {
+		work.AfterCommit(func(postCommitCtx context.Context) {
 			startClaim.resolve(postCommitCtx)
 			claimResolved = true
 			s.reconcilePreparedRuntimeSupplyForSandboxAsync(postCommitCtx, deploymentTask.DeploymentSandboxID, "session_start")
@@ -561,7 +560,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 					s.log.Error("enqueue session run failed", "run_id", pgvalue.MustUUIDValue(run.ID).String(), "error", err)
 				}
 			}
-			return nil
 		})
 		result = sessionStartResult{session: session, run: createScopedRunSummary(run)}
 		return nil
