@@ -1,4 +1,4 @@
-package runtimeprep
+package runtime
 
 import (
 	"crypto/sha256"
@@ -7,9 +7,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/compute"
-	"github.com/helmrdotdev/helmr/internal/substrate"
 )
 
 func KeyFromWorkspaceMount(mount api.WorkerWorkspaceMount, network compute.NetworkPolicy) string {
@@ -102,25 +100,4 @@ func NetworkPolicyJSON(network compute.NetworkPolicy) json.RawMessage {
 		return json.RawMessage(`{}`)
 	}
 	return json.RawMessage(body)
-}
-
-func NewInstanceToken() (string, error) {
-	return auth.GenerateOpaqueToken(32)
-}
-
-func substrateKey(sandboxDigest string, sandboxFormat string, imageDigest string, rootfsDigest string, runtimeABI string, guestdABI string, adapterABI string, workspaceMountPath string) string {
-	key, err := substrate.CacheKey(substrate.Source{
-		SandboxArtifactDigest: sandboxDigest,
-		SandboxArtifactFormat: sandboxFormat,
-		ImageDigest:           imageDigest,
-		RootfsDigest:          rootfsDigest,
-		RuntimeABI:            runtimeABI,
-		GuestdABI:             guestdABI,
-		AdapterABI:            adapterABI,
-		WorkspaceMountPath:    workspaceMountPath,
-	})
-	if err != nil {
-		return ""
-	}
-	return key
 }

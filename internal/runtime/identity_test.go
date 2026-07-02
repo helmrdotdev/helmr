@@ -1,4 +1,4 @@
-package runtimeprep
+package runtime
 
 import (
 	"testing"

@@ -19,7 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
-	"github.com/helmrdotdev/helmr/internal/runtimeprep"
+	"github.com/helmrdotdev/helmr/internal/runtime"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
@@ -1048,23 +1048,23 @@ func writeFileFrameWithMetadataContext(ctx context.Context, session vm.Session, 
 }
 
 func preparedRuntimeKey(mount api.WorkerWorkspaceMount, network compute.NetworkPolicy) string {
-	return runtimeprep.KeyFromWorkspaceMount(mount, network)
+	return runtime.KeyFromWorkspaceMount(mount, network)
 }
 
 func preparedRuntimeKeyID(key string) string {
-	return runtimeprep.ID(key)
+	return runtime.ID(key)
 }
 
 func preparedRuntimeKeyHash(key string) string {
-	return runtimeprep.Hash(key)
+	return runtime.Hash(key)
 }
 
 func preparedRuntimeNetworkPolicyJSON(network compute.NetworkPolicy) json.RawMessage {
-	return runtimeprep.NetworkPolicyJSON(network)
+	return runtime.NetworkPolicyJSON(network)
 }
 
 func newPreparedRuntimeInstanceToken() (string, error) {
-	return runtimeprep.NewInstanceToken()
+	return runtime.NewInstanceToken()
 }
 
 func (p *PreparedRuntimePool) logInfo(message string, attrs ...any) {
