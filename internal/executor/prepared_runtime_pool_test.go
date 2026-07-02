@@ -46,17 +46,17 @@ func TestPreparedRuntimePoolCheckoutRequiresMatchingRuntimeInstance(t *testing.T
 		{session: sessionB, runtimeInstanceID: "instance-b", runtimeEpoch: 2, instanceToken: "token-b"},
 	}
 
-	if session, _, _, ok := pool.Checkout(mount); ok || session != nil {
+	if session, _, _, ok := pool.Checkout(context.Background(), mount); ok || session != nil {
 		t.Fatal("checkout without runtime instance id used a prepared session")
 	}
 	mount.RuntimeInstanceID = "instance-missing"
 	mount.RuntimeEpoch = 2
-	if session, _, _, ok := pool.Checkout(mount); ok || session != nil {
+	if session, _, _, ok := pool.Checkout(context.Background(), mount); ok || session != nil {
 		t.Fatal("checkout with missing runtime instance id used a prepared session")
 	}
 	mount.RuntimeInstanceID = "instance-b"
 	mount.RuntimeEpoch = 2
-	session, _, instanceToken, ok := pool.Checkout(mount)
+	session, _, instanceToken, ok := pool.Checkout(context.Background(), mount)
 	if !ok || session != sessionB || instanceToken != "token-b" {
 		t.Fatalf("checkout session = %v, token = %q, ok = %v; want instance-b session token-b true", session, instanceToken, ok)
 	}
@@ -91,7 +91,7 @@ func TestPreparedRuntimePoolCheckoutRequiresMatchingRuntimeEpoch(t *testing.T) {
 		{session: currentSession, runtimeInstanceID: "instance-a", runtimeEpoch: 2, instanceToken: "current-token"},
 	}
 
-	checkedOut, _, token, ok := pool.Checkout(mount)
+	checkedOut, _, token, ok := pool.Checkout(context.Background(), mount)
 	if !ok || checkedOut != currentSession || token != "current-token" {
 		t.Fatalf("checkout session=%v token=%q ok=%v, want current epoch session", checkedOut, token, ok)
 	}
@@ -100,7 +100,7 @@ func TestPreparedRuntimePoolCheckoutRequiresMatchingRuntimeEpoch(t *testing.T) {
 	}
 
 	mount.RuntimeEpoch = 3
-	if checkedOut, _, token, ok := pool.Checkout(mount); ok || checkedOut != nil || token != "" {
+	if checkedOut, _, token, ok := pool.Checkout(context.Background(), mount); ok || checkedOut != nil || token != "" {
 		t.Fatalf("checkout with unknown epoch returned session=%v token=%q ok=%v, want miss", checkedOut, token, ok)
 	}
 }
@@ -129,7 +129,7 @@ func TestPreparedRuntimePoolCheckoutRejectsMissingRuntimeToken(t *testing.T) {
 		{session: session, runtimeInstanceID: "instance-a", runtimeEpoch: 1},
 	}
 
-	checkedOut, _, token, ok := pool.Checkout(mount)
+	checkedOut, _, token, ok := pool.Checkout(context.Background(), mount)
 	if ok || checkedOut != nil || token != "" {
 		t.Fatalf("checkout returned session=%v token=%q ok=%v, want miss", checkedOut, token, ok)
 	}
@@ -282,7 +282,7 @@ func TestPreparedRuntimePoolStopRuntimeFromCommandClaimsEntryBeforeClose(t *test
 	case <-time.After(time.Second):
 		t.Fatal("stop command did not enter session close")
 	}
-	checkedOut, _, _, ok := pool.Checkout(mount)
+	checkedOut, _, _, ok := pool.Checkout(context.Background(), mount)
 	if ok || checkedOut != nil {
 		t.Fatal("checkout returned a prepared runtime while stop command owned its session")
 	}
@@ -617,7 +617,7 @@ func TestPreparedRuntimePoolCheckoutWaitsForMarkReady(t *testing.T) {
 	}
 	checkout := make(chan checkoutResult, 1)
 	go func() {
-		checkedOut, _, token, ok := pool.Checkout(mount)
+		checkedOut, _, token, ok := pool.Checkout(context.Background(), mount)
 		checkout <- checkoutResult{session: checkedOut, token: token, ok: ok}
 	}()
 	select {
@@ -633,7 +633,7 @@ func TestPreparedRuntimePoolCheckoutWaitsForMarkReady(t *testing.T) {
 	if !result.ok || result.session != session || result.token != "token-1" {
 		t.Fatalf("checkout after MarkReady returned = session:%v token:%q ok:%v, want prepared session", result.session, result.token, result.ok)
 	}
-	if checkedOut, _, token, ok := pool.Checkout(mount); ok || checkedOut != nil || token != "" {
+	if checkedOut, _, token, ok := pool.Checkout(context.Background(), mount); ok || checkedOut != nil || token != "" {
 		t.Fatalf("second checkout after MarkReady returned = session:%v token:%q ok:%v, want no local ready entry", checkedOut, token, ok)
 	}
 }
@@ -715,7 +715,7 @@ func TestPreparedRuntimePoolCheckoutRejectsMarkReadyFailure(t *testing.T) {
 	}
 	checkout := make(chan checkoutResult, 1)
 	go func() {
-		checkedOut, _, token, ok := pool.Checkout(mount)
+		checkedOut, _, token, ok := pool.Checkout(context.Background(), mount)
 		checkout <- checkoutResult{session: checkedOut, token: token, ok: ok}
 	}()
 	select {
@@ -730,6 +730,114 @@ func TestPreparedRuntimePoolCheckoutRejectsMarkReadyFailure(t *testing.T) {
 	result := <-checkout
 	if result.ok || result.session != nil || result.token != "" {
 		t.Fatalf("checkout after MarkReady failed = session:%v token:%q ok:%v, want miss", result.session, result.token, result.ok)
+	}
+	if session.closeCount != 1 {
+		t.Fatalf("session close count = %d, want 1", session.closeCount)
+	}
+	if len(instances.failed) != 1 || instances.failed[0].ID != "instance-1" {
+		t.Fatalf("failed instances = %+v, want instance-1", instances.failed)
+	}
+}
+
+func TestPreparedRuntimePoolCheckoutReadyWaitRespectsContext(t *testing.T) {
+	body := []byte("sandbox")
+	digest := sha256sum.DigestBytes(body)
+	clientStream, serverStream := net.Pipe()
+	defer clientStream.Close()
+	defer serverStream.Close()
+	session := &fakePreparedRuntimeSession{
+		stream: clientStream,
+		wait:   make(chan error, 1),
+	}
+	t.Cleanup(func() {
+		session.exit(context.Canceled)
+	})
+	source := api.WorkerPreparedRuntimeSource{
+		DeploymentSandboxID:        "sandbox-1",
+		RuntimeID:                  "runtime-1",
+		RootfsDigest:               "rootfs-1",
+		RuntimeABI:                 "runtime-abi",
+		GuestdABI:                  "guestd-abi",
+		AdapterABI:                 "adapter-abi",
+		ImageDigest:                "image-1",
+		ImageFormat:                "oci-tar",
+		WorkspaceMountPath:         "/workspace",
+		SandboxImageArtifact:       api.CASObject{Digest: digest, SizeBytes: int64(len(body)), MediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar"},
+		SandboxImageArtifactFormat: "oci-tar",
+		ReservedCpuMillis:          1000,
+		ReservedMemoryMiB:          1024,
+		ReservedDiskMiB:            4096,
+		ReservedExecutionSlots:     1,
+	}
+	pool := NewPreparedRuntimePool(successfulPreparedRuntimeConnector{session: session}, fakePreparedRuntimeCAS{
+		object: cas.Object{Digest: digest, SizeBytes: int64(len(body)), MediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar"},
+		body:   body,
+	}, 1, nil)
+	mount := preparedRuntimeWorkspaceMountFromSource(source)
+	enteredReady := make(chan struct{})
+	releaseReady := make(chan struct{})
+	instances := &fakePreparedRuntimeInstanceClient{warmSource: source}
+	instances.onReady = func(api.WorkerRuntimeInstanceStateRequest) {
+		close(enteredReady)
+		<-releaseReady
+	}
+	pool.RuntimeInstances = instances
+	go acknowledgePreparedRuntime(t, serverStream)
+	payload, err := json.Marshal(api.WorkerRuntimePrepareCommand{
+		DeploymentSandboxID: "sandbox-1",
+		RuntimeInstance: api.WorkerRuntimeInstance{
+			ID:            "instance-1",
+			InstanceToken: "token-1",
+		},
+		Source: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, 1)
+	go func() {
+		errs <- pool.WarmFromCommand(context.Background(), instances, api.WorkerCapabilities{
+			RuntimeID:    "runtime-1",
+			RootfsDigest: "rootfs-1",
+			RuntimeABI:   "runtime-abi",
+		}, api.WorkerCommand{ID: 1, Kind: "runtime_prepare", Payload: payload})
+	}()
+	select {
+	case <-enteredReady:
+	case <-time.After(time.Second):
+		t.Fatal("MarkRuntimeInstanceReady was not reached")
+	}
+	mount.RuntimeInstanceID = "instance-1"
+	mount.RuntimeEpoch = 1
+	ctx, cancel := context.WithCancel(context.Background())
+	type checkoutResult struct {
+		session vm.Session
+		token   string
+		ok      bool
+	}
+	checkout := make(chan checkoutResult, 1)
+	go func() {
+		checkedOut, _, token, ok := pool.Checkout(ctx, mount)
+		checkout <- checkoutResult{session: checkedOut, token: token, ok: ok}
+	}()
+	select {
+	case result := <-checkout:
+		t.Fatalf("checkout while MarkReady blocked = session:%v token:%q ok:%v, want wait", result.session, result.token, result.ok)
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	var result checkoutResult
+	select {
+	case result = <-checkout:
+	case <-time.After(time.Second):
+		t.Fatal("checkout did not return after context cancellation")
+	}
+	if result.ok || result.session != nil || result.token != "" {
+		t.Fatalf("checkout after context cancellation = session:%v token:%q ok:%v, want miss", result.session, result.token, result.ok)
+	}
+	close(releaseReady)
+	if err := <-errs; err != nil {
+		t.Fatal(err)
 	}
 	if session.closeCount != 1 {
 		t.Fatalf("session close count = %d, want 1", session.closeCount)
@@ -813,7 +921,7 @@ func TestPreparedRuntimePoolCheckoutRejectsExitedSessionAfterMarkReady(t *testin
 	}
 	checkout := make(chan checkoutResult, 1)
 	go func() {
-		checkedOut, _, token, ok := pool.Checkout(mount)
+		checkedOut, _, token, ok := pool.Checkout(context.Background(), mount)
 		checkout <- checkoutResult{session: checkedOut, token: token, ok: ok}
 	}()
 	select {
@@ -1071,7 +1179,7 @@ func TestPreparedRuntimePoolMarkReadyDoesNotBlockCheckout(t *testing.T) {
 	}
 	mount.RuntimeInstanceID = "instance-existing"
 	mount.RuntimeEpoch = 1
-	session, _, token, ok := pool.Checkout(mount)
+	session, _, token, ok := pool.Checkout(context.Background(), mount)
 	if !ok || session != existingSession || token != "token-existing" {
 		t.Fatalf("checkout while MarkReady blocked = session:%v token:%q ok:%v, want existing ready entry", session, token, ok)
 	}
@@ -1219,7 +1327,7 @@ func TestPreparedRuntimePoolCheckoutRejectsExitedReadyEntry(t *testing.T) {
 		exit:              exit,
 	}}
 
-	checkedOut, _, _, ok := pool.Checkout(mount)
+	checkedOut, _, _, ok := pool.Checkout(context.Background(), mount)
 	if ok || checkedOut != nil {
 		t.Fatal("checkout returned an exited prepared runtime")
 	}

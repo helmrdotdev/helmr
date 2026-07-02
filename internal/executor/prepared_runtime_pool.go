@@ -104,11 +104,15 @@ func (r *preparedRuntimeReady) finish(err error) {
 	})
 }
 
-func (r *preparedRuntimeReady) wait() error {
+func (r *preparedRuntimeReady) wait(ctx context.Context) error {
 	if r == nil {
 		return nil
 	}
-	<-r.done
+	select {
+	case <-r.done:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	r.mu.Lock()
 	err := r.err
 	r.mu.Unlock()
@@ -168,9 +172,12 @@ func NewPreparedRuntimePool(connector vm.Connector, store cas.Store, size int, l
 	}
 }
 
-func (p *PreparedRuntimePool) Checkout(mount api.WorkerWorkspaceMount) (vm.Session, string, string, bool) {
+func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount api.WorkerWorkspaceMount) (vm.Session, string, string, bool) {
 	if p == nil || p.Size <= 0 {
 		return nil, "", "", false
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	key := preparedRuntimeKeyFromWorkspaceMount(mount, p.Network)
 	keyID := runtime.ID(key)
@@ -217,7 +224,7 @@ func (p *PreparedRuntimePool) Checkout(mount api.WorkerWorkspaceMount) (vm.Sessi
 	p.removeReadyEntryAtLocked(key, entries, index)
 	available := p.readyCountLocked()
 	p.mu.Unlock()
-	if err := entry.ready.wait(); err != nil {
+	if err := entry.ready.wait(ctx); err != nil {
 		p.closeSession(context.Background(), entry.session)
 		stateCtx, cancelState := preparedRuntimeControlContext(context.Background())
 		defer cancelState()
@@ -708,6 +715,12 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	p.entries[key] = append(p.entries[key], entry)
 	p.mu.Unlock()
 	keepSession = true
+	if err, exited := entry.exit.exited(); exited {
+		if failErr := p.removeReadyEntryAndFail(key, entry, preparedRuntimeExitCause(err), true); failErr != nil {
+			return errors.Join(preparedRuntimeExitCause(err), failErr)
+		}
+		return nil
+	}
 	if _, err := p.RuntimeInstances.MarkRuntimeInstanceReady(ctx, api.WorkerRuntimeInstanceStateRequest{
 		ID:                         runtimeInstanceID,
 		InstanceToken:              instanceToken,

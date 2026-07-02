@@ -411,7 +411,7 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 		return nil, "", "", func() {}, "", false, workspaceMountFailure{code: "workspace_mount_temp_unavailable", err: fmt.Errorf("create mount temp dir: %w", err)}
 	}
 	if m.RuntimePool != nil {
-		if session, key, runtimeInstanceToken, ok := m.RuntimePool.Checkout(*mount); ok {
+		if session, key, runtimeInstanceToken, ok := m.RuntimePool.Checkout(ctx, *mount); ok {
 			mount.RuntimeInstanceToken = strings.TrimSpace(runtimeInstanceToken)
 			if mount.RuntimeInstanceToken == "" {
 				_ = session.Close(context.Background())
