@@ -49,7 +49,7 @@ DO UPDATE SET
     deployment_stream_id = streams.deployment_stream_id,
     schema_fingerprint = streams.schema_fingerprint,
     metadata = streams.metadata
-RETURNING id, org_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
+RETURNING id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
 `
 
 type EnsureSessionStreamParams struct {
@@ -76,6 +76,7 @@ func (q *Queries) EnsureSessionStream(ctx context.Context, arg EnsureSessionStre
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -91,7 +92,7 @@ func (q *Queries) EnsureSessionStream(ctx context.Context, arg EnsureSessionStre
 }
 
 const getSessionStreamByName = `-- name: GetSessionStreamByName :one
-SELECT id, org_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
+SELECT id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
   FROM streams
  WHERE org_id = $1
    AND project_id = $2
@@ -123,6 +124,7 @@ func (q *Queries) GetSessionStreamByName(ctx context.Context, arg GetSessionStre
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -138,7 +140,7 @@ func (q *Queries) GetSessionStreamByName(ctx context.Context, arg GetSessionStre
 }
 
 const getStream = `-- name: GetStream :one
-SELECT id, org_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
+SELECT id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
   FROM streams
  WHERE org_id = $1
    AND project_id = $2
@@ -164,6 +166,7 @@ func (q *Queries) GetStream(ctx context.Context, arg GetStreamParams) (Stream, e
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -179,7 +182,7 @@ func (q *Queries) GetStream(ctx context.Context, arg GetStreamParams) (Stream, e
 }
 
 const listSessionStreams = `-- name: ListSessionStreams :many
-SELECT id, org_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
+SELECT id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
   FROM streams
  WHERE org_id = $1
    AND project_id = $2
@@ -212,6 +215,7 @@ func (q *Queries) ListSessionStreams(ctx context.Context, arg ListSessionStreams
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
+			&i.CellID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.SessionID,

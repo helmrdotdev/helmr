@@ -32,6 +32,54 @@ variable "public_url" {
   nullable    = true
 }
 
+variable "deployment_mode" {
+  description = "Helmr deployment mode passed to control-plane tasks."
+  type        = string
+  default     = "self-hosted"
+
+  validation {
+    condition     = contains(["self-hosted", "managed-cloud"], var.deployment_mode)
+    error_message = "deployment_mode must be self-hosted or managed-cloud."
+  }
+}
+
+variable "cell_id" {
+  description = "Managed-cloud cell ID for this control-plane stack."
+  type        = string
+  default     = "us-east-1-cell-1"
+
+  validation {
+    condition     = trimspace(var.cell_id) != ""
+    error_message = "cell_id must be non-empty."
+  }
+}
+
+variable "clickhouse_url" {
+  description = "Optional ClickHouse HTTP endpoint for historical telemetry."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "clickhouse_user" {
+  description = "Optional ClickHouse username for historical telemetry."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "clickhouse_password_secret_arn" {
+  description = "Optional Secrets Manager ARN for HELMR_CLICKHOUSE_PASSWORD."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.clickhouse_password_secret_arn == null || trimspace(var.clickhouse_password_secret_arn) != ""
+    error_message = "clickhouse_password_secret_arn must be null or a non-empty Secrets Manager ARN."
+  }
+}
+
 variable "control_image" {
   description = "Container image URI containing helmr-control and helmr-dispatcher. Managed release flows should pass a digest-pinned image."
   type        = string

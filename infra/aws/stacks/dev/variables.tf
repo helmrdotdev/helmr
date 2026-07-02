@@ -13,6 +13,39 @@ variable "public_url" {
   type        = string
 }
 
+variable "deployment_mode" {
+  description = "Helmr deployment mode passed to control-plane tasks."
+  type        = string
+  default     = "managed-cloud"
+}
+
+variable "cell_id" {
+  description = "Managed-cloud cell ID for this stack."
+  type        = string
+  default     = "us-east-1-cell-1"
+}
+
+variable "clickhouse_url" {
+  description = "Optional ClickHouse HTTP endpoint for historical telemetry."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "clickhouse_user" {
+  description = "Optional ClickHouse username for historical telemetry."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "clickhouse_password_secret_arn" {
+  description = "Optional Secrets Manager ARN for HELMR_CLICKHOUSE_PASSWORD."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "cloudfront_origin_domain_name" {
   description = "DNS name CloudFront uses for the HTTPS ALB origin when enable_cloudfront is true. This name must resolve to the public ALB and be covered by certificate_arn."
   type        = string

@@ -23,6 +23,7 @@ import (
 type testServerConfig struct {
 	Log                 *slog.Logger
 	DeploymentMode      string
+	CellID              string
 	DB                  db.Querier
 	DBTX                dbTXBeginner
 	TX                  TxBeginner
@@ -67,6 +68,9 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	}
 	if testCfg.DeploymentMode != "" {
 		cfg.DeploymentMode = testCfg.DeploymentMode
+	}
+	if testCfg.CellID != "" {
+		cfg.CellID = testCfg.CellID
 	}
 	if testCfg.DB != nil {
 		cfg.DB = testTransactionalStore{Querier: testCfg.DB}

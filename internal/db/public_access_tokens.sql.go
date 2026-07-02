@@ -21,7 +21,7 @@ UPDATE public_access_tokens
    AND state = 'active'
    AND expires_at > now()
    AND (max_uses IS NULL OR used_count < max_uses)
-RETURNING id, org_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+RETURNING id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
 `
 
 type ConsumePublicAccessTokenParams struct {
@@ -35,6 +35,7 @@ func (q *Queries) ConsumePublicAccessToken(ctx context.Context, arg ConsumePubli
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TokenHash,
@@ -76,7 +77,7 @@ VALUES (
     COALESCE($8::jsonb, '{}'::jsonb),
     COALESCE($9::jsonb, '{}'::jsonb)
 )
-RETURNING id, org_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+RETURNING id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
 `
 
 type CreatePublicAccessTokenParams struct {
@@ -107,6 +108,7 @@ func (q *Queries) CreatePublicAccessToken(ctx context.Context, arg CreatePublicA
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TokenHash,
@@ -197,7 +199,7 @@ SELECT $1,
            )
        )
    )
-RETURNING id, org_id, project_id, environment_id, public_access_token_id, scope_type, token_id, stream_id, correlation_id, created_at
+RETURNING id, org_id, cell_id, project_id, environment_id, public_access_token_id, scope_type, token_id, stream_id, correlation_id, created_at
 `
 
 type CreatePublicAccessTokenScopeParams struct {
@@ -228,6 +230,7 @@ func (q *Queries) CreatePublicAccessTokenScope(ctx context.Context, arg CreatePu
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.PublicAccessTokenID,
@@ -241,7 +244,7 @@ func (q *Queries) CreatePublicAccessTokenScope(ctx context.Context, arg CreatePu
 }
 
 const getPublicAccessToken = `-- name: GetPublicAccessToken :one
-SELECT id, org_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+SELECT id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
   FROM public_access_tokens
  WHERE org_id = $1
    AND id = $2
@@ -258,6 +261,7 @@ func (q *Queries) GetPublicAccessToken(ctx context.Context, arg GetPublicAccessT
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TokenHash,
@@ -277,7 +281,7 @@ func (q *Queries) GetPublicAccessToken(ctx context.Context, arg GetPublicAccessT
 }
 
 const getPublicAccessTokenStreamScope = `-- name: GetPublicAccessTokenStreamScope :one
-SELECT public_access_token_scopes.id, public_access_token_scopes.org_id, public_access_token_scopes.project_id, public_access_token_scopes.environment_id, public_access_token_scopes.public_access_token_id, public_access_token_scopes.scope_type, public_access_token_scopes.token_id, public_access_token_scopes.stream_id, public_access_token_scopes.correlation_id, public_access_token_scopes.created_at
+SELECT public_access_token_scopes.id, public_access_token_scopes.org_id, public_access_token_scopes.cell_id, public_access_token_scopes.project_id, public_access_token_scopes.environment_id, public_access_token_scopes.public_access_token_id, public_access_token_scopes.scope_type, public_access_token_scopes.token_id, public_access_token_scopes.stream_id, public_access_token_scopes.correlation_id, public_access_token_scopes.created_at
   FROM public_access_token_scopes
   JOIN public_access_tokens
     ON public_access_tokens.org_id = public_access_token_scopes.org_id
@@ -322,6 +326,7 @@ func (q *Queries) GetPublicAccessTokenStreamScope(ctx context.Context, arg GetPu
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.PublicAccessTokenID,
@@ -335,7 +340,7 @@ func (q *Queries) GetPublicAccessTokenStreamScope(ctx context.Context, arg GetPu
 }
 
 const getPublicAccessTokenTokenScope = `-- name: GetPublicAccessTokenTokenScope :one
-SELECT public_access_token_scopes.id, public_access_token_scopes.org_id, public_access_token_scopes.project_id, public_access_token_scopes.environment_id, public_access_token_scopes.public_access_token_id, public_access_token_scopes.scope_type, public_access_token_scopes.token_id, public_access_token_scopes.stream_id, public_access_token_scopes.correlation_id, public_access_token_scopes.created_at
+SELECT public_access_token_scopes.id, public_access_token_scopes.org_id, public_access_token_scopes.cell_id, public_access_token_scopes.project_id, public_access_token_scopes.environment_id, public_access_token_scopes.public_access_token_id, public_access_token_scopes.scope_type, public_access_token_scopes.token_id, public_access_token_scopes.stream_id, public_access_token_scopes.correlation_id, public_access_token_scopes.created_at
   FROM public_access_token_scopes
   JOIN public_access_tokens
     ON public_access_tokens.org_id = public_access_token_scopes.org_id
@@ -372,6 +377,7 @@ func (q *Queries) GetPublicAccessTokenTokenScope(ctx context.Context, arg GetPub
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.PublicAccessTokenID,
@@ -385,7 +391,7 @@ func (q *Queries) GetPublicAccessTokenTokenScope(ctx context.Context, arg GetPub
 }
 
 const listPublicAccessTokenScopes = `-- name: ListPublicAccessTokenScopes :many
-SELECT id, org_id, project_id, environment_id, public_access_token_id, scope_type, token_id, stream_id, correlation_id, created_at
+SELECT id, org_id, cell_id, project_id, environment_id, public_access_token_id, scope_type, token_id, stream_id, correlation_id, created_at
   FROM public_access_token_scopes
  WHERE org_id = $1
    AND project_id = $2
@@ -418,6 +424,7 @@ func (q *Queries) ListPublicAccessTokenScopes(ctx context.Context, arg ListPubli
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
+			&i.CellID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.PublicAccessTokenID,
@@ -438,7 +445,7 @@ func (q *Queries) ListPublicAccessTokenScopes(ctx context.Context, arg ListPubli
 }
 
 const lockPublicAccessTokenByHash = `-- name: LockPublicAccessTokenByHash :one
-SELECT id, org_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+SELECT id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
   FROM public_access_tokens
  WHERE token_hash = $1
  FOR UPDATE
@@ -450,6 +457,7 @@ func (q *Queries) LockPublicAccessTokenByHash(ctx context.Context, tokenHash []b
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TokenHash,
@@ -476,7 +484,7 @@ UPDATE public_access_tokens
  WHERE org_id = $1
    AND id = $2
    AND state = 'active'
-RETURNING id, org_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+RETURNING id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
 `
 
 type RevokePublicAccessTokenParams struct {
@@ -490,6 +498,7 @@ func (q *Queries) RevokePublicAccessToken(ctx context.Context, arg RevokePublicA
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TokenHash,

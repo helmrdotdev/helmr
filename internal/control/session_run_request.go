@@ -308,6 +308,7 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	run, err := store.CreateScopedRun(ctx, db.CreateScopedRunParams{
 		ID:                    runID,
 		OrgID:                 locked.OrgID,
+		CellID:                locked.CellID,
 		ProjectID:             locked.ProjectID,
 		EnvironmentID:         locked.EnvironmentID,
 		DeploymentID:          deploymentTask.DeploymentID,
@@ -331,7 +332,7 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 		Ttl:                   scheduling.ttl,
 		QueuedExpiresAt:       scheduling.queuedExpiresAt,
 		MaxActiveDurationMs:   int64(maxDurationSeconds) * 1000,
-		TraceID:               traceID,
+		TraceID:               pgtype.Text{String: traceID, Valid: true},
 		RootSpanID:            rootSpanID,
 		EventPayload:          createdPayload,
 	})

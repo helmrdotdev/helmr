@@ -51,7 +51,7 @@ UPDATE session_run_requests
        updated_at = now()
   FROM eligible
  WHERE session_run_requests.id = eligible.id
-RETURNING session_run_requests.id, session_run_requests.org_id, session_run_requests.project_id, session_run_requests.environment_id, session_run_requests.session_id, session_run_requests.stream_record_id, session_run_requests.stream_id, session_run_requests.cause_kind, session_run_requests.status, session_run_requests.attempts, session_run_requests.next_attempt_at, session_run_requests.last_error, session_run_requests.claimed_at, session_run_requests.claim_expires_at, session_run_requests.claim_owner, session_run_requests.run_id, session_run_requests.error_message, session_run_requests.created_at, session_run_requests.updated_at
+RETURNING session_run_requests.id, session_run_requests.org_id, session_run_requests.cell_id, session_run_requests.project_id, session_run_requests.environment_id, session_run_requests.session_id, session_run_requests.stream_record_id, session_run_requests.stream_id, session_run_requests.cause_kind, session_run_requests.status, session_run_requests.attempts, session_run_requests.next_attempt_at, session_run_requests.last_error, session_run_requests.claimed_at, session_run_requests.claim_expires_at, session_run_requests.claim_owner, session_run_requests.run_id, session_run_requests.error_message, session_run_requests.created_at, session_run_requests.updated_at
 `
 
 type ClaimDueSessionRunRequestsParams struct {
@@ -84,6 +84,7 @@ func (q *Queries) ClaimDueSessionRunRequests(ctx context.Context, arg ClaimDueSe
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
+			&i.CellID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.SessionID,
@@ -134,7 +135,7 @@ INSERT INTO session_run_requests (
 )
 ON CONFLICT (org_id, project_id, environment_id, stream_record_id)
 DO UPDATE SET updated_at = session_run_requests.updated_at
-RETURNING id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
+RETURNING id, org_id, cell_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
 `
 
 type EnsureSessionRunRequestForStreamRecordParams struct {
@@ -161,6 +162,7 @@ func (q *Queries) EnsureSessionRunRequestForStreamRecord(ctx context.Context, ar
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -183,7 +185,7 @@ func (q *Queries) EnsureSessionRunRequestForStreamRecord(ctx context.Context, ar
 }
 
 const getSessionRunRequest = `-- name: GetSessionRunRequest :one
-SELECT id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
+SELECT id, org_id, cell_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
   FROM session_run_requests
  WHERE org_id = $1
    AND project_id = $2
@@ -209,6 +211,7 @@ func (q *Queries) GetSessionRunRequest(ctx context.Context, arg GetSessionRunReq
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -232,7 +235,7 @@ func (q *Queries) GetSessionRunRequest(ctx context.Context, arg GetSessionRunReq
 
 const markSessionRunRequestConsumedByActiveRun = `-- name: MarkSessionRunRequestConsumedByActiveRun :one
 WITH target AS MATERIALIZED (
-    SELECT id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
+    SELECT id, org_id, cell_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
       FROM session_run_requests
      WHERE session_run_requests.org_id = $1
        AND session_run_requests.project_id = $2
@@ -272,7 +275,7 @@ cancelled_runs AS (
        AND runs.environment_id = target.environment_id
        AND runs.id = target.run_id
        AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+    RETURNING runs.id, runs.org_id, runs.cell_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
 ),
 cancelled_attempts AS (
     UPDATE run_attempts
@@ -341,7 +344,7 @@ UPDATE session_run_requests
    AND session_run_requests.project_id = target.project_id
    AND session_run_requests.environment_id = target.environment_id
    AND session_run_requests.id = target.id
-RETURNING session_run_requests.id, session_run_requests.org_id, session_run_requests.project_id, session_run_requests.environment_id, session_run_requests.session_id, session_run_requests.stream_record_id, session_run_requests.stream_id, session_run_requests.cause_kind, session_run_requests.status, session_run_requests.attempts, session_run_requests.next_attempt_at, session_run_requests.last_error, session_run_requests.claimed_at, session_run_requests.claim_expires_at, session_run_requests.claim_owner, session_run_requests.run_id, session_run_requests.error_message, session_run_requests.created_at, session_run_requests.updated_at
+RETURNING session_run_requests.id, session_run_requests.org_id, session_run_requests.cell_id, session_run_requests.project_id, session_run_requests.environment_id, session_run_requests.session_id, session_run_requests.stream_record_id, session_run_requests.stream_id, session_run_requests.cause_kind, session_run_requests.status, session_run_requests.attempts, session_run_requests.next_attempt_at, session_run_requests.last_error, session_run_requests.claimed_at, session_run_requests.claim_expires_at, session_run_requests.claim_owner, session_run_requests.run_id, session_run_requests.error_message, session_run_requests.created_at, session_run_requests.updated_at
 `
 
 type MarkSessionRunRequestConsumedByActiveRunParams struct {
@@ -364,6 +367,7 @@ func (q *Queries) MarkSessionRunRequestConsumedByActiveRun(ctx context.Context, 
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -401,7 +405,7 @@ UPDATE session_run_requests
 	   AND id = $5
 	   AND status = 'claimed'
 	   AND claim_owner = $6
-	RETURNING id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
+	RETURNING id, org_id, cell_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
 `
 
 type MarkSessionRunRequestCreatedParams struct {
@@ -426,6 +430,7 @@ func (q *Queries) MarkSessionRunRequestCreated(ctx context.Context, arg MarkSess
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -462,7 +467,7 @@ UPDATE session_run_requests
 	   AND id = $5
 	   AND status = 'claimed'
 	   AND claim_owner = $6
-	RETURNING id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
+	RETURNING id, org_id, cell_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
 `
 
 type MarkSessionRunRequestFailedParams struct {
@@ -487,6 +492,7 @@ func (q *Queries) MarkSessionRunRequestFailed(ctx context.Context, arg MarkSessi
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -523,7 +529,7 @@ UPDATE session_run_requests
 	   AND id = $5
 	   AND status = 'claimed'
 	   AND claim_owner = $6
-	RETURNING id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
+	RETURNING id, org_id, cell_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
 `
 
 type MarkSessionRunRequestSkippedParams struct {
@@ -548,6 +554,7 @@ func (q *Queries) MarkSessionRunRequestSkipped(ctx context.Context, arg MarkSess
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -585,7 +592,7 @@ UPDATE session_run_requests
 	   AND id = $6
 	   AND status = 'claimed'
 	   AND claim_owner = $7
-	RETURNING id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
+	RETURNING id, org_id, cell_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
 `
 
 type ReleaseSessionRunRequestForRetryParams struct {
@@ -612,6 +619,7 @@ func (q *Queries) ReleaseSessionRunRequestForRetry(ctx context.Context, arg Rele
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -72,7 +71,7 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 		RunID:       pgvalue.UUID(runID),
 	})
 	if isNoRows(err) {
-		writeJSON(w, http.StatusOK, api.LogSnapshotResponse{Cursor: "0"})
+		writeJSON(w, http.StatusOK, api.LogSnapshotResponse{Cursor: telemetryCursor(0)})
 		return
 	}
 	if err != nil {
@@ -83,7 +82,7 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.LogSnapshotResponse{
 		StdoutBase64: base64.StdEncoding.EncodeToString(logs.Stdout),
 		StderrBase64: base64.StdEncoding.EncodeToString(logs.Stderr),
-		Cursor:       strconv.FormatInt(logs.Cursor, 10),
+		Cursor:       telemetryCursor(logs.Cursor),
 		StdoutBytes:  logs.StdoutBytes,
 		StderrBytes:  logs.StderrBytes,
 		Truncated:    logs.Truncated.Bool,
@@ -170,9 +169,9 @@ func (s *Server) writeRunLogChunksAfter(ctx context.Context, w http.ResponseWrit
 	return cursor, len(rows), nil
 }
 
-func runLogChunkResponse(chunk db.RunLogChunk) api.RunLogChunk {
+func runLogChunkResponse(chunk db.RunLogHotChunk) api.RunLogChunk {
 	return api.RunLogChunk{
-		ID:            strconv.FormatInt(chunk.Seq, 10),
+		ID:            telemetryCursor(chunk.Seq),
 		RunID:         pgvalue.MustUUIDValue(chunk.RunID).String(),
 		RunLeaseID:    pgvalue.MustUUIDValue(chunk.RunLeaseID).String(),
 		AttemptNumber: chunk.AttemptNumber,

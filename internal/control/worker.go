@@ -107,6 +107,7 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 	credential, err := s.db.AuthenticateWorkerInstanceCredential(r.Context(), db.AuthenticateWorkerInstanceCredentialParams{
 		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
 		SecretHash:       secretHash,
+		CellID:           s.cellID,
 	})
 	if isNoRows(err) {
 		writeError(w, unauthorized(errors.New("worker authentication is required")))
@@ -127,6 +128,8 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 	signed, err := auth.IssueWorkerToken(s.workerTokenSecret, auth.WorkerClaims{
 		WorkerInstanceID: pgvalue.MustUUIDValue(credential.WorkerInstanceID).String(),
 		CredentialID:     credentialID.String(),
+		CellID:           credential.CellID,
+		ClaimVersion:     credential.ClaimVersion,
 		IssuedAt:         now,
 		ExpiresAt:        expiresAt,
 	})

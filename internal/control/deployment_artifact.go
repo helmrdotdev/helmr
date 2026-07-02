@@ -13,10 +13,12 @@ import (
 	"os"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -29,7 +31,7 @@ type deploymentVersionMetadata struct {
 }
 
 type casObjectLookupStore interface {
-	GetCasObject(context.Context, string) (db.CasObject, error)
+	GetCasObject(context.Context, db.GetCasObjectParams) (db.CasObject, error)
 }
 
 func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +98,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		MediaType: artifactObject.MediaType,
 	}
 	cleanupArtifact := func() {
-		s.deleteUnreferencedDeploymentSourceArtifact(r.Context(), artifact.Digest)
+		s.deleteUnreferencedDeploymentSourceArtifact(r.Context(), actor.OrgID, artifact.Digest)
 	}
 	var response api.DeploymentResponse
 	err = s.inTx(r.Context(), func(work *txWork) error {
@@ -105,7 +107,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 			return unavailable(errors.New("deployment storage is not configured"))
 		}
 		var createErr error
-		response, createErr = createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
+		response, createErr = createDeploymentRecords(r.Context(), store, s.cellID, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
 		return createErr
 	})
 	if err != nil {
@@ -224,13 +226,17 @@ func readLimitedFormField(part *multipart.Part, limit int64) (string, error) {
 	return string(bytes), nil
 }
 
-func (s *Server) deleteUnreferencedDeploymentSourceArtifact(ctx context.Context, digest string) {
+func (s *Server) deleteUnreferencedDeploymentSourceArtifact(ctx context.Context, orgID uuid.UUID, digest string) {
 	digest = strings.TrimSpace(digest)
 	if digest == "" || s.cas == nil {
 		return
 	}
 	if store, ok := s.db.(casObjectLookupStore); ok {
-		if _, err := store.GetCasObject(ctx, digest); err == nil {
+		if _, err := store.GetCasObject(ctx, db.GetCasObjectParams{
+			OrgID:  pgvalue.UUID(orgID),
+			CellID: s.cellID,
+			Digest: digest,
+		}); err == nil {
 			return
 		} else if !isNoRows(err) {
 			if s.log != nil {

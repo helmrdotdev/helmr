@@ -91,7 +91,7 @@ func (s *Server) initialSetupTokenMatches(token string) bool {
 }
 
 type workerBootstrapTokenStore interface {
-	GetDefaultWorkerGroup(context.Context) (db.WorkerGroup, error)
+	EnsureDefaultWorkerGroup(context.Context, string) (db.WorkerGroup, error)
 	UpsertWorkerBootstrapToken(context.Context, db.UpsertWorkerBootstrapTokenParams) (db.WorkerBootstrapToken, error)
 }
 
@@ -103,12 +103,13 @@ func (s *Server) ensureWorkerBootstrapToken(ctx context.Context, queries workerB
 	if err != nil {
 		return err
 	}
-	workerGroup, err := queries.GetDefaultWorkerGroup(ctx)
+	workerGroup, err := queries.EnsureDefaultWorkerGroup(ctx, s.cellID)
 	if err != nil {
 		return fmt.Errorf("get default worker group: %w", err)
 	}
 	_, err = queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		CellID:        s.cellID,
 		TokenHash:     tokenHash,
 		WorkerGroupID: workerGroup.ID,
 	})

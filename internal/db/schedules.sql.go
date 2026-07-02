@@ -1475,7 +1475,7 @@ updated_schedule AS (
        AND task_schedules.project_id = $2
        AND task_schedules.id = $3
        AND task_schedules.id = existing_schedule.id
-    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.created_at, task_schedules.updated_at,
+    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.cell_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.created_at, task_schedules.updated_at,
               (
                   existing_schedule.cron IS DISTINCT FROM $6
                   OR existing_schedule.timezone IS DISTINCT FROM $7
@@ -1539,10 +1539,10 @@ updated_instances AS (
            task_schedule_instances.environment_id = $8
            OR updated_schedule.timing_changed
        )
-    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.task_id, task_schedule_instances.run_options, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_fire_at, task_schedule_instances.last_fire_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_kind, task_schedule_instances.trigger_error_message, task_schedule_instances.last_trigger_run_id, task_schedule_instances.created_at, task_schedule_instances.updated_at
+    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.cell_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.task_id, task_schedule_instances.run_options, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_fire_at, task_schedule_instances.last_fire_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_kind, task_schedule_instances.trigger_error_message, task_schedule_instances.last_trigger_run_id, task_schedule_instances.created_at, task_schedule_instances.updated_at
 ),
 updated_instance AS (
-    SELECT id, schedule_id, org_id, project_id, environment_id, task_id, run_options, active, generation, next_fire_at, last_fire_at, retry_after, trigger_attempt_count, trigger_error_kind, trigger_error_message, last_trigger_run_id, created_at, updated_at
+    SELECT id, schedule_id, org_id, cell_id, project_id, environment_id, task_id, run_options, active, generation, next_fire_at, last_fire_at, retry_after, trigger_attempt_count, trigger_error_kind, trigger_error_message, last_trigger_run_id, created_at, updated_at
       FROM updated_instances
      WHERE environment_id = $8
 )
@@ -1670,7 +1670,7 @@ WITH updated_schedule AS (
      WHERE task_schedules.org_id = $1
        AND task_schedules.project_id = $2
        AND task_schedules.id = $3
-    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at
+    RETURNING id, org_id, cell_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at
 ),
 updated_instances AS (
     UPDATE task_schedule_instances
@@ -1686,10 +1686,10 @@ updated_instances AS (
       FROM updated_schedule
      WHERE task_schedule_instances.schedule_id = updated_schedule.id
        AND task_schedule_instances.environment_id = $6
-    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.task_id, task_schedule_instances.run_options, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_fire_at, task_schedule_instances.last_fire_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_kind, task_schedule_instances.trigger_error_message, task_schedule_instances.last_trigger_run_id, task_schedule_instances.created_at, task_schedule_instances.updated_at
+    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.cell_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.task_id, task_schedule_instances.run_options, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_fire_at, task_schedule_instances.last_fire_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_kind, task_schedule_instances.trigger_error_message, task_schedule_instances.last_trigger_run_id, task_schedule_instances.created_at, task_schedule_instances.updated_at
 ),
 updated_instance AS (
-    SELECT id, schedule_id, org_id, project_id, environment_id, task_id, run_options, active, generation, next_fire_at, last_fire_at, retry_after, trigger_attempt_count, trigger_error_kind, trigger_error_message, last_trigger_run_id, created_at, updated_at
+    SELECT id, schedule_id, org_id, cell_id, project_id, environment_id, task_id, run_options, active, generation, next_fire_at, last_fire_at, retry_after, trigger_attempt_count, trigger_error_kind, trigger_error_message, last_trigger_run_id, created_at, updated_at
       FROM updated_instances
      WHERE environment_id = $6
 )

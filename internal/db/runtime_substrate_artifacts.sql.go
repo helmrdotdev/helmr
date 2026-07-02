@@ -12,7 +12,7 @@ import (
 )
 
 const getRuntimeSubstrateArtifactForSandbox = `-- name: GetRuntimeSubstrateArtifactForSandbox :one
-SELECT runtime_substrate_artifacts.id, runtime_substrate_artifacts.org_id, runtime_substrate_artifacts.project_id, runtime_substrate_artifacts.environment_id, runtime_substrate_artifacts.deployment_sandbox_id, runtime_substrate_artifacts.artifact_id, runtime_substrate_artifacts.substrate_digest, runtime_substrate_artifacts.substrate_format, runtime_substrate_artifacts.builder_abi, runtime_substrate_artifacts.layout_abi, runtime_substrate_artifacts.substrate_size_bytes, runtime_substrate_artifacts.source, runtime_substrate_artifacts.created_by_worker_instance_id, runtime_substrate_artifacts.created_at, runtime_substrate_artifacts.updated_at, runtime_substrate_artifacts.retired_at, runtime_substrate_artifacts.last_referenced_at,
+SELECT runtime_substrate_artifacts.id, runtime_substrate_artifacts.org_id, runtime_substrate_artifacts.cell_id, runtime_substrate_artifacts.project_id, runtime_substrate_artifacts.environment_id, runtime_substrate_artifacts.deployment_sandbox_id, runtime_substrate_artifacts.artifact_id, runtime_substrate_artifacts.substrate_digest, runtime_substrate_artifacts.substrate_format, runtime_substrate_artifacts.builder_abi, runtime_substrate_artifacts.layout_abi, runtime_substrate_artifacts.substrate_size_bytes, runtime_substrate_artifacts.source, runtime_substrate_artifacts.created_by_worker_instance_id, runtime_substrate_artifacts.created_at, runtime_substrate_artifacts.updated_at, runtime_substrate_artifacts.retired_at, runtime_substrate_artifacts.last_referenced_at,
        artifacts.digest AS artifact_digest,
        artifacts.size_bytes AS artifact_size_bytes,
        artifacts.media_type AS artifact_media_type
@@ -48,6 +48,7 @@ type GetRuntimeSubstrateArtifactForSandboxParams struct {
 type GetRuntimeSubstrateArtifactForSandboxRow struct {
 	ID                        pgtype.UUID        `json:"id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
+	CellID                    string             `json:"cell_id"`
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	DeploymentSandboxID       pgtype.UUID        `json:"deployment_sandbox_id"`
@@ -83,6 +84,7 @@ func (q *Queries) GetRuntimeSubstrateArtifactForSandbox(ctx context.Context, arg
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentSandboxID,
@@ -142,7 +144,7 @@ DO UPDATE
    SET retired_at = NULL,
        last_referenced_at = now(),
        updated_at = now()
-RETURNING id, org_id, project_id, environment_id, deployment_sandbox_id, artifact_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, source, created_by_worker_instance_id, created_at, updated_at, retired_at, last_referenced_at
+RETURNING id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id, artifact_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, source, created_by_worker_instance_id, created_at, updated_at, retired_at, last_referenced_at
 `
 
 type UpsertRuntimeSubstrateArtifactParams struct {
@@ -181,6 +183,7 @@ func (q *Queries) UpsertRuntimeSubstrateArtifact(ctx context.Context, arg Upsert
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentSandboxID,

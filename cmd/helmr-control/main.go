@@ -170,6 +170,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	handler, err := control.NewServer(control.ServerConfig{
 		Log:                   log,
 		DeploymentMode:        cfg.DeploymentMode,
+		CellID:                cfg.CellID,
 		DB:                    queries,
 		TX:                    pool,
 		ReadinessDB:           pool,

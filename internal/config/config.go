@@ -12,6 +12,7 @@ import (
 )
 
 const DefaultPublicURL = "https://helmr.dev"
+const DefaultCellID = "us-east-1-cell-1"
 
 const (
 	DeploymentModeSelfHosted   = "self-hosted"
@@ -28,8 +29,12 @@ const (
 type Control struct {
 	Addr                    string
 	DeploymentMode          string
+	CellID                  string
 	DatabaseURL             string
 	RedisURL                string
+	ClickHouseURL           string
+	ClickHouseUser          string
+	ClickHousePassword      string
 	CASURI                  string
 	WorkerTokenSigningKey   string
 	WorkerBootstrapToken    string
@@ -55,6 +60,10 @@ type Control struct {
 type Dispatcher struct {
 	DatabaseURL                string
 	RedisURL                   string
+	CellID                     string
+	ClickHouseURL              string
+	ClickHouseUser             string
+	ClickHousePassword         string
 	AuthSecret                 string
 	SecretEncryptionKey        string
 	SecretEncryptionKeyOld     string

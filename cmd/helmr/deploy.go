@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -169,7 +168,7 @@ func deployCommand() *cobra.Command {
 
 type deploymentStatusClient interface {
 	GetDeployment(context.Context, string, api.GetDeploymentRequest) (api.DeploymentResponse, error)
-	FollowDeploymentEvents(context.Context, string, api.GetDeploymentRequest, int64, func(api.RunEvent) error) error
+	FollowDeploymentEvents(context.Context, string, api.GetDeploymentRequest, string, func(api.RunEvent) error) error
 }
 
 type deployReporter interface {
@@ -302,13 +301,13 @@ func waitForDeployment(ctx context.Context, control deploymentStatusClient, init
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	var cursor int64
+	var cursor string
 	for {
 		streamCtx, cancel := context.WithCancel(ctx)
 		terminal := false
 		err := control.FollowDeploymentEvents(streamCtx, initial.ID, scope, cursor, func(event api.RunEvent) error {
-			if parsed, parseErr := strconv.ParseInt(event.ID, 10, 64); parseErr == nil && parsed > cursor {
-				cursor = parsed
+			if event.ID != "" {
+				cursor = event.ID
 			}
 			if err := reporter.Event(event); err != nil {
 				return err

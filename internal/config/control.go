@@ -17,8 +17,12 @@ func LoadControl() (Control, error) {
 	cfg := Control{
 		Addr:                    env("HELMR_CONTROL_ADDR", ":8080"),
 		DeploymentMode:          env("HELMR_DEPLOYMENT_MODE", DeploymentModeSelfHosted),
+		CellID:                  env("HELMR_CELL_ID", DefaultCellID),
 		DatabaseURL:             envString("HELMR_DATABASE_URL"),
 		RedisURL:                env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
+		ClickHouseURL:           envString("HELMR_CLICKHOUSE_URL"),
+		ClickHouseUser:          envString("HELMR_CLICKHOUSE_USER"),
+		ClickHousePassword:      envString("HELMR_CLICKHOUSE_PASSWORD"),
 		CASURI:                  envString("HELMR_CAS_URI"),
 		WorkerTokenSigningKey:   envString("HELMR_WORKER_TOKEN_SIGNING_KEY"),
 		WorkerBootstrapToken:    envString("HELMR_WORKER_BOOTSTRAP_TOKEN"),
@@ -60,6 +64,9 @@ func LoadControl() (Control, error) {
 	}
 	if cfg.DeploymentMode != DeploymentModeSelfHosted && cfg.DeploymentMode != DeploymentModeManagedCloud {
 		return cfg, errors.New("HELMR_DEPLOYMENT_MODE must be self-hosted or managed-cloud")
+	}
+	if cfg.CellID == "" {
+		return cfg, errors.New("HELMR_CELL_ID is required")
 	}
 	if cfg.CASURI == "" {
 		return cfg, errors.New("HELMR_CAS_URI is required")

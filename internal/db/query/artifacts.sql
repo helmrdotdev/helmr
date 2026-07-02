@@ -2,6 +2,7 @@
 INSERT INTO artifacts (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     digest,
@@ -12,6 +13,7 @@ INSERT INTO artifacts (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(digest),
@@ -26,6 +28,7 @@ RETURNING *;
 INSERT INTO artifacts (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     digest,
@@ -36,6 +39,7 @@ INSERT INTO artifacts (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(digest),

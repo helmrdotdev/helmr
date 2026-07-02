@@ -97,12 +97,12 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		events = append(events, eventResponseFromRecord(row))
 	}
-	var nextCursor *int64
+	var nextCursor *string
 	if hasNext {
-		value := rows[len(rows)-1].Seq
+		value := telemetryCursor(rows[len(rows)-1].Seq)
 		nextCursor = &value
 	}
-	writeJSON(w, http.StatusOK, api.RunEventPage{Events: events, Cursor: cursor, NextCursor: nextCursor})
+	writeJSON(w, http.StatusOK, api.RunEventPage{Events: events, Cursor: telemetryCursor(cursor), NextCursor: nextCursor})
 }
 
 func (s *Server) followDeploymentEvents(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, deploymentID uuid.UUID, cursor int64) {

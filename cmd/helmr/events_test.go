@@ -205,17 +205,17 @@ func TestEventsCommandFollowsRunEvents(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		if request == 1 {
-			_, _ = w.Write([]byte("id: 1\nevent: run_event\ndata: {\"id\":\"1\",\"kind\":\"run.created\"}\n\n"))
+			_, _ = w.Write([]byte("id: tc1.eyJzIjoxfQ\nevent: run_event\ndata: {\"id\":\"tc1.eyJzIjoxfQ\",\"kind\":\"run.created\"}\n\n"))
 			return
 		}
 		if request > 2 {
 			<-r.Context().Done()
 			return
 		}
-		if got := r.Header.Get("Last-Event-ID"); got != "1" {
+		if got := r.Header.Get("Last-Event-ID"); got != "tc1.eyJzIjoxfQ" {
 			t.Fatalf("last event id = %q", got)
 		}
-		_, _ = w.Write([]byte("id: 2\nevent: run_event\ndata: {\"id\":\"2\",\"kind\":\"run.completed\"}\n\n"))
+		_, _ = w.Write([]byte("id: tc1.eyJzIjoyfQ\nevent: run_event\ndata: {\"id\":\"tc1.eyJzIjoyfQ\",\"kind\":\"run.completed\"}\n\n"))
 		time.AfterFunc(10*time.Millisecond, cancel)
 	}))
 	defer server.Close()
@@ -231,7 +231,7 @@ func TestEventsCommandFollowsRunEvents(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), `"id":"1"`) || !strings.Contains(out.String(), `"id":"2"`) {
+	if !strings.Contains(out.String(), `"id":"tc1.eyJzIjoxfQ"`) || !strings.Contains(out.String(), `"id":"tc1.eyJzIjoyfQ"`) {
 		t.Fatalf("output = %q", out.String())
 	}
 	if requests < 2 {
@@ -249,13 +249,13 @@ func TestLogsCommandFollowsRunLogs(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.LogSnapshotResponse{
 				StdoutBase64: base64.StdEncoding.EncodeToString([]byte("old\n")),
 				StderrBase64: "",
-				Cursor:       "7",
+				Cursor:       "tc1.eyJzIjo3fQ",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/logs" && r.URL.Query().Get("follow") == "1":
 			followRequests++
-			wantCursor := "7"
+			wantCursor := "tc1.eyJzIjo3fQ"
 			if followRequests == 2 {
-				wantCursor = "9"
+				wantCursor = "tc1.eyJzIjo5fQ"
 			}
 			if got := r.Header.Get("Last-Event-ID"); got != wantCursor {
 				t.Fatalf("last event id = %q", got)
@@ -264,9 +264,9 @@ func TestLogsCommandFollowsRunLogs(t *testing.T) {
 			if followRequests == 2 {
 				return
 			}
-			_, _ = io.WriteString(w, "id: 8\nevent: run_log\ndata: ")
+			_, _ = io.WriteString(w, "id: tc1.eyJzIjo4fQ\nevent: run_log\ndata: ")
 			_ = json.NewEncoder(w).Encode(api.RunLogChunk{
-				ID:            "8",
+				ID:            "tc1.eyJzIjo4fQ",
 				RunID:         "run-1",
 				RunLeaseID:    "run-lease-1",
 				AttemptNumber: 1,
@@ -276,9 +276,9 @@ func TestLogsCommandFollowsRunLogs(t *testing.T) {
 				ObservedSeq:   8,
 			})
 			_, _ = io.WriteString(w, "\n")
-			_, _ = io.WriteString(w, "id: 9\nevent: run_log\ndata: ")
+			_, _ = io.WriteString(w, "id: tc1.eyJzIjo5fQ\nevent: run_log\ndata: ")
 			_ = json.NewEncoder(w).Encode(api.RunLogChunk{
-				ID:            "9",
+				ID:            "tc1.eyJzIjo5fQ",
 				RunID:         "run-1",
 				RunLeaseID:    "run-lease-1",
 				AttemptNumber: 1,
@@ -347,12 +347,12 @@ func TestLogsCommandPrintsStreams(t *testing.T) {
 
 func TestEventsCommandPrintsJSONLines(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/events" || r.URL.Query().Get("cursor") != "4" || r.URL.Query().Get("limit") != "2" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/events" || r.URL.Query().Get("cursor") != "tc1.eyJzIjo0fQ" || r.URL.Query().Get("limit") != "2" {
 			t.Fatalf("%s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(api.RunEventPage{
-			Events: []api.RunEvent{{ID: "5", Kind: "run.started"}},
-			Cursor: 5,
+			Events: []api.RunEvent{{ID: "tc1.eyJzIjo1fQ", Kind: "run.started"}},
+			Cursor: "tc1.eyJzIjo1fQ",
 		})
 	}))
 	defer server.Close()
@@ -363,7 +363,7 @@ func TestEventsCommandPrintsJSONLines(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "events", "run-1", "--cursor", "4", "--limit", "2"})
+	cmd.SetArgs([]string{"run", "events", "run-1", "--cursor", "tc1.eyJzIjo0fQ", "--limit", "2"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}

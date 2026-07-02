@@ -114,9 +114,9 @@ Auth routes include GitHub OAuth, magic links, device auth, logout, API keys, me
 
 Worker routes include registration, activation, drain/status, execution lease/start/renew/release, log/event append, internal wait suspension, token creation, stream output append, metadata updates, and checkpoint ready/failed notifications. Worker registration and status responses include `worker_group_id`. Worker run leases and worker run payloads include `attempt_number`; this is the task attempt number, not the queue dispatch attempt.
 
-`GET /api/runs/{id}/events` returns JSON pages by default and streams SSE when `follow=1` or `Accept: text/event-stream` is present. The SSE `id` is the run event cursor.
+`GET /api/runs/{id}/events` returns JSON pages by default and streams SSE when `follow=1` or `Accept: text/event-stream` is present. Page cursors and SSE `id` values are opaque run event cursors.
 
-`GET /api/runs/{id}/logs` returns the latest stdout/stderr snapshot by default. The response `cursor` is a run-wide log cursor. When `follow=1` or `Accept: text/event-stream` is present, the same route streams `run_log` SSE records after the supplied cursor. Pass the cursor as `Last-Event-ID` or `?cursor=N` to continue after chunks already received.
+`GET /api/runs/{id}/logs` returns the latest stdout/stderr snapshot by default. The response `cursor` is a run-wide opaque log cursor. When `follow=1` or `Accept: text/event-stream` is present, the same route streams `run_log` SSE records after the supplied cursor. Pass the cursor as `Last-Event-ID` or `?cursor=CURSOR` to continue after chunks already received.
 
 Workspace routes manage durable workspace records and live materializations.
 `GET /api/workspaces/{workspace_id}/files/content?path=...` reads raw bytes

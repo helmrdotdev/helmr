@@ -187,7 +187,7 @@ func TestRunEventsPaginationUsesLookahead(t *testing.T) {
 		},
 	}
 	for i := int64(1); i <= 201; i++ {
-		store.events = append(store.events, db.Event{
+		store.events = append(store.events, db.EventHotPayload{
 			Seq:       i,
 			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			RunID:     pgvalue.UUID(runID),
@@ -209,7 +209,7 @@ func TestRunEventsPaginationUsesLookahead(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &limited); err != nil {
 		t.Fatal(err)
 	}
-	if len(limited.Events) != 2 || limited.NextCursor == nil || *limited.NextCursor != 2 {
+	if len(limited.Events) != 2 || limited.NextCursor == nil || *limited.NextCursor != telemetryCursor(2) {
 		t.Fatalf("limited page len=%d next=%v", len(limited.Events), limited.NextCursor)
 	}
 
@@ -224,11 +224,11 @@ func TestRunEventsPaginationUsesLookahead(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Events) != 200 || first.NextCursor == nil || *first.NextCursor != 200 {
+	if len(first.Events) != 200 || first.NextCursor == nil || *first.NextCursor != telemetryCursor(200) {
 		t.Fatalf("first page len=%d next=%v", len(first.Events), first.NextCursor)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/events?cursor=200", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/events?cursor="+telemetryCursor(200), nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -239,14 +239,14 @@ func TestRunEventsPaginationUsesLookahead(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Events) != 1 || second.Events[0].ID != "201" || second.NextCursor != nil {
+	if len(second.Events) != 1 || second.Events[0].ID != telemetryCursor(201) || second.NextCursor != nil {
 		t.Fatalf("second page = %+v", second)
 	}
 }
 
 func TestEventCursorPrefersLastEventID(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/runs/run-1/events?cursor=4", nil)
-	req.Header.Set("Last-Event-ID", "9")
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/run-1/events?cursor="+telemetryCursor(4), nil)
+	req.Header.Set("Last-Event-ID", telemetryCursor(9))
 
 	cursor, err := eventCursor(req)
 	if err != nil {
@@ -293,7 +293,7 @@ func TestEventStreamTreatsTrimmedOlderDuplicateAsPublished(t *testing.T) {
 
 func (f *fakeStore) AppendRunEvent(_ context.Context, arg db.AppendRunEventParams) (db.AppendRunEventRow, error) {
 	f.runEvent = arg
-	event := db.Event{
+	event := db.EventHotPayload{
 		Seq:       int64(len(f.events) + 1),
 		OrgID:     arg.OrgID,
 		RunID:     arg.RunID,
@@ -312,8 +312,8 @@ func (f *fakeStore) AppendRunEvent(_ context.Context, arg db.AppendRunEventParam
 	}, nil
 }
 
-func (f *fakeStore) ListSubjectEvents(_ context.Context, arg db.ListSubjectEventsParams) ([]db.Event, error) {
-	var events []db.Event
+func (f *fakeStore) ListSubjectEvents(_ context.Context, arg db.ListSubjectEventsParams) ([]db.EventHotPayload, error) {
+	var events []db.EventHotPayload
 	for _, event := range f.events {
 		if arg.SubjectType == db.EventSubjectTypeRun && event.RunID == arg.SubjectID && event.Seq > arg.Seq {
 			events = append(events, event)
@@ -334,7 +334,7 @@ func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendR
 	if f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.AppendRunEventForExecutionRow{}, pgx.ErrNoRows
 	}
-	event := db.Event{
+	event := db.EventHotPayload{
 		Seq:            int64(len(f.events) + 1),
 		OrgID:          arg.OrgID,
 		RunID:          arg.RunID,

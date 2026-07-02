@@ -31,7 +31,7 @@ UPDATE workspaces
           AND workspace_mounts.workspace_id = workspaces.id
           AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
    )
-RETURNING id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+RETURNING id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
 `
 
 type ArchiveWorkspaceParams struct {
@@ -52,6 +52,7 @@ func (q *Queries) ArchiveWorkspace(ctx context.Context, arg ArchiveWorkspacePara
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentSandboxID,
@@ -94,7 +95,7 @@ UPDATE workspace_operation_idempotencies
    AND workspace_operation_idempotencies.request_fingerprint = $9
    AND workspace_operation_idempotencies.response_resource_id IS NULL
    AND workspace_operation_idempotencies.expires_at > now()
-RETURNING id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at
+RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at
 `
 
 type CompleteWorkspaceOperationIdempotencyParams struct {
@@ -125,6 +126,7 @@ func (q *Queries) CompleteWorkspaceOperationIdempotency(ctx context.Context, arg
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -156,7 +158,7 @@ UPDATE workspace_operation_idempotencies
    AND workspace_operation_idempotencies.request_fingerprint = $10
    AND workspace_operation_idempotencies.response_resource_id IS NULL
    AND workspace_operation_idempotencies.expires_at > now()
-RETURNING id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at
+RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at
 `
 
 type CompleteWorkspaceScopedOperationIdempotencyParams struct {
@@ -189,6 +191,7 @@ func (q *Queries) CompleteWorkspaceScopedOperationIdempotency(ctx context.Contex
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -210,6 +213,7 @@ WITH created_workspace AS (
     INSERT INTO workspaces (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         deployment_sandbox_id,
@@ -223,6 +227,7 @@ WITH created_workspace AS (
     )
     SELECT $1,
            deployment_sandboxes.org_id,
+           deployment_sandboxes.cell_id,
            deployment_sandboxes.project_id,
            deployment_sandboxes.environment_id,
            deployment_sandboxes.id,
@@ -238,12 +243,13 @@ WITH created_workspace AS (
        AND deployment_sandboxes.project_id = $8
        AND deployment_sandboxes.environment_id = $9
        AND deployment_sandboxes.id = $10
-    RETURNING id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+    RETURNING id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
 ),
 created_version AS (
     INSERT INTO workspace_versions (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         workspace_id,
@@ -260,6 +266,7 @@ created_version AS (
     )
     SELECT $2,
            created_workspace.org_id,
+           created_workspace.cell_id,
            created_workspace.project_id,
            created_workspace.environment_id,
            created_workspace.id,
@@ -274,9 +281,9 @@ created_version AS (
            now(),
            'system'
       FROM created_workspace
-    RETURNING id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
+    RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
 )
-SELECT created_workspace.id, created_workspace.org_id, created_workspace.project_id, created_workspace.environment_id, created_workspace.deployment_sandbox_id, created_workspace.sandbox_id, created_workspace.sandbox_fingerprint, created_workspace.external_id, created_workspace.current_version_id, created_workspace.current_version_required_state, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.last_workspace_mount_id, created_workspace.metadata, created_workspace.tags, created_workspace.retention_policy, created_workspace.auto_stop_at, created_workspace.auto_archive_at, created_workspace.auto_delete_at, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.archived_at, created_workspace.deleted_at
+SELECT created_workspace.id, created_workspace.org_id, created_workspace.cell_id, created_workspace.project_id, created_workspace.environment_id, created_workspace.deployment_sandbox_id, created_workspace.sandbox_id, created_workspace.sandbox_fingerprint, created_workspace.external_id, created_workspace.current_version_id, created_workspace.current_version_required_state, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.last_workspace_mount_id, created_workspace.metadata, created_workspace.tags, created_workspace.retention_policy, created_workspace.auto_stop_at, created_workspace.auto_archive_at, created_workspace.auto_delete_at, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.archived_at, created_workspace.deleted_at
   FROM created_workspace
   JOIN created_version
     ON created_version.org_id = created_workspace.org_id
@@ -306,6 +313,7 @@ type CreateWorkspaceFromSandboxParams struct {
 type CreateWorkspaceFromSandboxRow struct {
 	ID                          pgtype.UUID               `json:"id"`
 	OrgID                       pgtype.UUID               `json:"org_id"`
+	CellID                      string                    `json:"cell_id"`
 	ProjectID                   pgtype.UUID               `json:"project_id"`
 	EnvironmentID               pgtype.UUID               `json:"environment_id"`
 	DeploymentSandboxID         pgtype.UUID               `json:"deployment_sandbox_id"`
@@ -353,6 +361,7 @@ func (q *Queries) CreateWorkspaceFromSandbox(ctx context.Context, arg CreateWork
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentSandboxID,
@@ -400,7 +409,7 @@ WITH replaced AS (
            OR workspace_operation_idempotencies.workspace_id = $11::uuid
        )
        AND workspace_operation_idempotencies.expires_at <= now()
-    RETURNING workspace_operation_idempotencies.id, workspace_operation_idempotencies.org_id, workspace_operation_idempotencies.project_id, workspace_operation_idempotencies.environment_id, workspace_operation_idempotencies.workspace_id, workspace_operation_idempotencies.operation_kind, workspace_operation_idempotencies.idempotency_key, workspace_operation_idempotencies.request_fingerprint, workspace_operation_idempotencies.response_resource_type, workspace_operation_idempotencies.response_resource_id, workspace_operation_idempotencies.response_body, workspace_operation_idempotencies.expires_at, workspace_operation_idempotencies.created_at, workspace_operation_idempotencies.last_used_at, TRUE::boolean AS inserted
+    RETURNING workspace_operation_idempotencies.id, workspace_operation_idempotencies.org_id, workspace_operation_idempotencies.cell_id, workspace_operation_idempotencies.project_id, workspace_operation_idempotencies.environment_id, workspace_operation_idempotencies.workspace_id, workspace_operation_idempotencies.operation_kind, workspace_operation_idempotencies.idempotency_key, workspace_operation_idempotencies.request_fingerprint, workspace_operation_idempotencies.response_resource_type, workspace_operation_idempotencies.response_resource_id, workspace_operation_idempotencies.response_body, workspace_operation_idempotencies.expires_at, workspace_operation_idempotencies.created_at, workspace_operation_idempotencies.last_used_at, TRUE::boolean AS inserted
 ),
 inserted AS (
     INSERT INTO workspace_operation_idempotencies (
@@ -432,7 +441,7 @@ inserted AS (
         $5
      WHERE NOT EXISTS (SELECT 1 FROM replaced)
     ON CONFLICT DO NOTHING
-    RETURNING workspace_operation_idempotencies.id, workspace_operation_idempotencies.org_id, workspace_operation_idempotencies.project_id, workspace_operation_idempotencies.environment_id, workspace_operation_idempotencies.workspace_id, workspace_operation_idempotencies.operation_kind, workspace_operation_idempotencies.idempotency_key, workspace_operation_idempotencies.request_fingerprint, workspace_operation_idempotencies.response_resource_type, workspace_operation_idempotencies.response_resource_id, workspace_operation_idempotencies.response_body, workspace_operation_idempotencies.expires_at, workspace_operation_idempotencies.created_at, workspace_operation_idempotencies.last_used_at, TRUE::boolean AS inserted
+    RETURNING workspace_operation_idempotencies.id, workspace_operation_idempotencies.org_id, workspace_operation_idempotencies.cell_id, workspace_operation_idempotencies.project_id, workspace_operation_idempotencies.environment_id, workspace_operation_idempotencies.workspace_id, workspace_operation_idempotencies.operation_kind, workspace_operation_idempotencies.idempotency_key, workspace_operation_idempotencies.request_fingerprint, workspace_operation_idempotencies.response_resource_type, workspace_operation_idempotencies.response_resource_id, workspace_operation_idempotencies.response_body, workspace_operation_idempotencies.expires_at, workspace_operation_idempotencies.created_at, workspace_operation_idempotencies.last_used_at, TRUE::boolean AS inserted
 ),
 existing AS (
     UPDATE workspace_operation_idempotencies
@@ -449,13 +458,13 @@ existing AS (
        AND workspace_operation_idempotencies.expires_at > now()
        AND NOT EXISTS (SELECT 1 FROM replaced)
        AND NOT EXISTS (SELECT 1 FROM inserted)
-    RETURNING workspace_operation_idempotencies.id, workspace_operation_idempotencies.org_id, workspace_operation_idempotencies.project_id, workspace_operation_idempotencies.environment_id, workspace_operation_idempotencies.workspace_id, workspace_operation_idempotencies.operation_kind, workspace_operation_idempotencies.idempotency_key, workspace_operation_idempotencies.request_fingerprint, workspace_operation_idempotencies.response_resource_type, workspace_operation_idempotencies.response_resource_id, workspace_operation_idempotencies.response_body, workspace_operation_idempotencies.expires_at, workspace_operation_idempotencies.created_at, workspace_operation_idempotencies.last_used_at, FALSE::boolean AS inserted
+    RETURNING workspace_operation_idempotencies.id, workspace_operation_idempotencies.org_id, workspace_operation_idempotencies.cell_id, workspace_operation_idempotencies.project_id, workspace_operation_idempotencies.environment_id, workspace_operation_idempotencies.workspace_id, workspace_operation_idempotencies.operation_kind, workspace_operation_idempotencies.idempotency_key, workspace_operation_idempotencies.request_fingerprint, workspace_operation_idempotencies.response_resource_type, workspace_operation_idempotencies.response_resource_id, workspace_operation_idempotencies.response_body, workspace_operation_idempotencies.expires_at, workspace_operation_idempotencies.created_at, workspace_operation_idempotencies.last_used_at, FALSE::boolean AS inserted
 )
-SELECT id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at, inserted FROM replaced
+SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at, inserted FROM replaced
 UNION ALL
-SELECT id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at, inserted FROM inserted
+SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at, inserted FROM inserted
 UNION ALL
-SELECT id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at, inserted FROM existing
+SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at, inserted FROM existing
 LIMIT 1
 `
 
@@ -477,6 +486,7 @@ type EnsureWorkspaceOperationIdempotencyParams struct {
 type EnsureWorkspaceOperationIdempotencyRow struct {
 	ID                   pgtype.UUID                       `json:"id"`
 	OrgID                pgtype.UUID                       `json:"org_id"`
+	CellID               string                            `json:"cell_id"`
 	ProjectID            pgtype.UUID                       `json:"project_id"`
 	EnvironmentID        pgtype.UUID                       `json:"environment_id"`
 	WorkspaceID          pgtype.UUID                       `json:"workspace_id"`
@@ -511,6 +521,7 @@ func (q *Queries) EnsureWorkspaceOperationIdempotency(ctx context.Context, arg E
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -529,7 +540,7 @@ func (q *Queries) EnsureWorkspaceOperationIdempotency(ctx context.Context, arg E
 }
 
 const getWorkspace = `-- name: GetWorkspace :one
-SELECT id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+SELECT id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
   FROM workspaces
  WHERE org_id = $1
    AND project_id = $2
@@ -556,6 +567,7 @@ func (q *Queries) GetWorkspace(ctx context.Context, arg GetWorkspaceParams) (Wor
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentSandboxID,
@@ -593,7 +605,7 @@ UPDATE workspace_operation_idempotencies
    AND workspace_id IS NULL
    AND idempotency_key = $5
    AND expires_at > now()
-RETURNING id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at
+RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at
 `
 
 type GetWorkspaceOperationIdempotencyParams struct {
@@ -616,6 +628,7 @@ func (q *Queries) GetWorkspaceOperationIdempotency(ctx context.Context, arg GetW
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -642,7 +655,7 @@ UPDATE workspace_operation_idempotencies
    AND operation_kind = $5::workspace_operation_idempotency_kind
    AND idempotency_key = $6
    AND expires_at > now()
-RETURNING id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at
+RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at
 `
 
 type GetWorkspaceScopedOperationIdempotencyParams struct {
@@ -667,6 +680,7 @@ func (q *Queries) GetWorkspaceScopedOperationIdempotency(ctx context.Context, ar
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -684,7 +698,7 @@ func (q *Queries) GetWorkspaceScopedOperationIdempotency(ctx context.Context, ar
 }
 
 const listWorkspaces = `-- name: ListWorkspaces :many
-SELECT id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+SELECT id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
   FROM workspaces
  WHERE org_id = $1
    AND project_id = $2
@@ -727,6 +741,7 @@ func (q *Queries) ListWorkspaces(ctx context.Context, arg ListWorkspacesParams) 
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
+			&i.CellID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.DeploymentSandboxID,
@@ -771,7 +786,7 @@ UPDATE workspaces
    AND workspaces.environment_id = $5
    AND workspaces.id = $6
    AND workspaces.deleted_at IS NULL
-RETURNING id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+RETURNING id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
 `
 
 type PatchWorkspaceParams struct {
@@ -796,6 +811,7 @@ func (q *Queries) PatchWorkspace(ctx context.Context, arg PatchWorkspaceParams) 
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentSandboxID,
@@ -824,7 +840,7 @@ func (q *Queries) PatchWorkspace(ctx context.Context, arg PatchWorkspaceParams) 
 }
 
 const resolveDeploymentSandboxForWorkspaceCreate = `-- name: ResolveDeploymentSandboxForWorkspaceCreate :one
-SELECT deployment_sandboxes.id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
+SELECT deployment_sandboxes.id, deployment_sandboxes.org_id, deployment_sandboxes.cell_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
   FROM deployment_sandboxes
   JOIN deployments
     ON deployments.org_id = deployment_sandboxes.org_id
@@ -868,6 +884,7 @@ func (q *Queries) ResolveDeploymentSandboxForWorkspaceCreate(ctx context.Context
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
@@ -906,7 +923,7 @@ UPDATE workspaces
    AND workspaces.state = 'active'
    AND workspaces.archived_at IS NULL
    AND workspaces.deleted_at IS NULL
-RETURNING id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+RETURNING id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
 `
 
 type SetWorkspaceDesiredStoppedParams struct {
@@ -927,6 +944,7 @@ func (q *Queries) SetWorkspaceDesiredStopped(ctx context.Context, arg SetWorkspa
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentSandboxID,

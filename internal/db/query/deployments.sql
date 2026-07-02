@@ -2,6 +2,7 @@
 INSERT INTO deployments (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     version,
@@ -17,6 +18,7 @@ INSERT INTO deployments (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(version),

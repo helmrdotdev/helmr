@@ -289,7 +289,7 @@ func eventResponseFromClaim(event db.ClaimEventOutboxRow) api.RunEvent {
 	return apiEventResponse(event.Seq, event.RunID, event.DeploymentID, event.RunLeaseID, event.AttemptID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
 }
 
-func eventResponseFromRecord(event db.Event) api.RunEvent {
+func eventResponseFromRecord(event db.EventHotPayload) api.RunEvent {
 	return apiEventResponse(event.Seq, event.RunID, event.DeploymentID, event.RunLeaseID, event.AttemptID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
 }
 
@@ -339,7 +339,7 @@ func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, ru
 		attributes = json.RawMessage(`{"redacted":true}`)
 	}
 	return api.RunEvent{
-		ID:             strconv.FormatInt(seq, 10),
+		ID:             telemetryCursor(seq),
 		RunID:          runIDValue,
 		DeploymentID:   deploymentIDValue,
 		RunLeaseID:     runLeaseIDValue,

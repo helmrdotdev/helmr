@@ -94,7 +94,7 @@ func TestGetRunLogsReportsTruncatedSnapshot(t *testing.T) {
 	if !response.Truncated {
 		t.Fatalf("logs = %+v", response)
 	}
-	if response.Cursor != "42" {
+	if response.Cursor != telemetryCursor(42) {
 		t.Fatalf("cursor = %q", response.Cursor)
 	}
 }
@@ -111,7 +111,7 @@ func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
 			CreatedAt: testTime(),
 			UpdatedAt: testTime(),
 		},
-		logChunks: []db.RunLogChunk{
+		logChunks: []db.RunLogHotChunk{
 			{
 				OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 				RunID:         pgvalue.UUID(runID),
@@ -128,10 +128,10 @@ func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs?follow=1&cursor=1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs?follow=1&cursor="+telemetryCursor(1), nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	req.Header.Set("accept", "text/event-stream")
-	req.Header.Set("Last-Event-ID", "7")
+	req.Header.Set("Last-Event-ID", telemetryCursor(7))
 	rec := httptest.NewRecorder()
 
 	server.ServeHTTP(rec, req)
@@ -142,7 +142,7 @@ func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
 	if store.firstRunLogChunksAfterSeq != 7 {
 		t.Fatalf("log cursor = %d", store.firstRunLogChunksAfterSeq)
 	}
-	if !strings.Contains(rec.Body.String(), "event: run_log") || !strings.Contains(rec.Body.String(), "id: 8") {
+	if !strings.Contains(rec.Body.String(), "event: run_log") || !strings.Contains(rec.Body.String(), "id: "+telemetryCursor(8)) {
 		t.Fatalf("sse body = %q", rec.Body.String())
 	}
 	var chunk api.RunLogChunk
@@ -154,7 +154,7 @@ func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
 			break
 		}
 	}
-	if chunk.ID != "8" || chunk.Stream != "stdout" || chunk.ContentBase64 != base64.StdEncoding.EncodeToString([]byte("new\n")) {
+	if chunk.ID != telemetryCursor(8) || chunk.Stream != "stdout" || chunk.ContentBase64 != base64.StdEncoding.EncodeToString([]byte("new\n")) {
 		t.Fatalf("chunk = %+v", chunk)
 	}
 }
@@ -172,7 +172,7 @@ func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
 			UpdatedAt: testTime(),
 		},
 		deferLogChunksUntilSecondList: true,
-		logChunks: []db.RunLogChunk{
+		logChunks: []db.RunLogHotChunk{
 			{
 				OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 				RunID:         pgvalue.UUID(runID),
@@ -189,7 +189,7 @@ func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs?follow=1&cursor=11", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs?follow=1&cursor="+telemetryCursor(11), nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -201,7 +201,7 @@ func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
 	if store.runLogChunksAfterCalls != 2 {
 		t.Fatalf("list calls = %d, want terminal drain", store.runLogChunksAfterCalls)
 	}
-	if !strings.Contains(rec.Body.String(), "id: 12") || !strings.Contains(rec.Body.String(), base64.StdEncoding.EncodeToString([]byte("final error\n"))) {
+	if !strings.Contains(rec.Body.String(), "id: "+telemetryCursor(12)) || !strings.Contains(rec.Body.String(), base64.StdEncoding.EncodeToString([]byte("final error\n"))) {
 		t.Fatalf("sse body = %q", rec.Body.String())
 	}
 }
@@ -272,7 +272,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 		t.Fatalf("next cursor = %v, want nil for final page", *events.NextCursor)
 	}
 
-	store.events = []db.Event{{
+	store.events = []db.EventHotPayload{{
 		Seq:            1,
 		OrgID:          store.run.OrgID,
 		RunID:          store.run.ID,
@@ -316,7 +316,7 @@ func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChun
 	case "stderr":
 		f.stderr = append(f.stderr, arg.Content...)
 	}
-	event := db.Event{
+	event := db.EventHotPayload{
 		Seq:            int64(len(f.events) + 1),
 		OrgID:          arg.OrgID,
 		RunID:          arg.RunID,
@@ -340,7 +340,7 @@ func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChun
 	}, nil
 }
 
-func (f *fakeStore) ListRunLogChunksAfter(_ context.Context, arg db.ListRunLogChunksAfterParams) ([]db.RunLogChunk, error) {
+func (f *fakeStore) ListRunLogChunksAfter(_ context.Context, arg db.ListRunLogChunksAfterParams) ([]db.RunLogHotChunk, error) {
 	f.runLogChunksAfter = arg
 	f.runLogChunksAfterCalls++
 	if f.runLogChunksAfterCalls == 1 {
@@ -349,7 +349,7 @@ func (f *fakeStore) ListRunLogChunksAfter(_ context.Context, arg db.ListRunLogCh
 	if f.deferLogChunksUntilSecondList && f.runLogChunksAfterCalls == 1 {
 		return nil, nil
 	}
-	rows := make([]db.RunLogChunk, 0, len(f.logChunks))
+	rows := make([]db.RunLogHotChunk, 0, len(f.logChunks))
 	for _, chunk := range f.logChunks {
 		if chunk.Seq <= arg.Seq {
 			continue

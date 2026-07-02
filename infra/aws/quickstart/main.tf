@@ -45,6 +45,11 @@ module "control" {
   public_subnet_ids                      = module.network.public_subnet_ids
   private_subnet_ids                     = module.network.private_subnet_ids
   public_url                             = var.public_url
+  deployment_mode                        = var.deployment_mode
+  cell_id                                = var.cell_id
+  clickhouse_url                         = var.clickhouse_url
+  clickhouse_user                        = var.clickhouse_user
+  clickhouse_password_secret_arn         = var.clickhouse_password_secret_arn
   cloudfront_origin_domain_name          = var.cloudfront_origin_domain_name
   control_image                          = module.release_artifacts.control_image
   control_desired_count                  = var.control_desired_count

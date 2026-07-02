@@ -17,6 +17,94 @@ BEGIN
 END;
 $$;
 
+CREATE TYPE cell_state AS ENUM (
+    'active',
+    'draining',
+    'disabled'
+);
+
+CREATE TYPE cell_health_state AS ENUM (
+    'healthy',
+    'degraded',
+    'unavailable'
+);
+
+CREATE TYPE org_cell_role AS ENUM (
+    'home',
+    'allowed'
+);
+
+CREATE TYPE environment_cell_route_state AS ENUM (
+    'active',
+    'draining',
+    'disabled'
+);
+
+CREATE TYPE worker_trust_tier AS ENUM (
+    'helmr_managed',
+    'customer_managed'
+);
+
+CREATE TYPE artifact_grant_operation AS ENUM (
+    'read',
+    'write'
+);
+
+CREATE TYPE artifact_grant_event_kind AS ENUM (
+    'issued',
+    'used',
+    'denied',
+    'revoked',
+    'expired'
+);
+
+CREATE TYPE telemetry_stream_kind AS ENUM (
+    'run_log',
+    'event',
+    'trace_span',
+    'terminal_output',
+    'usage_fact'
+);
+
+CREATE TYPE telemetry_outbox_state AS ENUM (
+    'pending',
+    'claimed',
+    'written',
+    'failed',
+    'dead_lettered'
+);
+
+CREATE TYPE telemetry_replay_error_state AS ENUM (
+    'retryable',
+    'dead_lettered',
+    'resolved'
+);
+
+CREATE TYPE retention_class AS ENUM (
+    'hot',
+    'standard',
+    'audit',
+    'billing',
+    'archive'
+);
+
+CREATE TABLE cells (
+    id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
+    region TEXT NOT NULL CHECK (btrim(region) <> ''),
+    provider TEXT NOT NULL CHECK (btrim(provider) <> ''),
+    environment_class TEXT NOT NULL CHECK (btrim(environment_class) <> ''),
+    state cell_state NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO cells (id, region, provider, environment_class)
+VALUES ('us-east-1-cell-1', 'us-east-1', 'aws', 'managed_cloud_dev')
+ON CONFLICT (id) DO UPDATE
+   SET region = EXCLUDED.region,
+       provider = EXCLUDED.provider,
+       environment_class = EXCLUDED.environment_class;
+
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     display_name TEXT NOT NULL CHECK (btrim(display_name) <> ''),
@@ -60,6 +148,16 @@ CREATE TABLE org_members (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, user_id)
+);
+
+CREATE TABLE org_cells (
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    cell_id TEXT NOT NULL REFERENCES cells(id) ON DELETE RESTRICT,
+    role org_cell_role NOT NULL,
+    state environment_cell_route_state NOT NULL DEFAULT 'active',
+    assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, cell_id, role)
 );
 
 CREATE TYPE deletion_job_status AS ENUM (
@@ -117,6 +215,29 @@ CREATE TABLE environments (
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
         ON DELETE CASCADE
+);
+
+CREATE TABLE environment_cells (
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    cell_id TEXT NOT NULL REFERENCES cells(id) ON DELETE RESTRICT,
+    route_state environment_cell_route_state NOT NULL DEFAULT 'active',
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
+    assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, project_id, environment_id),
+    FOREIGN KEY (org_id, project_id, environment_id)
+        REFERENCES environments(org_id, project_id, id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE cell_health (
+    cell_id TEXT PRIMARY KEY REFERENCES cells(id) ON DELETE CASCADE,
+    state cell_health_state NOT NULL DEFAULT 'healthy',
+    checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    routing_fresh_until TIMESTAMPTZ NOT NULL DEFAULT now() + interval '5 minutes',
+    details JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
 CREATE TABLE auth_sessions (
@@ -245,6 +366,7 @@ CREATE TABLE device_codes (
 CREATE TABLE secrets (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
@@ -266,10 +388,13 @@ CREATE TABLE secrets (
 );
 
 CREATE TABLE cas_objects (
-    digest TEXT PRIMARY KEY,
+    org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
+    digest TEXT NOT NULL,
     size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
     media_type TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, cell_id, digest)
 );
 
 CREATE TYPE artifact_kind AS ENUM (
@@ -295,20 +420,27 @@ CREATE TYPE worker_instance_status AS ENUM (
 
 CREATE TABLE worker_groups (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID,
+    cell_id TEXT NOT NULL,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     description TEXT NOT NULL DEFAULT '',
+    provider TEXT NOT NULL DEFAULT 'aws' CHECK (btrim(provider) <> ''),
+    trust_tier worker_trust_tier NOT NULL DEFAULT 'helmr_managed',
+    claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
+    deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (name)
+    UNIQUE (cell_id, name),
+    UNIQUE (org_id, cell_id, name)
 );
 
 CREATE TRIGGER worker_groups_set_updated_at
     BEFORE UPDATE ON worker_groups
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
-INSERT INTO worker_groups (id, name, description)
-VALUES (uuidv7(), 'default', 'Default worker group')
-ON CONFLICT (name) DO UPDATE
+INSERT INTO worker_groups (id, cell_id, name, description)
+VALUES (uuidv7(), 'us-east-1-cell-1', 'default', 'Default worker group')
+ON CONFLICT (cell_id, name) DO UPDATE
    SET description = worker_groups.description;
 
 CREATE TABLE runtime_releases (
@@ -336,9 +468,12 @@ CREATE TRIGGER runtime_release_selections_set_updated_at
 
 CREATE TABLE worker_instances (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID,
+    cell_id TEXT NOT NULL,
     resource_id TEXT NOT NULL CHECK (btrim(resource_id) <> ''),
     worker_group_id UUID NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
     status worker_instance_status NOT NULL DEFAULT 'active',
+    claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
     region TEXT NOT NULL DEFAULT '',
     total_milli_cpu BIGINT NOT NULL CHECK (total_milli_cpu > 0),
     total_memory_mib BIGINT NOT NULL CHECK (total_memory_mib > 0),
@@ -368,8 +503,11 @@ CREATE TABLE worker_instances (
 
 CREATE TABLE worker_bootstrap_tokens (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID,
+    cell_id TEXT NOT NULL,
     token_hash BYTEA NOT NULL UNIQUE,
     worker_group_id UUID NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
+    expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ,
     last_used_by_worker_instance_id UUID REFERENCES worker_instances(id) ON DELETE SET NULL,
@@ -378,8 +516,12 @@ CREATE TABLE worker_bootstrap_tokens (
 
 CREATE TABLE worker_instance_credentials (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID,
+    cell_id TEXT NOT NULL,
     worker_instance_id UUID NOT NULL REFERENCES worker_instances(id) ON DELETE CASCADE,
     key_prefix TEXT NOT NULL CHECK (btrim(key_prefix) <> ''),
+    claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
+    expires_at TIMESTAMPTZ,
     secret_hash BYTEA NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ,
@@ -390,9 +532,10 @@ CREATE TABLE worker_instance_credentials (
 CREATE TABLE artifacts (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    digest TEXT NOT NULL REFERENCES cas_objects(digest) ON DELETE RESTRICT,
+    digest TEXT NOT NULL,
     kind artifact_kind NOT NULL,
     size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
     media_type TEXT NOT NULL CHECK (btrim(media_type) <> ''),
@@ -406,7 +549,37 @@ CREATE TABLE artifacts (
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, cell_id, digest)
+        REFERENCES cas_objects(org_id, cell_id, digest)
         ON DELETE CASCADE
+);
+
+CREATE TABLE artifact_grants (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
+    artifact_id UUID,
+    digest TEXT NOT NULL CHECK (btrim(digest) <> ''),
+    subject_kind TEXT NOT NULL CHECK (btrim(subject_kind) <> ''),
+    subject_id UUID NOT NULL,
+    operation artifact_grant_operation NOT NULL,
+    byte_limit BIGINT NOT NULL CHECK (byte_limit >= 0),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE artifact_grant_events (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
+    artifact_grant_id UUID NOT NULL REFERENCES artifact_grants(id) ON DELETE CASCADE,
+    event_kind artifact_grant_event_kind NOT NULL,
+    subject_kind TEXT NOT NULL CHECK (btrim(subject_kind) <> ''),
+    subject_id UUID NOT NULL,
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    details JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
 CREATE TYPE stream_direction AS ENUM (
@@ -732,6 +905,7 @@ CREATE TYPE deployment_status AS ENUM (
 CREATE TABLE deployments (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     worker_group_id UUID NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
@@ -785,6 +959,7 @@ ALTER TABLE environments
 
 CREATE TABLE deployment_version_counters (
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     prefix TEXT NOT NULL CHECK (btrim(prefix) <> ''),
@@ -800,6 +975,7 @@ CREATE TABLE deployment_version_counters (
 CREATE TABLE deployment_promotions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
@@ -827,6 +1003,7 @@ ALTER TABLE environments
 CREATE TABLE tasks (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
@@ -846,6 +1023,7 @@ CREATE TABLE tasks (
 CREATE TABLE deployment_sandboxes (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
@@ -886,6 +1064,7 @@ CREATE TABLE deployment_sandboxes (
 CREATE TABLE deployment_queues (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
@@ -902,6 +1081,7 @@ CREATE TABLE deployment_queues (
 CREATE TABLE runtime_substrate_artifacts (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_sandbox_id UUID NOT NULL,
@@ -936,6 +1116,7 @@ CREATE TRIGGER runtime_substrate_artifacts_set_updated_at
 CREATE TABLE deployment_tasks (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
@@ -988,6 +1169,7 @@ CREATE TYPE task_schedule_type AS ENUM (
 CREATE TABLE task_schedules (
     id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     schedule_type task_schedule_type NOT NULL DEFAULT 'imperative',
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
@@ -1009,6 +1191,7 @@ CREATE TABLE task_schedule_instances (
     id UUID PRIMARY KEY,
     schedule_id UUID NOT NULL,
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
@@ -1044,6 +1227,7 @@ CREATE TABLE task_schedule_instances (
 CREATE TABLE workspaces (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_sandbox_id UUID NOT NULL,
@@ -1083,6 +1267,7 @@ CREATE TABLE workspaces (
 CREATE TABLE sessions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
@@ -1125,6 +1310,7 @@ CREATE TABLE sessions (
 CREATE TABLE runs (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
@@ -1158,7 +1344,7 @@ CREATE TABLE runs (
     max_active_duration_ms BIGINT NOT NULL CHECK (max_active_duration_ms > 0),
     active_elapsed_ms BIGINT NOT NULL DEFAULT 0 CHECK (active_elapsed_ms >= 0),
     active_started_at TIMESTAMPTZ,
-    trace_id TEXT NOT NULL CHECK (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000'),
+    trace_id TEXT CHECK (trace_id IS NULL OR (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000')),
     root_span_id TEXT NOT NULL CHECK (root_span_id ~ '^[0-9a-f]{16}$' AND root_span_id <> '0000000000000000'),
     state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
     current_attempt_id UUID,
@@ -1210,6 +1396,7 @@ ALTER TABLE sessions
 CREATE TABLE run_operations (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
@@ -1221,7 +1408,7 @@ CREATE TABLE run_operations (
     reason TEXT NOT NULL DEFAULT '',
     request JSONB NOT NULL DEFAULT '{}'::jsonb,
     result JSONB NOT NULL DEFAULT '{}'::jsonb,
-    idempotency_key TEXT NOT NULL DEFAULT '',
+    idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     applied_at TIMESTAMPTZ,
     rejected_at TIMESTAMPTZ,
@@ -1239,6 +1426,7 @@ CREATE UNIQUE INDEX run_operations_idempotency_idx
 CREATE TABLE session_runs (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     session_id UUID NOT NULL,
@@ -1268,6 +1456,7 @@ CREATE TABLE session_runs (
 CREATE TABLE session_start_idempotencies (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
@@ -1293,6 +1482,7 @@ CREATE TABLE session_start_idempotencies (
 CREATE TABLE workspace_mounts (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -1376,6 +1566,7 @@ ALTER TABLE workspaces
 CREATE TABLE workspace_leases (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -1416,6 +1607,7 @@ CREATE TABLE workspace_leases (
 CREATE TABLE workspace_execs (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -1465,6 +1657,7 @@ CREATE TABLE workspace_execs (
 CREATE TABLE workspace_pty_sessions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -1513,6 +1706,7 @@ CREATE TABLE workspace_pty_sessions (
 CREATE TABLE workspace_ports (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -1575,6 +1769,7 @@ ALTER TABLE workspace_leases
 CREATE TABLE workspace_versions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -1670,6 +1865,7 @@ ALTER TABLE workspaces
 CREATE TABLE workspace_exec_stream_chunks (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -1679,6 +1875,7 @@ CREATE TABLE workspace_exec_stream_chunks (
     offset_end BIGINT NOT NULL CHECK (offset_end > offset_start),
     data BYTEA NOT NULL,
     observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '7 days',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, exec_id, stream, offset_start),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, exec_id)
@@ -1689,6 +1886,7 @@ CREATE TABLE workspace_exec_stream_chunks (
 CREATE TABLE workspace_exec_stream_chunk_receipts (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -1709,6 +1907,7 @@ CREATE TABLE workspace_exec_stream_chunk_receipts (
 CREATE TABLE workspace_pty_stream_chunks (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -1718,6 +1917,7 @@ CREATE TABLE workspace_pty_stream_chunks (
     offset_end BIGINT NOT NULL CHECK (offset_end > offset_start),
     data BYTEA NOT NULL,
     observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '7 days',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, pty_session_id, stream, offset_start),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, pty_session_id)
@@ -1728,6 +1928,7 @@ CREATE TABLE workspace_pty_stream_chunks (
 CREATE TABLE workspace_pty_stream_chunk_receipts (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -1748,6 +1949,7 @@ CREATE TABLE workspace_pty_stream_chunk_receipts (
 CREATE TABLE workspace_operation_idempotencies (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID,
@@ -1770,6 +1972,7 @@ CREATE TABLE workspace_operation_idempotencies (
 CREATE TABLE workspace_operations (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -1829,6 +2032,7 @@ CREATE TABLE workspace_operations (
 CREATE TABLE deployment_streams (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
@@ -1849,6 +2053,7 @@ CREATE TABLE deployment_streams (
 CREATE TABLE streams (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     session_id UUID NOT NULL,
@@ -1874,6 +2079,7 @@ CREATE TABLE streams (
 CREATE TABLE tokens (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     state token_state NOT NULL DEFAULT 'pending',
@@ -1904,6 +2110,7 @@ CREATE TABLE tokens (
 CREATE TABLE public_access_tokens (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     token_hash BYTEA NOT NULL UNIQUE,
@@ -1929,6 +2136,7 @@ CREATE TABLE public_access_tokens (
 CREATE TABLE public_access_token_scopes (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     public_access_token_id UUID NOT NULL,
@@ -1965,6 +2173,7 @@ CREATE TABLE public_access_token_scopes (
 CREATE TABLE stream_records (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     session_id UUID NOT NULL,
@@ -1994,6 +2203,7 @@ CREATE TABLE stream_records (
 CREATE TABLE session_run_requests (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     session_id UUID NOT NULL,
@@ -2042,6 +2252,7 @@ ALTER TABLE runs
 CREATE TABLE run_attempts (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     run_id UUID NOT NULL,
     attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
     status run_attempt_status NOT NULL DEFAULT 'queued',
@@ -2075,6 +2286,7 @@ ALTER TABLE runs
 CREATE TABLE run_runtime_requirements (
     run_id UUID PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     worker_group_id UUID NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
     requested_milli_cpu BIGINT NOT NULL CHECK (requested_milli_cpu > 0),
     requested_memory_mib BIGINT NOT NULL CHECK (requested_memory_mib > 0),
@@ -2103,6 +2315,7 @@ CREATE TABLE run_runtime_requirements (
 CREATE TABLE run_queue_items (
     run_id UUID PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     status run_queue_status NOT NULL DEFAULT 'queued',
     priority INTEGER NOT NULL DEFAULT 0,
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
@@ -2134,7 +2347,7 @@ CREATE TYPE event_subject_type AS ENUM (
     'deployment'
 );
 
-CREATE TABLE events (
+CREATE TABLE event_hot_payloads (
     id BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
     subject_type event_subject_type GENERATED ALWAYS AS (
         CASE
@@ -2145,6 +2358,7 @@ CREATE TABLE events (
     subject_id UUID GENERATED ALWAYS AS (COALESCE(run_id, deployment_id)) STORED,
     seq BIGINT NOT NULL CHECK (seq > 0),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_id UUID,
@@ -2170,6 +2384,7 @@ CREATE TABLE events (
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     redaction_class TEXT NOT NULL DEFAULT 'internal',
     snapshot_version BIGINT CHECK (snapshot_version IS NULL OR snapshot_version > 0),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '7 days',
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (subject_type, subject_id, seq),
@@ -2188,42 +2403,114 @@ CREATE TABLE events (
         ON DELETE SET NULL (attempt_id)
 );
 
-CREATE INDEX events_scope_created_idx
-    ON events (org_id, project_id, environment_id, created_at DESC);
+CREATE INDEX event_hot_payloads_scope_created_idx
+    ON event_hot_payloads (org_id, project_id, environment_id, created_at DESC);
 
-CREATE INDEX events_trace_idx
-    ON events (trace_id, created_at)
+CREATE INDEX event_hot_payloads_trace_idx
+    ON event_hot_payloads (trace_id, created_at)
     WHERE trace_id IS NOT NULL;
 
-CREATE TABLE event_subject_cursors (
+CREATE TABLE event_cursors (
     org_id UUID NOT NULL,
-    subject_type event_subject_type NOT NULL,
+    cell_id TEXT NOT NULL,
+    subject_kind event_subject_type NOT NULL,
     subject_id UUID NOT NULL,
-    last_seq BIGINT NOT NULL CHECK (last_seq > 0),
+    seq BIGINT NOT NULL CHECK (seq >= 0),
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, subject_type, subject_id)
+    PRIMARY KEY (org_id, subject_kind, subject_id)
 );
 
-CREATE TABLE event_outbox (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    event_record_id BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-    stream_key TEXT NOT NULL CHECK (btrim(stream_key) <> ''),
-    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-    locked_until TIMESTAMPTZ,
-    published_at TIMESTAMPTZ,
-    last_error TEXT NOT NULL DEFAULT '',
+CREATE TABLE event_spill_objects (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
+    subject_kind event_subject_type NOT NULL,
+    subject_id UUID NOT NULL,
+    seq_start BIGINT NOT NULL CHECK (seq_start > 0),
+    seq_end BIGINT NOT NULL CHECK (seq_end >= seq_start),
+    cas_digest TEXT,
+    object_key TEXT,
+    size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
+    expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX event_outbox_event_record_id_idx ON event_outbox(event_record_id);
-CREATE INDEX event_outbox_ready_idx
-    ON event_outbox (created_at, id)
-    WHERE published_at IS NULL;
+CREATE TABLE event_watermarks (
+    org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
+    subject_kind event_subject_type NOT NULL,
+    subject_id UUID NOT NULL,
+    watermark_seq BIGINT NOT NULL DEFAULT 0 CHECK (watermark_seq >= 0),
+    watermark_observed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, cell_id, subject_kind, subject_id)
+);
+
+CREATE TABLE terminal_output_watermarks (
+    org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
+    workspace_id UUID NOT NULL,
+    resource_kind TEXT NOT NULL CHECK (btrim(resource_kind) <> ''),
+    resource_id UUID NOT NULL,
+    stream_name TEXT NOT NULL CHECK (btrim(stream_name) <> ''),
+    watermark_offset BIGINT NOT NULL DEFAULT 0 CHECK (watermark_offset >= 0),
+    watermark_observed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, cell_id, workspace_id, resource_kind, resource_id, stream_name)
+);
+
+CREATE TABLE telemetry_outbox (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    org_id UUID,
+    cell_id TEXT NOT NULL,
+    stream_kind telemetry_stream_kind NOT NULL DEFAULT 'event',
+    source_kind TEXT NOT NULL DEFAULT 'event',
+    source_id UUID,
+    idempotency_key TEXT NOT NULL DEFAULT '',
+    object_key TEXT,
+    cas_digest TEXT,
+    state telemetry_outbox_state NOT NULL DEFAULT 'pending',
+    retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+    next_retry_at TIMESTAMPTZ,
+    event_record_id BIGINT,
+    stream_key TEXT NOT NULL CHECK (btrim(stream_key) <> ''),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    locked_until TIMESTAMPTZ,
+    written_at TIMESTAMPTZ,
+    last_error TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX telemetry_outbox_event_record_id_idx ON telemetry_outbox(event_record_id)
+    WHERE event_record_id IS NOT NULL;
+CREATE UNIQUE INDEX telemetry_outbox_idempotency_idx
+    ON telemetry_outbox (cell_id, stream_kind, idempotency_key)
+    WHERE idempotency_key <> '';
+CREATE INDEX telemetry_outbox_ready_idx
+    ON telemetry_outbox (created_at, id)
+    WHERE written_at IS NULL;
+
+CREATE TABLE telemetry_replay_errors (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
+    stream_kind telemetry_stream_kind NOT NULL,
+    source_kind TEXT NOT NULL CHECK (btrim(source_kind) <> ''),
+    source_id UUID,
+    state telemetry_replay_error_state NOT NULL DEFAULT 'retryable',
+    retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+    last_error TEXT NOT NULL DEFAULT '',
+    next_retry_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 CREATE TABLE workspace_stream_wakeups (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -2250,8 +2537,9 @@ CREATE TYPE run_log_stream AS ENUM (
     'stderr'
 );
 
-CREATE TABLE run_log_chunks (
+CREATE TABLE run_log_hot_chunks (
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     run_id UUID NOT NULL,
     run_lease_id UUID NOT NULL,
     attempt_number INTEGER NOT NULL DEFAULT 1 CHECK (attempt_number > 0),
@@ -2260,6 +2548,7 @@ CREATE TABLE run_log_chunks (
     observed_seq BIGINT NOT NULL CHECK (observed_seq >= 0),
     content BYTEA NOT NULL,
     size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '7 days',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, run_id, seq),
     FOREIGN KEY (org_id, run_id)
@@ -2267,9 +2556,53 @@ CREATE TABLE run_log_chunks (
         ON DELETE CASCADE
 );
 
+CREATE TABLE run_log_cursors (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
+    run_id UUID NOT NULL,
+    attempt_id UUID,
+    run_lease_id UUID,
+    stream_name TEXT NOT NULL CHECK (btrim(stream_name) <> ''),
+    seq BIGINT NOT NULL CHECK (seq >= 0),
+    cursor TEXT NOT NULL CHECK (btrim(cursor) <> ''),
+    idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, cell_id, run_id, stream_name, seq),
+    UNIQUE (org_id, cell_id, run_id, stream_name, idempotency_key)
+);
+
+CREATE TABLE run_log_spill_objects (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
+    run_id UUID NOT NULL,
+    stream_name TEXT NOT NULL CHECK (btrim(stream_name) <> ''),
+    seq_start BIGINT NOT NULL CHECK (seq_start > 0),
+    seq_end BIGINT NOT NULL CHECK (seq_end >= seq_start),
+    cas_digest TEXT,
+    object_key TEXT,
+    size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE run_log_watermarks (
+    org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
+    run_id UUID NOT NULL,
+    stream_name TEXT NOT NULL CHECK (btrim(stream_name) <> ''),
+    watermark_seq BIGINT NOT NULL DEFAULT 0 CHECK (watermark_seq >= 0),
+    watermark_observed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, cell_id, run_id, stream_name)
+);
+
 CREATE TABLE run_leases (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     run_id UUID NOT NULL,
     attempt_id UUID NOT NULL,
     worker_instance_id UUID NOT NULL,
@@ -2313,6 +2646,7 @@ CREATE TABLE run_leases (
 
 CREATE TABLE run_snapshots (
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     run_id UUID NOT NULL,
     version BIGINT NOT NULL CHECK (version > 0),
     status run_status NOT NULL,
@@ -2347,6 +2681,7 @@ ALTER TABLE run_snapshots
 CREATE TABLE run_retry_decisions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
@@ -2379,6 +2714,7 @@ CREATE TABLE run_retry_decisions (
 CREATE TABLE run_queue_concurrency_leases (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
@@ -2395,14 +2731,14 @@ CREATE TABLE run_queue_concurrency_leases (
         DEFERRABLE INITIALLY DEFERRED
 );
 
-ALTER TABLE run_log_chunks
-    ADD CONSTRAINT run_log_chunks_run_lease_id_fkey
+ALTER TABLE run_log_hot_chunks
+    ADD CONSTRAINT run_log_hot_chunks_run_lease_id_fkey
     FOREIGN KEY (org_id, run_id, run_lease_id)
     REFERENCES run_leases(org_id, run_id, id)
     ON DELETE CASCADE;
 
-ALTER TABLE events
-    ADD CONSTRAINT events_run_lease_id_fkey
+ALTER TABLE event_hot_payloads
+    ADD CONSTRAINT event_hot_payloads_run_lease_id_fkey
     FOREIGN KEY (org_id, run_id, run_lease_id)
     REFERENCES run_leases(org_id, run_id, id)
     ON DELETE SET NULL (run_lease_id);
@@ -2416,6 +2752,7 @@ ALTER TABLE runs
 CREATE TABLE runtime_checkpoints (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -2494,6 +2831,7 @@ CREATE TYPE runtime_checkpoint_artifact_role AS ENUM (
 
 CREATE TABLE runtime_checkpoint_artifacts (
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
@@ -2531,35 +2869,28 @@ ALTER TABLE run_leases
     REFERENCES runtime_checkpoints(org_id, run_id, id)
     ON DELETE SET NULL (restore_runtime_checkpoint_id);
 
-CREATE TYPE run_usage_event_kind AS ENUM (
-    'active_time',
-    'log_bytes',
-    'output_bytes',
-    'checkpoint_bytes'
-);
-
-CREATE TYPE run_usage_event_unit AS ENUM (
-    'ms',
-    'bytes'
-);
-
-CREATE TABLE run_usage_events (
+CREATE TABLE usage_facts (
     id BIGINT GENERATED ALWAYS AS IDENTITY,
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
+    source_kind TEXT NOT NULL,
+    source_id UUID NOT NULL,
     run_id UUID NOT NULL,
     attempt_id UUID,
     run_lease_id UUID,
+    worker_group_id UUID,
     runtime_checkpoint_id UUID,
     trace_id TEXT NOT NULL CHECK (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000'),
     span_id TEXT CHECK (span_id IS NULL OR (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000')),
     snapshot_version BIGINT NOT NULL CHECK (snapshot_version > 0),
-    kind run_usage_event_kind NOT NULL,
-    quantity BIGINT NOT NULL CHECK (quantity >= 0),
-    unit run_usage_event_unit NOT NULL,
+    meter TEXT NOT NULL CHECK (btrim(meter) <> ''),
+    quantity NUMERIC NOT NULL CHECK (quantity >= 0),
+    unit TEXT NOT NULL CHECK (btrim(unit) <> ''),
     measured_to TIMESTAMPTZ,
-    attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
+    measured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    details JSONB NOT NULL DEFAULT '{}'::jsonb,
     idempotency_key TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (run_id, id),
@@ -2578,23 +2909,23 @@ CREATE TABLE run_usage_events (
         ON DELETE SET NULL (runtime_checkpoint_id),
     FOREIGN KEY (org_id, run_id, snapshot_version)
         REFERENCES run_snapshots(org_id, run_id, version)
-        ON DELETE CASCADE
+        ON DELETE RESTRICT
         DEFERRABLE INITIALLY DEFERRED
 );
 
-CREATE UNIQUE INDEX run_usage_events_idempotency_idx
-    ON run_usage_events (org_id, run_id, idempotency_key)
-    WHERE idempotency_key <> '';
+CREATE UNIQUE INDEX usage_facts_idempotency_idx
+    ON usage_facts (org_id, cell_id, source_kind, source_id, meter, idempotency_key);
 
-CREATE INDEX run_usage_events_scope_created_idx
-    ON run_usage_events (org_id, project_id, environment_id, created_at DESC);
+CREATE INDEX usage_facts_scope_created_idx
+    ON usage_facts (org_id, project_id, environment_id, created_at DESC);
 
-CREATE INDEX run_usage_events_trace_idx
-    ON run_usage_events (trace_id, created_at);
+CREATE INDEX usage_facts_trace_idx
+    ON usage_facts (trace_id, created_at);
 
 CREATE TABLE run_waits (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
@@ -2660,6 +2991,7 @@ CREATE TABLE run_waits (
 CREATE TABLE stream_waits (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_wait_id UUID NOT NULL,
@@ -2685,6 +3017,7 @@ CREATE TABLE stream_waits (
 CREATE TABLE token_waits (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_wait_id UUID NOT NULL,
@@ -2704,6 +3037,7 @@ CREATE TABLE token_waits (
 CREATE TABLE timer_waits (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_wait_id UUID NOT NULL,
@@ -2719,6 +3053,7 @@ CREATE TABLE timer_waits (
 CREATE TABLE worker_commands (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_id UUID,
@@ -2788,6 +3123,7 @@ CREATE TABLE worker_commands (
 CREATE TABLE runtime_checkpoint_restores (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
@@ -2831,6 +3167,7 @@ CREATE INDEX runtime_checkpoint_restores_run_idx
 CREATE TABLE runtime_instances (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
+    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     worker_instance_id UUID NOT NULL REFERENCES worker_instances(id) ON DELETE CASCADE,
@@ -3141,14 +3478,14 @@ CREATE INDEX deployment_tasks_lookup_idx
     ON deployment_tasks(org_id, project_id, environment_id, task_id);
 CREATE INDEX deployment_sandboxes_lookup_idx
     ON deployment_sandboxes(org_id, project_id, environment_id, deployment_id, sandbox_id);
-CREATE UNIQUE INDEX run_log_chunks_observed_idx ON run_log_chunks(org_id, run_id, run_lease_id, stream, observed_seq);
-CREATE INDEX events_run_id_idx ON events(run_id)
+CREATE UNIQUE INDEX run_log_hot_chunks_observed_idx ON run_log_hot_chunks(org_id, run_id, run_lease_id, stream, observed_seq);
+CREATE INDEX event_hot_payloads_run_id_idx ON event_hot_payloads(run_id)
     WHERE run_id IS NOT NULL;
-CREATE INDEX events_deployment_id_idx ON events(deployment_id)
+CREATE INDEX event_hot_payloads_deployment_id_idx ON event_hot_payloads(deployment_id)
     WHERE deployment_id IS NOT NULL;
-CREATE INDEX events_run_lease_idx ON events(org_id, run_id, run_lease_id, seq)
+CREATE INDEX event_hot_payloads_run_lease_idx ON event_hot_payloads(org_id, run_id, run_lease_id, seq)
     WHERE run_lease_id IS NOT NULL;
-CREATE INDEX events_run_attempt_idx ON events(org_id, run_id, attempt_number, seq)
+CREATE INDEX event_hot_payloads_run_attempt_idx ON event_hot_payloads(org_id, run_id, attempt_number, seq)
     WHERE attempt_number IS NOT NULL;
 CREATE INDEX run_attempts_run_status_idx ON run_attempts(org_id, run_id, status, attempt_number);
 CREATE UNIQUE INDEX run_leases_one_active_per_run_idx ON run_leases(run_id)

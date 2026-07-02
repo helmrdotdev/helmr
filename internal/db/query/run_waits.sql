@@ -87,7 +87,7 @@ waiting_runtime_instance AS (
            owner_run_wait_id = inserted_wait.id,
            owner_run_state_version = inserted_wait.owner_run_state_version,
            waiting_at = now(),
-           updated_at = now()
+           observed_at = now()
       FROM scope, inserted_wait
      WHERE runtime_instances.org_id = scope.org_id
        AND runtime_instances.id = scope.runtime_instance_id
@@ -144,7 +144,7 @@ UPDATE run_waits
          ELSE state
        END,
        resolved_at = COALESCE(run_waits.resolved_at, now()),
-       updated_at = now()
+       observed_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
    AND state IN ('live_waiting', 'checkpointed_waiting')
@@ -298,7 +298,7 @@ claimed_wait AS (
        SET state = 'checkpointing',
            runtime_checkpoint_started_at = COALESCE(run_waits.runtime_checkpoint_started_at, now()),
            runtime_checkpoint_id = sqlc.arg(runtime_checkpoint_id),
-           updated_at = now()
+           observed_at = now()
       FROM scope
      WHERE run_waits.org_id = scope.org_id
        AND run_waits.id = scope.id
@@ -350,7 +350,7 @@ checkpointing_runtime_instance AS (
            owner_run_wait_id = selected_wait.id,
            owner_run_state_version = selected_wait.owner_run_state_version,
            checkpointing_at = COALESCE(runtime_instances.checkpointing_at, now()),
-           updated_at = now()
+           observed_at = now()
       FROM scope, selected_wait
      WHERE runtime_instances.org_id = scope.org_id
        AND runtime_instances.id = scope.runtime_instance_id
@@ -415,7 +415,7 @@ updated_restore AS (
            error_message = NULL,
            acknowledged_at = COALESCE(runtime_checkpoint_restores.acknowledged_at, now()),
            finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
-           updated_at = now()
+           observed_at = now()
       FROM current_wait
       JOIN restore_phase_payload ON true
      WHERE runtime_checkpoint_restores.org_id = sqlc.arg(org_id)
@@ -436,7 +436,7 @@ updated_wait AS (
     UPDATE run_waits
        SET resumed_at = COALESCE(run_waits.resumed_at, now()),
            state = 'resumed',
-           updated_at = now()
+           observed_at = now()
       FROM current_wait
       JOIN updated_restore ON true
      WHERE run_waits.org_id = current_wait.org_id
@@ -483,7 +483,7 @@ updated_waits AS (
     UPDATE run_waits
        SET state = 'resuming',
            resuming_at = COALESCE(run_waits.resuming_at, now()),
-           updated_at = now()
+           observed_at = now()
       FROM eligible_waits
      WHERE run_waits.org_id = eligible_waits.org_id
        AND run_waits.id = eligible_waits.id
@@ -495,7 +495,7 @@ updated_runs AS (
        SET status = 'queued',
            execution_status = 'queued',
            state_version = runs.state_version + 1,
-           updated_at = now()
+           observed_at = now()
       FROM eligible_waits
       JOIN updated_waits ON updated_waits.org_id = eligible_waits.org_id
                         AND updated_waits.id = eligible_waits.id
@@ -508,7 +508,7 @@ updated_runs AS (
 updated_attempts AS (
     UPDATE run_attempts
        SET status = 'queued',
-           updated_at = now()
+           observed_at = now()
       FROM updated_runs
      WHERE run_attempts.org_id = updated_runs.org_id
        AND run_attempts.run_id = updated_runs.id
@@ -526,7 +526,7 @@ updated_queue AS (
            dispatch_generation = run_queue_items.dispatch_generation + 1,
            last_error = '',
            enqueued_at = now(),
-           updated_at = now(),
+           observed_at = now(),
            finished_at = NULL
       FROM updated_runs
       JOIN eligible_waits ON eligible_waits.org_id = updated_runs.org_id
@@ -614,7 +614,7 @@ WITH stale_waits AS MATERIALIZED (
 failed_waits AS (
     UPDATE run_waits
        SET state = 'failed',
-           updated_at = now()
+           observed_at = now()
       FROM stale_waits
      WHERE run_waits.org_id = stale_waits.org_id
        AND run_waits.id = stale_waits.run_wait_id
@@ -629,7 +629,7 @@ failed_runs AS (
            error_message = stale_waits.failure_message,
            state_version = stale_waits.next_state_version,
            finished_at = now(),
-           updated_at = now()
+           observed_at = now()
       FROM stale_waits
       JOIN failed_waits ON failed_waits.org_id = stale_waits.org_id
                        AND failed_waits.id = stale_waits.run_wait_id
@@ -677,7 +677,7 @@ failed_attempts AS (
        SET status = 'failed',
            error_message = failed_runs.error_message,
            finished_at = now(),
-           updated_at = now()
+           observed_at = now()
       FROM failed_runs
      WHERE run_attempts.org_id = failed_runs.org_id
        AND run_attempts.run_id = failed_runs.id
@@ -688,7 +688,7 @@ completed_queue_entries AS (
     UPDATE run_queue_items
        SET status = 'completed',
            dispatch_generation = dispatch_generation + 1,
-           updated_at = now(),
+           observed_at = now(),
            finished_at = now()
      FROM failed_runs
      WHERE run_queue_items.org_id = failed_runs.org_id
@@ -697,8 +697,9 @@ completed_queue_entries AS (
     RETURNING run_queue_items.run_id
 ),
 failed_snapshots AS (
-    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
+    INSERT INTO run_snapshots (org_id, cell_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
     SELECT failed_runs.org_id,
+           failed_runs.cell_id,
            failed_runs.id,
            failed_runs.state_version,
            'failed',
@@ -720,22 +721,23 @@ failed_snapshots AS (
     RETURNING run_snapshots.run_id
 ),
 failed_event_seq AS (
-    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
-    SELECT failed_runs.org_id, 'run', failed_runs.id, 1
+    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
+    SELECT failed_runs.org_id, failed_runs.cell_id, 'run', failed_runs.id, 1
       FROM failed_runs
       JOIN failed_snapshots ON failed_snapshots.run_id = failed_runs.id
-    ON CONFLICT (org_id, subject_type, subject_id)
-    DO UPDATE SET last_seq = event_subject_cursors.last_seq + 1,
-                  updated_at = now()
-    RETURNING org_id, subject_type, subject_id, last_seq
+    ON CONFLICT (org_id, subject_kind, subject_id)
+    DO UPDATE SET seq = event_cursors.seq + 1,
+                  observed_at = now()
+    RETURNING org_id, subject_kind, subject_id, seq
 ),
 failed_events AS (
-    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO event_hot_payloads (org_id, cell_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT failed_runs.org_id,
+           failed_runs.cell_id,
            failed_runs.project_id,
            failed_runs.environment_id,
            failed_runs.id,
-           failed_event_seq.last_seq,
+           failed_event_seq.seq,
            failed_runs.current_attempt_id,
            failed_runs.current_attempt_number,
            failed_runs.trace_id,
@@ -760,32 +762,38 @@ failed_events AS (
       FROM failed_runs
       JOIN failed_snapshots ON failed_snapshots.run_id = failed_runs.id
       JOIN failed_event_seq ON failed_event_seq.org_id = failed_runs.org_id
-                           AND failed_event_seq.subject_type = 'run'
+                           AND failed_event_seq.subject_kind = 'run'
                            AND failed_event_seq.subject_id = failed_runs.id
     RETURNING *
 ),
-failed_event_outbox AS (
-    INSERT INTO event_outbox (event_record_id, stream_key)
-    SELECT failed_events.id,
-           'helmr:events:' || failed_events.org_id::text || ':' || failed_events.subject_type::text || ':' || failed_events.subject_id::text
+failed_telemetry_outbox AS (
+    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, idempotency_key, event_record_id, stream_key)
+    SELECT failed_events.org_id,
+                  failed_events.cell_id,
+                  'event',
+                  'event',
+                  failed_events.subject_id,
+                  'event:' || failed_events.subject_kind::text || ':' || failed_events.subject_id::text || ':' || failed_events.seq::text,
+                  failed_events.id,
+                  'helmr:events:' || failed_events.org_id::text || ':' || failed_events.subject_kind::text || ':' || failed_events.subject_id::text
       FROM failed_events
     RETURNING id
 ),
 cleanup AS (
     SELECT
         (SELECT count(*) FROM invalidated_checkpoints) AS invalidated_checkpoints,
-        (SELECT count(*) FROM failed_event_outbox) AS failed_event_outboxes
+        (SELECT count(*) FROM failed_telemetry_outbox) AS failed_telemetry_outboxes
 )
 SELECT failed_waits.*
   FROM failed_waits
   JOIN failed_runs ON failed_runs.org_id = failed_waits.org_id
                   AND failed_runs.id = failed_waits.run_id
- WHERE (SELECT invalidated_checkpoints + failed_event_outboxes FROM cleanup) >= 0;
+ WHERE (SELECT invalidated_checkpoints + failed_telemetry_outboxes FROM cleanup) >= 0;
 
 -- name: SetRunWaitWorkspaceVersion :one
 UPDATE run_waits
    SET workspace_version_id = workspace_versions.id,
-       updated_at = now()
+       observed_at = now()
   FROM runs
   JOIN workspace_versions
     ON workspace_versions.org_id = runs.org_id
@@ -811,7 +819,7 @@ RETURNING run_waits.*;
 UPDATE run_waits
    SET state = 'cancelled',
        cancelled_at = COALESCE(run_waits.cancelled_at, now()),
-       updated_at = now()
+       observed_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
    AND state = 'checkpointed_waiting'
@@ -821,7 +829,7 @@ RETURNING *;
 UPDATE run_waits
    SET state = 'cancelled',
        cancelled_at = COALESCE(run_waits.cancelled_at, now()),
-       updated_at = now()
+       observed_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
    AND state = 'checkpointed_waiting'
@@ -834,7 +842,7 @@ UPDATE run_waits
          ELSE 'expired'::run_wait_state
        END,
        resolved_at = COALESCE(run_waits.resolved_at, now()),
-       updated_at = now()
+       observed_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND state IN ('live_waiting', 'checkpointed_waiting')
    AND timeout_at IS NOT NULL

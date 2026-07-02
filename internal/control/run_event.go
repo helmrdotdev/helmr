@@ -83,15 +83,15 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		events = append(events, runEventResponse(row))
 	}
-	var nextCursor *int64
+	var nextCursor *string
 	if hasNext {
-		value := rows[len(rows)-1].Seq
+		value := telemetryCursor(rows[len(rows)-1].Seq)
 		nextCursor = &value
 	}
-	writeJSON(w, http.StatusOK, api.RunEventPage{Events: events, Cursor: cursor, NextCursor: nextCursor})
+	writeJSON(w, http.StatusOK, api.RunEventPage{Events: events, Cursor: telemetryCursor(cursor), NextCursor: nextCursor})
 }
 
-func (s *Server) listRunEvents(r *http.Request, orgID pgtype.UUID, runID pgtype.UUID, cursor int64, limit int32) ([]db.Event, error) {
+func (s *Server) listRunEvents(r *http.Request, orgID pgtype.UUID, runID pgtype.UUID, cursor int64, limit int32) ([]db.EventHotPayload, error) {
 	return s.db.ListSubjectEvents(r.Context(), db.ListSubjectEventsParams{
 		OrgID:       orgID,
 		SubjectType: db.EventSubjectTypeRun,
@@ -109,11 +109,7 @@ func eventCursor(r *http.Request) (int64, error) {
 	if value == "" {
 		return 0, nil
 	}
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || parsed < 0 {
-		return 0, errors.New("cursor must be a non-negative integer")
-	}
-	return parsed, nil
+	return parseTelemetryCursor(value)
 }
 
 func eventLimit(r *http.Request) (int32, error) {
@@ -167,6 +163,6 @@ func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID u
 	}
 }
 
-func runEventResponse(event db.Event) api.RunEvent {
+func runEventResponse(event db.EventHotPayload) api.RunEvent {
 	return eventResponseFromRecord(event)
 }

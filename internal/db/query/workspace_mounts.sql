@@ -1159,7 +1159,9 @@ verified_artifact AS (
     SELECT artifacts.id
       FROM artifacts
       JOIN cas_objects
-        ON cas_objects.digest = artifacts.digest
+        ON cas_objects.org_id = artifacts.org_id
+       AND cas_objects.cell_id = artifacts.cell_id
+       AND cas_objects.digest = artifacts.digest
      WHERE artifacts.org_id = sqlc.arg(org_id)
        AND artifacts.project_id = sqlc.arg(project_id)
        AND artifacts.environment_id = sqlc.arg(environment_id)

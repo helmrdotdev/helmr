@@ -24,6 +24,8 @@ var (
 type WorkerClaims struct {
 	WorkerInstanceID string
 	CredentialID     string
+	CellID           string
+	ClaimVersion     int64
 	IssuedAt         time.Time
 	ExpiresAt        time.Time
 }
@@ -31,6 +33,8 @@ type WorkerClaims struct {
 type workerJWTClaims struct {
 	WorkerInstanceID string `json:"worker_instance_id"`
 	CredentialID     string `json:"credential_id"`
+	CellID           string `json:"cell_id"`
+	ClaimVersion     int64  `json:"claim_version"`
 	jwt.RegisteredClaims
 }
 
@@ -44,6 +48,8 @@ func IssueWorkerToken(secret []byte, payload WorkerClaims) (string, error) {
 	claims := workerJWTClaims{
 		WorkerInstanceID: strings.TrimSpace(payload.WorkerInstanceID),
 		CredentialID:     strings.TrimSpace(payload.CredentialID),
+		CellID:           strings.TrimSpace(payload.CellID),
+		ClaimVersion:     payload.ClaimVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    WorkerTokenIssuer,
 			Subject:   strings.TrimSpace(payload.WorkerInstanceID),
@@ -95,6 +101,8 @@ func VerifyWorkerToken(secret []byte, rawToken string, now time.Time) (WorkerCla
 	payload := WorkerClaims{
 		WorkerInstanceID: strings.TrimSpace(claims.WorkerInstanceID),
 		CredentialID:     strings.TrimSpace(claims.CredentialID),
+		CellID:           strings.TrimSpace(claims.CellID),
+		ClaimVersion:     claims.ClaimVersion,
 	}
 	if claims.IssuedAt != nil {
 		payload.IssuedAt = claims.IssuedAt.Time
@@ -128,6 +136,12 @@ func validateWorkerClaims(payload WorkerClaims) error {
 	}
 	if strings.TrimSpace(payload.CredentialID) == "" {
 		return errors.New("credential_id is empty")
+	}
+	if strings.TrimSpace(payload.CellID) == "" {
+		return errors.New("cell_id is empty")
+	}
+	if payload.ClaimVersion <= 0 {
+		return errors.New("claim_version must be positive")
 	}
 	if payload.IssuedAt.IsZero() {
 		return errors.New("issued_at is zero")

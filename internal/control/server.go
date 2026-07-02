@@ -51,6 +51,7 @@ type SecretManager interface {
 type Server struct {
 	log                   *slog.Logger
 	deploymentMode        string
+	cellID                string
 	db                    db.Querier
 	tx                    TxBeginner
 	readinessDB           db.DBTX
@@ -120,6 +121,7 @@ type dbTXBeginner interface {
 type ServerConfig struct {
 	Log            *slog.Logger
 	DeploymentMode string
+	CellID         string
 
 	DB          db.Querier
 	TX          TxBeginner
@@ -172,6 +174,10 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if deploymentMode == "" {
 		deploymentMode = deploymentModeSelfHosted
 	}
+	cellID := strings.TrimSpace(cfg.CellID)
+	if cellID == "" {
+		cellID = "us-east-1-cell-1"
+	}
 	mailer := cfg.Mailer
 	if mailer == nil {
 		if cfg.MagicLinkDebugURLs {
@@ -187,6 +193,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	server := &Server{
 		log:                   log,
 		deploymentMode:        deploymentMode,
+		cellID:                cellID,
 		db:                    cfg.DB,
 		tx:                    cfg.TX,
 		readinessDB:           cfg.ReadinessDB,

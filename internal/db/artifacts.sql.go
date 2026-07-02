@@ -15,6 +15,7 @@ const createArtifact = `-- name: CreateArtifact :one
 INSERT INTO artifacts (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     digest,
@@ -31,14 +32,16 @@ INSERT INTO artifacts (
     $6,
     $7,
     $8,
-    $9
+    $9,
+    $10
 )
-RETURNING id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_instance_id, created_at
+RETURNING id, org_id, cell_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_instance_id, created_at
 `
 
 type CreateArtifactParams struct {
 	ID                        pgtype.UUID  `json:"id"`
 	OrgID                     pgtype.UUID  `json:"org_id"`
+	CellID                    string       `json:"cell_id"`
 	ProjectID                 pgtype.UUID  `json:"project_id"`
 	EnvironmentID             pgtype.UUID  `json:"environment_id"`
 	Digest                    string       `json:"digest"`
@@ -52,6 +55,7 @@ func (q *Queries) CreateArtifact(ctx context.Context, arg CreateArtifactParams) 
 	row := q.db.QueryRow(ctx, createArtifact,
 		arg.ID,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Digest,
@@ -64,6 +68,7 @@ func (q *Queries) CreateArtifact(ctx context.Context, arg CreateArtifactParams) 
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.Digest,
@@ -77,7 +82,7 @@ func (q *Queries) CreateArtifact(ctx context.Context, arg CreateArtifactParams) 
 }
 
 const getArtifact = `-- name: GetArtifact :one
-SELECT id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_instance_id, created_at
+SELECT id, org_id, cell_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_instance_id, created_at
   FROM artifacts
  WHERE org_id = $1
    AND project_id = $2
@@ -103,6 +108,7 @@ func (q *Queries) GetArtifact(ctx context.Context, arg GetArtifactParams) (Artif
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.Digest,
@@ -116,7 +122,7 @@ func (q *Queries) GetArtifact(ctx context.Context, arg GetArtifactParams) (Artif
 }
 
 const listArtifactsByIDs = `-- name: ListArtifactsByIDs :many
-SELECT id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_instance_id, created_at
+SELECT id, org_id, cell_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_instance_id, created_at
   FROM artifacts
  WHERE org_id = $1
    AND project_id = $2
@@ -148,6 +154,7 @@ func (q *Queries) ListArtifactsByIDs(ctx context.Context, arg ListArtifactsByIDs
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
+			&i.CellID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.Digest,
@@ -171,6 +178,7 @@ const upsertRuntimeSubstrateArtifactBlob = `-- name: UpsertRuntimeSubstrateArtif
 INSERT INTO artifacts (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     digest,
@@ -184,21 +192,23 @@ INSERT INTO artifacts (
     $3,
     $4,
     $5,
-    'runtime_substrate',
     $6,
+    'runtime_substrate',
     $7,
-    $8
+    $8,
+    $9
 )
 ON CONFLICT (org_id, project_id, environment_id, digest, kind)
 WHERE kind = 'runtime_substrate'
 DO UPDATE
    SET created_by_worker_instance_id = COALESCE(artifacts.created_by_worker_instance_id, excluded.created_by_worker_instance_id)
-RETURNING id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_instance_id, created_at
+RETURNING id, org_id, cell_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_instance_id, created_at
 `
 
 type UpsertRuntimeSubstrateArtifactBlobParams struct {
 	ID                        pgtype.UUID `json:"id"`
 	OrgID                     pgtype.UUID `json:"org_id"`
+	CellID                    string      `json:"cell_id"`
 	ProjectID                 pgtype.UUID `json:"project_id"`
 	EnvironmentID             pgtype.UUID `json:"environment_id"`
 	Digest                    string      `json:"digest"`
@@ -211,6 +221,7 @@ func (q *Queries) UpsertRuntimeSubstrateArtifactBlob(ctx context.Context, arg Up
 	row := q.db.QueryRow(ctx, upsertRuntimeSubstrateArtifactBlob,
 		arg.ID,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Digest,
@@ -222,6 +233,7 @@ func (q *Queries) UpsertRuntimeSubstrateArtifactBlob(ctx context.Context, arg Up
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.Digest,

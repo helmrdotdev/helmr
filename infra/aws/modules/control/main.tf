@@ -8,6 +8,24 @@ locals {
   email_from          = var.email_from == null ? "" : var.email_from
   smtp_addr           = var.smtp_addr == null ? "" : var.smtp_addr
   smtp_username       = var.smtp_username == null ? "" : var.smtp_username
+  clickhouse_url      = var.clickhouse_url == null ? "" : var.clickhouse_url
+  clickhouse_user     = var.clickhouse_user == null ? "" : var.clickhouse_user
+
+  telemetry_environment = merge(
+    {
+      HELMR_CELL_ID = trimspace(var.cell_id)
+    },
+    local.clickhouse_url == "" ? {} : {
+      HELMR_CLICKHOUSE_URL = local.clickhouse_url
+    },
+    local.clickhouse_user == "" ? {} : {
+      HELMR_CLICKHOUSE_USER = local.clickhouse_user
+    }
+  )
+
+  telemetry_secrets = var.clickhouse_password_secret_arn == null ? {} : {
+    HELMR_CLICKHOUSE_PASSWORD = var.clickhouse_password_secret_arn
+  }
 
   email_environment = merge(
     var.email_provider == "none" ? {} : {
@@ -36,13 +54,13 @@ locals {
 
   managed_control_environment = merge({
     HELMR_CONTROL_ADDR           = ":${local.control_port}"
-    HELMR_DEPLOYMENT_MODE        = "self-hosted"
+    HELMR_DEPLOYMENT_MODE        = var.deployment_mode
     HELMR_CAS_URI                = "s3://${aws_s3_bucket.cas.bucket}"
     HELMR_PUBLIC_URL             = local.control_url
     HELMR_REDIS_URL              = local.redis_url
     HELMR_SCHEDULE_JITTER        = var.schedule_jitter
     HELMR_GITHUB_OAUTH_CLIENT_ID = var.github_oauth_client_id
-  }, local.email_environment)
+  }, local.telemetry_environment, local.email_environment)
 
   managed_control_secrets = merge({
     HELMR_DATABASE_URL               = aws_secretsmanager_secret.database_url.arn
@@ -56,6 +74,7 @@ locals {
     var.secret_encryption_key_old_arn != null ? {
       HELMR_SECRET_ENCRYPTION_KEY_OLD = var.secret_encryption_key_old_arn
     } : {},
+    local.telemetry_secrets,
     local.email_secrets
   )
 
@@ -66,6 +85,10 @@ locals {
     "HELMR_SMTP_ADDR",
     "HELMR_SMTP_USERNAME",
     "HELMR_SMTP_PASSWORD",
+    "HELMR_CELL_ID",
+    "HELMR_CLICKHOUSE_URL",
+    "HELMR_CLICKHOUSE_USER",
+    "HELMR_CLICKHOUSE_PASSWORD",
   ])
   reserved_control_environment_keys = toset(keys(local.managed_control_environment))
   reserved_control_secret_keys      = toset(keys(local.managed_control_secrets))
@@ -86,7 +109,7 @@ locals {
     HELMR_SCHEDULE_LEASE               = var.schedule_lease
     HELMR_SCHEDULE_MAX_ATTEMPTS        = tostring(var.schedule_max_attempts)
     HELMR_SCHEDULE_JITTER              = var.schedule_jitter
-  }, local.email_environment)
+  }, local.telemetry_environment, local.email_environment)
   dispatcher_environment = merge(var.dispatcher_environment, local.managed_dispatcher_environment)
 
   dispatcher_secrets = merge({
@@ -97,6 +120,7 @@ locals {
     var.secret_encryption_key_old_arn != null ? {
       HELMR_SECRET_ENCRYPTION_KEY_OLD = var.secret_encryption_key_old_arn
     } : {},
+    local.telemetry_secrets,
     local.email_secrets
   )
 
