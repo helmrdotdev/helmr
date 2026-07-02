@@ -22,6 +22,11 @@ type txWork struct {
 	afterCommit []func(context.Context) error
 }
 
+// AfterCommit registers a post-commit effect for the current unit of work.
+// Effects run synchronously after Commit succeeds, in registration order, with
+// context cancellation detached from the request. Each caller owns the effect's
+// durability semantics: return an error for required follow-up work, or log and
+// return nil for best-effort wakeups/enqueues that should not fail the request.
 func (work *txWork) AfterCommit(fn func(context.Context) error) {
 	if fn == nil {
 		return
@@ -29,6 +34,9 @@ func (work *txWork) AfterCommit(fn func(context.Context) error) {
 	work.afterCommit = append(work.afterCommit, fn)
 }
 
+// inTx owns the control-plane transaction lifecycle for request-level units of
+// work. The queryTransactionBeginner branch is a temporary seam for legacy unit
+// fakes; production uses ServerConfig.TX and sqlc queries over the pgx tx.
 func (s *Server) inTx(ctx context.Context, fn func(*txWork) error) (err error) {
 	if fn == nil {
 		return errors.New("transaction function is required")
