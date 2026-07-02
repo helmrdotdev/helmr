@@ -156,7 +156,7 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	if _, err := runMaxDurationSeconds(runOptions.MaxDurationSeconds, deploymentTask.MaxActiveDurationMs); err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
-	scheduling, err := s.resolveRunScheduling(runOptions, deploymentTask)
+	scheduling, err := resolveRunScheduling(runOptions, deploymentTask)
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
@@ -224,7 +224,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	if _, err := runMaxDurationSeconds(runOptions.MaxDurationSeconds, deploymentTask.MaxActiveDurationMs); err != nil {
 		return db.CreateScheduleRow{}, err
 	}
-	scheduling, err := s.resolveRunScheduling(runOptions, deploymentTask)
+	scheduling, err := resolveRunScheduling(runOptions, deploymentTask)
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}

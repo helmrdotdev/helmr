@@ -586,7 +586,7 @@ type runScheduling struct {
 	queuedExpiresAt       pgtype.Timestamptz
 }
 
-func (s *Server) resolveRunScheduling(options api.CreateRunOptions, task db.GetDeploymentTaskRow) (runScheduling, error) {
+func resolveRunScheduling(options api.CreateRunOptions, task db.GetDeploymentTaskRow) (runScheduling, error) {
 	now := time.Now().UTC()
 	queueName := strings.TrimSpace(task.QueueName)
 	queueLimit := task.QueueConcurrencyLimit

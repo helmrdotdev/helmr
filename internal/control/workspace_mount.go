@@ -351,10 +351,10 @@ func workspaceStopFingerprint() (string, error) {
 }
 
 func (s *Server) workspaceMountPrerequisiteError(ctx context.Context, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workspaceID pgtype.UUID) error {
-	return s.workspaceMountPrerequisiteErrorWithStore(ctx, s.db, orgID, projectID, environmentID, workspaceID)
+	return workspaceMountPrerequisiteErrorWithStore(ctx, s.db, orgID, projectID, environmentID, workspaceID)
 }
 
-func (s *Server) workspaceMountPrerequisiteErrorWithStore(ctx context.Context, store db.Querier, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workspaceID pgtype.UUID) error {
+func workspaceMountPrerequisiteErrorWithStore(ctx context.Context, store db.Querier, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workspaceID pgtype.UUID) error {
 	row, err := store.GetWorkspaceMountPrerequisites(ctx, db.GetWorkspaceMountPrerequisitesParams{
 		OrgID:         orgID,
 		ProjectID:     projectID,

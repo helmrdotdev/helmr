@@ -303,7 +303,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	if err != nil {
 		return sessionStartResult{}, err
 	}
-	scheduling, err := s.resolveRunScheduling(runOptions, deploymentTask)
+	scheduling, err := resolveRunScheduling(runOptions, deploymentTask)
 	if err != nil {
 		return sessionStartResult{}, err
 	}
@@ -496,7 +496,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		})
 		if err != nil {
 			if isNoRows(err) {
-				return s.workspaceMountPrerequisiteErrorWithStore(ctx, work.q, pgvalue.UUID(actor.OrgID), projectID, environmentID, workspace.ID)
+				return workspaceMountPrerequisiteErrorWithStore(ctx, work.q, pgvalue.UUID(actor.OrgID), projectID, environmentID, workspace.ID)
 			}
 			return err
 		}

@@ -254,7 +254,7 @@ func (s *Server) tryCreateContinuationRunForRequest(ctx context.Context, store d
 	if err != nil {
 		return pgtype.UUID{}, "", err
 	}
-	scheduling, err := s.resolveRunScheduling(api.CreateRunOptions{}, deploymentTask)
+	scheduling, err := resolveRunScheduling(api.CreateRunOptions{}, deploymentTask)
 	if err != nil {
 		return pgtype.UUID{}, "", err
 	}
@@ -335,7 +335,7 @@ func (s *Server) tryCreateContinuationRunForRequest(ctx context.Context, store d
 	})
 	if err != nil {
 		if isNoRows(err) {
-			return pgtype.UUID{}, "", s.workspaceMountPrerequisiteErrorWithStore(ctx, store, locked.OrgID, locked.ProjectID, locked.EnvironmentID, locked.WorkspaceID)
+			return pgtype.UUID{}, "", workspaceMountPrerequisiteErrorWithStore(ctx, store, locked.OrgID, locked.ProjectID, locked.EnvironmentID, locked.WorkspaceID)
 		}
 		return pgtype.UUID{}, "", err
 	}
