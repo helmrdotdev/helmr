@@ -3,8 +3,6 @@ package control
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -85,11 +84,7 @@ func (s *Server) workerClaimWorkspaceOperation(w http.ResponseWriter, r *http.Re
 }
 
 func newWorkspaceOperationClaimToken() (string, error) {
-	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+	return token.GenerateOpaque(32)
 }
 
 func (s *Server) workerStartWorkspaceOperation(w http.ResponseWriter, r *http.Request) {

@@ -2,8 +2,6 @@ package control
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/runtime"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -471,7 +470,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		writeError(w, errors.New("generate workspace mount guest channel token"))
 		return
 	}
-	runtimeInstanceToken, err := token.GenerateOpaque(32)
+	runtimeInstanceToken, err := runtime.NewInstanceToken()
 	if err != nil {
 		writeError(w, errors.New("generate workspace mount runtime instance token"))
 		return
@@ -1030,11 +1029,7 @@ func workerWorkspaceMountTransitionParams(ctx context.Context, orgID string, wor
 }
 
 func newGuestdChannelToken() (string, error) {
-	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+	return token.GenerateOpaque(32)
 }
 
 func guestdChannelTokenHash(token string) string {

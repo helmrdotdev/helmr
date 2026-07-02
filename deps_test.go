@@ -38,7 +38,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"compute":            {"sha256sum"},
 		"config":             {"auth"},
 		"console":            {},
-		"control":            {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "pgvalue", "schedule", "secret", "sha256sum", "stablejson", "token", "tracing", "workspace"},
+		"control":            {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "pgvalue", "runtime", "schedule", "secret", "sha256sum", "stablejson", "token", "tracing", "workspace"},
 		"db":                 {},
 		"db/dbtest":          {},
 		"db/schema":          {},
