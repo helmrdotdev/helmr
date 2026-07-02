@@ -18,9 +18,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -294,13 +294,13 @@ func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.R
 		if err != nil {
 			return nil, err
 		}
-		if transport.IsStreamFramePrefix(prefix) {
-			header, bodyLen, err := transport.ReadStreamFrameHeader(reader)
+		if frameio.IsStreamFramePrefix(prefix) {
+			header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
 			if err != nil {
 				return nil, err
 			}
 			switch header.Type {
-			case transport.StreamTypeCheckpointPauseReady:
+			case wire.StreamTypeCheckpointPauseReady:
 				if bodyLen != 0 {
 					return nil, fmt.Errorf("checkpoint pause ready body length %d must be zero", bodyLen)
 				}
@@ -310,7 +310,7 @@ func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.R
 				ready.RunWaitId = header.RunWaitID
 				ready.CheckpointId = header.CheckpointID
 				return workspaceCapture, nil
-			case transport.StreamTypeWorkspaceArtifact:
+			case wire.StreamTypeWorkspaceArtifact:
 				if !request.CaptureWorkspace {
 					return nil, errors.New("checkpoint pause returned unexpected workspace capture")
 				}
@@ -327,7 +327,7 @@ func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.R
 			}
 			continue
 		}
-		body, err := transport.ReadMessageFrame(reader)
+		body, err := frameio.ReadMessageFrame(reader)
 		if err != nil {
 			return nil, err
 		}

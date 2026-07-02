@@ -20,11 +20,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/stablejson"
 	"github.com/helmrdotdev/helmr/internal/task"
-	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -92,14 +93,14 @@ func (p GuestIndexer) Index(ctx context.Context, request IndexRequest) (Catalog,
 	if runID == "" {
 		runID = "deployment-index"
 	}
-	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeCatalogDeployment, RunID: runID}, sourceTar.Path); err != nil {
+	if err := wire.WriteFileFrame(stream, wire.StreamHeader{Type: wire.StreamTypeCatalogDeployment, RunID: runID}, sourceTar.Path); err != nil {
 		return Catalog{}, fmt.Errorf("write deployment source: %w", err)
 	}
-	body, err := transport.ReadMessageFrame(stream)
+	body, err := frameio.ReadMessageFrame(stream)
 	if err != nil {
 		return Catalog{}, fmt.Errorf("read deployment index: %w", err)
 	}
-	if frame, ok, err := transport.DecodeParseErrorFrame(body); err != nil {
+	if frame, ok, err := frameio.DecodeParseErrorFrame(body); err != nil {
 		return Catalog{}, fmt.Errorf("read deployment index: %w", err)
 	} else if ok {
 		return Catalog{}, task.ParseError{Kind: frame.Kind, Message: frame.Message}

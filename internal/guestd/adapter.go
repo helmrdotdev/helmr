@@ -20,8 +20,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/safepath"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
-	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"google.golang.org/protobuf/proto"
 )
@@ -604,7 +604,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 					recordControlErr(fmt.Errorf("read token create result: %w", err))
 					return
 				}
-				if err := transport.WriteProtoFrame(stdin, &result); err != nil {
+				if err := frameio.WriteProtoFrame(stdin, &result); err != nil {
 					recordControlErr(fmt.Errorf("write token create result: %w", err))
 					return
 				}
@@ -620,7 +620,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 					recordControlErr(fmt.Errorf("read active stream read result: %w", err))
 					return
 				}
-				if err := transport.WriteProtoFrame(stdin, &result); err != nil {
+				if err := frameio.WriteProtoFrame(stdin, &result); err != nil {
 					recordControlErr(fmt.Errorf("write active stream read result: %w", err))
 					return
 				}
@@ -713,7 +713,7 @@ type adapterControlEvent struct {
 func readAdapterControlEvents(conn io.Reader, events chan<- adapterControlEvent) {
 	defer close(events)
 	for {
-		event, err := transport.ReadRunEvent(conn)
+		event, err := wire.ReadRunEvent(conn)
 		if err != nil {
 			events <- adapterControlEvent{err: err}
 			return
@@ -729,12 +729,12 @@ func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream
 		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("read checkpoint suspend request: %v", err))
 		return "", fmt.Errorf("read checkpoint suspend request: %w", err)
 	}
-	if header.Type == transport.StreamTypeResumeDecision {
+	if header.Type == wire.StreamTypeResumeDecision {
 		decision, err := wire.ReadResumeDecision(header, stream.currentConn(), bodyLen)
 		if err != nil {
 			return "", err
 		}
-		if err := transport.WriteProtoFrame(stdin, decision); err != nil {
+		if err := frameio.WriteProtoFrame(stdin, decision); err != nil {
 			return "", fmt.Errorf("write immediate resume decision: %w", err)
 		}
 		if decision.GetRequireConsumedAck() {
@@ -835,7 +835,7 @@ func (s *adapterRunStream) writeEvent(event *runv0.RunEvent) error {
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return transport.WriteProtoFrame(conn, event)
+	return frameio.WriteProtoFrame(conn, event)
 }
 
 func (s *adapterRunStream) connAfterResumeAckGate() (io.ReadWriter, error) {
@@ -851,8 +851,8 @@ func (s *adapterRunStream) writeCheckpointPauseReady(runWaitID string, checkpoin
 	conn := s.currentConn()
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return transport.WriteStreamFrameHeader(conn, transport.StreamHeader{
-		Type:         transport.StreamTypeCheckpointPauseReady,
+	return wire.WriteStreamFrameHeader(conn, wire.StreamHeader{
+		Type:         wire.StreamTypeCheckpointPauseReady,
 		RunWaitID:    runWaitID,
 		CheckpointID: checkpointID,
 	}, 0)
@@ -1032,8 +1032,8 @@ func (s *adapterRunStream) writeWorkspaceArtifactToConn(conn io.Writer, runID st
 	entryCount := artifact.EntryCount
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return transport.WriteFileFrameWithMetadata(conn, transport.StreamHeader{
-		Type:       transport.StreamTypeWorkspaceArtifact,
+	return wire.WriteFileFrameWithMetadata(conn, wire.StreamHeader{
+		Type:       wire.StreamTypeWorkspaceArtifact,
 		RunID:      runID,
 		EntryCount: &entryCount,
 	}, artifact.Path, artifact.Digest, artifact.SizeBytes)
@@ -1057,14 +1057,14 @@ func (s *adapterRunStream) readProto(message proto.Message) error {
 	s.mu.Lock()
 	conn := s.conn
 	s.mu.Unlock()
-	return transport.ReadProtoFrame(conn, message)
+	return frameio.ReadProtoFrame(conn, message)
 }
 
-func (s *adapterRunStream) readControlFrame() (transport.StreamHeader, uint64, error) {
+func (s *adapterRunStream) readControlFrame() (wire.StreamHeader, uint64, error) {
 	s.mu.Lock()
 	conn := s.conn
 	s.mu.Unlock()
-	return transport.ReadStreamFrameHeader(conn)
+	return wire.ReadStreamFrameHeader(conn)
 }
 
 func (s *adapterRunStream) attachAndResume(conn io.ReadWriter, stdin io.Writer, decision *runv0.ResumeDecision) error {
@@ -1078,13 +1078,13 @@ func (s *adapterRunStream) attachAndResume(conn io.ReadWriter, stdin io.Writer, 
 		s.resumeAckRunWait = decision.GetRunWaitId()
 		s.resumeAckDeadline = time.Now().Add(resumeAttachTimeout)
 	}
-	return transport.WriteProtoFrame(stdin, decision)
+	return frameio.WriteProtoFrame(stdin, decision)
 }
 
 func (s *adapterRunStream) writeResumeAck(runWaitID string) error {
 	conn := s.currentConn()
 	s.writeMu.Lock()
-	err := transport.WriteProtoFrame(conn, &runv0.ResumeAck{RunWaitId: runWaitID})
+	err := frameio.WriteProtoFrame(conn, &runv0.ResumeAck{RunWaitId: runWaitID})
 	s.writeMu.Unlock()
 	if err != nil {
 		return err
@@ -1313,7 +1313,7 @@ func readResumeDecision(ctx context.Context, reader io.Reader) (*runv0.ResumeDec
 	result := make(chan resumeDecisionResult, 1)
 	go func() {
 		var decision runv0.ResumeDecision
-		err := transport.ReadProtoFrame(reader, &decision)
+		err := frameio.ReadProtoFrame(reader, &decision)
 		result <- resumeDecisionResult{decision: &decision, err: err}
 	}()
 	select {

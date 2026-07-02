@@ -20,9 +20,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
-	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -505,7 +505,7 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 	stream := session.Stream()
 	restore := request.Run.Restore
 	started := time.Now()
-	if err := transport.WriteProtoFrame(stream, &runv0.ResumeAttach{
+	if err := frameio.WriteProtoFrame(stream, &runv0.ResumeAttach{
 		CheckpointId: restore.CheckpointID,
 		RunWaitId:    restore.RunWait.ID,
 		RunLeaseId:   currentRunLease(request).ID,
@@ -513,7 +513,7 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 		phases.Record(vm.RuntimePhase{Name: "restore_attach_guest_resume", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: vm.RuntimeErrorClass(err)})
 		return fmt.Errorf("write resume attach: %w", err)
 	}
-	if err := transport.WriteProtoFrame(stream, &runv0.ResumeDecision{
+	if err := frameio.WriteProtoFrame(stream, &runv0.ResumeDecision{
 		RunWaitId:          restore.RunWait.ID,
 		Kind:               restore.RunWait.ResumeKind,
 		DataJson:           string(restore.RunWait.ResumePayloadJSON),
@@ -569,7 +569,7 @@ func readProtoFrameContext(ctx context.Context, session vm.Session, message prot
 func readProtoFrameFromReaderContext(ctx context.Context, session vm.Session, reader io.Reader, message proto.Message) error {
 	result := make(chan error, 1)
 	go func() {
-		result <- transport.ReadProtoFrame(reader, message)
+		result <- frameio.ReadProtoFrame(reader, message)
 	}()
 	select {
 	case err := <-result:
@@ -606,8 +606,8 @@ func (r GuestRunner) readRunEventOrWorkspaceFrame(ctx context.Context, reader io
 	if _, err := io.ReadFull(reader, prefix[:]); err != nil {
 		return nil, nil, err
 	}
-	if transport.IsStreamFramePrefix(prefix[:]) {
-		header, bodyLen, err := transport.ReadStreamFrameHeader(io.MultiReader(bytes.NewReader(prefix[:]), reader))
+	if frameio.IsStreamFramePrefix(prefix[:]) {
+		header, bodyLen, err := wire.ReadStreamFrameHeader(io.MultiReader(bytes.NewReader(prefix[:]), reader))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -618,8 +618,8 @@ func (r GuestRunner) readRunEventOrWorkspaceFrame(ctx context.Context, reader io
 		return nil, &artifact, nil
 	}
 	size := binary.BigEndian.Uint32(prefix[:])
-	if size > transport.MaxFrameBytes {
-		return nil, nil, fmt.Errorf("transport message frame length %d exceeds max %d", size, transport.MaxFrameBytes)
+	if size > frameio.MaxFrameBytes {
+		return nil, nil, fmt.Errorf("frameio message frame length %d exceeds max %d", size, frameio.MaxFrameBytes)
 	}
 	body := make([]byte, size)
 	if _, err := io.ReadFull(reader, body); err != nil {
@@ -627,7 +627,7 @@ func (r GuestRunner) readRunEventOrWorkspaceFrame(ctx context.Context, reader io
 	}
 	var event runv0.RunEvent
 	if err := proto.Unmarshal(body, &event); err != nil {
-		return nil, nil, fmt.Errorf("unmarshal transport proto frame: %w", err)
+		return nil, nil, fmt.Errorf("unmarshal frameio proto frame: %w", err)
 	}
 	return &event, nil, nil
 }
@@ -676,7 +676,7 @@ func (r GuestRunner) writeRuntimeInput(ctx context.Context, stream io.Writer, re
 		return runtimeInputMetadata{}, err
 	}
 	phaseStarted = time.Now()
-	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: request.Run.RunID}, request.Artifact.ImageTarPath); err != nil {
+	if err := wire.WriteFileFrame(stream, wire.StreamHeader{Type: wire.StreamTypeRunImage, RunID: request.Run.RunID}, request.Artifact.ImageTarPath); err != nil {
 		r.logRunPhase(request, "guest run image sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		return runtimeInputMetadata{}, fmt.Errorf("write run image: %w", err)
 	}
@@ -691,19 +691,19 @@ func (r GuestRunner) writeRuntimeInput(ctx context.Context, stream io.Writer, re
 	}
 	defer cleanupDeploymentSource()
 	phaseStarted = time.Now()
-	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: request.Run.RunID}, deploymentSourceTar.Path); err != nil {
+	if err := wire.WriteFileFrame(stream, wire.StreamHeader{Type: wire.StreamTypeDeploymentSource, RunID: request.Run.RunID}, deploymentSourceTar.Path); err != nil {
 		r.logRunPhase(request, "guest run deployment source sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		return runtimeInputMetadata{}, fmt.Errorf("write deployment source: %w", err)
 	}
 	r.logRunPhase(request, "guest run deployment source sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", deploymentSourceTar.SizeBytes)
 	phaseStarted = time.Now()
-	if err := transport.WriteProtoFrame(stream, protocolRequest); err != nil {
+	if err := frameio.WriteProtoFrame(stream, protocolRequest); err != nil {
 		r.logRunPhase(request, "guest run request sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		return runtimeInputMetadata{}, fmt.Errorf("write run request: %w", err)
 	}
 	r.logRunPhase(request, "guest run request sent", "duration_ms", time.Since(phaseStarted).Milliseconds())
 	phaseStarted = time.Now()
-	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: request.Run.RunID}, request.Workspace.Path); err != nil {
+	if err := wire.WriteFileFrame(stream, wire.StreamHeader{Type: wire.StreamTypeWorkspaceArtifact, RunID: request.Run.RunID}, request.Workspace.Path); err != nil {
 		r.logRunPhase(request, "guest run workspace artifact sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		return runtimeInputMetadata{}, fmt.Errorf("write workspace artifact: %w", err)
 	}
@@ -743,8 +743,8 @@ func (r GuestRunner) writeWorkspaceRunInput(ctx context.Context, stream io.Write
 		return runtimeInputMetadata{}, err
 	}
 	phaseStarted = time.Now()
-	if err := transport.WriteStreamFrameHeader(stream, transport.StreamHeader{
-		Type:             transport.StreamTypeWorkspaceRun,
+	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
+		Type:             wire.StreamTypeWorkspaceRun,
 		RunID:            request.Run.RunID,
 		WorkspaceID:      workspace.ID,
 		WorkspaceMountID: workspaceMountID,
@@ -755,7 +755,7 @@ func (r GuestRunner) writeWorkspaceRunInput(ctx context.Context, stream io.Write
 	r.logRunPhase(request, "guest workspace run header sent", "duration_ms", time.Since(phaseStarted).Milliseconds())
 	r.logRunPhase(request, "guest workspace run reusing materialized runtime", "h7_enabled", true, "run_image_sent_bytes", 0, "workspace_artifact_sent_bytes", 0)
 	phaseStarted = time.Now()
-	if err := transport.WriteProtoFrame(stream, &workspacev0.WorkspaceOperationEnvelope{
+	if err := frameio.WriteProtoFrame(stream, &workspacev0.WorkspaceOperationEnvelope{
 		WorkspaceMountId:  workspaceMountID,
 		WorkspaceId:       workspace.ID,
 		ChannelToken:      channelToken,
@@ -777,13 +777,13 @@ func (r GuestRunner) writeWorkspaceRunInput(ctx context.Context, stream io.Write
 	}
 	defer cleanupDeploymentSource()
 	phaseStarted = time.Now()
-	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: request.Run.RunID}, deploymentSourceTar.Path); err != nil {
+	if err := wire.WriteFileFrame(stream, wire.StreamHeader{Type: wire.StreamTypeDeploymentSource, RunID: request.Run.RunID}, deploymentSourceTar.Path); err != nil {
 		r.logRunPhase(request, "guest run deployment source sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		return runtimeInputMetadata{}, fmt.Errorf("write deployment source: %w", err)
 	}
 	r.logRunPhase(request, "guest run deployment source sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", deploymentSourceTar.SizeBytes)
 	phaseStarted = time.Now()
-	if err := transport.WriteProtoFrame(stream, protocolRequest); err != nil {
+	if err := frameio.WriteProtoFrame(stream, protocolRequest); err != nil {
 		r.logRunPhase(request, "guest run request sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		return runtimeInputMetadata{}, fmt.Errorf("write run request: %w", err)
 	}
@@ -898,7 +898,7 @@ func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, requ
 				}
 				return Result{}, err
 			}
-			if err := transport.WriteProtoFrame(stream, result); err != nil {
+			if err := frameio.WriteProtoFrame(stream, result); err != nil {
 				return Result{}, fmt.Errorf("write active stream read result: %w", err)
 			}
 		case *runv0.RunEvent_MetadataUpdated:
@@ -907,7 +907,7 @@ func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, requ
 			}
 		case *runv0.RunEvent_TokenCreateRequested:
 			result := r.createToken(ctx, currentRunLease(request), value.TokenCreateRequested)
-			if err := transport.WriteProtoFrame(stream, result); err != nil {
+			if err := frameio.WriteProtoFrame(stream, result); err != nil {
 				return Result{}, fmt.Errorf("write token create result: %w", err)
 			}
 		case *runv0.RunEvent_RunWaitRequested:

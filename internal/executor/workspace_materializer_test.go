@@ -16,10 +16,10 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/localcache"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -312,17 +312,17 @@ func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) 
 	workspaceMount.GuestdChannelToken = "channel-token"
 	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
 	go func() {
-		header, _, err := transport.ReadStreamFrameHeader(initialServer)
+		header, _, err := wire.ReadStreamFrameHeader(initialServer)
 		if err != nil {
 			t.Errorf("read materialize header: %v", err)
 			return
 		}
-		if header.Type != transport.StreamTypeWorkspaceMaterialize {
+		if header.Type != wire.StreamTypeWorkspaceMaterialize {
 			t.Errorf("materialize stream type = %s", header.Type)
 			return
 		}
 		var request workspacev0.MaterializeWorkspaceRequest
-		if err := transport.ReadProtoFrame(initialServer, &request); err != nil {
+		if err := frameio.ReadProtoFrame(initialServer, &request); err != nil {
 			t.Errorf("read materialize request: %v", err)
 			return
 		}
@@ -334,12 +334,12 @@ func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) 
 			t.Errorf("materialize request base_version_id=%q mount_path=%q base_digest=%q sandbox_digest=%q", request.BaseVersionId, request.MountPath, request.GetBaseArtifact().GetDigest(), request.GetSandboxArtifact().GetDigest())
 			return
 		}
-		imageHeader, imageSize, err := transport.ReadStreamFrameHeader(initialServer)
+		imageHeader, imageSize, err := wire.ReadStreamFrameHeader(initialServer)
 		if err != nil {
 			t.Errorf("read sandbox image header: %v", err)
 			return
 		}
-		if imageHeader.Type != transport.StreamTypeRunImage || imageHeader.WorkspaceID != workspaceMount.WorkspaceID || int64(imageSize) != workspaceMount.SandboxImageArtifact.SizeBytes {
+		if imageHeader.Type != wire.StreamTypeRunImage || imageHeader.WorkspaceID != workspaceMount.WorkspaceID || int64(imageSize) != workspaceMount.SandboxImageArtifact.SizeBytes {
 			t.Errorf("sandbox image header = %+v size=%d", imageHeader, imageSize)
 			return
 		}
@@ -347,12 +347,12 @@ func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) 
 			t.Errorf("drain sandbox image: %v", err)
 			return
 		}
-		artifactHeader, artifactSize, err := transport.ReadStreamFrameHeader(initialServer)
+		artifactHeader, artifactSize, err := wire.ReadStreamFrameHeader(initialServer)
 		if err != nil {
 			t.Errorf("read workspace artifact header: %v", err)
 			return
 		}
-		if artifactHeader.Type != transport.StreamTypeWorkspaceArtifact || artifactHeader.WorkspaceID != workspaceMount.WorkspaceID || int64(artifactSize) != workspaceMount.WorkspaceArtifact.SizeBytes {
+		if artifactHeader.Type != wire.StreamTypeWorkspaceArtifact || artifactHeader.WorkspaceID != workspaceMount.WorkspaceID || int64(artifactSize) != workspaceMount.WorkspaceArtifact.SizeBytes {
 			t.Errorf("workspace artifact header = %+v size=%d", artifactHeader, artifactSize)
 			return
 		}
@@ -360,23 +360,23 @@ func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) 
 			t.Errorf("drain workspace artifact: %v", err)
 			return
 		}
-		_ = transport.WriteProtoFrame(initialServer, &workspacev0.MaterializeWorkspaceResponse{
+		_ = frameio.WriteProtoFrame(initialServer, &workspacev0.MaterializeWorkspaceResponse{
 			State:                  "running",
 			GuestdChannelTokenHash: sha256sum.HexBytes([]byte("channel-token")),
 		})
 	}()
 	go func() {
-		header, _, err := transport.ReadStreamFrameHeader(eventServer)
+		header, _, err := wire.ReadStreamFrameHeader(eventServer)
 		if err != nil {
 			t.Errorf("read event header: %v", err)
 			return
 		}
-		if header.Type != transport.StreamTypeWorkspaceEvents {
+		if header.Type != wire.StreamTypeWorkspaceEvents {
 			t.Errorf("event header = %+v", header)
 			return
 		}
 		var envelope workspacev0.WorkspaceOperationEnvelope
-		if err := transport.ReadProtoFrame(eventServer, &envelope); err != nil {
+		if err := frameio.ReadProtoFrame(eventServer, &envelope); err != nil {
 			t.Errorf("read event envelope: %v", err)
 			return
 		}
@@ -387,17 +387,17 @@ func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) 
 		<-ctx.Done()
 	}()
 	go func() {
-		header, _, err := transport.ReadStreamFrameHeader(operationServer)
+		header, _, err := wire.ReadStreamFrameHeader(operationServer)
 		if err != nil {
 			t.Errorf("read operation header: %v", err)
 			return
 		}
-		if header.Type != transport.StreamTypeWorkspaceOperation || header.OperationID != "operation-1" {
+		if header.Type != wire.StreamTypeWorkspaceOperation || header.OperationID != "operation-1" {
 			t.Errorf("operation header = %+v", header)
 			return
 		}
 		var request workspacev0.WorkspaceOperationRequest
-		if err := transport.ReadProtoFrame(operationServer, &request); err != nil {
+		if err := frameio.ReadProtoFrame(operationServer, &request); err != nil {
 			t.Errorf("read operation request: %v", err)
 			return
 		}
@@ -405,7 +405,7 @@ func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) 
 			t.Errorf("operation request kind=%q channel_token=%q fencing_token=%q fencing_generation=%d", request.OperationKind, request.GetEnvelope().GetChannelToken(), request.GetEnvelope().GetFencingToken(), request.GetEnvelope().GetFencingGeneration())
 			return
 		}
-		_ = transport.WriteProtoFrame(operationServer, &workspacev0.WorkspaceOperationResult{ResultJson: `{"ok":true}`})
+		_ = frameio.WriteProtoFrame(operationServer, &workspacev0.WorkspaceOperationResult{ResultJson: `{"ok":true}`})
 	}()
 	client := &workspaceMaterializerTestClient{
 		cancel:      cancel,
@@ -497,17 +497,17 @@ func TestWorkspaceMaterializerStopWorkspaceGuestStoresCapturedArtifact(t *testin
 	}
 	done := make(chan error, 1)
 	go func() {
-		header, _, err := transport.ReadStreamFrameHeader(server)
+		header, _, err := wire.ReadStreamFrameHeader(server)
 		if err != nil {
 			done <- err
 			return
 		}
-		if header.Type != transport.StreamTypeWorkspaceStop || header.WorkspaceID != "workspace-1" {
+		if header.Type != wire.StreamTypeWorkspaceStop || header.WorkspaceID != "workspace-1" {
 			done <- fmt.Errorf("stop header = %+v", header)
 			return
 		}
 		var request workspacev0.StopWorkspaceRequest
-		if err := transport.ReadProtoFrame(server, &request); err != nil {
+		if err := frameio.ReadProtoFrame(server, &request); err != nil {
 			done <- err
 			return
 		}
@@ -515,7 +515,7 @@ func TestWorkspaceMaterializerStopWorkspaceGuestStoresCapturedArtifact(t *testin
 			done <- fmt.Errorf("stop request = %+v", &request)
 			return
 		}
-		if err := transport.WriteProtoFrame(server, &workspacev0.StopWorkspaceResponse{
+		if err := frameio.WriteProtoFrame(server, &workspacev0.StopWorkspaceResponse{
 			State: "captured",
 			CapturedArtifact: &workspacev0.WorkspaceArtifact{
 				Digest:     object.Digest,
@@ -529,8 +529,8 @@ func TestWorkspaceMaterializerStopWorkspaceGuestStoresCapturedArtifact(t *testin
 			return
 		}
 		entryCount := 3
-		if err := transport.WriteStreamFrameHeader(server, transport.StreamHeader{
-			Type:        transport.StreamTypeWorkspaceArtifact,
+		if err := wire.WriteStreamFrameHeader(server, wire.StreamHeader{
+			Type:        wire.StreamTypeWorkspaceArtifact,
 			WorkspaceID: "workspace-1",
 			BodyDigest:  &object.Digest,
 			EntryCount:  &entryCount,
@@ -565,17 +565,17 @@ func TestWorkspaceMaterializerControlledStopUsesRenewedFencingGeneration(t *test
 	workspaceMount.FencingGeneration = 7
 	done := make(chan error, 1)
 	go func() {
-		header, _, err := transport.ReadStreamFrameHeader(serverConn)
+		header, _, err := wire.ReadStreamFrameHeader(serverConn)
 		if err != nil {
 			done <- err
 			return
 		}
-		if header.Type != transport.StreamTypeWorkspaceStop || header.WorkspaceID != "workspace-1" {
+		if header.Type != wire.StreamTypeWorkspaceStop || header.WorkspaceID != "workspace-1" {
 			done <- fmt.Errorf("stop header = %+v", header)
 			return
 		}
 		var request workspacev0.StopWorkspaceRequest
-		if err := transport.ReadProtoFrame(serverConn, &request); err != nil {
+		if err := frameio.ReadProtoFrame(serverConn, &request); err != nil {
 			done <- err
 			return
 		}
@@ -587,7 +587,7 @@ func TestWorkspaceMaterializerControlledStopUsesRenewedFencingGeneration(t *test
 			done <- fmt.Errorf("stop request = %+v", &request)
 			return
 		}
-		done <- transport.WriteProtoFrame(serverConn, &workspacev0.StopWorkspaceResponse{State: "stopped"})
+		done <- frameio.WriteProtoFrame(serverConn, &workspacev0.StopWorkspaceResponse{State: "stopped"})
 	}()
 	client := &workspaceMaterializerTestClient{}
 	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
@@ -652,12 +652,12 @@ func TestWorkspaceMaterializerControlledDirtyStopPromotesBeforeFinalize(t *testi
 	}
 	done := make(chan error, 2)
 	go func() {
-		if _, _, err := transport.ReadStreamFrameHeader(captureServer); err != nil {
+		if _, _, err := wire.ReadStreamFrameHeader(captureServer); err != nil {
 			done <- err
 			return
 		}
 		var request workspacev0.StopWorkspaceRequest
-		if err := transport.ReadProtoFrame(captureServer, &request); err != nil {
+		if err := frameio.ReadProtoFrame(captureServer, &request); err != nil {
 			done <- err
 			return
 		}
@@ -665,7 +665,7 @@ func TestWorkspaceMaterializerControlledDirtyStopPromotesBeforeFinalize(t *testi
 			done <- fmt.Errorf("capture stop request = %+v", &request)
 			return
 		}
-		if err := transport.WriteProtoFrame(captureServer, &workspacev0.StopWorkspaceResponse{
+		if err := frameio.WriteProtoFrame(captureServer, &workspacev0.StopWorkspaceResponse{
 			State: "captured",
 			CapturedArtifact: &workspacev0.WorkspaceArtifact{
 				Digest:     object.Digest,
@@ -679,8 +679,8 @@ func TestWorkspaceMaterializerControlledDirtyStopPromotesBeforeFinalize(t *testi
 			return
 		}
 		entryCount := 2
-		if err := transport.WriteStreamFrameHeader(captureServer, transport.StreamHeader{
-			Type:        transport.StreamTypeWorkspaceArtifact,
+		if err := wire.WriteStreamFrameHeader(captureServer, wire.StreamHeader{
+			Type:        wire.StreamTypeWorkspaceArtifact,
 			WorkspaceID: "workspace-1",
 			BodyDigest:  &object.Digest,
 			EntryCount:  &entryCount,
@@ -692,12 +692,12 @@ func TestWorkspaceMaterializerControlledDirtyStopPromotesBeforeFinalize(t *testi
 		done <- err
 	}()
 	go func() {
-		if _, _, err := transport.ReadStreamFrameHeader(finalServer); err != nil {
+		if _, _, err := wire.ReadStreamFrameHeader(finalServer); err != nil {
 			done <- err
 			return
 		}
 		var request workspacev0.StopWorkspaceRequest
-		if err := transport.ReadProtoFrame(finalServer, &request); err != nil {
+		if err := frameio.ReadProtoFrame(finalServer, &request); err != nil {
 			done <- err
 			return
 		}
@@ -705,7 +705,7 @@ func TestWorkspaceMaterializerControlledDirtyStopPromotesBeforeFinalize(t *testi
 			done <- fmt.Errorf("final stop request = %+v", &request)
 			return
 		}
-		done <- transport.WriteProtoFrame(finalServer, &workspacev0.StopWorkspaceResponse{State: "stopped"})
+		done <- frameio.WriteProtoFrame(finalServer, &workspacev0.StopWorkspaceResponse{State: "stopped"})
 	}()
 	client := &workspaceMaterializerTestClient{}
 	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
@@ -751,12 +751,12 @@ func TestWorkspaceMaterializerControlledDirtyStopFinalizeFailureFailsWorkspaceMo
 	}
 	done := make(chan error, 1)
 	go func() {
-		if _, _, err := transport.ReadStreamFrameHeader(captureServer); err != nil {
+		if _, _, err := wire.ReadStreamFrameHeader(captureServer); err != nil {
 			done <- err
 			return
 		}
 		var request workspacev0.StopWorkspaceRequest
-		if err := transport.ReadProtoFrame(captureServer, &request); err != nil {
+		if err := frameio.ReadProtoFrame(captureServer, &request); err != nil {
 			done <- err
 			return
 		}
@@ -764,7 +764,7 @@ func TestWorkspaceMaterializerControlledDirtyStopFinalizeFailureFailsWorkspaceMo
 			done <- fmt.Errorf("capture stop request = %+v", &request)
 			return
 		}
-		if err := transport.WriteProtoFrame(captureServer, &workspacev0.StopWorkspaceResponse{
+		if err := frameio.WriteProtoFrame(captureServer, &workspacev0.StopWorkspaceResponse{
 			State: "captured",
 			CapturedArtifact: &workspacev0.WorkspaceArtifact{
 				Digest:     object.Digest,
@@ -778,8 +778,8 @@ func TestWorkspaceMaterializerControlledDirtyStopFinalizeFailureFailsWorkspaceMo
 			return
 		}
 		entryCount := 2
-		if err := transport.WriteStreamFrameHeader(captureServer, transport.StreamHeader{
-			Type:        transport.StreamTypeWorkspaceArtifact,
+		if err := wire.WriteStreamFrameHeader(captureServer, wire.StreamHeader{
+			Type:        wire.StreamTypeWorkspaceArtifact,
 			WorkspaceID: "workspace-1",
 			BodyDigest:  &object.Digest,
 			EntryCount:  &entryCount,
@@ -857,23 +857,23 @@ func TestWorkspaceMaterializerFailsStartupWhenGuestDoesNotRegister(t *testing.T)
 	workspaceMount.GuestdChannelToken = "channel-token"
 	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
 	go func() {
-		_, _, err := transport.ReadStreamFrameHeader(initialServer)
+		_, _, err := wire.ReadStreamFrameHeader(initialServer)
 		if err != nil {
 			return
 		}
 		var request workspacev0.MaterializeWorkspaceRequest
-		if err := transport.ReadProtoFrame(initialServer, &request); err != nil {
+		if err := frameio.ReadProtoFrame(initialServer, &request); err != nil {
 			return
 		}
-		imageHeader, imageSize, err := transport.ReadStreamFrameHeader(initialServer)
-		if err != nil || imageHeader.Type != transport.StreamTypeRunImage {
+		imageHeader, imageSize, err := wire.ReadStreamFrameHeader(initialServer)
+		if err != nil || imageHeader.Type != wire.StreamTypeRunImage {
 			return
 		}
 		if _, err := io.Copy(io.Discard, &io.LimitedReader{R: initialServer, N: int64(imageSize)}); err != nil {
 			return
 		}
-		artifactHeader, artifactSize, err := transport.ReadStreamFrameHeader(initialServer)
-		if err != nil || artifactHeader.Type != transport.StreamTypeWorkspaceArtifact {
+		artifactHeader, artifactSize, err := wire.ReadStreamFrameHeader(initialServer)
+		if err != nil || artifactHeader.Type != wire.StreamTypeWorkspaceArtifact {
 			return
 		}
 		_, _ = io.Copy(io.Discard, &io.LimitedReader{R: initialServer, N: int64(artifactSize)})
@@ -1002,22 +1002,22 @@ func TestWorkspaceMaterializerRetriesCompletionWithGuestResult(t *testing.T) {
 	workspaceMount.GuestdChannelToken = "channel-token"
 	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
 	go func() {
-		_, _, err := transport.ReadStreamFrameHeader(initialServer)
+		_, _, err := wire.ReadStreamFrameHeader(initialServer)
 		if err != nil {
 			t.Errorf("read materialize header: %v", err)
 			return
 		}
 		var request workspacev0.MaterializeWorkspaceRequest
-		if err := transport.ReadProtoFrame(initialServer, &request); err != nil {
+		if err := frameio.ReadProtoFrame(initialServer, &request); err != nil {
 			t.Errorf("read materialize request: %v", err)
 			return
 		}
-		imageHeader, imageSize, err := transport.ReadStreamFrameHeader(initialServer)
+		imageHeader, imageSize, err := wire.ReadStreamFrameHeader(initialServer)
 		if err != nil {
 			t.Errorf("read sandbox image header: %v", err)
 			return
 		}
-		if imageHeader.Type != transport.StreamTypeRunImage {
+		if imageHeader.Type != wire.StreamTypeRunImage {
 			t.Errorf("sandbox image header = %+v", imageHeader)
 			return
 		}
@@ -1025,12 +1025,12 @@ func TestWorkspaceMaterializerRetriesCompletionWithGuestResult(t *testing.T) {
 			t.Errorf("drain sandbox image: %v", err)
 			return
 		}
-		artifactHeader, artifactSize, err := transport.ReadStreamFrameHeader(initialServer)
+		artifactHeader, artifactSize, err := wire.ReadStreamFrameHeader(initialServer)
 		if err != nil {
 			t.Errorf("read workspace artifact header: %v", err)
 			return
 		}
-		if artifactHeader.Type != transport.StreamTypeWorkspaceArtifact {
+		if artifactHeader.Type != wire.StreamTypeWorkspaceArtifact {
 			t.Errorf("workspace artifact header = %+v", artifactHeader)
 			return
 		}
@@ -1038,36 +1038,36 @@ func TestWorkspaceMaterializerRetriesCompletionWithGuestResult(t *testing.T) {
 			t.Errorf("drain workspace artifact: %v", err)
 			return
 		}
-		_ = transport.WriteProtoFrame(initialServer, &workspacev0.MaterializeWorkspaceResponse{
+		_ = frameio.WriteProtoFrame(initialServer, &workspacev0.MaterializeWorkspaceResponse{
 			State:                  "running",
 			GuestdChannelTokenHash: sha256sum.HexBytes([]byte("channel-token")),
 		})
 	}()
 	go func() {
-		_, _, err := transport.ReadStreamFrameHeader(eventServer)
+		_, _, err := wire.ReadStreamFrameHeader(eventServer)
 		if err != nil {
 			t.Errorf("read event header: %v", err)
 			return
 		}
 		var envelope workspacev0.WorkspaceOperationEnvelope
-		if err := transport.ReadProtoFrame(eventServer, &envelope); err != nil {
+		if err := frameio.ReadProtoFrame(eventServer, &envelope); err != nil {
 			t.Errorf("read event envelope: %v", err)
 			return
 		}
 		<-ctx.Done()
 	}()
 	go func() {
-		_, _, err := transport.ReadStreamFrameHeader(operationServer)
+		_, _, err := wire.ReadStreamFrameHeader(operationServer)
 		if err != nil {
 			t.Errorf("read operation header: %v", err)
 			return
 		}
 		var request workspacev0.WorkspaceOperationRequest
-		if err := transport.ReadProtoFrame(operationServer, &request); err != nil {
+		if err := frameio.ReadProtoFrame(operationServer, &request); err != nil {
 			t.Errorf("read operation request: %v", err)
 			return
 		}
-		_ = transport.WriteProtoFrame(operationServer, &workspacev0.WorkspaceOperationResult{ResultJson: `{"ok":true}`})
+		_ = frameio.WriteProtoFrame(operationServer, &workspacev0.WorkspaceOperationResult{ResultJson: `{"ok":true}`})
 	}()
 	client := &workspaceMaterializerTestClient{
 		cancel:           cancel,
@@ -1240,22 +1240,22 @@ func TestWorkspaceMaterializerRegistersPreparedRuntimeOverOpenedStream(t *testin
 
 func acknowledgeWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, workspaceMount api.WorkerWorkspaceMount) {
 	t.Helper()
-	_, _, err := transport.ReadStreamFrameHeader(stream)
+	_, _, err := wire.ReadStreamFrameHeader(stream)
 	if err != nil {
 		t.Errorf("read materialize header: %v", err)
 		return
 	}
 	var request workspacev0.MaterializeWorkspaceRequest
-	if err := transport.ReadProtoFrame(stream, &request); err != nil {
+	if err := frameio.ReadProtoFrame(stream, &request); err != nil {
 		t.Errorf("read materialize request: %v", err)
 		return
 	}
-	imageHeader, imageSize, err := transport.ReadStreamFrameHeader(stream)
+	imageHeader, imageSize, err := wire.ReadStreamFrameHeader(stream)
 	if err != nil {
 		t.Errorf("read sandbox image header: %v", err)
 		return
 	}
-	if imageHeader.Type != transport.StreamTypeRunImage {
+	if imageHeader.Type != wire.StreamTypeRunImage {
 		t.Errorf("sandbox image header = %+v", imageHeader)
 		return
 	}
@@ -1263,12 +1263,12 @@ func acknowledgeWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, workspac
 		t.Errorf("drain sandbox image: %v", err)
 		return
 	}
-	artifactHeader, artifactSize, err := transport.ReadStreamFrameHeader(stream)
+	artifactHeader, artifactSize, err := wire.ReadStreamFrameHeader(stream)
 	if err != nil {
 		t.Errorf("read workspace artifact header: %v", err)
 		return
 	}
-	if artifactHeader.Type != transport.StreamTypeWorkspaceArtifact {
+	if artifactHeader.Type != wire.StreamTypeWorkspaceArtifact {
 		t.Errorf("workspace artifact header = %+v", artifactHeader)
 		return
 	}
@@ -1276,7 +1276,7 @@ func acknowledgeWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, workspac
 		t.Errorf("drain workspace artifact: %v", err)
 		return
 	}
-	_ = transport.WriteProtoFrame(stream, &workspacev0.MaterializeWorkspaceResponse{
+	_ = frameio.WriteProtoFrame(stream, &workspacev0.MaterializeWorkspaceResponse{
 		State:                  "running",
 		GuestdChannelTokenHash: workspaceMount.GuestdChannelTokenHash,
 	})
@@ -1284,17 +1284,17 @@ func acknowledgeWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, workspac
 
 func acknowledgePreparedWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, workspaceMount api.WorkerWorkspaceMount, runtimeKey string) {
 	t.Helper()
-	header, _, err := transport.ReadStreamFrameHeader(stream)
+	header, _, err := wire.ReadStreamFrameHeader(stream)
 	if err != nil {
 		t.Errorf("read materialize header: %v", err)
 		return
 	}
-	if header.Type != transport.StreamTypeWorkspaceMaterialize {
+	if header.Type != wire.StreamTypeWorkspaceMaterialize {
 		t.Errorf("materialize header = %+v", header)
 		return
 	}
 	var request workspacev0.MaterializeWorkspaceRequest
-	if err := transport.ReadProtoFrame(stream, &request); err != nil {
+	if err := frameio.ReadProtoFrame(stream, &request); err != nil {
 		t.Errorf("read materialize request: %v", err)
 		return
 	}
@@ -1302,12 +1302,12 @@ func acknowledgePreparedWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, 
 		t.Errorf("prepared runtime request use=%v key=%q", request.UsePreparedRuntime, request.RuntimeKey)
 		return
 	}
-	artifactHeader, artifactSize, err := transport.ReadStreamFrameHeader(stream)
+	artifactHeader, artifactSize, err := wire.ReadStreamFrameHeader(stream)
 	if err != nil {
 		t.Errorf("read workspace artifact header: %v", err)
 		return
 	}
-	if artifactHeader.Type != transport.StreamTypeWorkspaceArtifact {
+	if artifactHeader.Type != wire.StreamTypeWorkspaceArtifact {
 		t.Errorf("workspace artifact header = %+v", artifactHeader)
 		return
 	}
@@ -1315,7 +1315,7 @@ func acknowledgePreparedWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, 
 		t.Errorf("drain workspace artifact: %v", err)
 		return
 	}
-	_ = transport.WriteProtoFrame(stream, &workspacev0.MaterializeWorkspaceResponse{
+	_ = frameio.WriteProtoFrame(stream, &workspacev0.MaterializeWorkspaceResponse{
 		State:                  "running",
 		GuestdChannelTokenHash: workspaceMount.GuestdChannelTokenHash,
 	})
@@ -1708,7 +1708,7 @@ func TestWorkspaceExecInputRelayClosesAfterAllPagedInputIsDelivered(t *testing.T
 	}}
 	guestErr := make(chan error, 1)
 	go func() {
-		_, bodyLen, err := transport.ReadStreamFrameHeader(guestStream)
+		_, bodyLen, err := wire.ReadStreamFrameHeader(guestStream)
 		if err != nil {
 			guestErr <- err
 			return
@@ -1718,7 +1718,7 @@ func TestWorkspaceExecInputRelayClosesAfterAllPagedInputIsDelivered(t *testing.T
 			return
 		}
 		var envelope workspacev0.WorkspaceOperationEnvelope
-		if err := transport.ReadProtoFrame(guestStream, &envelope); err != nil {
+		if err := frameio.ReadProtoFrame(guestStream, &envelope); err != nil {
 			guestErr <- err
 			return
 		}
@@ -1728,7 +1728,7 @@ func TestWorkspaceExecInputRelayClosesAfterAllPagedInputIsDelivered(t *testing.T
 		}
 		for expected := range uint64(101) {
 			var frame workspacev0.WorkspaceInputFrame
-			if err := transport.ReadProtoFrame(guestStream, &frame); err != nil {
+			if err := frameio.ReadProtoFrame(guestStream, &frame); err != nil {
 				guestErr <- err
 				return
 			}
@@ -1741,7 +1741,7 @@ func TestWorkspaceExecInputRelayClosesAfterAllPagedInputIsDelivered(t *testing.T
 				guestErr <- fmt.Errorf("chunk offset = %d, want %d", chunk.GetOffsetStart(), expected)
 				return
 			}
-			if err := transport.WriteProtoFrame(guestStream, &workspacev0.WorkspaceStreamAck{
+			if err := frameio.WriteProtoFrame(guestStream, &workspacev0.WorkspaceStreamAck{
 				ResourceKind:  chunk.GetResourceKind(),
 				ResourceId:    chunk.GetResourceId(),
 				Stream:        chunk.GetStream(),
@@ -1752,7 +1752,7 @@ func TestWorkspaceExecInputRelayClosesAfterAllPagedInputIsDelivered(t *testing.T
 			}
 		}
 		var frame workspacev0.WorkspaceInputFrame
-		if err := transport.ReadProtoFrame(guestStream, &frame); err != nil {
+		if err := frameio.ReadProtoFrame(guestStream, &frame); err != nil {
 			guestErr <- err
 			return
 		}
@@ -1765,7 +1765,7 @@ func TestWorkspaceExecInputRelayClosesAfterAllPagedInputIsDelivered(t *testing.T
 			guestErr <- fmt.Errorf("close offset = %d, want 101", closeFrame.GetOffset())
 			return
 		}
-		if err := transport.WriteProtoFrame(guestStream, &workspacev0.WorkspaceStreamAck{
+		if err := frameio.WriteProtoFrame(guestStream, &workspacev0.WorkspaceStreamAck{
 			ResourceKind:  closeFrame.GetResourceKind(),
 			ResourceId:    closeFrame.GetResourceId(),
 			Stream:        closeFrame.GetStream(),
@@ -1819,7 +1819,7 @@ func TestWorkspaceExecInputRelayUsesPersistedDeliveredCursorForClose(t *testing.
 	}}
 	guestErr := make(chan error, 1)
 	go func() {
-		_, bodyLen, err := transport.ReadStreamFrameHeader(guestStream)
+		_, bodyLen, err := wire.ReadStreamFrameHeader(guestStream)
 		if err != nil {
 			guestErr <- err
 			return
@@ -1829,12 +1829,12 @@ func TestWorkspaceExecInputRelayUsesPersistedDeliveredCursorForClose(t *testing.
 			return
 		}
 		var envelope workspacev0.WorkspaceOperationEnvelope
-		if err := transport.ReadProtoFrame(guestStream, &envelope); err != nil {
+		if err := frameio.ReadProtoFrame(guestStream, &envelope); err != nil {
 			guestErr <- err
 			return
 		}
 		var frame workspacev0.WorkspaceInputFrame
-		if err := transport.ReadProtoFrame(guestStream, &frame); err != nil {
+		if err := frameio.ReadProtoFrame(guestStream, &frame); err != nil {
 			guestErr <- err
 			return
 		}
@@ -1847,7 +1847,7 @@ func TestWorkspaceExecInputRelayUsesPersistedDeliveredCursorForClose(t *testing.
 			guestErr <- fmt.Errorf("close offset = %d, want 101", closeFrame.GetOffset())
 			return
 		}
-		guestErr <- transport.WriteProtoFrame(guestStream, &workspacev0.WorkspaceStreamAck{
+		guestErr <- frameio.WriteProtoFrame(guestStream, &workspacev0.WorkspaceStreamAck{
 			ResourceKind:  closeFrame.GetResourceKind(),
 			ResourceId:    closeFrame.GetResourceId(),
 			Stream:        closeFrame.GetStream(),
@@ -1902,7 +1902,7 @@ func TestWorkspaceExecInputRelayStopsBeforeDeliveringTerminalInput(t *testing.T)
 	}}
 	guestErr := make(chan error, 1)
 	go func() {
-		_, bodyLen, err := transport.ReadStreamFrameHeader(guestStream)
+		_, bodyLen, err := wire.ReadStreamFrameHeader(guestStream)
 		if err != nil {
 			guestErr <- err
 			return
@@ -1912,7 +1912,7 @@ func TestWorkspaceExecInputRelayStopsBeforeDeliveringTerminalInput(t *testing.T)
 			return
 		}
 		var envelope workspacev0.WorkspaceOperationEnvelope
-		if err := transport.ReadProtoFrame(guestStream, &envelope); err != nil {
+		if err := frameio.ReadProtoFrame(guestStream, &envelope); err != nil {
 			guestErr <- err
 			return
 		}
@@ -1973,7 +1973,7 @@ func TestWorkspacePtyInputRelayStopsBeforeDeliveringTerminalInput(t *testing.T) 
 	}}
 	guestErr := make(chan error, 1)
 	go func() {
-		_, bodyLen, err := transport.ReadStreamFrameHeader(guestStream)
+		_, bodyLen, err := wire.ReadStreamFrameHeader(guestStream)
 		if err != nil {
 			guestErr <- err
 			return
@@ -1983,7 +1983,7 @@ func TestWorkspacePtyInputRelayStopsBeforeDeliveringTerminalInput(t *testing.T) 
 			return
 		}
 		var envelope workspacev0.WorkspaceOperationEnvelope
-		if err := transport.ReadProtoFrame(guestStream, &envelope); err != nil {
+		if err := frameio.ReadProtoFrame(guestStream, &envelope); err != nil {
 			guestErr <- err
 			return
 		}

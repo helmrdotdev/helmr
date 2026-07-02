@@ -5,8 +5,8 @@ import (
 	"io"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
-	"github.com/helmrdotdev/helmr/internal/transport"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -18,8 +18,8 @@ func WriteCheckpointPauseRequest(w io.Writer, request *runv0.CheckpointPauseRequ
 	if err != nil {
 		return fmt.Errorf("marshal checkpoint pause request: %w", err)
 	}
-	if err := transport.WriteStreamFrameHeader(w, transport.StreamHeader{
-		Type:         transport.StreamTypeCheckpointPauseRequest,
+	if err := WriteStreamFrameHeader(w, StreamHeader{
+		Type:         StreamTypeCheckpointPauseRequest,
 		RunWaitID:    request.RunWaitId,
 		CheckpointID: request.CheckpointId,
 	}, uint64(len(body))); err != nil {
@@ -37,8 +37,8 @@ func WriteResumeDecision(w io.Writer, decision *runv0.ResumeDecision) error {
 	if err != nil {
 		return fmt.Errorf("marshal resume decision: %w", err)
 	}
-	if err := transport.WriteStreamFrameHeader(w, transport.StreamHeader{
-		Type:      transport.StreamTypeResumeDecision,
+	if err := WriteStreamFrameHeader(w, StreamHeader{
+		Type:      StreamTypeResumeDecision,
 		RunWaitID: decision.RunWaitId,
 	}, uint64(len(body))); err != nil {
 		return err
@@ -47,8 +47,8 @@ func WriteResumeDecision(w io.Writer, decision *runv0.ResumeDecision) error {
 	return err
 }
 
-func ReadCheckpointPauseRequest(header transport.StreamHeader, reader io.Reader, bodyLen uint64) (*runv0.CheckpointPauseRequest, error) {
-	if header.Type != transport.StreamTypeCheckpointPauseRequest {
+func ReadCheckpointPauseRequest(header StreamHeader, reader io.Reader, bodyLen uint64) (*runv0.CheckpointPauseRequest, error) {
+	if header.Type != StreamTypeCheckpointPauseRequest {
 		return nil, fmt.Errorf("expected checkpoint pause request frame, got %q", header.Type)
 	}
 	var request runv0.CheckpointPauseRequest
@@ -62,8 +62,8 @@ func ReadCheckpointPauseRequest(header transport.StreamHeader, reader io.Reader,
 	return &request, nil
 }
 
-func ReadResumeDecision(header transport.StreamHeader, reader io.Reader, bodyLen uint64) (*runv0.ResumeDecision, error) {
-	if header.Type != transport.StreamTypeResumeDecision {
+func ReadResumeDecision(header StreamHeader, reader io.Reader, bodyLen uint64) (*runv0.ResumeDecision, error) {
+	if header.Type != StreamTypeResumeDecision {
 		return nil, fmt.Errorf("expected resume decision frame, got %q", header.Type)
 	}
 	var decision runv0.ResumeDecision
@@ -80,12 +80,20 @@ func readProtoStreamBody(reader io.Reader, bodyLen uint64, message proto.Message
 	if bodyLen == 0 {
 		return fmt.Errorf("protobuf stream frame body is required")
 	}
-	if bodyLen > uint64(transport.MaxFrameBytes) {
-		return fmt.Errorf("protobuf stream frame body length %d exceeds max %d", bodyLen, transport.MaxFrameBytes)
+	if bodyLen > uint64(frameio.MaxFrameBytes) {
+		return fmt.Errorf("protobuf stream frame body length %d exceeds max %d", bodyLen, frameio.MaxFrameBytes)
 	}
 	body := make([]byte, bodyLen)
 	if _, err := io.ReadFull(reader, body); err != nil {
 		return err
 	}
 	return proto.Unmarshal(body, message)
+}
+
+func ReadRunEvent(r io.Reader) (*runv0.RunEvent, error) {
+	var event runv0.RunEvent
+	if err := frameio.ReadProtoFrame(r, &event); err != nil {
+		return nil, err
+	}
+	return &event, nil
 }

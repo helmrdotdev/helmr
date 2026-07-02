@@ -9,9 +9,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
-	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -63,10 +64,10 @@ func (p GuestCompiler) Compile(ctx context.Context, request CompileRequest) (*bu
 	if runID == "" {
 		runID = "parse"
 	}
-	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeCompileTaskBundle, RunID: runID, TaskID: taskID}, sourceTar.Path); err != nil {
+	if err := wire.WriteFileFrame(stream, wire.StreamHeader{Type: wire.StreamTypeCompileTaskBundle, RunID: runID, TaskID: taskID}, sourceTar.Path); err != nil {
 		return nil, fmt.Errorf("write compiler source: %w", err)
 	}
-	body, err := transport.ReadMessageFrame(stream)
+	body, err := frameio.ReadMessageFrame(stream)
 	if err != nil {
 		return nil, fmt.Errorf("read parsed task bundle: %w", err)
 	}
@@ -95,7 +96,7 @@ func (e ParseError) FailureKind() string {
 }
 
 func decodeTaskBundleResponse(body []byte) (*bundlev0.Bundle, error) {
-	if frame, ok, err := transport.DecodeParseErrorFrame(body); err != nil {
+	if frame, ok, err := frameio.DecodeParseErrorFrame(body); err != nil {
 		return nil, fmt.Errorf("read parsed task bundle: %w", err)
 	} else if ok {
 		return nil, ParseError{Kind: frame.Kind, Message: frame.Message}

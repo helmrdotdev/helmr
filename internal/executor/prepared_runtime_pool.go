@@ -17,10 +17,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/runtimeprep"
-	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
 const (
@@ -877,8 +878,8 @@ func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session v
 		return fmt.Errorf("open prepared runtime stream: %w", err)
 	}
 	defer stream.Close()
-	if err := transport.WriteStreamFrameHeader(stream, transport.StreamHeader{
-		Type:        transport.StreamTypeWorkspaceRuntimePrepare,
+	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
+		Type:        wire.StreamTypeWorkspaceRuntimePrepare,
 		WorkspaceID: mount.WorkspaceID,
 	}, 0); err != nil {
 		return fmt.Errorf("write prepared runtime header: %w", err)
@@ -893,12 +894,12 @@ func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session v
 			SizeBytes: uint64(mount.SandboxImageArtifact.SizeBytes),
 		},
 	}
-	if err := transport.WriteProtoFrame(stream, request); err != nil {
+	if err := frameio.WriteProtoFrame(stream, request); err != nil {
 		return fmt.Errorf("write prepared runtime request: %w", err)
 	}
 	started := time.Now()
-	if err := writeFileFrameWithMetadataContext(ctx, session, stream, transport.StreamHeader{
-		Type:        transport.StreamTypeRunImage,
+	if err := writeFileFrameWithMetadataContext(ctx, session, stream, wire.StreamHeader{
+		Type:        wire.StreamTypeRunImage,
 		WorkspaceID: mount.WorkspaceID,
 	}, sandboxImagePath, strings.TrimSpace(mount.SandboxImageArtifact.Digest), mount.SandboxImageArtifact.SizeBytes); err != nil {
 		return fmt.Errorf("write prepared runtime sandbox image: %w", err)
@@ -1020,9 +1021,9 @@ func markPreparedRuntimeCommandFailed(ctx context.Context, client PreparedRuntim
 	return nil
 }
 
-func writeFileFrameWithMetadataContext(ctx context.Context, session vm.Session, w io.Writer, header transport.StreamHeader, path string, digest string, size int64) error {
+func writeFileFrameWithMetadataContext(ctx context.Context, session vm.Session, w io.Writer, header wire.StreamHeader, path string, digest string, size int64) error {
 	header.BodyDigest = &digest
-	if err := transport.WriteStreamFrameHeader(w, header, uint64(size)); err != nil {
+	if err := wire.WriteStreamFrameHeader(w, header, uint64(size)); err != nil {
 		return err
 	}
 	file, err := os.Open(path)

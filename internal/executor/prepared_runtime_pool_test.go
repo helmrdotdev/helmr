@@ -14,11 +14,12 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/substrate"
-	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
 func TestPreparedRuntimePoolCheckoutRequiresMatchingRuntimeInstance(t *testing.T) {
@@ -989,26 +990,26 @@ func TestPreparedRuntimePoolCloseCancelsInFlightRefill(t *testing.T) {
 
 func acknowledgePreparedRuntime(t *testing.T, stream io.ReadWriteCloser) {
 	t.Helper()
-	header, _, err := transport.ReadStreamFrameHeader(stream)
+	header, _, err := wire.ReadStreamFrameHeader(stream)
 	if err != nil {
 		t.Errorf("read prepared runtime header: %v", err)
 		return
 	}
-	if header.Type != transport.StreamTypeWorkspaceRuntimePrepare {
+	if header.Type != wire.StreamTypeWorkspaceRuntimePrepare {
 		t.Errorf("prepared runtime header = %+v", header)
 		return
 	}
 	var request workspacev0.PrepareWorkspaceRuntimeRequest
-	if err := transport.ReadProtoFrame(stream, &request); err != nil {
+	if err := frameio.ReadProtoFrame(stream, &request); err != nil {
 		t.Errorf("read prepared runtime request: %v", err)
 		return
 	}
-	imageHeader, imageSize, err := transport.ReadStreamFrameHeader(stream)
+	imageHeader, imageSize, err := wire.ReadStreamFrameHeader(stream)
 	if err != nil {
 		t.Errorf("read prepared runtime image header: %v", err)
 		return
 	}
-	if imageHeader.Type != transport.StreamTypeRunImage {
+	if imageHeader.Type != wire.StreamTypeRunImage {
 		t.Errorf("prepared runtime image header = %+v", imageHeader)
 		return
 	}
@@ -1016,7 +1017,7 @@ func acknowledgePreparedRuntime(t *testing.T, stream io.ReadWriteCloser) {
 		t.Errorf("drain prepared runtime image: %v", err)
 		return
 	}
-	_ = transport.WriteProtoFrame(stream, &workspacev0.PrepareWorkspaceRuntimeResponse{
+	_ = frameio.WriteProtoFrame(stream, &workspacev0.PrepareWorkspaceRuntimeResponse{
 		State:      "prepared",
 		RuntimeKey: request.RuntimeKey,
 	})

@@ -1,4 +1,4 @@
-package transport
+package frameio
 
 import (
 	"bytes"
@@ -37,8 +37,8 @@ func TestProtoFrameRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	event, err := ReadRunEvent(&buf)
-	if err != nil {
+	var event runv0.RunEvent
+	if err := ReadProtoFrame(&buf, &event); err != nil {
 		t.Fatal(err)
 	}
 	if event.GetTaskResult().GetExitCode() != 7 {

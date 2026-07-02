@@ -17,11 +17,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/localcache"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"golang.org/x/sync/errgroup"
 )
@@ -829,8 +830,8 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 	}
 	defer closeStream()
 	phaseStarted := time.Now()
-	if err := transport.WriteStreamFrameHeader(stream, transport.StreamHeader{
-		Type:        transport.StreamTypeWorkspaceMaterialize,
+	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
+		Type:        wire.StreamTypeWorkspaceMaterialize,
 		WorkspaceID: mount.WorkspaceID,
 	}, 0); err != nil {
 		m.logWorkspaceMountPhase(mount, "workspace mount header written", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
@@ -863,15 +864,15 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 		RuntimeKey:         strings.TrimSpace(preparedRuntimeKey),
 	}
 	phaseStarted = time.Now()
-	if err := transport.WriteProtoFrame(stream, request); err != nil {
+	if err := frameio.WriteProtoFrame(stream, request); err != nil {
 		m.logWorkspaceMountPhase(mount, "workspace mount request written", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		return fmt.Errorf("write workspace materialize request: %w", err)
 	}
 	m.logWorkspaceMountPhase(mount, "workspace mount request written", "duration_ms", time.Since(phaseStarted).Milliseconds())
 	if !usePreparedRuntime {
 		phaseStarted = time.Now()
-		if err := transport.WriteFileFrameWithMetadata(stream, transport.StreamHeader{
-			Type:        transport.StreamTypeRunImage,
+		if err := wire.WriteFileFrameWithMetadata(stream, wire.StreamHeader{
+			Type:        wire.StreamTypeRunImage,
 			WorkspaceID: mount.WorkspaceID,
 		}, sandboxImagePath, strings.TrimSpace(mount.SandboxImageArtifact.Digest), mount.SandboxImageArtifact.SizeBytes); err != nil {
 			m.logWorkspaceMountPhase(mount, "workspace mount sandbox image sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", mount.SandboxImageArtifact.SizeBytes, "error", err.Error())
@@ -882,8 +883,8 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 		m.logWorkspaceMountPhase(mount, "workspace mount sandbox image skipped", "prepared_runtime_hit", true, "runtime_key_id", preparedRuntimeKeyID(strings.TrimSpace(preparedRuntimeKey)), "size_bytes", mount.SandboxImageArtifact.SizeBytes)
 	}
 	phaseStarted = time.Now()
-	if err := transport.WriteFileFrameWithMetadata(stream, transport.StreamHeader{
-		Type:        transport.StreamTypeWorkspaceArtifact,
+	if err := wire.WriteFileFrameWithMetadata(stream, wire.StreamHeader{
+		Type:        wire.StreamTypeWorkspaceArtifact,
 		WorkspaceID: mount.WorkspaceID,
 	}, workspaceArtifactPath, strings.TrimSpace(mount.WorkspaceArtifact.Digest), mount.WorkspaceArtifact.SizeBytes); err != nil {
 		m.logWorkspaceMountPhase(mount, "workspace mount workspace artifact sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", mount.WorkspaceArtifact.SizeBytes, "error", err.Error())
@@ -1026,13 +1027,13 @@ func (m WorkspaceMaterializer) stopWorkspaceGuest(ctx context.Context, session v
 		return workspace.WorkspaceArtifact{}, fmt.Errorf("open workspace stop stream: %w", err)
 	}
 	defer stream.Close()
-	if err := transport.WriteStreamFrameHeader(stream, transport.StreamHeader{
-		Type:        transport.StreamTypeWorkspaceStop,
+	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
+		Type:        wire.StreamTypeWorkspaceStop,
 		WorkspaceID: mount.WorkspaceID,
 	}, 0); err != nil {
 		return workspace.WorkspaceArtifact{}, fmt.Errorf("write workspace stop header: %w", err)
 	}
-	if err := transport.WriteProtoFrame(stream, &workspacev0.StopWorkspaceRequest{
+	if err := frameio.WriteProtoFrame(stream, &workspacev0.StopWorkspaceRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			WorkspaceMountId:  mount.ID,
 			WorkspaceId:       mount.WorkspaceID,
@@ -1074,11 +1075,11 @@ func (m WorkspaceMaterializer) stopWorkspaceGuest(ctx context.Context, session v
 	if strings.TrimSpace(captured.GetEncoding()) != workspace.ArtifactEncoding {
 		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop captured artifact encoding %q is unsupported", captured.GetEncoding())
 	}
-	header, bodyLen, err := transport.ReadStreamFrameHeader(stream)
+	header, bodyLen, err := wire.ReadStreamFrameHeader(stream)
 	if err != nil {
 		return workspace.WorkspaceArtifact{}, fmt.Errorf("read workspace stop artifact header: %w", err)
 	}
-	if header.Type != transport.StreamTypeWorkspaceArtifact {
+	if header.Type != wire.StreamTypeWorkspaceArtifact {
 		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop returned artifact stream type %q", header.Type)
 	}
 	if strings.TrimSpace(header.WorkspaceID) != strings.TrimSpace(mount.WorkspaceID) {
@@ -1135,14 +1136,14 @@ func (m WorkspaceMaterializer) dispatchOperation(ctx context.Context, session vm
 		return api.WorkerWorkspaceOperationCompleteRequest{}, fmt.Errorf("open workspace operation stream: %w", err)
 	}
 	defer stream.Close()
-	if err := transport.WriteStreamFrameHeader(stream, transport.StreamHeader{
-		Type:        transport.StreamTypeWorkspaceOperation,
+	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
+		Type:        wire.StreamTypeWorkspaceOperation,
 		WorkspaceID: mount.WorkspaceID,
 		OperationID: operation.ID,
 	}, 0); err != nil {
 		return api.WorkerWorkspaceOperationCompleteRequest{}, fmt.Errorf("write workspace operation header: %w", err)
 	}
-	if err := transport.WriteProtoFrame(stream, &workspacev0.WorkspaceOperationRequest{
+	if err := frameio.WriteProtoFrame(stream, &workspacev0.WorkspaceOperationRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			OperationId:                operation.ID,
 			WorkspaceMountId:           operation.WorkspaceMountID,
@@ -1188,14 +1189,14 @@ func (m WorkspaceMaterializer) openWorkspaceEventStream(ctx context.Context, ses
 	if err != nil {
 		return nil, fmt.Errorf("open workspace event stream: %w", err)
 	}
-	if err := transport.WriteStreamFrameHeader(stream, transport.StreamHeader{
-		Type:        transport.StreamTypeWorkspaceEvents,
+	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
+		Type:        wire.StreamTypeWorkspaceEvents,
 		WorkspaceID: mount.WorkspaceID,
 	}, 0); err != nil {
 		_ = stream.Close()
 		return nil, fmt.Errorf("write workspace event stream header: %w", err)
 	}
-	if err := transport.WriteProtoFrame(stream, workspaceEventEnvelope(mount, channelToken)); err != nil {
+	if err := frameio.WriteProtoFrame(stream, workspaceEventEnvelope(mount, channelToken)); err != nil {
 		_ = stream.Close()
 		return nil, fmt.Errorf("write workspace event stream envelope: %w", err)
 	}
@@ -1407,14 +1408,14 @@ func (m WorkspaceMaterializer) openWorkspaceInputStream(ctx context.Context, ses
 	if err != nil {
 		return nil, fmt.Errorf("open workspace input stream: %w", err)
 	}
-	if err := transport.WriteStreamFrameHeader(stream, transport.StreamHeader{
-		Type:        transport.StreamTypeWorkspaceInput,
+	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
+		Type:        wire.StreamTypeWorkspaceInput,
 		WorkspaceID: mount.WorkspaceID,
 	}, 0); err != nil {
 		_ = stream.Close()
 		return nil, fmt.Errorf("write workspace input header: %w", err)
 	}
-	if err := transport.WriteProtoFrame(stream, workspaceInputEnvelope(operation, channelToken)); err != nil {
+	if err := frameio.WriteProtoFrame(stream, workspaceInputEnvelope(operation, channelToken)); err != nil {
 		_ = stream.Close()
 		return nil, fmt.Errorf("write workspace input envelope: %w", err)
 	}
@@ -1440,7 +1441,7 @@ func writeWorkspaceInputChunk(ctx context.Context, session vm.Session, stream io
 	if offsetStart < 0 {
 		return fmt.Errorf("workspace input offset must be non-negative")
 	}
-	if err := transport.WriteProtoFrame(stream, &workspacev0.WorkspaceInputFrame{
+	if err := frameio.WriteProtoFrame(stream, &workspacev0.WorkspaceInputFrame{
 		Frame: &workspacev0.WorkspaceInputFrame_Chunk{Chunk: &workspacev0.WorkspaceInputChunk{
 			ResourceKind: resourceKind,
 			ResourceId:   resourceID,
@@ -1475,7 +1476,7 @@ func writeWorkspaceInputClose(ctx context.Context, session vm.Session, stream io
 	if offset < 0 {
 		return fmt.Errorf("workspace input close offset must be non-negative")
 	}
-	if err := transport.WriteProtoFrame(stream, &workspacev0.WorkspaceInputFrame{
+	if err := frameio.WriteProtoFrame(stream, &workspacev0.WorkspaceInputFrame{
 		Frame: &workspacev0.WorkspaceInputFrame_Close{Close: &workspacev0.WorkspaceInputClose{
 			ResourceKind: resourceKind,
 			ResourceId:   resourceID,

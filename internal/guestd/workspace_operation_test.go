@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
@@ -57,7 +57,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	go func() {
 		errCh <- handleWorkspaceMaterializeConnection(context.Background(), materializeServer, slogDiscard(), registry)
 	}()
-	if err := transport.WriteProtoFrame(materializeClient, &workspacev0.MaterializeWorkspaceRequest{
+	if err := frameio.WriteProtoFrame(materializeClient, &workspacev0.MaterializeWorkspaceRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			WorkspaceMountId:  "mat-1",
 			WorkspaceId:       "workspace-1",
@@ -82,20 +82,20 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := transport.WriteFileFrame(materializeClient, transport.StreamHeader{
-		Type:        transport.StreamTypeRunImage,
+	if err := wire.WriteFileFrame(materializeClient, wire.StreamHeader{
+		Type:        wire.StreamTypeRunImage,
 		WorkspaceID: "workspace-1",
 	}, imagePath); err != nil {
 		t.Fatal(err)
 	}
-	if err := transport.WriteFileFrame(materializeClient, transport.StreamHeader{
-		Type:        transport.StreamTypeWorkspaceArtifact,
+	if err := wire.WriteFileFrame(materializeClient, wire.StreamHeader{
+		Type:        wire.StreamTypeWorkspaceArtifact,
 		WorkspaceID: "workspace-1",
 	}, artifact.Path); err != nil {
 		t.Fatal(err)
 	}
 	var response workspacev0.MaterializeWorkspaceResponse
-	if err := transport.ReadProtoFrame(materializeClient, &response); err != nil {
+	if err := frameio.ReadProtoFrame(materializeClient, &response); err != nil {
 		t.Fatal(err)
 	}
 	if response.State != "running" || response.GuestdChannelTokenHash != sha256sum.HexBytes([]byte("channel-token")) {
@@ -130,7 +130,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	go func() {
 		errCh <- handleWorkspaceOperationConnection(context.Background(), operationServer, registry)
 	}()
-	if err := transport.WriteProtoFrame(operationClient, &workspacev0.WorkspaceOperationRequest{
+	if err := frameio.WriteProtoFrame(operationClient, &workspacev0.WorkspaceOperationRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			OperationId:                "op-1",
 			WorkspaceMountId:           "mat-1",
@@ -146,7 +146,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 		t.Fatal(err)
 	}
 	var result workspacev0.WorkspaceOperationResult
-	if err := transport.ReadProtoFrame(operationClient, &result); err != nil {
+	if err := frameio.ReadProtoFrame(operationClient, &result); err != nil {
 		t.Fatal(err)
 	}
 	if result.ResultJson != "" || !strings.Contains(result.ErrorJson, `workspace pty \"pty-1\" is not open`) {
@@ -163,7 +163,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	go func() {
 		errCh <- handleWorkspaceOperationConnection(context.Background(), mismatchServer, registry)
 	}()
-	if err := transport.WriteProtoFrame(mismatchClient, &workspacev0.WorkspaceOperationRequest{
+	if err := frameio.WriteProtoFrame(mismatchClient, &workspacev0.WorkspaceOperationRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			OperationId:                "op-mismatch",
 			WorkspaceMountId:           "mat-1",
@@ -178,7 +178,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := transport.ReadProtoFrame(mismatchClient, &result); err != nil {
+	if err := frameio.ReadProtoFrame(mismatchClient, &result); err != nil {
 		t.Fatal(err)
 	}
 	if result.ResultJson != "" || !strings.Contains(result.ErrorJson, "channel token or fencing generation is invalid") {
@@ -195,7 +195,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	go func() {
 		errCh <- handleWorkspaceOperationConnection(context.Background(), advanceFenceServer, registry)
 	}()
-	if err := transport.WriteProtoFrame(advanceFenceClient, &workspacev0.WorkspaceOperationRequest{
+	if err := frameio.WriteProtoFrame(advanceFenceClient, &workspacev0.WorkspaceOperationRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			OperationId:                "op-advance-fence",
 			WorkspaceMountId:           "mat-1",
@@ -210,7 +210,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := transport.ReadProtoFrame(advanceFenceClient, &result); err != nil {
+	if err := frameio.ReadProtoFrame(advanceFenceClient, &result); err != nil {
 		t.Fatal(err)
 	}
 	if result.ResultJson != "" || !strings.Contains(result.ErrorJson, `workspace pty \"pty-1\" is not open`) {
@@ -227,7 +227,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	go func() {
 		errCh <- handleWorkspaceOperationConnection(context.Background(), staleFenceServer, registry)
 	}()
-	if err := transport.WriteProtoFrame(staleFenceClient, &workspacev0.WorkspaceOperationRequest{
+	if err := frameio.WriteProtoFrame(staleFenceClient, &workspacev0.WorkspaceOperationRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			OperationId:                "op-stale-fence",
 			WorkspaceMountId:           "mat-1",
@@ -242,7 +242,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := transport.ReadProtoFrame(staleFenceClient, &result); err != nil {
+	if err := frameio.ReadProtoFrame(staleFenceClient, &result); err != nil {
 		t.Fatal(err)
 	}
 	if result.ResultJson != "" || !strings.Contains(result.ErrorJson, "channel token or fencing generation is invalid") {
@@ -262,7 +262,7 @@ func TestWorkspaceMaterializeReturnsFailureResponse(t *testing.T) {
 	go func() {
 		errCh <- handleWorkspaceMaterializeConnection(context.Background(), materializeServer, slogDiscard(), registry)
 	}()
-	if err := transport.WriteProtoFrame(materializeClient, &workspacev0.MaterializeWorkspaceRequest{
+	if err := frameio.WriteProtoFrame(materializeClient, &workspacev0.MaterializeWorkspaceRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			WorkspaceMountId:  "mat-1",
 			WorkspaceId:       "workspace-1",
@@ -275,7 +275,7 @@ func TestWorkspaceMaterializeReturnsFailureResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	var response workspacev0.MaterializeWorkspaceResponse
-	if err := transport.ReadProtoFrame(materializeClient, &response); err != nil {
+	if err := frameio.ReadProtoFrame(materializeClient, &response); err != nil {
 		t.Fatal(err)
 	}
 	if response.State != "failed" {
