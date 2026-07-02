@@ -1,3 +1,6 @@
+-- name: LockMagicLinkRecipient :exec
+SELECT pg_advisory_xact_lock(sqlc.arg(lock_key)::bigint);
+
 -- name: CreateMagicLink :one
 INSERT INTO magic_links (
     id,

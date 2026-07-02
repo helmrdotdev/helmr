@@ -18,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/token"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -180,95 +179,84 @@ func magicLinkEmailMessage(message magicLinkMessage) email.Message {
 }
 
 func (s *Server) createPendingMagicLink(r *http.Request, purpose db.MagicLinkPurpose, email string, orgID pgtype.UUID, invitationID pgtype.UUID, redirectAfter string) (db.MagicLink, string, time.Time, bool, error) {
-	if s.tx == nil {
-		return db.MagicLink{}, "", time.Time{}, false, errors.New("transactional storage is not configured")
-	}
-	tx, err := s.tx.Begin(r.Context())
-	if err != nil {
-		return db.MagicLink{}, "", time.Time{}, false, err
-	}
-	defer tx.Rollback(r.Context())
-	queries := db.New(tx)
-	if err := lockMagicLinkRecipient(r.Context(), tx, purpose, email, orgID, invitationID); err != nil {
-		return db.MagicLink{}, "", time.Time{}, false, err
-	}
-	count, err := queries.CountRecentMagicLinks(r.Context(), db.CountRecentMagicLinksParams{
-		Purpose: purpose,
-		Email:   email,
-		Since:   pgvalue.Timestamptz(time.Now().Add(-magicLinkRateLimitWindow)),
-	})
-	if err != nil {
-		return db.MagicLink{}, "", time.Time{}, false, err
-	}
-	if count >= magicLinkRateLimitCount {
-		if err := tx.Commit(r.Context()); err != nil {
-			return db.MagicLink{}, "", time.Time{}, false, err
+	var link db.MagicLink
+	var linkURL string
+	var expiresAt time.Time
+	var created bool
+	err := s.inTx(r.Context(), func(work *txWork) error {
+		if err := lockMagicLinkRecipient(r.Context(), work.q, purpose, email, orgID, invitationID); err != nil {
+			return err
 		}
-		return db.MagicLink{}, "", time.Time{}, false, nil
-	}
-	rawToken, err := token.GenerateOpaque(32)
-	if err != nil {
-		return db.MagicLink{}, "", time.Time{}, false, err
-	}
-	tokenHash, err := auth.HashToken(s.authSecret, rawToken)
-	if err != nil {
-		return db.MagicLink{}, "", time.Time{}, false, err
-	}
-	redirect := pgtype.Text{}
-	if redirectAfter != "" {
-		redirect = pgtype.Text{String: redirectAfter, Valid: true}
-	}
-	expiresAt := time.Now().Add(s.effectiveMagicLinkTTL())
-	link, err := queries.CreateMagicLink(r.Context(), db.CreateMagicLinkParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		Purpose:       purpose,
-		TokenHash:     tokenHash,
-		Email:         email,
-		OrgID:         orgID,
-		InvitationID:  invitationID,
-		RedirectAfter: redirect,
-		ExpiresAt:     pgvalue.Timestamptz(expiresAt),
+		count, err := work.q.CountRecentMagicLinks(r.Context(), db.CountRecentMagicLinksParams{
+			Purpose: purpose,
+			Email:   email,
+			Since:   pgvalue.Timestamptz(time.Now().Add(-magicLinkRateLimitWindow)),
+		})
+		if err != nil {
+			return err
+		}
+		if count >= magicLinkRateLimitCount {
+			return nil
+		}
+		rawToken, err := token.GenerateOpaque(32)
+		if err != nil {
+			return err
+		}
+		tokenHash, err := auth.HashToken(s.authSecret, rawToken)
+		if err != nil {
+			return err
+		}
+		redirect := pgtype.Text{}
+		if redirectAfter != "" {
+			redirect = pgtype.Text{String: redirectAfter, Valid: true}
+		}
+		expiresAt = time.Now().Add(s.effectiveMagicLinkTTL())
+		link, err = work.q.CreateMagicLink(r.Context(), db.CreateMagicLinkParams{
+			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			Purpose:       purpose,
+			TokenHash:     tokenHash,
+			Email:         email,
+			OrgID:         orgID,
+			InvitationID:  invitationID,
+			RedirectAfter: redirect,
+			ExpiresAt:     pgvalue.Timestamptz(expiresAt),
+		})
+		if err != nil {
+			return err
+		}
+		linkURL = s.magicLinkURL(rawToken)
+		created = true
+		return nil
 	})
 	if err != nil {
 		return db.MagicLink{}, "", time.Time{}, false, err
 	}
-	linkURL := s.magicLinkURL(rawToken)
-	if err := tx.Commit(r.Context()); err != nil {
-		return db.MagicLink{}, "", time.Time{}, false, err
-	}
-	return link, linkURL, expiresAt, true, nil
+	return link, linkURL, expiresAt, created, nil
 }
 
 func (s *Server) markMagicLinkSent(ctx context.Context, purpose db.MagicLinkPurpose, email string, orgID pgtype.UUID, invitationID pgtype.UUID, linkID pgtype.UUID) error {
-	tx, err := s.tx.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	queries := db.New(tx)
-	if err := lockMagicLinkRecipient(ctx, tx, purpose, email, orgID, invitationID); err != nil {
-		return err
-	}
-	rows, err := queries.MarkMagicLinkSent(ctx, linkID)
-	if err != nil {
-		return err
-	}
-	if rows != 1 {
-		return errors.New("mark magic link sent")
-	}
-	if _, err := queries.RevokeOpenMagicLinksForRecipient(ctx, db.RevokeOpenMagicLinksForRecipientParams{
-		Purpose:      purpose,
-		Email:        email,
-		OrgID:        orgID,
-		InvitationID: invitationID,
-		ExceptID:     linkID,
-	}); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-	return nil
+	return s.inTx(ctx, func(work *txWork) error {
+		if err := lockMagicLinkRecipient(ctx, work.q, purpose, email, orgID, invitationID); err != nil {
+			return err
+		}
+		rows, err := work.q.MarkMagicLinkSent(ctx, linkID)
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return errors.New("mark magic link sent")
+		}
+		if _, err := work.q.RevokeOpenMagicLinksForRecipient(ctx, db.RevokeOpenMagicLinksForRecipientParams{
+			Purpose:      purpose,
+			Email:        email,
+			OrgID:        orgID,
+			InvitationID: invitationID,
+			ExceptID:     linkID,
+		}); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (s *Server) markMagicLinkDeliveryFailed(ctx context.Context, linkID pgtype.UUID) error {
@@ -282,9 +270,8 @@ func (s *Server) markMagicLinkDeliveryFailed(ctx context.Context, linkID pgtype.
 	return nil
 }
 
-func lockMagicLinkRecipient(ctx context.Context, tx pgx.Tx, purpose db.MagicLinkPurpose, email string, orgID pgtype.UUID, invitationID pgtype.UUID) error {
-	_, err := tx.Exec(ctx, "select pg_advisory_xact_lock($1)", magicLinkRecipientLockKey(purpose, email, orgID, invitationID))
-	if err != nil {
+func lockMagicLinkRecipient(ctx context.Context, store db.Querier, purpose db.MagicLinkPurpose, email string, orgID pgtype.UUID, invitationID pgtype.UUID) error {
+	if err := store.LockMagicLinkRecipient(ctx, magicLinkRecipientLockKey(purpose, email, orgID, invitationID)); err != nil {
 		return fmt.Errorf("lock magic link recipient: %w", err)
 	}
 	return nil

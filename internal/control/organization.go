@@ -18,10 +18,6 @@ import (
 )
 
 func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
-	if s.tx == nil {
-		writeError(w, unavailable(errors.New("organization storage is not configured")))
-		return
-	}
 	actor := actorFromContext(r.Context())
 	if actor.UserID == uuidNil {
 		writeError(w, unauthorized(errors.New("session authentication is required")))
@@ -37,56 +33,47 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	tx, err := s.tx.Begin(r.Context())
-	if err != nil {
-		writeError(w, errors.New("create organization"))
-		return
-	}
-	defer tx.Rollback(r.Context())
-	if s.selfHostedMode() {
-		if !s.initialSetupTokenMatches(request.SetupToken) {
-			writeError(w, forbidden(errors.New("invalid setup token")))
-			return
+	var org db.Organization
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		if s.selfHostedMode() {
+			if !s.initialSetupTokenMatches(request.SetupToken) {
+				return forbidden(errors.New("invalid setup token"))
+			}
+			if err := work.q.LockOrganizationsForSelfHostedSetup(r.Context()); err != nil {
+				return errors.New("create organization")
+			}
+			organizationCount, err := work.q.CountOrganizations(r.Context())
+			if err != nil {
+				return errors.New("create organization")
+			}
+			if organizationCount > 0 {
+				return conflict(errors.New("organization already exists"))
+			}
 		}
-		if _, err := tx.Exec(r.Context(), `LOCK TABLE organizations IN EXCLUSIVE MODE`); err != nil {
-			writeError(w, errors.New("create organization"))
-			return
+		var err error
+		org, err = work.q.CreateOrganization(r.Context(), db.CreateOrganizationParams{
+			ID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			Name: name,
+			Slug: slug,
+		})
+		if err != nil {
+			if isUniqueViolation(err) {
+				return badRequest(errors.New("organization slug is already in use"))
+			}
+			return errors.New("create organization")
 		}
-		var organizationCount int64
-		if err := tx.QueryRow(r.Context(), `SELECT count(*) FROM organizations`).Scan(&organizationCount); err != nil {
-			writeError(w, errors.New("create organization"))
-			return
+		if _, err := work.q.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
+			OrgID:       org.ID,
+			UserID:      pgvalue.UUID(actor.UserID),
+			Role:        db.OrgMemberRoleOwner,
+			DisplayName: pgtype.Text{},
+		}); err != nil {
+			return errors.New("create organization owner")
 		}
-		if organizationCount > 0 {
-			writeError(w, conflict(errors.New("organization already exists")))
-			return
-		}
-	}
-	queries := db.New(tx)
-	org, err := queries.CreateOrganization(r.Context(), db.CreateOrganizationParams{
-		ID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		Name: name,
-		Slug: slug,
+		return nil
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
-			writeError(w, badRequest(errors.New("organization slug is already in use")))
-			return
-		}
-		writeError(w, errors.New("create organization"))
-		return
-	}
-	if _, err := queries.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
-		OrgID:       org.ID,
-		UserID:      pgvalue.UUID(actor.UserID),
-		Role:        db.OrgMemberRoleOwner,
-		DisplayName: pgtype.Text{},
-	}); err != nil {
-		writeError(w, errors.New("create organization owner"))
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, errors.New("create organization"))
+		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, organizationResponse(org))

@@ -188,6 +188,15 @@ func (q *Queries) GetMagicLinkLoginUser(ctx context.Context, email pgtype.Text) 
 	return i, err
 }
 
+const lockMagicLinkRecipient = `-- name: LockMagicLinkRecipient :exec
+SELECT pg_advisory_xact_lock($1::bigint)
+`
+
+func (q *Queries) LockMagicLinkRecipient(ctx context.Context, lockKey int64) error {
+	_, err := q.db.Exec(ctx, lockMagicLinkRecipient, lockKey)
+	return err
+}
+
 const markMagicLinkDeliveryFailed = `-- name: MarkMagicLinkDeliveryFailed :execrows
 UPDATE magic_links
    SET delivery_failed_at = now(),

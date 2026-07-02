@@ -1,3 +1,9 @@
+-- name: LockOrganizationsForSelfHostedSetup :exec
+LOCK TABLE organizations IN EXCLUSIVE MODE;
+
+-- name: CountOrganizations :one
+SELECT count(*) FROM organizations;
+
 -- name: CreateOrganization :one
 INSERT INTO organizations (id, name, slug)
 VALUES (sqlc.arg(id), sqlc.arg(name), sqlc.arg(slug))
