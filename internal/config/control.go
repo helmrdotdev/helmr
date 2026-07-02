@@ -19,7 +19,6 @@ func LoadControl() (Control, error) {
 		DeploymentMode:          env("HELMR_DEPLOYMENT_MODE", DeploymentModeSelfHosted),
 		DatabaseURL:             envString("HELMR_DATABASE_URL"),
 		RedisURL:                env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
-		AsyncBusURI:             envString("HELMR_ASYNC_BUS_URI"),
 		CASURI:                  envString("HELMR_CAS_URI"),
 		WorkerTokenSigningKey:   envString("HELMR_WORKER_TOKEN_SIGNING_KEY"),
 		WorkerBootstrapToken:    envString("HELMR_WORKER_BOOTSTRAP_TOKEN"),

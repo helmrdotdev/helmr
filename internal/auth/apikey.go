@@ -1,10 +1,10 @@
 package auth
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/token"
 )
 
 const (
@@ -19,11 +19,11 @@ type GeneratedAPIKey struct {
 }
 
 func GenerateAPIKey() (GeneratedAPIKey, error) {
-	raw := make([]byte, apiKeyBytes)
-	if _, err := rand.Read(raw); err != nil {
+	raw, err := token.GenerateOpaque(apiKeyBytes)
+	if err != nil {
 		return GeneratedAPIKey{}, fmt.Errorf("generate API key: %w", err)
 	}
-	key := APIKeyPrefix + base64.RawURLEncoding.EncodeToString(raw)
+	key := APIKeyPrefix + raw
 	return GeneratedAPIKey{
 		Raw:       key,
 		KeyPrefix: KeyPrefix(key),

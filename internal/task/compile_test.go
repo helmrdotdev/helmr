@@ -5,15 +5,16 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/transport"
+	"github.com/helmrdotdev/helmr/internal/frameio"
+	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
 func TestDecodeTaskBundleResponseReturnsParseError(t *testing.T) {
 	var buf bytes.Buffer
-	if err := transport.WriteParseErrorFrame(&buf, "task_not_found", "task not found: deploy"); err != nil {
+	if err := wire.WriteParseErrorFrame(&buf, "task_not_found", "task not found: deploy"); err != nil {
 		t.Fatal(err)
 	}
-	body, err := transport.ReadMessageFrame(&buf)
+	body, err := frameio.ReadMessageFrame(&buf)
 	if err != nil {
 		t.Fatal(err)
 	}

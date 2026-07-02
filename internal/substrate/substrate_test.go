@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/ociimage"
+	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -169,6 +169,26 @@ func TestCacheKeyNormalizesSource(t *testing.T) {
 	}
 	if withWhitespace != trimmed {
 		t.Fatalf("cache key changed after whitespace normalization: %s != %s", withWhitespace, trimmed)
+	}
+}
+
+func TestCacheKeyMatchesGoldenSource(t *testing.T) {
+	key, err := CacheKey(Source{
+		SandboxArtifactDigest: "sha256:sandbox",
+		SandboxArtifactFormat: "oci-tar",
+		ImageDigest:           "sha256:image",
+		RootfsDigest:          "sha256:rootfs",
+		RuntimeABI:            "runtime-abi",
+		GuestdABI:             "guestd-abi",
+		AdapterABI:            "adapter-abi",
+		WorkspaceMountPath:    "/workspace",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "sha256:9d06f1ce620cdfa34be30058524cfb49331aeb7451524c5358c4154a2bfb381c"
+	if key != want {
+		t.Fatalf("cache key = %s, want %s", key, want)
 	}
 }
 
@@ -345,15 +365,15 @@ func ociTar(t *testing.T, files map[string]string) []byte {
 	config := []byte(`{"Config":{"Env":["PATH=/bin"],"WorkingDir":"/workspace","User":"agent"}}`)
 	configDigest := sha256sum.HexBytes(config)
 	layerDigest := sha256sum.HexBytes(layer)
-	manifest := mustJSON(t, ociimage.Manifest{
-		Config: ociimage.Descriptor{MediaType: "application/vnd.oci.image.Config.v1+json", Digest: "sha256:" + configDigest},
-		Layers: []ociimage.Descriptor{{
+	manifest := mustJSON(t, oci.Manifest{
+		Config: oci.Descriptor{MediaType: "application/vnd.oci.image.Config.v1+json", Digest: "sha256:" + configDigest},
+		Layers: []oci.Descriptor{{
 			MediaType: "application/vnd.oci.image.layer.v1.tar",
 			Digest:    "sha256:" + layerDigest,
 		}},
 	})
 	manifestDigest := sha256sum.HexBytes(manifest)
-	index := mustJSON(t, ociimage.Index{Manifests: []ociimage.Descriptor{{
+	index := mustJSON(t, oci.Index{Manifests: []oci.Descriptor{{
 		MediaType: "application/vnd.oci.image.manifest.v1+json",
 		Digest:    "sha256:" + manifestDigest,
 	}}})

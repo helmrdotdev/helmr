@@ -63,6 +63,7 @@ type Querier interface {
 	ConsumeDeviceCode(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
 	ConsumeMagicLink(ctx context.Context, arg ConsumeMagicLinkParams) (int64, error)
 	ConsumePublicAccessToken(ctx context.Context, arg ConsumePublicAccessTokenParams) (PublicAccessToken, error)
+	CountOrganizations(ctx context.Context) (int64, error)
 	CountRecentMagicLinks(ctx context.Context, arg CountRecentMagicLinksParams) (int64, error)
 	CountScopedRunsByStatus(ctx context.Context, arg CountScopedRunsByStatusParams) (CountScopedRunsByStatusRow, error)
 	CountSecretsByKeyID(ctx context.Context, keyID string) (int64, error)
@@ -311,6 +312,8 @@ type Querier interface {
 	ListWorkspaceVersions(ctx context.Context, arg ListWorkspaceVersionsParams) ([]WorkspaceVersion, error)
 	ListWorkspaces(ctx context.Context, arg ListWorkspacesParams) ([]Workspace, error)
 	LockDeploymentReusableBuildKey(ctx context.Context, arg LockDeploymentReusableBuildKeyParams) error
+	LockMagicLinkRecipient(ctx context.Context, lockKey int64) error
+	LockOrganizationsForSelfHostedSetup(ctx context.Context) error
 	LockPublicAccessTokenByHash(ctx context.Context, tokenHash []byte) (PublicAccessToken, error)
 	LockSession(ctx context.Context, arg LockSessionParams) (Session, error)
 	LockWorkspaceExecForStreamAppend(ctx context.Context, arg LockWorkspaceExecForStreamAppendParams) (LockWorkspaceExecForStreamAppendRow, error)

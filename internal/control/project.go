@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -253,25 +252,10 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("mark deletion job running"))
 		return
 	}
-	store := s.db
-	var tx pgx.Tx
-	if s.tx != nil {
-		tx, err = s.tx.Begin(r.Context())
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		projectsForPromotion, err := work.q.ListProjectsForUpdate(r.Context(), orgID)
 		if err != nil {
-			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, errors.New("begin deletion transaction"))
-			return
-		}
-		defer tx.Rollback(r.Context())
-		store = db.New(tx)
-	}
-	var projectsForPromotion []db.Project
-	if tx != nil {
-		projectsForPromotion, err = store.ListProjectsForUpdate(r.Context(), orgID)
-		if err != nil {
-			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, errors.New("lock projects"))
-			return
+			return errors.New("lock projects")
 		}
 		projectFound := false
 		for _, candidate := range projectsForPromotion {
@@ -282,80 +266,48 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !projectFound {
-			s.failDeletionJob(r.Context(), orgID, job.ID, errRecordNotFound)
-			writeError(w, notFound(errors.New("project not found")))
-			return
+			return notFound(errors.New("project not found"))
 		}
-	}
-	promotedProjectID := pgtype.UUID{}
-	if project.IsDefault {
-		if tx == nil {
-			projectsForPromotion, err = store.ListProjects(r.Context(), orgID)
-			if err != nil {
-				s.failDeletionJob(r.Context(), orgID, job.ID, err)
-				writeError(w, errors.New("list projects"))
-				return
+		promotedProjectID := pgtype.UUID{}
+		if project.IsDefault {
+			for _, candidate := range projectsForPromotion {
+				if candidate.ID != project.ID {
+					promotedProjectID = candidate.ID
+					break
+				}
 			}
 		}
-		for _, candidate := range projectsForPromotion {
-			if candidate.ID != project.ID {
-				promotedProjectID = candidate.ID
-				break
-			}
-		}
-	}
-	if _, err := store.DeleteProject(r.Context(), db.DeleteProjectParams{
-		OrgID: orgID,
-		ID:    targetProjectID,
-	}); isNoRows(err) {
-		s.failDeletionJob(r.Context(), orgID, job.ID, err)
-		writeError(w, notFound(errors.New("project not found")))
-		return
-	} else if err != nil {
-		s.failDeletionJob(r.Context(), orgID, job.ID, err)
-		writeError(w, errors.New("delete project"))
-		return
-	}
-	if promotedProjectID != (pgtype.UUID{}) {
-		if rows, err := store.SetDefaultProject(r.Context(), db.SetDefaultProjectParams{
+		if _, err := work.q.DeleteProject(r.Context(), db.DeleteProjectParams{
 			OrgID: orgID,
-			ID:    promotedProjectID,
-		}); err != nil {
-			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, errors.New("set default project"))
-			return
-		} else if rows == 0 {
-			s.failDeletionJob(r.Context(), orgID, job.ID, errors.New("set default project affected no rows"))
-			writeError(w, errors.New("set default project"))
-			return
+			ID:    targetProjectID,
+		}); isNoRows(err) {
+			return notFound(errors.New("project not found"))
+		} else if err != nil {
+			return errors.New("delete project")
 		}
-	}
-	if tx != nil {
-		if _, err := store.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
+		if promotedProjectID != (pgtype.UUID{}) {
+			if rows, err := work.q.SetDefaultProject(r.Context(), db.SetDefaultProjectParams{
+				OrgID: orgID,
+				ID:    promotedProjectID,
+			}); err != nil {
+				return errors.New("set default project")
+			} else if rows == 0 {
+				return errors.New("set default project affected no rows")
+			}
+		}
+		if _, err := work.q.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
 			OrgID:         orgID,
 			ID:            job.ID,
 			DeletedCounts: json.RawMessage(`{"projects":1}`),
 		}); err != nil {
-			_ = tx.Rollback(r.Context())
-			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, errors.New("complete deletion job"))
-			return
+			return errors.New("complete deletion job")
 		}
-		if err := tx.Commit(r.Context()); err != nil {
-			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, errors.New("commit deletion"))
-			return
-		}
-	} else {
-		if _, err := s.db.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
-			OrgID:         orgID,
-			ID:            job.ID,
-			DeletedCounts: json.RawMessage(`{"projects":1}`),
-		}); err != nil {
-			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, errors.New("complete deletion job"))
-			return
-		}
+		return nil
+	})
+	if err != nil {
+		s.failDeletionJob(r.Context(), orgID, job.ID, err)
+		writeError(w, err)
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -582,57 +534,29 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("mark deletion job running"))
 		return
 	}
-	store := s.db
-	var tx pgx.Tx
-	if s.tx != nil {
-		tx, err = s.tx.Begin(r.Context())
-		if err != nil {
-			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, errors.New("begin deletion transaction"))
-			return
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		if _, err := work.q.DeleteEnvironment(r.Context(), db.DeleteEnvironmentParams{
+			OrgID:     orgID,
+			ProjectID: targetProjectID,
+			ID:        targetEnvironmentID,
+		}); isNoRows(err) {
+			return notFound(errors.New("environment not found"))
+		} else if err != nil {
+			return errors.New("delete environment")
 		}
-		defer tx.Rollback(r.Context())
-		store = db.New(tx)
-	}
-	if _, err := store.DeleteEnvironment(r.Context(), db.DeleteEnvironmentParams{
-		OrgID:     orgID,
-		ProjectID: targetProjectID,
-		ID:        targetEnvironmentID,
-	}); isNoRows(err) {
-		s.failDeletionJob(r.Context(), orgID, job.ID, err)
-		writeError(w, notFound(errors.New("environment not found")))
-		return
-	} else if err != nil {
-		s.failDeletionJob(r.Context(), orgID, job.ID, err)
-		writeError(w, errors.New("delete environment"))
-		return
-	}
-	if tx != nil {
-		if _, err := store.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
+		if _, err := work.q.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
 			OrgID:         orgID,
 			ID:            job.ID,
 			DeletedCounts: json.RawMessage(`{"environments":1}`),
 		}); err != nil {
-			_ = tx.Rollback(r.Context())
-			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, errors.New("complete deletion job"))
-			return
+			return errors.New("complete deletion job")
 		}
-		if err := tx.Commit(r.Context()); err != nil {
-			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, errors.New("commit deletion"))
-			return
-		}
-	} else {
-		if _, err := s.db.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
-			OrgID:         orgID,
-			ID:            job.ID,
-			DeletedCounts: json.RawMessage(`{"environments":1}`),
-		}); err != nil {
-			s.failDeletionJob(r.Context(), orgID, job.ID, err)
-			writeError(w, errors.New("complete deletion job"))
-			return
-		}
+		return nil
+	})
+	if err != nil {
+		s.failDeletionJob(r.Context(), orgID, job.ID, err)
+		writeError(w, err)
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

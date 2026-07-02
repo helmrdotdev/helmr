@@ -162,6 +162,9 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if cfg.DB == nil {
 		return nil, errors.New("control database is required")
 	}
+	if cfg.TX == nil {
+		return nil, errors.New("control transaction database is required")
+	}
 	if cfg.Auth == nil {
 		return nil, errors.New("control authenticator is required")
 	}
@@ -212,7 +215,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		devicePollEvery:       cfg.DevicePollEvery,
 	}
 	if cfg.BackgroundContext != nil {
-		go server.RunSessionRunRequestReconciler(cfg.BackgroundContext)
+		go server.sessionRunRequestWorkflow().run(cfg.BackgroundContext)
 	}
 	router := chi.NewRouter()
 	router.Use(server.recoverPanics)

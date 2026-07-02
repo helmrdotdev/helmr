@@ -25,7 +25,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"adapter":            {},
 		"api":                {"compute"},
 		"archive":            {"safepath", "sha256sum"},
-		"auth":               {"db", "pgvalue"},
+		"auth":               {"db", "pgvalue", "token"},
 		"builder":            {"proto/bundle/v0", "secret"},
 		"buildkit":           {"builder", "proto/bundle/v0", "safepath", "secret"},
 		"cas":                {},
@@ -38,45 +38,66 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"compute":            {"sha256sum"},
 		"config":             {"auth"},
 		"console":            {},
-		"control":            {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "pgvalue", "schedule", "secret", "sha256sum", "stablejson", "tracing", "workspace"},
+		"control":            {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "pgvalue", "runtime", "schedule", "secret", "sha256sum", "stablejson", "token", "tracing", "wire", "workspace"},
 		"db":                 {},
 		"db/dbtest":          {},
 		"db/schema":          {},
-		"deployment":         {"api", "archive", "builder", "cas", "compute", "proto/bundle/v0", "schedule", "secret", "stablejson", "task", "transport", "vm"},
-		"dispatch":           {"api", "compute", "db", "pgvalue", "runtimeprep", "substrate"},
+		"deployment":         {"api", "archive", "builder", "cas", "compute", "frameio", "proto/bundle/v0", "schedule", "secret", "stablejson", "task", "vm", "wire"},
+		"dispatch":           {"api", "compute", "db", "pgvalue", "runtime", "substrate"},
 		"dispatch/redis":     {"compute", "dispatch"},
 		"email":              {},
-		"executor":           {"api", "archive", "builder", "cas", "checkpoint", "compute", "localcache", "proto/bundle/v0", "proto/run/v0", "proto/workspace/v0", "runprotocol", "runtimeprep", "sha256sum", "substrate", "task", "transport", "vm", "workspace"},
+		"executor":           {"api", "archive", "builder", "cas", "checkpoint", "compute", "frameio", "localcache", "proto/bundle/v0", "proto/run/v0", "proto/workspace/v0", "runtime", "sha256sum", "substrate", "task", "vm", "wire", "workspace"},
 		"firecracker":        {"cas", "compute", "sha256sum", "vm"},
-		"guestd":             {"archive", "ociimage", "proto/run/v0", "proto/workspace/v0", "runprotocol", "safepath", "sha256sum", "transport", "workspace", "workspace/protocol"},
+		"guestd":             {"archive", "oci", "proto/run/v0", "proto/workspace/v0", "safepath", "sha256sum", "frameio", "wire", "workspace"},
 		"localcache":         {},
-		"ociimage":           {"sha256sum"},
+		"oci":                {"sha256sum"},
 		"pgvalue":            {},
 		"proto/bundle/v0":    {},
 		"proto/run/v0":       {},
 		"proto/workspace/v0": {},
-		"runprotocol":        {"proto/run/v0", "transport"},
-		"runtimeprep":        {"api", "auth", "compute", "substrate"},
+		"runtime":            {"token"},
 		"schedule":           {"api", "db", "pgvalue"},
 		"secret":             {"api", "db", "pgvalue"},
 		"sha256sum":          {},
 		"safepath":           {},
 		"stablejson":         {},
-		"substrate":          {"localcache", "ociimage", "sha256sum"},
-		"task":               {"archive", "builder", "compute", "proto/bundle/v0", "transport", "vm"},
+		"substrate":          {"localcache", "oci", "sha256sum"},
+		"task":               {"archive", "builder", "compute", "frameio", "proto/bundle/v0", "vm", "wire"},
+		"token":              {},
 		"tracing":            {},
-		"transport":          {"proto/run/v0", "sha256sum"},
+		"frameio":            {"sha256sum"},
 		"version":            {},
 		"vm":                 {"compute"},
-		"sqs":                {},
+		"wire":               {"frameio", "proto/run/v0", "stablejson"},
 		"worker":             {"api", "client", "compute"},
-		"workspace":          {"archive", "db", "pgvalue", "safepath", "workspace/protocol"},
-		"workspace/protocol": {"stablejson"},
+		"workspace":          {"archive", "safepath"},
 	}
 	normalizeGraph(expected)
 
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("%s\nactual:\n%s\nexpected:\n%s", dependencyChangeMessage(actual, expected), formatGraph(actual), formatGraph(expected))
+	}
+}
+
+func TestInternalPackageForbiddenDependencies(t *testing.T) {
+	actual, err := internalPackageDependencyGraph("internal")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for source, targets := range map[string][]string{
+		"frameio":   {"api", "db", "proto/run/v0", "wire"},
+		"runtime":   {"api", "auth", "compute", "db", "firecracker", "guestd", "oci", "substrate", "vm"},
+		"wire":      {"api", "control", "db", "executor", "guestd", "workspace"},
+		"guestd":    {"control", "db", "executor"},
+		"workspace": {"api", "control", "db", "executor", "guestd", "pgvalue", "proto/workspace/v0", "wire"},
+		"control":   {"executor", "firecracker", "guestd"},
+	} {
+		for _, target := range targets {
+			if slices.Contains(actual[source], target) {
+				t.Fatalf("internal package import is forbidden: %s must not import %s", source, target)
+			}
+		}
 	}
 }
 

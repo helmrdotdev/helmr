@@ -305,95 +305,93 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 	if s.cas == nil {
 		return db.Workspace{}, false, errors.New("workspace artifact CAS is not configured")
 	}
-	workspaceStore := s.db
-	commit := func() error { return nil }
-	if s.tx != nil {
-		tx, err := s.tx.Begin(ctx)
-		if err != nil {
-			return db.Workspace{}, false, err
+	var row db.Workspace
+	replayed := false
+	err = s.inTx(ctx, func(work *txWork) error {
+		workspaceStore := work.q
+		if idempotencyKey != "" {
+			idempotency, err := ensureWorkspaceOperationIdempotency(ctx, workspaceStore, db.EnsureWorkspaceOperationIdempotencyParams{
+				ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				OrgID:                pgvalue.UUID(actor.OrgID),
+				ProjectID:            projectID,
+				EnvironmentID:        environmentID,
+				WorkspaceID:          pgtype.UUID{},
+				OperationKind:        workspaceCreateOperationKind,
+				IdempotencyKey:       idempotencyKey,
+				RequestFingerprint:   fingerprint,
+				ResponseResourceType: "",
+				ResponseResourceID:   pgtype.UUID{},
+				ResponseBody:         []byte(`{}`),
+				ExpiresAt:            pgvalue.Timestamptz(time.Now().Add(idempotencyTTL)),
+			})
+			if err != nil {
+				return err
+			}
+			if !idempotency.Inserted {
+				if idempotency.RequestFingerprint != fingerprint {
+					return codedError{code: "idempotency_fingerprint_mismatch", message: "idempotency_key was already used with different workspace create parameters"}
+				}
+				if !idempotency.ResponseResourceID.Valid {
+					return errWorkspaceOperationPending
+				}
+				existing, getWorkspaceErr := workspaceStore.GetWorkspace(ctx, db.GetWorkspaceParams{
+					OrgID:         pgvalue.UUID(actor.OrgID),
+					ProjectID:     projectID,
+					EnvironmentID: environmentID,
+					ID:            idempotency.ResponseResourceID,
+				})
+				row = existing
+				replayed = true
+				return getWorkspaceErr
+			}
 		}
-		defer tx.Rollback(ctx)
-		workspaceStore = db.New(tx)
-		commit = func() error { return tx.Commit(ctx) }
-	}
-	if idempotencyKey != "" {
-		idempotency, err := ensureWorkspaceOperationIdempotency(ctx, workspaceStore, db.EnsureWorkspaceOperationIdempotencyParams{
-			ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:                pgvalue.UUID(actor.OrgID),
-			ProjectID:            projectID,
-			EnvironmentID:        environmentID,
-			WorkspaceID:          pgtype.UUID{},
-			OperationKind:        workspaceCreateOperationKind,
-			IdempotencyKey:       idempotencyKey,
-			RequestFingerprint:   fingerprint,
-			ResponseResourceType: "",
-			ResponseResourceID:   pgtype.UUID{},
-			ResponseBody:         []byte(`{}`),
-			ExpiresAt:            pgvalue.Timestamptz(time.Now().Add(idempotencyTTL)),
+		workspaceArtifact, emptyArtifact, err := s.createInitialWorkspaceArtifact(ctx, workspaceStore, actor.OrgID, projectID, environmentID)
+		if err != nil {
+			return err
+		}
+		created, err := workspaceStore.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
+			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:                     pgvalue.UUID(actor.OrgID),
+			ProjectID:                 projectID,
+			EnvironmentID:             environmentID,
+			DeploymentSandboxID:       deploymentSandbox.ID,
+			ExternalID:                strings.TrimSpace(request.ExternalID),
+			Metadata:                  metadata,
+			Tags:                      tags,
+			RetentionPolicy:           []byte(`{}`),
+			InitialVersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			InitialArtifactID:         workspaceArtifact.ID,
+			InitialArtifactEncoding:   emptyArtifact.Encoding,
+			InitialArtifactEntryCount: int32(emptyArtifact.EntryCount),
+			InitialContentDigest:      workspaceArtifact.Digest,
+			InitialSizeBytes:          workspaceArtifact.SizeBytes,
 		})
 		if err != nil {
-			return db.Workspace{}, false, err
+			return err
 		}
-		if !idempotency.Inserted {
-			if idempotency.RequestFingerprint != fingerprint {
-				return db.Workspace{}, false, codedError{code: "idempotency_fingerprint_mismatch", message: "idempotency_key was already used with different workspace create parameters"}
-			}
-			if !idempotency.ResponseResourceID.Valid {
-				return db.Workspace{}, false, errWorkspaceOperationPending
-			}
-			row, getWorkspaceErr := s.db.GetWorkspace(ctx, db.GetWorkspaceParams{
-				OrgID:         pgvalue.UUID(actor.OrgID),
-				ProjectID:     projectID,
-				EnvironmentID: environmentID,
-				ID:            idempotency.ResponseResourceID,
+		row = workspaceFromCreateWorkspaceFromSandbox(created)
+		if idempotencyKey != "" {
+			_, err = workspaceStore.CompleteWorkspaceOperationIdempotency(ctx, db.CompleteWorkspaceOperationIdempotencyParams{
+				OrgID:                pgvalue.UUID(actor.OrgID),
+				ProjectID:            projectID,
+				EnvironmentID:        environmentID,
+				OperationKind:        workspaceCreateOperationKind,
+				IdempotencyKey:       idempotencyKey,
+				RequestFingerprint:   fingerprint,
+				ResponseResourceType: "workspace",
+				ResponseResourceID:   row.ID,
+				ResponseBody:         []byte(`{}`),
 			})
-			return row, true, getWorkspaceErr
+			if err != nil {
+				return err
+			}
 		}
-	}
-	workspaceArtifact, emptyArtifact, err := s.createInitialWorkspaceArtifact(ctx, workspaceStore, actor.OrgID, projectID, environmentID)
-	if err != nil {
-		return db.Workspace{}, false, err
-	}
-	row, err := workspaceStore.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
-		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:                     pgvalue.UUID(actor.OrgID),
-		ProjectID:                 projectID,
-		EnvironmentID:             environmentID,
-		DeploymentSandboxID:       deploymentSandbox.ID,
-		ExternalID:                strings.TrimSpace(request.ExternalID),
-		Metadata:                  metadata,
-		Tags:                      tags,
-		RetentionPolicy:           []byte(`{}`),
-		InitialVersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		InitialArtifactID:         workspaceArtifact.ID,
-		InitialArtifactEncoding:   emptyArtifact.Encoding,
-		InitialArtifactEntryCount: int32(emptyArtifact.EntryCount),
-		InitialContentDigest:      workspaceArtifact.Digest,
-		InitialSizeBytes:          workspaceArtifact.SizeBytes,
+		return nil
 	})
 	if err != nil {
 		return db.Workspace{}, false, err
 	}
-	if idempotencyKey != "" {
-		_, err = workspaceStore.CompleteWorkspaceOperationIdempotency(ctx, db.CompleteWorkspaceOperationIdempotencyParams{
-			OrgID:                pgvalue.UUID(actor.OrgID),
-			ProjectID:            projectID,
-			EnvironmentID:        environmentID,
-			OperationKind:        workspaceCreateOperationKind,
-			IdempotencyKey:       idempotencyKey,
-			RequestFingerprint:   fingerprint,
-			ResponseResourceType: "workspace",
-			ResponseResourceID:   row.ID,
-			ResponseBody:         []byte(`{}`),
-		})
-		if err != nil {
-			return db.Workspace{}, false, err
-		}
-	}
-	if err := commit(); err != nil {
-		return db.Workspace{}, false, err
-	}
-	return workspaceFromCreateWorkspaceFromSandbox(row), false, nil
+	return row, replayed, nil
 }
 
 func workspaceFromCreateWorkspaceFromSandbox(row db.CreateWorkspaceFromSandboxRow) db.Workspace {

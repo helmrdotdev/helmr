@@ -14,11 +14,11 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
-	"github.com/helmrdotdev/helmr/internal/runprotocol"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
@@ -121,8 +121,8 @@ func TestRuntimeCheckpointerSeparatesWorkspaceCaptureFromRuntimeManifest(t *test
 	workspaceBody := []byte("workspace tar")
 	workspaceDigest := sha256sum.DigestBytes(workspaceBody)
 	entryCount := 3
-	if err := transport.WriteStreamFrameHeader(&read, transport.StreamHeader{
-		Type:       transport.StreamTypeWorkspaceArtifact,
+	if err := wire.WriteStreamFrameHeader(&read, wire.StreamHeader{
+		Type:       wire.StreamTypeWorkspaceArtifact,
 		RunID:      "run-1",
 		BodyDigest: &workspaceDigest,
 		EntryCount: &entryCount,
@@ -418,7 +418,7 @@ func newCheckpointStream(t *testing.T, closeErr error, messages ...proto.Message
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := transport.WriteMessageFrame(&read, body); err != nil {
+		if err := frameio.WriteMessageFrame(&read, body); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -433,7 +433,7 @@ func newInterleavedCheckpointStream(t *testing.T, beforeSnapshot []proto.Message
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := transport.WriteMessageFrame(&read, body); err != nil {
+		if err := frameio.WriteMessageFrame(&read, body); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -446,7 +446,7 @@ func newInterleavedCheckpointStream(t *testing.T, beforeSnapshot []proto.Message
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := transport.WriteMessageFrame(&read, body); err != nil {
+		if err := frameio.WriteMessageFrame(&read, body); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -455,8 +455,8 @@ func newInterleavedCheckpointStream(t *testing.T, beforeSnapshot []proto.Message
 
 func writeCheckpointPauseReadyFrame(t *testing.T, w io.Writer, runWaitID string, checkpointID string) {
 	t.Helper()
-	if err := transport.WriteStreamFrameHeader(w, transport.StreamHeader{
-		Type:         transport.StreamTypeCheckpointPauseReady,
+	if err := wire.WriteStreamFrameHeader(w, wire.StreamHeader{
+		Type:         wire.StreamTypeCheckpointPauseReady,
 		RunWaitID:    runWaitID,
 		CheckpointID: checkpointID,
 	}, 0); err != nil {
@@ -735,11 +735,11 @@ func checkpointPhaseHasFilepackStats(phases []api.WorkerCheckpointPhase, name st
 func assertSuspendFrame(t *testing.T, body []byte, runWaitID string, checkpointID string) {
 	t.Helper()
 	reader := bytes.NewReader(body)
-	header, bodyLen, err := transport.ReadStreamFrameHeader(reader)
+	header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	suspend, err := runprotocol.ReadCheckpointPauseRequest(header, reader, bodyLen)
+	suspend, err := wire.ReadCheckpointPauseRequest(header, reader, bodyLen)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -46,8 +46,8 @@ func TestMagicLinkStartSendsLoginLinkForExistingMember(t *testing.T) {
 	if store.created.Purpose != db.MagicLinkPurposeLogin || store.created.Email != "user@example.test" || store.created.RedirectAfter.String != "/runs" {
 		t.Fatalf("created link = %+v", store.created)
 	}
-	if store.tx == nil || !store.tx.lockAcquired || !store.tx.markedSent || !store.tx.revoked || !store.tx.committed {
-		t.Fatalf("tx = %+v", store.tx)
+	if !store.lockAcquired || !store.markedSent || !store.revoked {
+		t.Fatalf("store lock=%v markedSent=%v revoked=%v", store.lockAcquired, store.markedSent, store.revoked)
 	}
 }
 
@@ -64,8 +64,8 @@ func TestMagicLinkStartDeliveryFailureMarksLinkFailedAndKeepsOldLinks(t *testing
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.tx == nil || store.tx.markedSent || store.tx.revoked || !store.tx.committed || !store.deliveryFailed {
-		t.Fatalf("tx = %+v deliveryFailed=%v", store.tx, store.deliveryFailed)
+	if store.markedSent || store.revoked || !store.deliveryFailed {
+		t.Fatalf("markedSent=%v revoked=%v deliveryFailed=%v", store.markedSent, store.revoked, store.deliveryFailed)
 	}
 }
 
@@ -248,6 +248,9 @@ type magicLinkStartStore struct {
 	created        db.CreateMagicLinkParams
 	deliveryFailed bool
 	tx             *magicLinkStartTx
+	lockAcquired   bool
+	markedSent     bool
+	revoked        bool
 }
 
 func newMagicLinkStartStore() *magicLinkStartStore {
@@ -288,11 +291,18 @@ func (s *magicLinkStartStore) CountRecentMagicLinks(context.Context, db.CountRec
 	return 0, nil
 }
 
+func (s *magicLinkStartStore) LockMagicLinkRecipient(context.Context, int64) error {
+	s.lockAcquired = true
+	return nil
+}
+
 func (s *magicLinkStartStore) RevokeOpenMagicLinksForRecipient(context.Context, db.RevokeOpenMagicLinksForRecipientParams) (int64, error) {
+	s.revoked = true
 	return 0, nil
 }
 
 func (s *magicLinkStartStore) MarkMagicLinkSent(context.Context, pgtype.UUID) (int64, error) {
+	s.markedSent = true
 	return 1, nil
 }
 

@@ -9,18 +9,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace"
-	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestWorkspacePrimitiveOperationFingerprintMatchesGuestdContract(t *testing.T) {
 	request := []byte(`{"exec_id":"exec-1","command":["echo","ok"]}`)
-	got, err := workspace.OperationFingerprint(workspaceOperationKindStartExec, request)
+	got, err := operationFingerprint(workspaceOperationKindStartExec, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := protocol.RequestFingerprint("StartExec", request)
+	want, err := wire.RequestFingerprint("StartExec", request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,11 +29,11 @@ func TestWorkspacePrimitiveOperationFingerprintMatchesGuestdContract(t *testing.
 }
 
 func TestWorkspacePrimitiveOperationFingerprintIgnoresJSONRepresentation(t *testing.T) {
-	created, err := workspace.OperationFingerprint(workspaceOperationKindStartExec, []byte(`{"exec_id":"exec-1","command":["echo","ok"],"detached":false}`))
+	created, err := operationFingerprint(workspaceOperationKindStartExec, []byte(`{"exec_id":"exec-1","command":["echo","ok"],"detached":false}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	transported, err := protocol.RequestFingerprint("StartExec", []byte(`{ "detached": false, "command": [ "echo", "ok" ], "exec_id": "exec-1" }`))
+	transported, err := wire.RequestFingerprint("StartExec", []byte(`{ "detached": false, "command": [ "echo", "ok" ], "exec_id": "exec-1" }`))
 	if err != nil {
 		t.Fatal(err)
 	}

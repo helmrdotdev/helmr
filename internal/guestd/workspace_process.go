@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
-	"github.com/helmrdotdev/helmr/internal/transport"
 )
 
 const workspaceProcessChunkBytes = 64 * 1024
@@ -260,7 +260,7 @@ func forceKillWorkspacePtyAfter(done <-chan struct{}, pgid int, delay time.Durat
 
 func handleWorkspaceInputConnection(ctx context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
 	var envelope workspacev0.WorkspaceOperationEnvelope
-	if err := transport.ReadProtoFrame(conn, &envelope); err != nil {
+	if err := frameio.ReadProtoFrame(conn, &envelope); err != nil {
 		return fmt.Errorf("read workspace input envelope: %w", err)
 	}
 	entry, release, ok := registry.acquire(envelope.WorkspaceMountId, envelope.WorkspaceId, envelope.ChannelToken, envelope.FencingGeneration)
@@ -275,7 +275,7 @@ func handleWorkspaceInputConnection(ctx context.Context, conn io.ReadWriter, reg
 		default:
 		}
 		var frame workspacev0.WorkspaceInputFrame
-		if err := transport.ReadProtoFrame(conn, &frame); err != nil {
+		if err := frameio.ReadProtoFrame(conn, &frame); err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
@@ -294,7 +294,7 @@ func handleWorkspaceInputConnection(ctx context.Context, conn io.ReadWriter, reg
 			if err != nil {
 				return err
 			}
-			if err := transport.WriteProtoFrame(conn, &workspacev0.WorkspaceStreamAck{
+			if err := frameio.WriteProtoFrame(conn, &workspacev0.WorkspaceStreamAck{
 				Envelope:      &envelope,
 				ResourceKind:  input.ResourceKind,
 				ResourceId:    input.ResourceId,
@@ -311,7 +311,7 @@ func handleWorkspaceInputConnection(ctx context.Context, conn io.ReadWriter, reg
 			if err := entry.closeWorkspaceInput(input.ResourceKind, input.ResourceId, input.Offset); err != nil {
 				return err
 			}
-			if err := transport.WriteProtoFrame(conn, &workspacev0.WorkspaceStreamAck{
+			if err := frameio.WriteProtoFrame(conn, &workspacev0.WorkspaceStreamAck{
 				Envelope:      &envelope,
 				ResourceKind:  input.ResourceKind,
 				ResourceId:    input.ResourceId,

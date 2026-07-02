@@ -11,7 +11,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/helmrdotdev/helmr/internal/ociimage"
+	"github.com/helmrdotdev/helmr/internal/oci"
 )
 
 const guestdSubstrateRootEnv = "HELMR_GUESTD_SUBSTRATE_ROOT"
@@ -25,7 +25,7 @@ func imageFromMountedSubstrate(r io.Reader, substrateRoot string) (ociImage, fun
 	if substrateRoot == "" || substrateRoot == "." {
 		return ociImage{}, func() {}, errors.New("runtime substrate root is required")
 	}
-	config, err := ociimage.ReadConfig(r)
+	config, err := oci.ReadConfig(r)
 	if err != nil {
 		return ociImage{}, func() {}, err
 	}

@@ -3,8 +3,6 @@ package control
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -85,11 +83,7 @@ func (s *Server) workerClaimWorkspaceOperation(w http.ResponseWriter, r *http.Re
 }
 
 func newWorkspaceOperationClaimToken() (string, error) {
-	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+	return token.GenerateOpaque(32)
 }
 
 func (s *Server) workerStartWorkspaceOperation(w http.ResponseWriter, r *http.Request) {
@@ -169,31 +163,22 @@ func (s *Server) workerCompleteWorkspaceOperation(w http.ResponseWriter, r *http
 	}
 	worker := workerFromContext(r.Context())
 	var row db.WorkspaceOperation
-	if s.tx == nil {
-		writeError(w, errors.New("workspace operation complete requires transactional store"))
-		return
-	}
-	tx, err := s.tx.Begin(r.Context())
-	if err != nil {
-		writeError(w, errors.New("complete workspace operation"))
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-	store := db.New(tx)
-	if len(failure) > 0 {
-		failed, failErr := store.FailWorkspaceOperation(r.Context(), db.FailWorkspaceOperationParams{
-			OrgID:            orgID,
-			ID:               operationID,
-			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			ClaimToken:       claimToken,
-			Error:            failure,
-		})
-		row = failedWorkspaceOperation(failed)
-		err = failErr
-		if err == nil {
-			err = failWorkspacePrimitiveForOperation(r.Context(), store, row, failure)
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		store := work.q
+		if len(failure) > 0 {
+			failed, failErr := store.FailWorkspaceOperation(r.Context(), db.FailWorkspaceOperationParams{
+				OrgID:            orgID,
+				ID:               operationID,
+				WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+				ClaimToken:       claimToken,
+				Error:            failure,
+			})
+			row = failedWorkspaceOperation(failed)
+			if failErr != nil {
+				return failErr
+			}
+			return failWorkspacePrimitiveForOperation(r.Context(), store, row, failure)
 		}
-	} else {
 		completed, completeErr := store.CompleteWorkspaceOperation(r.Context(), db.CompleteWorkspaceOperationParams{
 			OrgID:            orgID,
 			ID:               operationID,
@@ -202,22 +187,17 @@ func (s *Server) workerCompleteWorkspaceOperation(w http.ResponseWriter, r *http
 			Result:           result,
 		})
 		row = completedWorkspaceOperation(completed)
-		err = completeErr
-		if err == nil {
-			err = completeWorkspacePrimitiveForOperation(r.Context(), store, row)
+		if completeErr != nil {
+			return completeErr
 		}
-	}
+		return completeWorkspacePrimitiveForOperation(r.Context(), store, row)
+	})
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("workspace operation claim is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("complete workspace operation failed", "worker_instance_id", worker.WorkerInstanceID.String(), "operation_id", request.OperationID, "error", err)
-		writeError(w, errors.New("complete workspace operation"))
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		s.log.Error("commit workspace operation completion failed", "worker_instance_id", worker.WorkerInstanceID.String(), "operation_id", request.OperationID, "error", err)
 		writeError(w, errors.New("complete workspace operation"))
 		return
 	}
@@ -251,7 +231,7 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 	switch operation.OperationKind {
 	case workspaceOperationKindStartExec:
 		if operation.ResourceKind != workspaceOperationResourceExec {
-			return fmt.Errorf("StartExec operation resource_kind = %q, want %q", workspace.ResourceKindString(operation.ResourceKind), workspaceOperationResourceExec)
+			return fmt.Errorf("StartExec operation resource_kind = %q, want %q", resourceKindString(operation.ResourceKind), workspaceOperationResourceExec)
 		}
 		_, err := store.MarkWorkspaceExecExited(ctx, db.MarkWorkspaceExecExitedParams{
 			State:            db.WorkspaceExecStateFailed,
@@ -271,7 +251,7 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 		return err
 	case workspaceOperationKindCreatePty:
 		if operation.ResourceKind != workspaceOperationResourcePty {
-			return fmt.Errorf("CreatePty operation resource_kind = %q, want %q", workspace.ResourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
+			return fmt.Errorf("CreatePty operation resource_kind = %q, want %q", resourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
 		}
 		_, err := store.MarkWorkspacePtyFailed(ctx, db.MarkWorkspacePtyFailedParams{
 			Error:            failure,
@@ -288,11 +268,11 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 		return err
 	case workspaceOperationKindResizePty, workspaceOperationKindClosePty:
 		if operation.ResourceKind != workspaceOperationResourcePty {
-			operationKind, err := workspace.OperationGuestVerb(operation.OperationKind)
+			operationKind, err := operationGuestVerb(operation.OperationKind)
 			if err != nil {
 				return err
 			}
-			return fmt.Errorf("%s operation resource_kind = %q, want %q", operationKind, workspace.ResourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
+			return fmt.Errorf("%s operation resource_kind = %q, want %q", operationKind, resourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
 		}
 		cols, rows, err := workspacePtyControlRollbackTarget(operation)
 		if err != nil {
@@ -395,7 +375,7 @@ func workerWorkspaceOperationResponse(row db.WorkspaceOperation) (api.WorkerWork
 		WorkspaceOperationResponse: workspaceOperationResponse(row),
 		ClaimToken:                 row.ClaimToken,
 	}
-	operationKind, err := workspace.OperationGuestVerb(row.OperationKind)
+	operationKind, err := operationGuestVerb(row.OperationKind)
 	if err != nil {
 		return api.WorkerWorkspaceOperation{}, err
 	}
@@ -416,7 +396,7 @@ func workspaceOperationResponse(row db.WorkspaceOperation) api.WorkspaceOperatio
 		WorkspaceID:        pgvalue.MustUUIDValue(row.WorkspaceID).String(),
 		WorkspaceMountID:   pgvalue.MustUUIDValue(row.WorkspaceMountID).String(),
 		OperationKind:      string(row.OperationKind),
-		ResourceKind:       workspace.ResourceKindString(row.ResourceKind),
+		ResourceKind:       resourceKindString(row.ResourceKind),
 		RequestFingerprint: row.RequestFingerprint,
 		OperationExpiresAt: row.OperationExpiresAt.Time,
 		State:              string(row.State),

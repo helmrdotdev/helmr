@@ -24,7 +24,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -563,22 +562,22 @@ func TestWorkspaceListAndGetRejectUnrelatedPermission(t *testing.T) {
 
 func TestWorkspacePrimitiveCreateFingerprintsUseCanonicalProtocol(t *testing.T) {
 	envShape := []byte(`{"B":"2","A":"1"}`)
-	execFingerprint, err := workspace.ExecCreateFingerprint([]string{"echo", "ok"}, "/workspace", envShape, false, db.WorkspaceFilesystemModeWrite)
+	execFingerprint, err := execCreateFingerprint([]string{"echo", "ok"}, "/workspace", envShape, false, db.WorkspaceFilesystemModeWrite)
 	if err != nil {
 		t.Fatal(err)
 	}
-	execFingerprintAgain, err := workspace.ExecCreateFingerprint([]string{"echo", "ok"}, "/workspace", []byte(`{"A":"1","B":"2"}`), false, db.WorkspaceFilesystemModeWrite)
+	execFingerprintAgain, err := execCreateFingerprint([]string{"echo", "ok"}, "/workspace", []byte(`{"A":"1","B":"2"}`), false, db.WorkspaceFilesystemModeWrite)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if execFingerprint != execFingerprintAgain {
 		t.Fatalf("exec fingerprint changed with JSON field order: %q != %q", execFingerprint, execFingerprintAgain)
 	}
-	ptyFingerprint, err := workspace.PtyCreateFingerprint("/workspace", 80, 24, db.WorkspaceFilesystemModeWrite)
+	ptyFingerprint, err := ptyCreateFingerprint("/workspace", 80, 24, db.WorkspaceFilesystemModeWrite)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ptyFingerprintAgain, err := workspace.PtyCreateFingerprint("/workspace", 80, 24, db.WorkspaceFilesystemModeWrite)
+	ptyFingerprintAgain, err := ptyCreateFingerprint("/workspace", 80, 24, db.WorkspaceFilesystemModeWrite)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1361,7 +1360,7 @@ func TestContinuationRunRequestRetriesTransientEnsureFailure(t *testing.T) {
 	previousRun := store.run
 	store.ensureWorkspaceMountErr = errors.New("transient mount failure")
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store}
-	runID, err := server.reconcileClaimedSessionRunRequest(context.Background(), store.sessionRunRequest)
+	runID, err := server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), store.sessionRunRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1375,7 +1374,7 @@ func TestContinuationRunRequestRetriesTransientEnsureFailure(t *testing.T) {
 	store.ensureWorkspaceMountErr = nil
 	store.run = previousRun
 	store.sessionRunRequest.Status = "claimed"
-	runID, err = server.reconcileClaimedSessionRunRequest(context.Background(), store.sessionRunRequest)
+	runID, err = server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), store.sessionRunRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1393,7 +1392,7 @@ func TestContinuationRunRequestRetriesTransientEnsureFailure(t *testing.T) {
 func TestContinuationRunRequestCreatedAfterLiveRunTerminal(t *testing.T) {
 	store := continuationRunRequestFakeStore(db.RunStatusRunning)
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store}
-	runID, err := server.reconcileClaimedSessionRunRequest(context.Background(), store.sessionRunRequest)
+	runID, err := server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), store.sessionRunRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1403,7 +1402,7 @@ func TestContinuationRunRequestCreatedAfterLiveRunTerminal(t *testing.T) {
 
 	store.run.Status = db.RunStatusSucceeded
 	store.sessionRunRequest.Status = "claimed"
-	runID, err = server.reconcileClaimedSessionRunRequest(context.Background(), store.sessionRunRequest)
+	runID, err = server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), store.sessionRunRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1423,7 +1422,7 @@ func TestContinuationRunRequestClaimLostRollsBackContinuationCreation(t *testing
 	previousCurrentRunID := store.session.CurrentRunID
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store}
 
-	runID, err := server.reconcileClaimedSessionRunRequest(context.Background(), request)
+	runID, err := server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), request)
 
 	if !errors.Is(err, errSessionRunRequestLost) {
 		t.Fatalf("err = %v, want session run request claim lost", err)
@@ -1441,7 +1440,7 @@ func TestActiveRunInputConsumptionLocksSessionAndSkipsRequest(t *testing.T) {
 	activeRunID := store.run.ID
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store}
 
-	if err := server.consumeSessionRunRequestByActiveRun(context.Background(), store.session, activeRunID, store.streamRecord.ID); err != nil {
+	if err := server.sessionRunRequestWorkflow().consumeByActiveRun(context.Background(), store.session, activeRunID, store.streamRecord.ID); err != nil {
 		t.Fatal(err)
 	}
 

@@ -8,12 +8,12 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/transport"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
-func storeWorkspaceArtifactFrame(ctx context.Context, store cas.Store, reader io.Reader, header transport.StreamHeader, bodyLen uint64, runID string) (workspace.WorkspaceArtifact, error) {
-	if header.Type != transport.StreamTypeWorkspaceArtifact {
+func storeWorkspaceArtifactFrame(ctx context.Context, store cas.Store, reader io.Reader, header wire.StreamHeader, bodyLen uint64, runID string) (workspace.WorkspaceArtifact, error) {
+	if header.Type != wire.StreamTypeWorkspaceArtifact {
 		return workspace.WorkspaceArtifact{}, fmt.Errorf("unsupported runtime stream type %q", header.Type)
 	}
 	if strings.TrimSpace(header.RunID) != strings.TrimSpace(runID) {

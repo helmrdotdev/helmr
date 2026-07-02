@@ -11,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countOrganizations = `-- name: CountOrganizations :one
+SELECT count(*) FROM organizations
+`
+
+func (q *Queries) CountOrganizations(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countOrganizations)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createOrganization = `-- name: CreateOrganization :one
 INSERT INTO organizations (id, name, slug)
 VALUES ($1, $2, $3)
@@ -196,4 +207,13 @@ func (q *Queries) ListOrganizationIDsPage(ctx context.Context, arg ListOrganizat
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockOrganizationsForSelfHostedSetup = `-- name: LockOrganizationsForSelfHostedSetup :exec
+LOCK TABLE organizations IN EXCLUSIVE MODE
+`
+
+func (q *Queries) LockOrganizationsForSelfHostedSetup(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, lockOrganizationsForSelfHostedSetup)
+	return err
 }

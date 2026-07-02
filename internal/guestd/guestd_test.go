@@ -22,12 +22,12 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
-	"github.com/helmrdotdev/helmr/internal/runprotocol"
 	"github.com/helmrdotdev/helmr/internal/safepath"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"github.com/helmrdotdev/helmr/internal/transport"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
@@ -61,7 +61,7 @@ func TestRunAdapterForwardsOutputAndCompletion(t *testing.T) {
 	var stdout, stderr string
 	var completed bool
 	for !completed {
-		event, err := transport.ReadRunEvent(&stream)
+		event, err := wire.ReadRunEvent(&stream)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -98,7 +98,7 @@ func TestRunAdapterDrainsOutputTailAfterProcessExit(t *testing.T) {
 	var stdout, stderr string
 	var complete *runv0.TaskResult
 	for complete == nil {
-		event, err := transport.ReadRunEvent(&stream)
+		event, err := wire.ReadRunEvent(&stream)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -134,7 +134,7 @@ func TestRunAdapterDoesNotTreatStdoutAsTaskOutput(t *testing.T) {
 	}
 	var complete *runv0.TaskResult
 	for complete == nil {
-		event, err := transport.ReadRunEvent(&stream)
+		event, err := wire.ReadRunEvent(&stream)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -160,7 +160,7 @@ func TestRunAdapterDoesNotSetOutputOnNonzeroExit(t *testing.T) {
 	}
 	var complete *runv0.TaskResult
 	for complete == nil {
-		event, err := transport.ReadRunEvent(&stream)
+		event, err := wire.ReadRunEvent(&stream)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -201,7 +201,7 @@ func TestRunAdapterForwardsTaskOutputBeforeDescendantFDEOF(t *testing.T) {
 
 	var complete *runv0.TaskResult
 	for complete == nil {
-		event, err := transport.ReadRunEvent(host)
+		event, err := wire.ReadRunEvent(host)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -245,7 +245,7 @@ func TestRunAdapterNoResultTerminatesDescendantFDEOF(t *testing.T) {
 
 	var complete *runv0.TaskResult
 	for complete == nil {
-		event, err := transport.ReadRunEvent(host)
+		event, err := wire.ReadRunEvent(host)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -288,7 +288,7 @@ func TestRunAdapterPrefersLateTaskResultAfterWaitTimeout(t *testing.T) {
 	if err := host.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	event, err := transport.ReadRunEvent(host)
+	event, err := wire.ReadRunEvent(host)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestRunAdapterPrefersLateTaskResultAfterWaitTimeout(t *testing.T) {
 
 	var complete *runv0.TaskResult
 	for complete == nil {
-		event, err := transport.ReadRunEvent(host)
+		event, err := wire.ReadRunEvent(host)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -451,7 +451,7 @@ func TestRunAdapterReportsWaitHandoffControlFailure(t *testing.T) {
 	}
 	var sawWait bool
 	for {
-		event, err := transport.ReadRunEvent(&stream.written)
+		event, err := wire.ReadRunEvent(&stream.written)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -493,7 +493,7 @@ func TestRunAdapterBridgesActiveStreamReadResultToAdapterStdin(t *testing.T) {
 		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), newWaitingRunRegistry())
 	}()
 
-	event, err := transport.ReadRunEvent(host)
+	event, err := wire.ReadRunEvent(host)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,7 +504,7 @@ func TestRunAdapterBridgesActiveStreamReadResultToAdapterStdin(t *testing.T) {
 	if read.CorrelationId != "active-read-1" || read.Stream != "inbox" || read.Block {
 		t.Fatalf("active read request = %+v", read)
 	}
-	if err := transport.WriteProtoFrame(host, &runv0.ActiveStreamReadResult{
+	if err := frameio.WriteProtoFrame(host, &runv0.ActiveStreamReadResult{
 		CorrelationId: "active-read-1",
 		TimedOut:      true,
 	}); err != nil {
@@ -513,7 +513,7 @@ func TestRunAdapterBridgesActiveStreamReadResultToAdapterStdin(t *testing.T) {
 
 	var complete *runv0.TaskResult
 	for complete == nil {
-		event, err := transport.ReadRunEvent(host)
+		event, err := wire.ReadRunEvent(host)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -532,7 +532,7 @@ func TestHandleRunRejectsSourceOnlyRun(t *testing.T) {
 	err := handleRunConnection(context.Background(), &stream, Config{
 		AdapterRuntimePath: "/bin/false",
 		AdapterPath:        "adapter.js",
-	}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: "run"}, 0)
+	}, slogDiscard(), newWaitingRunRegistry(), wire.StreamHeader{Type: wire.StreamTypeWorkspaceArtifact, RunID: "run"}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -576,13 +576,13 @@ func TestHandleRunRejectsMismatchedRunIDs(t *testing.T) {
 			if _, err := input.Write(image); err != nil {
 				t.Fatal(err)
 			}
-			if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: tt.sourceRunID}, uint64(len(source))); err != nil {
+			if err := wire.WriteStreamFrameHeader(&input, wire.StreamHeader{Type: wire.StreamTypeDeploymentSource, RunID: tt.sourceRunID}, uint64(len(source))); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := input.Write(source); err != nil {
 				t.Fatal(err)
 			}
-			if err := transport.WriteProtoFrame(&input, &runv0.RunTaskRequest{
+			if err := frameio.WriteProtoFrame(&input, &runv0.RunTaskRequest{
 				RunId:       tt.requestRunID,
 				TaskId:      "task",
 				PayloadJson: "{}",
@@ -590,7 +590,7 @@ func TestHandleRunRejectsMismatchedRunIDs(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tt.sourceRunID == tt.imageRunID {
-				if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: tt.sourceRunID}, uint64(len(source))); err != nil {
+				if err := wire.WriteStreamFrameHeader(&input, wire.StreamHeader{Type: wire.StreamTypeWorkspaceArtifact, RunID: tt.sourceRunID}, uint64(len(source))); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -602,7 +602,7 @@ func TestHandleRunRejectsMismatchedRunIDs(t *testing.T) {
 			err := handleRunConnection(context.Background(), stream, Config{
 				AdapterRuntimePath: "/bin/false",
 				AdapterPath:        "adapter.js",
-			}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: tt.imageRunID}, uint64(len(image)))
+			}, slogDiscard(), newWaitingRunRegistry(), wire.StreamHeader{Type: wire.StreamTypeRunImage, RunID: tt.imageRunID}, uint64(len(image)))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -625,7 +625,7 @@ func TestHandleRunConnectionDrainsRequestAfterSourceExtractionError(t *testing.T
 		t.Fatal(err)
 	}
 	deploymentSource := tarBytes(t, nil)
-	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: "run-1"}, uint64(len(deploymentSource))); err != nil {
+	if err := wire.WriteStreamFrameHeader(&input, wire.StreamHeader{Type: wire.StreamTypeDeploymentSource, RunID: "run-1"}, uint64(len(deploymentSource))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := input.Write(deploymentSource); err != nil {
@@ -635,17 +635,17 @@ func TestHandleRunConnectionDrainsRequestAfterSourceExtractionError(t *testing.T
 	request.RunId = "run-1"
 	request.Workspace.Artifact.SizeBytes = uint64(len(source))
 	request.Workspace.Artifact.EntryCount = 1
-	if err := transport.WriteProtoFrame(&input, request); err != nil {
+	if err := frameio.WriteProtoFrame(&input, request); err != nil {
 		t.Fatal(err)
 	}
-	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: "run-1"}, uint64(len(source))); err != nil {
+	if err := wire.WriteStreamFrameHeader(&input, wire.StreamHeader{Type: wire.StreamTypeWorkspaceArtifact, RunID: "run-1"}, uint64(len(source))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := input.Write(source); err != nil {
 		t.Fatal(err)
 	}
 	stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
-	err := handleRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: "run-1"}, uint64(len(image)))
+	err := handleRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), wire.StreamHeader{Type: wire.StreamTypeRunImage, RunID: "run-1"}, uint64(len(image)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -666,7 +666,7 @@ func TestHandleRunConnectionRejectsWorkspaceArtifactBodyDigestMismatch(t *testin
 		t.Fatal(err)
 	}
 	deploymentSource := tarBytes(t, nil)
-	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: "run-1"}, uint64(len(deploymentSource))); err != nil {
+	if err := wire.WriteStreamFrameHeader(&input, wire.StreamHeader{Type: wire.StreamTypeDeploymentSource, RunID: "run-1"}, uint64(len(deploymentSource))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := input.Write(deploymentSource); err != nil {
@@ -677,11 +677,11 @@ func TestHandleRunConnectionRejectsWorkspaceArtifactBodyDigestMismatch(t *testin
 	request.Workspace.Artifact.Digest = sha256sum.DigestBytes([]byte("not the tar body"))
 	request.Workspace.Artifact.SizeBytes = uint64(len(source))
 	request.Workspace.Artifact.EntryCount = 1
-	if err := transport.WriteProtoFrame(&input, request); err != nil {
+	if err := frameio.WriteProtoFrame(&input, request); err != nil {
 		t.Fatal(err)
 	}
 	declaredDigest := request.Workspace.Artifact.Digest
-	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: "run-1", BodyDigest: &declaredDigest}, uint64(len(source))); err != nil {
+	if err := wire.WriteStreamFrameHeader(&input, wire.StreamHeader{Type: wire.StreamTypeWorkspaceArtifact, RunID: "run-1", BodyDigest: &declaredDigest}, uint64(len(source))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := input.Write(source); err != nil {
@@ -689,7 +689,7 @@ func TestHandleRunConnectionRejectsWorkspaceArtifactBodyDigestMismatch(t *testin
 	}
 	stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
 
-	err := handleRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: "run-1"}, uint64(len(image)))
+	err := handleRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), wire.StreamHeader{Type: wire.StreamTypeRunImage, RunID: "run-1"}, uint64(len(image)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -707,7 +707,7 @@ func TestHandleRunConnectionAcceptsEmptyWorkspaceArtifact(t *testing.T) {
 	if _, err := input.Write(image); err != nil {
 		t.Fatal(err)
 	}
-	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: "run-1"}, uint64(len(deploymentSource))); err != nil {
+	if err := wire.WriteStreamFrameHeader(&input, wire.StreamHeader{Type: wire.StreamTypeDeploymentSource, RunID: "run-1"}, uint64(len(deploymentSource))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := input.Write(deploymentSource); err != nil {
@@ -719,11 +719,11 @@ func TestHandleRunConnectionAcceptsEmptyWorkspaceArtifact(t *testing.T) {
 	request.Workspace.Artifact.Digest = sha256sum.DigestBytes(workspaceArtifact)
 	request.Workspace.Artifact.SizeBytes = uint64(len(workspaceArtifact))
 	request.Workspace.Artifact.EntryCount = 0
-	if err := transport.WriteProtoFrame(&input, request); err != nil {
+	if err := frameio.WriteProtoFrame(&input, request); err != nil {
 		t.Fatal(err)
 	}
 	declaredDigest := request.Workspace.Artifact.Digest
-	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: "run-1", BodyDigest: &declaredDigest}, uint64(len(workspaceArtifact))); err != nil {
+	if err := wire.WriteStreamFrameHeader(&input, wire.StreamHeader{Type: wire.StreamTypeWorkspaceArtifact, RunID: "run-1", BodyDigest: &declaredDigest}, uint64(len(workspaceArtifact))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := input.Write(workspaceArtifact); err != nil {
@@ -734,7 +734,7 @@ func TestHandleRunConnectionAcceptsEmptyWorkspaceArtifact(t *testing.T) {
 	err := handleRunConnection(context.Background(), stream, Config{
 		AdapterRuntimePath: "/bin/false",
 		AdapterPath:        "adapter.js",
-	}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: "run-1"}, uint64(len(image)))
+	}, slogDiscard(), newWaitingRunRegistry(), wire.StreamHeader{Type: wire.StreamTypeRunImage, RunID: "run-1"}, uint64(len(image)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -768,7 +768,7 @@ func TestHandleWorkspaceRunConnectionUsesRegisteredWorkspaceMount(t *testing.T) 
 		cleanup:           func() {},
 	})
 	var input bytes.Buffer
-	if err := transport.WriteProtoFrame(&input, &workspacev0.WorkspaceOperationEnvelope{
+	if err := frameio.WriteProtoFrame(&input, &workspacev0.WorkspaceOperationEnvelope{
 		WorkspaceMountId:  "mat-1",
 		WorkspaceId:       "workspace-1",
 		ChannelToken:      "channel-token",
@@ -779,7 +779,7 @@ func TestHandleWorkspaceRunConnectionUsesRegisteredWorkspaceMount(t *testing.T) 
 		t.Fatal(err)
 	}
 	deploymentSource := tarBytes(t, nil)
-	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: "run-1"}, uint64(len(deploymentSource))); err != nil {
+	if err := wire.WriteStreamFrameHeader(&input, wire.StreamHeader{Type: wire.StreamTypeDeploymentSource, RunID: "run-1"}, uint64(len(deploymentSource))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := input.Write(deploymentSource); err != nil {
@@ -788,13 +788,13 @@ func TestHandleWorkspaceRunConnectionUsesRegisteredWorkspaceMount(t *testing.T) 
 	request := testRunTaskRequest()
 	request.RunId = "run-1"
 	request.Cwd = "/workspace"
-	if err := transport.WriteProtoFrame(&input, request); err != nil {
+	if err := frameio.WriteProtoFrame(&input, request); err != nil {
 		t.Fatal(err)
 	}
 	stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
 
-	err := handleWorkspaceRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), registry, transport.StreamHeader{
-		Type:             transport.StreamTypeWorkspaceRun,
+	err := handleWorkspaceRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), registry, wire.StreamHeader{
+		Type:             wire.StreamTypeWorkspaceRun,
 		RunID:            "run-1",
 		WorkspaceID:      "workspace-1",
 		WorkspaceMountID: "mat-1",
@@ -820,7 +820,7 @@ func TestHandleWorkspaceRunConnectionRejectsInvalidChannelToken(t *testing.T) {
 		cleanup:           func() {},
 	})
 	var input bytes.Buffer
-	if err := transport.WriteProtoFrame(&input, &workspacev0.WorkspaceOperationEnvelope{
+	if err := frameio.WriteProtoFrame(&input, &workspacev0.WorkspaceOperationEnvelope{
 		WorkspaceMountId:  "mat-1",
 		WorkspaceId:       "workspace-1",
 		ChannelToken:      "wrong-token",
@@ -832,8 +832,8 @@ func TestHandleWorkspaceRunConnectionRejectsInvalidChannelToken(t *testing.T) {
 	}
 	stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
 
-	err := handleWorkspaceRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), registry, transport.StreamHeader{
-		Type:             transport.StreamTypeWorkspaceRun,
+	err := handleWorkspaceRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), registry, wire.StreamHeader{
+		Type:             wire.StreamTypeWorkspaceRun,
 		RunID:            "run-1",
 		WorkspaceID:      "workspace-1",
 		WorkspaceMountID: "mat-1",
@@ -1028,7 +1028,7 @@ func TestImageNodeRuntimeCommandRequiresNodeInImagePath(t *testing.T) {
 
 func TestReadConnectionStartAcceptsResumeAttach(t *testing.T) {
 	var stream bytes.Buffer
-	if err := transport.WriteProtoFrame(&stream, &runv0.ResumeAttach{
+	if err := frameio.WriteProtoFrame(&stream, &runv0.ResumeAttach{
 		CheckpointId: "checkpoint-1",
 		RunWaitId:    "run-wait-id-1",
 		RunLeaseId:   "execution-1",
@@ -1046,7 +1046,7 @@ func TestReadConnectionStartAcceptsResumeAttach(t *testing.T) {
 
 func TestReadConnectionStartAcceptsStreamHeader(t *testing.T) {
 	var stream bytes.Buffer
-	if err := transport.WriteStreamFrameHeader(&stream, transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: "run-1"}, 5); err != nil {
+	if err := wire.WriteStreamFrameHeader(&stream, wire.StreamHeader{Type: wire.StreamTypeRunImage, RunID: "run-1"}, 5); err != nil {
 		t.Fatal(err)
 	}
 	stream.WriteString("hello")
@@ -1054,7 +1054,7 @@ func TestReadConnectionStartAcceptsStreamHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if start.streamHeader.Type != transport.StreamTypeRunImage || start.streamHeader.RunID != "run-1" || start.bodyLen != 5 {
+	if start.streamHeader.Type != wire.StreamTypeRunImage || start.streamHeader.RunID != "run-1" || start.bodyLen != 5 {
 		t.Fatalf("start = %+v", start)
 	}
 	body := make([]byte, start.bodyLen)
@@ -1068,17 +1068,17 @@ func TestReadConnectionStartAcceptsStreamHeader(t *testing.T) {
 
 func TestReadConnectionStartAcceptsLargeStreamBody(t *testing.T) {
 	var stream bytes.Buffer
-	if err := transport.WriteStreamFrameHeader(&stream, transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: "run-1"}, transport.MaxFrameBytes+1); err != nil {
+	if err := wire.WriteStreamFrameHeader(&stream, wire.StreamHeader{Type: wire.StreamTypeRunImage, RunID: "run-1"}, frameio.MaxFrameBytes+1); err != nil {
 		t.Fatal(err)
 	}
 	start, err := readConnectionStart(&stream)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if start.streamHeader.Type != transport.StreamTypeRunImage || start.streamHeader.RunID != "run-1" {
+	if start.streamHeader.Type != wire.StreamTypeRunImage || start.streamHeader.RunID != "run-1" {
 		t.Fatalf("header = %+v", start.streamHeader)
 	}
-	if start.bodyLen != uint64(transport.MaxFrameBytes+1) {
+	if start.bodyLen != uint64(frameio.MaxFrameBytes+1) {
 		t.Fatalf("bodyLen = %d", start.bodyLen)
 	}
 }
@@ -1239,19 +1239,19 @@ func TestHandleCompileTaskBundleReportsTarExtractionError(t *testing.T) {
 		Typeflag: tar.TypeSymlink,
 	})
 	stream := &bufferConn{reader: bytes.NewReader(body)}
-	err := handleCompileTaskBundle(context.Background(), stream, Config{}, transport.StreamHeader{
-		Type:   transport.StreamTypeCompileTaskBundle,
+	err := handleCompileTaskBundle(context.Background(), stream, Config{}, wire.StreamHeader{
+		Type:   wire.StreamTypeCompileTaskBundle,
 		RunID:  "run-1",
 		TaskID: "task-1",
 	}, uint64(len(body)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	frame, err := transport.ReadMessageFrame(&stream.Buffer)
+	frame, err := frameio.ReadMessageFrame(&stream.Buffer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parseErr, ok, err := transport.DecodeParseErrorFrame(frame)
+	parseErr, ok, err := wire.DecodeParseErrorFrame(frame)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1267,18 +1267,18 @@ func TestHandleCatalogDeploymentReportsPackageValidationError(t *testing.T) {
 		Size: int64(len("export default { dirs: ['tasks'] }\n")),
 	})
 	stream := &bufferConn{reader: bytes.NewReader(body)}
-	err := handleCatalogDeployment(context.Background(), stream, Config{}, transport.StreamHeader{
-		Type:  transport.StreamTypeCatalogDeployment,
+	err := handleCatalogDeployment(context.Background(), stream, Config{}, wire.StreamHeader{
+		Type:  wire.StreamTypeCatalogDeployment,
 		RunID: "deployment-1",
 	}, uint64(len(body)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	frame, err := transport.ReadMessageFrame(&stream.Buffer)
+	frame, err := frameio.ReadMessageFrame(&stream.Buffer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parseErr, ok, err := transport.DecodeParseErrorFrame(frame)
+	parseErr, ok, err := wire.DecodeParseErrorFrame(frame)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1290,8 +1290,8 @@ func TestHandleCatalogDeploymentReportsPackageValidationError(t *testing.T) {
 func TestHandleRunConnectionReportsImageExtractionError(t *testing.T) {
 	body := []byte("not an oci image")
 	stream := &bufferConn{reader: bytes.NewReader(body)}
-	err := handleRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{
-		Type:  transport.StreamTypeRunImage,
+	err := handleRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), wire.StreamHeader{
+		Type:  wire.StreamTypeRunImage,
 		RunID: "run-1",
 	}, uint64(len(body)))
 	if err != nil {
@@ -1345,7 +1345,7 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), registry)
 	}()
 
-	event, err := transport.ReadRunEvent(originalHost)
+	event, err := wire.ReadRunEvent(originalHost)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1359,7 +1359,7 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 	if err := registry.attach("run-wait-id-1", "checkpoint-1", attachedGuest); err != nil {
 		t.Fatal(err)
 	}
-	if err := transport.WriteProtoFrame(attachedHost, &runv0.ResumeDecision{
+	if err := frameio.WriteProtoFrame(attachedHost, &runv0.ResumeDecision{
 		RunWaitId:          "run-wait-id-1",
 		Kind:               "completed",
 		DataJson:           "{}",
@@ -1368,7 +1368,7 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	var ack runv0.ResumeAck
-	if err := transport.ReadProtoFrame(attachedHost, &ack); err != nil {
+	if err := frameio.ReadProtoFrame(attachedHost, &ack); err != nil {
 		t.Fatal(err)
 	}
 	if ack.RunWaitId != "run-wait-id-1" {
@@ -1378,7 +1378,7 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 	var stdout strings.Builder
 	var completed bool
 	for !completed {
-		event, err := transport.ReadRunEvent(attachedHost)
+		event, err := wire.ReadRunEvent(attachedHost)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1452,7 +1452,7 @@ func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 	var stdout strings.Builder
 	var completed bool
 	for !completed {
-		event, err := transport.ReadRunEvent(secondReader)
+		event, err := wire.ReadRunEvent(secondReader)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1511,7 +1511,7 @@ func readRunWaitRequestedFrom(t *testing.T, reader *bufio.Reader) {
 func readRunWaitRequestedEvent(t *testing.T, conn io.Reader) *runv0.RunWaitRequested {
 	t.Helper()
 	for {
-		event, err := transport.ReadRunEvent(conn)
+		event, err := wire.ReadRunEvent(conn)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1523,7 +1523,7 @@ func readRunWaitRequestedEvent(t *testing.T, conn io.Reader) *runv0.RunWaitReque
 
 func writeSuspendAndReadReady(t *testing.T, conn io.ReadWriter, runWaitID string, checkpointID string) {
 	t.Helper()
-	if err := runprotocol.WriteCheckpointPauseRequest(conn, &runv0.CheckpointPauseRequest{
+	if err := wire.WriteCheckpointPauseRequest(conn, &runv0.CheckpointPauseRequest{
 		RunWaitId:    runWaitID,
 		CheckpointId: checkpointID,
 	}); err != nil {
@@ -1534,7 +1534,7 @@ func writeSuspendAndReadReady(t *testing.T, conn io.ReadWriter, runWaitID string
 
 func writeSuspendAndReadReadyFrom(t *testing.T, conn io.Writer, reader *bufio.Reader, runWaitID string, checkpointID string) {
 	t.Helper()
-	if err := runprotocol.WriteCheckpointPauseRequest(conn, &runv0.CheckpointPauseRequest{
+	if err := wire.WriteCheckpointPauseRequest(conn, &runv0.CheckpointPauseRequest{
 		RunWaitId:    runWaitID,
 		CheckpointId: checkpointID,
 	}); err != nil {
@@ -1556,17 +1556,17 @@ func readCheckpointPauseReadyFrom(t *testing.T, reader *bufio.Reader, runWaitID 
 		if err != nil {
 			t.Fatal(err)
 		}
-		if transport.IsStreamFramePrefix(prefix) {
-			header, bodyLen, err := transport.ReadStreamFrameHeader(reader)
+		if frameio.IsStreamFramePrefix(prefix) {
+			header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if header.Type != transport.StreamTypeCheckpointPauseReady || header.RunWaitID != runWaitID || header.CheckpointID != checkpointID || bodyLen != 0 {
+			if header.Type != wire.StreamTypeCheckpointPauseReady || header.RunWaitID != runWaitID || header.CheckpointID != checkpointID || bodyLen != 0 {
 				t.Fatalf("pause ready = %+v bodyLen=%d, want run wait=%s checkpoint=%s", header, bodyLen, runWaitID, checkpointID)
 			}
 			return
 		}
-		body, err := transport.ReadMessageFrame(reader)
+		body, err := frameio.ReadMessageFrame(reader)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1579,7 +1579,7 @@ func readCheckpointPauseReadyFrom(t *testing.T, reader *bufio.Reader, runWaitID 
 
 func writeDecisionAndReadAckFrom(t *testing.T, writer io.Writer, reader *bufio.Reader, runWaitID string, kind string) {
 	t.Helper()
-	if err := transport.WriteProtoFrame(writer, &runv0.ResumeDecision{
+	if err := frameio.WriteProtoFrame(writer, &runv0.ResumeDecision{
 		RunWaitId:          runWaitID,
 		Kind:               kind,
 		DataJson:           "{}",
@@ -1588,7 +1588,7 @@ func writeDecisionAndReadAckFrom(t *testing.T, writer io.Writer, reader *bufio.R
 		t.Fatal(err)
 	}
 	var ack runv0.ResumeAck
-	if err := transport.ReadProtoFrame(reader, &ack); err != nil {
+	if err := frameio.ReadProtoFrame(reader, &ack); err != nil {
 		t.Fatal(err)
 	}
 	if ack.RunWaitId != runWaitID {
@@ -1644,7 +1644,7 @@ func runGuestAdapterHelperProcess() int {
 			return 2
 		}
 		outputJSON := `{"ok":true}`
-		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+		if err := frameio.WriteProtoFrame(control, &runv0.RunEvent{
 			Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{
 				ExitCode:   0,
 				OutputJson: &outputJSON,
@@ -1675,14 +1675,14 @@ func runGuestAdapterHelperProcess() int {
 		if err != nil {
 			return 2
 		}
-		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+		if err := frameio.WriteProtoFrame(control, &runv0.RunEvent{
 			Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: []byte("blocked-before-result\n")},
 		}); err != nil {
 			_ = control.Close()
 			return 2
 		}
 		outputJSON := `{"late":true}`
-		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+		if err := frameio.WriteProtoFrame(control, &runv0.RunEvent{
 			Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{
 				ExitCode:   0,
 				OutputJson: &outputJSON,
@@ -1716,7 +1716,7 @@ func runGuestAdapterHelperProcess() int {
 		if err != nil {
 			return 2
 		}
-		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+		if err := frameio.WriteProtoFrame(control, &runv0.RunEvent{
 			Event: &runv0.RunEvent_RunWaitRequested{RunWaitRequested: &runv0.RunWaitRequested{
 				CorrelationId: "approval-1",
 				Kind:          "token",
@@ -1732,7 +1732,7 @@ func runGuestAdapterHelperProcess() int {
 		if err != nil {
 			return 2
 		}
-		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+		if err := frameio.WriteProtoFrame(control, &runv0.RunEvent{
 			Event: &runv0.RunEvent_ActiveStreamReadRequested{ActiveStreamReadRequested: &runv0.ActiveStreamReadRequested{
 				CorrelationId: "active-read-1",
 				Stream:        "inbox",
@@ -1744,7 +1744,7 @@ func runGuestAdapterHelperProcess() int {
 			return 2
 		}
 		var result runv0.ActiveStreamReadResult
-		if err := transport.ReadProtoFrame(os.Stdin, &result); err != nil {
+		if err := frameio.ReadProtoFrame(os.Stdin, &result); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			_ = control.Close()
 			return 2
@@ -1760,7 +1760,7 @@ func runGuestAdapterHelperProcess() int {
 			if index == 1 {
 				time.Sleep(200 * time.Millisecond)
 			}
-			if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+			if err := frameio.WriteProtoFrame(control, &runv0.RunEvent{
 				Event: &runv0.RunEvent_RunWaitRequested{RunWaitRequested: &runv0.RunWaitRequested{
 					CorrelationId: "run-wait-1",
 					Kind:          kind,
@@ -1772,7 +1772,7 @@ func runGuestAdapterHelperProcess() int {
 			}
 		}
 		var decision runv0.ResumeDecision
-		if err := transport.ReadProtoFrame(os.Stdin, &decision); err != nil {
+		if err := frameio.ReadProtoFrame(os.Stdin, &decision); err != nil {
 			_ = control.Close()
 			return 2
 		}
@@ -1788,7 +1788,7 @@ func runGuestAdapterHelperProcess() int {
 	if err != nil {
 		return 2
 	}
-	if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+	if err := frameio.WriteProtoFrame(control, &runv0.RunEvent{
 		Event: &runv0.RunEvent_RunWaitRequested{RunWaitRequested: &runv0.RunWaitRequested{
 			CorrelationId: "approval-1",
 			Kind:          "token",
@@ -1798,7 +1798,7 @@ func runGuestAdapterHelperProcess() int {
 		return 2
 	}
 	var decision runv0.ResumeDecision
-	if err := transport.ReadProtoFrame(os.Stdin, &decision); err != nil {
+	if err := frameio.ReadProtoFrame(os.Stdin, &decision); err != nil {
 		return 2
 	}
 	if err := writeHelperResumeConsumed(control, decision.RunWaitId); err != nil {
@@ -1806,7 +1806,7 @@ func runGuestAdapterHelperProcess() int {
 	}
 	fmt.Println("after-first")
 	if os.Getenv("HELMR_GUESTD_HELPER") == "resume-handoff-twice" {
-		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+		if err := frameio.WriteProtoFrame(control, &runv0.RunEvent{
 			Event: &runv0.RunEvent_RunWaitRequested{RunWaitRequested: &runv0.RunWaitRequested{
 				CorrelationId: "message-1",
 				Kind:          "token",
@@ -1815,7 +1815,7 @@ func runGuestAdapterHelperProcess() int {
 		}); err != nil {
 			return 2
 		}
-		if err := transport.ReadProtoFrame(os.Stdin, &decision); err != nil {
+		if err := frameio.ReadProtoFrame(os.Stdin, &decision); err != nil {
 			return 2
 		}
 		if err := writeHelperResumeConsumed(control, decision.RunWaitId); err != nil {
@@ -1829,7 +1829,7 @@ func runGuestAdapterHelperProcess() int {
 }
 
 func writeHelperResumeConsumed(control io.Writer, runWaitID string) error {
-	return transport.WriteProtoFrame(control, &runv0.RunEvent{
+	return frameio.WriteProtoFrame(control, &runv0.RunEvent{
 		Event: &runv0.RunEvent_ResumeConsumed{ResumeConsumed: &runv0.ResumeConsumed{
 			RunWaitId: runWaitID,
 		}},
@@ -1842,7 +1842,7 @@ func writeHelperTaskResult(control io.WriteCloser, exitCode int32, outputJSON st
 	if outputJSON != "" {
 		result.OutputJson = &outputJSON
 	}
-	if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+	if err := frameio.WriteProtoFrame(control, &runv0.RunEvent{
 		Event: &runv0.RunEvent_TaskResult{TaskResult: result},
 	}); err != nil {
 		return 2
@@ -1986,7 +1986,7 @@ func readGuestdFailureEvents(t *testing.T, stream io.Reader) (string, *runv0.Tas
 	t.Helper()
 	var stderr strings.Builder
 	for {
-		event, err := transport.ReadRunEvent(stream)
+		event, err := wire.ReadRunEvent(stream)
 		if err != nil {
 			t.Fatal(err)
 		}

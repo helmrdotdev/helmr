@@ -14,11 +14,11 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"github.com/helmrdotdev/helmr/internal/transport"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
-	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
 )
 
 type workspaceOperationRegistry struct {
@@ -173,7 +173,7 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 	}
 	totalStarted := time.Now()
 	var request workspacev0.MaterializeWorkspaceRequest
-	if err := transport.ReadProtoFrame(conn, &request); err != nil {
+	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
 		return fmt.Errorf("read workspace materialize request: %w", err)
 	}
 	envelope := request.GetEnvelope()
@@ -197,7 +197,7 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 	entry, phases, err := restoreWorkspaceMount(conn, &request, logger, registry)
 	if err != nil {
 		phases = appendWorkspaceMountFailurePhase(phases, "guest_materialize", totalStarted, err)
-		writeErr := transport.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{
+		writeErr := frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{
 			State:  "failed",
 			Phases: phases,
 		})
@@ -213,7 +213,7 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 	registry.register(envelope.WorkspaceMountId, entry)
 	phases = append(phases, workspaceMountPhase("guest_register", registerStarted, 0, 0, nil))
 	logger.Info("workspace materialize registered", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(totalStarted).Milliseconds())
-	return transport.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{
+	return frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{
 		State:                  "running",
 		GuestdChannelTokenHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelToken))),
 		Phases:                 phases,
@@ -226,13 +226,13 @@ func handleWorkspaceRuntimePrepareConnection(_ context.Context, conn io.ReadWrit
 	}
 	totalStarted := time.Now()
 	var request workspacev0.PrepareWorkspaceRuntimeRequest
-	if err := transport.ReadProtoFrame(conn, &request); err != nil {
+	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
 		return fmt.Errorf("read workspace runtime prepare request: %w", err)
 	}
 	runtime, phases, err := restorePreparedWorkspaceRuntime(conn, &request, logger)
 	if err != nil {
 		phases = appendWorkspaceMountFailurePhase(phases, "guest_runtime_prepare", totalStarted, err)
-		writeErr := transport.WriteProtoFrame(conn, &workspacev0.PrepareWorkspaceRuntimeResponse{
+		writeErr := frameio.WriteProtoFrame(conn, &workspacev0.PrepareWorkspaceRuntimeResponse{
 			State:      "failed",
 			RuntimeKey: strings.TrimSpace(request.RuntimeKey),
 			Phases:     phases,
@@ -244,7 +244,7 @@ func handleWorkspaceRuntimePrepareConnection(_ context.Context, conn io.ReadWrit
 	}
 	registry.setPreparedRuntime(runtime)
 	logger.Info("workspace runtime prepared", "runtime_key_id", runtimeKeyLogID(request.RuntimeKey))
-	return transport.WriteProtoFrame(conn, &workspacev0.PrepareWorkspaceRuntimeResponse{
+	return frameio.WriteProtoFrame(conn, &workspacev0.PrepareWorkspaceRuntimeResponse{
 		State:      "prepared",
 		RuntimeKey: strings.TrimSpace(request.RuntimeKey),
 		Phases:     phases,
@@ -430,13 +430,13 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 	entry.events = make(chan *workspacev0.WorkspaceOperationEvent, 1024)
 	entry.eventsDone = make(chan struct{})
 	phaseStarted := time.Now()
-	header, bodyLen, err := transport.ReadStreamFrameHeader(conn)
+	header, bodyLen, err := wire.ReadStreamFrameHeader(conn)
 	if err != nil {
 		entry.cleanup()
 		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, 0, 0, err))
 		return nil, phases, fmt.Errorf("read workspace artifact stream header: %w", err)
 	}
-	if header.Type != transport.StreamTypeWorkspaceArtifact {
+	if header.Type != wire.StreamTypeWorkspaceArtifact {
 		drainStreamBody(conn, bodyLen)
 		entry.cleanup()
 		err := fmt.Errorf("unsupported workspace materialize input type %q", header.Type)
@@ -564,11 +564,11 @@ func appendWorkspaceMountFailurePhase(phases []*workspacev0.WorkspaceMountPhase,
 
 func restoreWorkspaceMountSandboxImage(conn io.Reader, request *workspacev0.MaterializeWorkspaceRequest) (ociImage, func(), error) {
 	cleanup := func() {}
-	header, bodyLen, err := transport.ReadStreamFrameHeader(conn)
+	header, bodyLen, err := wire.ReadStreamFrameHeader(conn)
 	if err != nil {
 		return ociImage{}, cleanup, fmt.Errorf("read sandbox image stream header: %w", err)
 	}
-	if header.Type != transport.StreamTypeRunImage {
+	if header.Type != wire.StreamTypeRunImage {
 		drainStreamBody(conn, bodyLen)
 		return ociImage{}, cleanup, fmt.Errorf("unsupported workspace materialize sandbox input type %q", header.Type)
 	}
@@ -624,11 +624,11 @@ func restoreWorkspaceMountSandboxImage(conn io.Reader, request *workspacev0.Mate
 
 func restorePreparedSandboxImage(conn io.Reader, request *workspacev0.PrepareWorkspaceRuntimeRequest) (ociImage, func(), error) {
 	cleanup := func() {}
-	header, bodyLen, err := transport.ReadStreamFrameHeader(conn)
+	header, bodyLen, err := wire.ReadStreamFrameHeader(conn)
 	if err != nil {
 		return ociImage{}, cleanup, fmt.Errorf("read prepared sandbox image stream header: %w", err)
 	}
-	if header.Type != transport.StreamTypeRunImage {
+	if header.Type != wire.StreamTypeRunImage {
 		drainStreamBody(conn, bodyLen)
 		return ociImage{}, cleanup, fmt.Errorf("unsupported workspace runtime prepare input type %q", header.Type)
 	}
@@ -680,7 +680,7 @@ func restorePreparedSandboxImage(conn io.Reader, request *workspacev0.PrepareWor
 
 func handleWorkspaceEventsConnection(ctx context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
 	var envelope workspacev0.WorkspaceOperationEnvelope
-	if err := transport.ReadProtoFrame(conn, &envelope); err != nil {
+	if err := frameio.ReadProtoFrame(conn, &envelope); err != nil {
 		return fmt.Errorf("read workspace events envelope: %w", err)
 	}
 	if strings.TrimSpace(envelope.WorkspaceMountId) == "" {
@@ -714,7 +714,7 @@ func handleWorkspaceEventsConnection(ctx context.Context, conn io.ReadWriter, re
 					FencingGeneration: envelope.FencingGeneration,
 				}
 			}
-			if err := transport.WriteProtoFrame(conn, event); err != nil {
+			if err := frameio.WriteProtoFrame(conn, event); err != nil {
 				return fmt.Errorf("write workspace operation event: %w", err)
 			}
 		}
@@ -727,7 +727,7 @@ func handleWorkspaceStopConnection(_ context.Context, conn io.ReadWriter, regist
 			State:     "failed",
 			ErrorJson: workspaceOperationErrorJSON(err),
 		}
-		if writeErr := transport.WriteProtoFrame(conn, response); writeErr != nil {
+		if writeErr := frameio.WriteProtoFrame(conn, response); writeErr != nil {
 			return errors.Join(err, fmt.Errorf("write workspace stop failure: %w", writeErr))
 		}
 		return nil
@@ -737,7 +737,7 @@ func handleWorkspaceStopConnection(_ context.Context, conn io.ReadWriter, regist
 
 func handleWorkspaceStop(conn io.ReadWriter, registry *workspaceOperationRegistry) error {
 	var request workspacev0.StopWorkspaceRequest
-	if err := transport.ReadProtoFrame(conn, &request); err != nil {
+	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
 		return fmt.Errorf("read workspace stop request: %w", err)
 	}
 	envelope := request.GetEnvelope()
@@ -783,13 +783,13 @@ func handleWorkspaceStop(conn io.ReadWriter, registry *workspaceOperationRegistr
 		}
 		response.State = "captured"
 	}
-	if err := transport.WriteProtoFrame(conn, response); err != nil {
+	if err := frameio.WriteProtoFrame(conn, response); err != nil {
 		return fmt.Errorf("write workspace stop response: %w", err)
 	}
 	if request.GetCaptureBeforeStop() {
 		entryCount := artifact.EntryCount
-		if err := transport.WriteFileFrameWithMetadata(conn, transport.StreamHeader{
-			Type:        transport.StreamTypeWorkspaceArtifact,
+		if err := wire.WriteFileFrameWithMetadata(conn, wire.StreamHeader{
+			Type:        wire.StreamTypeWorkspaceArtifact,
 			WorkspaceID: envelope.WorkspaceId,
 			EntryCount:  &entryCount,
 		}, artifact.Path, artifact.Digest, artifact.SizeBytes); err != nil {
@@ -804,7 +804,7 @@ func handleWorkspaceStop(conn io.ReadWriter, registry *workspaceOperationRegistr
 
 func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
 	var request workspacev0.WorkspaceOperationRequest
-	if err := transport.ReadProtoFrame(conn, &request); err != nil {
+	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
 		return fmt.Errorf("read workspace operation request: %w", err)
 	}
 	envelope := request.GetEnvelope()
@@ -836,7 +836,7 @@ func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, r
 	if fingerprint == "" {
 		return writeWorkspaceOperationResult(conn, errors.New("workspace operation request_fingerprint is required"))
 	}
-	actual, err := protocol.RequestFingerprint(request.OperationKind, []byte(request.RequestJson))
+	actual, err := wire.RequestFingerprint(request.OperationKind, []byte(request.RequestJson))
 	if err != nil {
 		return writeWorkspaceOperationResult(conn, err)
 	}
@@ -844,16 +844,16 @@ func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, r
 		return writeWorkspaceOperationResult(conn, fmt.Errorf("workspace operation request_fingerprint %q does not match request %q", fingerprint, actual))
 	}
 	switch strings.TrimSpace(request.OperationKind) {
-	case protocol.GuestVerbStartExec:
+	case wire.GuestVerbStartExec:
 		return writeWorkspaceOperationResult(conn, entry.startWorkspaceExec(request.GetEnvelope(), request.RequestJson))
-	case protocol.GuestVerbCreatePty:
+	case wire.GuestVerbCreatePty:
 		return writeWorkspaceOperationResult(conn, entry.createWorkspacePty(request.GetEnvelope(), request.RequestJson))
-	case protocol.GuestVerbResizePty:
+	case wire.GuestVerbResizePty:
 		return writeWorkspaceOperationResult(conn, entry.resizeWorkspacePty(request.RequestJson))
-	case protocol.GuestVerbClosePty:
+	case wire.GuestVerbClosePty:
 		return writeWorkspaceOperationResult(conn, entry.closeWorkspacePty(request.RequestJson))
 	default:
-		return transport.WriteProtoFrame(conn, &workspacev0.WorkspaceOperationResult{
+		return frameio.WriteProtoFrame(conn, &workspacev0.WorkspaceOperationResult{
 			ErrorJson: fmt.Sprintf(`{"message":"unsupported workspace operation %q"}`, strings.TrimSpace(request.OperationKind)),
 		})
 	}
@@ -865,5 +865,5 @@ func writeWorkspaceOperationResult(conn io.Writer, err error) error {
 		result.ResultJson = ""
 		result.ErrorJson = workspaceOperationErrorJSON(err)
 	}
-	return transport.WriteProtoFrame(conn, result)
+	return frameio.WriteProtoFrame(conn, result)
 }
