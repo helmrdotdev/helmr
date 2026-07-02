@@ -164,31 +164,22 @@ func (s *Server) workerCompleteWorkspaceOperation(w http.ResponseWriter, r *http
 	}
 	worker := workerFromContext(r.Context())
 	var row db.WorkspaceOperation
-	if s.tx == nil {
-		writeError(w, errors.New("workspace operation complete requires transactional store"))
-		return
-	}
-	tx, err := s.tx.Begin(r.Context())
-	if err != nil {
-		writeError(w, errors.New("complete workspace operation"))
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-	store := db.New(tx)
-	if len(failure) > 0 {
-		failed, failErr := store.FailWorkspaceOperation(r.Context(), db.FailWorkspaceOperationParams{
-			OrgID:            orgID,
-			ID:               operationID,
-			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			ClaimToken:       claimToken,
-			Error:            failure,
-		})
-		row = failedWorkspaceOperation(failed)
-		err = failErr
-		if err == nil {
-			err = failWorkspacePrimitiveForOperation(r.Context(), store, row, failure)
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		store := work.q
+		if len(failure) > 0 {
+			failed, failErr := store.FailWorkspaceOperation(r.Context(), db.FailWorkspaceOperationParams{
+				OrgID:            orgID,
+				ID:               operationID,
+				WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+				ClaimToken:       claimToken,
+				Error:            failure,
+			})
+			row = failedWorkspaceOperation(failed)
+			if failErr != nil {
+				return failErr
+			}
+			return failWorkspacePrimitiveForOperation(r.Context(), store, row, failure)
 		}
-	} else {
 		completed, completeErr := store.CompleteWorkspaceOperation(r.Context(), db.CompleteWorkspaceOperationParams{
 			OrgID:            orgID,
 			ID:               operationID,
@@ -197,22 +188,17 @@ func (s *Server) workerCompleteWorkspaceOperation(w http.ResponseWriter, r *http
 			Result:           result,
 		})
 		row = completedWorkspaceOperation(completed)
-		err = completeErr
-		if err == nil {
-			err = completeWorkspacePrimitiveForOperation(r.Context(), store, row)
+		if completeErr != nil {
+			return completeErr
 		}
-	}
+		return completeWorkspacePrimitiveForOperation(r.Context(), store, row)
+	})
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("workspace operation claim is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("complete workspace operation failed", "worker_instance_id", worker.WorkerInstanceID.String(), "operation_id", request.OperationID, "error", err)
-		writeError(w, errors.New("complete workspace operation"))
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		s.log.Error("commit workspace operation completion failed", "worker_instance_id", worker.WorkerInstanceID.String(), "operation_id", request.OperationID, "error", err)
 		writeError(w, errors.New("complete workspace operation"))
 		return
 	}
