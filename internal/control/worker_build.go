@@ -132,7 +132,7 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
-	if s.db == nil || s.tx == nil {
+	if s.db == nil {
 		writeError(w, unavailable(errors.New("deployment build storage is not configured")))
 		return
 	}
@@ -155,297 +155,266 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	tx, err := s.tx.Begin(r.Context())
-	if err != nil {
-		writeError(w, errors.New("begin deployment build completion"))
-		return
-	}
-	defer tx.Rollback(r.Context())
-	queries := db.New(tx)
 	buildWorkerInstanceID := pgvalue.UUID(worker.WorkerInstanceID)
-	failBuild := func(message string) {
-		payload, err := json.Marshal(workerMessagePayload{Message: strings.TrimSpace(message)})
-		if err != nil {
-			writeError(w, errors.New("marshal deployment build error"))
-			return
+	var response api.WorkerDeploymentBuildResponse
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		failBuild := func(message string) error {
+			message = strings.TrimSpace(message)
+			if message == "" {
+				message = "deployment build failed"
+			}
+			payload, err := json.Marshal(workerMessagePayload{Message: message})
+			if err != nil {
+				return errors.New("marshal deployment build error")
+			}
+			row, err := work.q.FailDeploymentBuild(r.Context(), db.FailDeploymentBuildParams{
+				Failure:               payload,
+				OrgID:                 orgID,
+				ProjectID:             projectID,
+				EnvironmentID:         environmentID,
+				ID:                    deploymentID,
+				BuildLeaseID:          pgtype.Text{String: strings.TrimSpace(request.Lease.ID), Valid: true},
+				BuildWorkerInstanceID: buildWorkerInstanceID,
+			})
+			if isNoRows(err) {
+				return conflict(errors.New("deployment build lease is stale"))
+			}
+			if err != nil {
+				return errors.New("mark deployment build failed")
+			}
+			if err := appendDeploymentLifecycleEvent(r.Context(), work.q, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.failed", "error", "worker", "failed", message); err != nil {
+				return errors.New("record deployment event")
+			}
+			response = api.WorkerDeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)}
+			return nil
 		}
-		row, err := queries.FailDeploymentBuild(r.Context(), db.FailDeploymentBuildParams{
-			Failure:               payload,
+		if request.Result.Error != nil {
+			return failBuild(*request.Result.Error)
+		}
+		casObjects, err := deployment.ValidateBuildResult(request.Result)
+		if err != nil {
+			return failBuild(err.Error())
+		}
+		if err := s.verifyDeploymentBuildArtifacts(r.Context(), casObjects); err != nil {
+			return failBuild(err.Error())
+		}
+		if _, err := work.q.GetDeploymentBuildLease(r.Context(), db.GetDeploymentBuildLeaseParams{
 			OrgID:                 orgID,
 			ProjectID:             projectID,
 			EnvironmentID:         environmentID,
 			ID:                    deploymentID,
 			BuildLeaseID:          pgtype.Text{String: strings.TrimSpace(request.Lease.ID), Valid: true},
 			BuildWorkerInstanceID: buildWorkerInstanceID,
+		}); isNoRows(err) {
+			return conflict(errors.New("deployment build lease is stale"))
+		} else if err != nil {
+			return errors.New("get deployment build lease")
+		}
+		workerState, err := work.q.GetWorkerInstanceState(r.Context(), buildWorkerInstanceID)
+		if isNoRows(err) {
+			return failBuild("deployment build worker instance was not found")
+		}
+		if err != nil {
+			return errors.New("get deployment build worker state")
+		}
+		casObjectByDigest := make(map[string]api.CASObject, len(casObjects))
+		for _, object := range casObjects {
+			casObjectByDigest[strings.TrimSpace(object.Digest)] = object
+			if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
+				Digest:    object.Digest,
+				SizeBytes: object.SizeBytes,
+				MediaType: object.MediaType,
+			}); err != nil {
+				return failBuild("record deployment build artifact: " + err.Error())
+			}
+		}
+		buildManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.BuildManifestDigest), db.ArtifactKindBuildManifest, casObjectByDigest)
+		if err != nil {
+			return failBuild("record build manifest artifact: " + err.Error())
+		}
+		deploymentManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.DeploymentManifestDigest), db.ArtifactKindDeploymentManifest, casObjectByDigest)
+		if err != nil {
+			return failBuild("record deployment manifest artifact: " + err.Error())
+		}
+		queueConcurrencyLimits := map[string]*int32{}
+		for _, queue := range request.Result.Queues {
+			queueName := strings.TrimSpace(queue.Name)
+			queueConcurrencyLimits[queueName] = queue.ConcurrencyLimit
+			if _, err := work.q.CreateDeploymentQueue(r.Context(), db.CreateDeploymentQueueParams{
+				ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				OrgID:            orgID,
+				ProjectID:        projectID,
+				EnvironmentID:    environmentID,
+				DeploymentID:     deploymentID,
+				Name:             queueName,
+				ConcurrencyLimit: pgvalue.Int4Ptr(queue.ConcurrencyLimit),
+			}); err != nil {
+				return failBuild("record deployment queue: " + err.Error())
+			}
+		}
+		deploymentSandboxIDs := map[string]pgtype.UUID{}
+		for _, task := range request.Result.Tasks {
+			bundleArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.BundleDigest), db.ArtifactKindTaskBundle, casObjectByDigest)
+			if err != nil {
+				return failBuild("record task bundle artifact: " + err.Error())
+			}
+			secretDeclarations, err := json.Marshal(task.Secrets)
+			if err != nil {
+				return failBuild("encode deployment task secrets: " + err.Error())
+			}
+			scheduleDeclarations, err := json.Marshal(task.Schedules)
+			if err != nil {
+				return failBuild("encode deployment task schedules: " + err.Error())
+			}
+			networkPolicy, err := json.Marshal(task.Network)
+			if err != nil {
+				return failBuild("encode deployment task network: " + err.Error())
+			}
+			sandboxID := strings.TrimSpace(task.SandboxID)
+			deploymentSandboxID, ok := deploymentSandboxIDs[sandboxID]
+			if !ok {
+				imageArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.SandboxImageArtifact.Digest), db.ArtifactKindSandboxImage, casObjectByDigest)
+				if err != nil {
+					return failBuild("record deployment sandbox image artifact: " + err.Error())
+				}
+				resourceFloor, err := json.Marshal(map[string]any{
+					"milli_cpu":  task.RequestedMilliCPU,
+					"memory_mib": task.RequestedMemoryMiB,
+					"disk_mib":   task.RequestedDiskMiB,
+				})
+				if err != nil {
+					return failBuild("encode deployment sandbox resource floor: " + err.Error())
+				}
+				fingerprint, err := deploymentSandboxContractFingerprint(deploymentSandboxContractFingerprintInput{
+					RootfsDigest:       workerState.RootfsDigest,
+					RuntimeABI:         workerState.RuntimeABI,
+					GuestdABI:          currentGuestdABI,
+					AdapterABI:         currentAdapterABI,
+					WorkspaceMountPath: strings.TrimSpace(task.WorkspaceMountPath),
+					NetworkPolicy:      task.Network,
+					FilesystemFormat:   strings.TrimSpace(task.FilesystemFormat),
+					ContractVersion:    1,
+				})
+				if err != nil {
+					return failBuild("fingerprint deployment sandbox contract: " + err.Error())
+				}
+				row, err := work.q.CreateDeploymentSandbox(r.Context(), db.CreateDeploymentSandboxParams{
+					ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+					OrgID:               orgID,
+					ProjectID:           projectID,
+					EnvironmentID:       environmentID,
+					DeploymentID:        deploymentID,
+					SandboxID:           sandboxID,
+					ImageArtifactID:     imageArtifact.ID,
+					ImageArtifactFormat: strings.TrimSpace(task.SandboxImageArtifactFormat),
+					RootfsDigest:        workerState.RootfsDigest,
+					ImageDigest:         imageArtifact.Digest,
+					ImageFormat:         strings.TrimSpace(task.SandboxImageFormat),
+					WorkspaceMountPath:  strings.TrimSpace(task.WorkspaceMountPath),
+					ResourceFloor:       resourceFloor,
+					DiskFloorMib:        task.RequestedDiskMiB,
+					NetworkPolicy:       networkPolicy,
+					RuntimeABI:          workerState.RuntimeABI,
+					GuestdAbi:           currentGuestdABI,
+					AdapterAbi:          currentAdapterABI,
+					FilesystemFormat:    strings.TrimSpace(task.FilesystemFormat),
+					DefaultUid:          pgtype.Int8{},
+					DefaultGid:          pgtype.Int8{},
+					DefaultWorkdir:      "",
+					ContractVersion:     1,
+					Fingerprint:         fingerprint,
+				})
+				if err != nil {
+					return failBuild("record deployment sandbox: " + err.Error())
+				}
+				deploymentSandboxID = row.ID
+				deploymentSandboxIDs[sandboxID] = deploymentSandboxID
+			}
+			queueName := strings.TrimSpace(task.QueueName)
+			queueConcurrencyLimit, ok := queueConcurrencyLimits[queueName]
+			if !ok {
+				return failBuild("deployment task references undefined queue")
+			}
+			retryPolicy, err := normalizedRetryPolicy(task.RetryPolicy)
+			if err != nil {
+				return failBuild("validate deployment task retry policy: " + err.Error())
+			}
+			if _, err := work.q.CreateDeploymentTask(r.Context(), db.CreateDeploymentTaskParams{
+				ID:                    pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				OrgID:                 orgID,
+				ProjectID:             projectID,
+				EnvironmentID:         environmentID,
+				DeploymentID:          deploymentID,
+				DeploymentSandboxID:   deploymentSandboxID,
+				TaskID:                strings.TrimSpace(task.TaskID),
+				FilePath:              strings.TrimSpace(task.FilePath),
+				ExportName:            strings.TrimSpace(task.ExportName),
+				HandlerEntrypoint:     strings.TrimSpace(task.HandlerEntrypoint),
+				BundleArtifactID:      bundleArtifact.ID,
+				BundleFormatVersion:   firstPositiveInt32(task.BundleFormatVersion, api.CurrentBundleFormatVersion),
+				RequestedMilliCpu:     task.RequestedMilliCPU,
+				RequestedMemoryMib:    task.RequestedMemoryMiB,
+				RequestedDiskMib:      task.RequestedDiskMiB,
+				SecretDeclarations:    secretDeclarations,
+				ResourceRequirements:  []byte("{}"),
+				NetworkPolicy:         networkPolicy,
+				ScheduleDeclarations:  scheduleDeclarations,
+				QueueName:             queueName,
+				QueueConcurrencyLimit: pgvalue.Int4Ptr(queueConcurrencyLimit),
+				Ttl:                   strings.TrimSpace(task.TTL),
+				MaxActiveDurationMs:   int64(task.MaxDurationSeconds) * 1000,
+				RetryPolicy:           retryPolicy,
+			}); err != nil {
+				return failBuild("record deployment task: " + err.Error())
+			}
+		}
+		for _, stream := range request.Result.Streams {
+			schemaJSON := stream.SchemaJSON
+			if len(schemaJSON) == 0 {
+				schemaJSON = []byte("null")
+			}
+			if _, err := work.q.UpsertDeploymentStream(r.Context(), db.UpsertDeploymentStreamParams{
+				ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				OrgID:             orgID,
+				ProjectID:         projectID,
+				EnvironmentID:     environmentID,
+				DeploymentID:      deploymentID,
+				Name:              strings.TrimSpace(stream.Name),
+				Direction:         db.StreamDirection(strings.TrimSpace(stream.Direction)),
+				SchemaFingerprint: strings.TrimSpace(stream.SchemaFingerprint),
+				SchemaJson:        schemaJSON,
+				Metadata:          []byte("{}"),
+			}); err != nil {
+				return failBuild("record deployment stream: " + err.Error())
+			}
+		}
+		row, err := work.q.CompleteDeploymentBuild(r.Context(), db.CompleteDeploymentBuildParams{
+			BuildManifestArtifactID:      buildManifestArtifact.ID,
+			DeploymentManifestArtifactID: deploymentManifestArtifact.ID,
+			OrgID:                        orgID,
+			ProjectID:                    projectID,
+			EnvironmentID:                environmentID,
+			ID:                           deploymentID,
+			BuildLeaseID:                 pgtype.Text{String: strings.TrimSpace(request.Lease.ID), Valid: true},
+			BuildWorkerInstanceID:        buildWorkerInstanceID,
 		})
 		if isNoRows(err) {
-			writeError(w, conflict(errors.New("deployment build lease is stale")))
-			return
+			return conflict(errors.New("deployment build lease is stale"))
 		}
 		if err != nil {
-			writeError(w, errors.New("mark deployment build failed"))
-			return
+			return errors.New("mark deployment deployed")
 		}
-		if err := appendDeploymentLifecycleEvent(r.Context(), queries, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.failed", "error", "worker", "failed", strings.TrimSpace(message)); err != nil {
-			writeError(w, errors.New("record deployment event"))
-			return
+		if err := appendDeploymentLifecycleEvent(r.Context(), work.q, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.deployed", "info", "worker", "deployed", "Deployment build completed"); err != nil {
+			return errors.New("record deployment event")
 		}
-		if err := tx.Commit(r.Context()); err != nil {
-			writeError(w, errors.New("commit deployment build failure"))
-			return
-		}
-		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)})
-	}
-	if request.Result.Error != nil {
-		failBuild(*request.Result.Error)
-		return
-	}
-	casObjects, err := deployment.ValidateBuildResult(request.Result)
-	if err != nil {
-		failBuild(err.Error())
-		return
-	}
-	if err := s.verifyDeploymentBuildArtifacts(r.Context(), casObjects); err != nil {
-		failBuild(err.Error())
-		return
-	}
-	if _, err := queries.GetDeploymentBuildLease(r.Context(), db.GetDeploymentBuildLeaseParams{
-		OrgID:                 orgID,
-		ProjectID:             projectID,
-		EnvironmentID:         environmentID,
-		ID:                    deploymentID,
-		BuildLeaseID:          pgtype.Text{String: strings.TrimSpace(request.Lease.ID), Valid: true},
-		BuildWorkerInstanceID: buildWorkerInstanceID,
-	}); isNoRows(err) {
-		writeError(w, conflict(errors.New("deployment build lease is stale")))
-		return
-	} else if err != nil {
-		writeError(w, errors.New("get deployment build lease"))
-		return
-	}
-	workerState, err := queries.GetWorkerInstanceState(r.Context(), buildWorkerInstanceID)
-	if isNoRows(err) {
-		failBuild("deployment build worker instance was not found")
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("get deployment build worker state"))
-		return
-	}
-	casObjectByDigest := make(map[string]api.CASObject, len(casObjects))
-	for _, object := range casObjects {
-		casObjectByDigest[strings.TrimSpace(object.Digest)] = object
-		if _, err := queries.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
-			Digest:    object.Digest,
-			SizeBytes: object.SizeBytes,
-			MediaType: object.MediaType,
-		}); err != nil {
-			failBuild("record deployment build artifact: " + err.Error())
-			return
-		}
-	}
-	buildManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), queries, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.BuildManifestDigest), db.ArtifactKindBuildManifest, casObjectByDigest)
-	if err != nil {
-		failBuild("record build manifest artifact: " + err.Error())
-		return
-	}
-	deploymentManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), queries, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.DeploymentManifestDigest), db.ArtifactKindDeploymentManifest, casObjectByDigest)
-	if err != nil {
-		failBuild("record deployment manifest artifact: " + err.Error())
-		return
-	}
-	queueConcurrencyLimits := map[string]*int32{}
-	for _, queue := range request.Result.Queues {
-		queueName := strings.TrimSpace(queue.Name)
-		queueConcurrencyLimits[queueName] = queue.ConcurrencyLimit
-		if _, err := queries.CreateDeploymentQueue(r.Context(), db.CreateDeploymentQueueParams{
-			ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:            orgID,
-			ProjectID:        projectID,
-			EnvironmentID:    environmentID,
-			DeploymentID:     deploymentID,
-			Name:             queueName,
-			ConcurrencyLimit: pgvalue.Int4Ptr(queue.ConcurrencyLimit),
-		}); err != nil {
-			failBuild("record deployment queue: " + err.Error())
-			return
-		}
-	}
-	deploymentSandboxIDs := map[string]pgtype.UUID{}
-	for _, task := range request.Result.Tasks {
-		bundleArtifact, err := createDeploymentBuildArtifact(r.Context(), queries, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.BundleDigest), db.ArtifactKindTaskBundle, casObjectByDigest)
-		if err != nil {
-			failBuild("record task bundle artifact: " + err.Error())
-			return
-		}
-		secretDeclarations, err := json.Marshal(task.Secrets)
-		if err != nil {
-			failBuild("encode deployment task secrets: " + err.Error())
-			return
-		}
-		scheduleDeclarations, err := json.Marshal(task.Schedules)
-		if err != nil {
-			failBuild("encode deployment task schedules: " + err.Error())
-			return
-		}
-		networkPolicy, err := json.Marshal(task.Network)
-		if err != nil {
-			failBuild("encode deployment task network: " + err.Error())
-			return
-		}
-		sandboxID := strings.TrimSpace(task.SandboxID)
-		deploymentSandboxID, ok := deploymentSandboxIDs[sandboxID]
-		if !ok {
-			imageArtifact, err := createDeploymentBuildArtifact(r.Context(), queries, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.SandboxImageArtifact.Digest), db.ArtifactKindSandboxImage, casObjectByDigest)
-			if err != nil {
-				failBuild("record deployment sandbox image artifact: " + err.Error())
-				return
-			}
-			resourceFloor, err := json.Marshal(map[string]any{
-				"milli_cpu":  task.RequestedMilliCPU,
-				"memory_mib": task.RequestedMemoryMiB,
-				"disk_mib":   task.RequestedDiskMiB,
-			})
-			if err != nil {
-				failBuild("encode deployment sandbox resource floor: " + err.Error())
-				return
-			}
-			fingerprint, err := deploymentSandboxContractFingerprint(deploymentSandboxContractFingerprintInput{
-				RootfsDigest:       workerState.RootfsDigest,
-				RuntimeABI:         workerState.RuntimeABI,
-				GuestdABI:          currentGuestdABI,
-				AdapterABI:         currentAdapterABI,
-				WorkspaceMountPath: strings.TrimSpace(task.WorkspaceMountPath),
-				NetworkPolicy:      task.Network,
-				FilesystemFormat:   strings.TrimSpace(task.FilesystemFormat),
-				ContractVersion:    1,
-			})
-			if err != nil {
-				failBuild("fingerprint deployment sandbox contract: " + err.Error())
-				return
-			}
-			row, err := queries.CreateDeploymentSandbox(r.Context(), db.CreateDeploymentSandboxParams{
-				ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				OrgID:               orgID,
-				ProjectID:           projectID,
-				EnvironmentID:       environmentID,
-				DeploymentID:        deploymentID,
-				SandboxID:           sandboxID,
-				ImageArtifactID:     imageArtifact.ID,
-				ImageArtifactFormat: strings.TrimSpace(task.SandboxImageArtifactFormat),
-				RootfsDigest:        workerState.RootfsDigest,
-				ImageDigest:         imageArtifact.Digest,
-				ImageFormat:         strings.TrimSpace(task.SandboxImageFormat),
-				WorkspaceMountPath:  strings.TrimSpace(task.WorkspaceMountPath),
-				ResourceFloor:       resourceFloor,
-				DiskFloorMib:        task.RequestedDiskMiB,
-				NetworkPolicy:       networkPolicy,
-				RuntimeABI:          workerState.RuntimeABI,
-				GuestdAbi:           currentGuestdABI,
-				AdapterAbi:          currentAdapterABI,
-				FilesystemFormat:    strings.TrimSpace(task.FilesystemFormat),
-				DefaultUid:          pgtype.Int8{},
-				DefaultGid:          pgtype.Int8{},
-				DefaultWorkdir:      "",
-				ContractVersion:     1,
-				Fingerprint:         fingerprint,
-			})
-			if err != nil {
-				failBuild("record deployment sandbox: " + err.Error())
-				return
-			}
-			deploymentSandboxID = row.ID
-			deploymentSandboxIDs[sandboxID] = deploymentSandboxID
-		}
-		queueName := strings.TrimSpace(task.QueueName)
-		queueConcurrencyLimit, ok := queueConcurrencyLimits[queueName]
-		if !ok {
-			failBuild("deployment task references undefined queue")
-			return
-		}
-		retryPolicy, err := normalizedRetryPolicy(task.RetryPolicy)
-		if err != nil {
-			failBuild("validate deployment task retry policy: " + err.Error())
-			return
-		}
-		if _, err := queries.CreateDeploymentTask(r.Context(), db.CreateDeploymentTaskParams{
-			ID:                    pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:                 orgID,
-			ProjectID:             projectID,
-			EnvironmentID:         environmentID,
-			DeploymentID:          deploymentID,
-			DeploymentSandboxID:   deploymentSandboxID,
-			TaskID:                strings.TrimSpace(task.TaskID),
-			FilePath:              strings.TrimSpace(task.FilePath),
-			ExportName:            strings.TrimSpace(task.ExportName),
-			HandlerEntrypoint:     strings.TrimSpace(task.HandlerEntrypoint),
-			BundleArtifactID:      bundleArtifact.ID,
-			BundleFormatVersion:   firstPositiveInt32(task.BundleFormatVersion, api.CurrentBundleFormatVersion),
-			RequestedMilliCpu:     task.RequestedMilliCPU,
-			RequestedMemoryMib:    task.RequestedMemoryMiB,
-			RequestedDiskMib:      task.RequestedDiskMiB,
-			SecretDeclarations:    secretDeclarations,
-			ResourceRequirements:  []byte("{}"),
-			NetworkPolicy:         networkPolicy,
-			ScheduleDeclarations:  scheduleDeclarations,
-			QueueName:             queueName,
-			QueueConcurrencyLimit: pgvalue.Int4Ptr(queueConcurrencyLimit),
-			Ttl:                   strings.TrimSpace(task.TTL),
-			MaxActiveDurationMs:   int64(task.MaxDurationSeconds) * 1000,
-			RetryPolicy:           retryPolicy,
-		}); err != nil {
-			failBuild("record deployment task: " + err.Error())
-			return
-		}
-	}
-	for _, stream := range request.Result.Streams {
-		schemaJSON := stream.SchemaJSON
-		if len(schemaJSON) == 0 {
-			schemaJSON = []byte("null")
-		}
-		if _, err := queries.UpsertDeploymentStream(r.Context(), db.UpsertDeploymentStreamParams{
-			ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:             orgID,
-			ProjectID:         projectID,
-			EnvironmentID:     environmentID,
-			DeploymentID:      deploymentID,
-			Name:              strings.TrimSpace(stream.Name),
-			Direction:         db.StreamDirection(strings.TrimSpace(stream.Direction)),
-			SchemaFingerprint: strings.TrimSpace(stream.SchemaFingerprint),
-			SchemaJson:        schemaJSON,
-			Metadata:          []byte("{}"),
-		}); err != nil {
-			failBuild("record deployment stream: " + err.Error())
-			return
-		}
-	}
-	row, err := queries.CompleteDeploymentBuild(r.Context(), db.CompleteDeploymentBuildParams{
-		BuildManifestArtifactID:      buildManifestArtifact.ID,
-		DeploymentManifestArtifactID: deploymentManifestArtifact.ID,
-		OrgID:                        orgID,
-		ProjectID:                    projectID,
-		EnvironmentID:                environmentID,
-		ID:                           deploymentID,
-		BuildLeaseID:                 pgtype.Text{String: strings.TrimSpace(request.Lease.ID), Valid: true},
-		BuildWorkerInstanceID:        buildWorkerInstanceID,
+		response = api.WorkerDeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)}
+		return nil
 	})
-	if isNoRows(err) {
-		writeError(w, conflict(errors.New("deployment build lease is stale")))
-		return
-	}
 	if err != nil {
-		writeError(w, errors.New("mark deployment deployed"))
+		writeError(w, err)
 		return
 	}
-	if err := appendDeploymentLifecycleEvent(r.Context(), queries, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.deployed", "info", "worker", "deployed", "Deployment build completed"); err != nil {
-		writeError(w, errors.New("record deployment event"))
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, errors.New("commit deployment build completion"))
-		return
-	}
-	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func parseDeploymentBuildLeaseIDs(lease api.WorkerDeploymentBuildLease) (pgtype.UUID, pgtype.UUID, pgtype.UUID, pgtype.UUID, error) {
@@ -564,7 +533,7 @@ func deploymentSandboxContractFingerprint(input deploymentSandboxContractFingerp
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-func createDeploymentBuildArtifact(ctx context.Context, queries *db.Queries, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workerInstanceID pgtype.UUID, digest string, kind db.ArtifactKind, objects map[string]api.CASObject) (db.Artifact, error) {
+func createDeploymentBuildArtifact(ctx context.Context, queries db.Querier, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workerInstanceID pgtype.UUID, digest string, kind db.ArtifactKind, objects map[string]api.CASObject) (db.Artifact, error) {
 	object, ok := objects[strings.TrimSpace(digest)]
 	if !ok {
 		return db.Artifact{}, fmt.Errorf("missing CAS object %s", digest)
