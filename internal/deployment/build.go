@@ -100,7 +100,7 @@ func (p GuestIndexer) Index(ctx context.Context, request IndexRequest) (Catalog,
 	if err != nil {
 		return Catalog{}, fmt.Errorf("read deployment index: %w", err)
 	}
-	if frame, ok, err := frameio.DecodeParseErrorFrame(body); err != nil {
+	if frame, ok, err := wire.DecodeParseErrorFrame(body); err != nil {
 		return Catalog{}, fmt.Errorf("read deployment index: %w", err)
 	} else if ok {
 		return Catalog{}, task.ParseError{Kind: frame.Kind, Message: frame.Message}

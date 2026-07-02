@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -470,7 +471,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		writeError(w, errors.New("generate workspace mount guest channel token"))
 		return
 	}
-	runtimeInstanceToken, err := auth.GenerateOpaqueToken(32)
+	runtimeInstanceToken, err := token.GenerateOpaque(32)
 	if err != nil {
 		writeError(w, errors.New("generate workspace mount runtime instance token"))
 		return

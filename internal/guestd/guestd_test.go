@@ -1251,7 +1251,7 @@ func TestHandleCompileTaskBundleReportsTarExtractionError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parseErr, ok, err := frameio.DecodeParseErrorFrame(frame)
+	parseErr, ok, err := wire.DecodeParseErrorFrame(frame)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1278,7 +1278,7 @@ func TestHandleCatalogDeploymentReportsPackageValidationError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parseErr, ok, err := frameio.DecodeParseErrorFrame(frame)
+	parseErr, ok, err := wire.DecodeParseErrorFrame(frame)
 	if err != nil {
 		t.Fatal(err)
 	}

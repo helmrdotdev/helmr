@@ -22,6 +22,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -917,7 +918,7 @@ func (s *Server) createPublicAccessToken(w http.ResponseWriter, r *http.Request)
 		value := *request.MaxUses
 		responseMaxUses = &value
 	}
-	rawToken, err := auth.GenerateOpaqueToken(32)
+	rawToken, err := token.GenerateOpaque(32)
 	if err != nil {
 		writeError(w, errors.New("generate public access token"))
 		return

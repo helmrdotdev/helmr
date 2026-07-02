@@ -8,14 +8,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-func WriteFileFrame(w io.Writer, headerBytes []byte, path string) error {
-	_, size, err := HashFile(path)
-	if err != nil {
-		return err
-	}
-	return WriteFileFrameWithMetadata(w, headerBytes, path, size)
-}
-
 func WriteFileFrameWithMetadata(w io.Writer, headerBytes []byte, path string, size int64) error {
 	if err := WriteStreamFrameHeader(w, headerBytes, uint64(size)); err != nil {
 		return err

@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -133,7 +134,7 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("expires_in_days must be between 1 and 30")))
 		return
 	}
-	rawToken, err := auth.GenerateOpaqueToken(32)
+	rawToken, err := token.GenerateOpaque(32)
 	if err != nil {
 		writeError(w, errors.New("generate invitation token"))
 		return

@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/localcache"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
+	"github.com/helmrdotdev/helmr/internal/runtime"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -428,7 +429,7 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 				_ = session.Close(context.Background())
 				return nil, "", "", cleanupWorkspace, key, true, err
 			}
-			m.logWorkspaceMountPhase(*mount, "workspace mount prepared runtime checked out", "runtime_key_id", preparedRuntimeKeyID(key))
+			m.logWorkspaceMountPhase(*mount, "workspace mount prepared runtime checked out", "runtime_key_id", runtime.ID(key))
 			return session, "", workspacePath, cleanupWorkspace, key, true, nil
 		}
 	}
@@ -440,8 +441,8 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 	if mount.RuntimeInstanceToken == "" {
 		return nil, "", "", func() {}, "", false, workspaceMountFailure{code: "runtime_instance_token_unavailable", err: errors.New("workspace mount claim must include a runtime instance token")}
 	}
-	runtimeKey := preparedRuntimeKey(*mount, m.Network)
-	m.logWorkspaceMountPhase(*mount, "workspace mount runtime instance claimed", "runtime_instance_id", mount.RuntimeInstanceID, "runtime_key_id", preparedRuntimeKeyID(runtimeKey))
+	runtimeKey := runtime.KeyFromWorkspaceMount(*mount, m.Network)
+	m.logWorkspaceMountPhase(*mount, "workspace mount runtime instance claimed", "runtime_instance_id", mount.RuntimeInstanceID, "runtime_key_id", runtime.ID(runtimeKey))
 	workspaceArtifact := api.CASObject{
 		Digest:    strings.TrimSpace(mount.WorkspaceArtifact.Digest),
 		SizeBytes: mount.WorkspaceArtifact.SizeBytes,
@@ -880,7 +881,7 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 		}
 		m.logWorkspaceMountPhase(mount, "workspace mount sandbox image sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", mount.SandboxImageArtifact.SizeBytes)
 	} else {
-		m.logWorkspaceMountPhase(mount, "workspace mount sandbox image skipped", "prepared_runtime_hit", true, "runtime_key_id", preparedRuntimeKeyID(strings.TrimSpace(preparedRuntimeKey)), "size_bytes", mount.SandboxImageArtifact.SizeBytes)
+		m.logWorkspaceMountPhase(mount, "workspace mount sandbox image skipped", "prepared_runtime_hit", true, "runtime_key_id", runtime.ID(strings.TrimSpace(preparedRuntimeKey)), "size_bytes", mount.SandboxImageArtifact.SizeBytes)
 	}
 	phaseStarted = time.Now()
 	if err := wire.WriteFileFrameWithMetadata(stream, wire.StreamHeader{

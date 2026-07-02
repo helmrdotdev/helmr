@@ -96,7 +96,7 @@ func (e ParseError) FailureKind() string {
 }
 
 func decodeTaskBundleResponse(body []byte) (*bundlev0.Bundle, error) {
-	if frame, ok, err := frameio.DecodeParseErrorFrame(body); err != nil {
+	if frame, ok, err := wire.DecodeParseErrorFrame(body); err != nil {
 		return nil, fmt.Errorf("read parsed task bundle: %w", err)
 	} else if ok {
 		return nil, ParseError{Kind: frame.Kind, Message: frame.Message}

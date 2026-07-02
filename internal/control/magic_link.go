@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -205,7 +206,7 @@ func (s *Server) createPendingMagicLink(r *http.Request, purpose db.MagicLinkPur
 		}
 		return db.MagicLink{}, "", time.Time{}, false, nil
 	}
-	rawToken, err := auth.GenerateOpaqueToken(32)
+	rawToken, err := token.GenerateOpaque(32)
 	if err != nil {
 		return db.MagicLink{}, "", time.Time{}, false, err
 	}

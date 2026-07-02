@@ -123,16 +123,16 @@ func handleCatalogDeployment(ctx context.Context, conn io.ReadWriter, cfg Config
 		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
 			return errors.Join(fmt.Errorf("extract index source: %w", err), fmt.Errorf("drain index source: %w", drainErr))
 		}
-		return frameio.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("extract index source: %s", err))
+		return wire.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("extract index source: %s", err))
 	}
 	if _, err := io.Copy(io.Discard, body); err != nil {
-		return frameio.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("drain index source: %s", err))
+		return wire.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("drain index source: %s", err))
 	}
 	registry, err := indexAdapter(ctx, cfg, sourceRoot)
 	if err != nil {
 		var parseErr adapterParseError
 		if errors.As(err, &parseErr) {
-			return frameio.WriteParseErrorFrame(conn, parseErr.Kind, parseErr.Message)
+			return wire.WriteParseErrorFrame(conn, parseErr.Kind, parseErr.Message)
 		}
 		return err
 	}
@@ -162,16 +162,16 @@ func handleCompileTaskBundle(ctx context.Context, conn io.ReadWriter, cfg Config
 		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
 			return errors.Join(fmt.Errorf("extract parse source: %w", err), fmt.Errorf("drain parse source: %w", drainErr))
 		}
-		return frameio.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("extract parse source: %s", err))
+		return wire.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("extract parse source: %s", err))
 	}
 	if _, err := io.Copy(io.Discard, body); err != nil {
-		return frameio.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("drain parse source: %s", err))
+		return wire.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("drain parse source: %s", err))
 	}
 	bundle, err := parseAdapter(ctx, cfg, sourceRoot, taskID)
 	if err != nil {
 		var parseErr adapterParseError
 		if errors.As(err, &parseErr) {
-			return frameio.WriteParseErrorFrame(conn, parseErr.Kind, parseErr.Message)
+			return wire.WriteParseErrorFrame(conn, parseErr.Kind, parseErr.Message)
 		}
 		return err
 	}

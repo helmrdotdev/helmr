@@ -1,6 +1,10 @@
 package auth
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/token"
+)
 
 const (
 	WorkerBootstrapTokenPrefix = "helmr_bootstrap_"
@@ -28,7 +32,7 @@ func WorkerKeyPrefix(key string) string {
 }
 
 func generatePrefixedWorkerToken(hashSecret []byte, prefix string) (GeneratedWorkerToken, error) {
-	raw, err := GenerateOpaqueToken(workerSecretBytes)
+	raw, err := token.GenerateOpaque(workerSecretBytes)
 	if err != nil {
 		return GeneratedWorkerToken{}, err
 	}

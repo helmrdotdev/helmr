@@ -1,21 +1,15 @@
 package runtime
 
 import (
-	"crypto/rand"
-	"encoding/base64"
-	"errors"
 	"fmt"
+
+	"github.com/helmrdotdev/helmr/internal/token"
 )
 
 func NewInstanceToken() (string, error) {
-	const byteLen = 32
-	raw := make([]byte, byteLen)
-	if _, err := rand.Read(raw); err != nil {
+	raw, err := token.GenerateOpaque(32)
+	if err != nil {
 		return "", fmt.Errorf("generate runtime instance token: %w", err)
 	}
-	token := base64.RawURLEncoding.EncodeToString(raw)
-	if token == "" {
-		return "", errors.New("runtime instance token is empty")
-	}
-	return token, nil
+	return raw, nil
 }
