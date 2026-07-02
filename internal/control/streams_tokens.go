@@ -244,37 +244,38 @@ func (s *Server) appendSessionStreamRecord(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(fmt.Errorf("invalid stream record request JSON: %w", err)))
 		return
 	}
-	store := s.db
-	var tx controlTransaction
 	if direction == db.StreamDirectionInput {
-		var err error
-		store, tx, err = s.beginControlTransaction(r.Context())
+		var appended appendedStreamRecord
+		err := s.inTx(r.Context(), func(work *txWork) error {
+			var err error
+			appended, err = s.appendStreamRecord(r.Context(), work.q, session, stream, direction, sourceType, string(sourceType), publicAccessTokenID, request)
+			if err != nil {
+				return err
+			}
+			work.AfterCommit(func(ctx context.Context) error {
+				s.publishSessionInputStreamWakeup(ctx, session.OrgID, stream.ID, appended.record.Sequence)
+				if appended.resolvedWaitCount > 0 {
+					s.requeueResolvedRunWaits(ctx, session.OrgID)
+				}
+				for _, runID := range s.reconcileAcceptedSessionRunRequests(ctx, session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
+					appended.continuationRunID = runID
+					appended.continuationStatus = "created"
+				}
+				return nil
+			})
+			return nil
+		})
 		if err != nil {
-			writeError(w, errors.New("begin stream input transaction"))
+			s.writeStreamTokenError(w, err)
 			return
 		}
-		defer func() { _ = tx.Rollback(r.Context()) }()
+		writeJSON(w, http.StatusCreated, appendStreamRecordResponse(appended.record, appended.continuationStatus))
+		return
 	}
-	appended, err := s.appendStreamRecord(r.Context(), store, session, stream, direction, sourceType, string(sourceType), publicAccessTokenID, request)
+	appended, err := s.appendStreamRecord(r.Context(), s.db, session, stream, direction, sourceType, string(sourceType), publicAccessTokenID, request)
 	if err != nil {
 		s.writeStreamTokenError(w, err)
 		return
-	}
-	if tx != nil {
-		if err := tx.Commit(r.Context()); err != nil {
-			writeError(w, errors.New("commit stream input transaction"))
-			return
-		}
-	}
-	if direction == db.StreamDirectionInput {
-		s.publishSessionInputStreamWakeup(r.Context(), session.OrgID, stream.ID, appended.record.Sequence)
-		if appended.resolvedWaitCount > 0 {
-			s.requeueResolvedRunWaits(r.Context(), session.OrgID)
-		}
-		for _, runID := range s.reconcileAcceptedSessionRunRequests(r.Context(), session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
-			appended.continuationRunID = runID
-			appended.continuationStatus = "created"
-		}
 	}
 	writeJSON(w, http.StatusCreated, appendStreamRecordResponse(appended.record, appended.continuationStatus))
 }
@@ -445,77 +446,60 @@ func (s *Server) reconcileDueSessionRunRequests(ctx context.Context, orgID pgtyp
 }
 
 func (s *Server) reconcileClaimedSessionRunRequest(ctx context.Context, request db.SessionRunRequest) (pgtype.UUID, error) {
-	store, tx, err := s.beginControlTransaction(ctx)
-	if err != nil {
-		return pgtype.UUID{}, err
-	}
-	defer func() {
-		if tx != nil {
-			_ = tx.Rollback(ctx)
-		}
-	}()
 	session := db.Session{
 		ID:            request.SessionID,
 		OrgID:         request.OrgID,
 		ProjectID:     request.ProjectID,
 		EnvironmentID: request.EnvironmentID,
 	}
-	record, err := store.GetStreamRecord(ctx, db.GetStreamRecordParams{
-		OrgID:         request.OrgID,
-		ProjectID:     request.ProjectID,
-		EnvironmentID: request.EnvironmentID,
-		ID:            request.StreamRecordID,
-	})
-	if isNoRows(err) {
-		if _, markErr := store.MarkSessionRunRequestFailed(ctx, db.MarkSessionRunRequestFailedParams{
+	var runID pgtype.UUID
+	err := s.inTx(ctx, func(work *txWork) error {
+		record, err := work.q.GetStreamRecord(ctx, db.GetStreamRecordParams{
 			OrgID:         request.OrgID,
 			ProjectID:     request.ProjectID,
 			EnvironmentID: request.EnvironmentID,
-			ID:            request.ID,
-			ClaimOwner:    request.ClaimOwner,
-			Reason:        "stream_record_not_found",
-		}); markErr != nil {
-			return pgtype.UUID{}, markErr
+			ID:            request.StreamRecordID,
+		})
+		if isNoRows(err) {
+			if _, markErr := work.q.MarkSessionRunRequestFailed(ctx, db.MarkSessionRunRequestFailedParams{
+				OrgID:         request.OrgID,
+				ProjectID:     request.ProjectID,
+				EnvironmentID: request.EnvironmentID,
+				ID:            request.ID,
+				ClaimOwner:    request.ClaimOwner,
+				Reason:        "stream_record_not_found",
+			}); markErr != nil {
+				return markErr
+			}
+			return nil
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return pgtype.UUID{}, err
+		if err != nil {
+			if retryErr := s.releaseSessionRunRequestForRetry(ctx, work.q, request, err.Error(), sessionRunRequestRetryAfter(request, "")); retryErr != nil {
+				return retryErr
+			}
+			return nil
 		}
-		tx = nil
-		return pgtype.UUID{}, nil
-	}
+		createdRunID, status, err := s.tryCreateContinuationRunForRequest(ctx, work.q, session, request, record)
+		if err != nil {
+			if errors.Is(err, errSessionRunRequestLost) {
+				return err
+			}
+			if retryErr := s.releaseSessionRunRequestForRetry(ctx, work.q, request, err.Error(), sessionRunRequestRetryAfter(request, status)); retryErr != nil {
+				return retryErr
+			}
+			return nil
+		}
+		if status == "accepted_run_pending" {
+			if err := s.releaseSessionRunRequestForRetry(ctx, work.q, request, "current_run_not_terminal", sessionRunRequestRetryAfter(request, status)); err != nil {
+				return err
+			}
+		}
+		runID = createdRunID
+		return nil
+	})
 	if err != nil {
-		if retryErr := s.releaseSessionRunRequestForRetry(ctx, store, request, err.Error(), sessionRunRequestRetryAfter(request, "")); retryErr != nil {
-			return pgtype.UUID{}, retryErr
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return pgtype.UUID{}, err
-		}
-		tx = nil
-		return pgtype.UUID{}, nil
-	}
-	runID, status, err := s.tryCreateContinuationRunForRequest(ctx, store, session, request, record)
-	if err != nil {
-		if errors.Is(err, errSessionRunRequestLost) {
-			return pgtype.UUID{}, err
-		}
-		if retryErr := s.releaseSessionRunRequestForRetry(ctx, store, request, err.Error(), sessionRunRequestRetryAfter(request, status)); retryErr != nil {
-			return pgtype.UUID{}, retryErr
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return pgtype.UUID{}, err
-		}
-		tx = nil
-		return pgtype.UUID{}, nil
-	}
-	if status == "accepted_run_pending" {
-		if err := s.releaseSessionRunRequestForRetry(ctx, store, request, "current_run_not_terminal", sessionRunRequestRetryAfter(request, status)); err != nil {
-			return pgtype.UUID{}, err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return pgtype.UUID{}, err
 	}
-	tx = nil
 	return runID, nil
 }
 
@@ -915,47 +899,44 @@ func (s *Server) createPublicAccessToken(w http.ResponseWriter, r *http.Request)
 		writeError(w, errors.New("hash public access token"))
 		return
 	}
-	store, tx, err := s.beginControlTransaction(r.Context())
-	if err != nil {
-		writeError(w, errors.New("begin public access token create transaction"))
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-	publicToken, err := store.CreatePublicAccessToken(r.Context(), db.CreatePublicAccessTokenParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         session.OrgID,
-		ProjectID:     session.ProjectID,
-		EnvironmentID: session.EnvironmentID,
-		TokenHash:     tokenHash,
-		ExpiresAt:     pgvalue.Timestamptz(expiresAt),
-		MaxUses:       maxUses,
-		Metadata:      []byte(`{}`),
-		CreatedBy:     actorJSON(actor),
+	var publicToken db.PublicAccessToken
+	var scope db.PublicAccessTokenScope
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		var err error
+		publicToken, err = work.q.CreatePublicAccessToken(r.Context(), db.CreatePublicAccessTokenParams{
+			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:         session.OrgID,
+			ProjectID:     session.ProjectID,
+			EnvironmentID: session.EnvironmentID,
+			TokenHash:     tokenHash,
+			ExpiresAt:     pgvalue.Timestamptz(expiresAt),
+			MaxUses:       maxUses,
+			Metadata:      []byte(`{}`),
+			CreatedBy:     actorJSON(actor),
+		})
+		if err != nil {
+			return errors.New("create public access token")
+		}
+		scope, err = work.q.CreatePublicAccessTokenScope(r.Context(), db.CreatePublicAccessTokenScopeParams{
+			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:               session.OrgID,
+			ProjectID:           session.ProjectID,
+			EnvironmentID:       session.EnvironmentID,
+			PublicAccessTokenID: publicToken.ID,
+			ScopeType:           scopeType,
+			StreamID:            stream.ID,
+			CorrelationID:       correlationID,
+		})
+		if isNoRows(err) {
+			return forbidden(errTokenScopeDenied)
+		}
+		if err != nil {
+			return errors.New("create public access token scope")
+		}
+		return nil
 	})
 	if err != nil {
-		writeError(w, errors.New("create public access token"))
-		return
-	}
-	scope, err := store.CreatePublicAccessTokenScope(r.Context(), db.CreatePublicAccessTokenScopeParams{
-		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:               session.OrgID,
-		ProjectID:           session.ProjectID,
-		EnvironmentID:       session.EnvironmentID,
-		PublicAccessTokenID: publicToken.ID,
-		ScopeType:           scopeType,
-		StreamID:            stream.ID,
-		CorrelationID:       correlationID,
-	})
-	if isNoRows(err) {
-		writeError(w, forbidden(errTokenScopeDenied))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("create public access token scope"))
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, errors.New("commit public access token create transaction"))
+		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, api.PublicAccessTokenResponse{
@@ -1305,33 +1286,31 @@ func (s *Server) completeTokenWithPublicAccessToken(w http.ResponseWriter, r *ht
 		writeError(w, unauthorized(errTokenScopeDenied))
 		return
 	}
-	store, tx, err := s.beginControlTransaction(r.Context())
-	if err != nil {
-		writeError(w, errors.New("begin public token completion transaction"))
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-	publicToken, err := s.authorizePublicAccessTokenScope(r.Context(), store, publicAccessToken, token, db.PublicAccessTokenScopeTypeTokencomplete)
-	if err != nil {
-		s.writeStreamTokenError(w, err)
-		return
-	}
-	completed, err := s.completeTokenRecord(r.Context(), store, token, request.Data)
-	if err != nil {
-		s.writeStreamTokenError(w, err)
-		return
-	}
-	if !completed.AlreadyCompleted {
-		if _, err := s.consumePublicAccessToken(r.Context(), store, publicToken); err != nil {
-			s.writeStreamTokenError(w, err)
-			return
+	var completed db.CompleteTokenRow
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		publicToken, err := s.authorizePublicAccessTokenScope(r.Context(), work.q, publicAccessToken, token, db.PublicAccessTokenScopeTypeTokencomplete)
+		if err != nil {
+			return err
 		}
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, errors.New("commit public token completion transaction"))
+		completed, err = s.completeTokenRecord(r.Context(), work.q, token, request.Data)
+		if err != nil {
+			return err
+		}
+		if !completed.AlreadyCompleted {
+			if _, err := s.consumePublicAccessToken(r.Context(), work.q, publicToken); err != nil {
+				return err
+			}
+		}
+		work.AfterCommit(func(ctx context.Context) error {
+			s.requeueResolvedRunWaits(ctx, token.OrgID)
+			return nil
+		})
+		return nil
+	})
+	if err != nil {
+		s.writeStreamTokenError(w, err)
 		return
 	}
-	s.requeueResolvedRunWaits(r.Context(), token.OrgID)
 	writeJSON(w, http.StatusOK, tokenCompleteResponse(completed))
 }
 
