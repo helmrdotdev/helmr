@@ -298,6 +298,7 @@ SELECT id,
 -- name: InsertWorkspaceExecStreamChunk :one
 INSERT INTO workspace_exec_stream_chunks (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     workspace_id,
@@ -309,6 +310,7 @@ INSERT INTO workspace_exec_stream_chunks (
     observed_at
 ) VALUES (
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),
@@ -322,31 +324,52 @@ INSERT INTO workspace_exec_stream_chunks (
 RETURNING *;
 
 -- name: InsertWorkspaceExecOutputStreamChunk :one
-INSERT INTO workspace_exec_stream_chunks (
-    org_id,
-    project_id,
-    environment_id,
-    workspace_id,
-    exec_id,
-    stream,
-    offset_start,
-    offset_end,
-    data,
-    observed_at
-) VALUES (
-    sqlc.arg(org_id),
-    sqlc.arg(project_id),
-    sqlc.arg(environment_id),
-    sqlc.arg(workspace_id),
-    sqlc.arg(exec_id),
-    sqlc.arg(stream)::workspace_exec_stream,
-    sqlc.arg(offset_start),
-    sqlc.arg(offset_end),
-    sqlc.arg(data),
-    coalesce(sqlc.narg(observed_at), now())
+WITH inserted AS (
+    INSERT INTO workspace_exec_stream_chunks (
+        org_id,
+        cell_id,
+        project_id,
+        environment_id,
+        workspace_id,
+        exec_id,
+        stream,
+        offset_start,
+        offset_end,
+        data,
+        observed_at
+    ) VALUES (
+        sqlc.arg(org_id),
+        sqlc.arg(cell_id),
+        sqlc.arg(project_id),
+        sqlc.arg(environment_id),
+        sqlc.arg(workspace_id),
+        sqlc.arg(exec_id),
+        sqlc.arg(stream)::workspace_exec_stream,
+        sqlc.arg(offset_start),
+        sqlc.arg(offset_end),
+        sqlc.arg(data),
+        coalesce(sqlc.narg(observed_at), now())
+    )
+    ON CONFLICT DO NOTHING
+    RETURNING *
+),
+terminal_telemetry_outbox AS (
+    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key)
+    SELECT inserted.org_id,
+           inserted.cell_id,
+           'terminal_output',
+           'workspace_exec',
+           inserted.exec_id,
+           inserted.stream::text,
+           inserted.offset_start,
+           'terminal_output:workspace_exec:' || inserted.exec_id::text || ':' || inserted.stream::text || ':' || inserted.offset_start::text || ':' || inserted.offset_end::text
+      FROM inserted
+    ON CONFLICT (cell_id, stream_kind, idempotency_key) DO NOTHING
+    RETURNING id
 )
-ON CONFLICT DO NOTHING
-RETURNING *;
+SELECT *
+  FROM inserted
+ WHERE (SELECT count(*) FROM terminal_telemetry_outbox) >= 0;
 
 -- name: AdvanceWorkspaceExecStreamCursor :one
 UPDATE workspace_execs
@@ -413,13 +436,50 @@ RETURNING workspace_execs.*;
 
 -- name: DeleteWorkspaceExecStreamChunksBefore :exec
 DELETE FROM workspace_exec_stream_chunks
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND exec_id = sqlc.arg(exec_id)
-   AND stream = sqlc.arg(stream)::workspace_exec_stream
-   AND offset_end <= sqlc.arg(retain_after_offset);
+ WHERE workspace_exec_stream_chunks.org_id = sqlc.arg(org_id)
+   AND workspace_exec_stream_chunks.project_id = sqlc.arg(project_id)
+   AND workspace_exec_stream_chunks.environment_id = sqlc.arg(environment_id)
+   AND workspace_exec_stream_chunks.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_exec_stream_chunks.exec_id = sqlc.arg(exec_id)
+   AND workspace_exec_stream_chunks.stream = sqlc.arg(stream)::workspace_exec_stream
+   AND workspace_exec_stream_chunks.offset_end <= sqlc.arg(retain_after_offset)
+   AND (
+         NOT EXISTS (
+             SELECT 1
+               FROM telemetry_outbox
+              WHERE telemetry_outbox.org_id = workspace_exec_stream_chunks.org_id
+                AND telemetry_outbox.cell_id = workspace_exec_stream_chunks.cell_id
+                AND telemetry_outbox.stream_kind = 'terminal_output'
+                AND telemetry_outbox.source_kind = 'workspace_exec'
+                AND telemetry_outbox.source_id = workspace_exec_stream_chunks.exec_id
+                AND telemetry_outbox.stream_name = workspace_exec_stream_chunks.stream::text
+                AND telemetry_outbox.seq = workspace_exec_stream_chunks.offset_start
+         )
+         OR EXISTS (
+             SELECT 1
+               FROM terminal_output_watermarks
+              WHERE terminal_output_watermarks.org_id = workspace_exec_stream_chunks.org_id
+                AND terminal_output_watermarks.cell_id = workspace_exec_stream_chunks.cell_id
+                AND terminal_output_watermarks.workspace_id = workspace_exec_stream_chunks.workspace_id
+                AND terminal_output_watermarks.resource_kind = 'workspace_exec'
+                AND terminal_output_watermarks.resource_id = workspace_exec_stream_chunks.exec_id
+                AND terminal_output_watermarks.stream_name = workspace_exec_stream_chunks.stream::text
+                AND terminal_output_watermarks.watermark_offset >= workspace_exec_stream_chunks.offset_end
+         )
+   )
+   AND NOT EXISTS (
+         SELECT 1
+           FROM telemetry_outbox
+          WHERE telemetry_outbox.org_id = workspace_exec_stream_chunks.org_id
+            AND telemetry_outbox.cell_id = workspace_exec_stream_chunks.cell_id
+            AND telemetry_outbox.stream_kind = 'terminal_output'
+            AND telemetry_outbox.source_kind = 'workspace_exec'
+            AND telemetry_outbox.source_id = workspace_exec_stream_chunks.exec_id
+            AND telemetry_outbox.stream_name = workspace_exec_stream_chunks.stream::text
+            AND telemetry_outbox.seq = workspace_exec_stream_chunks.offset_start
+            AND telemetry_outbox.written_at IS NULL
+            AND telemetry_outbox.state <> 'dead_lettered'
+   );
 
 -- name: GetWorkspaceExecStreamChunkAtOffset :one
 SELECT *
@@ -435,6 +495,7 @@ SELECT *
 -- name: InsertWorkspaceExecStreamChunkReceipt :one
 INSERT INTO workspace_exec_stream_chunk_receipts (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     workspace_id,
@@ -447,6 +508,7 @@ INSERT INTO workspace_exec_stream_chunk_receipts (
     observed_at
 ) VALUES (
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),

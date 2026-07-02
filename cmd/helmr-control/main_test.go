@@ -39,6 +39,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		Auth:               auth.NewDBAuthenticator(store),
 		AuthSecret:         []byte("abcdefghijabcdefghijabcdefghij12"),
 		PublicURL:          publicURL,
+		CellID:             "us-east-1-cell-1",
 		MagicLinkDebugURLs: true,
 		Mailer:             configuredEmailSender(log, config.Control{EmailProvider: config.EmailProviderNone}),
 	})

@@ -84,6 +84,9 @@ func LoadDispatcher() (Dispatcher, error) {
 	if cfg.CellID == "" {
 		return cfg, errors.New("HELMR_CELL_ID is required")
 	}
+	if cfg.ClickHouseURL == "" {
+		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
+	}
 	if err := validatePublicURL(cfg.PublicURL); err != nil {
 		return cfg, err
 	}

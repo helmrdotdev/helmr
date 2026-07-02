@@ -57,6 +57,7 @@ func (s *Server) workerRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	credential, err := s.db.CreateWorkerInstanceCredentialFromBootstrap(r.Context(), db.CreateWorkerInstanceCredentialFromBootstrapParams{
 		BootstrapTokenHash: registrationHash,
+		CellID:             s.cellID,
 		CredentialID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		WorkerInstanceID:   pgvalue.UUID(workerInstanceID),
 		ResourceID:         resourceID,

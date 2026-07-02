@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -34,6 +37,7 @@ type testServerConfig struct {
 	DispatchQueue       dispatch.Queue
 	ScheduleEngine      ScheduleRegistrar
 	EventStream         *EventStream
+	TelemetryReader     telemetry.Reader
 	WorkspaceStreams    *WorkspaceStreamNotifier
 	WorkerCommands      *WorkerCommandStream
 	WorkerTokenSecret   []byte
@@ -69,11 +73,18 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	if testCfg.DeploymentMode != "" {
 		cfg.DeploymentMode = testCfg.DeploymentMode
 	}
+	cfg.CellID = "us-east-1-cell-1"
 	if testCfg.CellID != "" {
 		cfg.CellID = testCfg.CellID
 	}
 	if testCfg.DB != nil {
 		cfg.DB = testTransactionalStore{Querier: testCfg.DB}
+		if store, ok := testCfg.DB.(*fakeStore); ok && testCfg.TelemetryReader == nil {
+			cfg.TelemetryReader = fakeTelemetryReader{store: store}
+		}
+	}
+	if testCfg.TelemetryReader != nil {
+		cfg.TelemetryReader = testCfg.TelemetryReader
 	}
 	if testCfg.TX != nil {
 		cfg.TX = testCfg.TX
@@ -154,6 +165,134 @@ type testTransactionalStore struct {
 
 func (store testTransactionalStore) BeginQuerier(context.Context) (db.Querier, controlTransaction, error) {
 	return store.Querier, noopControlTransaction{}, nil
+}
+
+type fakeTelemetryReader struct {
+	store *fakeStore
+}
+
+func (r fakeTelemetryReader) ListEvents(ctx context.Context, query telemetry.EventQuery) (telemetry.EventPage, error) {
+	rows, err := r.store.ListSubjectEvents(ctx, db.ListSubjectEventsParams{
+		OrgID:       pgvalue.UUID(query.OrgID),
+		SubjectType: db.EventSubjectType(query.SubjectType),
+		SubjectID:   pgvalue.UUID(query.SubjectID),
+		Seq:         query.AfterSeq,
+		RowLimit:    query.Limit,
+	})
+	if err != nil {
+		return telemetry.EventPage{}, err
+	}
+	events := make([]api.RunEvent, 0, len(rows))
+	last := query.AfterSeq
+	for _, row := range rows {
+		events = append(events, eventResponseFromRecord(row))
+		last = row.Seq
+	}
+	return telemetry.EventPage{Events: events, LastSeq: last}, nil
+}
+
+func (r fakeTelemetryReader) ListRunLogChunks(ctx context.Context, query telemetry.RunLogChunkQuery) (telemetry.RunLogChunkPage, error) {
+	rows, err := r.store.ListRunLogChunksAfter(ctx, db.ListRunLogChunksAfterParams{
+		OrgID:    pgvalue.UUID(query.OrgID),
+		RunID:    pgvalue.UUID(query.RunID),
+		Seq:      query.AfterSeq,
+		RowLimit: query.Limit,
+	})
+	if err != nil {
+		return telemetry.RunLogChunkPage{}, err
+	}
+	chunks := make([]api.RunLogChunk, 0, len(rows))
+	last := query.AfterSeq
+	for _, row := range rows {
+		chunks = append(chunks, runLogChunkResponse(row))
+		last = row.Seq
+	}
+	return telemetry.RunLogChunkPage{Chunks: chunks, LastSeq: last}, nil
+}
+
+func (r fakeTelemetryReader) ListTerminalOutput(ctx context.Context, query telemetry.TerminalOutputQuery) (telemetry.TerminalOutputPage, error) {
+	page := telemetry.TerminalOutputPage{LastOffset: query.AfterOffset}
+	switch query.ResourceKind {
+	case "workspace_exec":
+		rows, err := r.store.ListWorkspaceExecStreamChunksAfter(ctx, db.ListWorkspaceExecStreamChunksAfterParams{
+			OrgID:         pgvalue.UUID(query.OrgID),
+			ProjectID:     pgvalue.UUID(query.ProjectID),
+			EnvironmentID: pgvalue.UUID(query.EnvironmentID),
+			WorkspaceID:   pgvalue.UUID(query.WorkspaceID),
+			ExecID:        pgvalue.UUID(query.ResourceID),
+			Stream:        db.WorkspaceExecStream(query.StreamName),
+			CursorOffset:  query.AfterOffset,
+			LimitCount:    query.Limit,
+		})
+		if err != nil {
+			return telemetry.TerminalOutputPage{}, err
+		}
+		for _, row := range rows {
+			chunk := workspaceExecStreamChunkResponse(row)
+			page.Chunks = append(page.Chunks, telemetry.TerminalOutputChunk{
+				ID:          chunk.ID,
+				Stream:      chunk.Stream,
+				OffsetStart: chunk.OffsetStart,
+				OffsetEnd:   chunk.OffsetEnd,
+				Data:        chunk.Data,
+				ObservedAt:  chunk.ObservedAt,
+				CreatedAt:   chunk.CreatedAt,
+			})
+			page.LastOffset = row.OffsetEnd
+		}
+	case "workspace_pty":
+		rows, err := r.store.ListWorkspacePtyStreamChunksAfter(ctx, db.ListWorkspacePtyStreamChunksAfterParams{
+			OrgID:         pgvalue.UUID(query.OrgID),
+			ProjectID:     pgvalue.UUID(query.ProjectID),
+			EnvironmentID: pgvalue.UUID(query.EnvironmentID),
+			WorkspaceID:   pgvalue.UUID(query.WorkspaceID),
+			PtySessionID:  pgvalue.UUID(query.ResourceID),
+			Stream:        db.WorkspacePtyStream(query.StreamName),
+			CursorOffset:  query.AfterOffset,
+			LimitCount:    query.Limit,
+		})
+		if err != nil {
+			return telemetry.TerminalOutputPage{}, err
+		}
+		for _, row := range rows {
+			chunk := workspacePtyStreamChunkResponse(row)
+			page.Chunks = append(page.Chunks, telemetry.TerminalOutputChunk{
+				ID:          chunk.ID,
+				Stream:      chunk.Stream,
+				OffsetStart: chunk.OffsetStart,
+				OffsetEnd:   chunk.OffsetEnd,
+				Data:        chunk.Data,
+				ObservedAt:  chunk.ObservedAt,
+				CreatedAt:   chunk.CreatedAt,
+			})
+			page.LastOffset = row.OffsetEnd
+		}
+	}
+	return page, nil
+}
+
+func (r fakeTelemetryReader) GetRunLogSnapshot(ctx context.Context, query telemetry.RunLogSnapshotQuery) (telemetry.RunLogSnapshot, error) {
+	row, err := r.store.GetRunLogSnapshot(ctx, db.GetRunLogSnapshotParams{
+		OrgID:       pgvalue.UUID(query.OrgID),
+		RunID:       pgvalue.UUID(query.RunID),
+		StdoutLimit: query.StdoutLimit,
+		StderrLimit: query.StderrLimit,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return telemetry.RunLogSnapshot{}, nil
+	}
+	if err != nil {
+		return telemetry.RunLogSnapshot{}, err
+	}
+	return telemetry.RunLogSnapshot{
+		Stdout:      row.Stdout,
+		Stderr:      row.Stderr,
+		Cursor:      row.Cursor,
+		StdoutBytes: row.StdoutBytes,
+		StderrBytes: row.StderrBytes,
+		Truncated:   row.Truncated.Bool,
+		UpdatedAt:   pgvalue.Time(row.UpdatedAt),
+	}, nil
 }
 
 type noopControlTransaction struct{}

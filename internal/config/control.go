@@ -68,6 +68,9 @@ func LoadControl() (Control, error) {
 	if cfg.CellID == "" {
 		return cfg, errors.New("HELMR_CELL_ID is required")
 	}
+	if cfg.ClickHouseURL == "" {
+		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
+	}
 	if cfg.CASURI == "" {
 		return cfg, errors.New("HELMR_CAS_URI is required")
 	}

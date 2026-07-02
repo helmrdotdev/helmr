@@ -17,15 +17,18 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/clickhouse"
+	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/db/schema"
+	dbschema "github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -74,6 +77,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer pool.Close()
 	queries := db.New(pool)
+	clickHouseClient, err := clickhouse.New(clickhouse.Config{
+		URL:      cfg.ClickHouseURL,
+		User:     cfg.ClickHouseUser,
+		Password: cfg.ClickHousePassword,
+	})
+	if err != nil {
+		return fmt.Errorf("configure clickhouse: %w", err)
+	}
+	telemetryReader := telemetry.NewCompositeReader(
+		telemetry.NewHotReader(queries),
+		telemetry.NewHistoricalReader(clickHouseClient),
+	)
 	redisOptions, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("parse redis url: %w", err)
@@ -111,7 +126,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("parse public URL: %w", err)
 	}
 	mailer := configuredEmailSender(log, cfg)
-	eventStream, err := control.NewEventStream(log, queries, redisClient)
+	eventStream, err := control.NewEventStream(log, queries, redisClient, control.EventStreamConfig{
+		CellID:          cfg.CellID,
+		TelemetryReader: telemetryReader,
+	})
 	if err != nil {
 		return fmt.Errorf("configure event stream: %w", err)
 	}
@@ -184,6 +202,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		EventStream:           eventStream,
 		WorkspaceStreams:      workspaceStreams,
 		WorkerCommands:        workerCommands,
+		TelemetryReader:       telemetryReader,
 		Mailer:                mailer,
 		AuthProvider:          authProvider,
 		WorkerTokenSecret:     []byte(cfg.WorkerTokenSigningKey),
@@ -251,9 +270,20 @@ func runMigrate(log *slog.Logger, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load database config: %w", err)
 	}
+	clickHouseCfg, err := config.LoadClickHouse()
+	if err != nil {
+		return fmt.Errorf("load clickhouse config: %w", err)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := schema.Up(ctx, cfg.URL); err != nil {
+	if err := clickhouseschema.Up(ctx, clickhouse.Config{
+		URL:      clickHouseCfg.URL,
+		User:     clickHouseCfg.User,
+		Password: clickHouseCfg.Password,
+	}); err != nil {
+		return err
+	}
+	if err := dbschema.Up(ctx, cfg.URL); err != nil {
 		return err
 	}
 	log.Info("database migrations are up to date")

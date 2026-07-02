@@ -2418,7 +2418,7 @@ CREATE TABLE event_cursors (
     seq BIGINT NOT NULL CHECK (seq >= 0),
     observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, subject_kind, subject_id)
+    PRIMARY KEY (org_id, cell_id, subject_kind, subject_id)
 );
 
 CREATE TABLE event_spill_objects (
@@ -2462,35 +2462,42 @@ CREATE TABLE terminal_output_watermarks (
 
 CREATE TABLE telemetry_outbox (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    org_id UUID,
+    org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
-    stream_kind telemetry_stream_kind NOT NULL DEFAULT 'event',
-    source_kind TEXT NOT NULL DEFAULT 'event',
-    source_id UUID,
-    idempotency_key TEXT NOT NULL DEFAULT '',
+    stream_kind telemetry_stream_kind NOT NULL,
+    source_kind TEXT NOT NULL CHECK (btrim(source_kind) <> ''),
+    source_id UUID NOT NULL,
+    stream_name TEXT NOT NULL DEFAULT '',
+    seq BIGINT NOT NULL CHECK (seq >= 0),
+    idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
     object_key TEXT,
     cas_digest TEXT,
     state telemetry_outbox_state NOT NULL DEFAULT 'pending',
     retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
     next_retry_at TIMESTAMPTZ,
-    event_record_id BIGINT,
-    stream_key TEXT NOT NULL CHECK (btrim(stream_key) <> ''),
-    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-    locked_until TIMESTAMPTZ,
     written_at TIMESTAMPTZ,
+    published_at TIMESTAMPTZ,
+    publish_attempts INTEGER NOT NULL DEFAULT 0 CHECK (publish_attempts >= 0),
+    publish_locked_until TIMESTAMPTZ,
     last_error TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX telemetry_outbox_event_record_id_idx ON telemetry_outbox(event_record_id)
-    WHERE event_record_id IS NOT NULL;
 CREATE UNIQUE INDEX telemetry_outbox_idempotency_idx
-    ON telemetry_outbox (cell_id, stream_kind, idempotency_key)
-    WHERE idempotency_key <> '';
-CREATE INDEX telemetry_outbox_ready_idx
+    ON telemetry_outbox (cell_id, stream_kind, idempotency_key);
+CREATE INDEX telemetry_outbox_publish_ready_idx
     ON telemetry_outbox (created_at, id)
+    WHERE stream_kind = 'event' AND published_at IS NULL;
+CREATE INDEX telemetry_outbox_ingest_ready_idx
+    ON telemetry_outbox (stream_kind, source_kind, source_id, stream_name, seq)
     WHERE written_at IS NULL;
+CREATE INDEX telemetry_outbox_ingest_claim_idx
+    ON telemetry_outbox (stream_kind, id)
+    WHERE written_at IS NULL AND state IN ('pending', 'claimed', 'failed');
+CREATE INDEX telemetry_outbox_written_gc_idx
+    ON telemetry_outbox (id)
+    WHERE written_at IS NOT NULL;
 
 CREATE TABLE telemetry_replay_errors (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -2499,6 +2506,8 @@ CREATE TABLE telemetry_replay_errors (
     stream_kind telemetry_stream_kind NOT NULL,
     source_kind TEXT NOT NULL CHECK (btrim(source_kind) <> ''),
     source_id UUID,
+    stream_name TEXT NOT NULL DEFAULT '',
+    seq BIGINT CHECK (seq IS NULL OR seq >= 0),
     state telemetry_replay_error_state NOT NULL DEFAULT 'retryable',
     retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
     last_error TEXT NOT NULL DEFAULT '',

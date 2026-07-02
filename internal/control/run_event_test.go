@@ -262,7 +262,7 @@ func TestEventStreamTreatsTrimmedOlderDuplicateAsPublished(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
-	streamKey := eventStreamKey(dbtest.DefaultOrgID, db.EventSubjectTypeRun, runID)
+	streamKey := eventStreamKey(dbtest.DefaultOrgID, "us-east-1-cell-1", db.EventSubjectTypeRun, runID)
 	if err := redisClient.XAdd(context.Background(), &redis.XAddArgs{
 		Stream: streamKey,
 		ID:     "2-0",

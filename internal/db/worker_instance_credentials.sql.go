@@ -102,10 +102,11 @@ WITH bootstrap_token AS (
            worker_bootstrap_tokens.cell_id,
            worker_bootstrap_tokens.worker_group_id,
            worker_groups.claim_version
-      FROM worker_bootstrap_tokens
+     FROM worker_bootstrap_tokens
       JOIN worker_groups ON worker_groups.id = worker_bootstrap_tokens.worker_group_id
                         AND worker_groups.cell_id = worker_bootstrap_tokens.cell_id
      WHERE worker_bootstrap_tokens.token_hash = $4
+       AND worker_bootstrap_tokens.cell_id = $5
        AND worker_bootstrap_tokens.revoked_at IS NULL
        AND (worker_bootstrap_tokens.expires_at IS NULL OR worker_bootstrap_tokens.expires_at > now())
      FOR UPDATE
@@ -131,11 +132,11 @@ reserved_worker_instance AS (
         heartbeat,
         last_seen_at
     )
-    SELECT $5,
+    SELECT $6,
            bootstrap_token.org_id,
            bootstrap_token.cell_id,
            bootstrap_token.worker_group_id,
-           $6,
+           $7,
            'offline',
            bootstrap_token.claim_version,
            1,
@@ -172,6 +173,7 @@ bootstrap_token_update AS (
        SET last_used_at = now(),
            last_used_by_worker_instance_id = (SELECT worker_instance_id FROM reserved_worker_instance)
      WHERE worker_bootstrap_tokens.token_hash = $4
+       AND worker_bootstrap_tokens.cell_id = $5
        AND worker_bootstrap_tokens.revoked_at IS NULL
      RETURNING 1
 )
@@ -195,6 +197,7 @@ type CreateWorkerInstanceCredentialFromBootstrapParams struct {
 	KeyPrefix          string      `json:"key_prefix"`
 	SecretHash         []byte      `json:"secret_hash"`
 	BootstrapTokenHash []byte      `json:"bootstrap_token_hash"`
+	CellID             string      `json:"cell_id"`
 	WorkerInstanceID   pgtype.UUID `json:"worker_instance_id"`
 	ResourceID         string      `json:"resource_id"`
 }
@@ -215,6 +218,7 @@ func (q *Queries) CreateWorkerInstanceCredentialFromBootstrap(ctx context.Contex
 		arg.KeyPrefix,
 		arg.SecretHash,
 		arg.BootstrapTokenHash,
+		arg.CellID,
 		arg.WorkerInstanceID,
 		arg.ResourceID,
 	)

@@ -32,13 +32,13 @@ idem="canary:${cell_id}:${run_id}"
 
 curl "${curl_args[@]}" "${url}/" --data-binary @- <<SQL
 INSERT INTO helmr_telemetry.run_logs
-    (cell_id, org_id, project_id, environment_id, run_id, stream_name, seq, observed_seq, content, size_bytes, idempotency_key, retention_class, redaction_class, source, observed_at)
+    (cell_id, org_id, project_id, environment_id, run_id, attempt_number, stream_name, seq, observed_seq, content, size_bytes, idempotency_key, retention_class, redaction_class, source, observed_at)
 VALUES
-    ('${cell_id}', '${org_id}', '${project_id}', '${environment_id}', '${run_id}', 'stdout', 1, 1, 'ok', 2, '${idem}', 'hot', 'internal', 'canary', now64(3));
+    ('${cell_id}', '${org_id}', '${project_id}', '${environment_id}', '${run_id}', 1, 'stdout', 1, 1, 'ok', 2, '${idem}', 'hot', 'internal', 'canary', now64(3));
 SQL
 
 count="$(
-  curl "${curl_args[@]}" "${url}/" --data-binary "SELECT count() FROM helmr_telemetry.run_logs WHERE cell_id = '${cell_id}' AND run_id = '${run_id}' AND idempotency_key = '${idem}' FORMAT TabSeparatedRaw"
+  curl "${curl_args[@]}" "${url}/" --data-binary "SELECT count() FROM helmr_telemetry.run_logs FINAL WHERE cell_id = '${cell_id}' AND run_id = '${run_id}' AND idempotency_key = '${idem}' FORMAT TabSeparatedRaw"
 )"
 
 if [[ "${count}" != "1" ]]; then

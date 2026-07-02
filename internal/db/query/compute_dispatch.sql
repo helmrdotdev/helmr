@@ -1132,7 +1132,7 @@ queue_entry AS (
 	    SELECT failed_run.org_id, failed_run.cell_id, 'run', failed_run.id, 1
 	      FROM failed_run
 	      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
-	    ON CONFLICT (org_id, subject_kind, subject_id)
+	    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
 	    DO UPDATE SET seq = event_cursors.seq + 1,
 	                  observed_at = now()
 	    RETURNING org_id, subject_kind, subject_id, seq
@@ -1165,15 +1165,14 @@ queue_entry AS (
 	    RETURNING *
 	),
 	run_telemetry_outbox AS (
-	    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, idempotency_key, event_record_id, stream_key)
+	    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
 	    SELECT run_event.org_id,
 	                  run_event.cell_id,
 	                  'event',
-	                  'event',
+	                  run_event.subject_type,
 	                  run_event.subject_id,
-	                  'event:' || run_event.subject_kind::text || ':' || run_event.subject_id::text || ':' || run_event.seq::text,
-	                  run_event.id,
-	                  'helmr:events:' || run_event.org_id::text || ':' || run_event.subject_kind::text || ':' || run_event.subject_id::text
+	                  run_event.seq,
+	                  'event:' || run_event.subject_type::text || ':' || run_event.subject_id::text || ':' || run_event.seq::text
 	      FROM run_event
 	    RETURNING id
 	),

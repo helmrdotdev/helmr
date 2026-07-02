@@ -185,7 +185,7 @@ event_seq AS (
     SELECT updated.org_id, updated.cell_id, 'run', updated.id, 1
       FROM updated
       JOIN snapshot ON true
-    ON CONFLICT (org_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
     RETURNING org_id, subject_kind, subject_id, seq
@@ -223,15 +223,14 @@ event AS (
     RETURNING id, subject_type, subject_id, seq, org_id, cell_id, project_id, environment_id, run_id, deployment_id, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
 ),
 telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, idempotency_key, event_record_id, stream_key)
+    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT event.org_id,
                   event.cell_id,
                   'event',
-                  'event',
+                  event.subject_type,
                   event.subject_id,
-                  'event:' || event.subject_kind::text || ':' || event.subject_id::text || ':' || event.seq::text,
-                  event.id,
-                  'helmr:events:' || event.org_id::text || ':' || event.subject_kind::text || ':' || event.subject_id::text
+                  event.seq,
+                  'event:' || event.subject_type::text || ':' || event.subject_id::text || ':' || event.seq::text
       FROM event
     RETURNING id
 ),
@@ -599,7 +598,7 @@ created_event_seq AS (
     SELECT created.org_id, created.cell_id, 'run', created.id, 1
       FROM created
       JOIN created_snapshot ON true
-    ON CONFLICT (org_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
     RETURNING org_id, subject_kind, subject_id, seq
@@ -632,15 +631,14 @@ created_event AS (
     RETURNING id, subject_type, subject_id, seq, org_id, cell_id, project_id, environment_id, run_id, deployment_id, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
 ),
 created_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, idempotency_key, event_record_id, stream_key)
+    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT created_event.org_id,
                   created_event.cell_id,
                   'event',
-                  'event',
+                  created_event.subject_type,
                   created_event.subject_id,
-                  'event:' || created_event.subject_kind::text || ':' || created_event.subject_id::text || ':' || created_event.seq::text,
-                  created_event.id,
-                  'helmr:events:' || created_event.org_id::text || ':' || created_event.subject_kind::text || ':' || created_event.subject_id::text
+                  created_event.seq,
+                  'event:' || created_event.subject_type::text || ':' || created_event.subject_id::text || ':' || created_event.seq::text
       FROM created_event
     RETURNING id
 )
@@ -883,7 +881,7 @@ expired_event_seq AS (
     SELECT expired_runs.org_id, expired_runs.cell_id, 'run', expired_runs.id, 1
       FROM expired_runs
       JOIN expired_snapshots ON expired_snapshots.run_id = expired_runs.id
-    ON CONFLICT (org_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
     RETURNING org_id, subject_kind, subject_id, seq
@@ -917,15 +915,14 @@ expired_event AS (
     RETURNING id, subject_type, subject_id, seq, org_id, cell_id, project_id, environment_id, run_id, deployment_id, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
 ),
 expired_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, idempotency_key, event_record_id, stream_key)
+    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT expired_event.org_id,
                   expired_event.cell_id,
                   'event',
-                  'event',
+                  expired_event.subject_type,
                   expired_event.subject_id,
-                  'event:' || expired_event.subject_kind::text || ':' || expired_event.subject_id::text || ':' || expired_event.seq::text,
-                  expired_event.id,
-                  'helmr:events:' || expired_event.org_id::text || ':' || expired_event.subject_kind::text || ':' || expired_event.subject_id::text
+                  expired_event.seq,
+                  'event:' || expired_event.subject_type::text || ':' || expired_event.subject_id::text || ':' || expired_event.seq::text
       FROM expired_event
     RETURNING id
 )
@@ -1040,7 +1037,7 @@ failed_event_seq AS (
     SELECT failed_run.org_id, failed_run.cell_id, 'run', failed_run.id, 1
       FROM failed_run
       JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
-    ON CONFLICT (org_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
     RETURNING org_id, subject_kind, subject_id, seq
@@ -1074,15 +1071,14 @@ failed_event AS (
     RETURNING id, subject_type, subject_id, seq, org_id, cell_id, project_id, environment_id, run_id, deployment_id, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
 ),
 failed_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, idempotency_key, event_record_id, stream_key)
+    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT failed_event.org_id,
                   failed_event.cell_id,
                   'event',
-                  'event',
+                  failed_event.subject_type,
                   failed_event.subject_id,
-                  'event:' || failed_event.subject_kind::text || ':' || failed_event.subject_id::text || ':' || failed_event.seq::text,
-                  failed_event.id,
-                  'helmr:events:' || failed_event.org_id::text || ':' || failed_event.subject_kind::text || ':' || failed_event.subject_id::text
+                  failed_event.seq,
+                  'event:' || failed_event.subject_type::text || ':' || failed_event.subject_id::text || ':' || failed_event.seq::text
       FROM failed_event
     RETURNING id
 )
@@ -1632,7 +1628,7 @@ event_seq AS (
            updated_with_context.id,
            1
       FROM updated_with_context
-    ON CONFLICT (org_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
     RETURNING org_id, subject_kind, subject_id, seq
@@ -1670,15 +1666,14 @@ inserted_event AS (
     RETURNING id
 ),
 telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, idempotency_key, event_record_id, stream_key)
+    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT inserted_event.org_id,
                   inserted_event.cell_id,
                   'event',
-                  'event',
+                  inserted_event.subject_type,
                   inserted_event.subject_id,
-                  'event:' || inserted_event.subject_kind::text || ':' || inserted_event.subject_id::text || ':' || inserted_event.seq::text,
-                  inserted_event.id,
-                  'helmr:events:' || updated_with_context.org_id::text || ':run:' || updated_with_context.id::text
+                  inserted_event.seq,
+                  'event:' || inserted_event.subject_type::text || ':' || inserted_event.subject_id::text || ':' || inserted_event.seq::text
       FROM inserted_event
       JOIN updated_with_context ON true
     RETURNING id

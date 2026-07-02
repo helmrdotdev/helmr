@@ -55,10 +55,13 @@ variable "cell_id" {
 }
 
 variable "clickhouse_url" {
-  description = "Optional ClickHouse HTTP endpoint for historical telemetry."
+  description = "ClickHouse HTTP endpoint for historical telemetry."
   type        = string
-  default     = null
-  nullable    = true
+
+  validation {
+    condition     = trimspace(var.clickhouse_url) != ""
+    error_message = "clickhouse_url must be non-empty."
+  }
 }
 
 variable "clickhouse_user" {
@@ -69,7 +72,7 @@ variable "clickhouse_user" {
 }
 
 variable "clickhouse_password_secret_arn" {
-  description = "Optional Secrets Manager ARN for HELMR_CLICKHOUSE_PASSWORD."
+  description = "Secrets Manager ARN for HELMR_CLICKHOUSE_PASSWORD when the ClickHouse endpoint requires a password."
   type        = string
   default     = null
   nullable    = true

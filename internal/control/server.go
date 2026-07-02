@@ -26,6 +26,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -63,6 +64,7 @@ type Server struct {
 	dispatchQueue         dispatch.Queue
 	scheduleEngine        ScheduleRegistrar
 	eventStream           *EventStream
+	telemetryReader       telemetry.Reader
 	workspaceStreams      *WorkspaceStreamNotifier
 	workerCommandStream   *WorkerCommandStream
 	workerLeaseScanSeed   atomic.Uint64
@@ -135,6 +137,7 @@ type ServerConfig struct {
 	DispatchQueue         dispatch.Queue
 	ScheduleEngine        ScheduleRegistrar
 	EventStream           *EventStream
+	TelemetryReader       telemetry.Reader
 	WorkspaceStreams      *WorkspaceStreamNotifier
 	WorkerCommands        *WorkerCommandStream
 	Mailer                email.Sender
@@ -176,7 +179,19 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	cellID := strings.TrimSpace(cfg.CellID)
 	if cellID == "" {
-		cellID = "us-east-1-cell-1"
+		return nil, errors.New("control cell id is required")
+	}
+	telemetryReader := cfg.TelemetryReader
+	if telemetryReader == nil {
+		telemetryReader = telemetry.NewCompositeReader(telemetry.NewHotReader(cfg.DB), nil)
+	}
+	if cfg.EventStream != nil {
+		if cfg.EventStream.cellID == "" {
+			cfg.EventStream.cellID = cellID
+		}
+		if cfg.EventStream.telemetryReader == nil {
+			cfg.EventStream.telemetryReader = telemetryReader
+		}
 	}
 	mailer := cfg.Mailer
 	if mailer == nil {
@@ -205,6 +220,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		dispatchQueue:         cfg.DispatchQueue,
 		scheduleEngine:        cfg.ScheduleEngine,
 		eventStream:           cfg.EventStream,
+		telemetryReader:       telemetryReader,
 		workspaceStreams:      cfg.WorkspaceStreams,
 		workerCommandStream:   cfg.WorkerCommands,
 		workerTokenSecret:     cfg.WorkerTokenSecret,

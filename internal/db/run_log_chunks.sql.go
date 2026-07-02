@@ -50,9 +50,9 @@ seed_run_log_cursor AS (
     SELECT org_id,
            cell_id,
            id,
-           ($7::run_log_stream)::text,
+           '__run__',
            0,
-           'rlc1.' || org_id::text || '.' || id::text || '.' || ($7::run_log_stream)::text || '.0',
+           'rlc1.' || org_id::text || '.' || id::text || '.__run__.0',
            '__head__'
       FROM current_run_lease
     ON CONFLICT (org_id, cell_id, run_id, stream_name, idempotency_key) DO NOTHING
@@ -64,11 +64,11 @@ locked_run_log_cursor AS (
            run_log_cursors.run_id,
            run_log_cursors.stream_name,
            run_log_cursors.seq
-      FROM run_log_cursors
+     FROM run_log_cursors
       JOIN current_run_lease ON current_run_lease.org_id = run_log_cursors.org_id
                             AND current_run_lease.cell_id = run_log_cursors.cell_id
                             AND current_run_lease.id = run_log_cursors.run_id
-     WHERE run_log_cursors.stream_name = ($7::run_log_stream)::text
+     WHERE run_log_cursors.stream_name = '__run__'
        AND run_log_cursors.idempotency_key = '__head__'
      FOR UPDATE OF run_log_cursors
 ),
@@ -78,12 +78,12 @@ existing_cursor AS (
            run_log_cursors.run_id,
            run_log_cursors.stream_name,
            run_log_cursors.seq
-      FROM run_log_cursors
+     FROM run_log_cursors
       JOIN locked_run_log_cursor ON locked_run_log_cursor.org_id = run_log_cursors.org_id
                                 AND locked_run_log_cursor.cell_id = run_log_cursors.cell_id
                                 AND locked_run_log_cursor.run_id = run_log_cursors.run_id
-                                AND locked_run_log_cursor.stream_name = run_log_cursors.stream_name
-     WHERE run_log_cursors.idempotency_key = 'log:' || $5::text || ':' || ($7::run_log_stream)::text || ':' || ($8::bigint)::text
+     WHERE run_log_cursors.stream_name = ($7::run_log_stream)::text
+       AND run_log_cursors.idempotency_key = 'log:' || $5::text || ':' || ($7::run_log_stream)::text || ':' || ($8::bigint)::text
 ),
 inserted_cursor AS (
     INSERT INTO run_log_cursors (org_id, cell_id, run_id, attempt_id, run_lease_id, stream_name, seq, cursor, idempotency_key)
@@ -92,10 +92,10 @@ inserted_cursor AS (
            locked_run_log_cursor.run_id,
            current_run_lease.attempt_id,
            current_run_lease.run_lease_id,
-           locked_run_log_cursor.stream_name,
+           ($7::run_log_stream)::text,
            locked_run_log_cursor.seq + 1,
-           'rlc1.' || locked_run_log_cursor.org_id::text || '.' || locked_run_log_cursor.run_id::text || '.' || locked_run_log_cursor.stream_name || '.' || (locked_run_log_cursor.seq + 1)::text,
-           'log:' || current_run_lease.run_lease_id::text || ':' || locked_run_log_cursor.stream_name || ':' || ($8::bigint)::text
+           'rlc1.' || locked_run_log_cursor.org_id::text || '.' || locked_run_log_cursor.run_id::text || '.' || ($7::run_log_stream)::text || '.' || (locked_run_log_cursor.seq + 1)::text,
+           'log:' || current_run_lease.run_lease_id::text || ':' || ($7::run_log_stream)::text || ':' || ($8::bigint)::text
       FROM locked_run_log_cursor
       JOIN current_run_lease ON current_run_lease.org_id = locked_run_log_cursor.org_id
                             AND current_run_lease.cell_id = locked_run_log_cursor.cell_id
@@ -112,7 +112,7 @@ advanced_run_log_cursor AS (
      WHERE run_log_cursors.org_id = inserted_cursor.org_id
        AND run_log_cursors.cell_id = inserted_cursor.cell_id
        AND run_log_cursors.run_id = inserted_cursor.run_id
-       AND run_log_cursors.stream_name = inserted_cursor.stream_name
+       AND run_log_cursors.stream_name = '__run__'
        AND run_log_cursors.idempotency_key = '__head__'
     RETURNING run_log_cursors.id
 ),
@@ -201,7 +201,7 @@ event_seq AS (
            event_input.run_id,
            1
       FROM event_input
-    ON CONFLICT (org_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
     RETURNING event_cursors.org_id, event_cursors.cell_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
@@ -236,17 +236,29 @@ event AS (
                     AND event_seq.subject_id = event_input.run_id
     RETURNING id, subject_type, subject_id, seq, org_id, cell_id, project_id, environment_id, run_id, deployment_id, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
 ),
-telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, idempotency_key, event_record_id, stream_key)
+event_telemetry_outbox AS (
+    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT event.org_id,
                   event.cell_id,
                   'event',
-                  'event',
+                  event.subject_type,
                   event.subject_id,
-                  'event:' || event.subject_type::text || ':' || event.subject_id::text || ':' || event.seq::text,
-                  event.id,
-                  'helmr:events:' || event.org_id::text || ':' || event.subject_type::text || ':' || event.subject_id::text
+                  event.seq,
+                  'event:' || event.subject_type::text || ':' || event.subject_id::text || ':' || event.seq::text
       FROM event
+    RETURNING id
+),
+run_log_telemetry_outbox AS (
+    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key)
+    SELECT inserted.org_id,
+           inserted.cell_id,
+           'run_log',
+           'run',
+           inserted.run_id,
+           inserted.stream::text,
+           inserted.seq,
+           'run_log:' || inserted.run_id::text || ':' || inserted.stream::text || ':' || inserted.seq::text
+      FROM inserted
     RETURNING id
 ),
 usage_event AS (
@@ -287,7 +299,8 @@ SELECT selected_chunk.org_id,
        selected_chunk.size_bytes,
        selected_chunk.created_at
   FROM selected_chunk
- WHERE (SELECT count(*) FROM telemetry_outbox) >= 0
+ WHERE (SELECT count(*) FROM event_telemetry_outbox) >= 0
+   AND (SELECT count(*) FROM run_log_telemetry_outbox) >= 0
    AND (SELECT count(*) FROM advanced_run_log_cursor) >= 0
    AND (SELECT count(*) FROM usage_event) >= 0
 `

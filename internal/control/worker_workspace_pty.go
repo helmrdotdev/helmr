@@ -186,6 +186,7 @@ func (s *Server) workerAdvanceWorkspacePtyInputDelivered(w http.ResponseWriter, 
 		deliveredDigest := streamDataSHA256(deliveredChunk.Data)
 		if _, err := work.q.InsertWorkspacePtyStreamChunkReceipt(r.Context(), db.InsertWorkspacePtyStreamChunkReceiptParams{
 			OrgID:         mount.OrgID,
+			CellID:        mount.CellID,
 			ProjectID:     mount.ProjectID,
 			EnvironmentID: mount.EnvironmentID,
 			WorkspaceID:   mount.WorkspaceID,
@@ -473,8 +474,9 @@ func (s *Server) appendWorkspacePtyOutputStreamChunk(ctx context.Context, pty db
 			}
 			return conflict(errWorkspaceStreamOffsetConflict)
 		}
-		chunk, err = work.q.InsertWorkspacePtyOutputStreamChunk(ctx, db.InsertWorkspacePtyOutputStreamChunkParams{
+		inserted, insertErr := work.q.InsertWorkspacePtyOutputStreamChunk(ctx, db.InsertWorkspacePtyOutputStreamChunkParams{
 			OrgID:         pty.OrgID,
+			CellID:        pty.CellID,
 			ProjectID:     pty.ProjectID,
 			EnvironmentID: pty.EnvironmentID,
 			WorkspaceID:   pty.WorkspaceID,
@@ -485,6 +487,8 @@ func (s *Server) appendWorkspacePtyOutputStreamChunk(ctx context.Context, pty db
 			Data:          data,
 			ObservedAt:    nil,
 		})
+		err = insertErr
+		chunk = db.WorkspacePtyStreamChunk(inserted)
 		if errors.Is(err, pgx.ErrNoRows) {
 			existing, getErr := work.q.GetWorkspacePtyStreamChunkAtOffset(ctx, db.GetWorkspacePtyStreamChunkAtOffsetParams{
 				OrgID:         pty.OrgID,

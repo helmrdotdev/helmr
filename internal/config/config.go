@@ -90,6 +90,12 @@ type Database struct {
 	URL string
 }
 
+type ClickHouse struct {
+	URL      string
+	User     string
+	Password string
+}
+
 type Worker struct {
 	ControlURL                   string
 	CASURI                       string
@@ -149,6 +155,18 @@ func LoadDatabase() (Database, error) {
 	cfg := Database{URL: envString("HELMR_DATABASE_URL")}
 	if cfg.URL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
+	}
+	return cfg, nil
+}
+
+func LoadClickHouse() (ClickHouse, error) {
+	cfg := ClickHouse{
+		URL:      envString("HELMR_CLICKHOUSE_URL"),
+		User:     envString("HELMR_CLICKHOUSE_USER"),
+		Password: envString("HELMR_CLICKHOUSE_PASSWORD"),
+	}
+	if cfg.URL == "" {
+		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
 	}
 	return cfg, nil
 }

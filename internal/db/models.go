@@ -4054,26 +4054,27 @@ type TaskScheduleInstance struct {
 }
 
 type TelemetryOutbox struct {
-	ID             int64                `json:"id"`
-	OrgID          pgtype.UUID          `json:"org_id"`
-	CellID         string               `json:"cell_id"`
-	StreamKind     TelemetryStreamKind  `json:"stream_kind"`
-	SourceKind     string               `json:"source_kind"`
-	SourceID       pgtype.UUID          `json:"source_id"`
-	IdempotencyKey string               `json:"idempotency_key"`
-	ObjectKey      pgtype.Text          `json:"object_key"`
-	CasDigest      pgtype.Text          `json:"cas_digest"`
-	State          TelemetryOutboxState `json:"state"`
-	RetryCount     int32                `json:"retry_count"`
-	NextRetryAt    pgtype.Timestamptz   `json:"next_retry_at"`
-	EventRecordID  pgtype.Int8          `json:"event_record_id"`
-	StreamKey      string               `json:"stream_key"`
-	Attempts       int32                `json:"attempts"`
-	LockedUntil    pgtype.Timestamptz   `json:"locked_until"`
-	WrittenAt      pgtype.Timestamptz   `json:"written_at"`
-	LastError      string               `json:"last_error"`
-	CreatedAt      pgtype.Timestamptz   `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz   `json:"updated_at"`
+	ID                 int64                `json:"id"`
+	OrgID              pgtype.UUID          `json:"org_id"`
+	CellID             string               `json:"cell_id"`
+	StreamKind         TelemetryStreamKind  `json:"stream_kind"`
+	SourceKind         string               `json:"source_kind"`
+	SourceID           pgtype.UUID          `json:"source_id"`
+	StreamName         string               `json:"stream_name"`
+	Seq                int64                `json:"seq"`
+	IdempotencyKey     string               `json:"idempotency_key"`
+	ObjectKey          pgtype.Text          `json:"object_key"`
+	CasDigest          pgtype.Text          `json:"cas_digest"`
+	State              TelemetryOutboxState `json:"state"`
+	RetryCount         int32                `json:"retry_count"`
+	NextRetryAt        pgtype.Timestamptz   `json:"next_retry_at"`
+	WrittenAt          pgtype.Timestamptz   `json:"written_at"`
+	PublishedAt        pgtype.Timestamptz   `json:"published_at"`
+	PublishAttempts    int32                `json:"publish_attempts"`
+	PublishLockedUntil pgtype.Timestamptz   `json:"publish_locked_until"`
+	LastError          string               `json:"last_error"`
+	CreatedAt          pgtype.Timestamptz   `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz   `json:"updated_at"`
 }
 
 type TelemetryReplayError struct {
@@ -4083,6 +4084,8 @@ type TelemetryReplayError struct {
 	StreamKind  TelemetryStreamKind       `json:"stream_kind"`
 	SourceKind  string                    `json:"source_kind"`
 	SourceID    pgtype.UUID               `json:"source_id"`
+	StreamName  string                    `json:"stream_name"`
+	Seq         pgtype.Int8               `json:"seq"`
 	State       TelemetryReplayErrorState `json:"state"`
 	RetryCount  int32                     `json:"retry_count"`
 	LastError   string                    `json:"last_error"`

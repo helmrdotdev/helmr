@@ -541,13 +541,50 @@ func (q *Queries) CreateWorkspaceExec(ctx context.Context, arg CreateWorkspaceEx
 
 const deleteWorkspaceExecStreamChunksBefore = `-- name: DeleteWorkspaceExecStreamChunksBefore :exec
 DELETE FROM workspace_exec_stream_chunks
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND workspace_id = $4
-   AND exec_id = $5
-   AND stream = $6::workspace_exec_stream
-   AND offset_end <= $7
+ WHERE workspace_exec_stream_chunks.org_id = $1
+   AND workspace_exec_stream_chunks.project_id = $2
+   AND workspace_exec_stream_chunks.environment_id = $3
+   AND workspace_exec_stream_chunks.workspace_id = $4
+   AND workspace_exec_stream_chunks.exec_id = $5
+   AND workspace_exec_stream_chunks.stream = $6::workspace_exec_stream
+   AND workspace_exec_stream_chunks.offset_end <= $7
+   AND (
+         NOT EXISTS (
+             SELECT 1
+               FROM telemetry_outbox
+              WHERE telemetry_outbox.org_id = workspace_exec_stream_chunks.org_id
+                AND telemetry_outbox.cell_id = workspace_exec_stream_chunks.cell_id
+                AND telemetry_outbox.stream_kind = 'terminal_output'
+                AND telemetry_outbox.source_kind = 'workspace_exec'
+                AND telemetry_outbox.source_id = workspace_exec_stream_chunks.exec_id
+                AND telemetry_outbox.stream_name = workspace_exec_stream_chunks.stream::text
+                AND telemetry_outbox.seq = workspace_exec_stream_chunks.offset_start
+         )
+         OR EXISTS (
+             SELECT 1
+               FROM terminal_output_watermarks
+              WHERE terminal_output_watermarks.org_id = workspace_exec_stream_chunks.org_id
+                AND terminal_output_watermarks.cell_id = workspace_exec_stream_chunks.cell_id
+                AND terminal_output_watermarks.workspace_id = workspace_exec_stream_chunks.workspace_id
+                AND terminal_output_watermarks.resource_kind = 'workspace_exec'
+                AND terminal_output_watermarks.resource_id = workspace_exec_stream_chunks.exec_id
+                AND terminal_output_watermarks.stream_name = workspace_exec_stream_chunks.stream::text
+                AND terminal_output_watermarks.watermark_offset >= workspace_exec_stream_chunks.offset_end
+         )
+   )
+   AND NOT EXISTS (
+         SELECT 1
+           FROM telemetry_outbox
+          WHERE telemetry_outbox.org_id = workspace_exec_stream_chunks.org_id
+            AND telemetry_outbox.cell_id = workspace_exec_stream_chunks.cell_id
+            AND telemetry_outbox.stream_kind = 'terminal_output'
+            AND telemetry_outbox.source_kind = 'workspace_exec'
+            AND telemetry_outbox.source_id = workspace_exec_stream_chunks.exec_id
+            AND telemetry_outbox.stream_name = workspace_exec_stream_chunks.stream::text
+            AND telemetry_outbox.seq = workspace_exec_stream_chunks.offset_start
+            AND telemetry_outbox.written_at IS NULL
+            AND telemetry_outbox.state <> 'dead_lettered'
+   )
 `
 
 type DeleteWorkspaceExecStreamChunksBeforeParams struct {
@@ -782,35 +819,57 @@ func (q *Queries) GetWorkspaceExecStreamChunkReceiptAtOffset(ctx context.Context
 }
 
 const insertWorkspaceExecOutputStreamChunk = `-- name: InsertWorkspaceExecOutputStreamChunk :one
-INSERT INTO workspace_exec_stream_chunks (
-    org_id,
-    project_id,
-    environment_id,
-    workspace_id,
-    exec_id,
-    stream,
-    offset_start,
-    offset_end,
-    data,
-    observed_at
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6::workspace_exec_stream,
-    $7,
-    $8,
-    $9,
-    coalesce($10, now())
+WITH inserted AS (
+    INSERT INTO workspace_exec_stream_chunks (
+        org_id,
+        cell_id,
+        project_id,
+        environment_id,
+        workspace_id,
+        exec_id,
+        stream,
+        offset_start,
+        offset_end,
+        data,
+        observed_at
+    ) VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7::workspace_exec_stream,
+        $8,
+        $9,
+        $10,
+        coalesce($11, now())
+    )
+    ON CONFLICT DO NOTHING
+    RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, exec_id, stream, offset_start, offset_end, data, observed_at, expires_at, created_at
+),
+terminal_telemetry_outbox AS (
+    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key)
+    SELECT inserted.org_id,
+           inserted.cell_id,
+           'terminal_output',
+           'workspace_exec',
+           inserted.exec_id,
+           inserted.stream::text,
+           inserted.offset_start,
+           'terminal_output:workspace_exec:' || inserted.exec_id::text || ':' || inserted.stream::text || ':' || inserted.offset_start::text || ':' || inserted.offset_end::text
+      FROM inserted
+    ON CONFLICT (cell_id, stream_kind, idempotency_key) DO NOTHING
+    RETURNING id
 )
-ON CONFLICT DO NOTHING
-RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, exec_id, stream, offset_start, offset_end, data, observed_at, expires_at, created_at
+SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, exec_id, stream, offset_start, offset_end, data, observed_at, expires_at, created_at
+  FROM inserted
+ WHERE (SELECT count(*) FROM terminal_telemetry_outbox) >= 0
 `
 
 type InsertWorkspaceExecOutputStreamChunkParams struct {
 	OrgID         pgtype.UUID         `json:"org_id"`
+	CellID        string              `json:"cell_id"`
 	ProjectID     pgtype.UUID         `json:"project_id"`
 	EnvironmentID pgtype.UUID         `json:"environment_id"`
 	WorkspaceID   pgtype.UUID         `json:"workspace_id"`
@@ -822,9 +881,27 @@ type InsertWorkspaceExecOutputStreamChunkParams struct {
 	ObservedAt    interface{}         `json:"observed_at"`
 }
 
-func (q *Queries) InsertWorkspaceExecOutputStreamChunk(ctx context.Context, arg InsertWorkspaceExecOutputStreamChunkParams) (WorkspaceExecStreamChunk, error) {
+type InsertWorkspaceExecOutputStreamChunkRow struct {
+	ID            pgtype.UUID         `json:"id"`
+	OrgID         pgtype.UUID         `json:"org_id"`
+	CellID        string              `json:"cell_id"`
+	ProjectID     pgtype.UUID         `json:"project_id"`
+	EnvironmentID pgtype.UUID         `json:"environment_id"`
+	WorkspaceID   pgtype.UUID         `json:"workspace_id"`
+	ExecID        pgtype.UUID         `json:"exec_id"`
+	Stream        WorkspaceExecStream `json:"stream"`
+	OffsetStart   int64               `json:"offset_start"`
+	OffsetEnd     int64               `json:"offset_end"`
+	Data          []byte              `json:"data"`
+	ObservedAt    pgtype.Timestamptz  `json:"observed_at"`
+	ExpiresAt     pgtype.Timestamptz  `json:"expires_at"`
+	CreatedAt     pgtype.Timestamptz  `json:"created_at"`
+}
+
+func (q *Queries) InsertWorkspaceExecOutputStreamChunk(ctx context.Context, arg InsertWorkspaceExecOutputStreamChunkParams) (InsertWorkspaceExecOutputStreamChunkRow, error) {
 	row := q.db.QueryRow(ctx, insertWorkspaceExecOutputStreamChunk,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
@@ -835,7 +912,7 @@ func (q *Queries) InsertWorkspaceExecOutputStreamChunk(ctx context.Context, arg 
 		arg.Data,
 		arg.ObservedAt,
 	)
-	var i WorkspaceExecStreamChunk
+	var i InsertWorkspaceExecOutputStreamChunkRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -858,6 +935,7 @@ func (q *Queries) InsertWorkspaceExecOutputStreamChunk(ctx context.Context, arg 
 const insertWorkspaceExecStreamChunk = `-- name: InsertWorkspaceExecStreamChunk :one
 INSERT INTO workspace_exec_stream_chunks (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     workspace_id,
@@ -873,17 +951,19 @@ INSERT INTO workspace_exec_stream_chunks (
     $3,
     $4,
     $5,
-    $6::workspace_exec_stream,
-    $7,
+    $6,
+    $7::workspace_exec_stream,
     $8,
     $9,
-    coalesce($10, now())
+    $10,
+    coalesce($11, now())
 )
 RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, exec_id, stream, offset_start, offset_end, data, observed_at, expires_at, created_at
 `
 
 type InsertWorkspaceExecStreamChunkParams struct {
 	OrgID         pgtype.UUID         `json:"org_id"`
+	CellID        string              `json:"cell_id"`
 	ProjectID     pgtype.UUID         `json:"project_id"`
 	EnvironmentID pgtype.UUID         `json:"environment_id"`
 	WorkspaceID   pgtype.UUID         `json:"workspace_id"`
@@ -898,6 +978,7 @@ type InsertWorkspaceExecStreamChunkParams struct {
 func (q *Queries) InsertWorkspaceExecStreamChunk(ctx context.Context, arg InsertWorkspaceExecStreamChunkParams) (WorkspaceExecStreamChunk, error) {
 	row := q.db.QueryRow(ctx, insertWorkspaceExecStreamChunk,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
@@ -931,6 +1012,7 @@ func (q *Queries) InsertWorkspaceExecStreamChunk(ctx context.Context, arg Insert
 const insertWorkspaceExecStreamChunkReceipt = `-- name: InsertWorkspaceExecStreamChunkReceipt :one
 INSERT INTO workspace_exec_stream_chunk_receipts (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     workspace_id,
@@ -947,12 +1029,13 @@ INSERT INTO workspace_exec_stream_chunk_receipts (
     $3,
     $4,
     $5,
-    $6::workspace_exec_stream,
-    $7,
+    $6,
+    $7::workspace_exec_stream,
     $8,
     $9,
     $10,
-    coalesce($11, now())
+    $11,
+    coalesce($12, now())
 )
 ON CONFLICT DO NOTHING
 RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, exec_id, stream, offset_start, offset_end, data_sha256, data_size, observed_at, created_at
@@ -960,6 +1043,7 @@ RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, exec_id
 
 type InsertWorkspaceExecStreamChunkReceiptParams struct {
 	OrgID         pgtype.UUID         `json:"org_id"`
+	CellID        string              `json:"cell_id"`
 	ProjectID     pgtype.UUID         `json:"project_id"`
 	EnvironmentID pgtype.UUID         `json:"environment_id"`
 	WorkspaceID   pgtype.UUID         `json:"workspace_id"`
@@ -975,6 +1059,7 @@ type InsertWorkspaceExecStreamChunkReceiptParams struct {
 func (q *Queries) InsertWorkspaceExecStreamChunkReceipt(ctx context.Context, arg InsertWorkspaceExecStreamChunkReceiptParams) (WorkspaceExecStreamChunkReceipt, error) {
 	row := q.db.QueryRow(ctx, insertWorkspaceExecStreamChunkReceipt,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,

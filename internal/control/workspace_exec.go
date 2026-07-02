@@ -209,6 +209,15 @@ func (s *Server) listWorkspaceExecStream(w http.ResponseWriter, r *http.Request,
 		writeError(w, badRequest(err))
 		return
 	}
+	if stream == db.WorkspaceExecStreamStdout || stream == db.WorkspaceExecStreamStderr {
+		out, _, err := s.listWorkspaceExecTerminalOutput(r.Context(), exec, stream, cursor, limit)
+		if err != nil {
+			s.writeWorkspacePrimitiveError(w, "list workspace exec stream", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, api.ListWorkspaceExecStreamChunksResponse{Chunks: out})
+		return
+	}
 	if err := s.ensureWorkspaceExecCursorAvailable(r.Context(), exec, stream, cursor); err != nil {
 		writeError(w, err)
 		return
@@ -467,6 +476,7 @@ func (s *Server) appendWorkspaceExecStreamChunk(ctx context.Context, exec db.Wor
 		}
 		chunk, err = work.q.InsertWorkspaceExecStreamChunk(ctx, db.InsertWorkspaceExecStreamChunkParams{
 			OrgID:         exec.OrgID,
+			CellID:        exec.CellID,
 			ProjectID:     exec.ProjectID,
 			EnvironmentID: exec.EnvironmentID,
 			WorkspaceID:   exec.WorkspaceID,

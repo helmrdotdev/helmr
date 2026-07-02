@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
 func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
@@ -64,16 +65,13 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 		s.followRunLogs(w, r, actor.OrgID, runID, cursor)
 		return
 	}
-	logs, err := s.db.GetRunLogSnapshot(r.Context(), db.GetRunLogSnapshotParams{
+	logs, err := s.telemetryReader.GetRunLogSnapshot(r.Context(), telemetry.RunLogSnapshotQuery{
 		StdoutLimit: maxRunLogSnapshotBytes,
 		StderrLimit: maxRunLogSnapshotBytes,
-		OrgID:       pgvalue.UUID(actor.OrgID),
-		RunID:       pgvalue.UUID(runID),
+		OrgID:       actor.OrgID,
+		CellID:      s.cellID,
+		RunID:       runID,
 	})
-	if isNoRows(err) {
-		writeJSON(w, http.StatusOK, api.LogSnapshotResponse{Cursor: telemetryCursor(0)})
-		return
-	}
 	if err != nil {
 		s.log.Error("get run logs failed", "run_id", runID.String(), "error", err)
 		writeError(w, errors.New("get run logs"))
@@ -85,7 +83,7 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 		Cursor:       telemetryCursor(logs.Cursor),
 		StdoutBytes:  logs.StdoutBytes,
 		StderrBytes:  logs.StderrBytes,
-		Truncated:    logs.Truncated.Bool,
+		Truncated:    logs.Truncated,
 	})
 }
 
@@ -143,17 +141,17 @@ func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uui
 }
 
 func (s *Server) writeRunLogChunksAfter(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, orgID uuid.UUID, runID uuid.UUID, cursor int64) (int64, int, error) {
-	rows, err := s.db.ListRunLogChunksAfter(ctx, db.ListRunLogChunksAfterParams{
-		OrgID:    pgvalue.UUID(orgID),
-		RunID:    pgvalue.UUID(runID),
-		Seq:      cursor,
-		RowLimit: runLogStreamBatchSize,
+	page, err := s.telemetryReader.ListRunLogChunks(ctx, telemetry.RunLogChunkQuery{
+		OrgID:    orgID,
+		CellID:   s.cellID,
+		RunID:    runID,
+		AfterSeq: cursor,
+		Limit:    runLogStreamBatchSize,
 	})
 	if err != nil {
 		return cursor, 0, err
 	}
-	for _, row := range rows {
-		chunk := runLogChunkResponse(row)
+	for _, chunk := range page.Chunks {
 		_, _ = fmt.Fprintf(w, "id: %s\n", chunk.ID)
 		_, _ = fmt.Fprint(w, "event: run_log\n")
 		_, _ = fmt.Fprint(w, "data: ")
@@ -164,9 +162,13 @@ func (s *Server) writeRunLogChunksAfter(ctx context.Context, w http.ResponseWrit
 		if flusher != nil {
 			flusher.Flush()
 		}
-		cursor = row.Seq
+		next, err := telemetry.ParseCursor(chunk.ID)
+		if err != nil {
+			return cursor, 0, err
+		}
+		cursor = next
 	}
-	return cursor, len(rows), nil
+	return cursor, len(page.Chunks), nil
 }
 
 func runLogChunkResponse(chunk db.RunLogHotChunk) api.RunLogChunk {

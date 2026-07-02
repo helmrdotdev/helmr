@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -78,31 +79,29 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		s.followDeploymentEvents(w, r, actor.OrgID, deploymentID, cursor)
 		return
 	}
-	rows, err := s.db.ListSubjectEvents(r.Context(), db.ListSubjectEventsParams{
-		OrgID:       pgvalue.UUID(actor.OrgID),
-		SubjectType: db.EventSubjectTypeDeployment,
-		SubjectID:   deployment.ID,
-		Seq:         cursor,
-		RowLimit:    limit + 1,
+	page, err := s.telemetryReader.ListEvents(r.Context(), telemetry.EventQuery{
+		OrgID:       actor.OrgID,
+		CellID:      s.cellID,
+		SubjectType: string(db.EventSubjectTypeDeployment),
+		SubjectID:   pgvalue.MustUUIDValue(deployment.ID),
+		AfterSeq:    cursor,
+		Limit:       limit + 1,
 	})
 	if err != nil {
 		writeError(w, errors.New("list deployment events"))
 		return
 	}
+	rows := page.Events
 	hasNext := len(rows) > int(limit)
 	if hasNext {
 		rows = rows[:limit]
 	}
-	events := make([]api.RunEvent, 0, len(rows))
-	for _, row := range rows {
-		events = append(events, eventResponseFromRecord(row))
-	}
 	var nextCursor *string
 	if hasNext {
-		value := telemetryCursor(rows[len(rows)-1].Seq)
+		value := rows[len(rows)-1].ID
 		nextCursor = &value
 	}
-	writeJSON(w, http.StatusOK, api.RunEventPage{Events: events, Cursor: telemetryCursor(cursor), NextCursor: nextCursor})
+	writeJSON(w, http.StatusOK, api.RunEventPage{Events: rows, Cursor: telemetryCursor(cursor), NextCursor: nextCursor})
 }
 
 func (s *Server) followDeploymentEvents(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, deploymentID uuid.UUID, cursor int64) {

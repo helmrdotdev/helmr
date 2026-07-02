@@ -19,11 +19,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -91,10 +93,34 @@ func main() {
 		log.Error("ping redis", "error", err)
 		os.Exit(1)
 	}
-	eventStream, err := control.NewEventStream(log, queries, redisClient)
+	telemetryReader := telemetry.NewCompositeReader(telemetry.NewHotReader(queries), nil)
+	eventStream, err := control.NewEventStream(log, queries, redisClient, control.EventStreamConfig{
+		CellID:          cfg.cellID,
+		TelemetryReader: telemetryReader,
+	})
 	if err != nil {
 		log.Error("configure event stream", "error", err)
 		os.Exit(1)
+	}
+	if cfg.clickHouseURL != "" {
+		clickHouseClient, err := clickhouse.New(clickhouse.Config{
+			URL:      cfg.clickHouseURL,
+			User:     cfg.clickHouseUser,
+			Password: cfg.clickHousePassword,
+		})
+		if err != nil {
+			log.Error("configure clickhouse", "error", err)
+			os.Exit(1)
+		}
+		telemetryReader = telemetry.NewCompositeReader(telemetry.NewHotReader(queries), telemetry.NewHistoricalReader(clickHouseClient))
+		eventStream, err = control.NewEventStream(log, queries, redisClient, control.EventStreamConfig{
+			CellID:          cfg.cellID,
+			TelemetryReader: telemetryReader,
+		})
+		if err != nil {
+			log.Error("configure event stream", "error", err)
+			os.Exit(1)
+		}
 	}
 	workspaceStreams, err := control.NewWorkspaceStreamNotifier(log, queries, redisClient)
 	if err != nil {
@@ -161,7 +187,9 @@ func main() {
 		SetupToken:          cfg.setupToken,
 		AuthSecret:          []byte(cfg.authSecret),
 		PublicURL:           publicURL,
+		CellID:              cfg.cellID,
 		EventStream:         eventStream,
+		TelemetryReader:     telemetryReader,
 		WorkspaceStreams:    workspaceStreams,
 		WorkerCommands:      workerCommands,
 	})
@@ -201,6 +229,10 @@ type devConfig struct {
 	addr                   string
 	deploymentMode         string
 	databaseURL            string
+	cellID                 string
+	clickHouseURL          string
+	clickHouseUser         string
+	clickHousePassword     string
 	redisURL               string
 	casDir                 string
 	publicURL              string
@@ -219,6 +251,10 @@ func loadConfig() (devConfig, error) {
 		addr:                   env("HELMR_CONTROL_ADDR", defaultAddr),
 		deploymentMode:         env("HELMR_DEPLOYMENT_MODE", "self-hosted"),
 		databaseURL:            os.Getenv("HELMR_DATABASE_URL"),
+		cellID:                 env("HELMR_CELL_ID", "us-east-1-cell-1"),
+		clickHouseURL:          strings.TrimSpace(os.Getenv("HELMR_CLICKHOUSE_URL")),
+		clickHouseUser:         strings.TrimSpace(os.Getenv("HELMR_CLICKHOUSE_USER")),
+		clickHousePassword:     os.Getenv("HELMR_CLICKHOUSE_PASSWORD"),
 		redisURL:               env("HELMR_REDIS_URL", defaultRedisURL),
 		casDir:                 env("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
 		publicURL:              env("HELMR_PUBLIC_URL", defaultPublicURL),

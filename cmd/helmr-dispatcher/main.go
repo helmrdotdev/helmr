@@ -10,6 +10,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -17,6 +18,7 @@ import (
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -46,6 +48,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("ping database: %w", err)
 	}
 	queries := db.New(pool)
+	clickHouseClient, err := clickhouse.New(clickhouse.Config{
+		URL:      cfg.ClickHouseURL,
+		User:     cfg.ClickHouseUser,
+		Password: cfg.ClickHousePassword,
+	})
+	if err != nil {
+		return fmt.Errorf("configure clickhouse: %w", err)
+	}
+	telemetryReader := telemetry.NewCompositeReader(
+		telemetry.NewHotReader(queries),
+		telemetry.NewHistoricalReader(clickHouseClient),
+	)
 
 	redisOptions, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
@@ -64,9 +78,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure dispatch enqueuer: %w", err)
 	}
-	eventStream, err := control.NewEventStream(log, queries, redisClient)
+	eventStream, err := control.NewEventStream(log, queries, redisClient, control.EventStreamConfig{
+		CellID:          cfg.CellID,
+		TelemetryReader: telemetryReader,
+	})
 	if err != nil {
 		return fmt.Errorf("configure event stream: %w", err)
+	}
+	telemetryIngestor, err := telemetry.NewIngestor(log, queries, telemetry.NewClickHouseWriter(clickHouseClient))
+	if err != nil {
+		return fmt.Errorf("configure telemetry ingester: %w", err)
 	}
 	scheduleIndex, err := schedule.NewRedisIndex(redisClient)
 	if err != nil {
@@ -158,9 +179,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errc := make(chan error, 4)
+	errc := make(chan error, 5)
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(5)
 	go func() {
 		defer wg.Done()
 		errc <- sweeper.Run(runCtx)
@@ -176,6 +197,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go func() {
 		defer wg.Done()
 		errc <- scheduleWorker.Run(runCtx)
+	}()
+	go func() {
+		defer wg.Done()
+		errc <- telemetryIngestor.Run(runCtx)
 	}()
 	done := make(chan struct{})
 	go func() {

@@ -8,14 +8,14 @@ locals {
   email_from          = var.email_from == null ? "" : var.email_from
   smtp_addr           = var.smtp_addr == null ? "" : var.smtp_addr
   smtp_username       = var.smtp_username == null ? "" : var.smtp_username
-  clickhouse_url      = var.clickhouse_url == null ? "" : var.clickhouse_url
+  clickhouse_url      = trimspace(var.clickhouse_url)
   clickhouse_user     = var.clickhouse_user == null ? "" : var.clickhouse_user
 
   telemetry_environment = merge(
     {
       HELMR_CELL_ID = trimspace(var.cell_id)
     },
-    local.clickhouse_url == "" ? {} : {
+    {
       HELMR_CLICKHOUSE_URL = local.clickhouse_url
     },
     local.clickhouse_user == "" ? {} : {
@@ -1050,10 +1050,20 @@ resource "aws_ecs_task_definition" "migration" {
     essential  = true
     entryPoint = var.control_entrypoint
     command    = ["migrate", "up"]
-    secrets = [{
-      name      = "HELMR_DATABASE_URL"
-      valueFrom = aws_secretsmanager_secret.database_url.arn
-    }]
+    environment = [
+      for key, value in local.telemetry_environment : {
+        name  = key
+        value = value
+      }
+    ]
+    secrets = [
+      for key, value in merge({
+        HELMR_DATABASE_URL = aws_secretsmanager_secret.database_url.arn
+      }, local.telemetry_secrets) : {
+        name      = key
+        valueFrom = value
+      }
+    ]
     logConfiguration = {
       logDriver = "awslogs"
       options = {
