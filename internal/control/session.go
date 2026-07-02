@@ -1505,64 +1505,53 @@ func (s *Server) cancelSession(w http.ResponseWriter, r *http.Request) {
 		reason = "cancelled"
 	}
 	actor := actorFromContext(r.Context())
-	store, tx, err := s.beginControlTransaction(r.Context())
-	if err != nil {
-		writeError(w, errors.New("cancel session"))
-		return
-	}
-	defer tx.Rollback(r.Context())
-	locked, err := store.LockSession(r.Context(), db.LockSessionParams{
-		OrgID:         session.OrgID,
-		ProjectID:     session.ProjectID,
-		EnvironmentID: session.EnvironmentID,
-		ID:            session.ID,
-	})
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("session not found")))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("cancel session"))
-		return
-	}
-	if locked.Status == db.SessionStatusCancelled {
-		if err := tx.Commit(r.Context()); err != nil {
-			writeError(w, errors.New("cancel session"))
-			return
+	var response api.SessionResponse
+	err := s.inTx(r.Context(), func(work *txWork) error {
+		locked, err := work.q.LockSession(r.Context(), db.LockSessionParams{
+			OrgID:         session.OrgID,
+			ProjectID:     session.ProjectID,
+			EnvironmentID: session.EnvironmentID,
+			ID:            session.ID,
+		})
+		if isNoRows(err) {
+			return notFound(errors.New("session not found"))
 		}
-		writeJSON(w, http.StatusOK, sessionResponseWithDerived(locked, sessionDerivedStateValue{activity: sessionActivityIdle}))
-		return
-	}
-	if locked.Status != db.SessionStatusOpen {
-		writeError(w, conflict(errSessionTerminated))
-		return
-	}
-	if locked.CurrentRunID.Valid {
-		if err := s.cancelSessionRun(r.Context(), store, actor, locked, reason); err != nil {
-			writeError(w, errors.New("cancel session run"))
-			return
+		if err != nil {
+			return errors.New("cancel session")
 		}
-	}
-	cancelled, err := store.CancelSession(r.Context(), db.CancelSessionParams{
-		OrgID:         locked.OrgID,
-		ProjectID:     locked.ProjectID,
-		EnvironmentID: locked.EnvironmentID,
-		ID:            locked.ID,
-		Reason:        reason,
+		if locked.Status == db.SessionStatusCancelled {
+			response = sessionResponseWithDerived(locked, sessionDerivedStateValue{activity: sessionActivityIdle})
+			return nil
+		}
+		if locked.Status != db.SessionStatusOpen {
+			return conflict(errSessionTerminated)
+		}
+		if locked.CurrentRunID.Valid {
+			if err := s.cancelSessionRun(r.Context(), work.q, actor, locked, reason); err != nil {
+				return errors.New("cancel session run")
+			}
+		}
+		cancelled, err := work.q.CancelSession(r.Context(), db.CancelSessionParams{
+			OrgID:         locked.OrgID,
+			ProjectID:     locked.ProjectID,
+			EnvironmentID: locked.EnvironmentID,
+			ID:            locked.ID,
+			Reason:        reason,
+		})
+		if isNoRows(err) {
+			return conflict(errSessionTerminated)
+		}
+		if err != nil {
+			return errors.New("cancel session")
+		}
+		response = sessionResponseWithDerived(cancelled, sessionDerivedStateValue{activity: sessionActivityIdle})
+		return nil
 	})
-	if isNoRows(err) {
-		writeError(w, conflict(errSessionTerminated))
-		return
-	}
 	if err != nil {
-		writeError(w, errors.New("cancel session"))
+		writeError(w, err)
 		return
 	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, errors.New("cancel session"))
-		return
-	}
-	writeJSON(w, http.StatusOK, sessionResponseWithDerived(cancelled, sessionDerivedStateValue{activity: sessionActivityIdle}))
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) cancelSessionRun(ctx context.Context, store db.Querier, actor auth.Actor, session db.Session, reason string) error {
