@@ -14,16 +14,8 @@ type preparedRuntimeSupplyWorkflow struct {
 	timeout time.Duration
 }
 
-func (s *Server) reconcilePreparedRuntimeSupply(ctx context.Context, reason string) {
-	s.preparedRuntimeSupplyWorkflow().Reconcile(ctx, reason)
-}
-
 func (s *Server) reconcilePreparedRuntimeSupplyAsync(ctx context.Context, reason string) {
 	s.preparedRuntimeSupplyWorkflow().ReconcileAsync(ctx, reason)
-}
-
-func (s *Server) reconcilePreparedRuntimeSupplyForSandbox(ctx context.Context, deploymentSandboxID pgtype.UUID, reason string) {
-	s.preparedRuntimeSupplyWorkflow().ReconcileDeploymentSandbox(ctx, deploymentSandboxID, reason)
 }
 
 func (s *Server) reconcilePreparedRuntimeSupplyForSandboxAsync(ctx context.Context, deploymentSandboxID pgtype.UUID, reason string) {
