@@ -739,6 +739,105 @@ func TestPreparedRuntimePoolCheckoutRejectsMarkReadyFailure(t *testing.T) {
 	}
 }
 
+func TestPreparedRuntimePoolCheckoutRejectsExitedSessionAfterMarkReady(t *testing.T) {
+	body := []byte("sandbox")
+	digest := sha256sum.DigestBytes(body)
+	clientStream, serverStream := net.Pipe()
+	defer clientStream.Close()
+	defer serverStream.Close()
+	session := &fakePreparedRuntimeSession{
+		stream: clientStream,
+		wait:   make(chan error, 1),
+	}
+	source := api.WorkerPreparedRuntimeSource{
+		DeploymentSandboxID:        "sandbox-1",
+		RuntimeID:                  "runtime-1",
+		RootfsDigest:               "rootfs-1",
+		RuntimeABI:                 "runtime-abi",
+		GuestdABI:                  "guestd-abi",
+		AdapterABI:                 "adapter-abi",
+		ImageDigest:                "image-1",
+		ImageFormat:                "oci-tar",
+		WorkspaceMountPath:         "/workspace",
+		SandboxImageArtifact:       api.CASObject{Digest: digest, SizeBytes: int64(len(body)), MediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar"},
+		SandboxImageArtifactFormat: "oci-tar",
+		ReservedCpuMillis:          1000,
+		ReservedMemoryMiB:          1024,
+		ReservedDiskMiB:            4096,
+		ReservedExecutionSlots:     1,
+	}
+	pool := NewPreparedRuntimePool(successfulPreparedRuntimeConnector{session: session}, fakePreparedRuntimeCAS{
+		object: cas.Object{Digest: digest, SizeBytes: int64(len(body)), MediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar"},
+		body:   body,
+	}, 1, nil)
+	mount := preparedRuntimeWorkspaceMountFromSource(source)
+	enteredReady := make(chan struct{})
+	releaseReady := make(chan struct{})
+	instances := &fakePreparedRuntimeInstanceClient{warmSource: source}
+	instances.onReady = func(api.WorkerRuntimeInstanceStateRequest) {
+		close(enteredReady)
+		<-releaseReady
+	}
+	pool.RuntimeInstances = instances
+	go acknowledgePreparedRuntime(t, serverStream)
+	payload, err := json.Marshal(api.WorkerRuntimePrepareCommand{
+		DeploymentSandboxID: "sandbox-1",
+		RuntimeInstance: api.WorkerRuntimeInstance{
+			ID:            "instance-1",
+			InstanceToken: "token-1",
+		},
+		Source: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, 1)
+	go func() {
+		errs <- pool.WarmFromCommand(context.Background(), instances, api.WorkerCapabilities{
+			RuntimeID:    "runtime-1",
+			RootfsDigest: "rootfs-1",
+			RuntimeABI:   "runtime-abi",
+		}, api.WorkerCommand{ID: 1, Kind: "runtime_prepare", Payload: payload})
+	}()
+	select {
+	case <-enteredReady:
+	case <-time.After(time.Second):
+		t.Fatal("MarkRuntimeInstanceReady was not reached")
+	}
+	mount.RuntimeInstanceID = "instance-1"
+	mount.RuntimeEpoch = 1
+	type checkoutResult struct {
+		session vm.Session
+		token   string
+		ok      bool
+	}
+	checkout := make(chan checkoutResult, 1)
+	go func() {
+		checkedOut, _, token, ok := pool.Checkout(mount)
+		checkout <- checkoutResult{session: checkedOut, token: token, ok: ok}
+	}()
+	select {
+	case result := <-checkout:
+		t.Fatalf("checkout while MarkReady blocked = session:%v token:%q ok:%v, want wait", result.session, result.token, result.ok)
+	case <-time.After(100 * time.Millisecond):
+	}
+	session.exit(errors.New("session exited before ready"))
+	close(releaseReady)
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	result := <-checkout
+	if result.ok || result.session != nil || result.token != "" {
+		t.Fatalf("checkout after session exit = session:%v token:%q ok:%v, want miss", result.session, result.token, result.ok)
+	}
+	if session.closeCount != 1 {
+		t.Fatalf("session close count = %d, want 1", session.closeCount)
+	}
+	if len(instances.failed) != 1 || instances.failed[0].ID != "instance-1" {
+		t.Fatalf("failed instances = %+v, want instance-1", instances.failed)
+	}
+}
+
 func TestPreparedRuntimePoolDoesNotPublishEntryWhenMarkReadyFails(t *testing.T) {
 	body := []byte("sandbox")
 	digest := sha256sum.DigestBytes(body)

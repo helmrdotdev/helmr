@@ -227,6 +227,16 @@ func (p *PreparedRuntimePool) Checkout(mount api.WorkerWorkspaceMount) (vm.Sessi
 		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "reason", "runtime_ready_failed", "error", err.Error())
 		return nil, key, "", false
 	}
+	if err, exited := entry.exit.exited(); exited {
+		p.closeSession(context.Background(), entry.session)
+		stateCtx, cancelState := preparedRuntimeControlContext(context.Background())
+		defer cancelState()
+		if failErr := p.markRuntimeInstanceFailed(stateCtx, entry.runtimeInstanceID, entry.instanceToken, preparedRuntimeExitCause(err)); failErr != nil {
+			p.logInfo("prepared runtime pool instance fail transition failed", "runtime_key_id", keyID, "runtime_instance_id", entry.runtimeInstanceID, "error", failErr.Error())
+		}
+		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "reason", "reserved_session_exited", "error", errorString(err))
+		return nil, key, "", false
+	}
 	p.logInfo("prepared runtime pool hit", "runtime_key_id", keyID, "available", available)
 	return entry.session, key, entry.instanceToken, true
 }
@@ -683,6 +693,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		exit:              newPreparedRuntimeSessionExit(),
 		ready:             newPreparedRuntimeReady(),
 	}
+	p.monitorReadyEntry(key, entry)
 	p.mu.Lock()
 	if p.closed || p.readyCountLocked() >= p.Size {
 		p.mu.Unlock()
@@ -725,7 +736,6 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	if !stillReady {
 		return nil
 	}
-	p.monitorReadyEntry(key, entry)
 	p.logInfo("prepared runtime pool refilled", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "available", available)
 	return nil
 }
