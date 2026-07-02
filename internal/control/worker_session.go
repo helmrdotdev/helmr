@@ -489,15 +489,10 @@ func (s *Server) logRunWorkspaceReuseDiagnostics(ctx context.Context, orgID pgty
 }
 
 func (s *Server) ensureQueuedRunWorkspaceMountForLeaseConflict(ctx context.Context, orgID pgtype.UUID, runID pgtype.UUID) error {
-	store, tx, err := s.beginControlTransaction(ctx)
-	if err != nil {
+	return s.inTx(ctx, func(work *txWork) error {
+		_, err := ensureQueuedRunWorkspaceMount(ctx, work.q, orgID, runID, "run_lease_conflict", s.log)
 		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := ensureQueuedRunWorkspaceMount(ctx, store, orgID, runID, "run_lease_conflict", s.log); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	})
 }
 
 func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {

@@ -23,26 +23,14 @@ func (s *Server) requeueResolvedRunWaits(ctx context.Context, orgID pgtype.UUID)
 	if log == nil {
 		log = slog.Default()
 	}
-	if s.tx == nil {
-		log.Error("requeue resolved run waits requires transactional store", "org_id", pgvalue.UUIDString(orgID))
-		return
-	}
-	tx, err := s.tx.Begin(ctx)
-	if err != nil {
-		log.Error("begin requeue resolved run waits failed", "org_id", pgvalue.UUIDString(orgID), "error", err)
-		return
-	}
-	defer func() {
-		_ = tx.Rollback(ctx)
-	}()
-	txStore := db.New(tx)
-	rows, err := requeueResolvedRunWaitsWithStore(ctx, txStore, orgID, log)
+	var rows []db.RequeueResolvedRunWaitsRow
+	err := s.inTx(ctx, func(work *txWork) error {
+		var err error
+		rows, err = requeueResolvedRunWaitsWithStore(ctx, work.q, orgID, log)
+		return err
+	})
 	if err != nil {
 		log.Error("requeue resolved run waits failed", "org_id", pgvalue.UUIDString(orgID), "error", err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		log.Error("commit requeue resolved run waits failed", "org_id", pgvalue.UUIDString(orgID), "error", err)
 		return
 	}
 	if s.runEnqueuer == nil {

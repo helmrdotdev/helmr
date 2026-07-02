@@ -69,44 +69,36 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 	}
 	leaseID := uuid.Must(uuid.NewV7()).String()
 	leaseExpiresAt := time.Now().Add(deploymentBuildLeaseDuration)
-	buildStore := s.db
-	commit := func() error { return nil }
-	rollback := func() {}
-	if s.tx != nil {
-		tx, err := s.tx.Begin(r.Context())
-		if err != nil {
-			writeError(w, errors.New("begin deployment build lease"))
-			return
+	var row db.LeaseQueuedDeploymentBuildRow
+	leased := false
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		var err error
+		row, err = work.q.LeaseQueuedDeploymentBuild(r.Context(), db.LeaseQueuedDeploymentBuildParams{
+			WorkerGroupID:         pgvalue.UUID(worker.WorkerGroupID),
+			BuildLeaseID:          pgtype.Text{String: leaseID, Valid: true},
+			BuildWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: leaseExpiresAt, Valid: true},
+		})
+		if isNoRows(err) {
+			return nil
 		}
-		defer tx.Rollback(r.Context())
-		buildStore = db.New(tx)
-		commit = func() error { return tx.Commit(r.Context()) }
-		rollback = func() {}
-	}
-	row, err := buildStore.LeaseQueuedDeploymentBuild(r.Context(), db.LeaseQueuedDeploymentBuildParams{
-		WorkerGroupID:         pgvalue.UUID(worker.WorkerGroupID),
-		BuildLeaseID:          pgtype.Text{String: leaseID, Valid: true},
-		BuildWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: leaseExpiresAt, Valid: true},
+		if err != nil {
+			s.log.Error("worker deployment build lease failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
+			return errors.New("lease deployment build")
+		}
+		if err := appendDeploymentLifecycleEvent(r.Context(), work.q, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.building", "info", "worker", "building", "Deployment build started"); err != nil {
+			s.log.Error("record deployment building event failed", "deployment_id", pgvalue.MustUUIDValue(row.ID).String(), "error", err)
+			return errors.New("record deployment event")
+		}
+		leased = true
+		return nil
 	})
-	if isNoRows(err) {
-		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
-		return
-	}
 	if err != nil {
-		s.log.Error("worker deployment build lease failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, errors.New("lease deployment build"))
+		writeError(w, err)
 		return
 	}
-	if err := appendDeploymentLifecycleEvent(r.Context(), buildStore, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.building", "info", "worker", "building", "Deployment build started"); err != nil {
-		rollback()
-		s.log.Error("record deployment building event failed", "deployment_id", pgvalue.MustUUIDValue(row.ID).String(), "error", err)
-		writeError(w, errors.New("record deployment event"))
-		return
-	}
-	if err := commit(); err != nil {
-		s.log.Error("commit deployment build lease failed", "deployment_id", pgvalue.MustUUIDValue(row.ID).String(), "error", err)
-		writeError(w, errors.New("commit deployment build lease"))
+	if !leased {
+		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
 		return
 	}
 	deploymentID := pgvalue.MustUUIDValue(row.ID).String()
