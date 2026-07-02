@@ -534,9 +534,14 @@ worker_image_cleanup() {
     aws ec2 describe-images \
       --region "${AWS_REGION}" \
       --owners self \
-      --filters "Name=tag:HelmrWorkerImageName,Values=${WORKER_IMAGE_NAME}" \
       --query 'sort_by(Images, &CreationDate)' \
-      --output json
+      --output json |
+      jq --arg worker_image_name "${WORKER_IMAGE_NAME}" '
+        map(select(
+          (.Tags // [] | any(.Key == "HelmrWorkerImageName" and .Value == $worker_image_name))
+          or ((.Name // "") | startswith($worker_image_name + "-worker-"))
+        ))
+      '
   )"
   count="$(printf '%s\n' "${images}" | jq 'length')"
   if [ "${count}" -le "${keep}" ]; then
