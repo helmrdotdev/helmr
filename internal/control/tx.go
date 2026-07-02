@@ -35,8 +35,9 @@ func (work *txWork) AfterCommit(fn func(context.Context) error) {
 }
 
 // inTx owns the control-plane transaction lifecycle for request-level units of
-// work. The queryTransactionBeginner branch is a temporary seam for legacy unit
-// fakes; production uses ServerConfig.TX and sqlc queries over the pgx tx.
+// work. The queryTransactionBeginner branch is a temporary, package-sealed seam
+// for Querier-level unit fakes; production uses ServerConfig.TX and sqlc
+// queries over the pgx tx.
 func (s *Server) inTx(ctx context.Context, fn func(*txWork) error) (err error) {
 	if fn == nil {
 		return errors.New("transaction function is required")
@@ -94,18 +95,4 @@ func runControlTransaction(ctx context.Context, q db.Querier, tx controlTransact
 		return fmt.Errorf("run post-commit effects: %w", err)
 	}
 	return nil
-}
-
-func (s *Server) beginControlTransaction(ctx context.Context) (db.Querier, controlTransaction, error) {
-	if beginner, ok := s.db.(queryTransactionBeginner); ok {
-		return beginner.BeginQuerier(ctx)
-	}
-	if s.tx == nil {
-		return nil, nil, errors.New("transactional control database is required")
-	}
-	tx, err := s.tx.Begin(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	return db.New(tx), tx, nil
 }
