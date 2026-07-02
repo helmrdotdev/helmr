@@ -637,15 +637,6 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		instanceToken:     instanceToken,
 		exit:              newPreparedRuntimeSessionExit(),
 	}
-	if _, err := p.RuntimeInstances.MarkRuntimeInstanceReady(ctx, api.WorkerRuntimeInstanceStateRequest{
-		ID:                         runtimeInstanceID,
-		InstanceToken:              instanceToken,
-		ExpiresAt:                  time.Now().Add(p.reservationTTL()),
-		RuntimeSubstrateArtifactID: runtimeSubstrateArtifactIDValue,
-	}); err != nil {
-		p.logInfo("prepared runtime pool instance ready transition failed", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "error", err.Error())
-		return failInstance(err)
-	}
 	p.mu.Lock()
 	if p.closed || p.readyCountLocked() >= p.Size {
 		p.mu.Unlock()
@@ -658,11 +649,23 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		return nil
 	}
 	p.entries[key] = append(p.entries[key], entry)
-	available := p.readyCountLocked()
 	p.mu.Unlock()
 	keepSession = true
+	if _, err := p.RuntimeInstances.MarkRuntimeInstanceReady(ctx, api.WorkerRuntimeInstanceStateRequest{
+		ID:                         runtimeInstanceID,
+		InstanceToken:              instanceToken,
+		ExpiresAt:                  time.Now().Add(p.reservationTTL()),
+		RuntimeSubstrateArtifactID: runtimeSubstrateArtifactIDValue,
+	}); err != nil {
+		p.logInfo("prepared runtime pool instance ready transition failed", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "error", err.Error())
+		if failErr := p.removeReadyEntryAndFail(key, entry, err, true); failErr != nil {
+			return errors.Join(err, failErr)
+		}
+		return nil
+	}
 
 	p.mu.Lock()
+	available := p.readyCountLocked()
 	stillReady := false
 	for _, candidate := range p.entries[key] {
 		if candidate.runtimeInstanceID == entry.runtimeInstanceID && candidate.runtimeEpoch == entry.runtimeEpoch && candidate.instanceToken == entry.instanceToken {

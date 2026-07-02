@@ -437,7 +437,7 @@ func TestPreparedRuntimePoolPrunesReadyEntryWhenReservationRenewFails(t *testing
 	}
 }
 
-func TestPreparedRuntimePoolPublishesLocalEntryAfterMarkingReady(t *testing.T) {
+func TestPreparedRuntimePoolPublishesLocalEntryBeforeMarkingReady(t *testing.T) {
 	body := []byte("sandbox")
 	digest := sha256sum.DigestBytes(body)
 	clientStream, serverStream := net.Pipe()
@@ -504,8 +504,8 @@ func TestPreparedRuntimePoolPublishesLocalEntryAfterMarkingReady(t *testing.T) {
 		if request.RuntimeSubstrateArtifactID != runtimeSubstrateArtifactID {
 			t.Fatalf("runtime_substrate_artifact_id = %q, want %q", request.RuntimeSubstrateArtifactID, runtimeSubstrateArtifactID)
 		}
-		if entries := pool.entries[key]; len(entries) != 0 {
-			t.Fatalf("local entries at ready transition = %+v, want none before DB ready is visible", entries)
+		if entries := pool.entries[key]; len(entries) != 1 || entries[0].runtimeInstanceID != "instance-1" || entries[0].instanceToken != "token-1" {
+			t.Fatalf("local entries at ready transition = %+v, want instance-1 published before DB ready is visible", entries)
 		}
 	}
 	go acknowledgePreparedRuntime(t, serverStream)
@@ -540,7 +540,7 @@ func TestPreparedRuntimePoolPublishesLocalEntryAfterMarkingReady(t *testing.T) {
 	}
 }
 
-func TestPreparedRuntimePoolCheckoutCannotClaimInstanceBeforeMarkReadyReturns(t *testing.T) {
+func TestPreparedRuntimePoolCheckoutCanClaimInstanceWhileMarkReadyReturns(t *testing.T) {
 	body := []byte("sandbox")
 	digest := sha256sum.DigestBytes(body)
 	clientStream, serverStream := net.Pipe()
@@ -610,16 +610,16 @@ func TestPreparedRuntimePoolCheckoutCannotClaimInstanceBeforeMarkReadyReturns(t 
 	}
 	mount.RuntimeInstanceID = "instance-1"
 	mount.RuntimeEpoch = 1
-	if checkedOut, _, token, ok := pool.Checkout(mount); ok || checkedOut != nil || token != "" {
-		t.Fatalf("checkout while MarkReady blocked = session:%v token:%q ok:%v, want no local ready entry", checkedOut, token, ok)
+	checkedOut, _, token, ok := pool.Checkout(mount)
+	if !ok || checkedOut != session || token != "token-1" {
+		t.Fatalf("checkout while MarkReady blocked = session:%v token:%q ok:%v, want prepared session", checkedOut, token, ok)
 	}
 	close(releaseReady)
 	if err := <-errs; err != nil {
 		t.Fatal(err)
 	}
-	checkedOut, _, token, ok := pool.Checkout(mount)
-	if !ok || checkedOut != session || token != "token-1" {
-		t.Fatalf("checkout after MarkReady returned = session:%v token:%q ok:%v, want prepared session", checkedOut, token, ok)
+	if checkedOut, _, token, ok := pool.Checkout(mount); ok || checkedOut != nil || token != "" {
+		t.Fatalf("second checkout after MarkReady returned = session:%v token:%q ok:%v, want no local ready entry", checkedOut, token, ok)
 	}
 }
 
