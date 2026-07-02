@@ -308,10 +308,6 @@ func (s *Server) magicLinkFinish(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(err))
 		return
 	}
-	if s.tx == nil {
-		writeError(w, unavailable(errors.New("transactional storage is not configured")))
-		return
-	}
 	var request api.MagicLinkFinishRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid magic link finish JSON: %w", err)))
@@ -332,49 +328,47 @@ func (s *Server) magicLinkFinish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) completeMagicLink(r *http.Request, tokenHash []byte) (string, string, error) {
-	tx, err := s.tx.Begin(r.Context())
-	if err != nil {
-		return "", "", err
-	}
-	defer tx.Rollback(r.Context())
-	queries := db.New(tx)
-	link, err := queries.GetActiveMagicLinkByTokenHash(r.Context(), tokenHash)
-	if err != nil {
-		if isNoRows(err) {
-			return "", "", errInvalidOrExpiredToken
-		}
-		return "", "", err
-	}
-	identity := magicLinkIdentity(link.Email)
 	var rawSession string
-	var userID pgtype.UUID
-	switch link.Purpose {
-	case db.MagicLinkPurposeInviteAccept:
-		rawSession, userID, err = s.completeMagicLinkInvite(r, queries, link, identity)
-	case db.MagicLinkPurposeLogin:
-		rawSession, userID, err = s.completeMagicLinkLogin(r, queries, identity)
-	default:
-		err = errors.New("unknown magic link purpose")
-	}
-	if err != nil {
-		return "", "", err
-	}
-	rows, err := queries.ConsumeMagicLink(r.Context(), db.ConsumeMagicLinkParams{
-		ID:               link.ID,
-		ConsumedByUserID: userID,
+	redirectAfter := "/"
+	err := s.inTx(r.Context(), func(work *txWork) error {
+		queries := work.q
+		link, err := queries.GetActiveMagicLinkByTokenHash(r.Context(), tokenHash)
+		if err != nil {
+			if isNoRows(err) {
+				return errInvalidOrExpiredToken
+			}
+			return err
+		}
+		identity := magicLinkIdentity(link.Email)
+		var userID pgtype.UUID
+		switch link.Purpose {
+		case db.MagicLinkPurposeInviteAccept:
+			rawSession, userID, err = s.completeMagicLinkInvite(r, queries, link, identity)
+		case db.MagicLinkPurposeLogin:
+			rawSession, userID, err = s.completeMagicLinkLogin(r, queries, identity)
+		default:
+			err = errors.New("unknown magic link purpose")
+		}
+		if err != nil {
+			return err
+		}
+		rows, err := queries.ConsumeMagicLink(r.Context(), db.ConsumeMagicLinkParams{
+			ID:               link.ID,
+			ConsumedByUserID: userID,
+		})
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return errInvalidOrExpiredToken
+		}
+		if link.RedirectAfter.Valid {
+			redirectAfter = validateRedirectAfter(link.RedirectAfter.String)
+		}
+		return nil
 	})
 	if err != nil {
 		return "", "", err
-	}
-	if rows == 0 {
-		return "", "", errInvalidOrExpiredToken
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		return "", "", err
-	}
-	redirectAfter := "/"
-	if link.RedirectAfter.Valid {
-		redirectAfter = validateRedirectAfter(link.RedirectAfter.String)
 	}
 	return rawSession, redirectAfter, nil
 }

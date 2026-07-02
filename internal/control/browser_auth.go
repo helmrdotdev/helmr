@@ -166,74 +166,67 @@ func (s *Server) completeBrowserAuth(r *http.Request, flow browserAuthFlow, iden
 }
 
 func (s *Server) completeInviteAuth(r *http.Request, flow browserAuthFlow, identity authIdentity) (string, error) {
-	if s.tx == nil {
-		return "", errors.New("transactional storage is not configured")
-	}
-	tx, err := s.tx.Begin(r.Context())
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback(r.Context())
-	queries := db.New(tx)
-	tokenHash, err := decodeFlowTokenHash(flow)
-	if err != nil {
-		return "", err
-	}
-	invite, err := queries.GetActiveInvitation(r.Context(), tokenHash)
-	if err != nil {
-		if isNoRows(err) {
-			return "", errInvalidOrExpiredToken
+	var rawSession string
+	err := s.inTx(r.Context(), func(work *txWork) error {
+		queries := work.q
+		tokenHash, err := decodeFlowTokenHash(flow)
+		if err != nil {
+			return err
 		}
-		return "", err
-	}
-	if !identityMatchesInvitationEmail(identity, invite.InviteeEmail) {
-		return "", errWrongAccount
-	}
-	user, err := s.upsertAuthIdentity(r, queries, identity)
-	if err != nil {
-		return "", err
-	}
-	if user.DisabledAt.Valid {
-		return "", errDisabledMember
-	}
-	existingMember, err := queries.GetOrgMemberForManagement(r.Context(), db.GetOrgMemberForManagementParams{
-		OrgID:  invite.OrgID,
-		UserID: user.ID,
+		invite, err := queries.GetActiveInvitation(r.Context(), tokenHash)
+		if err != nil {
+			if isNoRows(err) {
+				return errInvalidOrExpiredToken
+			}
+			return err
+		}
+		if !identityMatchesInvitationEmail(identity, invite.InviteeEmail) {
+			return errWrongAccount
+		}
+		user, err := s.upsertAuthIdentity(r, queries, identity)
+		if err != nil {
+			return err
+		}
+		if user.DisabledAt.Valid {
+			return errDisabledMember
+		}
+		existingMember, err := queries.GetOrgMemberForManagement(r.Context(), db.GetOrgMemberForManagementParams{
+			OrgID:  invite.OrgID,
+			UserID: user.ID,
+		})
+		if err != nil && !isNoRows(err) {
+			return err
+		}
+		if err == nil && !existingMember.DisabledAt.Valid {
+			if existingMember.UserDisabledAt.Valid {
+				return errDisabledMember
+			}
+			return errAlreadyMember
+		}
+		if rows, err := queries.AcceptInvitation(r.Context(), db.AcceptInvitationParams{
+			OrgID:  invite.OrgID,
+			ID:     invite.ID,
+			UserID: user.ID,
+		}); err != nil {
+			return err
+		} else if rows == 0 {
+			return errInvalidOrExpiredToken
+		}
+		if _, err := queries.RevokeAuthSessionsForUser(r.Context(), user.ID); err != nil {
+			return err
+		}
+		if _, err := queries.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
+			OrgID:       invite.OrgID,
+			UserID:      user.ID,
+			Role:        invite.Role,
+			DisplayName: pgtype.Text{String: identity.DisplayName, Valid: identity.DisplayName != ""},
+		}); err != nil {
+			return err
+		}
+		rawSession, err = s.issueSessionForOrg(r, queries, user.ID, invite.OrgID)
+		return err
 	})
-	if err != nil && !isNoRows(err) {
-		return "", err
-	}
-	if err == nil && !existingMember.DisabledAt.Valid {
-		if existingMember.UserDisabledAt.Valid {
-			return "", errDisabledMember
-		}
-		return "", errAlreadyMember
-	}
-	if rows, err := queries.AcceptInvitation(r.Context(), db.AcceptInvitationParams{
-		OrgID:  invite.OrgID,
-		ID:     invite.ID,
-		UserID: user.ID,
-	}); err != nil {
-		return "", err
-	} else if rows == 0 {
-		return "", errInvalidOrExpiredToken
-	}
-	if _, err := queries.RevokeAuthSessionsForUser(r.Context(), user.ID); err != nil {
-		return "", err
-	}
-	if _, err := queries.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
-		OrgID:       invite.OrgID,
-		UserID:      user.ID,
-		Role:        invite.Role,
-		DisplayName: pgtype.Text{String: identity.DisplayName, Valid: identity.DisplayName != ""},
-	}); err != nil {
-		return "", err
-	}
-	rawSession, err := s.issueSessionForOrg(r, queries, user.ID, invite.OrgID)
 	if err != nil {
-		return "", err
-	}
-	if err := tx.Commit(r.Context()); err != nil {
 		return "", err
 	}
 	return rawSession, nil
