@@ -215,92 +215,88 @@ func workspaceReadPermissions() []auth.Permission {
 }
 
 func (s *Server) requestWorkspaceStopForRequest(ctx context.Context, actor auth.Actor, projectID pgtype.UUID, environmentID pgtype.UUID, workspaceID pgtype.UUID, request api.WorkspaceStopRequest, fingerprint string) (api.WorkspaceStopResponse, error) {
-	if s.tx == nil {
-		return api.WorkspaceStopResponse{}, errors.New("transactional workspace storage is not configured")
-	}
-	tx, err := s.tx.Begin(ctx)
-	if err != nil {
-		return api.WorkspaceStopResponse{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	store := db.New(tx)
 	idempotencyKey := strings.TrimSpace(request.IdempotencyKey)
-	createdIdempotency := false
-	if idempotencyKey != "" {
-		idempotencyTTL, err := workspaceIdempotencyTTL(request.IdempotencyKeyTTL)
-		if err != nil {
-			return api.WorkspaceStopResponse{}, err
+	var response api.WorkspaceStopResponse
+	err := s.inTx(ctx, func(work *txWork) error {
+		createdIdempotency := false
+		if idempotencyKey != "" {
+			idempotencyTTL, err := workspaceIdempotencyTTL(request.IdempotencyKeyTTL)
+			if err != nil {
+				return err
+			}
+			idempotency, err := ensureWorkspaceOperationIdempotency(ctx, work.q, db.EnsureWorkspaceOperationIdempotencyParams{
+				ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				OrgID:                pgvalue.UUID(actor.OrgID),
+				ProjectID:            projectID,
+				EnvironmentID:        environmentID,
+				WorkspaceID:          workspaceID,
+				OperationKind:        workspaceStopOperationKind,
+				IdempotencyKey:       idempotencyKey,
+				RequestFingerprint:   fingerprint,
+				ResponseResourceType: "",
+				ResponseResourceID:   pgtype.UUID{},
+				ResponseBody:         []byte(`{}`),
+				ExpiresAt:            pgvalue.Timestamptz(time.Now().Add(idempotencyTTL)),
+			})
+			if err != nil {
+				return err
+			}
+			var replayed bool
+			response, replayed, err = workspaceStopIdempotencyResponse(idempotency, fingerprint)
+			if err != nil {
+				return err
+			}
+			if replayed {
+				return nil
+			}
+			createdIdempotency = true
 		}
-		idempotency, err := ensureWorkspaceOperationIdempotency(ctx, store, db.EnsureWorkspaceOperationIdempotencyParams{
-			ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:                pgvalue.UUID(actor.OrgID),
-			ProjectID:            projectID,
-			EnvironmentID:        environmentID,
-			WorkspaceID:          workspaceID,
-			OperationKind:        workspaceStopOperationKind,
-			IdempotencyKey:       idempotencyKey,
-			RequestFingerprint:   fingerprint,
-			ResponseResourceType: "",
-			ResponseResourceID:   pgtype.UUID{},
-			ResponseBody:         []byte(`{}`),
-			ExpiresAt:            pgvalue.Timestamptz(time.Now().Add(idempotencyTTL)),
-		})
-		if err != nil {
-			return api.WorkspaceStopResponse{}, err
-		}
-		response, replayed, err := workspaceStopIdempotencyResponse(idempotency, fingerprint)
-		if err != nil {
-			return api.WorkspaceStopResponse{}, err
-		}
-		if replayed {
-			return response, nil
-		}
-		createdIdempotency = true
-	}
-	row, err := store.RequestWorkspaceMountStop(ctx, db.RequestWorkspaceMountStopParams{
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		WorkspaceID:   workspaceID,
-	})
-	activeMount := true
-	if isNoRows(err) {
-		_, err = store.SetWorkspaceDesiredStopped(ctx, db.SetWorkspaceDesiredStoppedParams{
+		row, err := work.q.RequestWorkspaceMountStop(ctx, db.RequestWorkspaceMountStopParams{
 			OrgID:         pgvalue.UUID(actor.OrgID),
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
-			ID:            workspaceID,
+			WorkspaceID:   workspaceID,
 		})
-		if err != nil {
-			return api.WorkspaceStopResponse{}, err
+		activeMount := true
+		if isNoRows(err) {
+			_, err = work.q.SetWorkspaceDesiredStopped(ctx, db.SetWorkspaceDesiredStoppedParams{
+				OrgID:         pgvalue.UUID(actor.OrgID),
+				ProjectID:     projectID,
+				EnvironmentID: environmentID,
+				ID:            workspaceID,
+			})
+			if err != nil {
+				return err
+			}
+			activeMount = false
+		} else if err != nil {
+			return err
 		}
-		activeMount = false
-	} else if err != nil {
-		return api.WorkspaceStopResponse{}, err
-	}
-	response := workspaceStopResponse(workspaceID, row, activeMount)
-	responseBody, err := json.Marshal(response)
+		response = workspaceStopResponse(workspaceID, row, activeMount)
+		responseBody, err := json.Marshal(response)
+		if err != nil {
+			return err
+		}
+		if createdIdempotency {
+			_, err = work.q.CompleteWorkspaceScopedOperationIdempotency(ctx, db.CompleteWorkspaceScopedOperationIdempotencyParams{
+				OrgID:                pgvalue.UUID(actor.OrgID),
+				ProjectID:            projectID,
+				EnvironmentID:        environmentID,
+				OperationKind:        workspaceStopOperationKind,
+				WorkspaceID:          workspaceID,
+				IdempotencyKey:       idempotencyKey,
+				RequestFingerprint:   fingerprint,
+				ResponseResourceType: "workspace",
+				ResponseResourceID:   workspaceID,
+				ResponseBody:         responseBody,
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return api.WorkspaceStopResponse{}, err
-	}
-	if createdIdempotency {
-		_, err = store.CompleteWorkspaceScopedOperationIdempotency(ctx, db.CompleteWorkspaceScopedOperationIdempotencyParams{
-			OrgID:                pgvalue.UUID(actor.OrgID),
-			ProjectID:            projectID,
-			EnvironmentID:        environmentID,
-			OperationKind:        workspaceStopOperationKind,
-			WorkspaceID:          workspaceID,
-			IdempotencyKey:       idempotencyKey,
-			RequestFingerprint:   fingerprint,
-			ResponseResourceType: "workspace",
-			ResponseResourceID:   workspaceID,
-			ResponseBody:         responseBody,
-		})
-		if err != nil {
-			return api.WorkspaceStopResponse{}, err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return api.WorkspaceStopResponse{}, err
 	}
 	return response, nil
@@ -732,71 +728,61 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		writeError(w, badRequest(errors.New("artifact_entry_count must be non-negative")))
 		return
 	}
-	if s.tx == nil {
-		writeError(w, errors.New("workspace mount capture requires transactional store"))
-		return
-	}
-	tx, beginErr := s.tx.Begin(r.Context())
-	if beginErr != nil {
-		writeError(w, errors.New("capture workspace mount"))
-		return
-	}
-	defer tx.Rollback(r.Context())
-	store := db.New(tx)
-	if _, err := store.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
-		Digest:    digest,
-		SizeBytes: request.ArtifactSizeBytes,
-		MediaType: strings.TrimSpace(request.ArtifactMediaType),
-	}); err != nil {
-		writeError(w, errors.New("record workspace capture CAS object"))
-		return
-	}
-	artifact, err := store.CreateArtifact(r.Context(), db.CreateArtifactParams{
-		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:                     params.OrgID,
-		ProjectID:                 pgvalue.UUID(projectID),
-		EnvironmentID:             pgvalue.UUID(environmentID),
-		Digest:                    digest,
-		Kind:                      db.ArtifactKindWorkspaceVersion,
-		SizeBytes:                 request.ArtifactSizeBytes,
-		MediaType:                 strings.TrimSpace(request.ArtifactMediaType),
-		CreatedByWorkerInstanceID: params.WorkerInstanceID,
+	var response api.WorkerWorkspaceMountCaptureResponse
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
+			Digest:    digest,
+			SizeBytes: request.ArtifactSizeBytes,
+			MediaType: strings.TrimSpace(request.ArtifactMediaType),
+		}); err != nil {
+			return errors.New("record workspace capture CAS object")
+		}
+		artifact, err := work.q.CreateArtifact(r.Context(), db.CreateArtifactParams{
+			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:                     params.OrgID,
+			ProjectID:                 pgvalue.UUID(projectID),
+			EnvironmentID:             pgvalue.UUID(environmentID),
+			Digest:                    digest,
+			Kind:                      db.ArtifactKindWorkspaceVersion,
+			SizeBytes:                 request.ArtifactSizeBytes,
+			MediaType:                 strings.TrimSpace(request.ArtifactMediaType),
+			CreatedByWorkerInstanceID: params.WorkerInstanceID,
+		})
+		if err != nil {
+			return errors.New("record workspace capture artifact")
+		}
+		version, err := work.q.PromoteWorkspaceMountStopCapture(r.Context(), db.PromoteWorkspaceMountStopCaptureParams{
+			OrgID:                params.OrgID,
+			ID:                   params.ID,
+			WorkspaceID:          pgvalue.UUID(workspaceID),
+			WorkerInstanceID:     params.WorkerInstanceID,
+			RuntimeInstanceToken: params.RuntimeInstanceToken,
+			ProjectID:            pgvalue.UUID(projectID),
+			EnvironmentID:        pgvalue.UUID(environmentID),
+			ArtifactID:           artifact.ID,
+			SizeBytes:            request.ArtifactSizeBytes,
+			ArtifactEncoding:     strings.TrimSpace(request.ArtifactEncoding),
+			ContentDigest:        digest,
+			VersionID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ArtifactEntryCount:   request.ArtifactEntryCount,
+			Message:              "system capture before workspace stop",
+		})
+		if isNoRows(err) {
+			return conflict(codedError{code: "workspace_mount_capture_rejected", message: "workspace mount capture is stale"})
+		}
+		if err != nil {
+			return errors.New("promote workspace mount capture")
+		}
+		response = api.WorkerWorkspaceMountCaptureResponse{
+			VersionID: pgvalue.MustUUIDValue(version.ID).String(),
+		}
+		return nil
 	})
 	if err != nil {
-		writeError(w, errors.New("record workspace capture artifact"))
+		writeError(w, err)
 		return
 	}
-	version, err := store.PromoteWorkspaceMountStopCapture(r.Context(), db.PromoteWorkspaceMountStopCaptureParams{
-		OrgID:                params.OrgID,
-		ID:                   params.ID,
-		WorkspaceID:          pgvalue.UUID(workspaceID),
-		WorkerInstanceID:     params.WorkerInstanceID,
-		RuntimeInstanceToken: params.RuntimeInstanceToken,
-		ProjectID:            pgvalue.UUID(projectID),
-		EnvironmentID:        pgvalue.UUID(environmentID),
-		ArtifactID:           artifact.ID,
-		SizeBytes:            request.ArtifactSizeBytes,
-		ArtifactEncoding:     strings.TrimSpace(request.ArtifactEncoding),
-		ContentDigest:        digest,
-		VersionID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		ArtifactEntryCount:   request.ArtifactEntryCount,
-		Message:              "system capture before workspace stop",
-	})
-	if isNoRows(err) {
-		writeError(w, conflict(codedError{code: "workspace_mount_capture_rejected", message: "workspace mount capture is stale"}))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("promote workspace mount capture"))
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, errors.New("commit workspace mount capture"))
-		return
-	}
-	writeJSON(w, http.StatusOK, api.WorkerWorkspaceMountCaptureResponse{
-		VersionID: pgvalue.MustUUIDValue(version.ID).String(),
-	})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) workerFailWorkspaceMount(w http.ResponseWriter, r *http.Request) {
@@ -815,41 +801,32 @@ func (s *Server) workerFailWorkspaceMount(w http.ResponseWriter, r *http.Request
 		writeError(w, err)
 		return
 	}
-	if s.tx == nil {
-		writeError(w, errors.New("workspace mount failure requires transactional store"))
-		return
-	}
-	tx, beginErr := s.tx.Begin(r.Context())
-	if beginErr != nil {
-		writeError(w, errors.New("fail workspace mount"))
-		return
-	}
-	defer tx.Rollback(r.Context())
-	store := db.New(tx)
-	row, err := store.FailWorkspaceMount(r.Context(), db.FailWorkspaceMountParams{
-		OrgID:                params.OrgID,
-		ID:                   params.ID,
-		WorkerInstanceID:     params.WorkerInstanceID,
-		RuntimeInstanceToken: params.RuntimeInstanceToken,
-		Error:                errorJSON,
+	var response api.WorkspaceMountResponse
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		row, err := work.q.FailWorkspaceMount(r.Context(), db.FailWorkspaceMountParams{
+			OrgID:                params.OrgID,
+			ID:                   params.ID,
+			WorkerInstanceID:     params.WorkerInstanceID,
+			RuntimeInstanceToken: params.RuntimeInstanceToken,
+			Error:                errorJSON,
+		})
+		if isNoRows(err) {
+			return conflict(errors.New("workspace mount is stale"))
+		}
+		if err != nil {
+			return errors.New("fail workspace mount")
+		}
+		if err := failQueuedRunsForWorkspaceMountFailure(r.Context(), work.q, row, errorJSON); err != nil {
+			return errors.New("fail queued runs waiting for workspace mount")
+		}
+		response = failedWorkspaceMountResponse(row)
+		return nil
 	})
-	if isNoRows(err) {
-		writeError(w, conflict(errors.New("workspace mount is stale")))
-		return
-	}
 	if err != nil {
-		writeError(w, errors.New("fail workspace mount"))
+		writeError(w, err)
 		return
 	}
-	if err := failQueuedRunsForWorkspaceMountFailure(r.Context(), store, row, errorJSON); err != nil {
-		writeError(w, errors.New("fail queued runs waiting for workspace mount"))
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, errors.New("commit workspace mount failure"))
-		return
-	}
-	writeJSON(w, http.StatusOK, failedWorkspaceMountResponse(row))
+	writeJSON(w, http.StatusOK, response)
 }
 
 type queuedRunFailer interface {
@@ -931,24 +908,16 @@ func (s *Server) workerMarkWorkspaceMountMountedTransition(ctx context.Context, 
 	if err != nil {
 		return db.WorkspaceMount{}, err
 	}
-	if s.tx == nil {
-		return db.WorkspaceMount{}, errors.New("workspace mount mounted transition requires transactional store")
-	}
-	tx, err := s.tx.Begin(ctx)
+	var mount db.WorkspaceMount
+	err = s.inTx(ctx, func(work *txWork) error {
+		row, err := work.q.MarkWorkspaceMountMounted(ctx, params)
+		if err != nil {
+			return err
+		}
+		mount = db.WorkspaceMount(row)
+		return enqueuePendingWorkspacePrimitiveOperations(ctx, work.q, mount)
+	})
 	if err != nil {
-		return db.WorkspaceMount{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	store := db.New(tx)
-	row, err := store.MarkWorkspaceMountMounted(ctx, params)
-	if err != nil {
-		return db.WorkspaceMount{}, err
-	}
-	mount := db.WorkspaceMount(row)
-	if err := enqueuePendingWorkspacePrimitiveOperations(ctx, store, mount); err != nil {
-		return db.WorkspaceMount{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return db.WorkspaceMount{}, err
 	}
 	return mount, nil
