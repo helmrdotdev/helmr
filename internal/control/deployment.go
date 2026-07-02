@@ -633,55 +633,34 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 	promoteStore := interface {
 		PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
 	}(store)
-	if s.tx != nil {
-		tx, err := s.tx.Begin(r.Context())
-		if err != nil {
-			writeError(w, errors.New("begin promotion transaction"))
-			return
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		txPromoteStore, ok := work.q.(interface {
+			PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
+		})
+		if !ok {
+			return unavailable(errors.New("deployment storage is not configured"))
 		}
-		defer tx.Rollback(r.Context())
-		promoteStore = db.New(tx)
+		promoteStore = txPromoteStore
 		changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
 		if isNoRows(err) {
-			writeError(w, badRequest(errors.New("deployment is not deployable")))
-			return
+			return badRequest(errors.New("deployment is not deployable"))
 		} else if errors.Is(err, errPermissionRequired) {
-			writeError(w, forbidden(err))
-			return
+			return forbidden(err)
 		} else if err != nil {
 			s.log.Error("promote deployment failed", "deployment", deploymentRef, "error", err)
-			writeError(w, errors.New("promote deployment"))
-			return
+			return errors.New("promote deployment")
 		}
-		if err := tx.Commit(r.Context()); err != nil {
-			writeError(w, errors.New("commit promotion"))
-			return
-		}
-		s.registerChangedScheduleInstances(r.Context(), params.OrgID, params.ProjectID, changedSchedules)
-		s.reconcilePreparedRuntimeSupplyAsync(r.Context(), "deployment_promotion")
-		response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
-		if err != nil {
-			s.log.Error("get promoted deployment artifacts failed", "deployment", deploymentRef, "error", err)
-			writeError(w, errors.New("promote deployment"))
-			return
-		}
-		writeJSON(w, http.StatusOK, response)
+		work.AfterCommit(func(ctx context.Context) error {
+			s.registerChangedScheduleInstances(ctx, params.OrgID, params.ProjectID, changedSchedules)
+			s.reconcilePreparedRuntimeSupplyAsync(ctx, "deployment_promotion")
+			return nil
+		})
+		return nil
+	})
+	if err != nil {
+		writeError(w, err)
 		return
 	}
-	changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
-	if isNoRows(err) {
-		writeError(w, badRequest(errors.New("deployment is not deployable")))
-		return
-	} else if errors.Is(err, errPermissionRequired) {
-		writeError(w, forbidden(err))
-		return
-	} else if err != nil {
-		s.log.Error("promote deployment failed", "deployment", deploymentRef, "error", err)
-		writeError(w, errors.New("promote deployment"))
-		return
-	}
-	s.registerChangedScheduleInstances(r.Context(), params.OrgID, params.ProjectID, changedSchedules)
-	s.reconcilePreparedRuntimeSupplyAsync(r.Context(), "deployment_promotion")
 	response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
 	if err != nil {
 		s.log.Error("get promoted deployment artifacts failed", "deployment", deploymentRef, "error", err)
