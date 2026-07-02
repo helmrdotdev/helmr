@@ -159,122 +159,108 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 		_ = mount
 		return
 	}
-	if s.tx == nil {
-		writeError(w, errors.New("advance workspace exec input delivered requires transactional store"))
-		return
-	}
-	tx, err := s.tx.Begin(r.Context())
-	if err != nil {
-		s.writeWorkspacePrimitiveError(w, "advance workspace exec input delivered", err)
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-	store := db.New(tx)
-	deliveredChunk, err := store.GetWorkspaceExecStreamChunkAtOffset(r.Context(), db.GetWorkspaceExecStreamChunkAtOffsetParams{
-		OrgID:         mount.OrgID,
-		ProjectID:     mount.ProjectID,
-		EnvironmentID: mount.EnvironmentID,
-		WorkspaceID:   mount.WorkspaceID,
-		ExecID:        exec.ID,
-		Stream:        db.WorkspaceExecStreamStdin,
-		OffsetStart:   request.OffsetStart,
-	})
-	if err != nil {
-		if isNoRows(err) {
-			current, getErr := store.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
-				OrgID:         mount.OrgID,
-				ProjectID:     mount.ProjectID,
-				EnvironmentID: mount.EnvironmentID,
-				WorkspaceID:   mount.WorkspaceID,
-				ID:            exec.ID,
-			})
-			if getErr == nil && current.StdinDeliveredCursor >= request.OffsetEnd {
-				writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(current)})
-				return
-			}
-		}
-		s.writeWorkspacePrimitiveError(w, "load delivered workspace exec input", err)
-		return
-	}
-	if deliveredChunk.OffsetEnd != request.OffsetEnd {
-		writeError(w, conflict(errWorkspaceStreamOffsetConflict))
-		return
-	}
-	deliveredDigest := StreamDataSHA256(deliveredChunk.Data)
-	if _, err := store.InsertWorkspaceExecStreamChunkReceipt(r.Context(), db.InsertWorkspaceExecStreamChunkReceiptParams{
-		OrgID:         mount.OrgID,
-		ProjectID:     mount.ProjectID,
-		EnvironmentID: mount.EnvironmentID,
-		WorkspaceID:   mount.WorkspaceID,
-		ExecID:        exec.ID,
-		Stream:        db.WorkspaceExecStreamStdin,
-		OffsetStart:   deliveredChunk.OffsetStart,
-		OffsetEnd:     deliveredChunk.OffsetEnd,
-		DataSha256:    deliveredDigest,
-		DataSize:      int32(len(deliveredChunk.Data)),
-		ObservedAt:    nil,
-	}); err != nil {
-		if isNoRows(err) {
-			receipt, getErr := store.GetWorkspaceExecStreamChunkReceiptAtOffset(r.Context(), db.GetWorkspaceExecStreamChunkReceiptAtOffsetParams{
-				OrgID:         mount.OrgID,
-				ProjectID:     mount.ProjectID,
-				EnvironmentID: mount.EnvironmentID,
-				WorkspaceID:   mount.WorkspaceID,
-				ExecID:        exec.ID,
-				Stream:        db.WorkspaceExecStreamStdin,
-				OffsetStart:   deliveredChunk.OffsetStart,
-			})
-			if getErr == nil && receipt.OffsetEnd == deliveredChunk.OffsetEnd && receipt.DataSize == int32(len(deliveredChunk.Data)) && bytes.Equal(receipt.DataSha256, deliveredDigest) {
-				err = nil
-			} else {
-				writeError(w, conflict(errWorkspaceStreamOffsetConflict))
-				return
-			}
-		}
+	var row db.WorkspaceExec
+	if err := s.inTx(r.Context(), func(work *txWork) error {
+		deliveredChunk, err := work.q.GetWorkspaceExecStreamChunkAtOffset(r.Context(), db.GetWorkspaceExecStreamChunkAtOffsetParams{
+			OrgID:         mount.OrgID,
+			ProjectID:     mount.ProjectID,
+			EnvironmentID: mount.EnvironmentID,
+			WorkspaceID:   mount.WorkspaceID,
+			ExecID:        exec.ID,
+			Stream:        db.WorkspaceExecStreamStdin,
+			OffsetStart:   request.OffsetStart,
+		})
 		if err != nil {
-			s.writeWorkspacePrimitiveError(w, "record delivered workspace exec input", err)
-			return
+			if isNoRows(err) {
+				current, getErr := work.q.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
+					OrgID:         mount.OrgID,
+					ProjectID:     mount.ProjectID,
+					EnvironmentID: mount.EnvironmentID,
+					WorkspaceID:   mount.WorkspaceID,
+					ID:            exec.ID,
+				})
+				if getErr == nil && current.StdinDeliveredCursor >= request.OffsetEnd {
+					row = current
+					return nil
+				}
+			}
+			return err
 		}
-	}
-	row, err := store.AdvanceWorkspaceExecStdinDeliveredCursor(r.Context(), db.AdvanceWorkspaceExecStdinDeliveredCursorParams{
-		OffsetEnd:     request.OffsetEnd,
-		OrgID:         mount.OrgID,
-		ProjectID:     mount.ProjectID,
-		EnvironmentID: mount.EnvironmentID,
-		WorkspaceID:   mount.WorkspaceID,
-		ExecID:        exec.ID,
-		OffsetStart:   request.OffsetStart,
-	})
-	if err != nil {
-		if isNoRows(err) {
-			current, getErr := store.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
-				OrgID:         mount.OrgID,
-				ProjectID:     mount.ProjectID,
-				EnvironmentID: mount.EnvironmentID,
-				WorkspaceID:   mount.WorkspaceID,
-				ID:            exec.ID,
-			})
-			if getErr == nil && current.StdinDeliveredCursor >= request.OffsetEnd {
-				writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(current)})
-				return
+		if deliveredChunk.OffsetEnd != request.OffsetEnd {
+			return conflict(errWorkspaceStreamOffsetConflict)
+		}
+		deliveredDigest := StreamDataSHA256(deliveredChunk.Data)
+		if _, err := work.q.InsertWorkspaceExecStreamChunkReceipt(r.Context(), db.InsertWorkspaceExecStreamChunkReceiptParams{
+			OrgID:         mount.OrgID,
+			ProjectID:     mount.ProjectID,
+			EnvironmentID: mount.EnvironmentID,
+			WorkspaceID:   mount.WorkspaceID,
+			ExecID:        exec.ID,
+			Stream:        db.WorkspaceExecStreamStdin,
+			OffsetStart:   deliveredChunk.OffsetStart,
+			OffsetEnd:     deliveredChunk.OffsetEnd,
+			DataSha256:    deliveredDigest,
+			DataSize:      int32(len(deliveredChunk.Data)),
+			ObservedAt:    nil,
+		}); err != nil {
+			if isNoRows(err) {
+				receipt, getErr := work.q.GetWorkspaceExecStreamChunkReceiptAtOffset(r.Context(), db.GetWorkspaceExecStreamChunkReceiptAtOffsetParams{
+					OrgID:         mount.OrgID,
+					ProjectID:     mount.ProjectID,
+					EnvironmentID: mount.EnvironmentID,
+					WorkspaceID:   mount.WorkspaceID,
+					ExecID:        exec.ID,
+					Stream:        db.WorkspaceExecStreamStdin,
+					OffsetStart:   deliveredChunk.OffsetStart,
+				})
+				if getErr == nil && receipt.OffsetEnd == deliveredChunk.OffsetEnd && receipt.DataSize == int32(len(deliveredChunk.Data)) && bytes.Equal(receipt.DataSha256, deliveredDigest) {
+					err = nil
+				} else {
+					return conflict(errWorkspaceStreamOffsetConflict)
+				}
+			}
+			if err != nil {
+				return err
 			}
 		}
-		s.writeWorkspacePrimitiveError(w, "advance workspace exec input delivered", err)
-		return
-	}
-	if err := store.DeleteWorkspaceExecStreamChunksBefore(r.Context(), db.DeleteWorkspaceExecStreamChunksBeforeParams{
-		OrgID:             mount.OrgID,
-		ProjectID:         mount.ProjectID,
-		EnvironmentID:     mount.EnvironmentID,
-		WorkspaceID:       mount.WorkspaceID,
-		ExecID:            exec.ID,
-		Stream:            db.WorkspaceExecStreamStdin,
-		RetainAfterOffset: request.OffsetEnd,
+		row, err = work.q.AdvanceWorkspaceExecStdinDeliveredCursor(r.Context(), db.AdvanceWorkspaceExecStdinDeliveredCursorParams{
+			OffsetEnd:     request.OffsetEnd,
+			OrgID:         mount.OrgID,
+			ProjectID:     mount.ProjectID,
+			EnvironmentID: mount.EnvironmentID,
+			WorkspaceID:   mount.WorkspaceID,
+			ExecID:        exec.ID,
+			OffsetStart:   request.OffsetStart,
+		})
+		if err != nil {
+			if isNoRows(err) {
+				current, getErr := work.q.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
+					OrgID:         mount.OrgID,
+					ProjectID:     mount.ProjectID,
+					EnvironmentID: mount.EnvironmentID,
+					WorkspaceID:   mount.WorkspaceID,
+					ID:            exec.ID,
+				})
+				if getErr == nil && current.StdinDeliveredCursor >= request.OffsetEnd {
+					row = current
+					return nil
+				}
+			}
+			return err
+		}
+		if err := work.q.DeleteWorkspaceExecStreamChunksBefore(r.Context(), db.DeleteWorkspaceExecStreamChunksBeforeParams{
+			OrgID:             mount.OrgID,
+			ProjectID:         mount.ProjectID,
+			EnvironmentID:     mount.EnvironmentID,
+			WorkspaceID:       mount.WorkspaceID,
+			ExecID:            exec.ID,
+			Stream:            db.WorkspaceExecStreamStdin,
+			RetainAfterOffset: request.OffsetEnd,
+		}); err != nil {
+			return err
+		}
+		return nil
 	}); err != nil {
-		s.writeWorkspacePrimitiveError(w, "trim delivered workspace exec input", err)
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
 		s.writeWorkspacePrimitiveError(w, "advance workspace exec input delivered", err)
 		return
 	}
@@ -411,29 +397,37 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 	if len(data) > workspaceStreamChunkMaxBytes {
 		return db.WorkspaceExecStreamChunk{}, tooLarge(fmt.Errorf("stream chunk is %d bytes, exceeds max %d", len(data), workspaceStreamChunkMaxBytes))
 	}
-	if s.tx == nil {
-		return db.WorkspaceExecStreamChunk{}, errors.New("transactional workspace storage is not configured")
-	}
-	tx, err := s.tx.Begin(ctx)
-	if err != nil {
-		return db.WorkspaceExecStreamChunk{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	store := db.New(tx)
-	locked, err := store.LockWorkspaceExecForStreamAppend(ctx, db.LockWorkspaceExecForStreamAppendParams{
-		OrgID:         exec.OrgID,
-		ProjectID:     exec.ProjectID,
-		EnvironmentID: exec.EnvironmentID,
-		WorkspaceID:   exec.WorkspaceID,
-		ExecID:        exec.ID,
-	})
-	if err != nil {
-		return db.WorkspaceExecStreamChunk{}, err
-	}
-	tail := ExecStreamCursor(locked, stream)
-	offset := *requestedOffset
-	if offset != tail {
-		existing, getErr := store.GetWorkspaceExecStreamChunkAtOffset(ctx, db.GetWorkspaceExecStreamChunkAtOffsetParams{
+	var chunk db.WorkspaceExecStreamChunk
+	err := s.inTx(ctx, func(work *txWork) error {
+		locked, err := work.q.LockWorkspaceExecForStreamAppend(ctx, db.LockWorkspaceExecForStreamAppendParams{
+			OrgID:         exec.OrgID,
+			ProjectID:     exec.ProjectID,
+			EnvironmentID: exec.EnvironmentID,
+			WorkspaceID:   exec.WorkspaceID,
+			ExecID:        exec.ID,
+		})
+		if err != nil {
+			return err
+		}
+		tail := ExecStreamCursor(locked, stream)
+		offset := *requestedOffset
+		if offset != tail {
+			existing, getErr := work.q.GetWorkspaceExecStreamChunkAtOffset(ctx, db.GetWorkspaceExecStreamChunkAtOffsetParams{
+				OrgID:         exec.OrgID,
+				ProjectID:     exec.ProjectID,
+				EnvironmentID: exec.EnvironmentID,
+				WorkspaceID:   exec.WorkspaceID,
+				ExecID:        exec.ID,
+				Stream:        stream,
+				OffsetStart:   offset,
+			})
+			if getErr == nil && existing.OffsetEnd == offset+int64(len(data)) && bytes.Equal(existing.Data, data) {
+				chunk = existing
+				return nil
+			}
+			return conflict(errWorkspaceStreamOffsetConflict)
+		}
+		chunk, err = work.q.InsertWorkspaceExecOutputStreamChunk(ctx, db.InsertWorkspaceExecOutputStreamChunkParams{
 			OrgID:         exec.OrgID,
 			ProjectID:     exec.ProjectID,
 			EnvironmentID: exec.EnvironmentID,
@@ -441,84 +435,73 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 			ExecID:        exec.ID,
 			Stream:        stream,
 			OffsetStart:   offset,
+			OffsetEnd:     offset + int64(len(data)),
+			Data:          data,
+			ObservedAt:    nil,
 		})
-		if getErr == nil && existing.OffsetEnd == offset+int64(len(data)) && bytes.Equal(existing.Data, data) {
-			return existing, nil
+		if errors.Is(err, pgx.ErrNoRows) {
+			existing, getErr := work.q.GetWorkspaceExecStreamChunkAtOffset(ctx, db.GetWorkspaceExecStreamChunkAtOffsetParams{
+				OrgID:         exec.OrgID,
+				ProjectID:     exec.ProjectID,
+				EnvironmentID: exec.EnvironmentID,
+				WorkspaceID:   exec.WorkspaceID,
+				ExecID:        exec.ID,
+				Stream:        stream,
+				OffsetStart:   offset,
+			})
+			if getErr == nil && existing.OffsetEnd == offset+int64(len(data)) && bytes.Equal(existing.Data, data) {
+				chunk = existing
+				return nil
+			}
+			return conflict(errWorkspaceStreamOffsetConflict)
 		}
-		return db.WorkspaceExecStreamChunk{}, conflict(errWorkspaceStreamOffsetConflict)
-	}
-	chunk, err := store.InsertWorkspaceExecOutputStreamChunk(ctx, db.InsertWorkspaceExecOutputStreamChunkParams{
-		OrgID:         exec.OrgID,
-		ProjectID:     exec.ProjectID,
-		EnvironmentID: exec.EnvironmentID,
-		WorkspaceID:   exec.WorkspaceID,
-		ExecID:        exec.ID,
-		Stream:        stream,
-		OffsetStart:   offset,
-		OffsetEnd:     offset + int64(len(data)),
-		Data:          data,
-		ObservedAt:    nil,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		existing, getErr := store.GetWorkspaceExecStreamChunkAtOffset(ctx, db.GetWorkspaceExecStreamChunkAtOffsetParams{
+		if err != nil {
+			if isUniqueViolation(err) || isExclusionViolation(err) {
+				return conflict(errWorkspaceStreamOffsetConflict)
+			}
+			return err
+		}
+		row, err := work.q.AdvanceWorkspaceExecOutputCursor(ctx, db.AdvanceWorkspaceExecOutputCursorParams{
+			Stream:        stream,
 			OrgID:         exec.OrgID,
 			ProjectID:     exec.ProjectID,
 			EnvironmentID: exec.EnvironmentID,
 			WorkspaceID:   exec.WorkspaceID,
 			ExecID:        exec.ID,
-			Stream:        stream,
-			OffsetStart:   offset,
 		})
-		if getErr == nil && existing.OffsetEnd == offset+int64(len(data)) && bytes.Equal(existing.Data, data) {
-			return existing, nil
+		if err != nil {
+			return err
 		}
-		return db.WorkspaceExecStreamChunk{}, conflict(errWorkspaceStreamOffsetConflict)
-	}
-	if err != nil {
-		if isUniqueViolation(err) || isExclusionViolation(err) {
-			return db.WorkspaceExecStreamChunk{}, conflict(errWorkspaceStreamOffsetConflict)
+		retainAfter := ExecStreamCursorFromRow(row, stream) - workspaceStreamRetainedMaxBytes
+		if retainAfter > 0 {
+			if err := work.q.DeleteWorkspaceExecStreamChunksBefore(ctx, db.DeleteWorkspaceExecStreamChunksBeforeParams{
+				OrgID:             exec.OrgID,
+				ProjectID:         exec.ProjectID,
+				EnvironmentID:     exec.EnvironmentID,
+				WorkspaceID:       exec.WorkspaceID,
+				ExecID:            exec.ID,
+				Stream:            stream,
+				RetainAfterOffset: retainAfter,
+			}); err != nil {
+				return err
+			}
 		}
-		return db.WorkspaceExecStreamChunk{}, err
-	}
-	row, err := store.AdvanceWorkspaceExecOutputCursor(ctx, db.AdvanceWorkspaceExecOutputCursorParams{
-		Stream:        stream,
-		OrgID:         exec.OrgID,
-		ProjectID:     exec.ProjectID,
-		EnvironmentID: exec.EnvironmentID,
-		WorkspaceID:   exec.WorkspaceID,
-		ExecID:        exec.ID,
-	})
-	if err != nil {
-		return db.WorkspaceExecStreamChunk{}, err
-	}
-	retainAfter := ExecStreamCursorFromRow(row, stream) - workspaceStreamRetainedMaxBytes
-	if retainAfter > 0 {
-		if err := store.DeleteWorkspaceExecStreamChunksBefore(ctx, db.DeleteWorkspaceExecStreamChunksBeforeParams{
-			OrgID:             exec.OrgID,
-			ProjectID:         exec.ProjectID,
-			EnvironmentID:     exec.EnvironmentID,
-			WorkspaceID:       exec.WorkspaceID,
-			ExecID:            exec.ID,
-			Stream:            stream,
-			RetainAfterOffset: retainAfter,
+		if _, err := work.q.CreateWorkspaceStreamWakeup(ctx, db.CreateWorkspaceStreamWakeupParams{
+			OrgID:            exec.OrgID,
+			ProjectID:        exec.ProjectID,
+			EnvironmentID:    exec.EnvironmentID,
+			WorkspaceID:      exec.WorkspaceID,
+			ResourceKind:     db.WorkspaceResourceKindWorkspaceExec,
+			ResourceID:       exec.ID,
+			Stream:           string(stream),
+			CursorOffset:     chunk.OffsetEnd,
+			NotificationKind: db.WorkspaceStreamNotificationKindChunk,
 		}); err != nil {
-			return db.WorkspaceExecStreamChunk{}, err
+			return err
 		}
-	}
-	if _, err := store.CreateWorkspaceStreamWakeup(ctx, db.CreateWorkspaceStreamWakeupParams{
-		OrgID:            exec.OrgID,
-		ProjectID:        exec.ProjectID,
-		EnvironmentID:    exec.EnvironmentID,
-		WorkspaceID:      exec.WorkspaceID,
-		ResourceKind:     db.WorkspaceResourceKindWorkspaceExec,
-		ResourceID:       exec.ID,
-		Stream:           string(stream),
-		CursorOffset:     chunk.OffsetEnd,
-		NotificationKind: db.WorkspaceStreamNotificationKindChunk,
-	}); err != nil {
-		return db.WorkspaceExecStreamChunk{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
+		return nil
+	})
+	if err != nil {
 		return db.WorkspaceExecStreamChunk{}, err
 	}
 	return chunk, nil

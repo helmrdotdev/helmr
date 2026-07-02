@@ -153,122 +153,108 @@ func (s *Server) workerAdvanceWorkspacePtyInputDelivered(w http.ResponseWriter, 
 		_ = mount
 		return
 	}
-	if s.tx == nil {
-		writeError(w, errors.New("advance workspace pty input delivered requires transactional store"))
-		return
-	}
-	tx, err := s.tx.Begin(r.Context())
-	if err != nil {
-		s.writeWorkspacePrimitiveError(w, "advance workspace pty input delivered", err)
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-	store := db.New(tx)
-	deliveredChunk, err := store.GetWorkspacePtyStreamChunkAtOffset(r.Context(), db.GetWorkspacePtyStreamChunkAtOffsetParams{
-		OrgID:         mount.OrgID,
-		ProjectID:     mount.ProjectID,
-		EnvironmentID: mount.EnvironmentID,
-		WorkspaceID:   mount.WorkspaceID,
-		PtySessionID:  pty.ID,
-		Stream:        db.WorkspacePtyStreamInput,
-		OffsetStart:   request.OffsetStart,
-	})
-	if err != nil {
-		if isNoRows(err) {
-			current, getErr := store.GetWorkspacePtySession(r.Context(), db.GetWorkspacePtySessionParams{
-				OrgID:         mount.OrgID,
-				ProjectID:     mount.ProjectID,
-				EnvironmentID: mount.EnvironmentID,
-				WorkspaceID:   mount.WorkspaceID,
-				ID:            pty.ID,
-			})
-			if getErr == nil && current.InputDeliveredCursor >= request.OffsetEnd {
-				writeJSON(w, http.StatusOK, api.WorkspacePtyEnvelope{Pty: workspacePtyResponse(current)})
-				return
-			}
-		}
-		s.writeWorkspacePrimitiveError(w, "load delivered workspace pty input", err)
-		return
-	}
-	if deliveredChunk.OffsetEnd != request.OffsetEnd {
-		writeError(w, conflict(errWorkspaceStreamOffsetConflict))
-		return
-	}
-	deliveredDigest := StreamDataSHA256(deliveredChunk.Data)
-	if _, err := store.InsertWorkspacePtyStreamChunkReceipt(r.Context(), db.InsertWorkspacePtyStreamChunkReceiptParams{
-		OrgID:         mount.OrgID,
-		ProjectID:     mount.ProjectID,
-		EnvironmentID: mount.EnvironmentID,
-		WorkspaceID:   mount.WorkspaceID,
-		PtySessionID:  pty.ID,
-		Stream:        db.WorkspacePtyStreamInput,
-		OffsetStart:   deliveredChunk.OffsetStart,
-		OffsetEnd:     deliveredChunk.OffsetEnd,
-		DataSha256:    deliveredDigest,
-		DataSize:      int32(len(deliveredChunk.Data)),
-		ObservedAt:    nil,
-	}); err != nil {
-		if isNoRows(err) {
-			receipt, getErr := store.GetWorkspacePtyStreamChunkReceiptAtOffset(r.Context(), db.GetWorkspacePtyStreamChunkReceiptAtOffsetParams{
-				OrgID:         mount.OrgID,
-				ProjectID:     mount.ProjectID,
-				EnvironmentID: mount.EnvironmentID,
-				WorkspaceID:   mount.WorkspaceID,
-				PtySessionID:  pty.ID,
-				Stream:        db.WorkspacePtyStreamInput,
-				OffsetStart:   deliveredChunk.OffsetStart,
-			})
-			if getErr == nil && receipt.OffsetEnd == deliveredChunk.OffsetEnd && receipt.DataSize == int32(len(deliveredChunk.Data)) && bytes.Equal(receipt.DataSha256, deliveredDigest) {
-				err = nil
-			} else {
-				writeError(w, conflict(errWorkspaceStreamOffsetConflict))
-				return
-			}
-		}
+	var row db.WorkspacePtySession
+	if err := s.inTx(r.Context(), func(work *txWork) error {
+		deliveredChunk, err := work.q.GetWorkspacePtyStreamChunkAtOffset(r.Context(), db.GetWorkspacePtyStreamChunkAtOffsetParams{
+			OrgID:         mount.OrgID,
+			ProjectID:     mount.ProjectID,
+			EnvironmentID: mount.EnvironmentID,
+			WorkspaceID:   mount.WorkspaceID,
+			PtySessionID:  pty.ID,
+			Stream:        db.WorkspacePtyStreamInput,
+			OffsetStart:   request.OffsetStart,
+		})
 		if err != nil {
-			s.writeWorkspacePrimitiveError(w, "record delivered workspace pty input", err)
-			return
+			if isNoRows(err) {
+				current, getErr := work.q.GetWorkspacePtySession(r.Context(), db.GetWorkspacePtySessionParams{
+					OrgID:         mount.OrgID,
+					ProjectID:     mount.ProjectID,
+					EnvironmentID: mount.EnvironmentID,
+					WorkspaceID:   mount.WorkspaceID,
+					ID:            pty.ID,
+				})
+				if getErr == nil && current.InputDeliveredCursor >= request.OffsetEnd {
+					row = current
+					return nil
+				}
+			}
+			return err
 		}
-	}
-	row, err := store.AdvanceWorkspacePtyInputDeliveredCursor(r.Context(), db.AdvanceWorkspacePtyInputDeliveredCursorParams{
-		OffsetEnd:     request.OffsetEnd,
-		OrgID:         mount.OrgID,
-		ProjectID:     mount.ProjectID,
-		EnvironmentID: mount.EnvironmentID,
-		WorkspaceID:   mount.WorkspaceID,
-		PtySessionID:  pty.ID,
-		OffsetStart:   request.OffsetStart,
-	})
-	if err != nil {
-		if isNoRows(err) {
-			current, getErr := store.GetWorkspacePtySession(r.Context(), db.GetWorkspacePtySessionParams{
-				OrgID:         mount.OrgID,
-				ProjectID:     mount.ProjectID,
-				EnvironmentID: mount.EnvironmentID,
-				WorkspaceID:   mount.WorkspaceID,
-				ID:            pty.ID,
-			})
-			if getErr == nil && current.InputDeliveredCursor >= request.OffsetEnd {
-				writeJSON(w, http.StatusOK, api.WorkspacePtyEnvelope{Pty: workspacePtyResponse(current)})
-				return
+		if deliveredChunk.OffsetEnd != request.OffsetEnd {
+			return conflict(errWorkspaceStreamOffsetConflict)
+		}
+		deliveredDigest := StreamDataSHA256(deliveredChunk.Data)
+		if _, err := work.q.InsertWorkspacePtyStreamChunkReceipt(r.Context(), db.InsertWorkspacePtyStreamChunkReceiptParams{
+			OrgID:         mount.OrgID,
+			ProjectID:     mount.ProjectID,
+			EnvironmentID: mount.EnvironmentID,
+			WorkspaceID:   mount.WorkspaceID,
+			PtySessionID:  pty.ID,
+			Stream:        db.WorkspacePtyStreamInput,
+			OffsetStart:   deliveredChunk.OffsetStart,
+			OffsetEnd:     deliveredChunk.OffsetEnd,
+			DataSha256:    deliveredDigest,
+			DataSize:      int32(len(deliveredChunk.Data)),
+			ObservedAt:    nil,
+		}); err != nil {
+			if isNoRows(err) {
+				receipt, getErr := work.q.GetWorkspacePtyStreamChunkReceiptAtOffset(r.Context(), db.GetWorkspacePtyStreamChunkReceiptAtOffsetParams{
+					OrgID:         mount.OrgID,
+					ProjectID:     mount.ProjectID,
+					EnvironmentID: mount.EnvironmentID,
+					WorkspaceID:   mount.WorkspaceID,
+					PtySessionID:  pty.ID,
+					Stream:        db.WorkspacePtyStreamInput,
+					OffsetStart:   deliveredChunk.OffsetStart,
+				})
+				if getErr == nil && receipt.OffsetEnd == deliveredChunk.OffsetEnd && receipt.DataSize == int32(len(deliveredChunk.Data)) && bytes.Equal(receipt.DataSha256, deliveredDigest) {
+					err = nil
+				} else {
+					return conflict(errWorkspaceStreamOffsetConflict)
+				}
+			}
+			if err != nil {
+				return err
 			}
 		}
-		s.writeWorkspacePrimitiveError(w, "advance workspace pty input delivered", err)
-		return
-	}
-	if err := store.DeleteWorkspacePtyStreamChunksBefore(r.Context(), db.DeleteWorkspacePtyStreamChunksBeforeParams{
-		OrgID:             mount.OrgID,
-		ProjectID:         mount.ProjectID,
-		EnvironmentID:     mount.EnvironmentID,
-		WorkspaceID:       mount.WorkspaceID,
-		PtySessionID:      pty.ID,
-		Stream:            db.WorkspacePtyStreamInput,
-		RetainAfterOffset: request.OffsetEnd,
+		row, err = work.q.AdvanceWorkspacePtyInputDeliveredCursor(r.Context(), db.AdvanceWorkspacePtyInputDeliveredCursorParams{
+			OffsetEnd:     request.OffsetEnd,
+			OrgID:         mount.OrgID,
+			ProjectID:     mount.ProjectID,
+			EnvironmentID: mount.EnvironmentID,
+			WorkspaceID:   mount.WorkspaceID,
+			PtySessionID:  pty.ID,
+			OffsetStart:   request.OffsetStart,
+		})
+		if err != nil {
+			if isNoRows(err) {
+				current, getErr := work.q.GetWorkspacePtySession(r.Context(), db.GetWorkspacePtySessionParams{
+					OrgID:         mount.OrgID,
+					ProjectID:     mount.ProjectID,
+					EnvironmentID: mount.EnvironmentID,
+					WorkspaceID:   mount.WorkspaceID,
+					ID:            pty.ID,
+				})
+				if getErr == nil && current.InputDeliveredCursor >= request.OffsetEnd {
+					row = current
+					return nil
+				}
+			}
+			return err
+		}
+		if err := work.q.DeleteWorkspacePtyStreamChunksBefore(r.Context(), db.DeleteWorkspacePtyStreamChunksBeforeParams{
+			OrgID:             mount.OrgID,
+			ProjectID:         mount.ProjectID,
+			EnvironmentID:     mount.EnvironmentID,
+			WorkspaceID:       mount.WorkspaceID,
+			PtySessionID:      pty.ID,
+			Stream:            db.WorkspacePtyStreamInput,
+			RetainAfterOffset: request.OffsetEnd,
+		}); err != nil {
+			return err
+		}
+		return nil
 	}); err != nil {
-		s.writeWorkspacePrimitiveError(w, "trim delivered workspace pty input", err)
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
 		s.writeWorkspacePrimitiveError(w, "advance workspace pty input delivered", err)
 		return
 	}
@@ -457,29 +443,37 @@ func (s *Server) appendWorkspacePtyOutputStreamChunk(ctx context.Context, pty db
 	if len(data) > workspaceStreamChunkMaxBytes {
 		return db.WorkspacePtyStreamChunk{}, tooLarge(fmt.Errorf("stream chunk is %d bytes, exceeds max %d", len(data), workspaceStreamChunkMaxBytes))
 	}
-	if s.tx == nil {
-		return db.WorkspacePtyStreamChunk{}, errors.New("transactional workspace storage is not configured")
-	}
-	tx, err := s.tx.Begin(ctx)
-	if err != nil {
-		return db.WorkspacePtyStreamChunk{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	store := db.New(tx)
-	locked, err := store.LockWorkspacePtyForStreamAppend(ctx, db.LockWorkspacePtyForStreamAppendParams{
-		OrgID:         pty.OrgID,
-		ProjectID:     pty.ProjectID,
-		EnvironmentID: pty.EnvironmentID,
-		WorkspaceID:   pty.WorkspaceID,
-		PtySessionID:  pty.ID,
-	})
-	if err != nil {
-		return db.WorkspacePtyStreamChunk{}, err
-	}
-	tail := PtyStreamCursor(locked, db.WorkspacePtyStreamOutput)
-	offset := *requestedOffset
-	if offset != tail {
-		existing, getErr := store.GetWorkspacePtyStreamChunkAtOffset(ctx, db.GetWorkspacePtyStreamChunkAtOffsetParams{
+	var chunk db.WorkspacePtyStreamChunk
+	err := s.inTx(ctx, func(work *txWork) error {
+		locked, err := work.q.LockWorkspacePtyForStreamAppend(ctx, db.LockWorkspacePtyForStreamAppendParams{
+			OrgID:         pty.OrgID,
+			ProjectID:     pty.ProjectID,
+			EnvironmentID: pty.EnvironmentID,
+			WorkspaceID:   pty.WorkspaceID,
+			PtySessionID:  pty.ID,
+		})
+		if err != nil {
+			return err
+		}
+		tail := PtyStreamCursor(locked, db.WorkspacePtyStreamOutput)
+		offset := *requestedOffset
+		if offset != tail {
+			existing, getErr := work.q.GetWorkspacePtyStreamChunkAtOffset(ctx, db.GetWorkspacePtyStreamChunkAtOffsetParams{
+				OrgID:         pty.OrgID,
+				ProjectID:     pty.ProjectID,
+				EnvironmentID: pty.EnvironmentID,
+				WorkspaceID:   pty.WorkspaceID,
+				PtySessionID:  pty.ID,
+				Stream:        db.WorkspacePtyStreamOutput,
+				OffsetStart:   offset,
+			})
+			if getErr == nil && existing.OffsetEnd == offset+int64(len(data)) && bytes.Equal(existing.Data, data) {
+				chunk = existing
+				return nil
+			}
+			return conflict(errWorkspaceStreamOffsetConflict)
+		}
+		chunk, err = work.q.InsertWorkspacePtyOutputStreamChunk(ctx, db.InsertWorkspacePtyOutputStreamChunkParams{
 			OrgID:         pty.OrgID,
 			ProjectID:     pty.ProjectID,
 			EnvironmentID: pty.EnvironmentID,
@@ -487,84 +481,73 @@ func (s *Server) appendWorkspacePtyOutputStreamChunk(ctx context.Context, pty db
 			PtySessionID:  pty.ID,
 			Stream:        db.WorkspacePtyStreamOutput,
 			OffsetStart:   offset,
+			OffsetEnd:     offset + int64(len(data)),
+			Data:          data,
+			ObservedAt:    nil,
 		})
-		if getErr == nil && existing.OffsetEnd == offset+int64(len(data)) && bytes.Equal(existing.Data, data) {
-			return existing, nil
+		if errors.Is(err, pgx.ErrNoRows) {
+			existing, getErr := work.q.GetWorkspacePtyStreamChunkAtOffset(ctx, db.GetWorkspacePtyStreamChunkAtOffsetParams{
+				OrgID:         pty.OrgID,
+				ProjectID:     pty.ProjectID,
+				EnvironmentID: pty.EnvironmentID,
+				WorkspaceID:   pty.WorkspaceID,
+				PtySessionID:  pty.ID,
+				Stream:        db.WorkspacePtyStreamOutput,
+				OffsetStart:   offset,
+			})
+			if getErr == nil && existing.OffsetEnd == offset+int64(len(data)) && bytes.Equal(existing.Data, data) {
+				chunk = existing
+				return nil
+			}
+			return conflict(errWorkspaceStreamOffsetConflict)
 		}
-		return db.WorkspacePtyStreamChunk{}, conflict(errWorkspaceStreamOffsetConflict)
-	}
-	chunk, err := store.InsertWorkspacePtyOutputStreamChunk(ctx, db.InsertWorkspacePtyOutputStreamChunkParams{
-		OrgID:         pty.OrgID,
-		ProjectID:     pty.ProjectID,
-		EnvironmentID: pty.EnvironmentID,
-		WorkspaceID:   pty.WorkspaceID,
-		PtySessionID:  pty.ID,
-		Stream:        db.WorkspacePtyStreamOutput,
-		OffsetStart:   offset,
-		OffsetEnd:     offset + int64(len(data)),
-		Data:          data,
-		ObservedAt:    nil,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		existing, getErr := store.GetWorkspacePtyStreamChunkAtOffset(ctx, db.GetWorkspacePtyStreamChunkAtOffsetParams{
+		if err != nil {
+			if isUniqueViolation(err) || isExclusionViolation(err) {
+				return conflict(errWorkspaceStreamOffsetConflict)
+			}
+			return err
+		}
+		row, err := work.q.AdvanceWorkspacePtyOutputCursor(ctx, db.AdvanceWorkspacePtyOutputCursorParams{
+			Stream:        db.WorkspacePtyStreamOutput,
 			OrgID:         pty.OrgID,
 			ProjectID:     pty.ProjectID,
 			EnvironmentID: pty.EnvironmentID,
 			WorkspaceID:   pty.WorkspaceID,
 			PtySessionID:  pty.ID,
-			Stream:        db.WorkspacePtyStreamOutput,
-			OffsetStart:   offset,
 		})
-		if getErr == nil && existing.OffsetEnd == offset+int64(len(data)) && bytes.Equal(existing.Data, data) {
-			return existing, nil
+		if err != nil {
+			return err
 		}
-		return db.WorkspacePtyStreamChunk{}, conflict(errWorkspaceStreamOffsetConflict)
-	}
-	if err != nil {
-		if isUniqueViolation(err) || isExclusionViolation(err) {
-			return db.WorkspacePtyStreamChunk{}, conflict(errWorkspaceStreamOffsetConflict)
+		retainAfter := row.OutputCursor - workspaceStreamRetainedMaxBytes
+		if retainAfter > 0 {
+			if err := work.q.DeleteWorkspacePtyStreamChunksBefore(ctx, db.DeleteWorkspacePtyStreamChunksBeforeParams{
+				OrgID:             pty.OrgID,
+				ProjectID:         pty.ProjectID,
+				EnvironmentID:     pty.EnvironmentID,
+				WorkspaceID:       pty.WorkspaceID,
+				PtySessionID:      pty.ID,
+				Stream:            db.WorkspacePtyStreamOutput,
+				RetainAfterOffset: retainAfter,
+			}); err != nil {
+				return err
+			}
 		}
-		return db.WorkspacePtyStreamChunk{}, err
-	}
-	row, err := store.AdvanceWorkspacePtyOutputCursor(ctx, db.AdvanceWorkspacePtyOutputCursorParams{
-		Stream:        db.WorkspacePtyStreamOutput,
-		OrgID:         pty.OrgID,
-		ProjectID:     pty.ProjectID,
-		EnvironmentID: pty.EnvironmentID,
-		WorkspaceID:   pty.WorkspaceID,
-		PtySessionID:  pty.ID,
-	})
-	if err != nil {
-		return db.WorkspacePtyStreamChunk{}, err
-	}
-	retainAfter := row.OutputCursor - workspaceStreamRetainedMaxBytes
-	if retainAfter > 0 {
-		if err := store.DeleteWorkspacePtyStreamChunksBefore(ctx, db.DeleteWorkspacePtyStreamChunksBeforeParams{
-			OrgID:             pty.OrgID,
-			ProjectID:         pty.ProjectID,
-			EnvironmentID:     pty.EnvironmentID,
-			WorkspaceID:       pty.WorkspaceID,
-			PtySessionID:      pty.ID,
-			Stream:            db.WorkspacePtyStreamOutput,
-			RetainAfterOffset: retainAfter,
+		if _, err := work.q.CreateWorkspaceStreamWakeup(ctx, db.CreateWorkspaceStreamWakeupParams{
+			OrgID:            pty.OrgID,
+			ProjectID:        pty.ProjectID,
+			EnvironmentID:    pty.EnvironmentID,
+			WorkspaceID:      pty.WorkspaceID,
+			ResourceKind:     db.WorkspaceResourceKindWorkspacePty,
+			ResourceID:       pty.ID,
+			Stream:           string(db.WorkspacePtyStreamOutput),
+			CursorOffset:     chunk.OffsetEnd,
+			NotificationKind: db.WorkspaceStreamNotificationKindChunk,
 		}); err != nil {
-			return db.WorkspacePtyStreamChunk{}, err
+			return err
 		}
-	}
-	if _, err := store.CreateWorkspaceStreamWakeup(ctx, db.CreateWorkspaceStreamWakeupParams{
-		OrgID:            pty.OrgID,
-		ProjectID:        pty.ProjectID,
-		EnvironmentID:    pty.EnvironmentID,
-		WorkspaceID:      pty.WorkspaceID,
-		ResourceKind:     db.WorkspaceResourceKindWorkspacePty,
-		ResourceID:       pty.ID,
-		Stream:           string(db.WorkspacePtyStreamOutput),
-		CursorOffset:     chunk.OffsetEnd,
-		NotificationKind: db.WorkspaceStreamNotificationKindChunk,
-	}); err != nil {
-		return db.WorkspacePtyStreamChunk{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
+		return nil
+	})
+	if err != nil {
 		return db.WorkspacePtyStreamChunk{}, err
 	}
 	return chunk, nil
