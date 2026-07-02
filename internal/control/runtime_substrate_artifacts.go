@@ -60,67 +60,61 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 		return
 	}
 	worker := workerFromContext(r.Context())
-	store, tx, err := s.beginControlTransaction(r.Context())
-	if err != nil {
-		writeError(w, errors.New("begin runtime substrate artifact transaction"))
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-	sandbox, err := store.GetDeploymentSandboxForWorkerGroup(r.Context(), db.GetDeploymentSandboxForWorkerGroupParams{
-		ID:            deploymentSandboxID,
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-	})
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("deployment sandbox not found")))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("load deployment sandbox"))
-		return
-	}
-	if _, err := store.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
-		Digest:    strings.TrimSpace(request.Artifact.Digest),
-		SizeBytes: request.Artifact.SizeBytes,
-		MediaType: strings.TrimSpace(request.Artifact.MediaType),
-	}); err != nil {
-		writeError(w, errors.New("record runtime substrate CAS object"))
-		return
-	}
-	artifact, err := store.UpsertRuntimeSubstrateArtifactBlob(r.Context(), db.UpsertRuntimeSubstrateArtifactBlobParams{
-		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:                     sandbox.OrgID,
-		ProjectID:                 sandbox.ProjectID,
-		EnvironmentID:             sandbox.EnvironmentID,
-		Digest:                    strings.TrimSpace(request.Artifact.Digest),
-		SizeBytes:                 request.Artifact.SizeBytes,
-		MediaType:                 strings.TrimSpace(request.Artifact.MediaType),
-		CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-	})
-	if err != nil {
-		writeError(w, errors.New("record runtime substrate artifact"))
-		return
-	}
-	row, err := store.UpsertRuntimeSubstrateArtifact(r.Context(), db.UpsertRuntimeSubstrateArtifactParams{
-		ID:                        runtimeSubstrateArtifactID,
-		OrgID:                     sandbox.OrgID,
-		ProjectID:                 sandbox.ProjectID,
-		EnvironmentID:             sandbox.EnvironmentID,
-		DeploymentSandboxID:       sandbox.ID,
-		ArtifactID:                artifact.ID,
-		SubstrateDigest:           strings.TrimSpace(request.SubstrateDigest),
-		SubstrateFormat:           strings.TrimSpace(request.Format),
-		BuilderAbi:                strings.TrimSpace(request.BuilderABI),
-		LayoutAbi:                 strings.TrimSpace(request.LayoutABI),
-		SubstrateSizeBytes:        request.SizeBytes,
-		Source:                    normalizedJSONRawMessage(request.Source),
-		CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+	var row db.RuntimeSubstrateArtifact
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		sandbox, err := work.q.GetDeploymentSandboxForWorkerGroup(r.Context(), db.GetDeploymentSandboxForWorkerGroupParams{
+			ID:            deploymentSandboxID,
+			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
+		})
+		if isNoRows(err) {
+			return notFound(errors.New("deployment sandbox not found"))
+		}
+		if err != nil {
+			return errors.New("load deployment sandbox")
+		}
+		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
+			Digest:    strings.TrimSpace(request.Artifact.Digest),
+			SizeBytes: request.Artifact.SizeBytes,
+			MediaType: strings.TrimSpace(request.Artifact.MediaType),
+		}); err != nil {
+			return errors.New("record runtime substrate CAS object")
+		}
+		artifact, err := work.q.UpsertRuntimeSubstrateArtifactBlob(r.Context(), db.UpsertRuntimeSubstrateArtifactBlobParams{
+			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:                     sandbox.OrgID,
+			ProjectID:                 sandbox.ProjectID,
+			EnvironmentID:             sandbox.EnvironmentID,
+			Digest:                    strings.TrimSpace(request.Artifact.Digest),
+			SizeBytes:                 request.Artifact.SizeBytes,
+			MediaType:                 strings.TrimSpace(request.Artifact.MediaType),
+			CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		})
+		if err != nil {
+			return errors.New("record runtime substrate artifact")
+		}
+		row, err = work.q.UpsertRuntimeSubstrateArtifact(r.Context(), db.UpsertRuntimeSubstrateArtifactParams{
+			ID:                        runtimeSubstrateArtifactID,
+			OrgID:                     sandbox.OrgID,
+			ProjectID:                 sandbox.ProjectID,
+			EnvironmentID:             sandbox.EnvironmentID,
+			DeploymentSandboxID:       sandbox.ID,
+			ArtifactID:                artifact.ID,
+			SubstrateDigest:           strings.TrimSpace(request.SubstrateDigest),
+			SubstrateFormat:           strings.TrimSpace(request.Format),
+			BuilderAbi:                strings.TrimSpace(request.BuilderABI),
+			LayoutAbi:                 strings.TrimSpace(request.LayoutABI),
+			SubstrateSizeBytes:        request.SizeBytes,
+			Source:                    normalizedJSONRawMessage(request.Source),
+			CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		})
+		return err
 	})
 	if err != nil {
-		writeError(w, errors.New("upsert runtime substrate artifact"))
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, errors.New("commit runtime substrate artifact transaction"))
+		if errorStatus(err) == http.StatusInternalServerError {
+			writeError(w, errors.New("upsert runtime substrate artifact"))
+			return
+		}
+		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerRuntimeSubstrateArtifactRegisterResponse{

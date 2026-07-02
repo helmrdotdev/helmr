@@ -524,6 +524,10 @@ type projectManagementStore struct {
 	refreshedSession     pgtype.UUID
 }
 
+func (s *projectManagementStore) BeginQuerier(context.Context) (db.Querier, controlTransaction, error) {
+	return s, noopControlTransaction{}, nil
+}
+
 func (s *projectManagementStore) GetProject(_ context.Context, arg db.GetProjectParams) (db.Project, error) {
 	for _, project := range s.projects {
 		if project.OrgID == arg.OrgID && project.ID == arg.ID {
@@ -550,6 +554,10 @@ func (s *projectManagementStore) ListProjects(_ context.Context, orgID pgtype.UU
 		return nil, nil
 	}
 	return []db.Project{s.project}, nil
+}
+
+func (s *projectManagementStore) ListProjectsForUpdate(ctx context.Context, orgID pgtype.UUID) ([]db.Project, error) {
+	return s.ListProjects(ctx, orgID)
 }
 
 func (s *projectManagementStore) ClearDefaultProject(_ context.Context, orgID pgtype.UUID) (int64, error) {
