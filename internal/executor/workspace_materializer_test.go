@@ -21,8 +21,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
-	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
 )
 
 func testWorkspaceMountArtifacts(t *testing.T) (*fakeCAS, api.WorkerWorkspaceMount) {
@@ -1657,7 +1657,7 @@ func (c *workspaceMaterializerTestClient) MarkWorkspacePtyClosed(_ context.Conte
 }
 
 func testWorkspaceOperationFingerprint(operationKind string, requestJSON string) string {
-	fingerprint, err := protocol.RequestFingerprint(operationKind, []byte(requestJSON))
+	fingerprint, err := wire.RequestFingerprint(operationKind, []byte(requestJSON))
 	if err != nil {
 		panic(err)
 	}

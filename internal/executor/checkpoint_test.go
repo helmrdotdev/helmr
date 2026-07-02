@@ -15,10 +15,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
-	"github.com/helmrdotdev/helmr/internal/runprotocol"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
@@ -739,7 +739,7 @@ func assertSuspendFrame(t *testing.T, body []byte, runWaitID string, checkpointI
 	if err != nil {
 		t.Fatal(err)
 	}
-	suspend, err := runprotocol.ReadCheckpointPauseRequest(header, reader, bodyLen)
+	suspend, err := wire.ReadCheckpointPauseRequest(header, reader, bodyLen)
 	if err != nil {
 		t.Fatal(err)
 	}

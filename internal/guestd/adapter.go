@@ -21,8 +21,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workspace"
 
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
-	"github.com/helmrdotdev/helmr/internal/runprotocol"
 	"github.com/helmrdotdev/helmr/internal/transport"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -730,7 +730,7 @@ func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream
 		return "", fmt.Errorf("read checkpoint suspend request: %w", err)
 	}
 	if header.Type == transport.StreamTypeResumeDecision {
-		decision, err := runprotocol.ReadResumeDecision(header, stream.currentConn(), bodyLen)
+		decision, err := wire.ReadResumeDecision(header, stream.currentConn(), bodyLen)
 		if err != nil {
 			return "", err
 		}
@@ -742,7 +742,7 @@ func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream
 		}
 		return "", nil
 	}
-	suspend, err := runprotocol.ReadCheckpointPauseRequest(header, stream.currentConn(), bodyLen)
+	suspend, err := wire.ReadCheckpointPauseRequest(header, stream.currentConn(), bodyLen)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "helmr checkpoint: read suspend failed: %v\n", err)
 		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("read checkpoint suspend request: %v", err))

@@ -22,9 +22,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
-	"github.com/helmrdotdev/helmr/internal/runprotocol"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
@@ -1235,7 +1235,7 @@ func (r GuestRunner) handleRunWaitRequested(ctx context.Context, stream io.ReadW
 		if len(decision.Data) == 0 {
 			decision.Data = json.RawMessage(`null`)
 		}
-		if err := runprotocol.WriteResumeDecision(stream, &runv0.ResumeDecision{
+		if err := wire.WriteResumeDecision(stream, &runv0.ResumeDecision{
 			RunWaitId: wait.CorrelationId,
 			Kind:      decision.Kind,
 			DataJson:  string(decision.Data),

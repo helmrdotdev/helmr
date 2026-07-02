@@ -1,4 +1,4 @@
-package runprotocol
+package wire
 
 import (
 	"fmt"

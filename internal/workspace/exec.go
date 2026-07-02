@@ -8,7 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
+	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
 func NormalizeExecCommand(command []string) ([]string, error) {
@@ -74,7 +74,7 @@ func ExecCreateFingerprint(command []string, cwd string, envShape []byte, detach
 	if err != nil {
 		return "", fmt.Errorf("encode workspace exec fingerprint payload: %w", err)
 	}
-	return protocol.RequestFingerprint(string(db.WorkspaceOperationIdempotencyKindWorkspaceExecCreate), payload)
+	return wire.RequestFingerprint(string(db.WorkspaceOperationIdempotencyKindWorkspaceExecCreate), payload)
 }
 
 func ExecStateTerminal(state db.WorkspaceExecState) bool {

@@ -24,10 +24,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
-	"github.com/helmrdotdev/helmr/internal/runprotocol"
 	"github.com/helmrdotdev/helmr/internal/safepath"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
@@ -1523,7 +1523,7 @@ func readRunWaitRequestedEvent(t *testing.T, conn io.Reader) *runv0.RunWaitReque
 
 func writeSuspendAndReadReady(t *testing.T, conn io.ReadWriter, runWaitID string, checkpointID string) {
 	t.Helper()
-	if err := runprotocol.WriteCheckpointPauseRequest(conn, &runv0.CheckpointPauseRequest{
+	if err := wire.WriteCheckpointPauseRequest(conn, &runv0.CheckpointPauseRequest{
 		RunWaitId:    runWaitID,
 		CheckpointId: checkpointID,
 	}); err != nil {
@@ -1534,7 +1534,7 @@ func writeSuspendAndReadReady(t *testing.T, conn io.ReadWriter, runWaitID string
 
 func writeSuspendAndReadReadyFrom(t *testing.T, conn io.Writer, reader *bufio.Reader, runWaitID string, checkpointID string) {
 	t.Helper()
-	if err := runprotocol.WriteCheckpointPauseRequest(conn, &runv0.CheckpointPauseRequest{
+	if err := wire.WriteCheckpointPauseRequest(conn, &runv0.CheckpointPauseRequest{
 		RunWaitId:    runWaitID,
 		CheckpointId: checkpointID,
 	}); err != nil {

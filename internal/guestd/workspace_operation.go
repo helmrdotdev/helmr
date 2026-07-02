@@ -17,8 +17,8 @@ import (
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
-	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
 )
 
 type workspaceOperationRegistry struct {
@@ -836,7 +836,7 @@ func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, r
 	if fingerprint == "" {
 		return writeWorkspaceOperationResult(conn, errors.New("workspace operation request_fingerprint is required"))
 	}
-	actual, err := protocol.RequestFingerprint(request.OperationKind, []byte(request.RequestJson))
+	actual, err := wire.RequestFingerprint(request.OperationKind, []byte(request.RequestJson))
 	if err != nil {
 		return writeWorkspaceOperationResult(conn, err)
 	}
@@ -844,13 +844,13 @@ func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, r
 		return writeWorkspaceOperationResult(conn, fmt.Errorf("workspace operation request_fingerprint %q does not match request %q", fingerprint, actual))
 	}
 	switch strings.TrimSpace(request.OperationKind) {
-	case protocol.GuestVerbStartExec:
+	case wire.GuestVerbStartExec:
 		return writeWorkspaceOperationResult(conn, entry.startWorkspaceExec(request.GetEnvelope(), request.RequestJson))
-	case protocol.GuestVerbCreatePty:
+	case wire.GuestVerbCreatePty:
 		return writeWorkspaceOperationResult(conn, entry.createWorkspacePty(request.GetEnvelope(), request.RequestJson))
-	case protocol.GuestVerbResizePty:
+	case wire.GuestVerbResizePty:
 		return writeWorkspaceOperationResult(conn, entry.resizeWorkspacePty(request.RequestJson))
-	case protocol.GuestVerbClosePty:
+	case wire.GuestVerbClosePty:
 		return writeWorkspaceOperationResult(conn, entry.closeWorkspacePty(request.RequestJson))
 	default:
 		return transport.WriteProtoFrame(conn, &workspacev0.WorkspaceOperationResult{

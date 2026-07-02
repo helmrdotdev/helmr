@@ -7,7 +7,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
+	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
 func NormalizePtySize(cols int32, rows int32) (int32, int32, error) {
@@ -33,7 +33,7 @@ func PtyCreateFingerprint(cwd string, cols int32, rows int32, filesystemMode db.
 	if err != nil {
 		return "", fmt.Errorf("encode workspace pty fingerprint payload: %w", err)
 	}
-	return protocol.RequestFingerprint(string(db.WorkspaceOperationIdempotencyKindWorkspacePtyCreate), payload)
+	return wire.RequestFingerprint(string(db.WorkspaceOperationIdempotencyKindWorkspacePtyCreate), payload)
 }
 
 func PtyStateTerminal(state db.WorkspacePtyState) bool {

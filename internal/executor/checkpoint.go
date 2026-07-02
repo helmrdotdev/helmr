@@ -19,10 +19,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
-	"github.com/helmrdotdev/helmr/internal/runprotocol"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
@@ -236,7 +236,7 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := runprotocol.WriteCheckpointPauseRequest(c.stream, &runv0.CheckpointPauseRequest{
+	if err := wire.WriteCheckpointPauseRequest(c.stream, &runv0.CheckpointPauseRequest{
 		RunWaitId:        request.RunWaitID,
 		CheckpointId:     request.CheckpointID,
 		CaptureWorkspace: request.CaptureWorkspace,

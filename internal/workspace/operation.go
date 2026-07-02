@@ -2,7 +2,7 @@ package workspace
 
 import (
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
+	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
 func OperationFingerprint(operationKind db.WorkspaceOperationKind, request []byte) (string, error) {
@@ -10,11 +10,11 @@ func OperationFingerprint(operationKind db.WorkspaceOperationKind, request []byt
 	if err != nil {
 		return "", err
 	}
-	return protocol.RequestFingerprint(guestVerb, request)
+	return wire.RequestFingerprint(guestVerb, request)
 }
 
 func OperationGuestVerb(operationKind db.WorkspaceOperationKind) (string, error) {
-	return protocol.GuestVerb(string(operationKind))
+	return wire.GuestVerb(string(operationKind))
 }
 
 func ResourceKindString(kind db.WorkspaceResourceKind) string {

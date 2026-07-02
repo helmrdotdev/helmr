@@ -15,13 +15,13 @@ import (
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/transport"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
-	"github.com/helmrdotdev/helmr/internal/workspace/protocol"
 )
 
 func testWorkspaceOperationFingerprint(t *testing.T, operationKind string, requestJSON string) string {
 	t.Helper()
-	fingerprint, err := protocol.RequestFingerprint(operationKind, []byte(requestJSON))
+	fingerprint, err := wire.RequestFingerprint(operationKind, []byte(requestJSON))
 	if err != nil {
 		t.Fatal(fmt.Errorf("workspace operation fingerprint: %w", err))
 	}
