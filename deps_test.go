@@ -68,7 +68,6 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"version":            {},
 		"vm":                 {"compute"},
 		"wire":               {"frameio", "proto/run/v0", "stablejson"},
-		"sqs":                {},
 		"worker":             {"api", "client", "compute"},
 		"workspace":          {"archive", "db", "pgvalue", "safepath", "wire"},
 	}
