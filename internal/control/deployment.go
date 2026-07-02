@@ -757,36 +757,16 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 	cleanupArtifact := func() {
 		s.deleteUnreferencedDeploymentSourceArtifact(r.Context(), artifact.Digest)
 	}
-	store, ok := s.db.(deploymentStore)
-	if !ok {
-		cleanupArtifact()
-		writeError(w, unavailable(errors.New("deployment storage is not configured")))
-		return
-	}
-	if s.tx != nil {
-		tx, err := s.tx.Begin(r.Context())
-		if err != nil {
-			cleanupArtifact()
-			writeError(w, errors.New("begin deployment transaction"))
-			return
+	var response api.DeploymentResponse
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		store, ok := work.q.(deploymentStore)
+		if !ok {
+			return unavailable(errors.New("deployment storage is not configured"))
 		}
-		defer tx.Rollback(r.Context())
-		store = db.New(tx)
-		response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
-		if err != nil {
-			cleanupArtifact()
-			writeDeploymentError(w, s, err)
-			return
-		}
-		if err := tx.Commit(r.Context()); err != nil {
-			cleanupArtifact()
-			writeError(w, errors.New("commit deployment"))
-			return
-		}
-		writeJSON(w, http.StatusCreated, response)
-		return
-	}
-	response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
+		var createErr error
+		response, createErr = createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
+		return createErr
+	})
 	if err != nil {
 		cleanupArtifact()
 		writeDeploymentError(w, s, err)

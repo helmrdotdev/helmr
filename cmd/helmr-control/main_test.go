@@ -35,6 +35,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 	handler, err := control.NewServer(control.ServerConfig{
 		Log:                log,
 		DB:                 store,
+		TX:                 panicTxBeginner{},
 		Auth:               auth.NewDBAuthenticator(store),
 		AuthSecret:         []byte("abcdefghijabcdefghijabcdefghij12"),
 		PublicURL:          publicURL,
@@ -109,6 +110,12 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 
 type emptyStore struct {
 	db.Querier
+}
+
+type panicTxBeginner struct{}
+
+func (panicTxBeginner) Begin(context.Context) (pgx.Tx, error) {
+	panic("unexpected transaction")
 }
 
 func newSmokeDatabase(t *testing.T, ctx context.Context) string {

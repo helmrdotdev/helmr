@@ -33,6 +33,13 @@ func (s *Server) inTx(ctx context.Context, fn func(*txWork) error) (err error) {
 	if fn == nil {
 		return errors.New("transaction function is required")
 	}
+	if beginner, ok := s.db.(queryTransactionBeginner); ok {
+		q, tx, err := beginner.BeginQuerier(ctx)
+		if err != nil {
+			return err
+		}
+		return runControlTransaction(ctx, q, tx, fn)
+	}
 	if s.tx == nil {
 		return errors.New("transactional control database is required")
 	}
@@ -40,7 +47,17 @@ func (s *Server) inTx(ctx context.Context, fn func(*txWork) error) (err error) {
 	if err != nil {
 		return err
 	}
-	work := &txWork{q: db.New(tx)}
+	return runControlTransaction(ctx, db.New(tx), tx, fn)
+}
+
+func runControlTransaction(ctx context.Context, q db.Querier, tx controlTransaction, fn func(*txWork) error) (err error) {
+	if q == nil {
+		return errors.New("transaction query store is required")
+	}
+	if tx == nil {
+		return errors.New("transaction is required")
+	}
+	work := &txWork{q: q}
 	committed := false
 	defer func() {
 		if recovered := recover(); recovered != nil {

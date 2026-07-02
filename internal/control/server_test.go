@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
+	"github.com/jackc/pgx/v5"
 )
 
 type testServerConfig struct {
@@ -52,7 +54,8 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	}
 	cfg := ServerConfig{
 		Log:  log,
-		DB:   &fakeStore{},
+		DB:   testTransactionalStore{Querier: &fakeStore{}},
+		TX:   panicTxBeginner{},
 		Auth: fakeAuth{},
 	}
 	if testCfg.DBTX != nil {
@@ -66,7 +69,7 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 		cfg.DeploymentMode = testCfg.DeploymentMode
 	}
 	if testCfg.DB != nil {
-		cfg.DB = testCfg.DB
+		cfg.DB = testTransactionalStore{Querier: testCfg.DB}
 	}
 	if testCfg.TX != nil {
 		cfg.TX = testCfg.TX
@@ -133,6 +136,30 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 		panic(err)
 	}
 	return handler
+}
+
+type panicTxBeginner struct{}
+
+func (panicTxBeginner) Begin(context.Context) (pgx.Tx, error) {
+	panic("unexpected transaction")
+}
+
+type testTransactionalStore struct {
+	db.Querier
+}
+
+func (store testTransactionalStore) BeginQuerier(context.Context) (db.Querier, controlTransaction, error) {
+	return store.Querier, noopControlTransaction{}, nil
+}
+
+type noopControlTransaction struct{}
+
+func (noopControlTransaction) Commit(context.Context) error {
+	return nil
+}
+
+func (noopControlTransaction) Rollback(context.Context) error {
+	return nil
 }
 
 func mustParseTestURL(raw string) *url.URL {

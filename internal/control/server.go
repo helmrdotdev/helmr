@@ -162,6 +162,9 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if cfg.DB == nil {
 		return nil, errors.New("control database is required")
 	}
+	if cfg.TX == nil {
+		return nil, errors.New("control transaction database is required")
+	}
 	if cfg.Auth == nil {
 		return nil, errors.New("control authenticator is required")
 	}
