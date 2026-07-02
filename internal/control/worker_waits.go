@@ -128,94 +128,92 @@ func (s *Server) createWorkerRunWait(ctx context.Context, scope db.GetWorkerRunW
 			return api.WorkerCreateRunWaitResponse{}, badRequest(errors.New("timer wait requires timeout_seconds"))
 		}
 	}
-	store, tx, err := s.beginControlTransaction(ctx)
-	if err != nil {
-		return api.WorkerCreateRunWaitResponse{}, errors.New("begin run wait transaction")
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
 	runWaitID := uuid.Must(uuid.NewV7())
 	var timeoutAt pgtype.Timestamptz
 	if request.Kind != api.WorkerRunWaitKindTimer {
 		timeoutAt = workerWaitTimeoutAt(request.TimeoutSeconds)
 	}
 	waitPolicy := selectWorkerRunWaitPolicy(request)
-	createdRunWait, err := store.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
-		ID:               pgvalue.UUID(runWaitID),
-		OrgID:            scope.OrgID,
-		ProjectID:        scope.ProjectID,
-		EnvironmentID:    scope.EnvironmentID,
-		RunID:            scope.RunID,
-		RunLeaseID:       scope.CurrentRunLeaseID,
-		WorkerInstanceID: scope.WorkerInstanceID,
-		Kind:             db.RunWaitKind(request.Kind),
-		CorrelationID:    strings.TrimSpace(request.CorrelationID),
-		TimeoutAt:        timeoutAt,
-		CheckpointDelay:  pgvalue.Interval(waitPolicy.CheckpointDelay),
+	var response api.WorkerCreateRunWaitResponse
+	err := s.inTx(ctx, func(work *txWork) error {
+		createdRunWait, err := work.q.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+			ID:               pgvalue.UUID(runWaitID),
+			OrgID:            scope.OrgID,
+			ProjectID:        scope.ProjectID,
+			EnvironmentID:    scope.EnvironmentID,
+			RunID:            scope.RunID,
+			RunLeaseID:       scope.CurrentRunLeaseID,
+			WorkerInstanceID: scope.WorkerInstanceID,
+			Kind:             db.RunWaitKind(request.Kind),
+			CorrelationID:    strings.TrimSpace(request.CorrelationID),
+			TimeoutAt:        timeoutAt,
+			CheckpointDelay:  pgvalue.Interval(waitPolicy.CheckpointDelay),
+		})
+		if err != nil {
+			return err
+		}
+		runWait := runWaitFromCreateHotRunWait(createdRunWait)
+		if s.log != nil && s.log.Enabled(ctx, slog.LevelDebug) {
+			s.log.Debug("worker run wait policy selected",
+				"org_id", pgvalue.UUIDString(scope.OrgID),
+				"project_id", pgvalue.UUIDString(scope.ProjectID),
+				"environment_id", pgvalue.UUIDString(scope.EnvironmentID),
+				"run_id", pgvalue.UUIDString(scope.RunID),
+				"run_wait_id", pgvalue.UUIDString(runWait.ID),
+				"kind", request.Kind,
+				"timeout_seconds", optionalInt32Value(request.TimeoutSeconds),
+				"idle_timeout_seconds", optionalInt32Value(request.IdleTimeoutSeconds),
+				"checkpoint_delay_ms", waitPolicy.CheckpointDelay.Milliseconds(),
+				"reason", waitPolicy.Reason,
+			)
+		}
+		response = api.WorkerCreateRunWaitResponse{
+			RunID:             pgvalue.MustUUIDValue(scope.RunID).String(),
+			RunWaitID:         pgvalue.MustUUIDValue(runWait.ID).String(),
+			RuntimeInstanceID: pgvalue.UUIDString(runWait.OwnerRuntimeInstanceID),
+			RuntimeEpoch:      pgvalue.Int8Value(runWait.OwnerRuntimeEpoch),
+			CheckpointDelayMs: waitPolicy.CheckpointDelay.Milliseconds(),
+		}
+		if scope.DirtyGeneration == 0 {
+			runWait, err = work.q.SetRunWaitWorkspaceVersion(ctx, db.SetRunWaitWorkspaceVersionParams{
+				OrgID:              scope.OrgID,
+				ProjectID:          scope.ProjectID,
+				EnvironmentID:      scope.EnvironmentID,
+				ID:                 runWait.ID,
+				RunID:              scope.RunID,
+				WorkspaceVersionID: scope.WorkspaceCurrentVersionID,
+			})
+			if err != nil {
+				return errors.New("record clean run wait workspace version")
+			}
+			response.WorkspaceVersionID = pgvalue.MustUUIDValue(runWait.WorkspaceVersionID).String()
+		}
+		switch request.Kind {
+		case api.WorkerRunWaitKindStream:
+			if err := s.createWorkerStreamWait(ctx, work.q, scope, runWait, request); err != nil {
+				return err
+			}
+		case api.WorkerRunWaitKindToken:
+			resolutionKind, resolution, matched, err := s.createWorkerTokenWait(ctx, work.q, scope, runWait, request)
+			if err != nil {
+				return err
+			}
+			if matched {
+				response = api.WorkerCreateRunWaitResponse{
+					RunID:          pgvalue.MustUUIDValue(scope.RunID).String(),
+					ResolutionKind: resolutionKind,
+					Resolution:     resolution,
+				}
+			}
+		case api.WorkerRunWaitKindTimer:
+			if err := s.createWorkerTimerWait(ctx, work.q, scope, runWait, request); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return api.WorkerCreateRunWaitResponse{}, err
-	}
-	runWait := runWaitFromCreateHotRunWait(createdRunWait)
-	if s.log != nil && s.log.Enabled(ctx, slog.LevelDebug) {
-		s.log.Debug("worker run wait policy selected",
-			"org_id", pgvalue.UUIDString(scope.OrgID),
-			"project_id", pgvalue.UUIDString(scope.ProjectID),
-			"environment_id", pgvalue.UUIDString(scope.EnvironmentID),
-			"run_id", pgvalue.UUIDString(scope.RunID),
-			"run_wait_id", pgvalue.UUIDString(runWait.ID),
-			"kind", request.Kind,
-			"timeout_seconds", optionalInt32Value(request.TimeoutSeconds),
-			"idle_timeout_seconds", optionalInt32Value(request.IdleTimeoutSeconds),
-			"checkpoint_delay_ms", waitPolicy.CheckpointDelay.Milliseconds(),
-			"reason", waitPolicy.Reason,
-		)
-	}
-	response := api.WorkerCreateRunWaitResponse{
-		RunID:             pgvalue.MustUUIDValue(scope.RunID).String(),
-		RunWaitID:         pgvalue.MustUUIDValue(runWait.ID).String(),
-		RuntimeInstanceID: pgvalue.UUIDString(runWait.OwnerRuntimeInstanceID),
-		RuntimeEpoch:      pgvalue.Int8Value(runWait.OwnerRuntimeEpoch),
-		CheckpointDelayMs: waitPolicy.CheckpointDelay.Milliseconds(),
-	}
-	if scope.DirtyGeneration == 0 {
-		runWait, err = store.SetRunWaitWorkspaceVersion(ctx, db.SetRunWaitWorkspaceVersionParams{
-			OrgID:              scope.OrgID,
-			ProjectID:          scope.ProjectID,
-			EnvironmentID:      scope.EnvironmentID,
-			ID:                 runWait.ID,
-			RunID:              scope.RunID,
-			WorkspaceVersionID: scope.WorkspaceCurrentVersionID,
-		})
-		if err != nil {
-			return api.WorkerCreateRunWaitResponse{}, errors.New("record clean run wait workspace version")
-		}
-		response.WorkspaceVersionID = pgvalue.MustUUIDValue(runWait.WorkspaceVersionID).String()
-	}
-	switch request.Kind {
-	case api.WorkerRunWaitKindStream:
-		if err := s.createWorkerStreamWait(ctx, store, scope, runWait, request); err != nil {
-			return api.WorkerCreateRunWaitResponse{}, err
-		}
-	case api.WorkerRunWaitKindToken:
-		resolutionKind, resolution, matched, err := s.createWorkerTokenWait(ctx, store, scope, runWait, request)
-		if err != nil {
-			return api.WorkerCreateRunWaitResponse{}, err
-		}
-		if matched {
-			return api.WorkerCreateRunWaitResponse{
-				RunID:          pgvalue.MustUUIDValue(scope.RunID).String(),
-				ResolutionKind: resolutionKind,
-				Resolution:     resolution,
-			}, nil
-		}
-	case api.WorkerRunWaitKindTimer:
-		if err := s.createWorkerTimerWait(ctx, store, scope, runWait, request); err != nil {
-			return api.WorkerCreateRunWaitResponse{}, err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return api.WorkerCreateRunWaitResponse{}, errors.New("commit run wait transaction")
 	}
 	return response, nil
 }
@@ -600,124 +598,109 @@ func (s *Server) workerCaptureRunWaitWorkspace(w http.ResponseWriter, r *http.Re
 		writeError(w, badRequest(err))
 		return
 	}
-	store, tx, err := s.beginControlTransaction(r.Context())
-	if err != nil {
-		writeError(w, errors.New("begin run wait workspace capture transaction"))
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-	scope, err := store.GetWorkerRunWaitScope(r.Context(), db.GetWorkerRunWaitScopeParams{
-		OrgID:            pgvalue.UUID(orgID),
-		RunID:            pgvalue.UUID(runID),
-		RunLeaseID:       pgvalue.UUID(runLeaseID),
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-	})
-	if isNoRows(err) {
-		writeError(w, conflict(errors.New("worker run lease is not active")))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("load worker run wait scope"))
-		return
-	}
-	runWait, err := store.GetRunWait(r.Context(), db.GetRunWaitParams{
-		OrgID:         scope.OrgID,
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		ID:            pgvalue.UUID(runWaitID),
-	})
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("run wait not found")))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("load run wait"))
-		return
-	}
-	if pgvalue.MustUUIDValue(runWait.RunID) != runID || runWait.State != db.RunWaitStateCheckpointing {
-		writeError(w, conflict(errors.New("run wait is not checkpointing for this run")))
-		return
-	}
-	if runWait.WorkspaceVersionID.Valid {
-		if err := tx.Commit(r.Context()); err != nil {
-			writeError(w, errors.New("commit idempotent run wait workspace capture"))
-			return
+	var response api.WorkerRunWaitWorkspaceCaptureResponse
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		scope, err := work.q.GetWorkerRunWaitScope(r.Context(), db.GetWorkerRunWaitScopeParams{
+			OrgID:            pgvalue.UUID(orgID),
+			RunID:            pgvalue.UUID(runID),
+			RunLeaseID:       pgvalue.UUID(runLeaseID),
+			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		})
+		if isNoRows(err) {
+			return conflict(errors.New("worker run lease is not active"))
 		}
-		writeJSON(w, http.StatusOK, api.WorkerRunWaitWorkspaceCaptureResponse{
+		if err != nil {
+			return errors.New("load worker run wait scope")
+		}
+		runWait, err := work.q.GetRunWait(r.Context(), db.GetRunWaitParams{
+			OrgID:         scope.OrgID,
+			ProjectID:     scope.ProjectID,
+			EnvironmentID: scope.EnvironmentID,
+			ID:            pgvalue.UUID(runWaitID),
+		})
+		if isNoRows(err) {
+			return notFound(errors.New("run wait not found"))
+		}
+		if err != nil {
+			return errors.New("load run wait")
+		}
+		if pgvalue.MustUUIDValue(runWait.RunID) != runID || runWait.State != db.RunWaitStateCheckpointing {
+			return conflict(errors.New("run wait is not checkpointing for this run"))
+		}
+		if runWait.WorkspaceVersionID.Valid {
+			response = api.WorkerRunWaitWorkspaceCaptureResponse{
+				RunID:              runID.String(),
+				RunWaitID:          strings.TrimSpace(request.RunWaitID),
+				CheckpointID:       strings.TrimSpace(request.CheckpointID),
+				WorkspaceVersionID: pgvalue.MustUUIDValue(runWait.WorkspaceVersionID).String(),
+			}
+			return nil
+		}
+		capture := request.WorkspaceCapture
+		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
+			Digest:    strings.TrimSpace(capture.Digest),
+			SizeBytes: capture.SizeBytes,
+			MediaType: strings.TrimSpace(capture.MediaType),
+		}); err != nil {
+			return errors.New("record run wait workspace capture CAS object")
+		}
+		artifact, err := work.q.CreateArtifact(r.Context(), db.CreateArtifactParams{
+			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:                     scope.OrgID,
+			ProjectID:                 scope.ProjectID,
+			EnvironmentID:             scope.EnvironmentID,
+			Digest:                    strings.TrimSpace(capture.Digest),
+			Kind:                      db.ArtifactKindWorkspaceVersion,
+			SizeBytes:                 capture.SizeBytes,
+			MediaType:                 strings.TrimSpace(capture.MediaType),
+			CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		})
+		if err != nil {
+			return errors.New("record run wait workspace capture artifact")
+		}
+		version, err := work.q.PromoteWorkspaceCapture(r.Context(), db.PromoteWorkspaceCaptureParams{
+			OrgID:              scope.OrgID,
+			WriteLeaseID:       scope.WorkspaceLeaseID,
+			FencingToken:       scope.WorkspaceFencingToken,
+			DirtyGeneration:    scope.DirtyGeneration,
+			ArtifactID:         artifact.ID,
+			SizeBytes:          capture.SizeBytes,
+			ArtifactEncoding:   strings.TrimSpace(capture.Encoding),
+			ContentDigest:      strings.TrimSpace(capture.Digest),
+			VersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			Kind:               db.WorkspaceVersionKindSystem,
+			ArtifactEntryCount: capture.EntryCount,
+			Message:            "system capture before parked wait",
+		})
+		if isNoRows(err) {
+			return conflict(codedError{code: "workspace_capture_rejected", message: "workspace capture is stale"})
+		}
+		if err != nil {
+			return errors.New("promote run wait workspace capture")
+		}
+		if _, err := work.q.SetRunWaitWorkspaceVersion(r.Context(), db.SetRunWaitWorkspaceVersionParams{
+			OrgID:              scope.OrgID,
+			ProjectID:          scope.ProjectID,
+			EnvironmentID:      scope.EnvironmentID,
+			ID:                 pgvalue.UUID(runWaitID),
+			RunID:              scope.RunID,
+			WorkspaceVersionID: version.ID,
+		}); err != nil {
+			return errors.New("record run wait workspace version")
+		}
+		response = api.WorkerRunWaitWorkspaceCaptureResponse{
 			RunID:              runID.String(),
 			RunWaitID:          strings.TrimSpace(request.RunWaitID),
 			CheckpointID:       strings.TrimSpace(request.CheckpointID),
-			WorkspaceVersionID: pgvalue.MustUUIDValue(runWait.WorkspaceVersionID).String(),
-		})
-		return
-	}
-	capture := request.WorkspaceCapture
-	if _, err := store.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
-		Digest:    strings.TrimSpace(capture.Digest),
-		SizeBytes: capture.SizeBytes,
-		MediaType: strings.TrimSpace(capture.MediaType),
-	}); err != nil {
-		writeError(w, errors.New("record run wait workspace capture CAS object"))
-		return
-	}
-	artifact, err := store.CreateArtifact(r.Context(), db.CreateArtifactParams{
-		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:                     scope.OrgID,
-		ProjectID:                 scope.ProjectID,
-		EnvironmentID:             scope.EnvironmentID,
-		Digest:                    strings.TrimSpace(capture.Digest),
-		Kind:                      db.ArtifactKindWorkspaceVersion,
-		SizeBytes:                 capture.SizeBytes,
-		MediaType:                 strings.TrimSpace(capture.MediaType),
-		CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkspaceVersionID: pgvalue.MustUUIDValue(version.ID).String(),
+		}
+		return nil
 	})
 	if err != nil {
-		writeError(w, errors.New("record run wait workspace capture artifact"))
+		writeError(w, err)
 		return
 	}
-	version, err := store.PromoteWorkspaceCapture(r.Context(), db.PromoteWorkspaceCaptureParams{
-		OrgID:              scope.OrgID,
-		WriteLeaseID:       scope.WorkspaceLeaseID,
-		FencingToken:       scope.WorkspaceFencingToken,
-		DirtyGeneration:    scope.DirtyGeneration,
-		ArtifactID:         artifact.ID,
-		SizeBytes:          capture.SizeBytes,
-		ArtifactEncoding:   strings.TrimSpace(capture.Encoding),
-		ContentDigest:      strings.TrimSpace(capture.Digest),
-		VersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		Kind:               db.WorkspaceVersionKindSystem,
-		ArtifactEntryCount: capture.EntryCount,
-		Message:            "system capture before parked wait",
-	})
-	if isNoRows(err) {
-		writeError(w, conflict(codedError{code: "workspace_capture_rejected", message: "workspace capture is stale"}))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("promote run wait workspace capture"))
-		return
-	}
-	if _, err := store.SetRunWaitWorkspaceVersion(r.Context(), db.SetRunWaitWorkspaceVersionParams{
-		OrgID:              scope.OrgID,
-		ProjectID:          scope.ProjectID,
-		EnvironmentID:      scope.EnvironmentID,
-		ID:                 pgvalue.UUID(runWaitID),
-		RunID:              scope.RunID,
-		WorkspaceVersionID: version.ID,
-	}); err != nil {
-		writeError(w, errors.New("record run wait workspace version"))
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, errors.New("commit run wait workspace capture"))
-		return
-	}
-	writeJSON(w, http.StatusOK, api.WorkerRunWaitWorkspaceCaptureResponse{
-		RunID:              runID.String(),
-		RunWaitID:          strings.TrimSpace(request.RunWaitID),
-		CheckpointID:       strings.TrimSpace(request.CheckpointID),
-		WorkspaceVersionID: pgvalue.MustUUIDValue(version.ID).String(),
-	})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func validateWorkerWorkspaceCapture(capture api.WorkerWorkspaceArtifact) error {
