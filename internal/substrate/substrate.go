@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/localcache"
-	"github.com/helmrdotdev/helmr/internal/ociimage"
+	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"golang.org/x/sync/singleflight"
 )
@@ -190,7 +190,7 @@ func (r *Resolver) resolveLocked(ctx context.Context, imagePath string, source S
 	if err != nil {
 		return Result{}, fmt.Errorf("open substrate image: %w", err)
 	}
-	_, unpackErr := ociimage.Unpack(imageFile, rootfsDir)
+	_, unpackErr := oci.Unpack(imageFile, rootfsDir)
 	closeErr := imageFile.Close()
 	if unpackErr != nil {
 		return Result{}, fmt.Errorf("unpack substrate image: %w", unpackErr)

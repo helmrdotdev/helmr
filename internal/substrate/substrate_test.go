@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/ociimage"
+	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -345,15 +345,15 @@ func ociTar(t *testing.T, files map[string]string) []byte {
 	config := []byte(`{"Config":{"Env":["PATH=/bin"],"WorkingDir":"/workspace","User":"agent"}}`)
 	configDigest := sha256sum.HexBytes(config)
 	layerDigest := sha256sum.HexBytes(layer)
-	manifest := mustJSON(t, ociimage.Manifest{
-		Config: ociimage.Descriptor{MediaType: "application/vnd.oci.image.Config.v1+json", Digest: "sha256:" + configDigest},
-		Layers: []ociimage.Descriptor{{
+	manifest := mustJSON(t, oci.Manifest{
+		Config: oci.Descriptor{MediaType: "application/vnd.oci.image.Config.v1+json", Digest: "sha256:" + configDigest},
+		Layers: []oci.Descriptor{{
 			MediaType: "application/vnd.oci.image.layer.v1.tar",
 			Digest:    "sha256:" + layerDigest,
 		}},
 	})
 	manifestDigest := sha256sum.HexBytes(manifest)
-	index := mustJSON(t, ociimage.Index{Manifests: []ociimage.Descriptor{{
+	index := mustJSON(t, oci.Index{Manifests: []oci.Descriptor{{
 		MediaType: "application/vnd.oci.image.manifest.v1+json",
 		Digest:    "sha256:" + manifestDigest,
 	}}})
