@@ -78,6 +78,28 @@ func TestInternalPackageDependencies(t *testing.T) {
 	}
 }
 
+func TestInternalPackageForbiddenDependencies(t *testing.T) {
+	actual, err := internalPackageDependencyGraph("internal")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for source, targets := range map[string][]string{
+		"frameio":   {"api", "db", "proto/run/v0", "wire"},
+		"runtime":   {"auth", "db", "firecracker", "guestd", "vm"},
+		"wire":      {"api", "control", "db", "executor", "guestd", "workspace"},
+		"guestd":    {"control", "db", "executor"},
+		"workspace": {"api", "control", "executor", "guestd", "proto/workspace/v0"},
+		"control":   {"executor", "firecracker", "guestd"},
+	} {
+		for _, target := range targets {
+			if slices.Contains(actual[source], target) {
+				t.Fatalf("internal package import is forbidden: %s must not import %s", source, target)
+			}
+		}
+	}
+}
+
 func internalPackageDependencyGraph(root string) (map[string][]string, error) {
 	graph := make(map[string][]string)
 	edges := make(map[string]map[string]struct{})
