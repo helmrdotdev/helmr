@@ -726,7 +726,7 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		s.ackWorkerQueueLease(r.Context(), pgvalue.UUID(leaseIDs.runID), lease)
 	}
 	if run.SessionID.Valid && runStatusTerminal(run.Status) {
-		s.reconcileAcceptedSessionRunRequests(r.Context(), run.OrgID, run.ProjectID, run.EnvironmentID, run.SessionID)
+		s.sessionRunRequestWorkflow().reconcileAccepted(r.Context(), run.OrgID, run.ProjectID, run.EnvironmentID, run.SessionID)
 	}
 	writeJSON(w, http.StatusOK, api.WorkerReleaseResponse{RunID: request.Lease.RunID, Status: string(run.Status)})
 }

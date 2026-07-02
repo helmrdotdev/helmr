@@ -39,20 +39,24 @@ func (work *txWork) AfterCommit(fn func(context.Context) error) {
 // for Querier-level unit fakes; production uses ServerConfig.TX and sqlc
 // queries over the pgx tx.
 func (s *Server) inTx(ctx context.Context, fn func(*txWork) error) (err error) {
+	return inTxWith(ctx, s.db, s.tx, fn)
+}
+
+func inTxWith(ctx context.Context, store db.Querier, txb TxBeginner, fn func(*txWork) error) (err error) {
 	if fn == nil {
 		return errors.New("transaction function is required")
 	}
-	if beginner, ok := s.db.(queryTransactionBeginner); ok {
+	if beginner, ok := store.(queryTransactionBeginner); ok {
 		q, tx, err := beginner.BeginQuerier(ctx)
 		if err != nil {
 			return err
 		}
 		return runControlTransaction(ctx, q, tx, fn)
 	}
-	if s.tx == nil {
+	if txb == nil {
 		return errors.New("transactional control database is required")
 	}
-	tx, err := s.tx.Begin(ctx)
+	tx, err := txb.Begin(ctx)
 	if err != nil {
 		return err
 	}

@@ -157,7 +157,7 @@ func (s *Server) appendSessionInputStreamWithPublicAccessToken(w http.ResponseWr
 			if appended.resolvedWaitCount > 0 {
 				s.requeueResolvedRunWaits(ctx, session.OrgID)
 			}
-			for _, runID := range s.reconcileAcceptedSessionRunRequests(ctx, session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
+			for _, runID := range s.sessionRunRequestWorkflow().reconcileAccepted(ctx, session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
 				appended.continuationRunID = runID
 				appended.continuationStatus = "created"
 			}
@@ -252,7 +252,7 @@ func (s *Server) appendSessionStreamRecord(w http.ResponseWriter, r *http.Reques
 				if appended.resolvedWaitCount > 0 {
 					s.requeueResolvedRunWaits(ctx, session.OrgID)
 				}
-				for _, runID := range s.reconcileAcceptedSessionRunRequests(ctx, session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
+				for _, runID := range s.sessionRunRequestWorkflow().reconcileAccepted(ctx, session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
 					appended.continuationRunID = runID
 					appended.continuationStatus = "created"
 				}

@@ -215,7 +215,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		devicePollEvery:       cfg.DevicePollEvery,
 	}
 	if cfg.BackgroundContext != nil {
-		go server.RunSessionRunRequestReconciler(cfg.BackgroundContext)
+		go server.sessionRunRequestWorkflow().run(cfg.BackgroundContext)
 	}
 	router := chi.NewRouter()
 	router.Use(server.recoverPanics)
