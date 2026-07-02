@@ -146,34 +146,33 @@ func (s *Server) appendSessionInputStreamWithPublicAccessToken(w http.ResponseWr
 		writeError(w, unauthorized(errTokenScopeDenied))
 		return
 	}
-	store, tx, err := s.beginControlTransaction(r.Context())
-	if err != nil {
-		writeError(w, errors.New("begin public stream input transaction"))
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-	session, stream, consumedToken, err := s.authorizePublicAccessTokenStream(r.Context(), r, store, publicAccessToken, db.PublicAccessTokenScopeTypeSessioninputsend, db.StreamDirectionInput, pgtype.Text{String: strings.TrimSpace(request.CorrelationID), Valid: strings.TrimSpace(request.CorrelationID) != ""})
+	var appended appendedStreamRecord
+	err := s.inTx(r.Context(), func(work *txWork) error {
+		session, stream, consumedToken, err := s.authorizePublicAccessTokenStream(r.Context(), r, work.q, publicAccessToken, db.PublicAccessTokenScopeTypeSessioninputsend, db.StreamDirectionInput, pgtype.Text{String: strings.TrimSpace(request.CorrelationID), Valid: strings.TrimSpace(request.CorrelationID) != ""})
+		if err != nil {
+			return err
+		}
+		tokenID := pgvalue.MustUUIDValue(consumedToken.ID).String()
+		appended, err = s.appendStreamRecord(r.Context(), work.q, session, stream, db.StreamDirectionInput, db.StreamRecordSourceTypePublicAccessToken, tokenID, consumedToken.ID, request)
+		if err != nil {
+			return err
+		}
+		work.AfterCommit(func(ctx context.Context) error {
+			s.publishSessionInputStreamWakeup(ctx, session.OrgID, stream.ID, appended.record.Sequence)
+			if appended.resolvedWaitCount > 0 {
+				s.requeueResolvedRunWaits(ctx, session.OrgID)
+			}
+			for _, runID := range s.reconcileAcceptedSessionRunRequests(ctx, session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
+				appended.continuationRunID = runID
+				appended.continuationStatus = "created"
+			}
+			return nil
+		})
+		return nil
+	})
 	if err != nil {
 		s.writeStreamTokenError(w, err)
 		return
-	}
-	tokenID := pgvalue.MustUUIDValue(consumedToken.ID).String()
-	appended, err := s.appendStreamRecord(r.Context(), store, session, stream, db.StreamDirectionInput, db.StreamRecordSourceTypePublicAccessToken, tokenID, consumedToken.ID, request)
-	if err != nil {
-		s.writeStreamTokenError(w, err)
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, errors.New("commit public stream input transaction"))
-		return
-	}
-	s.publishSessionInputStreamWakeup(r.Context(), session.OrgID, stream.ID, appended.record.Sequence)
-	if appended.resolvedWaitCount > 0 {
-		s.requeueResolvedRunWaits(r.Context(), session.OrgID)
-	}
-	for _, runID := range s.reconcileAcceptedSessionRunRequests(r.Context(), session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
-		appended.continuationRunID = runID
-		appended.continuationStatus = "created"
 	}
 	writeJSON(w, http.StatusCreated, appendStreamRecordResponse(appended.record, appended.continuationStatus))
 }
@@ -186,24 +185,17 @@ func (s *Server) readSessionOutputStreamWithPublicAccessToken(w http.ResponseWri
 		return
 	}
 	correlationID := streamCorrelationQuery(r)
-	store, tx, err := s.beginControlTransaction(r.Context())
-	if err != nil {
-		writeError(w, errors.New("begin public stream output transaction"))
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-	session, stream, _, err := s.authorizePublicAccessTokenStream(r.Context(), r, store, publicAccessToken, db.PublicAccessTokenScopeTypeSessionoutputread, db.StreamDirectionOutput, correlationID)
-	if err != nil {
-		s.writeStreamTokenError(w, err)
-		return
-	}
-	response, err := s.readOutputStreamRecord(r.Context(), store, session, stream, correlationID, r)
+	var response api.ReadStreamRecordResponse
+	err := s.inTx(r.Context(), func(work *txWork) error {
+		session, stream, _, err := s.authorizePublicAccessTokenStream(r.Context(), r, work.q, publicAccessToken, db.PublicAccessTokenScopeTypeSessionoutputread, db.StreamDirectionOutput, correlationID)
+		if err != nil {
+			return err
+		}
+		response, err = s.readOutputStreamRecord(r.Context(), work.q, session, stream, correlationID, r)
+		return err
+	})
 	if err != nil {
 		s.writeStreamTokenError(w, err)
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, errors.New("commit public stream output transaction"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -783,32 +775,26 @@ func (s *Server) tryCreateContinuationRunForRequest(ctx context.Context, store d
 }
 
 func (s *Server) consumeSessionRunRequestByActiveRun(ctx context.Context, session db.Session, activeRunID pgtype.UUID, streamRecordID pgtype.UUID) error {
-	store, tx, err := s.beginControlTransaction(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := store.LockSession(ctx, db.LockSessionParams{
-		OrgID:         session.OrgID,
-		ProjectID:     session.ProjectID,
-		EnvironmentID: session.EnvironmentID,
-		ID:            session.ID,
-	}); err != nil {
-		return err
-	}
-	if _, err := store.MarkSessionRunRequestConsumedByActiveRun(ctx, db.MarkSessionRunRequestConsumedByActiveRunParams{
-		OrgID:          session.OrgID,
-		ProjectID:      session.ProjectID,
-		EnvironmentID:  session.EnvironmentID,
-		ActiveRunID:    activeRunID,
-		StreamRecordID: streamRecordID,
-	}); err != nil && !isNoRows(err) {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-	return nil
+	return s.inTx(ctx, func(work *txWork) error {
+		if _, err := work.q.LockSession(ctx, db.LockSessionParams{
+			OrgID:         session.OrgID,
+			ProjectID:     session.ProjectID,
+			EnvironmentID: session.EnvironmentID,
+			ID:            session.ID,
+		}); err != nil {
+			return err
+		}
+		if _, err := work.q.MarkSessionRunRequestConsumedByActiveRun(ctx, db.MarkSessionRunRequestConsumedByActiveRunParams{
+			OrgID:          session.OrgID,
+			ProjectID:      session.ProjectID,
+			EnvironmentID:  session.EnvironmentID,
+			ActiveRunID:    activeRunID,
+			StreamRecordID: streamRecordID,
+		}); err != nil && !isNoRows(err) {
+			return err
+		}
+		return nil
+	})
 }
 
 func runStatusTerminal(status db.RunStatus) bool {
@@ -1054,19 +1040,15 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
-	store, tx, err := s.beginControlTransaction(r.Context())
-	if err != nil {
-		writeError(w, errors.New("begin token create transaction"))
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-	token, publicToken, err := s.createTokenRecord(r.Context(), store, actor, projectID, environmentID, request)
+	var token db.CreateTokenRow
+	var publicToken string
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		var err error
+		token, publicToken, err = s.createTokenRecord(r.Context(), work.q, actor, projectID, environmentID, request)
+		return err
+	})
 	if err != nil {
 		s.writeStreamTokenError(w, err)
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, errors.New("commit token create transaction"))
 		return
 	}
 	status := http.StatusCreated
