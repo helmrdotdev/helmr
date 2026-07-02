@@ -13,25 +13,41 @@ func TestInTxCommitsAndRunsAfterCommit(t *testing.T) {
 	tx := &testControlTx{}
 	server := &Server{tx: testTxBeginner{tx: tx}}
 	var called bool
-	var afterCommit bool
+	var order []string
 	if err := server.inTx(context.Background(), func(work *txWork) error {
 		if work.q == nil {
 			t.Fatal("tx work query store is nil")
 		}
 		called = true
 		work.AfterCommit(func(context.Context) error {
-			afterCommit = true
+			order = append(order, "first")
+			return nil
+		})
+		work.AfterCommit(func(context.Context) error {
+			order = append(order, "second")
 			return nil
 		})
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !called || !afterCommit {
-		t.Fatalf("called=%v afterCommit=%v", called, afterCommit)
+	if !called || len(order) != 2 || order[0] != "first" || order[1] != "second" {
+		t.Fatalf("called=%v order=%v", called, order)
 	}
 	if !tx.committed || tx.rolledBack {
 		t.Fatalf("committed=%v rolledBack=%v", tx.committed, tx.rolledBack)
+	}
+}
+
+func TestInTxReturnsBeginError(t *testing.T) {
+	want := errors.New("begin failed")
+	server := &Server{tx: testTxBeginner{beginErr: want}}
+	err := server.inTx(context.Background(), func(*txWork) error {
+		t.Fatal("transaction body should not run")
+		return nil
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("err = %v, want %v", err, want)
 	}
 }
 
@@ -47,6 +63,39 @@ func TestInTxRollsBackOnError(t *testing.T) {
 	}
 	if tx.committed || !tx.rolledBack {
 		t.Fatalf("committed=%v rolledBack=%v", tx.committed, tx.rolledBack)
+	}
+}
+
+func TestInTxDoesNotRunAfterCommitAfterRollback(t *testing.T) {
+	tx := &testControlTx{}
+	server := &Server{tx: testTxBeginner{tx: tx}}
+	want := errors.New("work failed")
+	var afterCommit bool
+	err := server.inTx(context.Background(), func(work *txWork) error {
+		work.AfterCommit(func(context.Context) error {
+			afterCommit = true
+			return nil
+		})
+		return want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("err = %v, want %v", err, want)
+	}
+	if afterCommit {
+		t.Fatal("afterCommit ran after rollback")
+	}
+}
+
+func TestInTxJoinsRollbackError(t *testing.T) {
+	workErr := errors.New("work failed")
+	rollbackErr := errors.New("rollback failed")
+	tx := &testControlTx{rollbackErr: rollbackErr}
+	server := &Server{tx: testTxBeginner{tx: tx}}
+	err := server.inTx(context.Background(), func(*txWork) error {
+		return workErr
+	})
+	if !errors.Is(err, workErr) || !errors.Is(err, rollbackErr) {
+		t.Fatalf("err = %v, want work and rollback errors", err)
 	}
 }
 

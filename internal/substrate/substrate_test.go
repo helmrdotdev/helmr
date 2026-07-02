@@ -172,6 +172,26 @@ func TestCacheKeyNormalizesSource(t *testing.T) {
 	}
 }
 
+func TestCacheKeyMatchesGoldenSource(t *testing.T) {
+	key, err := CacheKey(Source{
+		SandboxArtifactDigest: "sha256:sandbox",
+		SandboxArtifactFormat: "oci-tar",
+		ImageDigest:           "sha256:image",
+		RootfsDigest:          "sha256:rootfs",
+		RuntimeABI:            "runtime-abi",
+		GuestdABI:             "guestd-abi",
+		AdapterABI:            "adapter-abi",
+		WorkspaceMountPath:    "/workspace",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "sha256:9d06f1ce620cdfa34be30058524cfb49331aeb7451524c5358c4154a2bfb381c"
+	if key != want {
+		t.Fatalf("cache key = %s, want %s", key, want)
+	}
+}
+
 func TestValidateCachedDigestFileRejectsSameSizeCorruption(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "substrate.ext4")
 	expected := []byte("good")
