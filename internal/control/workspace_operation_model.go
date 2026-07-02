@@ -1,4 +1,4 @@
-package workspace
+package control
 
 import (
 	"github.com/helmrdotdev/helmr/internal/db"

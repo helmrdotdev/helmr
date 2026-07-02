@@ -11,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -50,7 +49,7 @@ func (s *Server) workerMarkWorkspaceExecStarted(w http.ResponseWriter, r *http.R
 				WorkspaceID:   mount.WorkspaceID,
 				ID:            execID,
 			})
-			if getErr == nil && workerPrimitiveWorkspaceMountMatches(existing.WorkspaceMountID, mount.ID) && workspace.ExecStateTerminal(existing.State) {
+			if getErr == nil && workerPrimitiveWorkspaceMountMatches(existing.WorkspaceMountID, mount.ID) && ExecStateTerminal(existing.State) {
 				writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(existing)})
 				return
 			}
@@ -201,7 +200,7 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 		writeError(w, conflict(errWorkspaceStreamOffsetConflict))
 		return
 	}
-	deliveredDigest := workspace.StreamDataSHA256(deliveredChunk.Data)
+	deliveredDigest := StreamDataSHA256(deliveredChunk.Data)
 	if _, err := store.InsertWorkspaceExecStreamChunkReceipt(r.Context(), db.InsertWorkspaceExecStreamChunkReceiptParams{
 		OrgID:         mount.OrgID,
 		ProjectID:     mount.ProjectID,
@@ -431,7 +430,7 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 	if err != nil {
 		return db.WorkspaceExecStreamChunk{}, err
 	}
-	tail := workspace.ExecStreamCursor(locked, stream)
+	tail := ExecStreamCursor(locked, stream)
 	offset := *requestedOffset
 	if offset != tail {
 		existing, getErr := store.GetWorkspaceExecStreamChunkAtOffset(ctx, db.GetWorkspaceExecStreamChunkAtOffsetParams{
@@ -492,7 +491,7 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 	if err != nil {
 		return db.WorkspaceExecStreamChunk{}, err
 	}
-	retainAfter := workspace.ExecStreamCursorFromRow(row, stream) - workspaceStreamRetainedMaxBytes
+	retainAfter := ExecStreamCursorFromRow(row, stream) - workspaceStreamRetainedMaxBytes
 	if retainAfter > 0 {
 		if err := store.DeleteWorkspaceExecStreamChunksBefore(ctx, db.DeleteWorkspaceExecStreamChunksBeforeParams{
 			OrgID:             exec.OrgID,

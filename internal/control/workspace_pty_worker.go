@@ -11,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -195,7 +194,7 @@ func (s *Server) workerAdvanceWorkspacePtyInputDelivered(w http.ResponseWriter, 
 		writeError(w, conflict(errWorkspaceStreamOffsetConflict))
 		return
 	}
-	deliveredDigest := workspace.StreamDataSHA256(deliveredChunk.Data)
+	deliveredDigest := StreamDataSHA256(deliveredChunk.Data)
 	if _, err := store.InsertWorkspacePtyStreamChunkReceipt(r.Context(), db.InsertWorkspacePtyStreamChunkReceiptParams{
 		OrgID:         mount.OrgID,
 		ProjectID:     mount.ProjectID,
@@ -477,7 +476,7 @@ func (s *Server) appendWorkspacePtyOutputStreamChunk(ctx context.Context, pty db
 	if err != nil {
 		return db.WorkspacePtyStreamChunk{}, err
 	}
-	tail := workspace.PtyStreamCursor(locked, db.WorkspacePtyStreamOutput)
+	tail := PtyStreamCursor(locked, db.WorkspacePtyStreamOutput)
 	offset := *requestedOffset
 	if offset != tail {
 		existing, getErr := store.GetWorkspacePtyStreamChunkAtOffset(ctx, db.GetWorkspacePtyStreamChunkAtOffsetParams{

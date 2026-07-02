@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -43,18 +42,18 @@ func (s *Server) createWorkspacePty(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid workspace pty request JSON: %w", err)))
 		return
 	}
-	cwd, err := workspace.NormalizeExecCwd(request.Cwd)
+	cwd, err := NormalizeExecCwd(request.Cwd)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	cols, rows, err := workspace.NormalizePtySize(request.Cols, request.Rows)
+	cols, rows, err := NormalizePtySize(request.Cols, request.Rows)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	filesystemMode := db.WorkspaceFilesystemModeWrite
-	fingerprint, err := workspace.PtyCreateFingerprint(cwd, cols, rows, filesystemMode)
+	fingerprint, err := PtyCreateFingerprint(cwd, cols, rows, filesystemMode)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -209,7 +208,7 @@ func (s *Server) resizeWorkspacePty(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid workspace pty resize request JSON: %w", err)))
 		return
 	}
-	cols, rows, err := workspace.NormalizePtySize(request.Cols, request.Rows)
+	cols, rows, err := NormalizePtySize(request.Cols, request.Rows)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -264,7 +263,7 @@ func (s *Server) requestWorkspacePtyResize(ctx context.Context, pty db.Workspace
 	if err != nil {
 		return db.WorkspacePtySession{}, err
 	}
-	request, err := workspace.PtyResizeOperationRequest(row)
+	request, err := PtyResizeOperationRequest(row)
 	if err != nil {
 		return db.WorkspacePtySession{}, err
 	}
@@ -300,7 +299,7 @@ func (s *Server) requestWorkspacePtyCloseOperation(ctx context.Context, pty db.W
 	if err != nil {
 		return db.WorkspacePtySession{}, err
 	}
-	request, err := workspace.PtyCloseOperationRequest(row)
+	request, err := PtyCloseOperationRequest(row)
 	if err != nil {
 		return db.WorkspacePtySession{}, err
 	}
@@ -410,7 +409,7 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 		if err != nil {
 			return db.WorkspacePtySession{}, false, err
 		}
-		request, err := workspace.PtyCreateOperationRequest(row)
+		request, err := PtyCreateOperationRequest(row)
 		if err != nil {
 			return db.WorkspacePtySession{}, false, err
 		}
@@ -470,13 +469,13 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 	if err != nil {
 		return db.WorkspacePtyStreamChunk{}, err
 	}
-	if workspace.PtyStateTerminal(locked.State) {
+	if PtyStateTerminal(locked.State) {
 		return db.WorkspacePtyStreamChunk{}, conflict(errWorkspacePtyTerminal)
 	}
 	if stream == db.WorkspacePtyStreamInput && locked.State != db.WorkspacePtyStateOpen && locked.State != db.WorkspacePtyStateResizing {
 		return db.WorkspacePtyStreamChunk{}, conflict(errWorkspacePtyNotOpen)
 	}
-	want := workspace.PtyStreamCursor(locked, stream)
+	want := PtyStreamCursor(locked, stream)
 	if offset != want {
 		existing, getErr := store.GetWorkspacePtyStreamChunkAtOffset(ctx, db.GetWorkspacePtyStreamChunkAtOffsetParams{
 			OrgID:         pty.OrgID,
@@ -499,8 +498,8 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 			Stream:        stream,
 			OffsetStart:   offset,
 		})
-		if receiptErr == nil && receipt.OffsetEnd == offset+int64(len(data)) && receipt.DataSize == int32(len(data)) && bytes.Equal(receipt.DataSha256, workspace.StreamDataSHA256(data)) {
-			return workspace.PtyChunkFromReceipt(receipt, data), nil
+		if receiptErr == nil && receipt.OffsetEnd == offset+int64(len(data)) && receipt.DataSize == int32(len(data)) && bytes.Equal(receipt.DataSha256, StreamDataSHA256(data)) {
+			return PtyChunkFromReceipt(receipt, data), nil
 		}
 		return db.WorkspacePtyStreamChunk{}, conflict(errWorkspaceStreamOffsetConflict)
 	}

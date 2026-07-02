@@ -38,7 +38,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"compute":            {"sha256sum"},
 		"config":             {"auth"},
 		"console":            {},
-		"control":            {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "pgvalue", "runtime", "schedule", "secret", "sha256sum", "stablejson", "token", "tracing", "workspace"},
+		"control":            {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "pgvalue", "runtime", "schedule", "secret", "sha256sum", "stablejson", "token", "tracing", "wire", "workspace"},
 		"db":                 {},
 		"db/dbtest":          {},
 		"db/schema":          {},
@@ -70,7 +70,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"vm":                 {"compute"},
 		"wire":               {"frameio", "proto/run/v0", "stablejson"},
 		"worker":             {"api", "client", "compute"},
-		"workspace":          {"archive", "db", "pgvalue", "safepath", "wire"},
+		"workspace":          {"archive", "safepath"},
 	}
 	normalizeGraph(expected)
 
@@ -90,7 +90,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"runtime":   {"api", "auth", "compute", "db", "firecracker", "guestd", "oci", "substrate", "vm"},
 		"wire":      {"api", "control", "db", "executor", "guestd", "workspace"},
 		"guestd":    {"control", "db", "executor"},
-		"workspace": {"api", "control", "executor", "guestd", "proto/workspace/v0"},
+		"workspace": {"api", "control", "db", "executor", "guestd", "pgvalue", "proto/workspace/v0", "wire"},
 		"control":   {"executor", "firecracker", "guestd"},
 	} {
 		for _, target := range targets {

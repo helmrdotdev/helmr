@@ -1,4 +1,4 @@
-package workspace
+package control
 
 import (
 	"crypto/sha256"

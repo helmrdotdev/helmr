@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -63,7 +62,7 @@ func enqueuePendingWorkspacePrimitiveOperations(ctx context.Context, store db.Qu
 		if err != nil {
 			return err
 		}
-		request, err := workspace.ExecStartOperationRequest(exec)
+		request, err := ExecStartOperationRequest(exec)
 		if err != nil {
 			return err
 		}
@@ -87,7 +86,7 @@ func enqueuePendingWorkspacePrimitiveOperations(ctx context.Context, store db.Qu
 		if err != nil {
 			return err
 		}
-		request, err := workspace.PtyCreateOperationRequest(pty)
+		request, err := PtyCreateOperationRequest(pty)
 		if err != nil {
 			return err
 		}
@@ -149,7 +148,7 @@ func workspaceMountFromEnsureRow(row db.EnsureWorkspaceMountRequestedRow) db.Wor
 }
 
 func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, mount db.WorkspaceMount, operationKind db.WorkspaceOperationKind, resourceKind db.WorkspaceResourceKind, resourceID pgtype.UUID, request []byte, lease workspacePrimitiveOperationLease) error {
-	fingerprint, err := workspace.OperationFingerprint(operationKind, request)
+	fingerprint, err := OperationFingerprint(operationKind, request)
 	if err != nil {
 		return err
 	}
