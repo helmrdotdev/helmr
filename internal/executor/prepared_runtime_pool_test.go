@@ -504,8 +504,8 @@ func TestPreparedRuntimePoolPublishesLocalEntryAfterMarkingReady(t *testing.T) {
 		if request.RuntimeSubstrateArtifactID != runtimeSubstrateArtifactID {
 			t.Fatalf("runtime_substrate_artifact_id = %q, want %q", request.RuntimeSubstrateArtifactID, runtimeSubstrateArtifactID)
 		}
-		if entries := pool.entries[key]; len(entries) != 1 || entries[0].runtimeInstanceID != "instance-1" || entries[0].instanceToken != "token-1" {
-			t.Fatalf("local entries at ready transition = %+v, want instance-1 published before DB ready is visible", entries)
+		if entries := pool.entries[key]; len(entries) != 0 {
+			t.Fatalf("local entries at ready transition = %+v, want none before DB ready is visible", entries)
 		}
 	}
 	go acknowledgePreparedRuntime(t, serverStream)
@@ -537,6 +537,89 @@ func TestPreparedRuntimePoolPublishesLocalEntryAfterMarkingReady(t *testing.T) {
 	pool.mu.Unlock()
 	if len(entries) != 1 || entries[0].runtimeInstanceID != "instance-1" || entries[0].instanceToken != "token-1" {
 		t.Fatalf("local entries after ready transition = %+v, want instance-1 published", entries)
+	}
+}
+
+func TestPreparedRuntimePoolCheckoutCannotClaimInstanceBeforeMarkReadyReturns(t *testing.T) {
+	body := []byte("sandbox")
+	digest := sha256sum.DigestBytes(body)
+	clientStream, serverStream := net.Pipe()
+	defer clientStream.Close()
+	defer serverStream.Close()
+	session := &fakePreparedRuntimeSession{
+		stream: clientStream,
+		wait:   make(chan error, 1),
+	}
+	t.Cleanup(func() {
+		session.exit(context.Canceled)
+	})
+	source := api.WorkerPreparedRuntimeSource{
+		DeploymentSandboxID:        "sandbox-1",
+		RuntimeID:                  "runtime-1",
+		RootfsDigest:               "rootfs-1",
+		RuntimeABI:                 "runtime-abi",
+		GuestdABI:                  "guestd-abi",
+		AdapterABI:                 "adapter-abi",
+		ImageDigest:                "image-1",
+		ImageFormat:                "oci-tar",
+		WorkspaceMountPath:         "/workspace",
+		SandboxImageArtifact:       api.CASObject{Digest: digest, SizeBytes: int64(len(body)), MediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar"},
+		SandboxImageArtifactFormat: "oci-tar",
+		ReservedCpuMillis:          1000,
+		ReservedMemoryMiB:          1024,
+		ReservedDiskMiB:            4096,
+		ReservedExecutionSlots:     1,
+	}
+	pool := NewPreparedRuntimePool(successfulPreparedRuntimeConnector{session: session}, fakePreparedRuntimeCAS{
+		object: cas.Object{Digest: digest, SizeBytes: int64(len(body)), MediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar"},
+		body:   body,
+	}, 1, nil)
+	mount := preparedRuntimeWorkspaceMountFromSource(source)
+	enteredReady := make(chan struct{})
+	releaseReady := make(chan struct{})
+	instances := &fakePreparedRuntimeInstanceClient{warmSource: source}
+	instances.onReady = func(api.WorkerRuntimeInstanceStateRequest) {
+		close(enteredReady)
+		<-releaseReady
+	}
+	pool.RuntimeInstances = instances
+	go acknowledgePreparedRuntime(t, serverStream)
+	payload, err := json.Marshal(api.WorkerRuntimePrepareCommand{
+		DeploymentSandboxID: "sandbox-1",
+		RuntimeInstance: api.WorkerRuntimeInstance{
+			ID:            "instance-1",
+			InstanceToken: "token-1",
+		},
+		Source: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, 1)
+	go func() {
+		errs <- pool.WarmFromCommand(context.Background(), instances, api.WorkerCapabilities{
+			RuntimeID:    "runtime-1",
+			RootfsDigest: "rootfs-1",
+			RuntimeABI:   "runtime-abi",
+		}, api.WorkerCommand{ID: 1, Kind: "runtime_prepare", Payload: payload})
+	}()
+	select {
+	case <-enteredReady:
+	case <-time.After(time.Second):
+		t.Fatal("MarkRuntimeInstanceReady was not reached")
+	}
+	mount.RuntimeInstanceID = "instance-1"
+	mount.RuntimeEpoch = 1
+	if checkedOut, _, token, ok := pool.Checkout(mount); ok || checkedOut != nil || token != "" {
+		t.Fatalf("checkout while MarkReady blocked = session:%v token:%q ok:%v, want no local ready entry", checkedOut, token, ok)
+	}
+	close(releaseReady)
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	checkedOut, _, token, ok := pool.Checkout(mount)
+	if !ok || checkedOut != session || token != "token-1" {
+		t.Fatalf("checkout after MarkReady returned = session:%v token:%q ok:%v, want prepared session", checkedOut, token, ok)
 	}
 }
 
