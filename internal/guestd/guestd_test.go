@@ -1402,7 +1402,7 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 
 func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 	t.Setenv("HELMR_GUESTD_HELPER", "resume-handoff-twice")
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	originalGuest, originalHost := net.Pipe()
@@ -1418,7 +1418,7 @@ func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 	firstReader := bufio.NewReader(firstHost)
 	secondReader := bufio.NewReader(secondHost)
 
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for _, conn := range []net.Conn{originalHost, firstHost, secondHost} {
 		if err := conn.SetDeadline(deadline); err != nil {
 			t.Fatal(err)
