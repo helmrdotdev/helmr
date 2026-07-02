@@ -1,14 +1,12 @@
 package runtime
 
 import (
+	"encoding/json"
 	"testing"
-
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
-func TestKeyFromSourceNormalizesIdentityFields(t *testing.T) {
-	source := api.WorkerPreparedRuntimeSource{
+func TestKeyNormalizesIdentityFields(t *testing.T) {
+	identity := Identity{
 		DeploymentSandboxID:        "sandbox-1",
 		RuntimeID:                  "runtime-1",
 		ImageDigest:                "sha256:image",
@@ -18,15 +16,17 @@ func TestKeyFromSourceNormalizesIdentityFields(t *testing.T) {
 		GuestdABI:                  "guestd-abi",
 		AdapterABI:                 "adapter-abi",
 		WorkspaceMountPath:         "/workspace",
-		SandboxImageArtifact:       api.CASObject{Digest: "sha256:sandbox", SizeBytes: 1, MediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar"},
+		SandboxImageArtifactDigest: "sha256:sandbox",
 		SandboxImageArtifactFormat: "oci-tar",
+		RuntimeSubstrateCacheKey:   "sha256:substrate",
+		Network:                    json.RawMessage(`{"internet":false}`),
 	}
-	trimmed := KeyFromSource(source, compute.NetworkPolicy{})
-	source.RuntimeID = " " + source.RuntimeID + " "
-	source.ImageDigest = source.ImageDigest + " "
-	source.WorkspaceMountPath = " " + source.WorkspaceMountPath
-	source.SandboxImageArtifact.Digest = " " + source.SandboxImageArtifact.Digest + " "
-	withWhitespace := KeyFromSource(source, compute.NetworkPolicy{})
+	trimmed := Key(identity)
+	identity.RuntimeID = " " + identity.RuntimeID + " "
+	identity.ImageDigest = identity.ImageDigest + " "
+	identity.WorkspaceMountPath = " " + identity.WorkspaceMountPath
+	identity.SandboxImageArtifactDigest = " " + identity.SandboxImageArtifactDigest + " "
+	withWhitespace := Key(identity)
 	if withWhitespace != trimmed {
 		t.Fatalf("runtime prep key changed after whitespace normalization:\ntrimmed=%s\nwithWhitespace=%s", trimmed, withWhitespace)
 	}

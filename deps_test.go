@@ -55,7 +55,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"proto/bundle/v0":    {},
 		"proto/run/v0":       {},
 		"proto/workspace/v0": {},
-		"runtime":            {"api", "compute", "substrate", "token"},
+		"runtime":            {"token"},
 		"schedule":           {"api", "db", "pgvalue"},
 		"secret":             {"api", "db", "pgvalue"},
 		"sha256sum":          {},
@@ -87,7 +87,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 
 	for source, targets := range map[string][]string{
 		"frameio":   {"api", "db", "proto/run/v0", "wire"},
-		"runtime":   {"auth", "db", "firecracker", "guestd", "vm"},
+		"runtime":   {"api", "auth", "compute", "db", "firecracker", "guestd", "oci", "substrate", "vm"},
 		"wire":      {"api", "control", "db", "executor", "guestd", "workspace"},
 		"guestd":    {"control", "db", "executor"},
 		"workspace": {"api", "control", "executor", "guestd", "proto/workspace/v0"},

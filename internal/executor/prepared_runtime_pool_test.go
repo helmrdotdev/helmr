@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
-	"github.com/helmrdotdev/helmr/internal/runtime"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -39,7 +38,7 @@ func TestPreparedRuntimePoolCheckoutRequiresMatchingRuntimeInstance(t *testing.T
 		SandboxImageArtifact:       api.CASObject{Digest: "sandbox-1", SizeBytes: 10, MediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar"},
 		SandboxImageArtifactFormat: "oci-tar",
 	}
-	key := runtime.KeyFromWorkspaceMount(mount, pool.Network)
+	key := preparedRuntimeKeyFromWorkspaceMount(mount, pool.Network)
 	sessionA := &fakePreparedRuntimeSession{}
 	sessionB := &fakePreparedRuntimeSession{}
 	pool.entries[key] = []preparedRuntimeEntry{
@@ -84,7 +83,7 @@ func TestPreparedRuntimePoolCheckoutRequiresMatchingRuntimeEpoch(t *testing.T) {
 		RuntimeInstanceID:          "instance-a",
 		RuntimeEpoch:               2,
 	}
-	key := runtime.KeyFromWorkspaceMount(mount, pool.Network)
+	key := preparedRuntimeKeyFromWorkspaceMount(mount, pool.Network)
 	staleSession := &fakePreparedRuntimeSession{}
 	currentSession := &fakePreparedRuntimeSession{}
 	pool.entries[key] = []preparedRuntimeEntry{
@@ -124,7 +123,7 @@ func TestPreparedRuntimePoolCheckoutRejectsMissingRuntimeToken(t *testing.T) {
 		RuntimeInstanceID:          "instance-a",
 		RuntimeEpoch:               1,
 	}
-	key := runtime.KeyFromWorkspaceMount(mount, pool.Network)
+	key := preparedRuntimeKeyFromWorkspaceMount(mount, pool.Network)
 	session := newFakePreparedRuntimeSession()
 	pool.entries[key] = []preparedRuntimeEntry{
 		{session: session, runtimeInstanceID: "instance-a", runtimeEpoch: 1},
@@ -258,7 +257,7 @@ func TestPreparedRuntimePoolStopRuntimeFromCommandClaimsEntryBeforeClose(t *test
 		SandboxImageArtifact:       api.CASObject{Digest: "sandbox-1", SizeBytes: 10, MediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar"},
 		SandboxImageArtifactFormat: "oci-tar",
 	}
-	key := runtime.KeyFromWorkspaceMount(mount, pool.Network)
+	key := preparedRuntimeKeyFromWorkspaceMount(mount, pool.Network)
 	session := &blockingClosePreparedRuntimeSession{
 		entered: make(chan struct{}),
 		release: make(chan struct{}),
@@ -352,7 +351,7 @@ func TestPreparedRuntimePoolSizeLimitsTotalPreparedRuntimeInventory(t *testing.T
 		SandboxImageArtifact:       api.CASObject{Digest: digest, SizeBytes: int64(len(body)), MediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar"},
 		SandboxImageArtifactFormat: "oci-tar",
 	}
-	existingKey := runtime.KeyFromWorkspaceMount(existing, pool.Network)
+	existingKey := preparedRuntimeKeyFromWorkspaceMount(existing, pool.Network)
 	pool.entries[existingKey] = []preparedRuntimeEntry{
 		{session: &fakePreparedRuntimeSession{}, runtimeInstanceID: "instance-existing", instanceToken: "token-existing"},
 	}
@@ -416,7 +415,7 @@ func TestPreparedRuntimePoolPrunesReadyEntryWhenReservationRenewFails(t *testing
 		SandboxImageArtifact:       api.CASObject{Digest: "sandbox-1", SizeBytes: 10, MediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar"},
 		SandboxImageArtifactFormat: "oci-tar",
 	}
-	key := runtime.KeyFromWorkspaceMount(mount, pool.Network)
+	key := preparedRuntimeKeyFromWorkspaceMount(mount, pool.Network)
 	session := &fakePreparedRuntimeSession{}
 	pool.entries[key] = []preparedRuntimeEntry{
 		{session: session, runtimeInstanceID: "instance-stale", instanceToken: "token-stale"},
@@ -496,7 +495,7 @@ func TestPreparedRuntimePoolPublishesLocalEntryAfterMarkingReady(t *testing.T) {
 		},
 	}
 	mount := preparedRuntimeWorkspaceMountFromSource(source)
-	key := runtime.KeyFromWorkspaceMount(mount, pool.Network)
+	key := preparedRuntimeKeyFromWorkspaceMount(mount, pool.Network)
 	instances := &fakePreparedRuntimeInstanceClient{warmSource: source}
 	pool.RuntimeInstances = instances
 	readyHookCalled := false
@@ -576,7 +575,7 @@ func TestPreparedRuntimePoolDoesNotPublishEntryWhenMarkReadyFails(t *testing.T) 
 		body:   body,
 	}, 1, nil)
 	mount := preparedRuntimeWorkspaceMountFromSource(source)
-	key := runtime.KeyFromWorkspaceMount(mount, pool.Network)
+	key := preparedRuntimeKeyFromWorkspaceMount(mount, pool.Network)
 	readyErr := errors.New("mark ready failed")
 	instances := &fakePreparedRuntimeInstanceClient{warmSource: source, readyErr: readyErr}
 	pool.RuntimeInstances = instances
@@ -731,7 +730,7 @@ func TestPreparedRuntimePoolMarkReadyDoesNotBlockCheckout(t *testing.T) {
 		body:   body,
 	}, 2, nil)
 	mount := preparedRuntimeWorkspaceMountFromSource(source)
-	key := runtime.KeyFromWorkspaceMount(mount, pool.Network)
+	key := preparedRuntimeKeyFromWorkspaceMount(mount, pool.Network)
 	pool.entries[key] = []preparedRuntimeEntry{{
 		session:           existingSession,
 		runtimeInstanceID: "instance-existing",
@@ -857,7 +856,7 @@ func TestPreparedRuntimePoolFailsReadyEntryWhenSessionExits(t *testing.T) {
 		SandboxImageArtifact:       api.CASObject{Digest: "sandbox-1", SizeBytes: 10, MediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar"},
 		SandboxImageArtifactFormat: "oci-tar",
 	}
-	key := runtime.KeyFromWorkspaceMount(mount, pool.Network)
+	key := preparedRuntimeKeyFromWorkspaceMount(mount, pool.Network)
 	session := newFakePreparedRuntimeSession()
 	entry := preparedRuntimeEntry{
 		session:           session,
@@ -910,7 +909,7 @@ func TestPreparedRuntimePoolCheckoutRejectsExitedReadyEntry(t *testing.T) {
 		SandboxImageArtifact:       api.CASObject{Digest: "sandbox-1", SizeBytes: 10, MediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar"},
 		SandboxImageArtifactFormat: "oci-tar",
 	}
-	key := runtime.KeyFromWorkspaceMount(mount, pool.Network)
+	key := preparedRuntimeKeyFromWorkspaceMount(mount, pool.Network)
 	session := newFakePreparedRuntimeSession()
 	exit := newPreparedRuntimeSessionExit()
 	exit.finish(errors.New("firecracker exited"))

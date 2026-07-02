@@ -222,7 +222,7 @@ func (w *RuntimePreparer) reconcile(ctx context.Context, deploymentSandboxID pgt
 	created := 0
 	for _, row := range rows {
 		source := preparedRuntimeSourceFromWarmTarget(row)
-		key := runtime.KeyFromSource(source, compute.DefaultNetworkPolicy())
+		key := preparedRuntimeKeyFromSource(source, compute.DefaultNetworkPolicy())
 		instanceToken, err := runtime.NewInstanceToken()
 		if err != nil {
 			problems = append(problems, fmt.Errorf("generate prepared runtime instance token: %w", err))
@@ -291,6 +291,41 @@ func (w *RuntimePreparer) reconcile(ctx context.Context, deploymentSandboxID pgt
 		w.log.Info("prepared runtime warm commands created", "created", created, "substrate_prepare_created", createdSubstrates, "target_count", w.targetCount)
 	}
 	return errors.Join(problems...)
+}
+
+func preparedRuntimeKeyFromSource(source api.WorkerPreparedRuntimeSource, network compute.NetworkPolicy) string {
+	return runtime.Key(runtime.Identity{
+		RuntimeID:                  source.RuntimeID,
+		DeploymentSandboxID:        source.DeploymentSandboxID,
+		ImageDigest:                source.ImageDigest,
+		ImageFormat:                source.ImageFormat,
+		RootfsDigest:               source.RootfsDigest,
+		RuntimeABI:                 source.RuntimeABI,
+		GuestdABI:                  source.GuestdABI,
+		AdapterABI:                 source.AdapterABI,
+		WorkspaceMountPath:         source.WorkspaceMountPath,
+		SandboxImageArtifactDigest: source.SandboxImageArtifact.Digest,
+		SandboxImageArtifactFormat: source.SandboxImageArtifactFormat,
+		RuntimeSubstrateCacheKey:   preparedRuntimeSubstrateCacheKey(source),
+		Network:                    compute.NetworkPolicyJSON(network),
+	})
+}
+
+func preparedRuntimeSubstrateCacheKey(source api.WorkerPreparedRuntimeSource) string {
+	key, err := substrate.CacheKey(substrate.Source{
+		SandboxArtifactDigest: source.SandboxImageArtifact.Digest,
+		SandboxArtifactFormat: source.SandboxImageArtifactFormat,
+		ImageDigest:           source.ImageDigest,
+		RootfsDigest:          source.RootfsDigest,
+		RuntimeABI:            source.RuntimeABI,
+		GuestdABI:             source.GuestdABI,
+		AdapterABI:            source.AdapterABI,
+		WorkspaceMountPath:    source.WorkspaceMountPath,
+	})
+	if err != nil {
+		return ""
+	}
+	return key
 }
 
 func (w *RuntimePreparer) markPrecreatedRuntimeFailed(ctx context.Context, store RuntimePreparerStore, row db.CreateRuntimeInstanceForDeploymentSandboxRow, message string) {

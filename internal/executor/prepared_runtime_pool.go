@@ -137,7 +137,7 @@ func (p *PreparedRuntimePool) Checkout(mount api.WorkerWorkspaceMount) (vm.Sessi
 	if p == nil || p.Size <= 0 {
 		return nil, "", "", false
 	}
-	key := runtime.KeyFromWorkspaceMount(mount, p.Network)
+	key := preparedRuntimeKeyFromWorkspaceMount(mount, p.Network)
 	keyID := runtime.ID(key)
 	runtimeInstanceID := strings.TrimSpace(mount.RuntimeInstanceID)
 	if runtimeInstanceID == "" {
@@ -191,12 +191,12 @@ func (p *PreparedRuntimePool) Refill(ctx context.Context, mount api.WorkerWorksp
 		return
 	}
 	if p.RuntimeInstances == nil {
-		key := runtime.KeyFromWorkspaceMount(mount, p.Network)
+		key := preparedRuntimeKeyFromWorkspaceMount(mount, p.Network)
 		p.logInfo("prepared runtime pool refill skipped", "runtime_key_id", runtime.ID(key), "reason", "runtime_instance_client_missing")
 		return
 	}
 	p.pruneUnrenewableReadyEntries(ctx, p.RuntimeInstances)
-	key := runtime.KeyFromWorkspaceMount(mount, p.Network)
+	key := preparedRuntimeKeyFromWorkspaceMount(mount, p.Network)
 	keyID := runtime.ID(key)
 	refillCtx, finish, ok := p.beginBackground(ctx)
 	if !ok {
@@ -406,7 +406,7 @@ func (p *PreparedRuntimePool) WarmFromCommand(ctx context.Context, client Prepar
 	if strings.TrimSpace(mount.DeploymentSandboxID) == "" {
 		return errors.New("prepared runtime warm command source is required")
 	}
-	key := runtime.KeyFromWorkspaceMount(mount, p.Network)
+	key := preparedRuntimeKeyFromWorkspaceMount(mount, p.Network)
 	keyID := runtime.ID(key)
 	runtimeInstanceID := strings.TrimSpace(directive.RuntimeInstance.ID)
 	runtimeEpoch := directive.RuntimeInstance.RuntimeEpoch
@@ -514,7 +514,7 @@ func (p *PreparedRuntimePool) refillOne(ctx context.Context, key string, mount a
 		GuestdChannelToken: mount.GuestdChannelToken,
 		RuntimeKeyHash:     runtime.Hash(key),
 		RuntimeKey:         json.RawMessage(key),
-		NetworkPolicy:      runtime.NetworkPolicyJSON(p.Network),
+		NetworkPolicy:      compute.NetworkPolicyJSON(p.Network),
 		InstanceToken:      instanceToken,
 		ExpiresAt:          time.Now().Add(p.reservationTTL()),
 	})
