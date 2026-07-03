@@ -170,6 +170,15 @@ need_state_bucket() {
   [ -n "${STATE_BUCKET:-}" ] || die "STATE_BUCKET is required"
 }
 
+sensitive_mktemp() {
+  local name=$1
+  local tmpdir="${TMPDIR:-/tmp}"
+  local tmpfile
+  tmpfile="$(mktemp "${tmpdir%/}/helmr-${name}.XXXXXX")"
+  chmod 0600 "${tmpfile}"
+  printf '%s\n' "${tmpfile}"
+}
+
 tf_init() {
   stack=$1
   need_state_bucket
@@ -1113,11 +1122,8 @@ dev_secret_arn() {
 put_secret_value() {
   secret_id=$1
   secret_value=$2
-  mkdir -p "${STATE_DIR}"
-  input_file="$(mktemp "${STATE_DIR}/secret-put.XXXXXX.json")"
-  secret_file="$(mktemp "${STATE_DIR}/secret-value.XXXXXX.txt")"
-  chmod 0600 "${input_file}"
-  chmod 0600 "${secret_file}"
+  input_file="$(sensitive_mktemp secret-put.json)"
+  secret_file="$(sensitive_mktemp secret-value.txt)"
   trap 'rm -f "${input_file}" "${secret_file}"' RETURN
   printf '%s' "${secret_value}" >"${secret_file}"
   jq -n \
@@ -1133,9 +1139,7 @@ put_secret_value() {
 
 secret_value_status() {
   secret_id=$1
-  mkdir -p "${STATE_DIR}"
-  error_file="$(mktemp "${STATE_DIR}/secret-get.XXXXXX.err")"
-  chmod 0600 "${error_file}"
+  error_file="$(sensitive_mktemp secret-get.err)"
   if aws secretsmanager get-secret-value \
     --region "${AWS_REGION}" \
     --secret-id "${secret_id}" >/dev/null 2>"${error_file}"; then
@@ -1187,13 +1191,7 @@ dev_database_url() {
   )"
   username="$(printf '%s\n' "${master_secret}" | jq -r '.username')"
   password="$(printf '%s\n' "${master_secret}" | jq -r '.password')"
-  password_file="$(mktemp "${STATE_DIR}/database-password.XXXXXX.txt")"
-  chmod 0600 "${password_file}"
-  trap 'rm -f "${password_file}"' RETURN
-  printf '%s' "${password}" >"${password_file}"
-  encoded_password="$(jq -sRr @uri <"${password_file}")"
-  rm -f "${password_file}"
-  trap - RETURN
+  encoded_password="$(printf '%s' "${password}" | jq -sRr @uri)"
   put_secret_value_if_missing "${database_secret_arn}" "postgres://${username}:${encoded_password}@${endpoint}/helmr?sslmode=require"
   info "database_url secret populated: ${database_secret_arn}"
 }

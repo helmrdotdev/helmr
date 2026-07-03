@@ -44,11 +44,11 @@ scripts/aws-dev-smoke.sh worker-image-init
 scripts/aws-dev-smoke.sh worker-image-apply
 scripts/aws-dev-smoke.sh worker-image-start
 scripts/aws-dev-smoke.sh worker-image-wait
-scripts/aws-dev-smoke.sh dev-tfvars
-# Fill infra/aws/stacks/dev/full-run-smoke.tfvars with non-credential deployment values.
+scripts/dev-secrets.sh aws-dev-smoke dev-base-tfvars
 scripts/aws-dev-smoke.sh dev-init
-scripts/aws-dev-smoke.sh dev-apply
+scripts/dev-secrets.sh aws-dev-smoke dev-apply
 scripts/aws-dev-smoke.sh dev-secrets
+scripts/dev-secrets.sh aws-dev-smoke dev-github-oauth-secret
 scripts/aws-dev-smoke.sh dev-migrate
 ```
 

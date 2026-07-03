@@ -39,8 +39,9 @@ tofu apply \
 When `create_clickhouse_cloud=true`, the stack creates a ClickHouse Cloud service, an AWS
 PrivateLink endpoint, private DNS, and the ClickHouse password secret consumed by the control,
 dispatcher, and migration tasks. Configure the ClickHouse provider through
-`CLICKHOUSE_CLOUD_API_KEY` and `CLICKHOUSE_CLOUD_API_SECRET` in the shell or CI secret store that
-runs OpenTofu. Do not put those API credentials in `.tfvars`.
+`CLICKHOUSE_CLOUD_API_KEY` and `CLICKHOUSE_CLOUD_API_SECRET` in the environment that runs OpenTofu.
+For local dev, use `scripts/dev-secrets.sh` so 1Password injects those values only for the command.
+Do not put provider API credentials in `.tfvars` or scratch directories.
 
 To bring an existing ClickHouse service instead, keep `create_clickhouse_cloud=false` and pass
 `clickhouse_url`, `clickhouse_user`, `clickhouse_password_secret_arn`, and any required
@@ -129,7 +130,9 @@ keeps capacity at one worker, enables SSM access, and uses EC2 nested virtualiza
 instead of requiring a bare-metal worker instance. Destroy the stack after the smoke run; it still
 creates RDS, Redis/Valkey, NAT, ALB, EC2, and optionally ClickHouse Cloud resources. The repository
 scripts expose this as `scripts/aws-dev-smoke.sh dev-destroy` and `scripts/aws-dev-debug.sh
-dev-destroy`, which run pre-destroy cleanup before Terraform/OpenTofu destroy.
+dev-destroy`, which run pre-destroy cleanup before Terraform/OpenTofu destroy. When the stack owns
+ClickHouse Cloud, run those commands through `scripts/dev-secrets.sh` so provider credentials are
+available only to the destroy process.
 When scaling down from an active worker, first apply worker desired/min capacity
 zero while NAT is still present so lifecycle drain can finish, then apply control
 mode to remove NAT.

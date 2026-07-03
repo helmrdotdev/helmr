@@ -102,10 +102,10 @@ dev-on` starts the database and restores the control and dispatcher services.
 Stopped RDS instances can restart automatically after seven days, and Redis,
 load balancers, endpoints, logs, and ClickHouse Cloud can still carry cost. For
 longer idle periods or throwaway smoke stacks, use `aws-dev-debug.sh
-dev-destroy` or `aws-dev-smoke.sh dev-destroy` with `TOFU_DESTROY_ARGS` set as
-needed. The destroy command runs the pre-destroy cleanup first, then removes the
-Terraform-managed dev stack, including Terraform-managed ClickHouse Cloud
-resources.
+dev-destroy` or `aws-dev-smoke.sh dev-destroy` through `scripts/dev-secrets.sh`
+with `TOFU_DESTROY_ARGS` set as needed. The destroy command runs the pre-destroy
+cleanup first, then removes the Terraform-managed dev stack, including
+Terraform-managed ClickHouse Cloud resources.
 
 Use `aws-dev-debug.sh worker-image-cleanup` after worker image builds to keep
 only the most recent tagged worker AMIs and delete snapshots for older images.

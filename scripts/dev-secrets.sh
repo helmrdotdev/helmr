@@ -14,6 +14,7 @@ Commands:
   check                Verify op is available and the env file exists.
   run -- <command>     Run a command with 1Password references injected.
   aws-dev-smoke ...    Run scripts/aws-dev-smoke.sh with 1Password references injected.
+  aws-dev-debug ...    Run scripts/aws-dev-debug.sh with 1Password references injected.
 
 Environment:
   OP_ENV_FILE          1Password reference env file. Defaults to
@@ -104,6 +105,11 @@ case "${command}" in
     shift
     [ "$#" -gt 0 ] || die "aws-dev-smoke requires a scripts/aws-dev-smoke.sh command"
     run_with_secrets "${ROOT}/scripts/aws-dev-smoke.sh" "$@"
+    ;;
+  aws-dev-debug)
+    shift
+    [ "$#" -gt 0 ] || die "aws-dev-debug requires a scripts/aws-dev-debug.sh command"
+    run_with_secrets "${ROOT}/scripts/aws-dev-debug.sh" "$@"
     ;;
   ""|-h|--help|help)
     usage
