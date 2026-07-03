@@ -7,7 +7,12 @@
 
 let
   pkgs = import nixpkgs { inherit system; };
-  pkgsUnstable = import nixpkgs-unstable { inherit system; };
+  pkgsUnstable = import nixpkgs-unstable {
+    inherit system;
+    config.allowUnfreePredicate = pkg: builtins.elem (nixpkgs.lib.getName pkg) [
+      "1password-cli"
+    ];
+  };
   toolsets = import ./build-support/toolsets.nix {
     inherit
       pkgs

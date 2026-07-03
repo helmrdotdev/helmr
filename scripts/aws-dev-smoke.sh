@@ -22,7 +22,6 @@ DEV_STACK="${DEV_STACK:-${ROOT}/infra/aws/stacks/dev}"
 DEV_TFVARS_TEMPLATE="${DEV_TFVARS_TEMPLATE:-${DEV_STACK}/full-run-smoke.tfvars.example}"
 DEV_TFVARS="${DEV_TFVARS:-${DEV_STACK}/full-run-smoke.tfvars}"
 STATE_DIR="${STATE_DIR:-${ROOT}/.helmr-aws-dev-smoke}"
-CLICKHOUSE_ENV_FILE="${CLICKHOUSE_ENV_FILE:-${STATE_DIR}/clickhouse-cloud.env}"
 IMAGE_ARN_FILE="${STATE_DIR}/worker-image-build-version-arn"
 AMI_ID_FILE="${STATE_DIR}/worker-ami-id"
 AMI_IDS_FILE="${STATE_DIR}/worker-ami-ids.json"
@@ -80,8 +79,6 @@ Common optional environment:
   AWS_REGION            AWS region. Defaults to us-east-1.
   STATE_REGION          State bucket region. Defaults to AWS_REGION.
   TF_BIN                Terraform-compatible binary. Defaults to tofu.
-  CLICKHOUSE_ENV_FILE   Optional local env file for ClickHouse Cloud Terraform provider credentials.
-                        Defaults to .helmr-aws-dev-smoke/clickhouse-cloud.env.
   TOFU_APPLY_ARGS       Extra args for apply, for example "-auto-approve".
   TOFU_DESTROY_ARGS     Extra args for destroy, for example "-auto-approve".
   SOURCE_BUNDLE_BUCKET  S3 artifact bucket for local source bundles. Defaults to bootstrap output.
@@ -150,8 +147,9 @@ Dev optional environment:
   DEV_WORKER_VM_SCRATCH_DISK_MIB
                        Writable disk in MiB for dev Firecracker task VMs. Defaults to 32768 in run mode.
   WORKER_AMI_ID         AMI ID to inject; defaults to the last worker-image-wait result.
-  GITHUB_OAUTH_CLIENT_SECRET_FILE
-                        File containing the GitHub OAuth client secret for dev-github-oauth-secret.
+  HELMR_GITHUB_OAUTH_CLIENT_SECRET
+                        GitHub OAuth client secret for dev-github-oauth-secret. Use
+                        scripts/dev-secrets.sh so 1Password injects it only for the command.
 EOF
 }
 
@@ -164,30 +162,6 @@ info() {
   printf '==> %s\n' "$*" >&2
 }
 
-load_clickhouse_cloud_env() {
-  [ -f "${CLICKHOUSE_ENV_FILE}" ] || return 0
-  while IFS='=' read -r key value || [ -n "${key:-}" ]; do
-    key="${key#"${key%%[![:space:]]*}"}"
-    key="${key%"${key##*[![:space:]]}"}"
-    case "${key}" in
-      ""|\#*) continue ;;
-    esac
-    value="${value%$'\r'}"
-    case "${value}" in
-      \"*\") value="${value#\"}"; value="${value%\"}" ;;
-      \'*\') value="${value#\'}"; value="${value%\'}" ;;
-    esac
-    case "${key}" in
-      CLICKHOUSE_CLOUD_API_KEY|CLICKHOUSE_CLOUD_API_SECRET|CLICKHOUSE_TOKEN_KEY|CLICKHOUSE_TOKEN_SECRET|DEV_CLICKHOUSE_*|DEV_CREATE_CLICKHOUSE_CLOUD)
-        if [ "${!key+x}" != "x" ]; then
-          export "${key}=${value}"
-        fi
-        ;;
-      *) die "${CLICKHOUSE_ENV_FILE} contains unsupported variable: ${key}" ;;
-    esac
-  done <"${CLICKHOUSE_ENV_FILE}"
-}
-
 need_command() {
   command -v "$1" >/dev/null 2>&1 || die "missing command: $1"
 }
@@ -198,7 +172,6 @@ need_state_bucket() {
 
 tf_init() {
   stack=$1
-  load_clickhouse_cloud_env
   need_state_bucket
   backend_args=(
     "-backend-config=bucket=${STATE_BUCKET}"
@@ -220,8 +193,8 @@ tf_apply() {
     case $- in
       *f*) had_noglob=1 ;;
     esac
-    # shellcheck disable=SC2206
     set -f
+    # shellcheck disable=SC2206
     extra_args=(${TOFU_APPLY_ARGS})
     if [ "${had_noglob}" != "1" ]; then
       set +f
@@ -235,14 +208,13 @@ tf_apply() {
 tf_destroy() {
   stack=$1
   shift
-  load_clickhouse_cloud_env
   if [ -n "${TOFU_DESTROY_ARGS:-}" ]; then
     had_noglob=0
     case $- in
       *f*) had_noglob=1 ;;
     esac
-    # shellcheck disable=SC2206
     set -f
+    # shellcheck disable=SC2206
     extra_args=(${TOFU_DESTROY_ARGS})
     if [ "${had_noglob}" != "1" ]; then
       set +f
@@ -746,7 +718,6 @@ EOF
 
 dev_apply() {
   [ -f "${DEV_TFVARS}" ] || die "${DEV_TFVARS} does not exist; run dev-tfvars and fill required values first"
-  load_clickhouse_cloud_env
   tf_apply "${DEV_STACK}" -var-file="${DEV_TFVARS}"
 }
 
@@ -840,7 +811,6 @@ tf_json_string_array_or_empty() {
 
 apply_dev_clickhouse_tfvars() {
   file=$1
-  load_clickhouse_cloud_env
   create_clickhouse="${DEV_CREATE_CLICKHOUSE_CLOUD:-false}"
   validate_tf_bool DEV_CREATE_CLICKHOUSE_CLOUD "${create_clickhouse}"
 
@@ -849,13 +819,8 @@ apply_dev_clickhouse_tfvars() {
 
   if [ "${create_clickhouse}" = "true" ]; then
     [ -n "${DEV_CLICKHOUSE_ORGANIZATION_ID:-}" ] || die "DEV_CLICKHOUSE_ORGANIZATION_ID is required when DEV_CREATE_CLICKHOUSE_CLOUD=true"
-    if [ -z "${CLICKHOUSE_CLOUD_API_KEY:-}" ] || [ -z "${CLICKHOUSE_CLOUD_API_SECRET:-}" ]; then
-      if [ -n "${CLICKHOUSE_TOKEN_KEY:-}" ] && [ -n "${CLICKHOUSE_TOKEN_SECRET:-}" ]; then
-        info "using deprecated CLICKHOUSE_TOKEN_KEY/CLICKHOUSE_TOKEN_SECRET; prefer CLICKHOUSE_CLOUD_API_KEY/CLICKHOUSE_CLOUD_API_SECRET"
-      else
-        die "CLICKHOUSE_CLOUD_API_KEY and CLICKHOUSE_CLOUD_API_SECRET are required when DEV_CREATE_CLICKHOUSE_CLOUD=true"
-      fi
-    fi
+    [ -n "${CLICKHOUSE_CLOUD_API_KEY:-}" ] || die "CLICKHOUSE_CLOUD_API_KEY is required when DEV_CREATE_CLICKHOUSE_CLOUD=true"
+    [ -n "${CLICKHOUSE_CLOUD_API_SECRET:-}" ] || die "CLICKHOUSE_CLOUD_API_SECRET is required when DEV_CREATE_CLICKHOUSE_CLOUD=true"
 
     set_tfvar "${file}" "clickhouse_organization_id" "$(tf_quote "${DEV_CLICKHOUSE_ORGANIZATION_ID}")"
     unset_tfvar "${file}" "clickhouse_url"
@@ -1248,17 +1213,10 @@ random_hex() {
   dd if=/dev/urandom bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'
 }
 
-read_secret_file() {
-  path=$1
-  [ -n "${path}" ] || die "secret file path is required"
-  [ -f "${path}" ] || die "secret file does not exist: ${path}"
-  cat "${path}"
-}
-
 dev_github_oauth_secret() {
-  client_secret_file="${GITHUB_OAUTH_CLIENT_SECRET_FILE:-}"
-  [ -n "${client_secret_file}" ] || die "GITHUB_OAUTH_CLIENT_SECRET_FILE is required"
-  put_secret_value_if_missing "$(dev_secret_arn github_oauth_client_secret)" "$(read_secret_file "${client_secret_file}")"
+  client_secret="${HELMR_GITHUB_OAUTH_CLIENT_SECRET:-}"
+  [ -n "${client_secret}" ] || die "HELMR_GITHUB_OAUTH_CLIENT_SECRET is required"
+  put_secret_value_if_missing "$(dev_secret_arn github_oauth_client_secret)" "${client_secret}"
   info "GitHub OAuth client secret populated"
 }
 
