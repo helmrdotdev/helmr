@@ -166,7 +166,7 @@ func (r *HistoricalReader) ListTerminalOutput(ctx context.Context, q TerminalOut
 		return nil, q.AfterOffset, nil
 	}
 	sql := `SELECT stream_name, offset_start, offset_end, content, observed_at, ingested_at
-FROM helmr_telemetry.terminal_output FINAL
+FROM helmr_telemetry.terminal_outputs FINAL
 WHERE org_id = @org_id
   AND cell_id = @cell_id
   AND project_id = @project_id

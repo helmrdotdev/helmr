@@ -111,7 +111,7 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	terminalBatch := client.takeLast(t)
-	assertQueryContains(t, terminalBatch.query, "INSERT INTO helmr_telemetry.terminal_output", "offset_start", "observed_at")
+	assertQueryContains(t, terminalBatch.query, "INSERT INTO helmr_telemetry.terminal_outputs", "offset_start", "observed_at")
 	assertRowShape(t, terminalBatch.rows, 1, 16)
 	if got := terminalBatch.rows[0][8]; got != uint64(10) {
 		t.Fatalf("terminal offset_start = %v, want 10", got)

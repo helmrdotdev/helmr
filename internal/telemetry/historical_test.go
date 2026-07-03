@@ -19,8 +19,8 @@ func TestHistoricalReaderListsTerminalOutputFromClickHouse(t *testing.T) {
 	client := &fakeHistoricalClient{
 		selectFunc: func(_ context.Context, dest any, query string, args ...any) error {
 			params := namedArgs(args)
-			if !strings.Contains(query, "helmr_telemetry.terminal_output FINAL") {
-				t.Fatalf("query = %q, want terminal_output FINAL", query)
+			if !strings.Contains(query, "helmr_telemetry.terminal_outputs FINAL") {
+				t.Fatalf("query = %q, want terminal_outputs FINAL", query)
 			}
 			if !strings.Contains(query, "offset_end > @after") || !strings.Contains(query, "offset_end <= @watermark") {
 				t.Fatalf("query = %q, want bounded historical offsets", query)

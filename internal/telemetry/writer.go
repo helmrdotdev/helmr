@@ -112,7 +112,7 @@ func (w *ClickHouseWriter) WriteTerminalOutput(ctx context.Context, rows []Termi
 	if len(rows) == 0 {
 		return nil
 	}
-	batch, err := w.client.PrepareBatch(ctx, `INSERT INTO helmr_telemetry.terminal_output (
+	batch, err := w.client.PrepareBatch(ctx, `INSERT INTO helmr_telemetry.terminal_outputs (
     cell_id, org_id, project_id, environment_id, workspace_id, resource_kind, resource_id,
     stream_name, offset_start, offset_end, content, size_bytes, idempotency_key,
     retention_class, redaction_class, observed_at

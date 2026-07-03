@@ -82,7 +82,7 @@ ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY (toYYYYMM(observed_at), cell_id)
 ORDER BY (org_id, project_id, environment_id, trace_id, span_id, observed_at);
 
-CREATE TABLE IF NOT EXISTS helmr_telemetry.terminal_output (
+CREATE TABLE IF NOT EXISTS helmr_telemetry.terminal_outputs (
     cell_id String,
     org_id UUID,
     project_id UUID,
