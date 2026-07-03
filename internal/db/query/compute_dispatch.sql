@@ -56,6 +56,7 @@ WITH observed_runtime AS (
 upserted_worker AS (
     INSERT INTO worker_instances (
         id,
+        cell_id,
         worker_group_id,
         resource_id,
         status,
@@ -82,6 +83,7 @@ upserted_worker AS (
         last_seen_at
     )
     SELECT sqlc.arg(id),
+           sqlc.arg(cell_id),
            sqlc.arg(worker_group_id),
            sqlc.arg(resource_id),
            'active',

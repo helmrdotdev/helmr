@@ -3536,7 +3536,7 @@ updated_runs AS (
      WHERE runs.id = eligible.run_id
        AND runs.status = 'running'
        AND runs.current_run_lease_id = eligible.run_lease_id
-    RETURNING eligible.run_id, eligible.run_lease_id, eligible.attempt_number, eligible.restore_runtime_checkpoint_id, runs.project_id, runs.environment_id, runs.current_attempt_id, runs.state_version, runs.queued_expires_at
+    RETURNING eligible.run_id, eligible.run_lease_id, eligible.attempt_number, eligible.restore_runtime_checkpoint_id, runs.cell_id, runs.project_id, runs.environment_id, runs.current_attempt_id, runs.state_version, runs.queued_expires_at
 ),
 requeued_attempts AS (
     UPDATE run_attempts

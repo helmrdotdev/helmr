@@ -15,6 +15,7 @@ const allocateDeploymentVersion = `-- name: AllocateDeploymentVersion :one
 WITH allocated AS (
     INSERT INTO deployment_version_counters (
         org_id,
+        cell_id,
         project_id,
         environment_id,
         prefix,
@@ -24,6 +25,7 @@ WITH allocated AS (
         $2,
         $3,
         $4,
+        $5,
         2
     )
     ON CONFLICT (org_id, project_id, environment_id, prefix)
@@ -38,6 +40,7 @@ SELECT concat(prefix, '.', next_ordinal - 1)::text AS version
 
 type AllocateDeploymentVersionParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
+	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	Prefix        string      `json:"prefix"`
@@ -46,6 +49,7 @@ type AllocateDeploymentVersionParams struct {
 func (q *Queries) AllocateDeploymentVersion(ctx context.Context, arg AllocateDeploymentVersionParams) (string, error) {
 	row := q.db.QueryRow(ctx, allocateDeploymentVersion,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Prefix,
@@ -2153,6 +2157,7 @@ const promoteDeployment = `-- name: PromoteDeployment :one
 WITH target AS (
     SELECT deployments.id,
            deployments.org_id,
+           deployments.cell_id,
            deployments.project_id,
            deployments.environment_id
       FROM deployments
@@ -2184,6 +2189,7 @@ promotion AS (
     INSERT INTO deployment_promotions (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         deployment_id,
@@ -2193,6 +2199,7 @@ promotion AS (
     )
     SELECT $5,
            target.org_id,
+           target.cell_id,
            target.project_id,
            target.environment_id,
            target.id,

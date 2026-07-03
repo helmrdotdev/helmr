@@ -451,7 +451,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, cellID 
 }
 
 func createQueuedDeployment(ctx context.Context, store deploymentStore, cellID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workerGroupID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (db.Deployment, error) {
-	version, err := nextDeploymentVersion(ctx, store, orgID, projectID, environmentID)
+	version, err := nextDeploymentVersion(ctx, store, cellID, orgID, projectID, environmentID)
 	if err != nil {
 		return db.Deployment{}, err
 	}
@@ -495,9 +495,10 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, cellID s
 	return deployment, nil
 }
 
-func nextDeploymentVersion(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (string, error) {
+func nextDeploymentVersion(ctx context.Context, store deploymentStore, cellID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (string, error) {
 	return store.AllocateDeploymentVersion(ctx, db.AllocateDeploymentVersionParams{
 		OrgID:         pgvalue.UUID(orgID),
+		CellID:        cellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Prefix:        deploymentVersionPrefix(),

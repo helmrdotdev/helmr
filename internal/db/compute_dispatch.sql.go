@@ -2108,6 +2108,7 @@ WITH observed_runtime AS (
 upserted_worker AS (
     INSERT INTO worker_instances (
         id,
+        cell_id,
         worker_group_id,
         resource_id,
         status,
@@ -2136,8 +2137,8 @@ upserted_worker AS (
     SELECT $8,
            $9,
            $10,
-           'active',
            $11,
+           'active',
            $12,
            $13,
            $14,
@@ -2150,6 +2151,7 @@ upserted_worker AS (
            $21,
            $22,
            $23,
+           $24,
            observed_runtime.runtime_id,
            observed_runtime.runtime_arch,
            observed_runtime.runtime_abi,
@@ -2200,6 +2202,7 @@ type UpsertWorkerInstanceHeartbeatParams struct {
 	RootfsDigest            string      `json:"rootfs_digest"`
 	CniProfile              string      `json:"cni_profile"`
 	ID                      pgtype.UUID `json:"id"`
+	CellID                  string      `json:"cell_id"`
 	WorkerGroupID           pgtype.UUID `json:"worker_group_id"`
 	ResourceID              string      `json:"resource_id"`
 	Region                  string      `json:"region"`
@@ -2260,6 +2263,7 @@ func (q *Queries) UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertW
 		arg.RootfsDigest,
 		arg.CniProfile,
 		arg.ID,
+		arg.CellID,
 		arg.WorkerGroupID,
 		arg.ResourceID,
 		arg.Region,

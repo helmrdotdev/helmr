@@ -63,12 +63,14 @@ SELECT *
 WITH allocated AS (
     INSERT INTO deployment_version_counters (
         org_id,
+        cell_id,
         project_id,
         environment_id,
         prefix,
         next_ordinal
     ) VALUES (
         sqlc.arg(org_id),
+        sqlc.arg(cell_id),
         sqlc.arg(project_id),
         sqlc.arg(environment_id),
         sqlc.arg(prefix),
@@ -222,6 +224,7 @@ RETURNING *;
 WITH target AS (
     SELECT deployments.id,
            deployments.org_id,
+           deployments.cell_id,
            deployments.project_id,
            deployments.environment_id
       FROM deployments
@@ -253,6 +256,7 @@ promotion AS (
     INSERT INTO deployment_promotions (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         deployment_id,
@@ -262,6 +266,7 @@ promotion AS (
     )
     SELECT sqlc.arg(id),
            target.org_id,
+           target.cell_id,
            target.project_id,
            target.environment_id,
            target.id,

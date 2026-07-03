@@ -253,6 +253,7 @@ func workerInstanceHeartbeatParams(worker workerActor, capabilities api.WorkerCa
 	labels, _ := json.Marshal(capabilities.Labels)
 	return db.UpsertWorkerInstanceHeartbeatParams{
 		ID:                      pgvalue.UUID(worker.WorkerInstanceID),
+		CellID:                  worker.CellID,
 		WorkerGroupID:           pgvalue.UUID(worker.WorkerGroupID),
 		ResourceID:              worker.ResourceID,
 		Region:                  capabilities.Region,
