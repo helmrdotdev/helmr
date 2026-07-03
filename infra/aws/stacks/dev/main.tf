@@ -162,6 +162,26 @@ resource "terraform_data" "clickhouse_preconditions" {
     }
 
     precondition {
+      condition     = var.create_clickhouse_cloud || var.clickhouse_organization_id == null
+      error_message = "Do not set clickhouse_organization_id when create_clickhouse_cloud is false; provide clickhouse_url and clickhouse_password_secret_arn for an external ClickHouse service."
+    }
+
+    precondition {
+      condition     = var.create_clickhouse_cloud || var.clickhouse_cloud_service_name == null
+      error_message = "Do not set clickhouse_cloud_service_name when create_clickhouse_cloud is false."
+    }
+
+    precondition {
+      condition     = var.create_clickhouse_cloud || var.clickhouse_cloud_region == null
+      error_message = "Do not set clickhouse_cloud_region when create_clickhouse_cloud is false."
+    }
+
+    precondition {
+      condition     = var.create_clickhouse_cloud || var.clickhouse_secret_kms_key_id == null
+      error_message = "Do not set clickhouse_secret_kms_key_id when create_clickhouse_cloud is false; use clickhouse_password_kms_key_arns for an external ClickHouse password secret."
+    }
+
+    precondition {
       condition     = var.create_clickhouse_cloud || var.clickhouse_password_secret_arn != null
       error_message = "clickhouse_password_secret_arn is required when using an external ClickHouse service."
     }

@@ -132,7 +132,7 @@ variable "clickhouse_max_replica_memory_gb" {
 variable "clickhouse_idle_scaling" {
   description = "Enable idle scaling for Terraform-managed ClickHouse Cloud."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "clickhouse_idle_timeout_minutes" {
