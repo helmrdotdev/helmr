@@ -3,39 +3,48 @@ package telemetry
 import (
 	"context"
 	"encoding/base64"
-	"net/http"
-	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/clickhouse"
 )
 
 func TestHistoricalReaderListsTerminalOutputFromClickHouse(t *testing.T) {
-	var query string
 	resourceID := uuid.Must(uuid.NewV7())
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		query = r.URL.Query().Get("query")
-		if !strings.Contains(query, "helmr_telemetry.terminal_output FINAL") {
-			t.Fatalf("query = %q, want terminal_output FINAL", query)
-		}
-		if !strings.Contains(query, "offset_end > {after:UInt64}") || !strings.Contains(query, "offset_end <= {watermark:UInt64}") {
-			t.Fatalf("query = %q, want bounded historical offsets", query)
-		}
-		if r.URL.Query().Get("param_after") != "5" || r.URL.Query().Get("param_watermark") != "10" {
-			t.Fatalf("params after=%q watermark=%q, want 5/10", r.URL.Query().Get("param_after"), r.URL.Query().Get("param_watermark"))
-		}
-		if r.URL.Query().Get("param_resource_id") != resourceID.String() {
-			t.Fatalf("param_resource_id = %q, want %s", r.URL.Query().Get("param_resource_id"), resourceID)
-		}
-		_, _ = w.Write([]byte(`{"stream_name":"output","offset_start":5,"offset_end":10,"content":"` + base64.StdEncoding.EncodeToString([]byte("hello")) + `","observed_at":"2026-07-02 01:02:03.123","ingested_at":"2026-07-02 01:02:04.456"}` + "\n"))
-	}))
-	defer server.Close()
-
-	client, err := clickhouse.New(clickhouse.Config{URL: server.URL})
-	if err != nil {
-		t.Fatal(err)
+	observedAt := time.Date(2026, 7, 2, 1, 2, 3, 123000000, time.UTC)
+	ingestedAt := time.Date(2026, 7, 2, 1, 2, 4, 456000000, time.UTC)
+	client := &fakeHistoricalClient{
+		selectFunc: func(_ context.Context, dest any, query string, args ...any) error {
+			params := namedArgs(args)
+			if !strings.Contains(query, "helmr_telemetry.terminal_output FINAL") {
+				t.Fatalf("query = %q, want terminal_output FINAL", query)
+			}
+			if !strings.Contains(query, "offset_end > @after") || !strings.Contains(query, "offset_end <= @watermark") {
+				t.Fatalf("query = %q, want bounded historical offsets", query)
+			}
+			if params["after"] != uint64(5) || params["watermark"] != uint64(10) {
+				t.Fatalf("params after=%v watermark=%v, want 5/10", params["after"], params["watermark"])
+			}
+			if params["resource_id"] != resourceID {
+				t.Fatalf("resource_id = %v, want %s", params["resource_id"], resourceID)
+			}
+			rows, ok := dest.(*[]terminalOutputHistoryRow)
+			if !ok {
+				t.Fatalf("dest type = %T, want *[]terminalOutputHistoryRow", dest)
+			}
+			*rows = append(*rows, terminalOutputHistoryRow{
+				StreamName:  "output",
+				OffsetStart: 5,
+				OffsetEnd:   10,
+				Content:     base64.StdEncoding.EncodeToString([]byte("hello")),
+				ObservedAt:  observedAt,
+				IngestedAt:  ingestedAt,
+			})
+			return nil
+		},
 	}
 	reader := NewHistoricalReader(client)
 	rows, last, err := reader.ListTerminalOutput(context.Background(), TerminalOutputQuery{
@@ -60,7 +69,57 @@ func TestHistoricalReaderListsTerminalOutputFromClickHouse(t *testing.T) {
 	if rows[0].ObservedAt.IsZero() || rows[0].CreatedAt.IsZero() {
 		t.Fatalf("timestamps were not parsed: %+v", rows[0])
 	}
-	if !strings.Contains(query, "resource_id = {resource_id:UUID}") {
-		t.Fatalf("query = %q, want resource scope placeholder", query)
+}
+
+func TestHistoricalRowsDeclareClickHouseTagsForSelectedColumns(t *testing.T) {
+	assertClickHouseTags(t, eventRow{}, []string{
+		"seq", "run_id", "deployment_id", "attempt_id", "run_lease_id", "attempt_number",
+		"trace_id", "span_id", "traceparent", "category", "severity", "source",
+		"event_kind", "message", "body", "redaction_class", "observed_at",
+	})
+	assertClickHouseTags(t, runLogRow{}, []string{
+		"run_id", "run_lease_id", "attempt_id", "attempt_number", "stream_name",
+		"seq", "observed_seq", "content", "size_bytes", "observed_at",
+	})
+	assertClickHouseTags(t, terminalOutputHistoryRow{}, []string{
+		"stream_name", "offset_start", "offset_end", "content", "observed_at", "ingested_at",
+	})
+}
+
+type fakeHistoricalClient struct {
+	selectFunc func(context.Context, any, string, ...any) error
+}
+
+func (c *fakeHistoricalClient) Select(ctx context.Context, dest any, query string, args ...any) error {
+	return c.selectFunc(ctx, dest, query, args...)
+}
+
+func namedArgs(args []any) map[string]any {
+	values := make(map[string]any, len(args))
+	for _, arg := range args {
+		named, ok := arg.(chdriver.NamedValue)
+		if !ok {
+			continue
+		}
+		values[named.Name] = named.Value
+	}
+	return values
+}
+
+func assertClickHouseTags(t *testing.T, row any, columns []string) {
+	t.Helper()
+	tags := make(map[string]struct{})
+	rowType := reflect.TypeOf(row)
+	for field := range rowType.Fields() {
+		tag := field.Tag.Get("ch")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		tags[tag] = struct{}{}
+	}
+	for _, column := range columns {
+		if _, ok := tags[column]; !ok {
+			t.Fatalf("%T missing ch tag for selected column %q", row, column)
+		}
 	}
 }

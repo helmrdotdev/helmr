@@ -56,6 +56,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure clickhouse: %w", err)
 	}
+	defer clickHouseClient.Close()
 	telemetryReader := telemetry.NewCompositeReader(
 		telemetry.NewHotReader(queries),
 		telemetry.NewHistoricalReader(clickHouseClient),

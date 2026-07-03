@@ -108,6 +108,7 @@ func main() {
 		log.Error("configure clickhouse", "error", err)
 		os.Exit(1)
 	}
+	defer clickHouseClient.Close()
 	telemetryReader := telemetry.NewCompositeReader(
 		telemetry.NewHotReader(queries),
 		telemetry.NewHistoricalReader(clickHouseClient),

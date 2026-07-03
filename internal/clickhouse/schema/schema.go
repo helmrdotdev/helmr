@@ -20,6 +20,7 @@ func Up(ctx context.Context, cfg clickhouse.Config) error {
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	entries, err := fs.ReadDir(Migrations, "migrations")
 	if err != nil {
 		return err

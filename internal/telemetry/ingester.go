@@ -727,7 +727,7 @@ func optionalInt32(value pgtype.Int4) *int32 {
 	return &value.Int32
 }
 
-func observedAt(primary pgtype.Timestamptz, fallback pgtype.Timestamptz) string {
+func observedAt(primary pgtype.Timestamptz, fallback pgtype.Timestamptz) time.Time {
 	at := pgvalue.Time(primary)
 	if at.IsZero() {
 		at = pgvalue.Time(fallback)
@@ -735,7 +735,7 @@ func observedAt(primary pgtype.Timestamptz, fallback pgtype.Timestamptz) string 
 	if at.IsZero() {
 		at = time.Unix(0, 0).UTC()
 	}
-	return at.UTC().Format(time.RFC3339Nano)
+	return at.UTC()
 }
 
 func truncateError(err error) string {

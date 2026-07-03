@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,10 +13,14 @@ import (
 )
 
 type HistoricalReader struct {
-	client *clickhouse.Client
+	client historicalClient
 }
 
-func NewHistoricalReader(client *clickhouse.Client) *HistoricalReader {
+type historicalClient interface {
+	Select(ctx context.Context, dest any, query string, args ...any) error
+}
+
+func NewHistoricalReader(client historicalClient) *HistoricalReader {
 	return &HistoricalReader{client: client}
 }
 
@@ -47,7 +50,7 @@ type EventRecord struct {
 	IdempotencyKey string     `json:"idempotency_key"`
 	RetentionClass string     `json:"retention_class"`
 	RedactionClass string     `json:"redaction_class"`
-	ObservedAt     string     `json:"observed_at"`
+	ObservedAt     time.Time  `json:"observed_at"`
 }
 
 type RunLogRecord struct {
@@ -68,7 +71,7 @@ type RunLogRecord struct {
 	RetentionClass string     `json:"retention_class"`
 	RedactionClass string     `json:"redaction_class"`
 	Source         string     `json:"source"`
-	ObservedAt     string     `json:"observed_at"`
+	ObservedAt     time.Time  `json:"observed_at"`
 }
 
 type TerminalOutputRecord struct {
@@ -87,7 +90,7 @@ type TerminalOutputRecord struct {
 	IdempotencyKey string    `json:"idempotency_key"`
 	RetentionClass string    `json:"retention_class"`
 	RedactionClass string    `json:"redaction_class"`
-	ObservedAt     string    `json:"observed_at"`
+	ObservedAt     time.Time `json:"observed_at"`
 }
 
 func (r *HistoricalReader) ListEvents(ctx context.Context, q EventQuery, watermark int64) ([]api.RunEvent, int64, error) {
@@ -96,24 +99,24 @@ func (r *HistoricalReader) ListEvents(ctx context.Context, q EventQuery, waterma
 	}
 	sql := `SELECT seq, run_id, deployment_id, attempt_id, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, event_kind, message, body, redaction_class, observed_at
 FROM helmr_telemetry.events FINAL
-WHERE org_id = {org_id:UUID}
-  AND cell_id = {cell_id:String}
-  AND subject_kind = {subject_kind:String}
-  AND subject_id = {subject_id:UUID}
-  AND seq > {after:UInt64}
-  AND seq <= {watermark:UInt64}
+WHERE org_id = @org_id
+  AND cell_id = @cell_id
+  AND subject_kind = @subject_kind
+  AND subject_id = @subject_id
+  AND seq > @after
+  AND seq <= @watermark
 ORDER BY seq ASC
-LIMIT {row_limit:UInt32} FORMAT JSONEachRow`
+LIMIT @row_limit`
 	var rows []eventRow
-	if err := r.client.SelectJSONEachRowParams(ctx, sql, map[string]string{
-		"org_id":       q.OrgID.String(),
-		"cell_id":      q.CellID,
-		"subject_kind": q.SubjectType,
-		"subject_id":   q.SubjectID.String(),
-		"after":        strconv.FormatInt(q.AfterSeq, 10),
-		"watermark":    strconv.FormatInt(watermark, 10),
-		"row_limit":    strconv.FormatInt(int64(q.Limit), 10),
-	}, &rows); err != nil {
+	if err := r.client.Select(ctx, &rows, sql,
+		clickhouse.Named("org_id", q.OrgID),
+		clickhouse.Named("cell_id", q.CellID),
+		clickhouse.Named("subject_kind", q.SubjectType),
+		clickhouse.Named("subject_id", q.SubjectID),
+		clickhouse.Named("after", uint64(q.AfterSeq)),
+		clickhouse.Named("watermark", uint64(watermark)),
+		clickhouse.Named("row_limit", uint32(q.Limit)),
+	); err != nil {
 		return nil, q.AfterSeq, err
 	}
 	events := make([]api.RunEvent, 0, len(rows))
@@ -131,22 +134,22 @@ func (r *HistoricalReader) ListRunLogChunks(ctx context.Context, q RunLogChunkQu
 	}
 	sql := `SELECT run_id, run_lease_id, attempt_id, attempt_number, stream_name, seq, observed_seq, content, size_bytes, observed_at
 FROM helmr_telemetry.run_logs FINAL
-WHERE org_id = {org_id:UUID}
-  AND cell_id = {cell_id:String}
-  AND run_id = {run_id:UUID}
-  AND seq > {after:UInt64}
-  AND seq <= {watermark:UInt64}
+WHERE org_id = @org_id
+  AND cell_id = @cell_id
+  AND run_id = @run_id
+  AND seq > @after
+  AND seq <= @watermark
 ORDER BY seq ASC
-LIMIT {row_limit:UInt32} FORMAT JSONEachRow`
+LIMIT @row_limit`
 	var rows []runLogRow
-	if err := r.client.SelectJSONEachRowParams(ctx, sql, map[string]string{
-		"org_id":    q.OrgID.String(),
-		"cell_id":   q.CellID,
-		"run_id":    q.RunID.String(),
-		"after":     strconv.FormatInt(q.AfterSeq, 10),
-		"watermark": strconv.FormatInt(watermark, 10),
-		"row_limit": strconv.FormatInt(int64(q.Limit), 10),
-	}, &rows); err != nil {
+	if err := r.client.Select(ctx, &rows, sql,
+		clickhouse.Named("org_id", q.OrgID),
+		clickhouse.Named("cell_id", q.CellID),
+		clickhouse.Named("run_id", q.RunID),
+		clickhouse.Named("after", uint64(q.AfterSeq)),
+		clickhouse.Named("watermark", uint64(watermark)),
+		clickhouse.Named("row_limit", uint32(q.Limit)),
+	); err != nil {
 		return nil, q.AfterSeq, err
 	}
 	chunks := make([]api.RunLogChunk, 0, len(rows))
@@ -164,32 +167,32 @@ func (r *HistoricalReader) ListTerminalOutput(ctx context.Context, q TerminalOut
 	}
 	sql := `SELECT stream_name, offset_start, offset_end, content, observed_at, ingested_at
 FROM helmr_telemetry.terminal_output FINAL
-WHERE org_id = {org_id:UUID}
-  AND cell_id = {cell_id:String}
-  AND project_id = {project_id:UUID}
-  AND environment_id = {environment_id:UUID}
-  AND workspace_id = {workspace_id:UUID}
-  AND resource_kind = {resource_kind:String}
-  AND resource_id = {resource_id:UUID}
-  AND stream_name = {stream_name:String}
-  AND offset_end > {after:UInt64}
-  AND offset_end <= {watermark:UInt64}
+WHERE org_id = @org_id
+  AND cell_id = @cell_id
+  AND project_id = @project_id
+  AND environment_id = @environment_id
+  AND workspace_id = @workspace_id
+  AND resource_kind = @resource_kind
+  AND resource_id = @resource_id
+  AND stream_name = @stream_name
+  AND offset_end > @after
+  AND offset_end <= @watermark
 ORDER BY offset_start ASC
-LIMIT {row_limit:UInt32} FORMAT JSONEachRow`
+LIMIT @row_limit`
 	var rows []terminalOutputHistoryRow
-	if err := r.client.SelectJSONEachRowParams(ctx, sql, map[string]string{
-		"org_id":         q.OrgID.String(),
-		"cell_id":        q.CellID,
-		"project_id":     q.ProjectID.String(),
-		"environment_id": q.EnvironmentID.String(),
-		"workspace_id":   q.WorkspaceID.String(),
-		"resource_kind":  q.ResourceKind,
-		"resource_id":    q.ResourceID.String(),
-		"stream_name":    q.StreamName,
-		"after":          strconv.FormatInt(q.AfterOffset, 10),
-		"watermark":      strconv.FormatInt(watermark, 10),
-		"row_limit":      strconv.FormatInt(int64(q.Limit), 10),
-	}, &rows); err != nil {
+	if err := r.client.Select(ctx, &rows, sql,
+		clickhouse.Named("org_id", q.OrgID),
+		clickhouse.Named("cell_id", q.CellID),
+		clickhouse.Named("project_id", q.ProjectID),
+		clickhouse.Named("environment_id", q.EnvironmentID),
+		clickhouse.Named("workspace_id", q.WorkspaceID),
+		clickhouse.Named("resource_kind", q.ResourceKind),
+		clickhouse.Named("resource_id", q.ResourceID),
+		clickhouse.Named("stream_name", q.StreamName),
+		clickhouse.Named("after", uint64(q.AfterOffset)),
+		clickhouse.Named("watermark", uint64(watermark)),
+		clickhouse.Named("row_limit", uint32(q.Limit)),
+	); err != nil {
 		return nil, q.AfterOffset, err
 	}
 	chunks := make([]TerminalOutputChunk, 0, len(rows))
@@ -202,23 +205,23 @@ LIMIT {row_limit:UInt32} FORMAT JSONEachRow`
 }
 
 type eventRow struct {
-	Seq            uint64     `json:"seq"`
-	RunID          *uuid.UUID `json:"run_id"`
-	DeploymentID   *uuid.UUID `json:"deployment_id"`
-	AttemptID      *uuid.UUID `json:"attempt_id"`
-	RunLeaseID     *uuid.UUID `json:"run_lease_id"`
-	AttemptNumber  *int32     `json:"attempt_number"`
-	TraceID        string     `json:"trace_id"`
-	SpanID         string     `json:"span_id"`
-	Traceparent    string     `json:"traceparent"`
-	Category       string     `json:"category"`
-	Severity       string     `json:"severity"`
-	Source         string     `json:"source"`
-	EventKind      string     `json:"event_kind"`
-	Message        string     `json:"message"`
-	Body           string     `json:"body"`
-	RedactionClass string     `json:"redaction_class"`
-	ObservedAt     string     `json:"observed_at"`
+	Seq            uint64     `ch:"seq"`
+	RunID          *uuid.UUID `ch:"run_id"`
+	DeploymentID   *uuid.UUID `ch:"deployment_id"`
+	AttemptID      *uuid.UUID `ch:"attempt_id"`
+	RunLeaseID     *uuid.UUID `ch:"run_lease_id"`
+	AttemptNumber  *int32     `ch:"attempt_number"`
+	TraceID        string     `ch:"trace_id"`
+	SpanID         string     `ch:"span_id"`
+	Traceparent    string     `ch:"traceparent"`
+	Category       string     `ch:"category"`
+	Severity       string     `ch:"severity"`
+	Source         string     `ch:"source"`
+	EventKind      string     `ch:"event_kind"`
+	Message        string     `ch:"message"`
+	Body           string     `ch:"body"`
+	RedactionClass string     `ch:"redaction_class"`
+	ObservedAt     time.Time  `ch:"observed_at"`
 }
 
 func (r eventRow) event() api.RunEvent {
@@ -239,7 +242,7 @@ func (r eventRow) event() api.RunEvent {
 		value := r.AttemptID.String()
 		attemptID = &value
 	}
-	at := parseTime(r.ObservedAt)
+	at := r.ObservedAt.UTC()
 	attrs := json.RawMessage(r.Body)
 	if len(attrs) == 0 || !json.Valid(attrs) {
 		attrs = json.RawMessage(`{}`)
@@ -268,25 +271,25 @@ func (r eventRow) event() api.RunEvent {
 }
 
 type runLogRow struct {
-	RunID         uuid.UUID  `json:"run_id"`
-	RunLeaseID    uuid.UUID  `json:"run_lease_id"`
-	AttemptID     *uuid.UUID `json:"attempt_id"`
-	AttemptNumber int32      `json:"attempt_number"`
-	StreamName    string     `json:"stream_name"`
-	Seq           uint64     `json:"seq"`
-	ObservedSeq   uint64     `json:"observed_seq"`
-	Content       string     `json:"content"`
-	SizeBytes     uint64     `json:"size_bytes"`
-	ObservedAt    string     `json:"observed_at"`
+	RunID         uuid.UUID  `ch:"run_id"`
+	RunLeaseID    uuid.UUID  `ch:"run_lease_id"`
+	AttemptID     *uuid.UUID `ch:"attempt_id"`
+	AttemptNumber int32      `ch:"attempt_number"`
+	StreamName    string     `ch:"stream_name"`
+	Seq           uint64     `ch:"seq"`
+	ObservedSeq   uint64     `ch:"observed_seq"`
+	Content       string     `ch:"content"`
+	SizeBytes     uint64     `ch:"size_bytes"`
+	ObservedAt    time.Time  `ch:"observed_at"`
 }
 
 type terminalOutputHistoryRow struct {
-	StreamName  string `json:"stream_name"`
-	OffsetStart uint64 `json:"offset_start"`
-	OffsetEnd   uint64 `json:"offset_end"`
-	Content     string `json:"content"`
-	ObservedAt  string `json:"observed_at"`
-	IngestedAt  string `json:"ingested_at"`
+	StreamName  string    `ch:"stream_name"`
+	OffsetStart uint64    `ch:"offset_start"`
+	OffsetEnd   uint64    `ch:"offset_end"`
+	Content     string    `ch:"content"`
+	ObservedAt  time.Time `ch:"observed_at"`
+	IngestedAt  time.Time `ch:"ingested_at"`
 }
 
 func (r terminalOutputHistoryRow) chunk(resourceKind string, resourceID uuid.UUID) TerminalOutputChunk {
@@ -294,8 +297,8 @@ func (r terminalOutputHistoryRow) chunk(resourceKind string, resourceID uuid.UUI
 	if err != nil {
 		content = []byte(r.Content)
 	}
-	observed := parseTime(r.ObservedAt)
-	created := parseTime(r.IngestedAt)
+	observed := r.ObservedAt.UTC()
+	created := r.IngestedAt.UTC()
 	if created.IsZero() {
 		created = observed
 	}
@@ -324,27 +327,6 @@ func (r runLogRow) chunk() api.RunLogChunk {
 		ContentBase64: contentBase64,
 		Bytes:         int64(r.SizeBytes),
 		ObservedSeq:   int64(r.ObservedSeq),
-		At:            parseTime(r.ObservedAt),
+		At:            r.ObservedAt.UTC(),
 	}
-}
-
-func parseTime(raw string) time.Time {
-	if raw == "" {
-		return time.Time{}
-	}
-	if parsed, err := time.Parse(time.RFC3339Nano, raw); err == nil {
-		return parsed
-	}
-	for _, layout := range []string{
-		"2006-01-02 15:04:05.999999999",
-		"2006-01-02 15:04:05",
-	} {
-		if parsed, err := time.ParseInLocation(layout, raw, time.UTC); err == nil {
-			return parsed.UTC()
-		}
-	}
-	if unix, err := strconv.ParseInt(raw, 10, 64); err == nil {
-		return time.Unix(unix, 0).UTC()
-	}
-	return time.Time{}
 }
