@@ -5,7 +5,7 @@ output "clickhouse_url" {
 
 output "clickhouse_user" {
   description = "ClickHouse user for HELMR_CLICKHOUSE_USER."
-  value       = var.clickhouse_user
+  value       = "default"
 }
 
 output "clickhouse_password_secret_arn" {

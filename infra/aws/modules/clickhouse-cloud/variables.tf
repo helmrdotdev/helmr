@@ -34,17 +34,6 @@ variable "secret_kms_key_id" {
   }
 }
 
-variable "clickhouse_user" {
-  description = "ClickHouse username Helmr uses for telemetry."
-  type        = string
-  default     = "default"
-
-  validation {
-    condition     = var.clickhouse_user == "default"
-    error_message = "clickhouse_user must be default because this module configures the ClickHouse Cloud default user password."
-  }
-}
-
 variable "vpc_id" {
   description = "AWS VPC ID that connects to ClickHouse Cloud over PrivateLink."
   type        = string
