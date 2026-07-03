@@ -13,7 +13,7 @@ import (
 
 const appendStreamRecord = `-- name: AppendStreamRecord :one
 WITH existing_record AS MATERIALIZED (
-    SELECT stream_records.id, stream_records.org_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
+    SELECT stream_records.id, stream_records.org_id, stream_records.cell_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
       FROM stream_records
      WHERE stream_records.org_id = $2
        AND stream_records.project_id = $3
@@ -24,7 +24,7 @@ WITH existing_record AS MATERIALIZED (
      FOR UPDATE
 ),
 locked_stream AS (
-    SELECT streams.id, streams.org_id, streams.project_id, streams.environment_id, streams.session_id, streams.deployment_stream_id, streams.name, streams.direction, streams.schema_fingerprint, streams.metadata, streams.next_sequence, streams.created_at
+    SELECT streams.id, streams.org_id, streams.cell_id, streams.project_id, streams.environment_id, streams.session_id, streams.deployment_stream_id, streams.name, streams.direction, streams.schema_fingerprint, streams.metadata, streams.next_sequence, streams.created_at
       FROM streams
      WHERE streams.org_id = $2
        AND streams.project_id = $3
@@ -40,12 +40,13 @@ allocated_stream AS (
       FROM locked_stream
      WHERE streams.org_id = locked_stream.org_id
        AND streams.id = locked_stream.id
-    RETURNING streams.id, streams.org_id, streams.project_id, streams.environment_id, streams.session_id, streams.deployment_stream_id, streams.name, streams.direction, streams.schema_fingerprint, streams.metadata, streams.next_sequence, streams.created_at, streams.next_sequence - 1 AS allocated_sequence
+    RETURNING streams.id, streams.org_id, streams.cell_id, streams.project_id, streams.environment_id, streams.session_id, streams.deployment_stream_id, streams.name, streams.direction, streams.schema_fingerprint, streams.metadata, streams.next_sequence, streams.created_at, streams.next_sequence - 1 AS allocated_sequence
 ),
 inserted_record AS (
     INSERT INTO stream_records (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         session_id,
@@ -63,6 +64,7 @@ inserted_record AS (
     )
     SELECT $8,
            allocated_stream.org_id,
+           allocated_stream.cell_id,
            allocated_stream.project_id,
            allocated_stream.environment_id,
            allocated_stream.session_id,
@@ -78,16 +80,16 @@ inserted_record AS (
            COALESCE($13::text, ''),
            $14::uuid
       FROM allocated_stream
-    RETURNING stream_records.id, stream_records.org_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
+    RETURNING stream_records.id, stream_records.org_id, stream_records.cell_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
 ),
 selected_record AS (
-    SELECT inserted_record.id, inserted_record.org_id, inserted_record.project_id, inserted_record.environment_id, inserted_record.session_id, inserted_record.stream_id, inserted_record.direction, inserted_record.sequence, inserted_record.data, inserted_record.correlation_id, inserted_record.content_type, inserted_record.idempotency_key, inserted_record.idempotency_fingerprint, inserted_record.source_type, inserted_record.source_id, inserted_record.public_access_token_id, inserted_record.created_at, false::boolean AS is_cached
+    SELECT inserted_record.id, inserted_record.org_id, inserted_record.cell_id, inserted_record.project_id, inserted_record.environment_id, inserted_record.session_id, inserted_record.stream_id, inserted_record.direction, inserted_record.sequence, inserted_record.data, inserted_record.correlation_id, inserted_record.content_type, inserted_record.idempotency_key, inserted_record.idempotency_fingerprint, inserted_record.source_type, inserted_record.source_id, inserted_record.public_access_token_id, inserted_record.created_at, false::boolean AS is_cached
       FROM inserted_record
     UNION ALL
-    SELECT existing_record.id, existing_record.org_id, existing_record.project_id, existing_record.environment_id, existing_record.session_id, existing_record.stream_id, existing_record.direction, existing_record.sequence, existing_record.data, existing_record.correlation_id, existing_record.content_type, existing_record.idempotency_key, existing_record.idempotency_fingerprint, existing_record.source_type, existing_record.source_id, existing_record.public_access_token_id, existing_record.created_at, true::boolean AS is_cached
+    SELECT existing_record.id, existing_record.org_id, existing_record.cell_id, existing_record.project_id, existing_record.environment_id, existing_record.session_id, existing_record.stream_id, existing_record.direction, existing_record.sequence, existing_record.data, existing_record.correlation_id, existing_record.content_type, existing_record.idempotency_key, existing_record.idempotency_fingerprint, existing_record.source_type, existing_record.source_id, existing_record.public_access_token_id, existing_record.created_at, true::boolean AS is_cached
       FROM existing_record
 )
-SELECT selected_record.id, selected_record.org_id, selected_record.project_id, selected_record.environment_id, selected_record.session_id, selected_record.stream_id, selected_record.direction, selected_record.sequence, selected_record.data, selected_record.correlation_id, selected_record.content_type, selected_record.idempotency_key, selected_record.idempotency_fingerprint, selected_record.source_type, selected_record.source_id, selected_record.public_access_token_id, selected_record.created_at, selected_record.is_cached,
+SELECT selected_record.id, selected_record.org_id, selected_record.cell_id, selected_record.project_id, selected_record.environment_id, selected_record.session_id, selected_record.stream_id, selected_record.direction, selected_record.sequence, selected_record.data, selected_record.correlation_id, selected_record.content_type, selected_record.idempotency_key, selected_record.idempotency_fingerprint, selected_record.source_type, selected_record.source_id, selected_record.public_access_token_id, selected_record.created_at, selected_record.is_cached,
        (
            selected_record.is_cached
            AND selected_record.idempotency_fingerprint <> COALESCE($1::text, '')
@@ -115,6 +117,7 @@ type AppendStreamRecordParams struct {
 type AppendStreamRecordRow struct {
 	ID                             pgtype.UUID            `json:"id"`
 	OrgID                          pgtype.UUID            `json:"org_id"`
+	CellID                         string                 `json:"cell_id"`
 	ProjectID                      pgtype.UUID            `json:"project_id"`
 	EnvironmentID                  pgtype.UUID            `json:"environment_id"`
 	SessionID                      pgtype.UUID            `json:"session_id"`
@@ -155,6 +158,7 @@ func (q *Queries) AppendStreamRecord(ctx context.Context, arg AppendStreamRecord
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -177,7 +181,7 @@ func (q *Queries) AppendStreamRecord(ctx context.Context, arg AppendStreamRecord
 }
 
 const getStreamRecord = `-- name: GetStreamRecord :one
-SELECT id, org_id, project_id, environment_id, session_id, stream_id, direction, sequence, data, correlation_id, content_type, idempotency_key, idempotency_fingerprint, source_type, source_id, public_access_token_id, created_at
+SELECT id, org_id, cell_id, project_id, environment_id, session_id, stream_id, direction, sequence, data, correlation_id, content_type, idempotency_key, idempotency_fingerprint, source_type, source_id, public_access_token_id, created_at
   FROM stream_records
  WHERE org_id = $1
    AND project_id = $2
@@ -203,6 +207,7 @@ func (q *Queries) GetStreamRecord(ctx context.Context, arg GetStreamRecordParams
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -223,7 +228,7 @@ func (q *Queries) GetStreamRecord(ctx context.Context, arg GetStreamRecordParams
 }
 
 const getStreamRecordByIdempotencyKey = `-- name: GetStreamRecordByIdempotencyKey :one
-SELECT id, org_id, project_id, environment_id, session_id, stream_id, direction, sequence, data, correlation_id, content_type, idempotency_key, idempotency_fingerprint, source_type, source_id, public_access_token_id, created_at
+SELECT id, org_id, cell_id, project_id, environment_id, session_id, stream_id, direction, sequence, data, correlation_id, content_type, idempotency_key, idempotency_fingerprint, source_type, source_id, public_access_token_id, created_at
   FROM stream_records
  WHERE org_id = $1
    AND stream_id = $2
@@ -243,6 +248,7 @@ func (q *Queries) GetStreamRecordByIdempotencyKey(ctx context.Context, arg GetSt
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -263,7 +269,7 @@ func (q *Queries) GetStreamRecordByIdempotencyKey(ctx context.Context, arg GetSt
 }
 
 const listStreamRecords = `-- name: ListStreamRecords :many
-SELECT stream_records.id, stream_records.org_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
+SELECT stream_records.id, stream_records.org_id, stream_records.cell_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
   FROM stream_records
   JOIN streams ON streams.org_id = stream_records.org_id
               AND streams.id = stream_records.stream_id
@@ -313,6 +319,7 @@ func (q *Queries) ListStreamRecords(ctx context.Context, arg ListStreamRecordsPa
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
+			&i.CellID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.SessionID,
@@ -354,7 +361,7 @@ WITH candidate_raw AS (
       JOIN run_waits ON run_waits.org_id = stream_waits.org_id
                     AND run_waits.id = stream_waits.run_wait_id
       JOIN LATERAL (
-          SELECT stream_records.id, stream_records.org_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
+          SELECT stream_records.id, stream_records.org_id, stream_records.cell_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
             FROM stream_records
            WHERE stream_records.org_id = stream_waits.org_id
              AND stream_records.stream_id = stream_waits.stream_id
@@ -406,7 +413,7 @@ resolved_wait AS (
      WHERE run_waits.org_id = matched_wait.org_id
        AND run_waits.id = matched_wait.run_wait_id
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.id, run_waits.org_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+    RETURNING run_waits.id, run_waits.org_id, run_waits.cell_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
 )
 SELECT resolved_wait.id AS run_wait_id,
        resolved_wait.org_id,
@@ -479,7 +486,7 @@ WITH candidate_raw AS (
       JOIN run_waits ON run_waits.org_id = stream_waits.org_id
                     AND run_waits.id = stream_waits.run_wait_id
       JOIN LATERAL (
-          SELECT stream_records.id, stream_records.org_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
+          SELECT stream_records.id, stream_records.org_id, stream_records.cell_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
             FROM stream_records
            WHERE stream_records.org_id = stream_waits.org_id
              AND stream_records.stream_id = stream_waits.stream_id
@@ -532,7 +539,7 @@ resolved_wait AS (
      WHERE run_waits.org_id = matched_wait.org_id
        AND run_waits.id = matched_wait.run_wait_id
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.id, run_waits.org_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+    RETURNING run_waits.id, run_waits.org_id, run_waits.cell_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
 )
 SELECT resolved_wait.id AS run_wait_id,
        resolved_wait.org_id,

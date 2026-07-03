@@ -10,6 +10,7 @@ SELECT *
 INSERT INTO sessions (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     task_id,
@@ -24,6 +25,7 @@ INSERT INTO sessions (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(task_id),
@@ -42,6 +44,7 @@ RETURNING *;
 INSERT INTO workspaces (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     deployment_sandbox_id,
@@ -54,6 +57,7 @@ INSERT INTO workspaces (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(deployment_sandbox_id),
@@ -129,6 +133,7 @@ RETURNING *;
 INSERT INTO session_runs (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     session_id,
@@ -140,6 +145,7 @@ INSERT INTO session_runs (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(session_id),

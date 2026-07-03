@@ -13,6 +13,7 @@ inserted_token AS (
     INSERT INTO tokens (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         timeout_at,
@@ -27,6 +28,7 @@ inserted_token AS (
     )
     SELECT sqlc.arg(id),
            sqlc.arg(org_id),
+           sqlc.arg(cell_id),
            sqlc.arg(project_id),
            sqlc.arg(environment_id),
            sqlc.arg(timeout_at),

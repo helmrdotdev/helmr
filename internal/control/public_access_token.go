@@ -127,6 +127,7 @@ func (s *Server) createPublicAccessToken(w http.ResponseWriter, r *http.Request)
 		publicToken, err = work.q.CreatePublicAccessToken(r.Context(), db.CreatePublicAccessTokenParams{
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:         session.OrgID,
+			CellID:        session.CellID,
 			ProjectID:     session.ProjectID,
 			EnvironmentID: session.EnvironmentID,
 			TokenHash:     tokenHash,
@@ -141,6 +142,7 @@ func (s *Server) createPublicAccessToken(w http.ResponseWriter, r *http.Request)
 		scope, err = work.q.CreatePublicAccessTokenScope(r.Context(), db.CreatePublicAccessTokenScopeParams{
 			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:               session.OrgID,
+			CellID:              session.CellID,
 			ProjectID:           session.ProjectID,
 			EnvironmentID:       session.EnvironmentID,
 			PublicAccessTokenID: publicToken.ID,

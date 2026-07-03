@@ -32,6 +32,68 @@ variable "public_url" {
   nullable    = true
 }
 
+variable "deployment_mode" {
+  description = "Helmr deployment mode passed to control-plane tasks."
+  type        = string
+  default     = "self-hosted"
+
+  validation {
+    condition     = contains(["self-hosted", "managed-cloud"], var.deployment_mode)
+    error_message = "deployment_mode must be self-hosted or managed-cloud."
+  }
+}
+
+variable "cell_id" {
+  description = "Managed-cloud cell ID for this control-plane stack."
+  type        = string
+  default     = "us-east-1-cell-1"
+
+  validation {
+    condition     = trimspace(var.cell_id) != ""
+    error_message = "cell_id must be non-empty."
+  }
+}
+
+variable "clickhouse_url" {
+  description = "ClickHouse HTTP endpoint for historical telemetry."
+  type        = string
+
+  validation {
+    condition     = can(regex("^https://[^<>[:space:]]+(:[0-9]+)?/?$", trimspace(var.clickhouse_url)))
+    error_message = "clickhouse_url must be an https URL without placeholder characters."
+  }
+}
+
+variable "clickhouse_user" {
+  description = "Optional ClickHouse username for historical telemetry."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "clickhouse_password_secret_arn" {
+  description = "Secrets Manager ARN for HELMR_CLICKHOUSE_PASSWORD when the ClickHouse endpoint requires a password."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.clickhouse_password_secret_arn == null || can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", trimspace(var.clickhouse_password_secret_arn)))
+    error_message = "clickhouse_password_secret_arn must be null or a Secrets Manager secret ARN."
+  }
+}
+
+variable "clickhouse_password_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs needed to decrypt clickhouse_password_secret_arn when it is not encrypted by this module's KMS key."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for arn in var.clickhouse_password_kms_key_arns : trimspace(arn) != ""])
+    error_message = "clickhouse_password_kms_key_arns entries must be non-empty KMS key ARNs."
+  }
+}
+
 variable "control_image" {
   description = "Container image URI containing helmr-control and helmr-dispatcher. Managed release flows should pass a digest-pinned image."
   type        = string
@@ -423,6 +485,17 @@ variable "allowed_security_group_ids" {
   description = "Security groups allowed to connect to Postgres."
   type        = list(string)
   default     = []
+}
+
+variable "additional_control_security_group_ids" {
+  description = "Additional security groups attached to control, dispatcher, and migration tasks."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for id in var.additional_control_security_group_ids : trimspace(id) != ""])
+    error_message = "additional_control_security_group_ids entries must be non-empty security group IDs."
+  }
 }
 
 variable "tags" {

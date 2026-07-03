@@ -218,6 +218,7 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 			if _, err := store.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
 				ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:          session.OrgID,
+				CellID:         session.CellID,
 				ProjectID:      session.ProjectID,
 				EnvironmentID:  session.EnvironmentID,
 				SessionID:      session.ID,

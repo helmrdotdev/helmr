@@ -7,18 +7,30 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getCasObject = `-- name: GetCasObject :one
-SELECT digest, size_bytes, media_type, created_at
+SELECT org_id, cell_id, digest, size_bytes, media_type, created_at
   FROM cas_objects
- WHERE digest = $1
+ WHERE org_id = $1
+   AND cell_id = $2
+   AND digest = $3
 `
 
-func (q *Queries) GetCasObject(ctx context.Context, digest string) (CasObject, error) {
-	row := q.db.QueryRow(ctx, getCasObject, digest)
+type GetCasObjectParams struct {
+	OrgID  pgtype.UUID `json:"org_id"`
+	CellID string      `json:"cell_id"`
+	Digest string      `json:"digest"`
+}
+
+func (q *Queries) GetCasObject(ctx context.Context, arg GetCasObjectParams) (CasObject, error) {
+	row := q.db.QueryRow(ctx, getCasObject, arg.OrgID, arg.CellID, arg.Digest)
 	var i CasObject
 	err := row.Scan(
+		&i.OrgID,
+		&i.CellID,
 		&i.Digest,
 		&i.SizeBytes,
 		&i.MediaType,
@@ -28,25 +40,35 @@ func (q *Queries) GetCasObject(ctx context.Context, digest string) (CasObject, e
 }
 
 const upsertCasObject = `-- name: UpsertCasObject :one
-INSERT INTO cas_objects (digest, size_bytes, media_type)
-VALUES ($1, $2, $3)
-ON CONFLICT (digest) DO UPDATE SET
+INSERT INTO cas_objects (org_id, cell_id, digest, size_bytes, media_type)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (org_id, cell_id, digest) DO UPDATE SET
     size_bytes = cas_objects.size_bytes
 WHERE cas_objects.size_bytes = EXCLUDED.size_bytes
   AND cas_objects.media_type = EXCLUDED.media_type
-RETURNING digest, size_bytes, media_type, created_at
+RETURNING org_id, cell_id, digest, size_bytes, media_type, created_at
 `
 
 type UpsertCasObjectParams struct {
-	Digest    string `json:"digest"`
-	SizeBytes int64  `json:"size_bytes"`
-	MediaType string `json:"media_type"`
+	OrgID     pgtype.UUID `json:"org_id"`
+	CellID    string      `json:"cell_id"`
+	Digest    string      `json:"digest"`
+	SizeBytes int64       `json:"size_bytes"`
+	MediaType string      `json:"media_type"`
 }
 
 func (q *Queries) UpsertCasObject(ctx context.Context, arg UpsertCasObjectParams) (CasObject, error) {
-	row := q.db.QueryRow(ctx, upsertCasObject, arg.Digest, arg.SizeBytes, arg.MediaType)
+	row := q.db.QueryRow(ctx, upsertCasObject,
+		arg.OrgID,
+		arg.CellID,
+		arg.Digest,
+		arg.SizeBytes,
+		arg.MediaType,
+	)
 	var i CasObject
 	err := row.Scan(
+		&i.OrgID,
+		&i.CellID,
 		&i.Digest,
 		&i.SizeBytes,
 		&i.MediaType,

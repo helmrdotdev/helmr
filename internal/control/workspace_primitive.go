@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -72,9 +73,25 @@ func (s *Server) writeWorkspacePrimitiveError(w http.ResponseWriter, op string, 
 		writeError(w, gone(errWorkspaceStreamCursorExpired))
 		return
 	}
+	var lagging telemetry.LaggingError
+	if errors.As(err, &lagging) {
+		writeError(w, gone(workspaceStreamCursorExpiredAt(lagging.WantSeq)))
+		return
+	}
+	if errors.Is(err, telemetry.ErrHistoricalUnavailable) {
+		writeError(w, unavailable(telemetry.ErrHistoricalUnavailable))
+		return
+	}
 	if errors.Is(err, errWorkspaceReadOnlyUnsupported) {
 		writeError(w, badRequest(errWorkspaceReadOnlyUnsupported))
 		return
 	}
 	writeError(w, fmt.Errorf("%s: %w", op, err))
+}
+
+func workspaceStreamCursorExpiredAt(earliest int64) codedError {
+	return codedError{
+		code:    errWorkspaceStreamCursorExpired.code,
+		message: fmt.Sprintf("workspace stream cursor expired; earliest available cursor is %d", earliest),
+	}
 }

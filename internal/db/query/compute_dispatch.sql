@@ -56,6 +56,7 @@ WITH observed_runtime AS (
 upserted_worker AS (
     INSERT INTO worker_instances (
         id,
+        cell_id,
         worker_group_id,
         resource_id,
         status,
@@ -82,6 +83,7 @@ upserted_worker AS (
         last_seen_at
     )
     SELECT sqlc.arg(id),
+           sqlc.arg(cell_id),
            sqlc.arg(worker_group_id),
            sqlc.arg(resource_id),
            'active',
@@ -263,6 +265,7 @@ SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu - a
 INSERT INTO run_runtime_requirements (
     run_id,
     org_id,
+    cell_id,
     requested_milli_cpu,
     requested_memory_mib,
     requested_disk_mib,
@@ -280,6 +283,7 @@ INSERT INTO run_runtime_requirements (
 )
 SELECT sqlc.arg(run_id),
        sqlc.arg(org_id),
+       runs.cell_id,
        sqlc.arg(requested_milli_cpu),
        sqlc.arg(requested_memory_mib),
        sqlc.arg(requested_disk_mib),
@@ -294,6 +298,9 @@ SELECT sqlc.arg(run_id),
        sqlc.arg(network_policy),
        sqlc.arg(placement),
        sqlc.arg(worker_group_id)
+  FROM runs
+ WHERE runs.org_id = sqlc.arg(org_id)
+   AND runs.id = sqlc.arg(run_id)
 ON CONFLICT (run_id) DO UPDATE
    SET requested_milli_cpu = excluded.requested_milli_cpu,
        requested_memory_mib = excluded.requested_memory_mib,
@@ -317,6 +324,7 @@ WITH upserted AS (
     INSERT INTO run_queue_items (
         run_id,
         org_id,
+        cell_id,
         status,
         priority,
         queue_name,
@@ -329,9 +337,10 @@ WITH upserted AS (
         enqueued_at,
         updated_at,
         finished_at
-    ) VALUES (
-        sqlc.arg(run_id),
+    )
+    SELECT sqlc.arg(run_id),
         sqlc.arg(org_id),
+        runs.cell_id,
         'queued',
         sqlc.arg(priority),
         sqlc.arg(queue_name),
@@ -344,7 +353,9 @@ WITH upserted AS (
         now(),
         now(),
         NULL
-    )
+      FROM runs
+     WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.id = sqlc.arg(run_id)
     ON CONFLICT (run_id) DO UPDATE
        SET status = 'queued',
            priority = excluded.priority,
@@ -369,6 +380,7 @@ SELECT *
 WITH target_run AS (
     SELECT id,
            org_id,
+           cell_id,
            project_id,
            environment_id,
            deployment_id,
@@ -420,6 +432,7 @@ inserted_requirements AS (
     INSERT INTO run_runtime_requirements (
         run_id,
         org_id,
+        cell_id,
         requested_milli_cpu,
         requested_memory_mib,
         requested_disk_mib,
@@ -435,6 +448,7 @@ inserted_requirements AS (
     )
     SELECT target_run.id,
            target_run.org_id,
+           target_run.cell_id,
            deployment_tasks.requested_milli_cpu,
            deployment_tasks.requested_memory_mib,
            deployment_tasks.requested_disk_mib,
@@ -492,6 +506,7 @@ dispatch AS (
     INSERT INTO run_queue_items (
         run_id,
         org_id,
+        cell_id,
         status,
         priority,
         queue_name,
@@ -507,6 +522,7 @@ dispatch AS (
     )
     SELECT target_run.id,
            target_run.org_id,
+           target_run.cell_id,
            'queued',
            target_run.priority,
            target_run.queue_name,
@@ -1053,82 +1069,84 @@ queue_entry AS (
        )
     RETURNING *
 ),
-	failed_run AS (
-		    UPDATE runs
-		       SET status = 'failed',
-		           execution_status = 'finished',
-		           terminal_outcome = 'dead_lettered',
-		           current_run_lease_id = NULL,
-	           error_message = sqlc.arg(last_error),
-	           state_version = state_version + 1,
-	           updated_at = now(),
-	           finished_at = now()
+failed_run AS (
+    UPDATE runs
+       SET status = 'failed',
+           execution_status = 'finished',
+           terminal_outcome = 'dead_lettered',
+           current_run_lease_id = NULL,
+           error_message = sqlc.arg(last_error),
+           state_version = state_version + 1,
+           updated_at = now(),
+           finished_at = now()
 	      FROM queue_entry
 	     WHERE runs.org_id = queue_entry.org_id
-	       AND runs.id = queue_entry.run_id
-	       AND runs.status = 'queued'
-	       AND runs.current_run_lease_id IS NULL
-	    RETURNING runs.org_id, runs.project_id, runs.environment_id, runs.id, runs.session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version
-	),
-	failed_attempt AS (
-	    UPDATE run_attempts
-	       SET status = 'failed',
-	           error_message = sqlc.arg(last_error),
-	           finished_at = now(),
-	           updated_at = now()
-	      FROM failed_run
-	     WHERE run_attempts.org_id = failed_run.org_id
-	       AND run_attempts.run_id = failed_run.id
-	       AND run_attempts.id = failed_run.current_attempt_id
-	    RETURNING run_attempts.id, run_attempts.run_id
-	),
-	failed_snapshot AS (
-		    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
-		    SELECT failed_run.org_id,
-		           failed_run.id,
-		           failed_run.state_version,
-		           'failed',
-		           'finished',
-		           'dead_lettered',
-		           failed_run.current_attempt_id,
-	           sqlc.arg(event_kind),
-	           sqlc.arg(event_payload)
-	      FROM failed_run
-	      JOIN failed_attempt ON failed_attempt.run_id = failed_run.id
-	    RETURNING run_snapshots.run_id
-	),
-	failed_session_runs AS (
-	    UPDATE session_runs
-	       SET ended_at = now()
+       AND runs.id = queue_entry.run_id
+       AND runs.status = 'queued'
+       AND runs.current_run_lease_id IS NULL
+    RETURNING runs.org_id, runs.cell_id, runs.project_id, runs.environment_id, runs.id, runs.session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version
+),
+failed_attempt AS (
+    UPDATE run_attempts
+       SET status = 'failed',
+           error_message = sqlc.arg(last_error),
+           finished_at = now(),
+           updated_at = now()
+      FROM failed_run
+     WHERE run_attempts.org_id = failed_run.org_id
+       AND run_attempts.run_id = failed_run.id
+       AND run_attempts.id = failed_run.current_attempt_id
+    RETURNING run_attempts.id, run_attempts.run_id
+),
+failed_snapshot AS (
+    INSERT INTO run_snapshots (org_id, cell_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
+    SELECT failed_run.org_id,
+           failed_run.cell_id,
+           failed_run.id,
+           failed_run.state_version,
+           'failed',
+           'finished',
+           'dead_lettered',
+           failed_run.current_attempt_id,
+           sqlc.arg(event_kind),
+           sqlc.arg(event_payload)
+      FROM failed_run
+      JOIN failed_attempt ON failed_attempt.run_id = failed_run.id
+    RETURNING run_snapshots.run_id
+),
+failed_session_runs AS (
+    UPDATE session_runs
+       SET ended_at = now()
       FROM failed_run
      WHERE session_runs.org_id = failed_run.org_id
-	       AND session_runs.project_id = failed_run.project_id
-	       AND session_runs.environment_id = failed_run.environment_id
-	       AND session_runs.session_id = failed_run.session_id
-	       AND session_runs.run_id = failed_run.id
-	    RETURNING session_runs.id
-	),
-	failed_sessions AS (
-	    SELECT failed_run.session_id AS id
-	      FROM failed_run
-	),
-	run_event_seq AS (
-	    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
-	    SELECT failed_run.org_id, 'run', failed_run.id, 1
-	      FROM failed_run
-	      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
-	    ON CONFLICT (org_id, subject_type, subject_id)
-	    DO UPDATE SET last_seq = event_subject_cursors.last_seq + 1,
-	                  updated_at = now()
-	    RETURNING org_id, subject_type, subject_id, last_seq
-	),
+       AND session_runs.project_id = failed_run.project_id
+       AND session_runs.environment_id = failed_run.environment_id
+       AND session_runs.session_id = failed_run.session_id
+       AND session_runs.run_id = failed_run.id
+    RETURNING session_runs.id
+),
+failed_sessions AS (
+    SELECT failed_run.session_id AS id
+      FROM failed_run
+),
+run_event_seq AS (
+    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
+    SELECT failed_run.org_id, failed_run.cell_id, 'run', failed_run.id, 1
+      FROM failed_run
+      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
+    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
+    DO UPDATE SET seq = event_cursors.seq + 1,
+                  observed_at = now()
+    RETURNING org_id, subject_kind, subject_id, seq
+),
 	run_event AS (
-	    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+	    INSERT INTO event_hot_payloads (org_id, cell_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
 	    SELECT failed_run.org_id,
+	           failed_run.cell_id,
 	           failed_run.project_id,
 	           failed_run.environment_id,
 	           failed_run.id,
-	           run_event_seq.last_seq,
+	           run_event_seq.seq,
 	           failed_run.current_attempt_id,
 	           failed_run.current_attempt_number,
 	           failed_run.trace_id,
@@ -1144,14 +1162,19 @@ queue_entry AS (
 	           failed_run.state_version
 	      FROM failed_run
 	      JOIN run_event_seq ON run_event_seq.org_id = failed_run.org_id
-	                        AND run_event_seq.subject_type = 'run'
+	                        AND run_event_seq.subject_kind = 'run'
 	                        AND run_event_seq.subject_id = failed_run.id
 	    RETURNING *
 	),
-	run_event_outbox AS (
-	    INSERT INTO event_outbox (event_record_id, stream_key)
-	    SELECT run_event.id,
-	           'helmr:events:' || run_event.org_id::text || ':' || run_event.subject_type::text || ':' || run_event.subject_id::text
+	run_telemetry_outbox AS (
+	    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+	    SELECT run_event.org_id,
+	                  run_event.cell_id,
+	                  'event',
+	                  run_event.subject_type,
+	                  run_event.subject_id,
+	                  run_event.seq,
+	                  'event:' || run_event.subject_type::text || ':' || run_event.subject_id::text || ':' || run_event.seq::text
 	      FROM run_event
 	    RETURNING id
 	),
@@ -1165,7 +1188,7 @@ existing_dead_letter AS (
 )
 SELECT queue_entry.*
   FROM queue_entry
-  JOIN run_event_outbox ON true
+  JOIN run_telemetry_outbox ON true
  WHERE (SELECT count(*) FROM failed_session_runs) >= 0
    AND (SELECT count(*) FROM failed_sessions) >= 0
 UNION ALL

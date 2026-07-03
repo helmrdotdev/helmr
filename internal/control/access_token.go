@@ -102,6 +102,7 @@ func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor 
 	row, err := store.CreateToken(ctx, db.CreateTokenParams{
 		ID:                        pgvalue.UUID(tokenID),
 		OrgID:                     pgvalue.UUID(actor.OrgID),
+		CellID:                    s.cellID,
 		ProjectID:                 projectID,
 		EnvironmentID:             environmentID,
 		TimeoutAt:                 pgvalue.Timestamptz(timeoutAt),
@@ -130,6 +131,7 @@ func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor 
 	publicAccessToken, err := store.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(actor.OrgID),
+		CellID:        s.cellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		TokenHash:     publicTokenHash,
@@ -144,6 +146,7 @@ func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor 
 	if _, err := store.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(actor.OrgID),
+		CellID:              s.cellID,
 		ProjectID:           projectID,
 		EnvironmentID:       environmentID,
 		PublicAccessTokenID: publicAccessToken.ID,

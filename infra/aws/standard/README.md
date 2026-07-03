@@ -79,8 +79,8 @@ aws ecs run-task \
   --launch-type FARGATE \
   --network-configuration "$(jq -cn \
     --argjson subnets "$(tofu output -json control_task_subnet_ids)" \
-    --arg sg "$(tofu output -raw control_security_group_id)" \
-    '{awsvpcConfiguration:{subnets:$subnets,securityGroups:[$sg],assignPublicIp:"DISABLED"}}')"
+    --argjson securityGroups "$(tofu output -json control_task_security_group_ids)" \
+    '{awsvpcConfiguration:{subnets:$subnets,securityGroups:$securityGroups,assignPublicIp:"DISABLED"}}')"
 ```
 
 ## Email

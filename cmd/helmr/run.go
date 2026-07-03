@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -152,7 +151,7 @@ func sessionStartCommand() *cobra.Command {
 					followCtx, cancel = context.WithDeadline(followCtx, deadline)
 					defer cancel()
 				}
-				if err := followRunLogs(followCtx, cmd, control, started.Run.ID, 0, client.RunScopeOptions{
+				if err := followRunLogs(followCtx, cmd, control, started.Run.ID, "", client.RunScopeOptions{
 					ProjectID:     scope.ProjectID,
 					EnvironmentID: scope.EnvironmentID,
 				}); err != nil {
@@ -454,11 +453,7 @@ func runLogsCommand() *cobra.Command {
 				return err
 			}
 			if follow {
-				cursor, err := strconv.ParseInt(strings.TrimSpace(logs.Cursor), 10, 64)
-				if err != nil && strings.TrimSpace(logs.Cursor) != "" {
-					return fmt.Errorf("parse log cursor: %w", err)
-				}
-				return followRunLogs(cmd.Context(), cmd, control, args[0], cursor, scope)
+				return followRunLogs(cmd.Context(), cmd, control, args[0], strings.TrimSpace(logs.Cursor), scope)
 			}
 			return nil
 		},
@@ -489,7 +484,7 @@ func writeRunLogSnapshot(cmd *cobra.Command, logs api.LogSnapshotResponse) error
 func runEventsCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
-	var cursor int64
+	var cursor string
 	var limit int32
 	var follow bool
 	cmd := &cobra.Command{
@@ -516,7 +511,7 @@ func runEventsCommand() *cobra.Command {
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().Int64Var(&cursor, "cursor", 0, "Return events after this cursor.")
+	cmd.Flags().StringVar(&cursor, "cursor", "", "Return events after this cursor.")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum events to return.")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Continue streaming new events.")
 	return cmd
@@ -708,12 +703,12 @@ func cleanTags(tags []string) []string {
 	return cleaned
 }
 
-func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, cursor int64, scope client.RunScopeOptions) error {
+func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, cursor string, scope client.RunScopeOptions) error {
 	for {
 		terminal := false
 		err := control.FollowRunEvents(cmd.Context(), runID, cursor, func(event api.RunEvent) error {
-			if parsed, parseErr := strconv.ParseInt(event.ID, 10, 64); parseErr == nil && parsed > cursor {
-				cursor = parsed
+			if event.ID != "" {
+				cursor = event.ID
 			}
 			if api.RunEventKindIsTerminal(event.Kind) {
 				terminal = true
@@ -742,12 +737,8 @@ func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, c
 	}
 }
 
-func followRunLogs(ctx context.Context, cmd *cobra.Command, control *client.Client, runID string, cursor int64, scope client.RunScopeOptions) error {
+func followRunLogs(ctx context.Context, cmd *cobra.Command, control *client.Client, runID string, cursor string, scope client.RunScopeOptions) error {
 	handleChunk := func(chunk api.RunLogChunk) error {
-		parsedCursor, parseErr := strconv.ParseInt(chunk.ID, 10, 64)
-		if parseErr != nil {
-			return fmt.Errorf("parse log chunk cursor: %w", parseErr)
-		}
 		content, err := base64.StdEncoding.DecodeString(chunk.ContentBase64)
 		if err != nil {
 			return fmt.Errorf("decode log chunk: %w", err)
@@ -763,8 +754,8 @@ func followRunLogs(ctx context.Context, cmd *cobra.Command, control *client.Clie
 		if err != nil {
 			return err
 		}
-		if parsedCursor > cursor {
-			cursor = parsedCursor
+		if chunk.ID != "" {
+			cursor = chunk.ID
 		}
 		return nil
 	}
@@ -808,13 +799,13 @@ func waitForRun(ctx context.Context, control *client.Client, runID string, scope
 	if api.RunStatusIsTerminal(run.Status) {
 		return run, nil
 	}
-	var cursor int64
+	var cursor string
 	for {
 		streamCtx, cancel := context.WithCancel(ctx)
 		terminal := false
 		err := control.FollowRunEvents(streamCtx, runID, cursor, func(event api.RunEvent) error {
-			if parsed, parseErr := strconv.ParseInt(event.ID, 10, 64); parseErr == nil && parsed > cursor {
-				cursor = parsed
+			if event.ID != "" {
+				cursor = event.ID
 			}
 			if api.RunEventKindIsTerminal(event.Kind) {
 				terminal = true

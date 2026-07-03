@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -27,6 +28,7 @@ func TestCurrentRunningRunLeaseAcceptsExecutingRun(t *testing.T) {
 
 	row, err := queries.GetCurrentRunningRunLease(ctx, db.GetCurrentRunningRunLeaseParams{
 		OrgID:            pgvalue.UUID(ids.orgID),
+		CellID:           testCellID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
@@ -61,12 +63,12 @@ func TestMarkRuntimeResumeWaitResumedAcceptsExecutingRun(t *testing.T) {
 	}
 	restoreID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO runtime_checkpoint_restores (
-			id, org_id, project_id, environment_id, run_id, runtime_checkpoint_id,
-			run_wait_id, run_lease_id, worker_instance_id
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, restoreID, ids.orgID, ids.projectID, ids.environmentID, ids.runID, pgvalue.MustUUIDValue(storedWait.RuntimeCheckpointID), pgvalue.MustUUIDValue(runWait.ID), runLeaseID, workerID); err != nil {
+			INSERT INTO runtime_checkpoint_restores (
+				id, org_id, cell_id, project_id, environment_id, run_id, runtime_checkpoint_id,
+				run_wait_id, run_lease_id, worker_instance_id
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		`, restoreID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.runID, pgvalue.MustUUIDValue(storedWait.RuntimeCheckpointID), pgvalue.MustUUIDValue(runWait.ID), runLeaseID, workerID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -443,6 +445,7 @@ func TestAcknowledgeWorkerCommandMarksHotWaitResumed(t *testing.T) {
 	}
 	command, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
+		CellID:            dbtest.DefaultCellID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -599,6 +602,7 @@ func TestAcknowledgeWorkerCommandRetiresStaleHotResumeAfterRuntimeCheckpointing(
 	}
 	command, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
+		CellID:            dbtest.DefaultCellID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -896,6 +900,7 @@ func TestClaimWorkerCommandsKeepsRetryingNotifyAttempts(t *testing.T) {
 	}
 	command, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
+		CellID:            dbtest.DefaultCellID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -1043,6 +1048,7 @@ func TestWorkerCommandTargetShapeRejectsPrepareRunTargets(t *testing.T) {
 
 	_, err = queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
+		CellID:            dbtest.DefaultCellID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -1061,6 +1067,7 @@ func TestWorkerCommandTargetShapeRejectsPrepareRunTargets(t *testing.T) {
 
 	command, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
+		CellID:            dbtest.DefaultCellID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		WorkerInstanceID:  pgvalue.UUID(workerID),
@@ -1078,6 +1085,7 @@ func TestWorkerCommandTargetShapeRejectsPrepareRunTargets(t *testing.T) {
 
 	_, err = queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:            pgvalue.UUID(ids.orgID),
+		CellID:           dbtest.DefaultCellID,
 		ProjectID:        pgvalue.UUID(ids.projectID),
 		EnvironmentID:    pgvalue.UUID(ids.environmentID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
@@ -1090,6 +1098,7 @@ func TestWorkerCommandTargetShapeRejectsPrepareRunTargets(t *testing.T) {
 
 	substrateCommand, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:               pgvalue.UUID(ids.orgID),
+		CellID:              dbtest.DefaultCellID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		WorkerInstanceID:    pgvalue.UUID(workerID),
@@ -1183,6 +1192,7 @@ func seedWorkerCommandForScopeTest(t *testing.T, ctx context.Context, queries *d
 	}
 	command, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
+		CellID:            dbtest.DefaultCellID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -1243,6 +1253,7 @@ func TestWorkerCommandCreationSkipsExistingCommandsBeforeLimit(t *testing.T) {
 	}
 	if _, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
+		CellID:            dbtest.DefaultCellID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -1283,6 +1294,7 @@ func TestWorkerCommandCreationSkipsExistingCommandsBeforeLimit(t *testing.T) {
 	}
 	if _, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
+		CellID:            dbtest.DefaultCellID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -1325,17 +1337,18 @@ func TestFailStaleResolvedRunWaitsTerminalizesWorkspaceVersionMismatch(t *testin
 	nextVersionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, org_id, project_id, environment_id, workspace_id, kind, state,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		SELECT $1, $2, $3, $4, $5, 'system', 'ready',
+		SELECT $1, $2, $3, $4, $5, $6, 'system', 'ready',
 		       artifacts.id, 'tar', 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
-		   AND artifacts.project_id = $3
-		   AND artifacts.environment_id = $4
-		   AND artifacts.id = $6
-	`, nextVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID); err != nil {
+		   AND artifacts.cell_id = $3
+		   AND artifacts.project_id = $4
+		   AND artifacts.environment_id = $5
+		   AND artifacts.id = $7
+	`, nextVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1660,10 +1673,10 @@ func TestExpiredRunningLeaseCancelsParkingRunWait(t *testing.T) {
 	var activeTimeUsageMs int64
 	if err := pool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(quantity), 0)
-		  FROM run_usage_events
+		  FROM usage_facts
 		 WHERE org_id = $1
 		   AND run_id = $2
-		   AND kind = 'active_time'
+		   AND meter = 'active_time'
 	`, ids.orgID, ids.runID).Scan(&activeTimeUsageMs); err != nil {
 		t.Fatal(err)
 	}
@@ -1703,6 +1716,7 @@ func TestExpiredRunningLeaseCancelsCheckpointingRunWait(t *testing.T) {
 	}
 	command, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
+		CellID:            dbtest.DefaultCellID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -1886,15 +1900,15 @@ func TestExpiredParkingLeaseAfterWorkspaceCaptureKeepsVersionAndInvalidatesCheck
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_checkpoints (
-			id, org_id, project_id, environment_id, workspace_id, run_id,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, run_id,
 			source_workspace_lease_id, workspace_mount_id, base_workspace_version_id,
 			state, runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, runtime_config_digest, cni_profile, manifest
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
 		        'creating', 'test', 'test-runtime', 'arm64', 'test-abi', 'sha256:kernel',
 		        'sha256:initramfs', 'sha256:rootfs', 'sha256:config', 'test-cni', '{}')
-	`, checkpointID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, ids.runID, workspaceLeaseID, workspaceMountID, currentVersionID); err != nil {
+	`, checkpointID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, ids.runID, workspaceLeaseID, workspaceMountID, currentVersionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -2175,10 +2189,10 @@ func TestCreateReadyRuntimeCheckpointRejectsSharedActiveWorkspaceMount(t *testin
 	execID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_execs (
-			id, org_id, project_id, environment_id, workspace_id, workspace_mount_id,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id,
 			command, state, detached, created_by_subject_type, created_by_subject_id
 		)
-		SELECT $1, org_id, project_id, environment_id, id, $2,
+		SELECT $1, org_id, cell_id, project_id, environment_id, id, $2,
 		       '["true"]'::jsonb, 'running', true, 'test', 'test'
 		  FROM workspaces
 		 WHERE org_id = $3
@@ -2188,11 +2202,11 @@ func TestCreateReadyRuntimeCheckpointRejectsSharedActiveWorkspaceMount(t *testin
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_leases (
-			id, org_id, project_id, environment_id, workspace_id, workspace_mount_id,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id,
 			lease_kind, state, owner_exec_id, base_version_id, acquired_version_id,
 			acquired_fencing_generation, fencing_token, expires_at
 		)
-		SELECT $1, org_id, project_id, environment_id, id, $2,
+		SELECT $1, org_id, cell_id, project_id, environment_id, id, $2,
 		       'instance', 'active', $3, current_version_id, current_version_id,
 		       1, 'exec-instance-token', now() + interval '1 hour'
 		  FROM workspaces
@@ -2279,15 +2293,15 @@ func TestDirtyRunWaitCapturePromotesSystemVersionBeforeCheckpointReady(t *testin
 	captureVersionID := uuid.Must(uuid.NewV7())
 	captureDigest := "sha256:" + strings.Repeat("b", 64)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (digest, size_bytes, media_type)
-		VALUES ($1, 42, 'application/vnd.helmr.workspace.v0.tar')
-	`, captureDigest); err != nil {
+		INSERT INTO cas_objects (org_id, cell_id, digest, size_bytes, media_type)
+		VALUES ($1, $2, $3, 42, 'application/vnd.helmr.workspace.v0.tar')
+	`, ids.orgID, dbtest.DefaultCellID, captureDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4, $5, 'workspace_version', 42, 'application/vnd.helmr.workspace.v0.tar')
-	`, captureArtifactID, ids.orgID, ids.projectID, ids.environmentID, captureDigest); err != nil {
+		INSERT INTO artifacts (id, org_id, cell_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, $6, 'workspace_version', 42, 'application/vnd.helmr.workspace.v0.tar')
+	`, captureArtifactID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, captureDigest); err != nil {
 		t.Fatal(err)
 	}
 	var workspaceLeaseID uuid.UUID
@@ -2707,12 +2721,12 @@ func TestResolveStreamWaitsBroadcastsRecordToMatchingWaiters(t *testing.T) {
 	secondRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'waiting', 'waiting', '{}', 'default', 300000,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, secondRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
+	`, secondRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	secondIDs := ids
@@ -2792,12 +2806,12 @@ func TestResolveStreamWaitForRunWaitDoesNotFanOutToOtherWaiters(t *testing.T) {
 	secondRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'waiting', 'waiting', '{}', 'default', 300000,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, secondRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
+	`, secondRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	secondIDs := ids
@@ -3185,6 +3199,7 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 	token, err := queries.CreateToken(ctx, db.CreateTokenParams{
 		ID:                        pgvalue.UUID(tokenID),
 		OrgID:                     pgvalue.UUID(ids.orgID),
+		CellID:                    dbtest.DefaultCellID,
 		ProjectID:                 pgvalue.UUID(ids.projectID),
 		EnvironmentID:             pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                 pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3201,6 +3216,7 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 	replay, err := queries.CreateToken(ctx, db.CreateTokenParams{
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
+		CellID:                   dbtest.DefaultCellID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3217,6 +3233,7 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 	conflict, err := queries.CreateToken(ctx, db.CreateTokenParams{
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
+		CellID:                   dbtest.DefaultCellID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3298,6 +3315,7 @@ func TestConcurrentTokenCompletionIsFirstResolveWins(t *testing.T) {
 	token, err := queries.CreateToken(ctx, db.CreateTokenParams{
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
+		CellID:                   dbtest.DefaultCellID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3361,6 +3379,7 @@ func TestTokenAndTimerWaitExpiryBoundaries(t *testing.T) {
 	token, err := queries.CreateToken(ctx, db.CreateTokenParams{
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
+		CellID:                   dbtest.DefaultCellID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(-time.Second)),
@@ -3435,12 +3454,12 @@ func TestResolveDueTimerWaitForRunWaitDoesNotFanOutToOtherTimers(t *testing.T) {
 	secondRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'waiting', 'waiting', '{}', 'default', 300000,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, secondRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
+	`, secondRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	secondIDs := ids
@@ -3507,6 +3526,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	token, err := queries.CreateToken(ctx, db.CreateTokenParams{
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
+		CellID:                   dbtest.DefaultCellID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3519,6 +3539,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	publicToken, err := queries.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		TokenHash:     []byte("public-token-hash"),
@@ -3532,6 +3553,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
+		CellID:              dbtest.DefaultCellID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3543,6 +3565,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
+		CellID:              dbtest.DefaultCellID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3554,6 +3577,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
+		CellID:              dbtest.DefaultCellID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3565,6 +3589,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	_, err = queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
+		CellID:              dbtest.DefaultCellID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3577,6 +3602,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	_, err = queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
+		CellID:              dbtest.DefaultCellID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3587,11 +3613,11 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 		t.Fatalf("invalid stream scope err = %v, want no rows", err)
 	}
 	_, err = pool.Exec(ctx, `
-		INSERT INTO public_access_token_scopes (
-			id, org_id, project_id, environment_id, public_access_token_id, scope_type, token_id, stream_id
-		)
-		VALUES ($1, $2, $3, $4, $5, 'session.input.send', $6, NULL)
-	`, uuid.Must(uuid.NewV7()), ids.orgID, ids.projectID, ids.environmentID, pgvalue.MustUUIDValue(publicToken.ID), pgvalue.MustUUIDValue(token.ID))
+			INSERT INTO public_access_token_scopes (
+				id, org_id, cell_id, project_id, environment_id, public_access_token_id, scope_type, token_id, stream_id
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, 'session.input.send', $7, NULL)
+		`, uuid.Must(uuid.NewV7()), ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, pgvalue.MustUUIDValue(publicToken.ID), pgvalue.MustUUIDValue(token.ID))
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
 		t.Fatalf("invalid direct scope err = %v, want check violation", err)
@@ -3603,6 +3629,7 @@ func seedSessionStream(t *testing.T, ctx context.Context, queries *db.Queries, i
 	deploymentStream, err := queries.UpsertDeploymentStream(ctx, db.UpsertDeploymentStreamParams{
 		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:             pgvalue.UUID(ids.orgID),
+		CellID:            dbtest.DefaultCellID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		DeploymentID:      pgvalue.UUID(ids.deploymentID),
@@ -3643,6 +3670,7 @@ func seedRunWait(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids inte
 	if _, err := pool.Exec(ctx, `
 		WITH run_scope AS (
 			SELECT runs.org_id,
+			       runs.cell_id,
 			       runs.project_id,
 			       runs.environment_id,
 			       runs.id AS run_id,
@@ -3675,12 +3703,12 @@ func seedRunWait(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids inte
 			   AND runs.id = $5
 		)
 		INSERT INTO run_waits (
-			id, org_id, project_id, environment_id, run_id, kind, state,
+			id, org_id, cell_id, project_id, environment_id, run_id, kind, state,
 			live_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch,
 			owner_run_id, owner_run_lease_id, owner_worker_instance_id,
 			owner_run_state_version
 		)
-		SELECT $1, org_id, project_id, environment_id, run_id, $6::run_wait_kind,
+		SELECT $1, org_id, cell_id, project_id, environment_id, run_id, $6::run_wait_kind,
 		       CASE WHEN runtime_instance_id IS NULL THEN 'cancelled'::run_wait_state ELSE 'live_waiting'::run_wait_state END,
 		       CASE WHEN runtime_instance_id IS NULL THEN NULL ELSE now() END,
 		       runtime_instance_id,
@@ -3810,13 +3838,14 @@ func seedAcceptedRuntimeCheckpointWorkerCommand(t *testing.T, ctx context.Contex
 	t.Helper()
 	var workerCommandID int64
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO worker_commands (
-			org_id, project_id, environment_id, run_id, run_wait_id,
-			run_lease_id, worker_instance_id, runtime_instance_id,
-			runtime_epoch, run_state_version, kind, payload, accepted_at
-		)
-		SELECT run_waits.org_id,
-		       run_waits.project_id,
+			INSERT INTO worker_commands (
+				org_id, cell_id, project_id, environment_id, run_id, run_wait_id,
+				run_lease_id, worker_instance_id, runtime_instance_id,
+				runtime_epoch, run_state_version, kind, payload, accepted_at
+			)
+			SELECT run_waits.org_id,
+			       run_waits.cell_id,
+			       run_waits.project_id,
 		       run_waits.environment_id,
 		       run_waits.run_id,
 		       run_waits.id,
@@ -3859,13 +3888,13 @@ func seedRestoreReadyWorkspaceMount(t *testing.T, ctx context.Context, pool *pgx
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_mounts (
-			id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
 			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id,
 			workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest,
 			workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path,
 			runtime_abi, guestd_abi, adapter_abi, state, mounted_at, last_heartbeat_at
 		)
-		SELECT $1, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
+		SELECT $1, workspaces.org_id, workspaces.cell_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
 		       deployment_sandboxes.id, workspaces.sandbox_fingerprint,
 		       image_artifact.id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest,
 		       deployment_sandboxes.image_digest, deployment_sandboxes.image_format,
@@ -3902,7 +3931,7 @@ func seedRestoreReadyWorkspaceMount(t *testing.T, ctx context.Context, pool *pgx
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_instances (
-			id, org_id, project_id, environment_id, worker_instance_id,
+			id, org_id, cell_id, project_id, environment_id, worker_instance_id,
 			runtime_release_id, deployment_sandbox_id, runtime_key_hash, runtime_key,
 			sandbox_fingerprint, rootfs_digest, image_digest, image_format,
 			sandbox_image_artifact_id, sandbox_image_artifact_digest,
@@ -3912,7 +3941,7 @@ func seedRestoreReadyWorkspaceMount(t *testing.T, ctx context.Context, pool *pgx
 			workspace_mount_id, state, instance_token, expires_at,
 			last_heartbeat_at, bound_at
 		)
-		SELECT $1, workspace_mounts.org_id, workspace_mounts.project_id,
+		SELECT $1, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id,
 		       workspace_mounts.environment_id, $2, $3,
 		       workspace_mounts.deployment_sandbox_id, $4, '{}'::jsonb,
 		       workspace_mounts.sandbox_fingerprint, workspace_mounts.rootfs_digest,
@@ -4082,13 +4111,13 @@ func ensureRunningWorkspaceMount(t *testing.T, ctx context.Context, pool interfa
 		),
 		inserted AS (
 			INSERT INTO workspace_mounts (
-				id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
+				id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
 				image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
 				workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count,
 				workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type,
 				workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, state
 			)
-			SELECT $1, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
+			SELECT $1, workspaces.org_id, workspaces.cell_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
 			       deployment_sandboxes.id, workspaces.sandbox_fingerprint,
 			       image_artifact.id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest,
 		       deployment_sandboxes.image_digest, deployment_sandboxes.image_format,
@@ -4152,11 +4181,11 @@ func seedActiveWorkspaceLeaseForRun(t *testing.T, ctx context.Context, pool inte
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_leases (
-			id, org_id, project_id, environment_id, workspace_id, workspace_mount_id,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id,
 			lease_kind, state, owner_run_id, base_version_id, acquired_version_id,
 			acquired_fencing_generation, fencing_token, expires_at
 		)
-		SELECT $1, org_id, project_id, environment_id, id, $2,
+		SELECT $1, org_id, cell_id, project_id, environment_id, id, $2,
 		       'write', 'active', $3, current_version_id, current_version_id,
 		       1, 'test-fencing-token', now() + interval '1 hour'
 		  FROM workspaces
@@ -4189,17 +4218,18 @@ func advanceWorkspaceCurrentVersion(t *testing.T, ctx context.Context, pool *pgx
 	nextVersionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, org_id, project_id, environment_id, workspace_id, kind, state,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		SELECT $1, $2, $3, $4, $5, 'system', 'ready',
+		SELECT $1, $2, $3, $4, $5, $6, 'system', 'ready',
 		       artifacts.id, 'tar', 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
-		   AND artifacts.project_id = $3
-		   AND artifacts.environment_id = $4
-		   AND artifacts.id = $6
-	`, nextVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID); err != nil {
+		   AND artifacts.cell_id = $3
+		   AND artifacts.project_id = $4
+		   AND artifacts.environment_id = $5
+		   AND artifacts.id = $7
+	`, nextVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -4234,11 +4264,11 @@ func markRunWaitWaiting(t *testing.T, ctx context.Context, pool interface {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_leases (
-			id, org_id, project_id, environment_id, workspace_id, workspace_mount_id,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id,
 			lease_kind, state, owner_run_id, base_version_id, acquired_version_id,
 			acquired_fencing_generation, fencing_token, expires_at
 		)
-		SELECT $1, org_id, project_id, environment_id, id, $2,
+		SELECT $1, org_id, cell_id, project_id, environment_id, id, $2,
 		       'write', 'released', $3, current_version_id, current_version_id,
 		       1, 'test-fencing-token', now() + interval '1 hour'
 		  FROM workspaces
@@ -4249,12 +4279,12 @@ func markRunWaitWaiting(t *testing.T, ctx context.Context, pool interface {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_checkpoints (
-			id, org_id, project_id, environment_id, workspace_id, run_id,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, run_id,
 			source_workspace_lease_id, workspace_mount_id, base_workspace_version_id,
 			state, runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, runtime_config_digest, cni_profile, manifest, ready_at
 		)
-		SELECT $1, workspaces.org_id, workspaces.project_id, workspaces.environment_id,
+		SELECT $1, workspaces.org_id, workspaces.cell_id, workspaces.project_id, workspaces.environment_id,
 		       workspaces.id, $2, $3, $4, workspaces.current_version_id,
 		       'ready', 'test', 'test-runtime', 'arm64', 'test-abi', 'sha256:kernel',
 		       'sha256:initramfs', 'sha256:rootfs', 'sha256:config', 'test-cni', '{}', now()

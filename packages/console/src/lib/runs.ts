@@ -70,12 +70,12 @@ export type RunEventRecord = {
 
 export type RunEventPage = {
   events: RunEventRecord[];
-  cursor: number;
-  next_cursor?: number | null;
+  cursor: string;
+  next_cursor?: string | null;
 };
 
 export type ListRunEventsOptions = {
-  cursor?: number;
+  cursor?: string;
   limit?: number;
 };
 

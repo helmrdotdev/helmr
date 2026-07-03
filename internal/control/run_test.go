@@ -2557,13 +2557,13 @@ type fakeStore struct {
 	deploymentPromotions                    []db.PromoteDeploymentParams
 	createDeploymentResult                  *db.Deployment
 	createDeploymentErr                     error
-	deploymentEvents                        []db.Event
+	deploymentEvents                        []db.EventHotPayload
 	deploymentTasks                         []db.DeploymentTask
 	deploymentStreams                       []db.DeploymentStream
 	ensuredSessionStreams                   []db.EnsureSessionStreamParams
 	artifacts                               []db.Artifact
 	runEvent                                db.AppendRunEventParams
-	events                                  []db.Event
+	events                                  []db.EventHotPayload
 	stdout                                  []byte
 	stderr                                  []byte
 	runLogSnapshot                          db.GetRunLogSnapshotParams
@@ -2571,7 +2571,7 @@ type fakeStore struct {
 	runLogChunksAfterCalls                  int
 	firstRunLogChunksAfterSeq               int64
 	deferLogChunksUntilSecondList           bool
-	logChunks                               []db.RunLogChunk
+	logChunks                               []db.RunLogHotChunk
 	logTruncated                            bool
 	updateRunMetadata                       db.UpdateRunMetadataForExecutionParams
 	secret                                  db.GetScopedSecretMetadataByNameRow
@@ -2591,8 +2591,11 @@ type fakeStore struct {
 	checkpoint                              db.RuntimeCheckpoint
 	abandonedClaim                          bool
 	workerBootstrapTokenHash                []byte
+	upsertWorkerBootstrapToken              db.UpsertWorkerBootstrapTokenParams
 	workerCredentialID                      pgtype.UUID
 	workerCredentialSecretHash              []byte
+	workerCredentialCellID                  string
+	workerCredentialClaimVersion            int64
 	dequeueRequest                          dispatch.DequeueRequest
 	ackedLeases                             []dispatch.Lease
 	nackedLeases                            []dispatch.Lease
@@ -2744,7 +2747,7 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		Kind:    "run.created",
 		Payload: arg.EventPayload,
 	}
-	f.events = append(f.events, db.Event{
+	f.events = append(f.events, db.EventHotPayload{
 		Seq:       int64(len(f.events) + 1),
 		OrgID:     arg.OrgID,
 		RunID:     arg.ID,

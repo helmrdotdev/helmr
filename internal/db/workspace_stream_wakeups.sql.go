@@ -27,9 +27,9 @@ updated AS (
            attempts = workspace_stream_wakeups.attempts + 1
       FROM claimable
      WHERE workspace_stream_wakeups.id = claimable.id
-    RETURNING workspace_stream_wakeups.id, workspace_stream_wakeups.org_id, workspace_stream_wakeups.project_id, workspace_stream_wakeups.environment_id, workspace_stream_wakeups.workspace_id, workspace_stream_wakeups.resource_kind, workspace_stream_wakeups.resource_id, workspace_stream_wakeups.stream, workspace_stream_wakeups.cursor_offset, workspace_stream_wakeups.notification_kind, workspace_stream_wakeups.attempts, workspace_stream_wakeups.locked_until, workspace_stream_wakeups.last_error, workspace_stream_wakeups.created_at
+    RETURNING workspace_stream_wakeups.id, workspace_stream_wakeups.org_id, workspace_stream_wakeups.cell_id, workspace_stream_wakeups.project_id, workspace_stream_wakeups.environment_id, workspace_stream_wakeups.workspace_id, workspace_stream_wakeups.resource_kind, workspace_stream_wakeups.resource_id, workspace_stream_wakeups.stream, workspace_stream_wakeups.cursor_offset, workspace_stream_wakeups.notification_kind, workspace_stream_wakeups.attempts, workspace_stream_wakeups.locked_until, workspace_stream_wakeups.last_error, workspace_stream_wakeups.created_at
 )
-SELECT id, org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind, attempts, locked_until, last_error, created_at
+SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind, attempts, locked_until, last_error, created_at
   FROM updated
  ORDER BY id ASC
 `
@@ -43,6 +43,7 @@ type ClaimWorkspaceStreamWakeupsParams struct {
 type ClaimWorkspaceStreamWakeupsRow struct {
 	ID               int64                           `json:"id"`
 	OrgID            pgtype.UUID                     `json:"org_id"`
+	CellID           string                          `json:"cell_id"`
 	ProjectID        pgtype.UUID                     `json:"project_id"`
 	EnvironmentID    pgtype.UUID                     `json:"environment_id"`
 	WorkspaceID      pgtype.UUID                     `json:"workspace_id"`
@@ -69,6 +70,7 @@ func (q *Queries) ClaimWorkspaceStreamWakeups(ctx context.Context, arg ClaimWork
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
+			&i.CellID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkspaceID,
@@ -114,7 +116,7 @@ INSERT INTO workspace_stream_wakeups (
     $8,
     $9::workspace_stream_notification_kind
 )
-RETURNING id, org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind, attempts, locked_until, last_error, created_at
+RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind, attempts, locked_until, last_error, created_at
 `
 
 type CreateWorkspaceStreamWakeupParams struct {
@@ -145,6 +147,7 @@ func (q *Queries) CreateWorkspaceStreamWakeup(ctx context.Context, arg CreateWor
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,

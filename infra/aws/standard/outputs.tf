@@ -73,6 +73,11 @@ output "control_security_group_id" {
   value       = module.control.control_security_group_id
 }
 
+output "control_task_security_group_ids" {
+  description = "Security group IDs attached to control, dispatcher, and migration tasks."
+  value       = module.control.control_task_security_group_ids
+}
+
 output "migration_task_definition_arn" {
   description = "ECS task definition ARN for running database migrations."
   value       = module.control.migration_task_definition_arn

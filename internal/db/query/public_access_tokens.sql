@@ -2,6 +2,7 @@
 INSERT INTO public_access_tokens (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     token_hash,
@@ -13,6 +14,7 @@ INSERT INTO public_access_tokens (
 VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(token_hash),
@@ -27,6 +29,7 @@ RETURNING *;
 INSERT INTO public_access_token_scopes (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     public_access_token_id,
@@ -37,6 +40,7 @@ INSERT INTO public_access_token_scopes (
 )
 SELECT sqlc.arg(id),
        sqlc.arg(org_id),
+       sqlc.arg(cell_id),
        sqlc.arg(project_id),
        sqlc.arg(environment_id),
        public_access_tokens.id,

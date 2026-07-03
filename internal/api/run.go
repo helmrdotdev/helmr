@@ -230,6 +230,6 @@ type RunEvent struct {
 
 type RunEventPage struct {
 	Events     []RunEvent `json:"events"`
-	Cursor     int64      `json:"cursor"`
-	NextCursor *int64     `json:"next_cursor,omitempty"`
+	Cursor     string     `json:"cursor"`
+	NextCursor *string    `json:"next_cursor,omitempty"`
 }

@@ -1,6 +1,7 @@
 -- name: CreateHotRunWait :one
 WITH scope AS MATERIALIZED (
     SELECT runs.org_id,
+           runs.cell_id,
            runs.project_id,
            runs.environment_id,
            runs.id AS run_id,
@@ -40,6 +41,7 @@ inserted_wait AS (
     INSERT INTO run_waits (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         run_id,
@@ -58,6 +60,7 @@ inserted_wait AS (
     )
     SELECT sqlc.arg(id),
            scope.org_id,
+           scope.cell_id,
            scope.project_id,
            scope.environment_id,
            scope.run_id,
@@ -232,6 +235,7 @@ claimed_checkpoint AS (
     INSERT INTO runtime_checkpoints (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         workspace_id,
@@ -261,6 +265,7 @@ claimed_checkpoint AS (
     )
     SELECT sqlc.arg(runtime_checkpoint_id),
            scope.org_id,
+           scope.cell_id,
            scope.project_id,
            scope.environment_id,
            scope.workspace_id,
@@ -551,6 +556,7 @@ SELECT updated_waits.*,
 WITH stale_waits AS MATERIALIZED (
     SELECT run_waits.id AS run_wait_id,
            run_waits.org_id,
+           run_waits.cell_id,
            run_waits.project_id,
            run_waits.environment_id,
            run_waits.run_id,
@@ -637,7 +643,7 @@ failed_runs AS (
        AND runs.id = stale_waits.run_id
        AND runs.status = stale_waits.run_status
        AND runs.current_run_lease_id IS NULL
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.session_id,
+    RETURNING runs.id, runs.org_id, runs.cell_id, runs.project_id, runs.environment_id, runs.session_id,
               runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id,
               runs.state_version, runs.error_message, stale_waits.runtime_checkpoint_id,
               stale_waits.base_workspace_version_id, stale_waits.current_version_id,
@@ -697,8 +703,9 @@ completed_queue_entries AS (
     RETURNING run_queue_items.run_id
 ),
 failed_snapshots AS (
-    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
+    INSERT INTO run_snapshots (org_id, cell_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
     SELECT failed_runs.org_id,
+           failed_runs.cell_id,
            failed_runs.id,
            failed_runs.state_version,
            'failed',
@@ -720,22 +727,23 @@ failed_snapshots AS (
     RETURNING run_snapshots.run_id
 ),
 failed_event_seq AS (
-    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
-    SELECT failed_runs.org_id, 'run', failed_runs.id, 1
+    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
+    SELECT failed_runs.org_id, failed_runs.cell_id, 'run', failed_runs.id, 1
       FROM failed_runs
       JOIN failed_snapshots ON failed_snapshots.run_id = failed_runs.id
-    ON CONFLICT (org_id, subject_type, subject_id)
-    DO UPDATE SET last_seq = event_subject_cursors.last_seq + 1,
-                  updated_at = now()
-    RETURNING org_id, subject_type, subject_id, last_seq
+    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
+    DO UPDATE SET seq = event_cursors.seq + 1,
+                  observed_at = now()
+    RETURNING org_id, subject_kind, subject_id, seq
 ),
 failed_events AS (
-    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO event_hot_payloads (org_id, cell_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT failed_runs.org_id,
+           failed_runs.cell_id,
            failed_runs.project_id,
            failed_runs.environment_id,
            failed_runs.id,
-           failed_event_seq.last_seq,
+           failed_event_seq.seq,
            failed_runs.current_attempt_id,
            failed_runs.current_attempt_number,
            failed_runs.trace_id,
@@ -760,27 +768,32 @@ failed_events AS (
       FROM failed_runs
       JOIN failed_snapshots ON failed_snapshots.run_id = failed_runs.id
       JOIN failed_event_seq ON failed_event_seq.org_id = failed_runs.org_id
-                           AND failed_event_seq.subject_type = 'run'
+                           AND failed_event_seq.subject_kind = 'run'
                            AND failed_event_seq.subject_id = failed_runs.id
     RETURNING *
 ),
-failed_event_outbox AS (
-    INSERT INTO event_outbox (event_record_id, stream_key)
-    SELECT failed_events.id,
-           'helmr:events:' || failed_events.org_id::text || ':' || failed_events.subject_type::text || ':' || failed_events.subject_id::text
+failed_telemetry_outbox AS (
+    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+    SELECT failed_events.org_id,
+                  failed_events.cell_id,
+                  'event',
+                  failed_events.subject_type,
+                  failed_events.subject_id,
+                  failed_events.seq,
+                  'event:' || failed_events.subject_type::text || ':' || failed_events.subject_id::text || ':' || failed_events.seq::text
       FROM failed_events
     RETURNING id
 ),
 cleanup AS (
     SELECT
         (SELECT count(*) FROM invalidated_checkpoints) AS invalidated_checkpoints,
-        (SELECT count(*) FROM failed_event_outbox) AS failed_event_outboxes
+        (SELECT count(*) FROM failed_telemetry_outbox) AS failed_telemetry_outboxes
 )
 SELECT failed_waits.*
   FROM failed_waits
   JOIN failed_runs ON failed_runs.org_id = failed_waits.org_id
                   AND failed_runs.id = failed_waits.run_id
- WHERE (SELECT invalidated_checkpoints + failed_event_outboxes FROM cleanup) >= 0;
+ WHERE (SELECT invalidated_checkpoints + failed_telemetry_outboxes FROM cleanup) >= 0;
 
 -- name: SetRunWaitWorkspaceVersion :one
 UPDATE run_waits
@@ -843,6 +856,7 @@ RETURNING *;
 
 -- name: GetWorkerRunWaitScope :one
 SELECT runs.org_id,
+       runs.cell_id,
        runs.project_id,
        runs.environment_id,
        runs.deployment_id,

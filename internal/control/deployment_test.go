@@ -949,6 +949,8 @@ func (f *fakeStore) UpsertCasObject(_ context.Context, arg db.UpsertCasObjectPar
 	f.artifactAuthorityEvents = append(f.artifactAuthorityEvents, "cas:"+arg.Digest)
 	f.casObjects = append(f.casObjects, arg)
 	return db.CasObject{
+		OrgID:     arg.OrgID,
+		CellID:    arg.CellID,
 		Digest:    arg.Digest,
 		SizeBytes: arg.SizeBytes,
 		MediaType: arg.MediaType,
@@ -956,13 +958,15 @@ func (f *fakeStore) UpsertCasObject(_ context.Context, arg db.UpsertCasObjectPar
 	}, nil
 }
 
-func (f *fakeStore) GetCasObject(_ context.Context, digest string) (db.CasObject, error) {
+func (f *fakeStore) GetCasObject(_ context.Context, arg db.GetCasObjectParams) (db.CasObject, error) {
 	if f.getCasObjectErr != nil {
 		return db.CasObject{}, f.getCasObjectErr
 	}
 	for _, object := range f.casObjects {
-		if object.Digest == digest {
+		if object.OrgID == arg.OrgID && object.CellID == arg.CellID && object.Digest == arg.Digest {
 			return db.CasObject{
+				OrgID:     object.OrgID,
+				CellID:    object.CellID,
 				Digest:    object.Digest,
 				SizeBytes: object.SizeBytes,
 				MediaType: object.MediaType,
@@ -1023,9 +1027,10 @@ func (f *fakeStore) AllocateDeploymentVersion(_ context.Context, _ db.AllocateDe
 	return "20260101.1", nil
 }
 
-func (f *fakeStore) GetDefaultWorkerGroup(context.Context) (db.WorkerGroup, error) {
+func (f *fakeStore) EnsureDefaultWorkerGroup(_ context.Context, cellID string) (db.WorkerGroup, error) {
 	return db.WorkerGroup{
 		ID:          testWorkerGroupID(),
+		CellID:      cellID,
 		Name:        "default",
 		Description: "Default worker group",
 		CreatedAt:   testTime(),
@@ -1229,7 +1234,7 @@ func (f *fakeStore) CreateDeploymentTask(_ context.Context, arg db.CreateDeploym
 }
 
 func (f *fakeStore) AppendDeploymentEvent(_ context.Context, arg db.AppendDeploymentEventParams) (db.AppendDeploymentEventRow, error) {
-	event := db.Event{
+	event := db.EventHotPayload{
 		Seq:             int64(len(f.deploymentEvents) + 1),
 		OrgID:           arg.OrgID,
 		ProjectID:       arg.ProjectID,

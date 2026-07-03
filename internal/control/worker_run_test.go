@@ -548,15 +548,48 @@ func TestWorkerRoutesRejectUserAPIKey(t *testing.T) {
 	}
 }
 
-func TestWorkerBootstrapIssuesCredentialForTokenExchange(t *testing.T) {
-	authSecret := []byte(testWorkerTokenSecret)
-	bootstrapToken := auth.WorkerBootstrapTokenPrefix + "bootstrap-token"
-	bootstrapHash, err := auth.HashToken(authSecret, bootstrapToken)
+func TestWorkerRoutesRejectWrongCellCredential(t *testing.T) {
+	store := &fakeStore{workerCredentialCellID: "us-east-1-cell-2"}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour})
+	workerID := uuid.Must(uuid.NewV7()).String()
+	token, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
+		WorkerInstanceID: workerID,
+		CredentialID:     testWorkerInstanceCredentialID,
+		CellID:           "us-east-1-cell-1",
+		ClaimVersion:     1,
+		IssuedAt:         time.Now(),
+		ExpiresAt:        time.Now().Add(time.Hour),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &fakeStore{workerBootstrapTokenHash: bootstrapHash}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour, AuthSecret: []byte(string(authSecret)), PublicURL: mustParseTestURL("http://127.0.0.1:8080")})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/worker/status", nil)
+	req.Header.Set("authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkerBootstrapIssuesCredentialForTokenExchange(t *testing.T) {
+	authSecret := []byte(testWorkerTokenSecret)
+	bootstrapToken := auth.WorkerBootstrapTokenPrefix + "bootstrap-token"
+	const cellID = "us-east-1-cell-2"
+	store := &fakeStore{}
+	server := newTestServer(testServerConfig{
+		Log:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DB:                  store,
+		DispatchQueue:       store,
+		CellID:              cellID,
+		WorkerTokenSecret:   []byte(testWorkerTokenSecret),
+		WorkerTokenTTL:      time.Hour,
+		WorkerRegisterToken: bootstrapToken,
+		AuthSecret:          []byte(string(authSecret)),
+		PublicURL:           mustParseTestURL("http://127.0.0.1:8080"),
+	})
 
 	registerBody, err := json.Marshal(api.WorkerRegisterRequest{
 		BootstrapToken: bootstrapToken,
@@ -598,6 +631,16 @@ func TestWorkerBootstrapIssuesCredentialForTokenExchange(t *testing.T) {
 	}
 	if token.Token == "" || token.ExpiresInSeconds <= 0 {
 		t.Fatalf("token response = %+v", token)
+	}
+	if store.upsertWorkerBootstrapToken.CellID != cellID {
+		t.Fatalf("bootstrap cell_id = %q, want %q", store.upsertWorkerBootstrapToken.CellID, cellID)
+	}
+	claims, err := auth.VerifyWorkerToken([]byte(testWorkerTokenSecret), token.Token, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.CellID != cellID {
+		t.Fatalf("token cell_id = %q, want %q", claims.CellID, cellID)
 	}
 }
 
@@ -985,6 +1028,8 @@ func mintTestWorkerToken(t *testing.T, server http.Handler, workerID string) str
 	token, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
 		WorkerInstanceID: workerID,
 		CredentialID:     testWorkerInstanceCredentialID,
+		CellID:           "us-east-1-cell-1",
+		ClaimVersion:     1,
 		IssuedAt:         time.Now(),
 		ExpiresAt:        time.Now().Add(time.Hour),
 	})
@@ -1232,12 +1277,13 @@ func (f *fakeStore) GetRunLeaseQueueLease(_ context.Context, arg db.GetRunLeaseQ
 	if f.activeQueueLeaseMissing {
 		return db.GetRunLeaseQueueLeaseRow{}, pgx.ErrNoRows
 	}
-	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.CellID != dbtest.DefaultCellID {
 		return db.GetRunLeaseQueueLeaseRow{}, pgx.ErrNoRows
 	}
 	return db.GetRunLeaseQueueLeaseRow{
 		ID:                    f.sessionID,
 		RunID:                 f.run.ID,
+		CellID:                arg.CellID,
 		ProjectID:             fakeRunProjectID(f.run),
 		EnvironmentID:         fakeRunEnvironmentID(f.run),
 		WorkerInstanceID:      f.executionWorkerInstanceID,
@@ -1289,9 +1335,19 @@ func (f *fakeStore) AuthenticateWorkerInstanceCredential(_ context.Context, arg 
 	if len(f.workerCredentialSecretHash) == 0 || !bytes.Equal(arg.SecretHash, f.workerCredentialSecretHash) {
 		return db.AuthenticateWorkerInstanceCredentialRow{}, pgx.ErrNoRows
 	}
+	cellID := firstNonEmptyString(f.workerCredentialCellID, "us-east-1-cell-1")
+	if arg.CellID != cellID {
+		return db.AuthenticateWorkerInstanceCredentialRow{}, pgx.ErrNoRows
+	}
+	claimVersion := f.workerCredentialClaimVersion
+	if claimVersion == 0 {
+		claimVersion = 1
+	}
 	return db.AuthenticateWorkerInstanceCredentialRow{
 		ID:               f.workerCredentialID,
+		CellID:           cellID,
 		WorkerInstanceID: arg.WorkerInstanceID,
+		ClaimVersion:     claimVersion,
 	}, nil
 }
 
@@ -1304,9 +1360,19 @@ func (f *fakeStore) AuthorizeWorkerInstanceCredential(_ context.Context, arg db.
 	if arg.CredentialID != allowed {
 		return db.AuthorizeWorkerInstanceCredentialRow{}, pgx.ErrNoRows
 	}
+	cellID := firstNonEmptyString(f.workerCredentialCellID, "us-east-1-cell-1")
+	if arg.CellID != cellID {
+		return db.AuthorizeWorkerInstanceCredentialRow{}, pgx.ErrNoRows
+	}
+	claimVersion := f.workerCredentialClaimVersion
+	if claimVersion == 0 {
+		claimVersion = 1
+	}
 	return db.AuthorizeWorkerInstanceCredentialRow{
 		ID:               arg.CredentialID,
+		CellID:           cellID,
 		WorkerInstanceID: arg.WorkerInstanceID,
+		ClaimVersion:     claimVersion,
 		WorkerGroupID:    testWorkerGroupID(),
 		ResourceID:       pgvalue.MustUUIDValue(arg.WorkerInstanceID).String(),
 	}, nil
@@ -1318,12 +1384,30 @@ func (f *fakeStore) CreateWorkerInstanceCredentialFromBootstrap(_ context.Contex
 	}
 	f.workerCredentialID = arg.CredentialID
 	f.workerCredentialSecretHash = append([]byte(nil), arg.SecretHash...)
+	cellID := firstNonEmptyString(f.workerCredentialCellID, "us-east-1-cell-1")
 	return db.CreateWorkerInstanceCredentialFromBootstrapRow{
 		ID:               arg.CredentialID,
+		CellID:           cellID,
 		WorkerInstanceID: arg.WorkerInstanceID,
 		WorkerGroupID:    testWorkerGroupID(),
 		KeyPrefix:        arg.KeyPrefix,
+		ClaimVersion:     1,
 		CreatedAt:        testTime(),
+	}, nil
+}
+
+func (f *fakeStore) UpsertWorkerBootstrapToken(_ context.Context, arg db.UpsertWorkerBootstrapTokenParams) (db.WorkerBootstrapToken, error) {
+	f.upsertWorkerBootstrapToken = arg
+	f.workerBootstrapTokenHash = append([]byte(nil), arg.TokenHash...)
+	if f.workerCredentialCellID == "" {
+		f.workerCredentialCellID = arg.CellID
+	}
+	return db.WorkerBootstrapToken{
+		ID:            arg.ID,
+		CellID:        arg.CellID,
+		TokenHash:     arg.TokenHash,
+		WorkerGroupID: arg.WorkerGroupID,
+		CreatedAt:     testTime(),
 	}, nil
 }
 
@@ -1529,7 +1613,7 @@ func (f *fakeStore) ReleaseRunLease(_ context.Context, arg db.ReleaseRunLeasePar
 	f.run.ErrorMessage = arg.ErrorMessage
 	f.run.FinishedAt = testTime()
 	f.run.UpdatedAt = testTime()
-	f.events = append(f.events, db.Event{
+	f.events = append(f.events, db.EventHotPayload{
 		Seq:       int64(len(f.events) + 1),
 		OrgID:     arg.OrgID,
 		RunID:     arg.RunID,

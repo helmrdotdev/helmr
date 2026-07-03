@@ -294,7 +294,7 @@ func (c *Client) GetDeployment(ctx context.Context, deploymentID string, input a
 	return response, nil
 }
 
-func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string, input api.GetDeploymentRequest, cursor int64, handle func(api.RunEvent) error) error {
+func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string, input api.GetDeploymentRequest, cursor string, handle func(api.RunEvent) error) error {
 	basePath, _, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
 	if err != nil {
 		return err
@@ -307,8 +307,8 @@ func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string
 		return err
 	}
 	req.Header.Set("accept", "text/event-stream")
-	if cursor > 0 {
-		req.Header.Set("Last-Event-ID", strconv.FormatInt(cursor, 10))
+	if cursor != "" {
+		req.Header.Set("Last-Event-ID", cursor)
 	}
 	res, err := c.httpClient.Do(req)
 	if err != nil {
@@ -539,7 +539,7 @@ type ListRunsOptions struct {
 }
 
 type ListRunEventsOptions struct {
-	Cursor int64
+	Cursor string
 	Limit  int32
 	RunScopeOptions
 }
@@ -608,7 +608,7 @@ func (c *Client) GetRunLogs(ctx context.Context, id string, opts ...RunScopeOpti
 	return response, nil
 }
 
-func (c *Client) FollowRunLogs(ctx context.Context, id string, cursor int64, handle func(api.RunLogChunk) error, opts ...RunScopeOptions) error {
+func (c *Client) FollowRunLogs(ctx context.Context, id string, cursor string, handle func(api.RunLogChunk) error, opts ...RunScopeOptions) error {
 	values := url.Values{}
 	values.Set("follow", "1")
 	path, err := c.runItemPath(id, "/logs", opts...)
@@ -621,8 +621,8 @@ func (c *Client) FollowRunLogs(ctx context.Context, id string, cursor int64, han
 		return err
 	}
 	req.Header.Set("accept", "text/event-stream")
-	if cursor > 0 {
-		req.Header.Set("Last-Event-ID", strconv.FormatInt(cursor, 10))
+	if cursor != "" {
+		req.Header.Set("Last-Event-ID", cursor)
 	}
 	res, err := c.httpClient.Do(req)
 	if err != nil {
@@ -662,8 +662,8 @@ func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEv
 	}
 	if len(opts) > 0 {
 		values := url.Values{}
-		if opts[0].Cursor > 0 {
-			values.Set("cursor", strconv.FormatInt(opts[0].Cursor, 10))
+		if opts[0].Cursor != "" {
+			values.Set("cursor", opts[0].Cursor)
 		}
 		if opts[0].Limit > 0 {
 			values.Set("limit", strconv.FormatInt(int64(opts[0].Limit), 10))
@@ -683,7 +683,7 @@ func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEv
 	return response, nil
 }
 
-func (c *Client) FollowRunEvents(ctx context.Context, id string, cursor int64, handle func(api.RunEvent) error, opts ...RunScopeOptions) error {
+func (c *Client) FollowRunEvents(ctx context.Context, id string, cursor string, handle func(api.RunEvent) error, opts ...RunScopeOptions) error {
 	values := url.Values{}
 	values.Set("follow", "1")
 	path, err := c.runItemPath(id, "/events", opts...)
@@ -696,8 +696,8 @@ func (c *Client) FollowRunEvents(ctx context.Context, id string, cursor int64, h
 		return err
 	}
 	req.Header.Set("accept", "text/event-stream")
-	if cursor > 0 {
-		req.Header.Set("Last-Event-ID", strconv.FormatInt(cursor, 10))
+	if cursor != "" {
+		req.Header.Set("Last-Event-ID", cursor)
 	}
 	res, err := c.httpClient.Do(req)
 	if err != nil {

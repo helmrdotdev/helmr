@@ -15,6 +15,7 @@ const createStreamWait = `-- name: CreateStreamWait :one
 INSERT INTO stream_waits (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     run_wait_id,
@@ -24,6 +25,7 @@ INSERT INTO stream_waits (
 )
 SELECT $1,
        run_waits.org_id,
+       run_waits.cell_id,
        run_waits.project_id,
        run_waits.environment_id,
        run_waits.id,
@@ -40,7 +42,7 @@ SELECT $1,
    AND run_waits.environment_id = $7
    AND run_waits.id = $8
    AND run_waits.kind = 'stream'
-RETURNING id, org_id, project_id, environment_id, run_wait_id, stream_id, after_sequence, correlation_id, matched_record_id, cursor_advanced_at, created_at
+RETURNING id, org_id, cell_id, project_id, environment_id, run_wait_id, stream_id, after_sequence, correlation_id, matched_record_id, cursor_advanced_at, created_at
 `
 
 type CreateStreamWaitParams struct {
@@ -69,6 +71,7 @@ func (q *Queries) CreateStreamWait(ctx context.Context, arg CreateStreamWaitPara
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunWaitID,
@@ -83,7 +86,7 @@ func (q *Queries) CreateStreamWait(ctx context.Context, arg CreateStreamWaitPara
 }
 
 const getStreamWaitForRunWait = `-- name: GetStreamWaitForRunWait :one
-SELECT id, org_id, project_id, environment_id, run_wait_id, stream_id, after_sequence, correlation_id, matched_record_id, cursor_advanced_at, created_at
+SELECT id, org_id, cell_id, project_id, environment_id, run_wait_id, stream_id, after_sequence, correlation_id, matched_record_id, cursor_advanced_at, created_at
   FROM stream_waits
  WHERE org_id = $1
    AND project_id = $2
@@ -109,6 +112,7 @@ func (q *Queries) GetStreamWaitForRunWait(ctx context.Context, arg GetStreamWait
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunWaitID,

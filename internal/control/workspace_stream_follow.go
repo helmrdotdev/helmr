@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
 func workspaceStreamFollowRequested(r *http.Request) bool {
@@ -41,8 +42,8 @@ func (s *Server) followWorkspaceExecStream(w http.ResponseWriter, r *http.Reques
 		writeError(w, unavailable(errors.New("workspace stream notifier is not configured")))
 		return
 	}
-	if err := s.ensureWorkspaceExecCursorAvailable(r.Context(), exec, stream, cursor); err != nil {
-		writeError(w, err)
+	if stream != db.WorkspaceExecStreamStdout && stream != db.WorkspaceExecStreamStderr {
+		writeError(w, badRequest(errors.New("workspace exec follow is only available for output streams")))
 		return
 	}
 	streamKey := workspaceStreamKey(exec.OrgID, "workspace_exec", exec.ID, string(stream))
@@ -133,6 +134,19 @@ func (s *Server) drainWorkspaceExecTerminal(ctx context.Context, w http.Response
 }
 
 func (s *Server) writeWorkspaceExecStreamChunksAfter(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, exec db.WorkspaceExec, stream db.WorkspaceExecStream, cursor int64, limit int32) (int64, int, error) {
+	if stream == db.WorkspaceExecStreamStdout || stream == db.WorkspaceExecStreamStderr {
+		chunks, next, err := s.listWorkspaceExecTerminalOutput(ctx, exec, stream, cursor, limit)
+		if err != nil {
+			return cursor, 0, err
+		}
+		for _, chunk := range chunks {
+			if err := writeWorkspaceStreamSSE(w, flusher, encoder, strconv.FormatInt(chunk.OffsetEnd, 10), "workspace_stream_chunk", chunk); err != nil {
+				return cursor, 0, err
+			}
+			cursor = chunk.OffsetEnd
+		}
+		return next, len(chunks), nil
+	}
 	if err := s.ensureWorkspaceExecCursorAvailable(ctx, exec, stream, cursor); err != nil {
 		return cursor, 0, err
 	}
@@ -162,10 +176,6 @@ func (s *Server) writeWorkspaceExecStreamChunksAfter(ctx context.Context, w http
 func (s *Server) followWorkspacePtyOutput(w http.ResponseWriter, r *http.Request, pty db.WorkspacePtySession, cursor int64, limit int32) {
 	if s.workspaceStreams == nil {
 		writeError(w, unavailable(errors.New("workspace stream notifier is not configured")))
-		return
-	}
-	if err := s.ensureWorkspacePtyCursorAvailable(r.Context(), pty, db.WorkspacePtyStreamOutput, cursor); err != nil {
-		writeError(w, err)
 		return
 	}
 	streamKey := workspaceStreamKey(pty.OrgID, "workspace_pty", pty.ID, "output")
@@ -256,33 +266,95 @@ func (s *Server) drainWorkspacePtyTerminal(ctx context.Context, w http.ResponseW
 }
 
 func (s *Server) writeWorkspacePtyOutputChunksAfter(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, pty db.WorkspacePtySession, cursor int64, limit int32) (int64, int, error) {
-	if err := s.ensureWorkspacePtyCursorAvailable(ctx, pty, db.WorkspacePtyStreamOutput, cursor); err != nil {
-		return cursor, 0, err
-	}
-	rows, err := s.db.ListWorkspacePtyStreamChunksAfter(ctx, db.ListWorkspacePtyStreamChunksAfterParams{
-		OrgID:         pty.OrgID,
-		ProjectID:     pty.ProjectID,
-		EnvironmentID: pty.EnvironmentID,
-		WorkspaceID:   pty.WorkspaceID,
-		PtySessionID:  pty.ID,
-		Stream:        db.WorkspacePtyStreamOutput,
-		CursorOffset:  cursor,
-		LimitCount:    limit,
-	})
+	chunks, next, err := s.listWorkspacePtyTerminalOutput(ctx, pty, cursor, limit)
 	if err != nil {
 		return cursor, 0, err
 	}
-	for _, row := range rows {
-		chunk := workspacePtyStreamChunkResponse(row)
+	for _, chunk := range chunks {
 		if err := writeWorkspaceStreamSSE(w, flusher, encoder, strconv.FormatInt(chunk.OffsetEnd, 10), "workspace_stream_chunk", chunk); err != nil {
 			return cursor, 0, err
 		}
-		cursor = row.OffsetEnd
+		cursor = chunk.OffsetEnd
 	}
-	return cursor, len(rows), nil
+	return next, len(chunks), nil
+}
+
+func (s *Server) listWorkspaceExecTerminalOutput(ctx context.Context, exec db.WorkspaceExec, stream db.WorkspaceExecStream, cursor int64, limit int32) ([]api.WorkspaceExecStreamChunkResponse, int64, error) {
+	page, err := s.telemetryReader.ListTerminalOutput(ctx, telemetry.TerminalOutputQuery{
+		OrgID:         pgvalue.MustUUIDValue(exec.OrgID),
+		CellID:        exec.CellID,
+		ProjectID:     pgvalue.MustUUIDValue(exec.ProjectID),
+		EnvironmentID: pgvalue.MustUUIDValue(exec.EnvironmentID),
+		WorkspaceID:   pgvalue.MustUUIDValue(exec.WorkspaceID),
+		ResourceKind:  "workspace_exec",
+		ResourceID:    pgvalue.MustUUIDValue(exec.ID),
+		StreamName:    string(stream),
+		AfterOffset:   cursor,
+		Limit:         limit,
+	})
+	if err != nil {
+		return nil, cursor, err
+	}
+	out := make([]api.WorkspaceExecStreamChunkResponse, 0, len(page.Chunks))
+	for _, row := range page.Chunks {
+		out = append(out, workspaceExecTerminalOutputResponse(row))
+	}
+	return out, page.LastOffset, nil
+}
+
+func (s *Server) listWorkspacePtyTerminalOutput(ctx context.Context, pty db.WorkspacePtySession, cursor int64, limit int32) ([]api.WorkspacePtyStreamChunkResponse, int64, error) {
+	page, err := s.telemetryReader.ListTerminalOutput(ctx, telemetry.TerminalOutputQuery{
+		OrgID:         pgvalue.MustUUIDValue(pty.OrgID),
+		CellID:        pty.CellID,
+		ProjectID:     pgvalue.MustUUIDValue(pty.ProjectID),
+		EnvironmentID: pgvalue.MustUUIDValue(pty.EnvironmentID),
+		WorkspaceID:   pgvalue.MustUUIDValue(pty.WorkspaceID),
+		ResourceKind:  "workspace_pty",
+		ResourceID:    pgvalue.MustUUIDValue(pty.ID),
+		StreamName:    string(db.WorkspacePtyStreamOutput),
+		AfterOffset:   cursor,
+		Limit:         limit,
+	})
+	if err != nil {
+		return nil, cursor, err
+	}
+	out := make([]api.WorkspacePtyStreamChunkResponse, 0, len(page.Chunks))
+	for _, row := range page.Chunks {
+		out = append(out, workspacePtyTerminalOutputResponse(row))
+	}
+	return out, page.LastOffset, nil
+}
+
+func workspaceExecTerminalOutputResponse(row telemetry.TerminalOutputChunk) api.WorkspaceExecStreamChunkResponse {
+	return api.WorkspaceExecStreamChunkResponse{
+		ID:          row.ID,
+		Stream:      row.Stream,
+		OffsetStart: row.OffsetStart,
+		OffsetEnd:   row.OffsetEnd,
+		Data:        row.Data,
+		ObservedAt:  row.ObservedAt,
+		CreatedAt:   row.CreatedAt,
+	}
+}
+
+func workspacePtyTerminalOutputResponse(row telemetry.TerminalOutputChunk) api.WorkspacePtyStreamChunkResponse {
+	return api.WorkspacePtyStreamChunkResponse{
+		ID:          row.ID,
+		Stream:      row.Stream,
+		OffsetStart: row.OffsetStart,
+		OffsetEnd:   row.OffsetEnd,
+		Data:        row.Data,
+		ObservedAt:  row.ObservedAt,
+		CreatedAt:   row.CreatedAt,
+	}
 }
 
 func (s *Server) writeWorkspaceStreamFollowError(w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, cursor int64, err error) bool {
+	var lagging telemetry.LaggingError
+	if errors.As(err, &lagging) {
+		_ = s.writeWorkspaceStreamServerError(w, flusher, encoder, cursor, errWorkspaceStreamCursorExpired.code, workspaceStreamCursorExpiredAt(lagging.WantSeq).Error())
+		return true
+	}
 	var apiErr apiError
 	if errors.As(err, &apiErr) {
 		var coded codedError

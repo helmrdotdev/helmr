@@ -11,6 +11,10 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 6.44"
     }
+    clickhouse = {
+      source  = "ClickHouse/clickhouse"
+      version = ">= 3.17.3"
+    }
   }
 }
 
@@ -20,4 +24,8 @@ provider "aws" {
   default_tags {
     tags = local.tags
   }
+}
+
+provider "clickhouse" {
+  organization_id = var.clickhouse_organization_id
 }

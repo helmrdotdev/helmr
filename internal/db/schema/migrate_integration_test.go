@@ -79,6 +79,7 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 		t.Fatal("runs table was not created")
 	}
 	assertWorkspaceStreamSchema(t, dbctx, pool)
+	assertTelemetrySchema(t, dbctx, pool)
 	if !verifyDown {
 		return
 	}
@@ -90,6 +91,65 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	}
 	if exists {
 		t.Fatal("runs table still exists after down migration")
+	}
+}
+
+func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	var legacyPayloadRelations int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_class
+		  JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
+		 WHERE pg_namespace.nspname = 'public'
+		   AND pg_class.relname IN ('events', 'run_log_chunks')
+		   AND pg_class.relkind IN ('r', 'p', 'v', 'm')
+	`).Scan(&legacyPayloadRelations); err != nil {
+		t.Fatal(err)
+	}
+	if legacyPayloadRelations != 0 {
+		t.Fatalf("legacy telemetry payload relations = %d, want 0", legacyPayloadRelations)
+	}
+	var boundedHotTables int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name IN (
+		       'event_hot_payloads',
+		       'run_log_hot_chunks',
+		       'workspace_exec_stream_chunks',
+		       'workspace_pty_stream_chunks'
+		   )
+		   AND column_name = 'expires_at'
+		   AND is_nullable = 'NO'
+	`).Scan(&boundedHotTables); err != nil {
+		t.Fatal(err)
+	}
+	if boundedHotTables != 4 {
+		t.Fatalf("bounded telemetry hot payload tables = %d, want 4", boundedHotTables)
+	}
+	var oldUsageEnums int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_type
+		 WHERE typname LIKE 'run\_usage\_event\_%' ESCAPE '\'
+	`).Scan(&oldUsageEnums); err != nil {
+		t.Fatal(err)
+	}
+	if oldUsageEnums != 0 {
+		t.Fatalf("legacy usage enum types = %d, want 0", oldUsageEnums)
+	}
+	var cellPropagationFunctions int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_proc
+		 WHERE proname LIKE 'set\_%\_cell\_id' ESCAPE '\'
+	`).Scan(&cellPropagationFunctions); err != nil {
+		t.Fatal(err)
+	}
+	if cellPropagationFunctions != 0 {
+		t.Fatalf("cell propagation functions = %d, want 0", cellPropagationFunctions)
 	}
 }
 

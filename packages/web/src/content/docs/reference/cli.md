@@ -29,7 +29,7 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr run list [-p PROJECT] [-e ENV] [--session SESSION] [--json]` | List run attempts. |
 | `helmr run get RUN [-p PROJECT] [-e ENV] [--json]` | Show run details. |
 | `helmr run logs RUN [-p PROJECT] [-e ENV] [--follow]` | Print latest stdout/stderr snapshots and optionally stream new log chunks. |
-| `helmr run events RUN [-p PROJECT] [-e ENV] [--cursor N] [--limit N] [--follow]` | Print run events as JSON lines. |
+| `helmr run events RUN [-p PROJECT] [-e ENV] [--cursor CURSOR] [--limit N] [--follow]` | Print run events as JSON lines. |
 | `helmr run wait RUN [-p PROJECT] [-e ENV] [--timeout DURATION] [--json]` | Wait for a run to finish using the run event stream. |
 | `helmr run cancel RUN [-p PROJECT] [-e ENV] [--reason TEXT] [--force] [--idempotency-key KEY] [--json]` | Cancel a run attempt. |
 | `helmr token create [-p PROJECT] [-e ENV] [--timeout DURATION] [--json]` | Create an external completion token. |

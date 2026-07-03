@@ -12,6 +12,7 @@ import (
 )
 
 const DefaultPublicURL = "https://helmr.dev"
+const DefaultCellID = "us-east-1-cell-1"
 
 const (
 	DeploymentModeSelfHosted   = "self-hosted"
@@ -28,8 +29,12 @@ const (
 type Control struct {
 	Addr                    string
 	DeploymentMode          string
+	CellID                  string
 	DatabaseURL             string
 	RedisURL                string
+	ClickHouseURL           string
+	ClickHouseUser          string
+	ClickHousePassword      string
 	CASURI                  string
 	WorkerTokenSigningKey   string
 	WorkerBootstrapToken    string
@@ -55,6 +60,10 @@ type Control struct {
 type Dispatcher struct {
 	DatabaseURL                string
 	RedisURL                   string
+	CellID                     string
+	ClickHouseURL              string
+	ClickHouseUser             string
+	ClickHousePassword         string
 	AuthSecret                 string
 	SecretEncryptionKey        string
 	SecretEncryptionKeyOld     string
@@ -79,6 +88,12 @@ type Dispatcher struct {
 
 type Database struct {
 	URL string
+}
+
+type ClickHouse struct {
+	URL      string
+	User     string
+	Password string
 }
 
 type Worker struct {
@@ -140,6 +155,18 @@ func LoadDatabase() (Database, error) {
 	cfg := Database{URL: envString("HELMR_DATABASE_URL")}
 	if cfg.URL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
+	}
+	return cfg, nil
+}
+
+func LoadClickHouse() (ClickHouse, error) {
+	cfg := ClickHouse{
+		URL:      envString("HELMR_CLICKHOUSE_URL"),
+		User:     envString("HELMR_CLICKHOUSE_USER"),
+		Password: envString("HELMR_CLICKHOUSE_PASSWORD"),
+	}
+	if cfg.URL == "" {
+		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
 	}
 	return cfg, nil
 }

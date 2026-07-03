@@ -42,6 +42,7 @@ func (s *Server) validateWorkerWorkspacePrimitiveScope(ctx context.Context, work
 	}
 	mount, err := s.db.GetWorkspaceMountForWorkerPrimitiveScope(ctx, db.GetWorkspaceMountForWorkerPrimitiveScopeParams{
 		OrgID:                orgID,
+		CellID:               worker.CellID,
 		ProjectID:            projectID,
 		EnvironmentID:        environmentID,
 		WorkspaceID:          workspaceID,

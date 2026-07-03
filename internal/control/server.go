@@ -26,6 +26,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -51,6 +52,7 @@ type SecretManager interface {
 type Server struct {
 	log                   *slog.Logger
 	deploymentMode        string
+	cellID                string
 	db                    db.Querier
 	tx                    TxBeginner
 	readinessDB           db.DBTX
@@ -62,6 +64,7 @@ type Server struct {
 	dispatchQueue         dispatch.Queue
 	scheduleEngine        ScheduleRegistrar
 	eventStream           *EventStream
+	telemetryReader       telemetry.Reader
 	workspaceStreams      *WorkspaceStreamNotifier
 	workerCommandStream   *WorkerCommandStream
 	workerLeaseScanSeed   atomic.Uint64
@@ -120,6 +123,7 @@ type dbTXBeginner interface {
 type ServerConfig struct {
 	Log            *slog.Logger
 	DeploymentMode string
+	CellID         string
 
 	DB          db.Querier
 	TX          TxBeginner
@@ -133,6 +137,7 @@ type ServerConfig struct {
 	DispatchQueue         dispatch.Queue
 	ScheduleEngine        ScheduleRegistrar
 	EventStream           *EventStream
+	TelemetryReader       telemetry.Reader
 	WorkspaceStreams      *WorkspaceStreamNotifier
 	WorkerCommands        *WorkerCommandStream
 	Mailer                email.Sender
@@ -172,6 +177,22 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if deploymentMode == "" {
 		deploymentMode = deploymentModeSelfHosted
 	}
+	cellID := strings.TrimSpace(cfg.CellID)
+	if cellID == "" {
+		return nil, errors.New("control cell id is required")
+	}
+	telemetryReader := cfg.TelemetryReader
+	if telemetryReader == nil {
+		telemetryReader = telemetry.NewCompositeReader(telemetry.NewHotReader(cfg.DB), nil)
+	}
+	if cfg.EventStream != nil {
+		if cfg.EventStream.cellID == "" {
+			cfg.EventStream.cellID = cellID
+		}
+		if cfg.EventStream.telemetryReader == nil {
+			cfg.EventStream.telemetryReader = telemetryReader
+		}
+	}
 	mailer := cfg.Mailer
 	if mailer == nil {
 		if cfg.MagicLinkDebugURLs {
@@ -187,6 +208,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	server := &Server{
 		log:                   log,
 		deploymentMode:        deploymentMode,
+		cellID:                cellID,
 		db:                    cfg.DB,
 		tx:                    cfg.TX,
 		readinessDB:           cfg.ReadinessDB,
@@ -198,6 +220,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		dispatchQueue:         cfg.DispatchQueue,
 		scheduleEngine:        cfg.ScheduleEngine,
 		eventStream:           cfg.EventStream,
+		telemetryReader:       telemetryReader,
 		workspaceStreams:      cfg.WorkspaceStreams,
 		workerCommandStream:   cfg.WorkerCommands,
 		workerTokenSecret:     cfg.WorkerTokenSecret,
@@ -295,7 +318,10 @@ func (s *Server) requireCurrentAPIVersion(next http.Handler) http.Handler {
 		w.Header().Set(api.APIVersionHeader, api.CurrentAPIVersion)
 		requested := strings.TrimSpace(r.Header.Get(api.APIVersionHeader))
 		if requested != "" && requested != api.CurrentAPIVersion {
-			writeError(w, badRequest(fmt.Errorf("unsupported %s %q; current version is %s", api.APIVersionHeader, requested, api.CurrentAPIVersion)))
+			writeError(w, badRequest(codedError{
+				code:    "unsupported_api_version",
+				message: fmt.Sprintf("unsupported %s %q; current version is %s", api.APIVersionHeader, requested, api.CurrentAPIVersion),
+			}))
 			return
 		}
 		ctx := context.WithValue(r.Context(), apiVersionContextKey{}, api.CurrentAPIVersion)

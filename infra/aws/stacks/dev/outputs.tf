@@ -48,6 +48,41 @@ output "control_security_group_id" {
   value       = module.control.control_security_group_id
 }
 
+output "control_task_security_group_ids" {
+  description = "Security group IDs attached to control, dispatcher, and migration tasks."
+  value       = module.control.control_task_security_group_ids
+}
+
+output "clickhouse_url" {
+  description = "ClickHouse HTTPS URL used by control, dispatcher, and migration tasks."
+  value       = local.clickhouse_url
+}
+
+output "clickhouse_user" {
+  description = "ClickHouse user used by control, dispatcher, and migration tasks."
+  value       = local.clickhouse_user
+}
+
+output "clickhouse_password_secret_arn" {
+  description = "Secrets Manager ARN containing the ClickHouse password."
+  value       = local.clickhouse_password_secret
+}
+
+output "clickhouse_private_dns_hostname" {
+  description = "Terraform-managed ClickHouse Cloud private DNS hostname when create_clickhouse_cloud is true."
+  value       = one(module.clickhouse[*].private_dns_hostname)
+}
+
+output "clickhouse_vpc_endpoint_id" {
+  description = "Terraform-managed ClickHouse Cloud VPC endpoint ID when create_clickhouse_cloud is true."
+  value       = one(module.clickhouse[*].vpc_endpoint_id)
+}
+
+output "clickhouse_service_id" {
+  description = "Terraform-managed ClickHouse Cloud service ID when create_clickhouse_cloud is true."
+  value       = one(module.clickhouse[*].service_id)
+}
+
 output "control_service_name" {
   description = "ECS service name for helmr-control."
   value       = module.control.control_service_name

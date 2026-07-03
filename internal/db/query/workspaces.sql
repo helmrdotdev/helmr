@@ -3,6 +3,7 @@ WITH created_workspace AS (
     INSERT INTO workspaces (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         deployment_sandbox_id,
@@ -16,6 +17,7 @@ WITH created_workspace AS (
     )
     SELECT sqlc.arg(id),
            deployment_sandboxes.org_id,
+           deployment_sandboxes.cell_id,
            deployment_sandboxes.project_id,
            deployment_sandboxes.environment_id,
            deployment_sandboxes.id,
@@ -37,6 +39,7 @@ created_version AS (
     INSERT INTO workspace_versions (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         workspace_id,
@@ -53,6 +56,7 @@ created_version AS (
     )
     SELECT sqlc.arg(initial_version_id),
            created_workspace.org_id,
+           created_workspace.cell_id,
            created_workspace.project_id,
            created_workspace.environment_id,
            created_workspace.id,

@@ -26,6 +26,12 @@ variable "enable_nat_gateway" {
   default     = true
 }
 
+variable "enable_s3_gateway_endpoint" {
+  description = "Create an S3 gateway endpoint attached to the private route table."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "Tags applied to all resources."
   type        = map(string)

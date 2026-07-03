@@ -526,11 +526,11 @@ func TestFollowRunLogsSendsCursorAndDecodesChunks(t *testing.T) {
 		}
 		gotLastEventID = r.Header.Get("Last-Event-ID")
 		w.Header().Set("content-type", "text/event-stream")
-		_, _ = io.WriteString(w, "id: 9\n")
+		_, _ = io.WriteString(w, "id: tc1.eyJzIjo5fQ\n")
 		_, _ = io.WriteString(w, "event: run_log\n")
 		_, _ = io.WriteString(w, "data: ")
 		_ = json.NewEncoder(w).Encode(api.RunLogChunk{
-			ID:            "9",
+			ID:            "tc1.eyJzIjo5fQ",
 			RunID:         "run-1",
 			RunLeaseID:    "run-lease-1",
 			AttemptNumber: 1,
@@ -549,16 +549,16 @@ func TestFollowRunLogsSendsCursorAndDecodesChunks(t *testing.T) {
 		t.Fatal(err)
 	}
 	var chunks []api.RunLogChunk
-	if err := client.FollowRunLogs(context.Background(), "run-1", 8, func(chunk api.RunLogChunk) error {
+	if err := client.FollowRunLogs(context.Background(), "run-1", "tc1.eyJzIjo4fQ", func(chunk api.RunLogChunk) error {
 		chunks = append(chunks, chunk)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if gotLastEventID != "8" {
+	if gotLastEventID != "tc1.eyJzIjo4fQ" {
 		t.Fatalf("last event id = %q", gotLastEventID)
 	}
-	if len(chunks) != 1 || chunks[0].ID != "9" || chunks[0].ContentBase64 != base64.StdEncoding.EncodeToString([]byte("hello\n")) {
+	if len(chunks) != 1 || chunks[0].ID != "tc1.eyJzIjo5fQ" || chunks[0].ContentBase64 != base64.StdEncoding.EncodeToString([]byte("hello\n")) {
 		t.Fatalf("chunks = %+v", chunks)
 	}
 }

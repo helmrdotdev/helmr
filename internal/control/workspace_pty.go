@@ -173,27 +173,10 @@ func (s *Server) listWorkspacePtyOutput(w http.ResponseWriter, r *http.Request) 
 		writeError(w, badRequest(err))
 		return
 	}
-	if err := s.ensureWorkspacePtyCursorAvailable(r.Context(), pty, db.WorkspacePtyStreamOutput, cursor); err != nil {
-		writeError(w, err)
-		return
-	}
-	rows, err := s.db.ListWorkspacePtyStreamChunksAfter(r.Context(), db.ListWorkspacePtyStreamChunksAfterParams{
-		OrgID:         pty.OrgID,
-		ProjectID:     pty.ProjectID,
-		EnvironmentID: pty.EnvironmentID,
-		WorkspaceID:   pty.WorkspaceID,
-		PtySessionID:  pty.ID,
-		Stream:        db.WorkspacePtyStreamOutput,
-		CursorOffset:  cursor,
-		LimitCount:    limit,
-	})
+	out, _, err := s.listWorkspacePtyTerminalOutput(r.Context(), pty, cursor, limit)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "list workspace pty output", err)
 		return
-	}
-	out := make([]api.WorkspacePtyStreamChunkResponse, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, workspacePtyStreamChunkResponse(row))
 	}
 	writeJSON(w, http.StatusOK, api.ListWorkspacePtyStreamChunksResponse{Chunks: out})
 }
@@ -484,6 +467,7 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 		}
 		chunk, err = work.q.InsertWorkspacePtyStreamChunk(ctx, db.InsertWorkspacePtyStreamChunkParams{
 			OrgID:         pty.OrgID,
+			CellID:        pty.CellID,
 			ProjectID:     pty.ProjectID,
 			EnvironmentID: pty.EnvironmentID,
 			WorkspaceID:   pty.WorkspaceID,
@@ -518,24 +502,6 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 		return db.WorkspacePtyStreamChunk{}, err
 	}
 	return chunk, nil
-}
-
-func (s *Server) ensureWorkspacePtyCursorAvailable(ctx context.Context, pty db.WorkspacePtySession, stream db.WorkspacePtyStream, cursor int64) error {
-	bounds, err := s.db.GetWorkspacePtyStreamBounds(ctx, db.GetWorkspacePtyStreamBoundsParams{
-		OrgID:         pty.OrgID,
-		ProjectID:     pty.ProjectID,
-		EnvironmentID: pty.EnvironmentID,
-		WorkspaceID:   pty.WorkspaceID,
-		PtySessionID:  pty.ID,
-		Stream:        stream,
-	})
-	if err != nil {
-		return err
-	}
-	if cursor < bounds.EarliestOffset && bounds.EarliestOffset > 0 {
-		return gone(codedError{code: errWorkspaceStreamCursorExpired.code, message: fmt.Sprintf("workspace stream cursor expired; earliest available cursor is %d", bounds.EarliestOffset)})
-	}
-	return nil
 }
 
 func (s *Server) loadWorkspacePtyForRequest(w http.ResponseWriter, r *http.Request, permission auth.Permission) (db.WorkspacePtySession, bool) {

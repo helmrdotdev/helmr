@@ -53,7 +53,7 @@ func (q *Queries) DeleteScopedSecret(ctx context.Context, arg DeleteScopedSecret
 }
 
 const getScopedSecretByName = `-- name: GetScopedSecretByName :one
-SELECT id, org_id, project_id, environment_id, name, version, key_id, nonce, ciphertext, created_at, updated_at, rotated_at
+SELECT id, org_id, cell_id, project_id, environment_id, name, version, key_id, nonce, ciphertext, created_at, updated_at, rotated_at
   FROM secrets
  WHERE org_id = $1
    AND project_id = $2
@@ -79,6 +79,7 @@ func (q *Queries) GetScopedSecretByName(ctx context.Context, arg GetScopedSecret
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.Name,
@@ -151,7 +152,7 @@ WITH default_scope AS (
        AND projects.is_default
      LIMIT 1
 )
-SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.version, secrets.key_id, secrets.nonce, secrets.ciphertext, secrets.created_at, secrets.updated_at, secrets.rotated_at
+SELECT secrets.id, secrets.org_id, secrets.cell_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.version, secrets.key_id, secrets.nonce, secrets.ciphertext, secrets.created_at, secrets.updated_at, secrets.rotated_at
   FROM secrets
   JOIN default_scope ON default_scope.project_id = secrets.project_id
                     AND default_scope.environment_id = secrets.environment_id
@@ -170,6 +171,7 @@ func (q *Queries) GetSecretByName(ctx context.Context, arg GetSecretByNameParams
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.Name,
@@ -341,7 +343,7 @@ func (q *Queries) ListSecrets(ctx context.Context, arg ListSecretsParams) ([]Lis
 }
 
 const listSecretsByKeyIDForRotation = `-- name: ListSecretsByKeyIDForRotation :many
-SELECT id, org_id, project_id, environment_id, name, version, key_id, nonce, ciphertext, created_at, updated_at, rotated_at
+SELECT id, org_id, cell_id, project_id, environment_id, name, version, key_id, nonce, ciphertext, created_at, updated_at, rotated_at
   FROM secrets
  WHERE key_id = $1
  ORDER BY updated_at ASC, id ASC
@@ -365,6 +367,7 @@ func (q *Queries) ListSecretsByKeyIDForRotation(ctx context.Context, arg ListSec
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
+			&i.CellID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.Name,
@@ -454,7 +457,7 @@ ON CONFLICT (org_id, project_id, environment_id, name) DO UPDATE
        ciphertext = EXCLUDED.ciphertext,
        updated_at = now()
  WHERE secrets.version = $10
-RETURNING id, org_id, project_id, environment_id, name, version, key_id, nonce, ciphertext, created_at, updated_at, rotated_at
+RETURNING id, org_id, cell_id, project_id, environment_id, name, version, key_id, nonce, ciphertext, created_at, updated_at, rotated_at
 `
 
 type UpsertScopedSecretParams struct {
@@ -487,6 +490,7 @@ func (q *Queries) UpsertScopedSecret(ctx context.Context, arg UpsertScopedSecret
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.Name,

@@ -14,59 +14,81 @@ import (
 const authenticateWorkerInstanceCredential = `-- name: AuthenticateWorkerInstanceCredential :one
 UPDATE worker_instance_credentials
    SET last_used_at = now()
- WHERE worker_instance_credentials.worker_instance_id = $1
+WHERE worker_instance_credentials.worker_instance_id = $1
    AND worker_instance_credentials.secret_hash = $2
+   AND worker_instance_credentials.cell_id = $3
    AND worker_instance_credentials.revoked_at IS NULL
-RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_instance_id
+RETURNING worker_instance_credentials.id,
+          worker_instance_credentials.cell_id,
+          worker_instance_credentials.worker_instance_id,
+          worker_instance_credentials.claim_version
 `
 
 type AuthenticateWorkerInstanceCredentialParams struct {
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	SecretHash       []byte      `json:"secret_hash"`
+	CellID           string      `json:"cell_id"`
 }
 
 type AuthenticateWorkerInstanceCredentialRow struct {
 	ID               pgtype.UUID `json:"id"`
+	CellID           string      `json:"cell_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	ClaimVersion     int64       `json:"claim_version"`
 }
 
 func (q *Queries) AuthenticateWorkerInstanceCredential(ctx context.Context, arg AuthenticateWorkerInstanceCredentialParams) (AuthenticateWorkerInstanceCredentialRow, error) {
-	row := q.db.QueryRow(ctx, authenticateWorkerInstanceCredential, arg.WorkerInstanceID, arg.SecretHash)
+	row := q.db.QueryRow(ctx, authenticateWorkerInstanceCredential, arg.WorkerInstanceID, arg.SecretHash, arg.CellID)
 	var i AuthenticateWorkerInstanceCredentialRow
-	err := row.Scan(&i.ID, &i.WorkerInstanceID)
+	err := row.Scan(
+		&i.ID,
+		&i.CellID,
+		&i.WorkerInstanceID,
+		&i.ClaimVersion,
+	)
 	return i, err
 }
 
 const authorizeWorkerInstanceCredential = `-- name: AuthorizeWorkerInstanceCredential :one
 SELECT worker_instance_credentials.id,
+       worker_instance_credentials.cell_id,
        worker_instance_credentials.worker_instance_id,
+       worker_instance_credentials.claim_version,
        worker_instances.worker_group_id,
        worker_instances.resource_id
   FROM worker_instance_credentials
   JOIN worker_instances ON worker_instances.id = worker_instance_credentials.worker_instance_id
- WHERE worker_instance_credentials.id = $1
+WHERE worker_instance_credentials.id = $1
    AND worker_instance_credentials.worker_instance_id = $2
+   AND worker_instance_credentials.cell_id = $3
+   AND worker_instance_credentials.cell_id = worker_instances.cell_id
+   AND worker_instance_credentials.claim_version = worker_instances.claim_version
    AND worker_instance_credentials.revoked_at IS NULL
 `
 
 type AuthorizeWorkerInstanceCredentialParams struct {
 	CredentialID     pgtype.UUID `json:"credential_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	CellID           string      `json:"cell_id"`
 }
 
 type AuthorizeWorkerInstanceCredentialRow struct {
 	ID               pgtype.UUID `json:"id"`
+	CellID           string      `json:"cell_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	ClaimVersion     int64       `json:"claim_version"`
 	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	ResourceID       string      `json:"resource_id"`
 }
 
 func (q *Queries) AuthorizeWorkerInstanceCredential(ctx context.Context, arg AuthorizeWorkerInstanceCredentialParams) (AuthorizeWorkerInstanceCredentialRow, error) {
-	row := q.db.QueryRow(ctx, authorizeWorkerInstanceCredential, arg.CredentialID, arg.WorkerInstanceID)
+	row := q.db.QueryRow(ctx, authorizeWorkerInstanceCredential, arg.CredentialID, arg.WorkerInstanceID, arg.CellID)
 	var i AuthorizeWorkerInstanceCredentialRow
 	err := row.Scan(
 		&i.ID,
+		&i.CellID,
 		&i.WorkerInstanceID,
+		&i.ClaimVersion,
 		&i.WorkerGroupID,
 		&i.ResourceID,
 	)
@@ -76,18 +98,28 @@ func (q *Queries) AuthorizeWorkerInstanceCredential(ctx context.Context, arg Aut
 const createWorkerInstanceCredentialFromBootstrap = `-- name: CreateWorkerInstanceCredentialFromBootstrap :one
 WITH bootstrap_token AS (
     SELECT worker_bootstrap_tokens.id,
-           worker_bootstrap_tokens.worker_group_id
-      FROM worker_bootstrap_tokens
+           worker_bootstrap_tokens.org_id,
+           worker_bootstrap_tokens.cell_id,
+           worker_bootstrap_tokens.worker_group_id,
+           worker_groups.claim_version
+     FROM worker_bootstrap_tokens
+      JOIN worker_groups ON worker_groups.id = worker_bootstrap_tokens.worker_group_id
+                        AND worker_groups.cell_id = worker_bootstrap_tokens.cell_id
      WHERE worker_bootstrap_tokens.token_hash = $4
+       AND worker_bootstrap_tokens.cell_id = $5
        AND worker_bootstrap_tokens.revoked_at IS NULL
+       AND (worker_bootstrap_tokens.expires_at IS NULL OR worker_bootstrap_tokens.expires_at > now())
      FOR UPDATE
 ),
 reserved_worker_instance AS (
     INSERT INTO worker_instances (
         id,
+        org_id,
+        cell_id,
         worker_group_id,
         resource_id,
         status,
+        claim_version,
         total_milli_cpu,
         total_memory_mib,
         total_disk_mib,
@@ -100,10 +132,13 @@ reserved_worker_instance AS (
         heartbeat,
         last_seen_at
     )
-    SELECT $5,
+    SELECT $6,
+           bootstrap_token.org_id,
+           bootstrap_token.cell_id,
            bootstrap_token.worker_group_id,
-           $6,
+           $7,
            'offline',
+           bootstrap_token.claim_version,
            1,
            1,
            0,
@@ -117,8 +152,10 @@ reserved_worker_instance AS (
            now()
       FROM bootstrap_token
     ON CONFLICT (worker_group_id, resource_id) DO UPDATE
-       SET resource_id = EXCLUDED.resource_id
-    RETURNING id AS worker_instance_id, worker_group_id
+       SET resource_id = EXCLUDED.resource_id,
+           cell_id = EXCLUDED.cell_id,
+           claim_version = EXCLUDED.claim_version
+    RETURNING id AS worker_instance_id, org_id, cell_id, worker_group_id, claim_version
 ),
 revoked_existing_credentials AS (
     UPDATE worker_instance_credentials
@@ -136,19 +173,23 @@ bootstrap_token_update AS (
        SET last_used_at = now(),
            last_used_by_worker_instance_id = (SELECT worker_instance_id FROM reserved_worker_instance)
      WHERE worker_bootstrap_tokens.token_hash = $4
+       AND worker_bootstrap_tokens.cell_id = $5
        AND worker_bootstrap_tokens.revoked_at IS NULL
      RETURNING 1
 )
-INSERT INTO worker_instance_credentials (id, worker_instance_id, key_prefix, secret_hash)
+INSERT INTO worker_instance_credentials (id, org_id, cell_id, worker_instance_id, key_prefix, claim_version, secret_hash)
 SELECT $1,
+       reserved_worker_instance.org_id,
+       reserved_worker_instance.cell_id,
        reserved_worker_instance.worker_instance_id,
        $2,
+       reserved_worker_instance.claim_version,
        $3
   FROM bootstrap_token
  CROSS JOIN reserved_worker_instance
  CROSS JOIN bootstrap_token_update
  CROSS JOIN credential_rotation
-RETURNING id, worker_instance_id, (SELECT worker_group_id FROM reserved_worker_instance) AS worker_group_id, key_prefix, created_at
+RETURNING id, cell_id, worker_instance_id, (SELECT worker_group_id FROM reserved_worker_instance) AS worker_group_id, key_prefix, claim_version, created_at
 `
 
 type CreateWorkerInstanceCredentialFromBootstrapParams struct {
@@ -156,15 +197,18 @@ type CreateWorkerInstanceCredentialFromBootstrapParams struct {
 	KeyPrefix          string      `json:"key_prefix"`
 	SecretHash         []byte      `json:"secret_hash"`
 	BootstrapTokenHash []byte      `json:"bootstrap_token_hash"`
+	CellID             string      `json:"cell_id"`
 	WorkerInstanceID   pgtype.UUID `json:"worker_instance_id"`
 	ResourceID         string      `json:"resource_id"`
 }
 
 type CreateWorkerInstanceCredentialFromBootstrapRow struct {
 	ID               pgtype.UUID        `json:"id"`
+	CellID           string             `json:"cell_id"`
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	WorkerGroupID    pgtype.UUID        `json:"worker_group_id"`
 	KeyPrefix        string             `json:"key_prefix"`
+	ClaimVersion     int64              `json:"claim_version"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -174,45 +218,58 @@ func (q *Queries) CreateWorkerInstanceCredentialFromBootstrap(ctx context.Contex
 		arg.KeyPrefix,
 		arg.SecretHash,
 		arg.BootstrapTokenHash,
+		arg.CellID,
 		arg.WorkerInstanceID,
 		arg.ResourceID,
 	)
 	var i CreateWorkerInstanceCredentialFromBootstrapRow
 	err := row.Scan(
 		&i.ID,
+		&i.CellID,
 		&i.WorkerInstanceID,
 		&i.WorkerGroupID,
 		&i.KeyPrefix,
+		&i.ClaimVersion,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const upsertWorkerBootstrapToken = `-- name: UpsertWorkerBootstrapToken :one
-INSERT INTO worker_bootstrap_tokens (id, token_hash, worker_group_id)
+INSERT INTO worker_bootstrap_tokens (id, cell_id, token_hash, worker_group_id)
 VALUES (
     $1,
-    $2::bytea,
-    $3
+    $2,
+    $3::bytea,
+    $4
 )
 ON CONFLICT (token_hash) DO UPDATE
    SET revoked_at = worker_bootstrap_tokens.revoked_at
-RETURNING id, token_hash, worker_group_id, created_at, last_used_at, last_used_by_worker_instance_id, revoked_at
+RETURNING id, org_id, cell_id, token_hash, worker_group_id, expires_at, created_at, last_used_at, last_used_by_worker_instance_id, revoked_at
 `
 
 type UpsertWorkerBootstrapTokenParams struct {
 	ID            pgtype.UUID `json:"id"`
+	CellID        string      `json:"cell_id"`
 	TokenHash     []byte      `json:"token_hash"`
 	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
 }
 
 func (q *Queries) UpsertWorkerBootstrapToken(ctx context.Context, arg UpsertWorkerBootstrapTokenParams) (WorkerBootstrapToken, error) {
-	row := q.db.QueryRow(ctx, upsertWorkerBootstrapToken, arg.ID, arg.TokenHash, arg.WorkerGroupID)
+	row := q.db.QueryRow(ctx, upsertWorkerBootstrapToken,
+		arg.ID,
+		arg.CellID,
+		arg.TokenHash,
+		arg.WorkerGroupID,
+	)
 	var i WorkerBootstrapToken
 	err := row.Scan(
 		&i.ID,
+		&i.OrgID,
+		&i.CellID,
 		&i.TokenHash,
 		&i.WorkerGroupID,
+		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.LastUsedByWorkerInstanceID,

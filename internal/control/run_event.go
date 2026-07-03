@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
 func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
@@ -65,39 +65,40 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
+	if s.rejectRunFromWrongCell(w, summary.CellID) {
+		return
+	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
 		s.followRunEvents(w, r, actor.OrgID, runID, cursor)
 		return
 	}
-	rows, err := s.listRunEvents(r, pgvalue.UUID(actor.OrgID), pgvalue.UUID(runID), cursor, limit)
+	page, err := s.listRunEvents(r, actor.OrgID, runID, cursor, limit)
 	if err != nil {
 		s.log.Error("list run events failed", "run_id", runID.String(), "error", err)
-		writeError(w, errors.New("list run events"))
+		writeRunTelemetryError(w, err)
 		return
 	}
+	rows := page.Events
 	hasNext := len(rows) > int(limit)
 	if hasNext {
 		rows = rows[:limit]
 	}
-	events := make([]api.RunEvent, 0, len(rows))
-	for _, row := range rows {
-		events = append(events, runEventResponse(row))
-	}
-	var nextCursor *int64
+	var nextCursor *string
 	if hasNext {
-		value := rows[len(rows)-1].Seq
+		value := rows[len(rows)-1].ID
 		nextCursor = &value
 	}
-	writeJSON(w, http.StatusOK, api.RunEventPage{Events: events, Cursor: cursor, NextCursor: nextCursor})
+	writeJSON(w, http.StatusOK, api.RunEventPage{Events: rows, Cursor: telemetryCursor(cursor), NextCursor: nextCursor})
 }
 
-func (s *Server) listRunEvents(r *http.Request, orgID pgtype.UUID, runID pgtype.UUID, cursor int64, limit int32) ([]db.Event, error) {
-	return s.db.ListSubjectEvents(r.Context(), db.ListSubjectEventsParams{
+func (s *Server) listRunEvents(r *http.Request, orgID uuid.UUID, runID uuid.UUID, cursor int64, limit int32) (telemetry.EventPage, error) {
+	return s.telemetryReader.ListEvents(r.Context(), telemetry.EventQuery{
 		OrgID:       orgID,
-		SubjectType: db.EventSubjectTypeRun,
+		CellID:      s.cellID,
+		SubjectType: string(db.EventSubjectTypeRun),
 		SubjectID:   runID,
-		Seq:         cursor,
-		RowLimit:    limit + 1,
+		AfterSeq:    cursor,
+		Limit:       limit + 1,
 	})
 }
 
@@ -109,11 +110,7 @@ func eventCursor(r *http.Request) (int64, error) {
 	if value == "" {
 		return 0, nil
 	}
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || parsed < 0 {
-		return 0, errors.New("cursor must be a non-negative integer")
-	}
-	return parsed, nil
+	return parseTelemetryCursor(value)
 }
 
 func eventLimit(r *http.Request) (int32, error) {
@@ -165,8 +162,4 @@ func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID u
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		s.log.Warn("follow run events failed", "error", err)
 	}
-}
-
-func runEventResponse(event db.Event) api.RunEvent {
-	return eventResponseFromRecord(event)
 }

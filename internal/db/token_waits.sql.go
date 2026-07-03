@@ -15,6 +15,7 @@ const createTokenWait = `-- name: CreateTokenWait :one
 INSERT INTO token_waits (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     run_wait_id,
@@ -23,6 +24,7 @@ INSERT INTO token_waits (
 )
 SELECT $1,
        run_waits.org_id,
+       run_waits.cell_id,
        run_waits.project_id,
        run_waits.environment_id,
        run_waits.id,
@@ -41,7 +43,7 @@ SELECT $1,
    AND run_waits.environment_id = $5
    AND run_waits.id = $6
    AND run_waits.kind = 'token'
-RETURNING id, org_id, project_id, environment_id, run_wait_id, token_id, matched_completion_at, created_at
+RETURNING id, org_id, cell_id, project_id, environment_id, run_wait_id, token_id, matched_completion_at, created_at
 `
 
 type CreateTokenWaitParams struct {
@@ -66,6 +68,7 @@ func (q *Queries) CreateTokenWait(ctx context.Context, arg CreateTokenWaitParams
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunWaitID,
@@ -77,7 +80,7 @@ func (q *Queries) CreateTokenWait(ctx context.Context, arg CreateTokenWaitParams
 }
 
 const getTokenWaitForRunWait = `-- name: GetTokenWaitForRunWait :one
-SELECT id, org_id, project_id, environment_id, run_wait_id, token_id, matched_completion_at, created_at
+SELECT id, org_id, cell_id, project_id, environment_id, run_wait_id, token_id, matched_completion_at, created_at
   FROM token_waits
  WHERE org_id = $1
    AND project_id = $2
@@ -103,6 +106,7 @@ func (q *Queries) GetTokenWaitForRunWait(ctx context.Context, arg GetTokenWaitFo
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunWaitID,
@@ -115,7 +119,7 @@ func (q *Queries) GetTokenWaitForRunWait(ctx context.Context, arg GetTokenWaitFo
 
 const resolveImmediateTokenWait = `-- name: ResolveImmediateTokenWait :one
 WITH target_wait AS (
-    SELECT token_waits.id, token_waits.org_id, token_waits.project_id, token_waits.environment_id, token_waits.run_wait_id, token_waits.token_id, token_waits.matched_completion_at, token_waits.created_at, tokens.state AS token_state
+    SELECT token_waits.id, token_waits.org_id, token_waits.cell_id, token_waits.project_id, token_waits.environment_id, token_waits.run_wait_id, token_waits.token_id, token_waits.matched_completion_at, token_waits.created_at, tokens.state AS token_state
       FROM token_waits
       JOIN run_waits ON run_waits.org_id = token_waits.org_id
                     AND run_waits.id = token_waits.run_wait_id
@@ -142,7 +146,7 @@ resolved_wait AS (
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
 )
-SELECT target_wait.id, target_wait.org_id, target_wait.project_id, target_wait.environment_id, target_wait.run_wait_id, target_wait.token_id, target_wait.matched_completion_at, target_wait.created_at, target_wait.token_state
+SELECT target_wait.id, target_wait.org_id, target_wait.cell_id, target_wait.project_id, target_wait.environment_id, target_wait.run_wait_id, target_wait.token_id, target_wait.matched_completion_at, target_wait.created_at, target_wait.token_state
   FROM target_wait
   JOIN resolved_wait ON true
 `
@@ -155,6 +159,7 @@ type ResolveImmediateTokenWaitParams struct {
 type ResolveImmediateTokenWaitRow struct {
 	ID                  pgtype.UUID        `json:"id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
+	CellID              string             `json:"cell_id"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	RunWaitID           pgtype.UUID        `json:"run_wait_id"`
@@ -170,6 +175,7 @@ func (q *Queries) ResolveImmediateTokenWait(ctx context.Context, arg ResolveImme
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunWaitID,

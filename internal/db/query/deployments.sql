@@ -2,6 +2,7 @@
 INSERT INTO deployments (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     version,
@@ -17,6 +18,7 @@ INSERT INTO deployments (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(version),
@@ -61,12 +63,14 @@ SELECT *
 WITH allocated AS (
     INSERT INTO deployment_version_counters (
         org_id,
+        cell_id,
         project_id,
         environment_id,
         prefix,
         next_ordinal
     ) VALUES (
         sqlc.arg(org_id),
+        sqlc.arg(cell_id),
         sqlc.arg(project_id),
         sqlc.arg(environment_id),
         sqlc.arg(prefix),
@@ -220,6 +224,7 @@ RETURNING *;
 WITH target AS (
     SELECT deployments.id,
            deployments.org_id,
+           deployments.cell_id,
            deployments.project_id,
            deployments.environment_id
       FROM deployments
@@ -251,6 +256,7 @@ promotion AS (
     INSERT INTO deployment_promotions (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         deployment_id,
@@ -260,6 +266,7 @@ promotion AS (
     )
     SELECT sqlc.arg(id),
            target.org_id,
+           target.cell_id,
            target.project_id,
            target.environment_id,
            target.id,
@@ -315,6 +322,7 @@ SELECT *
 INSERT INTO deployment_sandboxes (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     deployment_id,
@@ -340,6 +348,7 @@ INSERT INTO deployment_sandboxes (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(deployment_id),
@@ -369,6 +378,7 @@ RETURNING *;
 INSERT INTO deployment_queues (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     deployment_id,
@@ -377,6 +387,7 @@ INSERT INTO deployment_queues (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(deployment_id),
@@ -389,6 +400,7 @@ RETURNING *;
 WITH catalog_task AS (
     INSERT INTO tasks (
         org_id,
+        cell_id,
         project_id,
         environment_id,
         task_id,
@@ -396,6 +408,7 @@ WITH catalog_task AS (
         updated_at
     ) VALUES (
         sqlc.arg(org_id),
+        sqlc.arg(cell_id),
         sqlc.arg(project_id),
         sqlc.arg(environment_id),
         sqlc.arg(task_id),
@@ -410,6 +423,7 @@ WITH catalog_task AS (
 INSERT INTO deployment_tasks (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     deployment_id,
@@ -435,6 +449,7 @@ INSERT INTO deployment_tasks (
 ) SELECT
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(deployment_id),

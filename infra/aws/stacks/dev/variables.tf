@@ -13,6 +13,140 @@ variable "public_url" {
   type        = string
 }
 
+variable "deployment_mode" {
+  description = "Helmr deployment mode passed to control-plane tasks."
+  type        = string
+  default     = "managed-cloud"
+}
+
+variable "cell_id" {
+  description = "Managed-cloud cell ID for this stack."
+  type        = string
+  default     = "us-east-1-cell-1"
+}
+
+variable "clickhouse_url" {
+  description = "External ClickHouse HTTP endpoint for historical telemetry. Leave null when create_clickhouse_cloud is true."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.clickhouse_url == null || can(regex("^https://[^<>[:space:]]+(:[0-9]+)?/?$", trimspace(var.clickhouse_url)))
+    error_message = "clickhouse_url must be an https URL without placeholder characters."
+  }
+}
+
+variable "create_clickhouse_cloud" {
+  description = "Create a ClickHouse Cloud service, AWS PrivateLink endpoint, private DNS, and Secrets Manager password secret for dev telemetry."
+  type        = bool
+  default     = false
+}
+
+variable "clickhouse_organization_id" {
+  description = "ClickHouse Cloud organization ID used by the ClickHouse Terraform provider when create_clickhouse_cloud is true."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.clickhouse_organization_id == null || trimspace(var.clickhouse_organization_id) != ""
+    error_message = "clickhouse_organization_id must be null or a non-empty organization ID."
+  }
+}
+
+variable "clickhouse_cloud_service_name" {
+  description = "Optional ClickHouse Cloud service name. Defaults to <name>-telemetry."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.clickhouse_cloud_service_name == null || trimspace(var.clickhouse_cloud_service_name) != ""
+    error_message = "clickhouse_cloud_service_name must be null or non-empty."
+  }
+}
+
+variable "clickhouse_cloud_region" {
+  description = "ClickHouse Cloud AWS region. Defaults to aws_region and must match the AWS provider region for PrivateLink."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.clickhouse_cloud_region == null || trimspace(var.clickhouse_cloud_region) != ""
+    error_message = "clickhouse_cloud_region must be null or non-empty."
+  }
+}
+
+variable "clickhouse_secret_kms_key_id" {
+  description = "Optional customer-managed KMS key ID or ARN for the Terraform-managed ClickHouse password secret."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.clickhouse_secret_kms_key_id == null || trimspace(var.clickhouse_secret_kms_key_id) != ""
+    error_message = "clickhouse_secret_kms_key_id must be null or a non-empty KMS key ID or ARN."
+  }
+}
+
+variable "clickhouse_user" {
+  description = "Optional ClickHouse username for historical telemetry."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "clickhouse_password_secret_arn" {
+  description = "Secrets Manager ARN for HELMR_CLICKHOUSE_PASSWORD when the ClickHouse endpoint requires a password."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "clickhouse_password_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs needed to decrypt clickhouse_password_secret_arn."
+  type        = list(string)
+  default     = []
+}
+
+variable "additional_control_security_group_ids" {
+  description = "Additional security groups attached to control, dispatcher, and migration tasks."
+  type        = list(string)
+  default     = []
+}
+
+variable "clickhouse_min_replica_memory_gb" {
+  description = "Minimum memory per Terraform-managed ClickHouse Cloud replica."
+  type        = number
+  default     = 8
+}
+
+variable "clickhouse_max_replica_memory_gb" {
+  description = "Maximum memory per Terraform-managed ClickHouse Cloud replica."
+  type        = number
+  default     = 32
+}
+
+variable "clickhouse_idle_scaling" {
+  description = "Enable idle scaling for Terraform-managed ClickHouse Cloud."
+  type        = bool
+  default     = true
+}
+
+variable "clickhouse_idle_timeout_minutes" {
+  description = "Idle timeout in minutes for Terraform-managed ClickHouse Cloud when idle scaling is enabled."
+  type        = number
+  default     = 5
+}
+
+variable "clickhouse_backup_retention_period_in_hours" {
+  description = "Backup retention in hours for Terraform-managed ClickHouse Cloud."
+  type        = number
+  default     = 24
+}
+
 variable "cloudfront_origin_domain_name" {
   description = "DNS name CloudFront uses for the HTTPS ALB origin when enable_cloudfront is true. This name must resolve to the public ALB and be covered by certificate_arn."
   type        = string

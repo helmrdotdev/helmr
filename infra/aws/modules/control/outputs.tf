@@ -83,6 +83,11 @@ output "control_security_group_id" {
   value       = aws_security_group.control.id
 }
 
+output "control_task_security_group_ids" {
+  description = "Security group IDs attached to control, dispatcher, and migration tasks."
+  value       = local.control_security_group_ids
+}
+
 output "control_task_subnet_ids" {
   description = "Subnet IDs used by control and migration Fargate tasks."
   value       = local.control_subnet_ids

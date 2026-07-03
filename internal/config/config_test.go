@@ -8,8 +8,13 @@ import (
 
 func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", " postgres://example\n")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_DEPLOYMENT_MODE", " managed-cloud ")
+	t.Setenv("HELMR_CELL_ID", " us-east-1-cell-2 ")
 	t.Setenv("HELMR_REDIS_URL", "\nredis://redis.example.test:6379/0 ")
+	t.Setenv("HELMR_CLICKHOUSE_URL", " https://clickhouse.example.test ")
+	t.Setenv("HELMR_CLICKHOUSE_USER", " telemetry ")
+	t.Setenv("HELMR_CLICKHOUSE_PASSWORD", " clickhouse-password ")
 	t.Setenv("HELMR_CAS_URI", " s3://helmr-cas ")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "\n01234567890123456789012345678901\n")
 	t.Setenv("HELMR_WORKER_BOOTSTRAP_TOKEN", " worker-bootstrap-token ")
@@ -30,13 +35,14 @@ func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.CASURI != "s3://helmr-cas" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerBootstrapToken != "worker-bootstrap-token" || cfg.SetupToken != "setup-token" || cfg.AuthSecret != "abcdefghijabcdefghijabcdefghij12" || cfg.SecretEncryptionKey != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" || cfg.SecretEncryptionKeyOld != "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.CellID != "us-east-1-cell-2" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerBootstrapToken != "worker-bootstrap-token" || cfg.SetupToken != "setup-token" || cfg.AuthSecret != "abcdefghijabcdefghijabcdefghij12" || cfg.SecretEncryptionKey != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" || cfg.SecretEncryptionKeyOld != "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
 
 func TestLoadControlDefaultsToSelfHostedDeploymentMode(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
@@ -52,10 +58,14 @@ func TestLoadControlDefaultsToSelfHostedDeploymentMode(t *testing.T) {
 	if cfg.DeploymentMode != DeploymentModeSelfHosted {
 		t.Fatalf("deployment mode = %q", cfg.DeploymentMode)
 	}
+	if cfg.CellID != DefaultCellID {
+		t.Fatalf("cell id = %q", cfg.CellID)
+	}
 }
 
 func TestLoadControlRequiresSetupTokenForSelfHosted(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
@@ -74,6 +84,7 @@ func TestLoadControlRequiresSetupTokenForSelfHosted(t *testing.T) {
 
 func TestLoadControlRejectsInvalidDeploymentMode(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_DEPLOYMENT_MODE", "unknown")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
@@ -94,6 +105,7 @@ func TestLoadControlRejectsInvalidDeploymentMode(t *testing.T) {
 
 func TestLoadControlRejectsWeakWorkerSigningKey(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "short")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
@@ -112,6 +124,7 @@ func TestLoadControlRejectsWeakWorkerSigningKey(t *testing.T) {
 
 func TestLoadControlRejectsWeakAuthSecret(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_AUTH_SECRET", "short")
@@ -130,6 +143,7 @@ func TestLoadControlRejectsWeakAuthSecret(t *testing.T) {
 
 func TestLoadControlAllowsHTTPOnlyForLoopbackPublicURL(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
@@ -155,6 +169,7 @@ func TestLoadControlAllowsHTTPOnlyForLoopbackPublicURL(t *testing.T) {
 
 func TestLoadControlDefaultsPublicURL(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
@@ -186,6 +201,7 @@ func TestLoadControlRejectsInvalidMagicLinkDebugURLs(t *testing.T) {
 
 func TestLoadControlRequiresCompleteSMTPConfig(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
@@ -212,6 +228,7 @@ func TestLoadControlRequiresCompleteSMTPConfig(t *testing.T) {
 
 func TestLoadControlReadsResendConfig(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_DEPLOYMENT_MODE", "managed-cloud")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
@@ -234,6 +251,7 @@ func TestLoadControlReadsResendConfig(t *testing.T) {
 
 func TestLoadDatabaseOnlyRequiresDatabaseURL(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "\npostgres://example ")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 
 	cfg, err := LoadDatabase()

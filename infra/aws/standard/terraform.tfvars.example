@@ -8,6 +8,16 @@ certificate_arn = "<acm-certificate-arn>"
 
 github_oauth_client_id = "<github-oauth-client-id>"
 
+clickhouse_url  = "https://replace-me.clickhouse.cloud:8443"
+clickhouse_user = "default"
+clickhouse_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:replace-me"
+# When the ClickHouse password secret uses a customer-managed key outside this
+# stack, allow the control and dispatcher execution roles to decrypt it.
+# clickhouse_password_kms_key_arns = ["<clickhouse-password-kms-key-arn>"]
+# When using the ClickHouse Cloud PrivateLink module, attach its client security
+# group to control, dispatcher, and migration tasks.
+# additional_control_security_group_ids = ["<clickhouse-client-security-group-id>"]
+
 # Keep create_control_service=false for the first apply. Populate the emitted
 # Secrets Manager secrets, run migrations, then set it true.
 create_control_service = false

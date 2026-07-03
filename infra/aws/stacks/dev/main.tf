@@ -1,8 +1,19 @@
 locals {
-  public_url_host          = regex("^https?://([^/:]+)", var.public_url)[0]
-  worker_control_dns_name  = var.enable_cloudfront ? var.cloudfront_origin_domain_name : local.public_url_host
-  private_control_dns_name = var.create_worker ? local.worker_control_dns_name : null
-  worker_control_url       = module.control.private_control_url
+  public_url_host              = regex("^https?://([^/:]+)", var.public_url)[0]
+  worker_control_dns_name      = var.enable_cloudfront ? var.cloudfront_origin_domain_name : local.public_url_host
+  private_control_dns_name     = var.create_worker ? local.worker_control_dns_name : null
+  worker_control_url           = module.control.private_control_url
+  external_clickhouse_url      = var.clickhouse_url == null ? null : trimspace(var.clickhouse_url)
+  managed_clickhouse_url       = one(module.clickhouse[*].clickhouse_url)
+  managed_clickhouse_user      = one(module.clickhouse[*].clickhouse_user)
+  managed_clickhouse_secret    = one(module.clickhouse[*].clickhouse_password_secret_arn)
+  managed_clickhouse_kms_key   = one(module.clickhouse[*].clickhouse_password_kms_key_id)
+  managed_clickhouse_client_sg = one(module.clickhouse[*].client_security_group_id)
+  clickhouse_url               = var.create_clickhouse_cloud ? local.managed_clickhouse_url : local.external_clickhouse_url
+  clickhouse_user              = var.create_clickhouse_cloud ? local.managed_clickhouse_user : var.clickhouse_user
+  clickhouse_password_secret   = var.create_clickhouse_cloud ? local.managed_clickhouse_secret : var.clickhouse_password_secret_arn
+  clickhouse_kms_key_arns      = var.create_clickhouse_cloud ? compact([local.managed_clickhouse_kms_key]) : var.clickhouse_password_kms_key_arns
+  control_security_group_ids   = concat(var.additional_control_security_group_ids, var.create_clickhouse_cloud ? compact([local.managed_clickhouse_client_sg]) : [])
 
   tags = {
     Project     = "helmr"
@@ -19,6 +30,26 @@ module "network" {
   tags               = local.tags
 }
 
+module "clickhouse" {
+  count = var.create_clickhouse_cloud ? 1 : 0
+
+  source = "../../modules/clickhouse-cloud"
+
+  name                             = var.name
+  service_name                     = var.clickhouse_cloud_service_name
+  clickhouse_region                = var.clickhouse_cloud_region
+  secret_kms_key_id                = var.clickhouse_secret_kms_key_id
+  vpc_id                           = module.network.vpc_id
+  subnet_ids                       = module.network.private_subnet_ids
+  min_replica_memory_gb            = var.clickhouse_min_replica_memory_gb
+  max_replica_memory_gb            = var.clickhouse_max_replica_memory_gb
+  idle_scaling                     = var.clickhouse_idle_scaling
+  idle_timeout_minutes             = var.clickhouse_idle_timeout_minutes
+  backup_retention_period_in_hours = var.clickhouse_backup_retention_period_in_hours
+  secret_recovery_window_in_days   = var.secret_recovery_window_in_days
+  tags                             = local.tags
+}
+
 module "control" {
   source = "../../modules/control"
 
@@ -27,6 +58,13 @@ module "control" {
   public_subnet_ids                          = module.network.public_subnet_ids
   private_subnet_ids                         = module.network.private_subnet_ids
   public_url                                 = var.public_url
+  deployment_mode                            = var.deployment_mode
+  cell_id                                    = var.cell_id
+  clickhouse_url                             = local.clickhouse_url
+  clickhouse_user                            = local.clickhouse_user
+  clickhouse_password_secret_arn             = local.clickhouse_password_secret
+  clickhouse_password_kms_key_arns           = local.clickhouse_kms_key_arns
+  additional_control_security_group_ids      = local.control_security_group_ids
   cloudfront_origin_domain_name              = var.cloudfront_origin_domain_name
   control_image                              = var.control_image
   create_control_repository                  = true
@@ -104,6 +142,65 @@ module "worker" {
   }
 
   tags = local.tags
+}
+
+resource "terraform_data" "clickhouse_preconditions" {
+  input = {
+    create_clickhouse_cloud = var.create_clickhouse_cloud
+    clickhouse_url          = local.external_clickhouse_url
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.create_clickhouse_cloud != (local.external_clickhouse_url != null)
+      error_message = "Set exactly one ClickHouse mode: create_clickhouse_cloud=true, or provide clickhouse_url for an external ClickHouse service."
+    }
+
+    precondition {
+      condition     = !var.create_clickhouse_cloud || var.clickhouse_organization_id != null
+      error_message = "clickhouse_organization_id is required when create_clickhouse_cloud is true."
+    }
+
+    precondition {
+      condition     = var.create_clickhouse_cloud || var.clickhouse_organization_id == null
+      error_message = "Do not set clickhouse_organization_id when create_clickhouse_cloud is false; provide clickhouse_url and clickhouse_password_secret_arn for an external ClickHouse service."
+    }
+
+    precondition {
+      condition     = var.create_clickhouse_cloud || var.clickhouse_cloud_service_name == null
+      error_message = "Do not set clickhouse_cloud_service_name when create_clickhouse_cloud is false."
+    }
+
+    precondition {
+      condition     = var.create_clickhouse_cloud || var.clickhouse_cloud_region == null
+      error_message = "Do not set clickhouse_cloud_region when create_clickhouse_cloud is false."
+    }
+
+    precondition {
+      condition     = var.create_clickhouse_cloud || var.clickhouse_secret_kms_key_id == null
+      error_message = "Do not set clickhouse_secret_kms_key_id when create_clickhouse_cloud is false; use clickhouse_password_kms_key_arns for an external ClickHouse password secret."
+    }
+
+    precondition {
+      condition     = var.create_clickhouse_cloud || var.clickhouse_password_secret_arn != null
+      error_message = "clickhouse_password_secret_arn is required when using an external ClickHouse service."
+    }
+
+    precondition {
+      condition     = !var.create_clickhouse_cloud || var.clickhouse_password_secret_arn == null
+      error_message = "Do not set clickhouse_password_secret_arn when create_clickhouse_cloud is true; the ClickHouse module creates the password secret."
+    }
+
+    precondition {
+      condition     = !var.create_clickhouse_cloud || length(var.clickhouse_password_kms_key_arns) == 0
+      error_message = "Do not set clickhouse_password_kms_key_arns when create_clickhouse_cloud is true; use clickhouse_secret_kms_key_id for the managed ClickHouse password secret."
+    }
+
+    precondition {
+      condition     = !var.create_clickhouse_cloud || var.clickhouse_user == null || var.clickhouse_user == "default"
+      error_message = "Terraform-managed ClickHouse Cloud currently configures the default user; leave clickhouse_user unset or set it to default."
+    }
+  }
 }
 
 resource "terraform_data" "control_network_preconditions" {

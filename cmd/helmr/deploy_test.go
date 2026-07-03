@@ -234,13 +234,13 @@ func TestDeployCommandReconnectsDeploymentEventsUntilTerminal(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "text/event-stream")
 			if eventRequests == 1 {
-				_, _ = fmt.Fprint(w, "id: 1\nevent: deployment_event\ndata: {\"id\":\"1\",\"deployment_id\":\"deployment-1\",\"kind\":\"deployment.building\",\"message\":\"Deployment build started\"}\n\n")
+				_, _ = fmt.Fprint(w, "id: tc1.eyJzIjoxfQ\nevent: deployment_event\ndata: {\"id\":\"tc1.eyJzIjoxfQ\",\"deployment_id\":\"deployment-1\",\"kind\":\"deployment.building\",\"message\":\"Deployment build started\"}\n\n")
 				return
 			}
-			if got := r.Header.Get("Last-Event-ID"); got != "1" {
+			if got := r.Header.Get("Last-Event-ID"); got != "tc1.eyJzIjoxfQ" {
 				t.Fatalf("last event id = %q", got)
 			}
-			_, _ = fmt.Fprint(w, "id: 2\nevent: deployment_event\ndata: {\"id\":\"2\",\"deployment_id\":\"deployment-1\",\"kind\":\"deployment.deployed\",\"message\":\"Deployment build completed\"}\n\n")
+			_, _ = fmt.Fprint(w, "id: tc1.eyJzIjoyfQ\nevent: deployment_event\ndata: {\"id\":\"tc1.eyJzIjoyfQ\",\"deployment_id\":\"deployment-1\",\"kind\":\"deployment.deployed\",\"message\":\"Deployment build completed\"}\n\n")
 		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
 			deploymentRequests++
 			status := "queued"

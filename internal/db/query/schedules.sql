@@ -37,7 +37,7 @@ updated_schedule AS (
        AND task_schedules.project_id = sqlc.arg(project_id)
        AND task_schedules.id = existing_schedule.id
        AND task_schedules.schedule_type = 'imperative'
-    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.created_at, task_schedules.updated_at,
+    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.cell_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.created_at, task_schedules.updated_at,
               (
                   existing_schedule.cron IS DISTINCT FROM sqlc.arg(cron)
                   OR existing_schedule.timezone IS DISTINCT FROM sqlc.arg(timezone)
@@ -47,6 +47,7 @@ inserted_schedule AS (
     INSERT INTO task_schedules (
         id,
         org_id,
+        cell_id,
         project_id,
         schedule_type,
         task_id,
@@ -59,6 +60,7 @@ inserted_schedule AS (
     )
     SELECT sqlc.arg(schedule_id),
            sqlc.arg(org_id),
+           sqlc.arg(cell_id),
            sqlc.arg(project_id),
            sqlc.arg(schedule_type)::task_schedule_type,
            sqlc.arg(task_id),
@@ -70,7 +72,7 @@ inserted_schedule AS (
            true
       FROM schedule_lock
      WHERE NOT EXISTS (SELECT 1 FROM updated_schedule)
-    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at,
+    RETURNING id, org_id, cell_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at,
               false AS timing_changed
 ),
 schedule AS (
@@ -82,9 +84,10 @@ schedule AS (
 ),
 instance_inputs AS (
     SELECT sqlc.arg(instance_id) AS id,
-	           schedule.id AS schedule_id,
-	           schedule.org_id,
-	           schedule.project_id,
+		           schedule.id AS schedule_id,
+		           schedule.org_id,
+		           schedule.cell_id,
+		           schedule.project_id,
 	           sqlc.arg(environment_id)::uuid AS environment_id,
 	           schedule.task_id,
 	           sqlc.arg(run_options)::jsonb AS run_options,
@@ -93,9 +96,10 @@ instance_inputs AS (
       FROM schedule
     UNION ALL
     SELECT uuidv7() AS id,
-	           task_schedule_instances.schedule_id,
-	           task_schedule_instances.org_id,
-	           task_schedule_instances.project_id,
+		           task_schedule_instances.schedule_id,
+		           task_schedule_instances.org_id,
+		           task_schedule_instances.cell_id,
+		           task_schedule_instances.project_id,
 	           task_schedule_instances.environment_id,
 	           schedule.task_id,
 	           task_schedule_instances.run_options,
@@ -109,9 +113,10 @@ instance_inputs AS (
 instances AS (
     INSERT INTO task_schedule_instances (
         id,
-	        schedule_id,
-	        org_id,
-	        project_id,
+		        schedule_id,
+		        org_id,
+		        cell_id,
+		        project_id,
 	        environment_id,
 	        task_id,
 	        run_options,
@@ -119,9 +124,10 @@ instances AS (
         next_fire_at
     )
     SELECT id,
-	           schedule_id,
-	           org_id,
-	           project_id,
+		           schedule_id,
+		           org_id,
+		           cell_id,
+		           project_id,
 	           environment_id,
 	           task_id,
 	           run_options,
@@ -213,7 +219,7 @@ updated_schedule AS (
        AND task_schedules.project_id = sqlc.arg(project_id)
        AND task_schedules.id = existing_schedule.id
        AND task_schedules.schedule_type = 'declarative'
-    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.created_at, task_schedules.updated_at,
+    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.cell_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.created_at, task_schedules.updated_at,
               (
                   existing_schedule.cron IS DISTINCT FROM sqlc.arg(cron)
                   OR existing_schedule.timezone IS DISTINCT FROM sqlc.arg(timezone)
@@ -223,6 +229,7 @@ inserted_schedule AS (
     INSERT INTO task_schedules (
         id,
         org_id,
+        cell_id,
         project_id,
         schedule_type,
         task_id,
@@ -234,6 +241,7 @@ inserted_schedule AS (
     )
     SELECT sqlc.arg(schedule_id),
            sqlc.arg(org_id),
+           sqlc.arg(cell_id),
            sqlc.arg(project_id),
            'declarative',
            sqlc.arg(task_id),
@@ -244,7 +252,7 @@ inserted_schedule AS (
            true
       FROM schedule_lock
      WHERE NOT EXISTS (SELECT 1 FROM updated_schedule)
-    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at,
+    RETURNING id, org_id, cell_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at,
               false AS timing_changed
 ),
 schedule AS (
@@ -256,9 +264,10 @@ schedule AS (
 ),
 instance_inputs AS (
     SELECT sqlc.arg(instance_id) AS id,
-	           schedule.id AS schedule_id,
-	           schedule.org_id,
-	           schedule.project_id,
+		           schedule.id AS schedule_id,
+		           schedule.org_id,
+		           schedule.cell_id,
+		           schedule.project_id,
 	           sqlc.arg(environment_id)::uuid AS environment_id,
 	           schedule.task_id,
 	           sqlc.arg(run_options)::jsonb AS run_options,
@@ -267,9 +276,10 @@ instance_inputs AS (
       FROM schedule
     UNION ALL
     SELECT uuidv7() AS id,
-	           task_schedule_instances.schedule_id,
-	           task_schedule_instances.org_id,
-	           task_schedule_instances.project_id,
+		           task_schedule_instances.schedule_id,
+		           task_schedule_instances.org_id,
+		           task_schedule_instances.cell_id,
+		           task_schedule_instances.project_id,
 	           task_schedule_instances.environment_id,
 	           schedule.task_id,
 	           task_schedule_instances.run_options,
@@ -283,9 +293,10 @@ instance_inputs AS (
 instances AS (
     INSERT INTO task_schedule_instances (
         id,
-	        schedule_id,
-	        org_id,
-	        project_id,
+		        schedule_id,
+		        org_id,
+		        cell_id,
+		        project_id,
 	        environment_id,
 	        task_id,
 	        run_options,
@@ -293,9 +304,10 @@ instances AS (
         next_fire_at
     )
     SELECT id,
-	           schedule_id,
-	           org_id,
-	           project_id,
+		           schedule_id,
+		           org_id,
+		           cell_id,
+		           project_id,
 	           environment_id,
 	           task_id,
 	           run_options,

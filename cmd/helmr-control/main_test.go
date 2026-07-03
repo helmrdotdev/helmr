@@ -39,6 +39,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		Auth:               auth.NewDBAuthenticator(store),
 		AuthSecret:         []byte("abcdefghijabcdefghijabcdefghij12"),
 		PublicURL:          publicURL,
+		CellID:             "us-east-1-cell-1",
 		MagicLinkDebugURLs: true,
 		Mailer:             configuredEmailSender(log, config.Control{EmailProvider: config.EmailProviderNone}),
 	})
@@ -67,6 +68,7 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_ADDR", addr)
 	t.Setenv("HELMR_DATABASE_URL", databaseURL)
 	t.Setenv("HELMR_REDIS_URL", "redis://"+redisServer.Addr()+"/0")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-smoke")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_WORKER_BOOTSTRAP_TOKEN", "worker-bootstrap-token")

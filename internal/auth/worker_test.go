@@ -14,6 +14,8 @@ func TestWorkerTokenRoundTrip(t *testing.T) {
 	payload := WorkerClaims{
 		WorkerInstanceID: "worker-1",
 		CredentialID:     "00000000-0000-0000-0000-000000000002",
+		CellID:           "us-east-1-cell-1",
+		ClaimVersion:     1,
 		IssuedAt:         now,
 		ExpiresAt:        now.Add(time.Hour),
 	}
@@ -40,6 +42,8 @@ func TestWorkerTokenUsesJWTClaims(t *testing.T) {
 	token, err := IssueWorkerToken(workerSecret(), WorkerClaims{
 		WorkerInstanceID: "worker-1",
 		CredentialID:     "credential-1",
+		CellID:           "us-east-1-cell-1",
+		ClaimVersion:     1,
 		IssuedAt:         now,
 		ExpiresAt:        now.Add(time.Hour),
 	})
@@ -85,6 +89,8 @@ func TestVerifyWorkerTokenRejectsBadSignature(t *testing.T) {
 	token, err := IssueWorkerToken(workerSecret(), WorkerClaims{
 		WorkerInstanceID: "worker-1",
 		CredentialID:     "credential-1",
+		CellID:           "us-east-1-cell-1",
+		ClaimVersion:     1,
 		IssuedAt:         now,
 		ExpiresAt:        now.Add(time.Hour),
 	})
@@ -103,6 +109,8 @@ func TestVerifyWorkerTokenRejectsTamperedPayload(t *testing.T) {
 	token, err := IssueWorkerToken(workerSecret(), WorkerClaims{
 		WorkerInstanceID: "worker-1",
 		CredentialID:     "credential-1",
+		CellID:           "us-east-1-cell-1",
+		ClaimVersion:     1,
 		IssuedAt:         now,
 		ExpiresAt:        now.Add(time.Hour),
 	})
@@ -131,6 +139,8 @@ func TestVerifyWorkerTokenRejectsExpiredToken(t *testing.T) {
 	token, err := IssueWorkerToken(workerSecret(), WorkerClaims{
 		WorkerInstanceID: "worker-1",
 		CredentialID:     "credential-1",
+		CellID:           "us-east-1-cell-1",
+		ClaimVersion:     1,
 		IssuedAt:         now,
 		ExpiresAt:        now.Add(time.Hour),
 	})
@@ -149,6 +159,8 @@ func TestWorkerTokenValidation(t *testing.T) {
 	_, err := IssueWorkerToken(workerSecret(), WorkerClaims{
 		WorkerInstanceID: " ",
 		CredentialID:     "credential-1",
+		CellID:           "us-east-1-cell-1",
+		ClaimVersion:     1,
 		IssuedAt:         now,
 		ExpiresAt:        now.Add(time.Hour),
 	})
@@ -159,6 +171,8 @@ func TestWorkerTokenValidation(t *testing.T) {
 	_, err = IssueWorkerToken([]byte("short"), WorkerClaims{
 		WorkerInstanceID: "worker-1",
 		CredentialID:     "credential-1",
+		CellID:           "us-east-1-cell-1",
+		ClaimVersion:     1,
 		IssuedAt:         now,
 		ExpiresAt:        now.Add(time.Hour),
 	})

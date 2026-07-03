@@ -282,6 +282,8 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 	var response api.WorkerWorkspaceMountCaptureResponse
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
+			OrgID:     params.OrgID,
+			CellID:    params.CellID,
 			Digest:    digest,
 			SizeBytes: request.ArtifactSizeBytes,
 			MediaType: strings.TrimSpace(request.ArtifactMediaType),
@@ -291,6 +293,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		artifact, err := work.q.CreateArtifact(r.Context(), db.CreateArtifactParams{
 			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                     params.OrgID,
+			CellID:                    params.CellID,
 			ProjectID:                 pgvalue.UUID(projectID),
 			EnvironmentID:             pgvalue.UUID(environmentID),
 			Digest:                    digest,

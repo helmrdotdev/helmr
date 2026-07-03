@@ -8,7 +8,7 @@ order: 950
 
 # Run events
 
-Run event records are ordered by numeric cursor and exposed through the REST API, CLI, and SDK. The CLI uses the same durable event stream for `helmr run events --follow` and `helmr run wait`.
+Run event records are ordered by an opaque cursor exposed through the REST API, CLI, and SDK. The CLI uses the same durable event stream for `helmr run events --follow` and `helmr run wait`.
 
 Each raw event record includes `run_id`. Events that originate from a worker lease also include `run_lease_id` and `attempt_number`. Run-level events that happen before a worker lease, such as queued expiry, can omit lease and attempt metadata.
 

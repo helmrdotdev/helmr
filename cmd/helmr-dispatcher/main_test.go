@@ -23,6 +23,7 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 
 	t.Setenv("HELMR_DATABASE_URL", databaseURL)
 	t.Setenv("HELMR_REDIS_URL", "redis://"+redisServer.Addr()+"/0")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_PUBLIC_URL", "http://127.0.0.1:8080")

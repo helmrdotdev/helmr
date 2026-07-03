@@ -50,6 +50,54 @@ variable "public_url" {
   nullable    = true
 }
 
+variable "deployment_mode" {
+  description = "Helmr deployment mode passed to control-plane tasks."
+  type        = string
+  default     = "self-hosted"
+}
+
+variable "cell_id" {
+  description = "Managed-cloud cell ID for this stack."
+  type        = string
+  default     = "us-east-1-cell-1"
+}
+
+variable "clickhouse_url" {
+  description = "ClickHouse HTTP endpoint for historical telemetry."
+  type        = string
+
+  validation {
+    condition     = can(regex("^https://[^<>[:space:]]+(:[0-9]+)?/?$", trimspace(var.clickhouse_url)))
+    error_message = "clickhouse_url must be an https URL without placeholder characters."
+  }
+}
+
+variable "clickhouse_user" {
+  description = "Optional ClickHouse username for historical telemetry."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "clickhouse_password_secret_arn" {
+  description = "Secrets Manager ARN for HELMR_CLICKHOUSE_PASSWORD when the ClickHouse endpoint requires a password."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "clickhouse_password_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs needed to decrypt clickhouse_password_secret_arn."
+  type        = list(string)
+  default     = []
+}
+
+variable "additional_control_security_group_ids" {
+  description = "Additional security groups attached to control, dispatcher, and migration tasks."
+  type        = list(string)
+  default     = []
+}
+
 variable "cloudfront_origin_domain_name" {
   description = "DNS name CloudFront uses for the HTTPS ALB origin when enable_cloudfront is true. This name must resolve to the public ALB and be covered by certificate_arn."
   type        = string

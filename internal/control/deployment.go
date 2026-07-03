@@ -24,7 +24,7 @@ type deploymentStore interface {
 	AppendDeploymentEvent(context.Context, db.AppendDeploymentEventParams) (db.AppendDeploymentEventRow, error)
 	CreateArtifact(context.Context, db.CreateArtifactParams) (db.Artifact, error)
 	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.Deployment, error)
-	GetDefaultWorkerGroup(context.Context) (db.WorkerGroup, error)
+	EnsureDefaultWorkerGroup(context.Context, string) (db.WorkerGroup, error)
 	GetReusableDeploymentByContentHash(context.Context, db.GetReusableDeploymentByContentHashParams) (db.Deployment, error)
 	ListArtifactsByIDs(context.Context, db.ListArtifactsByIDsParams) ([]db.Artifact, error)
 	LockDeploymentReusableBuildKey(context.Context, db.LockDeploymentReusableBuildKeyParams) error
@@ -407,15 +407,17 @@ func validateDeploymentContentHash(archivePath string, contentHash string) error
 	return nil
 }
 
-func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (api.DeploymentResponse, error) {
+func createDeploymentRecords(ctx context.Context, store deploymentStore, cellID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (api.DeploymentResponse, error) {
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
+		OrgID:     pgvalue.UUID(orgID),
+		CellID:    cellID,
 		Digest:    artifact.Digest,
 		SizeBytes: artifact.SizeBytes,
 		MediaType: artifact.MediaType,
 	}); err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	workerGroup, err := store.GetDefaultWorkerGroup(ctx)
+	workerGroup, err := store.EnsureDefaultWorkerGroup(ctx, cellID)
 	if err != nil {
 		return api.DeploymentResponse{}, fmt.Errorf("get default worker group: %w", err)
 	}
@@ -436,7 +438,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 		WorkerGroupID: workerGroup.ID,
 	})
 	if isNoRows(err) {
-		deployment, err = createQueuedDeployment(ctx, store, orgID, projectID, environmentID, workerGroup.ID, contentHash, artifact, metadata)
+		deployment, err = createQueuedDeployment(ctx, store, cellID, orgID, projectID, environmentID, workerGroup.ID, contentHash, artifact, metadata)
 	}
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -448,14 +450,15 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 	return response, nil
 }
 
-func createQueuedDeployment(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workerGroupID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (db.Deployment, error) {
-	version, err := nextDeploymentVersion(ctx, store, orgID, projectID, environmentID)
+func createQueuedDeployment(ctx context.Context, store deploymentStore, cellID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workerGroupID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (db.Deployment, error) {
+	version, err := nextDeploymentVersion(ctx, store, cellID, orgID, projectID, environmentID)
 	if err != nil {
 		return db.Deployment{}, err
 	}
 	sourceArtifact, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(orgID),
+		CellID:        cellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Digest:        artifact.Digest,
@@ -469,6 +472,7 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, orgID uu
 	deployment, err := store.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                      pgvalue.UUID(orgID),
+		CellID:                     cellID,
 		ProjectID:                  projectID,
 		EnvironmentID:              environmentID,
 		Version:                    version,
@@ -491,9 +495,10 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, orgID uu
 	return deployment, nil
 }
 
-func nextDeploymentVersion(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (string, error) {
+func nextDeploymentVersion(ctx context.Context, store deploymentStore, cellID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (string, error) {
 	return store.AllocateDeploymentVersion(ctx, db.AllocateDeploymentVersionParams{
 		OrgID:         pgvalue.UUID(orgID),
+		CellID:        cellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Prefix:        deploymentVersionPrefix(),

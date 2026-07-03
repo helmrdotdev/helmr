@@ -9,19 +9,27 @@ import (
 	"context"
 )
 
-const getDefaultWorkerGroup = `-- name: GetDefaultWorkerGroup :one
-SELECT id, name, description, created_at, updated_at
-  FROM worker_groups
- WHERE name = 'default'
+const ensureDefaultWorkerGroup = `-- name: EnsureDefaultWorkerGroup :one
+INSERT INTO worker_groups (cell_id, name, description)
+VALUES ($1, 'default', 'Default worker group')
+ON CONFLICT (cell_id, name) DO UPDATE
+   SET description = worker_groups.description
+RETURNING id, org_id, cell_id, name, description, provider, trust_tier, claim_version, deleted_at, created_at, updated_at
 `
 
-func (q *Queries) GetDefaultWorkerGroup(ctx context.Context) (WorkerGroup, error) {
-	row := q.db.QueryRow(ctx, getDefaultWorkerGroup)
+func (q *Queries) EnsureDefaultWorkerGroup(ctx context.Context, cellID string) (WorkerGroup, error) {
+	row := q.db.QueryRow(ctx, ensureDefaultWorkerGroup, cellID)
 	var i WorkerGroup
 	err := row.Scan(
 		&i.ID,
+		&i.OrgID,
+		&i.CellID,
 		&i.Name,
 		&i.Description,
+		&i.Provider,
+		&i.TrustTier,
+		&i.ClaimVersion,
+		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -29,14 +37,20 @@ func (q *Queries) GetDefaultWorkerGroup(ctx context.Context) (WorkerGroup, error
 }
 
 const listWorkerGroups = `-- name: ListWorkerGroups :many
-SELECT id, name, description, created_at, updated_at
+SELECT id, org_id, cell_id, name, description, provider, trust_tier, claim_version, deleted_at, created_at, updated_at
   FROM worker_groups
+ WHERE cell_id = $1
  ORDER BY name ASC
- LIMIT $1
+ LIMIT $2
 `
 
-func (q *Queries) ListWorkerGroups(ctx context.Context, rowLimit int32) ([]WorkerGroup, error) {
-	rows, err := q.db.Query(ctx, listWorkerGroups, rowLimit)
+type ListWorkerGroupsParams struct {
+	CellID   string `json:"cell_id"`
+	RowLimit int32  `json:"row_limit"`
+}
+
+func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsParams) ([]WorkerGroup, error) {
+	rows, err := q.db.Query(ctx, listWorkerGroups, arg.CellID, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -46,8 +60,14 @@ func (q *Queries) ListWorkerGroups(ctx context.Context, rowLimit int32) ([]Worke
 		var i WorkerGroup
 		if err := rows.Scan(
 			&i.ID,
+			&i.OrgID,
+			&i.CellID,
 			&i.Name,
 			&i.Description,
+			&i.Provider,
+			&i.TrustTier,
+			&i.ClaimVersion,
+			&i.DeletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {

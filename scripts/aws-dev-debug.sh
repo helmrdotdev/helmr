@@ -28,6 +28,7 @@ Commands:
   database-down      Stop the dev RDS instance and wait until stopped.
   dev-on [COUNT]     Start database and control service. Defaults to one control task.
   dev-off            Scale worker/control to zero and stop the database.
+  dev-destroy        Prepare and destroy the ephemeral dev stack through aws-dev-smoke.sh.
   worker-instance    Print the active worker EC2 instance ID.
   worker-up [COUNT]  Temporarily scale the worker Auto Scaling group up. Defaults to 1.
   worker-down        Temporarily scale the worker Auto Scaling group down to zero instances.
@@ -442,6 +443,10 @@ dev_off() {
   database_down
 }
 
+dev_destroy() {
+  "${ROOT}/scripts/aws-dev-smoke.sh" dev-destroy
+}
+
 wait_worker_capacity() {
   asg=$1
   desired=$2
@@ -829,9 +834,11 @@ show_run() {
   run_id=${1:-}
   [ -n "${run_id}" ] || die "RUN_ID is required"
   base_url="$(control_url)"
-  HELMR_API_URL="${base_url}" go run ./cmd/helmr run get "${run_id}"
-  HELMR_API_URL="${base_url}" go run ./cmd/helmr run events "${run_id}"
-  HELMR_API_URL="${base_url}" go run ./cmd/helmr run logs "${run_id}"
+  project="${DEBUG_RUN_PROJECT:-helmr}"
+  env="${DEBUG_RUN_ENV:-production}"
+  HELMR_API_URL="${base_url}" go run ./cmd/helmr run get "${run_id}" --project "${project}" --env "${env}"
+  HELMR_API_URL="${base_url}" go run ./cmd/helmr run events "${run_id}" --project "${project}" --env "${env}"
+  HELMR_API_URL="${base_url}" go run ./cmd/helmr run logs "${run_id}" --project "${project}" --env "${env}"
 }
 
 command=${1:-}
@@ -845,6 +852,7 @@ case "${command}" in
   database-down) database_down ;;
   dev-on) shift; dev_on "$@" ;;
   dev-off) dev_off ;;
+  dev-destroy) dev_destroy ;;
   worker-instance) worker_instance_id ;;
   worker-up) shift; worker_up "$@" ;;
   worker-down) worker_down ;;

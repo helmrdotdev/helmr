@@ -3,8 +3,9 @@
 This stack is the deployable AWS development and full-run smoke environment for Helmr.
 
 It creates Secrets Manager containers for Helmr internal and application secrets, but it does not
-store secret values in OpenTofu/Terraform state. Populate those secrets before starting
-control-plane services.
+store those secret values in OpenTofu/Terraform state. The exception is Terraform-managed
+ClickHouse Cloud: that path generates the ClickHouse service password, writes it to AWS Secrets
+Manager, and therefore stores the generated password in encrypted Terraform state.
 
 Run commands from the repository Nix infra shell so AWS CLI, OpenTofu, and jq versions match the
 scripts:
@@ -30,8 +31,21 @@ tofu apply \
   -var="public_url=https://helmr.example.com" \
   -var="control_image=<account>.dkr.ecr.us-east-1.amazonaws.com/helmr-example/control@sha256:<digest>" \
   -var="certificate_arn=arn:aws:acm:..." \
-  -var="github_oauth_client_id=Iv1..."
+  -var="github_oauth_client_id=Iv1..." \
+  -var="create_clickhouse_cloud=true" \
+  -var="clickhouse_organization_id=<clickhouse-cloud-organization-id>"
 ```
+
+When `create_clickhouse_cloud=true`, the stack creates a ClickHouse Cloud service, an AWS
+PrivateLink endpoint, private DNS, and the ClickHouse password secret consumed by the control,
+dispatcher, and migration tasks. Configure the ClickHouse provider through
+`CLICKHOUSE_CLOUD_API_KEY` and `CLICKHOUSE_CLOUD_API_SECRET` in the environment that runs OpenTofu.
+For local dev, use `scripts/dev-secrets.sh` so 1Password injects those values only for the command.
+Do not put provider API credentials in `.tfvars` or scratch directories.
+
+To bring an existing ClickHouse service instead, keep `create_clickhouse_cloud=false` and pass
+`clickhouse_url`, `clickhouse_user`, `clickhouse_password_secret_arn`, and any required
+`clickhouse_password_kms_key_arns` or additional client security groups.
 
 This repository does not commit a `.terraform.lock.hcl` because Terraform and OpenTofu
 write different provider hostnames. Commit the generated lock file in your deployment repository.
@@ -99,9 +113,9 @@ aws ecs run-task \
   --launch-type FARGATE \
   --network-configuration "$(jq -cn \
     --argjson subnets "$(tofu output -json control_task_subnet_ids)" \
-    --arg sg "$(tofu output -raw control_security_group_id)" \
+    --argjson securityGroups "$(tofu output -json control_task_security_group_ids)" \
     --arg assignPublicIp "$([ "$(tofu output -raw control_assign_public_ip)" = "true" ] && printf ENABLED || printf DISABLED)" \
-    '{awsvpcConfiguration:{subnets:$subnets,securityGroups:[$sg],assignPublicIp:$assignPublicIp}}')"
+    '{awsvpcConfiguration:{subnets:$subnets,securityGroups:$securityGroups,assignPublicIp:$assignPublicIp}}')"
 ```
 
 Worker resources are not created until `create_worker=true`. Build and publish a worker AMI that
@@ -114,7 +128,11 @@ advertised filesystem capacity.
 For ephemeral full-run smoke testing, use `full-run-smoke.tfvars.example` as the starting point. It
 keeps capacity at one worker, enables SSM access, and uses EC2 nested virtualization on `c8i.xlarge`
 instead of requiring a bare-metal worker instance. Destroy the stack after the smoke run; it still
-creates RDS, NAT, ALB, and EC2 resources.
+creates RDS, Redis/Valkey, NAT, ALB, EC2, and optionally ClickHouse Cloud resources. The repository
+scripts expose this as `scripts/aws-dev-smoke.sh dev-destroy` and `scripts/aws-dev-debug.sh
+dev-destroy`, which run pre-destroy cleanup before Terraform/OpenTofu destroy. When the stack owns
+ClickHouse Cloud, run those commands through `scripts/dev-secrets.sh` so provider credentials are
+available only to the destroy process.
 When scaling down from an active worker, first apply worker desired/min capacity
 zero while NAT is still present so lifecycle drain can finish, then apply control
 mode to remove NAT.

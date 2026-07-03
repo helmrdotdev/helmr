@@ -419,6 +419,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		session, err := work.q.CreateSession(ctx, db.CreateSessionParams{
 			ID:                  pgvalue.UUID(sessionID),
 			OrgID:               pgvalue.UUID(actor.OrgID),
+			CellID:              s.cellID,
 			ProjectID:           projectID,
 			EnvironmentID:       environmentID,
 			TaskID:              taskID,
@@ -440,6 +441,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		run, err := work.q.CreateScopedRun(ctx, db.CreateScopedRunParams{
 			ID:                    pgvalue.UUID(runID),
 			OrgID:                 pgvalue.UUID(actor.OrgID),
+			CellID:                s.cellID,
 			ProjectID:             projectID,
 			EnvironmentID:         environmentID,
 			DeploymentID:          deploymentTask.DeploymentID,
@@ -463,7 +465,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 			Ttl:                   scheduling.ttl,
 			QueuedExpiresAt:       scheduling.queuedExpiresAt,
 			MaxActiveDurationMs:   int64(maxDurationSeconds) * 1000,
-			TraceID:               traceID,
+			TraceID:               pgtype.Text{String: traceID, Valid: true},
 			RootSpanID:            rootSpanID,
 			EventPayload:          createdPayload,
 			ScheduleID:            source.scheduleID,
@@ -510,6 +512,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if _, err := work.q.CreateSessionRun(ctx, db.CreateSessionRunParams{
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:         pgvalue.UUID(actor.OrgID),
+			CellID:        session.CellID,
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			SessionID:     session.ID,

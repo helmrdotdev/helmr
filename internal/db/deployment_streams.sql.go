@@ -12,7 +12,7 @@ import (
 )
 
 const getDeploymentStreamByName = `-- name: GetDeploymentStreamByName :one
-SELECT id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json, metadata, created_at
+SELECT id, org_id, cell_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json, metadata, created_at
   FROM deployment_streams
  WHERE org_id = $1
    AND project_id = $2
@@ -44,6 +44,7 @@ func (q *Queries) GetDeploymentStreamByName(ctx context.Context, arg GetDeployme
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
@@ -58,7 +59,7 @@ func (q *Queries) GetDeploymentStreamByName(ctx context.Context, arg GetDeployme
 }
 
 const listDeploymentStreamsForDeployment = `-- name: ListDeploymentStreamsForDeployment :many
-SELECT id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json, metadata, created_at
+SELECT id, org_id, cell_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json, metadata, created_at
   FROM deployment_streams
  WHERE org_id = $1
    AND project_id = $2
@@ -91,6 +92,7 @@ func (q *Queries) ListDeploymentStreamsForDeployment(ctx context.Context, arg Li
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
+			&i.CellID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.DeploymentID,
@@ -115,6 +117,7 @@ const upsertDeploymentStream = `-- name: UpsertDeploymentStream :one
 INSERT INTO deployment_streams (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     deployment_id,
@@ -131,22 +134,24 @@ VALUES (
     $4,
     $5,
     $6,
-    $7::stream_direction,
-    COALESCE($8::text, ''),
-    COALESCE($9::jsonb, 'null'::jsonb),
-    COALESCE($10::jsonb, '{}'::jsonb)
+    $7,
+    $8::stream_direction,
+    COALESCE($9::text, ''),
+    COALESCE($10::jsonb, 'null'::jsonb),
+    COALESCE($11::jsonb, '{}'::jsonb)
 )
 ON CONFLICT (org_id, deployment_id, name, direction)
 DO UPDATE SET
     schema_fingerprint = EXCLUDED.schema_fingerprint,
     schema_json = EXCLUDED.schema_json,
     metadata = EXCLUDED.metadata
-RETURNING id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json, metadata, created_at
+RETURNING id, org_id, cell_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json, metadata, created_at
 `
 
 type UpsertDeploymentStreamParams struct {
 	ID                pgtype.UUID     `json:"id"`
 	OrgID             pgtype.UUID     `json:"org_id"`
+	CellID            string          `json:"cell_id"`
 	ProjectID         pgtype.UUID     `json:"project_id"`
 	EnvironmentID     pgtype.UUID     `json:"environment_id"`
 	DeploymentID      pgtype.UUID     `json:"deployment_id"`
@@ -161,6 +166,7 @@ func (q *Queries) UpsertDeploymentStream(ctx context.Context, arg UpsertDeployme
 	row := q.db.QueryRow(ctx, upsertDeploymentStream,
 		arg.ID,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentID,
@@ -174,6 +180,7 @@ func (q *Queries) UpsertDeploymentStream(ctx context.Context, arg UpsertDeployme
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,

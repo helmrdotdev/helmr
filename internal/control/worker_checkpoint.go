@@ -211,6 +211,8 @@ func (s *Server) workerCaptureRunWaitWorkspace(w http.ResponseWriter, r *http.Re
 		}
 		capture := request.WorkspaceCapture
 		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
+			OrgID:     scope.OrgID,
+			CellID:    scope.CellID,
 			Digest:    strings.TrimSpace(capture.Digest),
 			SizeBytes: capture.SizeBytes,
 			MediaType: strings.TrimSpace(capture.MediaType),
@@ -220,6 +222,7 @@ func (s *Server) workerCaptureRunWaitWorkspace(w http.ResponseWriter, r *http.Re
 		artifact, err := work.q.CreateArtifact(r.Context(), db.CreateArtifactParams{
 			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                     scope.OrgID,
+			CellID:                    scope.CellID,
 			ProjectID:                 scope.ProjectID,
 			EnvironmentID:             scope.EnvironmentID,
 			Digest:                    strings.TrimSpace(capture.Digest),

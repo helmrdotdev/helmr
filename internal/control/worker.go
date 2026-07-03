@@ -57,6 +57,7 @@ func (s *Server) workerRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	credential, err := s.db.CreateWorkerInstanceCredentialFromBootstrap(r.Context(), db.CreateWorkerInstanceCredentialFromBootstrapParams{
 		BootstrapTokenHash: registrationHash,
+		CellID:             s.cellID,
 		CredentialID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		WorkerInstanceID:   pgvalue.UUID(workerInstanceID),
 		ResourceID:         resourceID,
@@ -107,6 +108,7 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 	credential, err := s.db.AuthenticateWorkerInstanceCredential(r.Context(), db.AuthenticateWorkerInstanceCredentialParams{
 		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
 		SecretHash:       secretHash,
+		CellID:           s.cellID,
 	})
 	if isNoRows(err) {
 		writeError(w, unauthorized(errors.New("worker authentication is required")))
@@ -127,6 +129,8 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 	signed, err := auth.IssueWorkerToken(s.workerTokenSecret, auth.WorkerClaims{
 		WorkerInstanceID: pgvalue.MustUUIDValue(credential.WorkerInstanceID).String(),
 		CredentialID:     credentialID.String(),
+		CellID:           credential.CellID,
+		ClaimVersion:     credential.ClaimVersion,
 		IssuedAt:         now,
 		ExpiresAt:        expiresAt,
 	})
@@ -249,6 +253,7 @@ func workerInstanceHeartbeatParams(worker workerActor, capabilities api.WorkerCa
 	labels, _ := json.Marshal(capabilities.Labels)
 	return db.UpsertWorkerInstanceHeartbeatParams{
 		ID:                      pgvalue.UUID(worker.WorkerInstanceID),
+		CellID:                  worker.CellID,
 		WorkerGroupID:           pgvalue.UUID(worker.WorkerGroupID),
 		ResourceID:              worker.ResourceID,
 		Region:                  capabilities.Region,

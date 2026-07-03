@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/redis/go-redis/v9"
 )
@@ -29,12 +30,19 @@ const (
 )
 
 type EventStream struct {
-	log   *slog.Logger
-	db    db.Querier
-	redis redis.Cmdable
+	log             *slog.Logger
+	db              db.Querier
+	redis           redis.Cmdable
+	cellID          string
+	telemetryReader telemetry.Reader
 }
 
-func NewEventStream(log *slog.Logger, queries db.Querier, redis redis.Cmdable) (*EventStream, error) {
+type EventStreamConfig struct {
+	CellID          string
+	TelemetryReader telemetry.Reader
+}
+
+func NewEventStream(log *slog.Logger, queries db.Querier, redis redis.Cmdable, configs ...EventStreamConfig) (*EventStream, error) {
 	if queries == nil {
 		return nil, errors.New("event stream database is required")
 	}
@@ -44,7 +52,18 @@ func NewEventStream(log *slog.Logger, queries db.Querier, redis redis.Cmdable) (
 	if log == nil {
 		log = slog.Default()
 	}
-	return &EventStream{log: log, db: queries, redis: redis}, nil
+	var cfg EventStreamConfig
+	if len(configs) > 0 {
+		cfg = configs[0]
+	}
+	if strings.TrimSpace(cfg.CellID) == "" {
+		return nil, errors.New("event stream cell id is required")
+	}
+	reader := cfg.TelemetryReader
+	if reader == nil {
+		reader = telemetry.NewCompositeReader(telemetry.NewHotReader(queries), nil)
+	}
+	return &EventStream{log: log, db: queries, redis: redis, cellID: cfg.CellID, telemetryReader: reader}, nil
 }
 
 func (s *EventStream) RunPublisher(ctx context.Context) error {
@@ -155,7 +174,7 @@ func (s *EventStream) streamAdvancedPastID(ctx context.Context, streamKey string
 }
 
 func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectType db.EventSubjectType, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error, onIdle func() error) error {
-	streamKey := eventStreamKey(orgID, subjectType, subjectID)
+	streamKey := eventStreamKey(orgID, s.cellID, subjectType, subjectID)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -210,27 +229,32 @@ func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectT
 }
 
 func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, subjectType db.EventSubjectType, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error) (int64, bool, error) {
-	events, err := s.db.ListSubjectEvents(ctx, db.ListSubjectEventsParams{
-		OrgID:       pgvalue.UUID(orgID),
-		SubjectType: subjectType,
-		SubjectID:   pgvalue.UUID(subjectID),
-		Seq:         cursor,
-		RowLimit:    runEventsPageSize,
+	page, err := s.telemetryReader.ListEvents(ctx, telemetry.EventQuery{
+		OrgID:       orgID,
+		CellID:      s.cellID,
+		SubjectType: string(subjectType),
+		SubjectID:   subjectID,
+		AfterSeq:    cursor,
+		Limit:       runEventsPageSize,
 	})
 	if err != nil {
 		return cursor, false, fmt.Errorf("list durable subject events: %w", err)
 	}
-	for _, event := range events {
-		cursor = event.Seq
-		if err := onEvent(eventResponseFromRecord(event)); err != nil {
+	for _, event := range page.Events {
+		nextCursor, err := telemetry.ParseCursor(event.ID)
+		if err != nil {
+			return cursor, false, err
+		}
+		cursor = nextCursor
+		if err := onEvent(event); err != nil {
 			return cursor, false, err
 		}
 	}
-	return cursor, len(events) == int(runEventsPageSize), nil
+	return cursor, len(page.Events) == int(runEventsPageSize), nil
 }
 
-func eventStreamKey(orgID uuid.UUID, subjectType db.EventSubjectType, subjectID uuid.UUID) string {
-	return "helmr:events:" + orgID.String() + ":" + string(subjectType) + ":" + subjectID.String()
+func eventStreamKey(orgID uuid.UUID, cellID string, subjectType db.EventSubjectType, subjectID uuid.UUID) string {
+	return "helmr:events:" + orgID.String() + ":" + cellID + ":" + string(subjectType) + ":" + subjectID.String()
 }
 
 func redisEventID(seq int64) string {
@@ -289,7 +313,7 @@ func eventResponseFromClaim(event db.ClaimEventOutboxRow) api.RunEvent {
 	return apiEventResponse(event.Seq, event.RunID, event.DeploymentID, event.RunLeaseID, event.AttemptID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
 }
 
-func eventResponseFromRecord(event db.Event) api.RunEvent {
+func eventResponseFromRecord(event db.EventHotPayload) api.RunEvent {
 	return apiEventResponse(event.Seq, event.RunID, event.DeploymentID, event.RunLeaseID, event.AttemptID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
 }
 
@@ -339,7 +363,7 @@ func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, ru
 		attributes = json.RawMessage(`{"redacted":true}`)
 	}
 	return api.RunEvent{
-		ID:             strconv.FormatInt(seq, 10),
+		ID:             telemetryCursor(seq),
 		RunID:          runIDValue,
 		DeploymentID:   deploymentIDValue,
 		RunLeaseID:     runLeaseIDValue,

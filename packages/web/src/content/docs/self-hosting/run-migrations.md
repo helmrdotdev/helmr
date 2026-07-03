@@ -19,8 +19,8 @@ aws ecs run-task \
   --launch-type FARGATE \
   --network-configuration "$(jq -cn \
     --argjson subnets "$(tofu output -json control_task_subnet_ids)" \
-    --arg sg "$(tofu output -raw control_security_group_id)" \
-    '{awsvpcConfiguration:{subnets:$subnets,securityGroups:[$sg],assignPublicIp:"DISABLED"}}')"
+    --argjson securityGroups "$(tofu output -json control_task_security_group_ids)" \
+    '{awsvpcConfiguration:{subnets:$subnets,securityGroups:$securityGroups,assignPublicIp:"DISABLED"}}')"
 ```
 
 For the `quickstart` profile, use the profile output to decide whether the task needs a public IP:
@@ -32,9 +32,9 @@ aws ecs run-task \
   --launch-type FARGATE \
   --network-configuration "$(jq -cn \
     --argjson subnets "$(tofu output -json control_task_subnet_ids)" \
-    --arg sg "$(tofu output -raw control_security_group_id)" \
+    --argjson securityGroups "$(tofu output -json control_task_security_group_ids)" \
     --arg assignPublicIp "$([ "$(tofu output -raw control_assign_public_ip)" = "true" ] && printf ENABLED || printf DISABLED)" \
-    '{awsvpcConfiguration:{subnets:$subnets,securityGroups:[$sg],assignPublicIp:$assignPublicIp}}')"
+    '{awsvpcConfiguration:{subnets:$subnets,securityGroups:$securityGroups,assignPublicIp:$assignPublicIp}}')"
 ```
 
 Wait for the task to finish and inspect the logs if it exits non-zero. Do not start the control or dispatcher services until migrations have completed.
