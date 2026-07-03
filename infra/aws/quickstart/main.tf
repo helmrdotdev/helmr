@@ -50,6 +50,8 @@ module "control" {
   clickhouse_url                         = var.clickhouse_url
   clickhouse_user                        = var.clickhouse_user
   clickhouse_password_secret_arn         = var.clickhouse_password_secret_arn
+  clickhouse_password_kms_key_arns       = var.clickhouse_password_kms_key_arns
+  additional_control_security_group_ids  = var.additional_control_security_group_ids
   cloudfront_origin_domain_name          = var.cloudfront_origin_domain_name
   control_image                          = module.release_artifacts.control_image
   control_desired_count                  = var.control_desired_count

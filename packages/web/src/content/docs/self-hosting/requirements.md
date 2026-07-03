@@ -17,6 +17,7 @@ Prepare these before creating the AWS stack.
 | OpenTofu or Terraform | The AWS profiles are OpenTofu-compatible. Use the infra shell if you want the repo-pinned toolchain. |
 | AWS CLI and `jq` | Needed for reading outputs, writing secret values, and running the migration task. |
 | GitHub OAuth app | Required for browser login. |
+| ClickHouse Cloud service | Required for production historical telemetry. Use a customer-owned ClickHouse Cloud organization. |
 | Helmr release version | AWS examples read control image and worker AMI metadata from the release artifact manifest. |
 | Public URL | Use HTTPS for customer environments. Quickstart can use the generated CloudFront URL; production usually uses your own domain and ACM certificate. |
 

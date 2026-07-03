@@ -98,9 +98,9 @@ aws ecs run-task \
   --launch-type FARGATE \
   --network-configuration "$(jq -cn \
     --argjson subnets "$(tofu output -json control_task_subnet_ids)" \
-    --arg sg "$(tofu output -raw control_security_group_id)" \
+    --argjson securityGroups "$(tofu output -json control_task_security_group_ids)" \
     --arg assignPublicIp "$([ "$(tofu output -raw control_assign_public_ip)" = "true" ] && printf ENABLED || printf DISABLED)" \
-    '{awsvpcConfiguration:{subnets:$subnets,securityGroups:[$sg],assignPublicIp:$assignPublicIp}}')"
+    '{awsvpcConfiguration:{subnets:$subnets,securityGroups:$securityGroups,assignPublicIp:$assignPublicIp}}')"
 ```
 
 Then set `create_control_service=true` and apply again. This starts separate `helmr-control` and

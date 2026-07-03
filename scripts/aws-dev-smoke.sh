@@ -116,6 +116,14 @@ Dev optional environment:
                        Run control tasks in public subnets. Defaults to 1 for control mode.
   DEV_GITHUB_OAUTH_CLIENT_ID
                        Initial GitHub OAuth client ID placeholder. Defaults to placeholder.
+  DEV_CLICKHOUSE_URL   ClickHouse Cloud HTTPS endpoint for dev telemetry.
+  DEV_CLICKHOUSE_USER  ClickHouse username. Defaults to default.
+  DEV_CLICKHOUSE_PASSWORD_SECRET_ARN
+                       Secrets Manager ARN containing the ClickHouse password.
+  DEV_CLICKHOUSE_PASSWORD_KMS_KEY_ARNS
+                       Optional JSON array of KMS key ARNs for the ClickHouse password secret.
+  DEV_ADDITIONAL_CONTROL_SECURITY_GROUP_IDS
+                       Optional JSON array of security group IDs to attach to control tasks.
   DEV_CONTROL_DESIRED_COUNT
                        Control ECS desired task count. Defaults to 1 for dev cost control.
   DEV_CONTROL_KEEP_WORKER
@@ -666,6 +674,7 @@ worker_vm_vcpus                     = ${DEV_WORKER_VM_VCPUS:-2}
 worker_vm_memory_mib                = ${DEV_WORKER_VM_MEMORY_MIB:-4096}
 worker_vm_scratch_disk_mib          = ${DEV_WORKER_VM_SCRATCH_DISK_MIB:-32768}
 EOF
+  apply_dev_clickhouse_tfvars "${DEV_TFVARS}"
   info "wrote ${DEV_TFVARS}"
 }
 
@@ -747,6 +756,31 @@ tfvar_string_value() {
 
 env_is_set() {
   eval '[ "${'"$1"'+set}" = set ]'
+}
+
+tf_json_string_array_or_empty() {
+  name=$1
+  value="${!name:-}"
+  if [ -z "${value}" ]; then
+    printf '[]\n'
+    return 0
+  fi
+  printf '%s\n' "${value}" |
+    jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null ||
+    die "${name} must be a JSON array of strings"
+  printf '%s\n' "${value}"
+}
+
+apply_dev_clickhouse_tfvars() {
+  file=$1
+  [ -n "${DEV_CLICKHOUSE_URL:-}" ] || die "DEV_CLICKHOUSE_URL is required for dev tfvars generation"
+  [ -n "${DEV_CLICKHOUSE_PASSWORD_SECRET_ARN:-}" ] || die "DEV_CLICKHOUSE_PASSWORD_SECRET_ARN is required for dev tfvars generation"
+
+  set_tfvar "${file}" "clickhouse_url" "$(tf_quote "${DEV_CLICKHOUSE_URL}")"
+  set_tfvar "${file}" "clickhouse_user" "$(tf_quote "${DEV_CLICKHOUSE_USER:-default}")"
+  set_tfvar "${file}" "clickhouse_password_secret_arn" "$(tf_quote "${DEV_CLICKHOUSE_PASSWORD_SECRET_ARN}")"
+  set_tfvar "${file}" "clickhouse_password_kms_key_arns" "$(tf_json_string_array_or_empty DEV_CLICKHOUSE_PASSWORD_KMS_KEY_ARNS)"
+  set_tfvar "${file}" "additional_control_security_group_ids" "$(tf_json_string_array_or_empty DEV_ADDITIONAL_CONTROL_SECURITY_GROUP_IDS)"
 }
 
 validate_tf_bool() {
@@ -930,6 +964,7 @@ EOF
     set_tfvar "${DEV_TFVARS}" "cloudfront_origin_domain_name" "null"
   fi
   set_tfvar "${DEV_TFVARS}" "github_oauth_client_id" "$(tf_quote "${DEV_GITHUB_OAUTH_CLIENT_ID}")"
+  apply_dev_clickhouse_tfvars "${DEV_TFVARS}"
   set_tfvar "${DEV_TFVARS}" "create_control_service" "true"
   set_tfvar "${DEV_TFVARS}" "control_desired_count" "${DEV_CONTROL_DESIRED_COUNT:-1}"
   set_tfvar "${DEV_TFVARS}" "dispatcher_desired_count" "${DEV_DISPATCHER_DESIRED_COUNT:-1}"
@@ -1140,7 +1175,7 @@ dev_worker_down_tfvars() {
 dev_migrate() {
   cluster="$("${TF_BIN}" -chdir="${DEV_STACK}" output -raw control_cluster_name)"
   task_definition="$("${TF_BIN}" -chdir="${DEV_STACK}" output -raw migration_task_definition_arn)"
-  security_group="$("${TF_BIN}" -chdir="${DEV_STACK}" output -raw control_security_group_id)"
+  security_groups="$("${TF_BIN}" -chdir="${DEV_STACK}" output -json control_task_security_group_ids)"
   subnets="$("${TF_BIN}" -chdir="${DEV_STACK}" output -json control_task_subnet_ids)"
   assign_public_ip="$("${TF_BIN}" -chdir="${DEV_STACK}" output -raw control_assign_public_ip)"
   if [ "${assign_public_ip}" = "true" ]; then
@@ -1151,9 +1186,9 @@ dev_migrate() {
   network_configuration="$(
     jq -cn \
       --argjson subnets "${subnets}" \
-      --arg sg "${security_group}" \
+      --argjson security_groups "${security_groups}" \
       --arg assign_public_ip "${assign_public_ip_value}" \
-      '{awsvpcConfiguration:{subnets:$subnets,securityGroups:[$sg],assignPublicIp:$assign_public_ip}}'
+      '{awsvpcConfiguration:{subnets:$subnets,securityGroups:$security_groups,assignPublicIp:$assign_public_ip}}'
   )"
 
   task_arn="$(

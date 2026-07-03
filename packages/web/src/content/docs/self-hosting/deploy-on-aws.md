@@ -33,6 +33,7 @@ Fill the non-secret values in `terraform.tfvars`, including:
 - `helmr_version`.
 - `github_oauth_client_id`. Create the OAuth app before the first apply so the client ID is available.
 - Public URL and certificate settings when you use your own domain.
+- ClickHouse Cloud endpoint settings. See [ClickHouse Cloud](/docs/self-hosting/clickhouse-cloud/).
 - Optional email sender settings such as `email_provider` and `email_from`.
 
 Keep `create_control_service = false` for the first apply. The control and dispatcher services need secret values and database migrations before they can become ready.

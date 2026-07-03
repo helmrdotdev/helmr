@@ -63,6 +63,11 @@ output "control_security_group_id" {
   value       = module.control.control_security_group_id
 }
 
+output "control_task_security_group_ids" {
+  description = "Security group IDs attached to control, dispatcher, and migration tasks."
+  value       = module.control.control_task_security_group_ids
+}
+
 output "control_task_subnet_ids" {
   description = "Subnet IDs used by control and migration Fargate tasks."
   value       = module.control.control_task_subnet_ids

@@ -20,13 +20,14 @@ The deployment has these runtime components:
 
 | Component | Responsibility |
 | --- | --- |
-| Control plane | Serves the web UI and API, stores run state in PostgreSQL, authenticates users, coordinates workers, and records logs/events. |
+| Control plane | Serves the web UI and API, stores run state in PostgreSQL, authenticates users, coordinates workers, and writes historical telemetry to ClickHouse Cloud. |
 | Dispatcher | Reconciles runnable work into the Redis/Valkey dispatch path and sweeps expired executions. |
 | Workers | Poll the control plane, materialize writable workspaces, build task images, run tasks in Firecracker guests, stream events, and create or restore checkpoints. |
 
 AWS infrastructure provides the shared dependencies:
 
 - Amazon RDS for PostgreSQL stores orgs, auth state, projects, sessions, runs, workers, waits, stream records, tokens, metadata, checkpoints, and events.
+- ClickHouse Cloud stores historical run logs, events, traces, terminal output, and telemetry analytics.
 - Cluster-mode disabled ElastiCache Valkey/Redis backs the dispatch queue used by
   `HELMR_REDIS_URL`.
 - S3 stores source bundles, runtime artifacts, and encrypted checkpoint objects.

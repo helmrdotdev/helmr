@@ -10,6 +10,15 @@ locals {
   smtp_username       = var.smtp_username == null ? "" : var.smtp_username
   clickhouse_url      = trimspace(var.clickhouse_url)
   clickhouse_user     = var.clickhouse_user == null ? "" : var.clickhouse_user
+  secret_kms_key_arns = distinct(concat(
+    [aws_kms_key.helmr.arn],
+    var.secret_encryption_key_old_kms_key_arns,
+    var.clickhouse_password_kms_key_arns
+  ))
+  control_security_group_ids = concat(
+    [aws_security_group.control.id],
+    var.additional_control_security_group_ids
+  )
 
   telemetry_environment = merge(
     {
@@ -26,6 +35,9 @@ locals {
   telemetry_secrets = var.clickhouse_password_secret_arn == null ? {} : {
     HELMR_CLICKHOUSE_PASSWORD = var.clickhouse_password_secret_arn
   }
+  migration_secrets = merge({
+    HELMR_DATABASE_URL = aws_secretsmanager_secret.database_url.arn
+  }, local.telemetry_secrets)
 
   email_environment = merge(
     var.email_provider == "none" ? {} : {
@@ -825,7 +837,7 @@ resource "aws_iam_role_policy" "control_execution" {
         Action = [
           "kms:Decrypt"
         ]
-        Resource = concat([aws_kms_key.helmr.arn], var.secret_encryption_key_old_kms_key_arns)
+        Resource = local.secret_kms_key_arns
         Condition = {
           StringEquals = {
             "kms:ViaService" = "secretsmanager.${data.aws_region.current.region}.amazonaws.com"
@@ -855,7 +867,7 @@ resource "aws_iam_role_policy" "dispatcher_execution" {
         Action = [
           "kms:Decrypt"
         ]
-        Resource = concat([aws_kms_key.helmr.arn], var.secret_encryption_key_old_kms_key_arns)
+        Resource = local.secret_kms_key_arns
         Condition = {
           StringEquals = {
             "kms:ViaService" = "secretsmanager.${data.aws_region.current.region}.amazonaws.com"
@@ -1057,9 +1069,7 @@ resource "aws_ecs_task_definition" "migration" {
       }
     ]
     secrets = [
-      for key, value in merge({
-        HELMR_DATABASE_URL = aws_secretsmanager_secret.database_url.arn
-      }, local.telemetry_secrets) : {
+      for key, value in local.migration_secrets : {
         name      = key
         valueFrom = value
       }
@@ -1087,7 +1097,7 @@ resource "aws_ecs_service" "control" {
 
   network_configuration {
     subnets          = local.control_subnet_ids
-    security_groups  = [aws_security_group.control.id]
+    security_groups  = local.control_security_group_ids
     assign_public_ip = var.control_assign_public_ip
   }
 
@@ -1141,7 +1151,7 @@ resource "aws_ecs_service" "dispatcher" {
 
   network_configuration {
     subnets          = local.control_subnet_ids
-    security_groups  = [aws_security_group.control.id]
+    security_groups  = local.control_security_group_ids
     assign_public_ip = var.control_assign_public_ip
   }
 

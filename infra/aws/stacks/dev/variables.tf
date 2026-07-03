@@ -30,8 +30,8 @@ variable "clickhouse_url" {
   type        = string
 
   validation {
-    condition     = trimspace(var.clickhouse_url) != ""
-    error_message = "clickhouse_url must be non-empty."
+    condition     = can(regex("^https://[^<>[:space:]]+(:[0-9]+)?/?$", trimspace(var.clickhouse_url)))
+    error_message = "clickhouse_url must be an https URL without placeholder characters."
   }
 }
 
@@ -47,6 +47,18 @@ variable "clickhouse_password_secret_arn" {
   type        = string
   default     = null
   nullable    = true
+}
+
+variable "clickhouse_password_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs needed to decrypt clickhouse_password_secret_arn."
+  type        = list(string)
+  default     = []
+}
+
+variable "additional_control_security_group_ids" {
+  description = "Additional security groups attached to control, dispatcher, and migration tasks."
+  type        = list(string)
+  default     = []
 }
 
 variable "cloudfront_origin_domain_name" {

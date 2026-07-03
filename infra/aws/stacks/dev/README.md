@@ -30,7 +30,10 @@ tofu apply \
   -var="public_url=https://helmr.example.com" \
   -var="control_image=<account>.dkr.ecr.us-east-1.amazonaws.com/helmr-example/control@sha256:<digest>" \
   -var="certificate_arn=arn:aws:acm:..." \
-  -var="github_oauth_client_id=Iv1..."
+  -var="github_oauth_client_id=Iv1..." \
+  -var="clickhouse_url=https://replace-me.clickhouse.cloud:8443" \
+  -var="clickhouse_user=default" \
+  -var="clickhouse_password_secret_arn=arn:aws:secretsmanager:us-east-1:123456789012:secret:replace-me"
 ```
 
 This repository does not commit a `.terraform.lock.hcl` because Terraform and OpenTofu
@@ -99,9 +102,9 @@ aws ecs run-task \
   --launch-type FARGATE \
   --network-configuration "$(jq -cn \
     --argjson subnets "$(tofu output -json control_task_subnet_ids)" \
-    --arg sg "$(tofu output -raw control_security_group_id)" \
+    --argjson securityGroups "$(tofu output -json control_task_security_group_ids)" \
     --arg assignPublicIp "$([ "$(tofu output -raw control_assign_public_ip)" = "true" ] && printf ENABLED || printf DISABLED)" \
-    '{awsvpcConfiguration:{subnets:$subnets,securityGroups:[$sg],assignPublicIp:$assignPublicIp}}')"
+    '{awsvpcConfiguration:{subnets:$subnets,securityGroups:$securityGroups,assignPublicIp:$assignPublicIp}}')"
 ```
 
 Worker resources are not created until `create_worker=true`. Build and publish a worker AMI that

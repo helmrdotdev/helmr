@@ -59,8 +59,8 @@ variable "clickhouse_url" {
   type        = string
 
   validation {
-    condition     = trimspace(var.clickhouse_url) != ""
-    error_message = "clickhouse_url must be non-empty."
+    condition     = can(regex("^https://[^<>[:space:]]+(:[0-9]+)?/?$", trimspace(var.clickhouse_url)))
+    error_message = "clickhouse_url must be an https URL without placeholder characters."
   }
 }
 
@@ -78,8 +78,19 @@ variable "clickhouse_password_secret_arn" {
   nullable    = true
 
   validation {
-    condition     = var.clickhouse_password_secret_arn == null || trimspace(var.clickhouse_password_secret_arn) != ""
-    error_message = "clickhouse_password_secret_arn must be null or a non-empty Secrets Manager ARN."
+    condition     = var.clickhouse_password_secret_arn == null || can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", trimspace(var.clickhouse_password_secret_arn)))
+    error_message = "clickhouse_password_secret_arn must be null or a Secrets Manager secret ARN."
+  }
+}
+
+variable "clickhouse_password_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs needed to decrypt clickhouse_password_secret_arn when it is not encrypted by this module's KMS key."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for arn in var.clickhouse_password_kms_key_arns : trimspace(arn) != ""])
+    error_message = "clickhouse_password_kms_key_arns entries must be non-empty KMS key ARNs."
   }
 }
 
@@ -474,6 +485,17 @@ variable "allowed_security_group_ids" {
   description = "Security groups allowed to connect to Postgres."
   type        = list(string)
   default     = []
+}
+
+variable "additional_control_security_group_ids" {
+  description = "Additional security groups attached to control, dispatcher, and migration tasks."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for id in var.additional_control_security_group_ids : trimspace(id) != ""])
+    error_message = "additional_control_security_group_ids entries must be non-empty security group IDs."
+  }
 }
 
 variable "tags" {
