@@ -22,6 +22,7 @@ DEV_STACK="${DEV_STACK:-${ROOT}/infra/aws/stacks/dev}"
 DEV_TFVARS_TEMPLATE="${DEV_TFVARS_TEMPLATE:-${DEV_STACK}/full-run-smoke.tfvars.example}"
 DEV_TFVARS="${DEV_TFVARS:-${DEV_STACK}/full-run-smoke.tfvars}"
 STATE_DIR="${STATE_DIR:-${ROOT}/.helmr-aws-dev-smoke}"
+CLICKHOUSE_ENV_FILE="${CLICKHOUSE_ENV_FILE:-${STATE_DIR}/clickhouse-cloud.env}"
 IMAGE_ARN_FILE="${STATE_DIR}/worker-image-build-version-arn"
 AMI_ID_FILE="${STATE_DIR}/worker-ami-id"
 AMI_IDS_FILE="${STATE_DIR}/worker-ami-ids.json"
@@ -68,6 +69,7 @@ Commands:
                        Update dev tfvars to keep worker resources but stop worker instances.
   dev-migrate           Run the ECS migration task for the dev stack.
   dev-destroy-prepare   Prepare an ephemeral dev stack for destroy.
+  dev-destroy           Prepare and destroy an ephemeral dev stack.
 
 Required environment:
   STATE_BUCKET          S3 bucket for Terraform/OpenTofu state; not needed for check/bootstrap-*.
@@ -78,7 +80,10 @@ Common optional environment:
   AWS_REGION            AWS region. Defaults to us-east-1.
   STATE_REGION          State bucket region. Defaults to AWS_REGION.
   TF_BIN                Terraform-compatible binary. Defaults to tofu.
+  CLICKHOUSE_ENV_FILE   Optional local env file for ClickHouse Cloud Terraform provider credentials.
+                        Defaults to .helmr-aws-dev-smoke/clickhouse-cloud.env.
   TOFU_APPLY_ARGS       Extra args for apply, for example "-auto-approve".
+  TOFU_DESTROY_ARGS     Extra args for destroy, for example "-auto-approve".
   SOURCE_BUNDLE_BUCKET  S3 artifact bucket for local source bundles. Defaults to bootstrap output.
 
 Worker image optional environment:
@@ -116,6 +121,20 @@ Dev optional environment:
                        Run control tasks in public subnets. Defaults to 1 for control mode.
   DEV_GITHUB_OAUTH_CLIENT_ID
                        Initial GitHub OAuth client ID placeholder. Defaults to placeholder.
+  DEV_CREATE_CLICKHOUSE_CLOUD
+                       Set to true to create ClickHouse Cloud, AWS PrivateLink, DNS, and password secret with Terraform.
+  DEV_CLICKHOUSE_ORGANIZATION_ID
+                       ClickHouse Cloud organization ID for Terraform-managed ClickHouse.
+  CLICKHOUSE_CLOUD_API_KEY
+                       ClickHouse Cloud API key ID for the Terraform provider when DEV_CREATE_CLICKHOUSE_CLOUD=true.
+  CLICKHOUSE_CLOUD_API_SECRET
+                       ClickHouse Cloud API key secret for the Terraform provider when DEV_CREATE_CLICKHOUSE_CLOUD=true.
+  DEV_CLICKHOUSE_CLOUD_SERVICE_NAME
+                       Optional ClickHouse Cloud service name. Defaults to <DEV_NAME>-telemetry.
+  DEV_CLICKHOUSE_CLOUD_REGION
+                       Optional ClickHouse Cloud AWS region. Defaults to AWS_REGION.
+  DEV_CLICKHOUSE_SECRET_KMS_KEY_ID
+                       Optional KMS key ID or ARN for the Terraform-managed ClickHouse password secret.
   DEV_CLICKHOUSE_URL   ClickHouse Cloud HTTPS endpoint for dev telemetry.
   DEV_CLICKHOUSE_USER  ClickHouse username. Defaults to default.
   DEV_CLICKHOUSE_PASSWORD_SECRET_ARN
@@ -145,6 +164,30 @@ info() {
   printf '==> %s\n' "$*" >&2
 }
 
+load_clickhouse_cloud_env() {
+  [ -f "${CLICKHOUSE_ENV_FILE}" ] || return 0
+  while IFS='=' read -r key value || [ -n "${key:-}" ]; do
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    case "${key}" in
+      ""|\#*) continue ;;
+    esac
+    value="${value%$'\r'}"
+    case "${value}" in
+      \"*\") value="${value#\"}"; value="${value%\"}" ;;
+      \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
+    case "${key}" in
+      CLICKHOUSE_CLOUD_API_KEY|CLICKHOUSE_CLOUD_API_SECRET|CLICKHOUSE_TOKEN_KEY|CLICKHOUSE_TOKEN_SECRET|DEV_CLICKHOUSE_*|DEV_CREATE_CLICKHOUSE_CLOUD)
+        if [ "${!key+x}" != "x" ]; then
+          export "${key}=${value}"
+        fi
+        ;;
+      *) die "${CLICKHOUSE_ENV_FILE} contains unsupported variable: ${key}" ;;
+    esac
+  done <"${CLICKHOUSE_ENV_FILE}"
+}
+
 need_command() {
   command -v "$1" >/dev/null 2>&1 || die "missing command: $1"
 }
@@ -155,6 +198,7 @@ need_state_bucket() {
 
 tf_init() {
   stack=$1
+  load_clickhouse_cloud_env
   need_state_bucket
   backend_args=(
     "-backend-config=bucket=${STATE_BUCKET}"
@@ -188,6 +232,27 @@ tf_apply() {
   fi
 }
 
+tf_destroy() {
+  stack=$1
+  shift
+  load_clickhouse_cloud_env
+  if [ -n "${TOFU_DESTROY_ARGS:-}" ]; then
+    had_noglob=0
+    case $- in
+      *f*) had_noglob=1 ;;
+    esac
+    # shellcheck disable=SC2206
+    set -f
+    extra_args=(${TOFU_DESTROY_ARGS})
+    if [ "${had_noglob}" != "1" ]; then
+      set +f
+    fi
+    "${TF_BIN}" -chdir="${stack}" destroy "${extra_args[@]}" "$@"
+  else
+    "${TF_BIN}" -chdir="${stack}" destroy "$@"
+  fi
+}
+
 check() {
   need_command "${TF_BIN}"
   need_command aws
@@ -216,22 +281,23 @@ bootstrap_output() {
 
 delete_all_s3_object_versions() {
   bucket=$1
+  bucket_region=${2:-${STATE_REGION}}
   mkdir -p "${STATE_DIR}"
   while :; do
     delete_file="$(mktemp "${STATE_DIR}/s3-delete.XXXXXX.json")"
     trap 'rm -f "${delete_file}"' RETURN
     aws s3api list-object-versions \
-      --region "${STATE_REGION}" \
+      --region "${bucket_region}" \
       --bucket "${bucket}" \
       --output json |
-      jq '{Objects: (((.Versions // []) + (.DeleteMarkers // [])) | map({Key, VersionId}))}' >"${delete_file}"
+      jq '{Objects: ((((.Versions // []) + (.DeleteMarkers // [])) | map({Key} + (if ((.VersionId // "") == "" or .VersionId == "null") then {} else {VersionId} end)))[:1000])}' >"${delete_file}"
     if [ "$(jq '.Objects | length' <"${delete_file}")" -eq 0 ]; then
       rm -f "${delete_file}"
       trap - RETURN
       break
     fi
     aws s3api delete-objects \
-      --region "${STATE_REGION}" \
+      --region "${bucket_region}" \
       --bucket "${bucket}" \
       --delete "file://${delete_file}" >/dev/null
     rm -f "${delete_file}"
@@ -680,6 +746,7 @@ EOF
 
 dev_apply() {
   [ -f "${DEV_TFVARS}" ] || die "${DEV_TFVARS} does not exist; run dev-tfvars and fill required values first"
+  load_clickhouse_cloud_env
   tf_apply "${DEV_STACK}" -var-file="${DEV_TFVARS}"
 }
 
@@ -773,14 +840,74 @@ tf_json_string_array_or_empty() {
 
 apply_dev_clickhouse_tfvars() {
   file=$1
-  [ -n "${DEV_CLICKHOUSE_URL:-}" ] || die "DEV_CLICKHOUSE_URL is required for dev tfvars generation"
-  [ -n "${DEV_CLICKHOUSE_PASSWORD_SECRET_ARN:-}" ] || die "DEV_CLICKHOUSE_PASSWORD_SECRET_ARN is required for dev tfvars generation"
+  load_clickhouse_cloud_env
+  create_clickhouse="${DEV_CREATE_CLICKHOUSE_CLOUD:-false}"
+  validate_tf_bool DEV_CREATE_CLICKHOUSE_CLOUD "${create_clickhouse}"
 
+  set_tfvar "${file}" "create_clickhouse_cloud" "${create_clickhouse}"
+  set_tfvar "${file}" "additional_control_security_group_ids" "$(tf_json_string_array_or_empty DEV_ADDITIONAL_CONTROL_SECURITY_GROUP_IDS)"
+
+  if [ "${create_clickhouse}" = "true" ]; then
+    [ -n "${DEV_CLICKHOUSE_ORGANIZATION_ID:-}" ] || die "DEV_CLICKHOUSE_ORGANIZATION_ID is required when DEV_CREATE_CLICKHOUSE_CLOUD=true"
+    if [ -z "${CLICKHOUSE_CLOUD_API_KEY:-}" ] || [ -z "${CLICKHOUSE_CLOUD_API_SECRET:-}" ]; then
+      if [ -n "${CLICKHOUSE_TOKEN_KEY:-}" ] && [ -n "${CLICKHOUSE_TOKEN_SECRET:-}" ]; then
+        info "using deprecated CLICKHOUSE_TOKEN_KEY/CLICKHOUSE_TOKEN_SECRET; prefer CLICKHOUSE_CLOUD_API_KEY/CLICKHOUSE_CLOUD_API_SECRET"
+      else
+        die "CLICKHOUSE_CLOUD_API_KEY and CLICKHOUSE_CLOUD_API_SECRET are required when DEV_CREATE_CLICKHOUSE_CLOUD=true"
+      fi
+    fi
+
+    set_tfvar "${file}" "clickhouse_organization_id" "$(tf_quote "${DEV_CLICKHOUSE_ORGANIZATION_ID}")"
+    unset_tfvar "${file}" "clickhouse_url"
+    unset_tfvar "${file}" "clickhouse_user"
+    unset_tfvar "${file}" "clickhouse_password_secret_arn"
+    unset_tfvar "${file}" "clickhouse_password_kms_key_arns"
+
+    if [ -n "${DEV_CLICKHOUSE_CLOUD_SERVICE_NAME:-}" ]; then
+      set_tfvar "${file}" "clickhouse_cloud_service_name" "$(tf_quote "${DEV_CLICKHOUSE_CLOUD_SERVICE_NAME}")"
+    else
+      unset_tfvar "${file}" "clickhouse_cloud_service_name"
+    fi
+    if [ -n "${DEV_CLICKHOUSE_CLOUD_REGION:-}" ]; then
+      set_tfvar "${file}" "clickhouse_cloud_region" "$(tf_quote "${DEV_CLICKHOUSE_CLOUD_REGION}")"
+    else
+      unset_tfvar "${file}" "clickhouse_cloud_region"
+    fi
+    if [ -n "${DEV_CLICKHOUSE_SECRET_KMS_KEY_ID:-}" ]; then
+      set_tfvar "${file}" "clickhouse_secret_kms_key_id" "$(tf_quote "${DEV_CLICKHOUSE_SECRET_KMS_KEY_ID}")"
+    else
+      unset_tfvar "${file}" "clickhouse_secret_kms_key_id"
+    fi
+    if [ -n "${DEV_CLICKHOUSE_MIN_REPLICA_MEMORY_GB:-}" ]; then
+      set_tfvar "${file}" "clickhouse_min_replica_memory_gb" "${DEV_CLICKHOUSE_MIN_REPLICA_MEMORY_GB}"
+    fi
+    if [ -n "${DEV_CLICKHOUSE_MAX_REPLICA_MEMORY_GB:-}" ]; then
+      set_tfvar "${file}" "clickhouse_max_replica_memory_gb" "${DEV_CLICKHOUSE_MAX_REPLICA_MEMORY_GB}"
+    fi
+    if [ -n "${DEV_CLICKHOUSE_IDLE_SCALING:-}" ]; then
+      validate_tf_bool DEV_CLICKHOUSE_IDLE_SCALING "${DEV_CLICKHOUSE_IDLE_SCALING}"
+      set_tfvar "${file}" "clickhouse_idle_scaling" "${DEV_CLICKHOUSE_IDLE_SCALING}"
+    fi
+    if [ -n "${DEV_CLICKHOUSE_IDLE_TIMEOUT_MINUTES:-}" ]; then
+      set_tfvar "${file}" "clickhouse_idle_timeout_minutes" "${DEV_CLICKHOUSE_IDLE_TIMEOUT_MINUTES}"
+    fi
+    if [ -n "${DEV_CLICKHOUSE_BACKUP_RETENTION_HOURS:-}" ]; then
+      set_tfvar "${file}" "clickhouse_backup_retention_period_in_hours" "${DEV_CLICKHOUSE_BACKUP_RETENTION_HOURS}"
+    fi
+    return
+  fi
+
+  [ -n "${DEV_CLICKHOUSE_URL:-}" ] || die "DEV_CLICKHOUSE_URL is required when DEV_CREATE_CLICKHOUSE_CLOUD=false"
+  [ -n "${DEV_CLICKHOUSE_PASSWORD_SECRET_ARN:-}" ] || die "DEV_CLICKHOUSE_PASSWORD_SECRET_ARN is required when DEV_CREATE_CLICKHOUSE_CLOUD=false"
+
+  unset_tfvar "${file}" "clickhouse_organization_id"
+  unset_tfvar "${file}" "clickhouse_cloud_service_name"
+  unset_tfvar "${file}" "clickhouse_cloud_region"
+  unset_tfvar "${file}" "clickhouse_secret_kms_key_id"
   set_tfvar "${file}" "clickhouse_url" "$(tf_quote "${DEV_CLICKHOUSE_URL}")"
   set_tfvar "${file}" "clickhouse_user" "$(tf_quote "${DEV_CLICKHOUSE_USER:-default}")"
   set_tfvar "${file}" "clickhouse_password_secret_arn" "$(tf_quote "${DEV_CLICKHOUSE_PASSWORD_SECRET_ARN}")"
   set_tfvar "${file}" "clickhouse_password_kms_key_arns" "$(tf_json_string_array_or_empty DEV_CLICKHOUSE_PASSWORD_KMS_KEY_ARNS)"
-  set_tfvar "${file}" "additional_control_security_group_ids" "$(tf_json_string_array_or_empty DEV_ADDITIONAL_CONTROL_SECURITY_GROUP_IDS)"
 }
 
 validate_tf_bool() {
@@ -955,7 +1082,14 @@ EOF
   else
     set_tfvar "${DEV_TFVARS}" "certificate_arn" "null"
   fi
-  set_tfvar "${DEV_TFVARS}" "allow_insecure_http" "${DEV_ALLOW_INSECURE_HTTP:-true}"
+  allow_insecure_http="${DEV_ALLOW_INSECURE_HTTP:-}"
+  if [ -z "${allow_insecure_http}" ]; then
+    case "${DEV_PUBLIC_URL:-http://localhost}" in
+      http://*) allow_insecure_http=true ;;
+      *) allow_insecure_http=false ;;
+    esac
+  fi
+  set_tfvar "${DEV_TFVARS}" "allow_insecure_http" "${allow_insecure_http}"
   set_tfvar "${DEV_TFVARS}" "enable_cloudfront" "${DEV_ENABLE_CLOUDFRONT:-false}"
   if [ "${DEV_ENABLE_CLOUDFRONT:-false}" = "true" ]; then
     [ -n "${DEV_CLOUDFRONT_ORIGIN_DOMAIN_NAME:-}" ] || die "DEV_CLOUDFRONT_ORIGIN_DOMAIN_NAME is required when DEV_ENABLE_CLOUDFRONT=true"
@@ -1220,11 +1354,15 @@ json_array_length() {
 }
 
 dev_destroy_prepare() {
+  need_command aws
+  need_command jq
   mkdir -p "${STATE_DIR}"
   name="${DEV_NAME:-helmr-smoke}"
   asg_name="${name}-worker"
   db_identifier="${name}-postgres"
   repository_name="${name}/control"
+  account_id="$(aws sts get-caller-identity --region "${AWS_REGION}" --query Account --output text)"
+  cas_bucket="${name}-${account_id}-${AWS_REGION}-cas"
 
   if aws autoscaling describe-auto-scaling-groups \
     --region "${AWS_REGION}" \
@@ -1298,6 +1436,16 @@ dev_destroy_prepare() {
     rm -f "${image_ids_file}"
     trap - RETURN
   fi
+
+  if aws s3api head-bucket --bucket "${cas_bucket}" >/dev/null 2>&1; then
+    delete_all_s3_object_versions "${cas_bucket}" "${AWS_REGION}"
+  fi
+}
+
+dev_destroy() {
+  [ -f "${DEV_TFVARS}" ] || die "${DEV_TFVARS} does not exist; run dev-base-tfvars/dev-control-tfvars first or set DEV_TFVARS"
+  dev_destroy_prepare
+  tf_destroy "${DEV_STACK}" -var-file="${DEV_TFVARS}"
 }
 
 command=${1:-}
@@ -1329,6 +1477,7 @@ case "${command}" in
   dev-worker-down-tfvars) dev_worker_down_tfvars ;;
   dev-migrate) dev_migrate ;;
   dev-destroy-prepare) dev_destroy_prepare ;;
+  dev-destroy) dev_destroy ;;
   -h|--help|help|"") usage ;;
   *) usage >&2; die "unknown command: ${command}" ;;
 esac

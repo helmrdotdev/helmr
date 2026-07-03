@@ -14,14 +14,19 @@ enable_cloudfront    = true
 cloudfront_origin_domain_name = "origin.helmr-smoke.example.com"
 github_oauth_client_id = "Iv1..."
 
-clickhouse_url  = "https://replace-me.clickhouse.cloud:8443"
-clickhouse_user = "default"
-clickhouse_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:replace-me"
-# When the ClickHouse password secret uses a customer-managed key outside this
-# stack, allow the control and dispatcher execution roles to decrypt it.
+create_clickhouse_cloud  = true
+clickhouse_organization_id = "<clickhouse-cloud-organization-id>"
+# Optional managed ClickHouse tuning:
+# clickhouse_cloud_service_name = "helmr-smoke-telemetry"
+# clickhouse_cloud_region       = "us-east-1"
+# clickhouse_secret_kms_key_id  = "arn:aws:kms:us-east-1:123456789012:key/replace-me"
+
+# To bring an existing ClickHouse service instead, set create_clickhouse_cloud=false
+# and provide its endpoint plus a Secrets Manager password secret ARN:
+# clickhouse_url                 = "https://replace-me.clickhouse.cloud:8443"
+# clickhouse_user                = "default"
+# clickhouse_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:replace-me"
 # clickhouse_password_kms_key_arns = ["<clickhouse-password-kms-key-arn>"]
-# When using the ClickHouse Cloud PrivateLink module, attach its client security
-# group to control, dispatcher, and migration tasks.
 # additional_control_security_group_ids = ["<clickhouse-client-security-group-id>"]
 
 control_assign_public_ip = false

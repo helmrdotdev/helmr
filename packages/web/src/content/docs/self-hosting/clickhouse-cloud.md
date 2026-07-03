@@ -39,7 +39,7 @@ provider "clickhouse" {
 }
 ```
 
-The provider reads API credentials from environment variables supported by the provider. Do not commit those values.
+Set `CLICKHOUSE_CLOUD_API_KEY` and `CLICKHOUSE_CLOUD_API_SECRET` in the shell or CI secret store that runs Terraform/OpenTofu. Do not commit those values.
 
 Compose the ClickHouse module beside the AWS network and control modules:
 
@@ -72,6 +72,8 @@ module "control" {
 ```
 
 The module uses PrivateLink only. If you intentionally use a public ClickHouse endpoint, do not use this module; pass `clickhouse_url`, `clickhouse_user`, and `clickhouse_password_secret_arn` to the control module directly.
+
+The repository's AWS dev stack can compose this module directly by setting `create_clickhouse_cloud=true` and `clickhouse_organization_id`. Customer self-host roots can either use the same composition or keep the module separate if their infrastructure repository has a different stack layout.
 
 ## State and Secrets
 
