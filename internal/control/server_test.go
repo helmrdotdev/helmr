@@ -344,6 +344,7 @@ func TestAPIRejectsUnsupportedAPIVersion(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "unsupported "+api.APIVersionHeader) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
+	requireErrorCode(t, rec.Body.Bytes(), "unsupported_api_version")
 }
 
 func TestWorkerLogsRejectOversizedRequestBody(t *testing.T) {

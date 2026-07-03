@@ -189,6 +189,7 @@ created_version AS (
     INSERT INTO workspace_versions (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         workspace_id,
@@ -207,6 +208,7 @@ created_version AS (
     )
     SELECT sqlc.arg(version_id),
            active_writer.org_id,
+           active_writer.cell_id,
            active_writer.project_id,
            active_writer.environment_id,
            active_writer.workspace_id,

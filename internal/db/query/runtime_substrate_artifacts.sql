@@ -2,6 +2,7 @@
 INSERT INTO runtime_substrate_artifacts (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     deployment_sandbox_id,
@@ -17,6 +18,7 @@ INSERT INTO runtime_substrate_artifacts (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(deployment_sandbox_id),

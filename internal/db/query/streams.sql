@@ -2,6 +2,7 @@
 INSERT INTO streams (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     session_id,
@@ -13,6 +14,7 @@ INSERT INTO streams (
 )
 SELECT sqlc.arg(id),
        sessions.org_id,
+       sessions.cell_id,
        sessions.project_id,
        sessions.environment_id,
        sessions.id,

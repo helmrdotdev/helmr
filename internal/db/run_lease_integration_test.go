@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -27,25 +28,25 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	baseVersionID := uuid.Must(uuid.NewV7())
 	baseDigest := "sha256:" + strings.Repeat("a", 64)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (digest, size_bytes, media_type)
-		VALUES ($1, 10, 'application/vnd.helmr.workspace.v0.tar')
+		INSERT INTO cas_objects (org_id, cell_id, digest, size_bytes, media_type)
+		VALUES ($1, $2, $3, 10, 'application/vnd.helmr.workspace.v0.tar')
 		ON CONFLICT DO NOTHING
-	`, baseDigest); err != nil {
+	`, ids.orgID, dbtest.DefaultCellID, baseDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4, $5, 'workspace_version', 10, 'application/vnd.helmr.workspace.v0.tar')
-	`, baseArtifactID, ids.orgID, ids.projectID, ids.environmentID, baseDigest); err != nil {
+		INSERT INTO artifacts (id, org_id, cell_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, $6, 'workspace_version', 10, 'application/vnd.helmr.workspace.v0.tar')
+	`, baseArtifactID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, baseDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, org_id, project_id, environment_id, workspace_id, artifact_id,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, artifact_id,
 			artifact_encoding, artifact_entry_count, content_digest, size_bytes, state, promoted_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'tar', 1, $7, 10, 'ready', now())
-	`, baseVersionID, ids.orgID, ids.projectID, ids.environmentID, workspaceID, baseArtifactID, baseDigest); err != nil {
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'tar', 1, $8, 10, 'ready', now())
+	`, baseVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, workspaceID, baseArtifactID, baseDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -79,15 +80,15 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, status, protocol_version,
+			id, org_id, cell_id, resource_id, worker_group_id, status, protocol_version,
 			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
 			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
 			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
-		VALUES ($1, $2, $3, 'active', $4,
+		VALUES ($1, $2, $3, $4, $5, 'active', $6,
 			1000, 1024, 4096, 1, 1000, 1024, 4096, 1,
-			$5, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, workerID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
+			$7, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, workerID, ids.orgID, dbtest.DefaultCellID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -99,9 +100,9 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
-		VALUES ($1, $2, $3, 1, 'queued')
-	`, winnerAttemptID, ids.orgID, ids.runID); err != nil {
+		INSERT INTO run_attempts (id, org_id, cell_id, run_id, attempt_number, status)
+		VALUES ($1, $2, $3, $4, 1, 'queued')
+	`, winnerAttemptID, ids.orgID, dbtest.DefaultCellID, ids.runID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -118,31 +119,31 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_runtime_requirements (
-			run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
+			run_id, org_id, cell_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
 			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
 		)
-		VALUES ($1, $2, 1, 1, 1, 1, $3, 'arm64', 'test',
-			'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default', $4)
-	`, ids.runID, ids.orgID, runtimeID, workerGroupID); err != nil {
+		VALUES ($1, $2, $3, 1, 1, 1, 1, $4, 'arm64', 'test',
+			'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default', $5)
+	`, ids.runID, ids.orgID, dbtest.DefaultCellID, runtimeID, workerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name, queue_timestamp,
 			max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task',
-			$8, 'queued', 'queued', '{}', 'default', now(), 300000,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'approval-task',
+			$9, 'queued', 'queued', '{}', 'default', now(), 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, loserRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
+	`, loserRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
-		VALUES ($1, $2, $3, 1, 'queued')
-	`, loserAttemptID, ids.orgID, loserRunID); err != nil {
+		INSERT INTO run_attempts (id, org_id, cell_id, run_id, attempt_number, status)
+		VALUES ($1, $2, $3, $4, 1, 'queued')
+	`, loserAttemptID, ids.orgID, dbtest.DefaultCellID, loserRunID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -156,22 +157,22 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_runtime_requirements (
-			run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
+			run_id, org_id, cell_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
 			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
 		)
-		VALUES ($1, $2, 1, 1, 1, 1, $3, 'arm64', 'test',
-			'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default', $4)
-	`, loserRunID, ids.orgID, runtimeID, workerGroupID); err != nil {
+		VALUES ($1, $2, $3, 1, 1, 1, 1, $4, 'arm64', 'test',
+			'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default', $5)
+	`, loserRunID, ids.orgID, dbtest.DefaultCellID, runtimeID, workerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_queue_items (
-			run_id, org_id, status, queue_name, dispatch_message_id,
+			run_id, org_id, cell_id, status, queue_name, dispatch_message_id,
 			reserved_by_worker_instance_id, reservation_expires_at
 		)
-		VALUES ($1, $2, 'reserved', 'default', $3, $4, now() + interval '1 hour')
-	`, loserRunID, ids.orgID, dispatchMessageID, workerID); err != nil {
+		VALUES ($1, $2, $3, 'reserved', 'default', $4, $5, now() + interval '1 hour')
+	`, loserRunID, ids.orgID, dbtest.DefaultCellID, dispatchMessageID, workerID); err != nil {
 		t.Fatal(err)
 	}
 	visible, err := queries.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
@@ -628,15 +629,15 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, status, protocol_version,
+			id, org_id, cell_id, resource_id, worker_group_id, status, protocol_version,
 			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
 			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
 			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
-		VALUES ($1, $2, $3, 'active', $4,
+		VALUES ($1, $2, $3, $4, $5, 'active', $6,
 			1000, 1024, 4096, 1, 1000, 1024, 4096, 1,
-			$5, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, workerID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
+			$7, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, workerID, ids.orgID, dbtest.DefaultCellID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -649,29 +650,30 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, org_id, project_id, environment_id, workspace_id, kind, state,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		SELECT $1, $2, $3, $4, $5, 'system', 'ready',
+		SELECT $1, $2, $3, $4, $5, $6, 'system', 'ready',
 		       artifacts.id, 'tar', 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
-		   AND artifacts.project_id = $3
-		   AND artifacts.environment_id = $4
-		   AND artifacts.id = $6
-	`, staleVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, staleArtifactID); err != nil {
+		   AND artifacts.cell_id = $3
+		   AND artifacts.project_id = $4
+		   AND artifacts.environment_id = $5
+		   AND artifacts.id = $7
+	`, staleVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, staleArtifactID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_mounts (
-			id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
 			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
 			workspace_artifact_id, workspace_artifact_encoding,
 			workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes,
 			workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, state,
 			mounted_at
 		)
-		SELECT $1, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
+		SELECT $1, workspaces.org_id, workspaces.cell_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
 		       deployment_sandboxes.id, workspaces.sandbox_fingerprint,
 		       image_artifact.id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest,
 		       deployment_sandboxes.image_digest, deployment_sandboxes.image_format,
@@ -708,32 +710,32 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_leases (
-			id, org_id, project_id, environment_id, workspace_id, workspace_mount_id,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id,
 			lease_kind, state, owner_run_id, base_version_id, acquired_version_id,
 			acquired_fencing_generation, fencing_token, expires_at, released_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'write', 'released', $7, $8, $8, 1,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'write', 'released', $8, $9, $9, 1,
 		        'stale-checkpoint-source-lease', now() + interval '1 hour', now())
-	`, sourceWorkspaceLeaseID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, workspaceMountID, ids.runID, staleVersionID); err != nil {
+	`, sourceWorkspaceLeaseID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, workspaceMountID, ids.runID, staleVersionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_checkpoints (
-			id, org_id, project_id, environment_id, workspace_id, run_id,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, run_id,
 			source_workspace_lease_id, workspace_mount_id, base_workspace_version_id,
 			state, runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, runtime_config_digest, cni_profile, manifest, ready_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-		        'ready', 'test', $10, 'arm64', 'test', 'sha256:kernel',
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+		        'ready', 'test', $11, 'arm64', 'test', 'sha256:kernel',
 		        'sha256:initramfs', 'sha256:rootfs', 'sha256:config', 'default', '{}', now())
-	`, staleCheckpointID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, ids.runID, sourceWorkspaceLeaseID, workspaceMountID, staleVersionID, runtimeID); err != nil {
+	`, staleCheckpointID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, ids.runID, sourceWorkspaceLeaseID, workspaceMountID, staleVersionID, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
-		VALUES ($1, $2, $3, 1, 'queued')
-	`, attemptID, ids.orgID, ids.runID); err != nil {
+		INSERT INTO run_attempts (id, org_id, cell_id, run_id, attempt_number, status)
+		VALUES ($1, $2, $3, $4, 1, 'queued')
+	`, attemptID, ids.orgID, dbtest.DefaultCellID, ids.runID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -753,22 +755,22 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_runtime_requirements (
-			run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
+			run_id, org_id, cell_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
 			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
 		)
-		VALUES ($1, $2, 1, 1, 1, 1, $3, 'arm64', 'test',
-			'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default', $4)
-	`, ids.runID, ids.orgID, runtimeID, workerGroupID); err != nil {
+		VALUES ($1, $2, $3, 1, 1, 1, 1, $4, 'arm64', 'test',
+			'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default', $5)
+	`, ids.runID, ids.orgID, dbtest.DefaultCellID, runtimeID, workerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_queue_items (
-			run_id, org_id, status, queue_name, dispatch_message_id,
+			run_id, org_id, cell_id, status, queue_name, dispatch_message_id,
 			reserved_by_worker_instance_id, reservation_expires_at
 		)
-		VALUES ($1, $2, 'reserved', 'default', $3, $4, now() + interval '1 hour')
-	`, ids.runID, ids.orgID, dispatchMessageID, workerID); err != nil {
+		VALUES ($1, $2, $3, 'reserved', 'default', $4, $5, now() + interval '1 hour')
+	`, ids.runID, ids.orgID, dbtest.DefaultCellID, dispatchMessageID, workerID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -825,9 +827,9 @@ func TestLeaseRunLeaseCreditsResidentRuntimeOnOneSlotWorker(t *testing.T) {
 	dispatchMessageID := "dispatch-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	attemptID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
-		VALUES ($1, $2, $3, 1, 'queued')
-	`, attemptID, ids.orgID, ids.runID); err != nil {
+		INSERT INTO run_attempts (id, org_id, cell_id, run_id, attempt_number, status)
+		VALUES ($1, $2, $3, $4, 1, 'queued')
+	`, attemptID, ids.orgID, dbtest.DefaultCellID, ids.runID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -844,11 +846,11 @@ func TestLeaseRunLeaseCreditsResidentRuntimeOnOneSlotWorker(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_runtime_requirements (
-			run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
+			run_id, org_id, cell_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
 			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
 		)
-		SELECT $1, $2, 1000, 1024, 4096, 1, worker_instances.runtime_id, worker_instances.runtime_arch,
+		SELECT $1, $2, worker_instances.cell_id, 1000, 1024, 4096, 1, worker_instances.runtime_id, worker_instances.runtime_arch,
 		       worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest,
 		       worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.worker_group_id
 		  FROM worker_instances
@@ -858,11 +860,11 @@ func TestLeaseRunLeaseCreditsResidentRuntimeOnOneSlotWorker(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_queue_items (
-			run_id, org_id, status, queue_name, dispatch_message_id,
+			run_id, org_id, cell_id, status, queue_name, dispatch_message_id,
 			reserved_by_worker_instance_id, reservation_expires_at
 		)
-		VALUES ($1, $2, 'reserved', 'default', $3, $4, now() + interval '1 hour')
-	`, ids.runID, ids.orgID, dispatchMessageID, workerID); err != nil {
+		VALUES ($1, $2, $3, 'reserved', 'default', $4, $5, now() + interval '1 hour')
+	`, ids.runID, ids.orgID, dbtest.DefaultCellID, dispatchMessageID, workerID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -902,9 +904,9 @@ func TestLeaseRunLeaseDoesNotReclaimCheckpointingResidentRuntime(t *testing.T) {
 	dispatchMessageID := "dispatch-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	attemptID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
-		VALUES ($1, $2, $3, 1, 'queued')
-	`, attemptID, ids.orgID, ids.runID); err != nil {
+		INSERT INTO run_attempts (id, org_id, cell_id, run_id, attempt_number, status)
+		VALUES ($1, $2, $3, $4, 1, 'queued')
+	`, attemptID, ids.orgID, dbtest.DefaultCellID, ids.runID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -921,11 +923,11 @@ func TestLeaseRunLeaseDoesNotReclaimCheckpointingResidentRuntime(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_runtime_requirements (
-			run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
+			run_id, org_id, cell_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
 			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
 		)
-		SELECT $1, $2, 1000, 1024, 4096, 1, worker_instances.runtime_id, worker_instances.runtime_arch,
+		SELECT $1, $2, worker_instances.cell_id, 1000, 1024, 4096, 1, worker_instances.runtime_id, worker_instances.runtime_arch,
 		       worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest,
 		       worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.worker_group_id
 		  FROM worker_instances
@@ -935,11 +937,11 @@ func TestLeaseRunLeaseDoesNotReclaimCheckpointingResidentRuntime(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_queue_items (
-			run_id, org_id, status, queue_name, dispatch_message_id,
+			run_id, org_id, cell_id, status, queue_name, dispatch_message_id,
 			reserved_by_worker_instance_id, reservation_expires_at
 		)
-		VALUES ($1, $2, 'reserved', 'default', $3, $4, now() + interval '1 hour')
-	`, ids.runID, ids.orgID, dispatchMessageID, workerID); err != nil {
+		VALUES ($1, $2, $3, 'reserved', 'default', $4, $5, now() + interval '1 hour')
+	`, ids.runID, ids.orgID, dbtest.DefaultCellID, dispatchMessageID, workerID); err != nil {
 		t.Fatal(err)
 	}
 	workspaceMountID := uuid.Must(uuid.NewV7())
@@ -1007,15 +1009,15 @@ func seedRuntimePressureWorker(t *testing.T, ctx context.Context, pool *pgxpool.
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, status, protocol_version,
+			id, org_id, cell_id, resource_id, worker_group_id, status, protocol_version,
 			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
 			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
 			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
-		VALUES ($1, $2, $3, 'active', $4,
-			$5, $6, $7, $8, $5, $6, $7, $8,
-			$9, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, workerID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, cpu, memory, disk, slots, runtimeID); err != nil {
+		VALUES ($1, $2, $3, $4, $5, 'active', $6,
+			$7, $8, $9, $10, $7, $8, $9, $10,
+			$11, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, workerID, ids.orgID, dbtest.DefaultCellID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, cpu, memory, disk, slots, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	return workerID
@@ -1026,15 +1028,15 @@ func seedResidentRuntimeWorkspaceMount(t *testing.T, ctx context.Context, pool *
 	runtimeInstanceID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		WITH mounted AS (
-			INSERT INTO workspace_mounts (
-				id, org_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
+				INSERT INTO workspace_mounts (
+					id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
 				base_version_id,
 				image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
 				workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count,
 				workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type,
 				workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, state, mounted_at
 			)
-			SELECT $1, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
+				SELECT $1, workspaces.org_id, workspaces.cell_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
 			       deployment_sandboxes.id, workspaces.sandbox_fingerprint,
 			       workspaces.current_version_id,
 			       image_artifact.id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest,
@@ -1070,8 +1072,8 @@ func seedResidentRuntimeWorkspaceMount(t *testing.T, ctx context.Context, pool *
 			RETURNING *
 		),
 		runtime AS (
-			INSERT INTO runtime_instances (
-				id, org_id, project_id, environment_id, worker_instance_id, runtime_release_id,
+				INSERT INTO runtime_instances (
+					id, org_id, cell_id, project_id, environment_id, worker_instance_id, runtime_release_id,
 				deployment_sandbox_id, runtime_key_hash, runtime_key, sandbox_fingerprint,
 				rootfs_digest, image_digest, image_format, sandbox_image_artifact_id,
 				sandbox_image_artifact_digest, sandbox_image_artifact_format, workspace_mount_path,
@@ -1079,7 +1081,7 @@ func seedResidentRuntimeWorkspaceMount(t *testing.T, ctx context.Context, pool *
 				reserved_disk_mib, reserved_execution_slots, workspace_mount_id, owner_workspace_id,
 				owner_workspace_version_id, state, instance_token, last_heartbeat_at, running_at
 			)
-				SELECT $4, mounted.org_id, mounted.project_id, mounted.environment_id, $5, worker_instances.runtime_id,
+					SELECT $4, mounted.org_id, mounted.cell_id, mounted.project_id, mounted.environment_id, $5, worker_instances.runtime_id,
 				       mounted.deployment_sandbox_id, 'resident-runtime-' || ($4::uuid)::text, '{}'::jsonb, mounted.sandbox_fingerprint,
 				       mounted.rootfs_digest, mounted.image_digest, mounted.image_format, mounted.image_artifact_id,
 				       mounted.image_digest, mounted.image_artifact_format, mounted.workspace_mount_path,

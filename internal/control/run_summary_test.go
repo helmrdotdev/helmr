@@ -316,6 +316,13 @@ func fakeRunSessionID(run db.Run) pgtype.UUID {
 	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000601"))
 }
 
+func fakeRunCellID(run db.Run) string {
+	if run.CellID != "" {
+		return run.CellID
+	}
+	return dbtest.DefaultCellID
+}
+
 func (f *fakeStore) GetRunSummary(_ context.Context, arg db.GetRunSummaryParams) (db.GetRunSummaryRow, error) {
 	if f.run.ID != arg.ID {
 		return db.GetRunSummaryRow{}, pgx.ErrNoRows
@@ -323,6 +330,7 @@ func (f *fakeStore) GetRunSummary(_ context.Context, arg db.GetRunSummaryParams)
 	return db.GetRunSummaryRow{
 		ID:               f.run.ID,
 		OrgID:            f.run.OrgID,
+		CellID:           fakeRunCellID(f.run),
 		ProjectID:        fakeRunProjectID(f.run),
 		EnvironmentID:    fakeRunEnvironmentID(f.run),
 		DeploymentID:     fakeRunDeploymentID(f.run),

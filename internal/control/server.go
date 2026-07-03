@@ -318,7 +318,10 @@ func (s *Server) requireCurrentAPIVersion(next http.Handler) http.Handler {
 		w.Header().Set(api.APIVersionHeader, api.CurrentAPIVersion)
 		requested := strings.TrimSpace(r.Header.Get(api.APIVersionHeader))
 		if requested != "" && requested != api.CurrentAPIVersion {
-			writeError(w, badRequest(fmt.Errorf("unsupported %s %q; current version is %s", api.APIVersionHeader, requested, api.CurrentAPIVersion)))
+			writeError(w, badRequest(codedError{
+				code:    "unsupported_api_version",
+				message: fmt.Sprintf("unsupported %s %q; current version is %s", api.APIVersionHeader, requested, api.CurrentAPIVersion),
+			}))
 			return
 		}
 		ctx := context.WithValue(r.Context(), apiVersionContextKey{}, api.CurrentAPIVersion)

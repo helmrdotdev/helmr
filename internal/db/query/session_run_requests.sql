@@ -2,6 +2,7 @@
 INSERT INTO session_run_requests (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     session_id,
@@ -11,6 +12,7 @@ INSERT INTO session_run_requests (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(session_id),

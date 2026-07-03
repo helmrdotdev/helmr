@@ -198,18 +198,24 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		if err := s.verifyDeploymentBuildArtifacts(r.Context(), casObjects); err != nil {
 			return failBuild(err.Error())
 		}
-		if _, err := work.q.GetDeploymentBuildLease(r.Context(), db.GetDeploymentBuildLeaseParams{
+		buildDeployment, err := work.q.GetDeploymentBuildLease(r.Context(), db.GetDeploymentBuildLeaseParams{
 			OrgID:                 orgID,
 			ProjectID:             projectID,
 			EnvironmentID:         environmentID,
 			ID:                    deploymentID,
 			BuildLeaseID:          pgtype.Text{String: strings.TrimSpace(request.Lease.ID), Valid: true},
 			BuildWorkerInstanceID: buildWorkerInstanceID,
-		}); isNoRows(err) {
+		})
+		if isNoRows(err) {
 			return conflict(errors.New("deployment build lease is stale"))
-		} else if err != nil {
+		}
+		if err != nil {
 			return errors.New("get deployment build lease")
 		}
+		if buildDeployment.CellID != worker.CellID {
+			return forbidden(errors.New("deployment build lease belongs to another cell"))
+		}
+		cellID := buildDeployment.CellID
 		workerState, err := work.q.GetWorkerInstanceState(r.Context(), buildWorkerInstanceID)
 		if isNoRows(err) {
 			return failBuild("deployment build worker instance was not found")
@@ -221,6 +227,8 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		for _, object := range casObjects {
 			casObjectByDigest[strings.TrimSpace(object.Digest)] = object
 			if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
+				OrgID:     orgID,
+				CellID:    cellID,
 				Digest:    object.Digest,
 				SizeBytes: object.SizeBytes,
 				MediaType: object.MediaType,
@@ -228,11 +236,11 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				return failBuild("record deployment build artifact: " + err.Error())
 			}
 		}
-		buildManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.BuildManifestDigest), db.ArtifactKindBuildManifest, casObjectByDigest)
+		buildManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, cellID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.BuildManifestDigest), db.ArtifactKindBuildManifest, casObjectByDigest)
 		if err != nil {
 			return failBuild("record build manifest artifact: " + err.Error())
 		}
-		deploymentManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.DeploymentManifestDigest), db.ArtifactKindDeploymentManifest, casObjectByDigest)
+		deploymentManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, cellID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.DeploymentManifestDigest), db.ArtifactKindDeploymentManifest, casObjectByDigest)
 		if err != nil {
 			return failBuild("record deployment manifest artifact: " + err.Error())
 		}
@@ -243,6 +251,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			if _, err := work.q.CreateDeploymentQueue(r.Context(), db.CreateDeploymentQueueParams{
 				ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:            orgID,
+				CellID:           cellID,
 				ProjectID:        projectID,
 				EnvironmentID:    environmentID,
 				DeploymentID:     deploymentID,
@@ -254,7 +263,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		}
 		deploymentSandboxIDs := map[string]pgtype.UUID{}
 		for _, task := range request.Result.Tasks {
-			bundleArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.BundleDigest), db.ArtifactKindTaskBundle, casObjectByDigest)
+			bundleArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, cellID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.BundleDigest), db.ArtifactKindTaskBundle, casObjectByDigest)
 			if err != nil {
 				return failBuild("record task bundle artifact: " + err.Error())
 			}
@@ -273,7 +282,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			sandboxID := strings.TrimSpace(task.SandboxID)
 			deploymentSandboxID, ok := deploymentSandboxIDs[sandboxID]
 			if !ok {
-				imageArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.SandboxImageArtifact.Digest), db.ArtifactKindSandboxImage, casObjectByDigest)
+				imageArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, cellID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.SandboxImageArtifact.Digest), db.ArtifactKindSandboxImage, casObjectByDigest)
 				if err != nil {
 					return failBuild("record deployment sandbox image artifact: " + err.Error())
 				}
@@ -301,6 +310,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				row, err := work.q.CreateDeploymentSandbox(r.Context(), db.CreateDeploymentSandboxParams{
 					ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 					OrgID:               orgID,
+					CellID:              cellID,
 					ProjectID:           projectID,
 					EnvironmentID:       environmentID,
 					DeploymentID:        deploymentID,
@@ -342,6 +352,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			if _, err := work.q.CreateDeploymentTask(r.Context(), db.CreateDeploymentTaskParams{
 				ID:                    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:                 orgID,
+				CellID:                cellID,
 				ProjectID:             projectID,
 				EnvironmentID:         environmentID,
 				DeploymentID:          deploymentID,
@@ -376,6 +387,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			if _, err := work.q.UpsertDeploymentStream(r.Context(), db.UpsertDeploymentStreamParams{
 				ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:             orgID,
+				CellID:            cellID,
 				ProjectID:         projectID,
 				EnvironmentID:     environmentID,
 				DeploymentID:      deploymentID,
@@ -533,7 +545,7 @@ func deploymentSandboxContractFingerprint(input deploymentSandboxContractFingerp
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-func createDeploymentBuildArtifact(ctx context.Context, queries db.Querier, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workerInstanceID pgtype.UUID, digest string, kind db.ArtifactKind, objects map[string]api.CASObject) (db.Artifact, error) {
+func createDeploymentBuildArtifact(ctx context.Context, queries db.Querier, orgID pgtype.UUID, cellID string, projectID pgtype.UUID, environmentID pgtype.UUID, workerInstanceID pgtype.UUID, digest string, kind db.ArtifactKind, objects map[string]api.CASObject) (db.Artifact, error) {
 	object, ok := objects[strings.TrimSpace(digest)]
 	if !ok {
 		return db.Artifact{}, fmt.Errorf("missing CAS object %s", digest)
@@ -541,6 +553,7 @@ func createDeploymentBuildArtifact(ctx context.Context, queries db.Querier, orgI
 	return queries.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     orgID,
+		CellID:                    cellID,
 		ProjectID:                 projectID,
 		EnvironmentID:             environmentID,
 		Digest:                    strings.TrimSpace(object.Digest),

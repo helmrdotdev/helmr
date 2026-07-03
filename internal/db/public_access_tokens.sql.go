@@ -58,6 +58,7 @@ const createPublicAccessToken = `-- name: CreatePublicAccessToken :one
 INSERT INTO public_access_tokens (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     token_hash,
@@ -73,9 +74,10 @@ VALUES (
     $4,
     $5,
     $6,
-    $7::integer,
-    COALESCE($8::jsonb, '{}'::jsonb),
-    COALESCE($9::jsonb, '{}'::jsonb)
+    $7,
+    $8::integer,
+    COALESCE($9::jsonb, '{}'::jsonb),
+    COALESCE($10::jsonb, '{}'::jsonb)
 )
 RETURNING id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
 `
@@ -83,6 +85,7 @@ RETURNING id, org_id, cell_id, project_id, environment_id, token_hash, state, me
 type CreatePublicAccessTokenParams struct {
 	ID            pgtype.UUID        `json:"id"`
 	OrgID         pgtype.UUID        `json:"org_id"`
+	CellID        string             `json:"cell_id"`
 	ProjectID     pgtype.UUID        `json:"project_id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	TokenHash     []byte             `json:"token_hash"`
@@ -96,6 +99,7 @@ func (q *Queries) CreatePublicAccessToken(ctx context.Context, arg CreatePublicA
 	row := q.db.QueryRow(ctx, createPublicAccessToken,
 		arg.ID,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.TokenHash,
@@ -131,6 +135,7 @@ const createPublicAccessTokenScope = `-- name: CreatePublicAccessTokenScope :one
 INSERT INTO public_access_token_scopes (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     public_access_token_id,
@@ -143,58 +148,59 @@ SELECT $1,
        $2,
        $3,
        $4,
+       $5,
        public_access_tokens.id,
-       $5::public_access_token_scope_type,
-       $6::uuid,
+       $6::public_access_token_scope_type,
        $7::uuid,
+       $8::uuid,
        CASE
-           WHEN $5::public_access_token_scope_type = 'token.complete' THEN ''
-           ELSE COALESCE($8::text, '')
+           WHEN $6::public_access_token_scope_type = 'token.complete' THEN ''
+           ELSE COALESCE($9::text, '')
        END
   FROM public_access_tokens
  WHERE public_access_tokens.org_id = $2
-   AND public_access_tokens.project_id = $3
-   AND public_access_tokens.environment_id = $4
-   AND public_access_tokens.id = $9
+   AND public_access_tokens.project_id = $4
+   AND public_access_tokens.environment_id = $5
+   AND public_access_tokens.id = $10
    AND (
        (
-           $5::public_access_token_scope_type = 'token.complete'
-           AND $6::uuid IS NOT NULL
-           AND $7::uuid IS NULL
+           $6::public_access_token_scope_type = 'token.complete'
+           AND $7::uuid IS NOT NULL
+           AND $8::uuid IS NULL
            AND EXISTS (
                SELECT 1
                  FROM tokens
                 WHERE tokens.org_id = $2
-                  AND tokens.project_id = $3
-                  AND tokens.environment_id = $4
-                  AND tokens.id = $6::uuid
+                  AND tokens.project_id = $4
+                  AND tokens.environment_id = $5
+                  AND tokens.id = $7::uuid
            )
        )
        OR (
-           $5::public_access_token_scope_type = 'session.input.send'
-           AND $6::uuid IS NULL
-           AND $7::uuid IS NOT NULL
+           $6::public_access_token_scope_type = 'session.input.send'
+           AND $7::uuid IS NULL
+           AND $8::uuid IS NOT NULL
            AND EXISTS (
                SELECT 1
                  FROM streams
                 WHERE streams.org_id = $2
-                  AND streams.project_id = $3
-                  AND streams.environment_id = $4
-                  AND streams.id = $7::uuid
+                  AND streams.project_id = $4
+                  AND streams.environment_id = $5
+                  AND streams.id = $8::uuid
                   AND streams.direction = 'input'
            )
        )
        OR (
-           $5::public_access_token_scope_type = 'session.output.read'
-           AND $6::uuid IS NULL
-           AND $7::uuid IS NOT NULL
+           $6::public_access_token_scope_type = 'session.output.read'
+           AND $7::uuid IS NULL
+           AND $8::uuid IS NOT NULL
            AND EXISTS (
                SELECT 1
                  FROM streams
                 WHERE streams.org_id = $2
-                  AND streams.project_id = $3
-                  AND streams.environment_id = $4
-                  AND streams.id = $7::uuid
+                  AND streams.project_id = $4
+                  AND streams.environment_id = $5
+                  AND streams.id = $8::uuid
                   AND streams.direction = 'output'
            )
        )
@@ -205,6 +211,7 @@ RETURNING id, org_id, cell_id, project_id, environment_id, public_access_token_i
 type CreatePublicAccessTokenScopeParams struct {
 	ID                  pgtype.UUID                `json:"id"`
 	OrgID               pgtype.UUID                `json:"org_id"`
+	CellID              string                     `json:"cell_id"`
 	ProjectID           pgtype.UUID                `json:"project_id"`
 	EnvironmentID       pgtype.UUID                `json:"environment_id"`
 	ScopeType           PublicAccessTokenScopeType `json:"scope_type"`
@@ -218,6 +225,7 @@ func (q *Queries) CreatePublicAccessTokenScope(ctx context.Context, arg CreatePu
 	row := q.db.QueryRow(ctx, createPublicAccessTokenScope,
 		arg.ID,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ScopeType,

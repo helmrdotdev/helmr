@@ -372,6 +372,7 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	if _, err := store.CreateSessionRun(ctx, db.CreateSessionRunParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         locked.OrgID,
+		CellID:        locked.CellID,
 		ProjectID:     locked.ProjectID,
 		EnvironmentID: locked.EnvironmentID,
 		SessionID:     locked.ID,

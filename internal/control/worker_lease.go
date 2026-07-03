@@ -478,6 +478,7 @@ func parseWorkerRunLease(lease api.WorkerRunLease) (workerRunLeaseIDs, error) {
 func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, leaseIDs workerRunLeaseIDs) (db.GetRunLeaseQueueLeaseRow, dispatch.Lease, error) {
 	row, err := s.db.GetRunLeaseQueueLease(ctx, db.GetRunLeaseQueueLeaseParams{
 		OrgID:            pgvalue.UUID(leaseIDs.orgID),
+		CellID:           worker.CellID,
 		RunID:            pgvalue.UUID(leaseIDs.runID),
 		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -506,6 +507,7 @@ func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, l
 func (s *Server) workerCurrentRunningLease(ctx context.Context, worker workerActor, leaseIDs workerRunLeaseIDs) (db.GetCurrentRunningRunLeaseRow, error) {
 	row, err := s.db.GetCurrentRunningRunLease(ctx, db.GetCurrentRunningRunLeaseParams{
 		OrgID:            pgvalue.UUID(leaseIDs.orgID),
+		CellID:           worker.CellID,
 		RunID:            pgvalue.UUID(leaseIDs.runID),
 		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),

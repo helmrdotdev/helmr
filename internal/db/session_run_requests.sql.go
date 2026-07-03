@@ -117,6 +117,7 @@ const ensureSessionRunRequestForStreamRecord = `-- name: EnsureSessionRunRequest
 INSERT INTO session_run_requests (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     session_id,
@@ -131,6 +132,7 @@ INSERT INTO session_run_requests (
     $5,
     $6,
     $7,
+    $8,
     'stream_record'
 )
 ON CONFLICT (org_id, project_id, environment_id, stream_record_id)
@@ -141,6 +143,7 @@ RETURNING id, org_id, cell_id, project_id, environment_id, session_id, stream_re
 type EnsureSessionRunRequestForStreamRecordParams struct {
 	ID             pgtype.UUID `json:"id"`
 	OrgID          pgtype.UUID `json:"org_id"`
+	CellID         string      `json:"cell_id"`
 	ProjectID      pgtype.UUID `json:"project_id"`
 	EnvironmentID  pgtype.UUID `json:"environment_id"`
 	SessionID      pgtype.UUID `json:"session_id"`
@@ -152,6 +155,7 @@ func (q *Queries) EnsureSessionRunRequestForStreamRecord(ctx context.Context, ar
 	row := q.db.QueryRow(ctx, ensureSessionRunRequestForStreamRecord,
 		arg.ID,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.SessionID,

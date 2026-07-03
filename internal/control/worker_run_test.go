@@ -1277,12 +1277,13 @@ func (f *fakeStore) GetRunLeaseQueueLease(_ context.Context, arg db.GetRunLeaseQ
 	if f.activeQueueLeaseMissing {
 		return db.GetRunLeaseQueueLeaseRow{}, pgx.ErrNoRows
 	}
-	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.CellID != dbtest.DefaultCellID {
 		return db.GetRunLeaseQueueLeaseRow{}, pgx.ErrNoRows
 	}
 	return db.GetRunLeaseQueueLeaseRow{
 		ID:                    f.sessionID,
 		RunID:                 f.run.ID,
+		CellID:                arg.CellID,
 		ProjectID:             fakeRunProjectID(f.run),
 		EnvironmentID:         fakeRunEnvironmentID(f.run),
 		WorkerInstanceID:      f.executionWorkerInstanceID,

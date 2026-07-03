@@ -783,9 +783,7 @@ func (p *PreparedRuntimePool) monitorReadyEntryLocked(key string, entry prepared
 	if p == nil || p.closed || entry.session == nil || entry.exit == nil {
 		return
 	}
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
+	p.wg.Go(func() {
 		err := entry.session.Wait(p.ctx)
 		entry.exit.finish(err)
 		entry.ready.finish(preparedRuntimeExitCause(err))
@@ -793,7 +791,7 @@ func (p *PreparedRuntimePool) monitorReadyEntryLocked(key string, entry prepared
 			return
 		}
 		p.removeReadyEntryAndFail(key, entry, preparedRuntimeExitCause(err), false)
-	}()
+	})
 }
 
 func preparedRuntimeExitCause(err error) error {

@@ -25,6 +25,7 @@ inserted AS (
     INSERT INTO workspace_mounts (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         workspace_id,
@@ -52,6 +53,7 @@ inserted AS (
     )
     SELECT sqlc.arg(id),
            workspaces.org_id,
+           workspaces.cell_id,
            workspaces.project_id,
            workspaces.environment_id,
            workspaces.id,
@@ -300,14 +302,17 @@ SELECT workspace_mounts.*
   FROM workspace_mounts
   JOIN runtime_instances
     ON runtime_instances.org_id = workspace_mounts.org_id
+   AND runtime_instances.cell_id = workspace_mounts.cell_id
    AND runtime_instances.id = workspace_mounts.runtime_instance_id
  WHERE workspace_mounts.org_id = sqlc.arg(org_id)
+   AND workspace_mounts.cell_id = sqlc.arg(cell_id)
    AND workspace_mounts.project_id = sqlc.arg(project_id)
    AND workspace_mounts.environment_id = sqlc.arg(environment_id)
    AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
    AND workspace_mounts.id = sqlc.arg(id)
    AND workspace_mounts.state IN ('mounted', 'unmounting')
    AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND runtime_instances.cell_id = sqlc.arg(cell_id)
    AND runtime_instances.instance_token = sqlc.arg(runtime_instance_token)
    AND runtime_instances.workspace_mount_id = workspace_mounts.id
    AND runtime_instances.state IN ('running', 'waiting_hot', 'checkpointing', 'stopping')
@@ -408,6 +413,7 @@ active_runtime_instance_usage AS MATERIALIZED (
 candidate AS (
     SELECT workspace_mounts.id,
            workspace_mounts.org_id,
+           workspace_mounts.cell_id,
            workspace_mounts.project_id,
            workspace_mounts.environment_id,
            workspace_mounts.workspace_id,
@@ -590,6 +596,7 @@ cold_runtime_instance AS (
     INSERT INTO runtime_instances (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         worker_instance_id,
@@ -623,6 +630,7 @@ cold_runtime_instance AS (
     )
     SELECT sqlc.arg(runtime_instance_id),
            candidate.org_id,
+           candidate.cell_id,
            candidate.project_id,
            candidate.environment_id,
            sqlc.arg(worker_instance_id),
@@ -1178,6 +1186,7 @@ created_version AS (
     INSERT INTO workspace_versions (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         workspace_id,
@@ -1196,6 +1205,7 @@ created_version AS (
     )
     SELECT sqlc.arg(version_id),
            target.org_id,
+           target.cell_id,
            target.project_id,
            target.environment_id,
            target.workspace_id,

@@ -391,11 +391,13 @@ current_run_lease AS (
       JOIN run_attempts ON run_attempts.org_id = run_leases.org_id
                        AND run_attempts.run_id = run_leases.run_id
                        AND run_attempts.id = run_leases.attempt_id
-     WHERE runs.org_id = $3
-       AND runs.id = $4
-       AND runs.status = 'running'
-       AND run_leases.id = $5
-       AND run_leases.worker_instance_id = $6
+	     WHERE runs.org_id = $3
+	       AND runs.cell_id = $4
+	       AND runs.id = $5
+	       AND runs.status = 'running'
+	       AND run_leases.cell_id = $4
+	       AND run_leases.id = $6
+       AND run_leases.worker_instance_id = $7
        AND run_leases.status IN ('leased', 'running')
        AND run_leases.lease_expires_at > now()
 ),
@@ -487,6 +489,7 @@ type AppendRunEventForExecutionParams struct {
 	Kind             string      `json:"kind"`
 	Payload          []byte      `json:"payload"`
 	OrgID            pgtype.UUID `json:"org_id"`
+	CellID           string      `json:"cell_id"`
 	RunID            pgtype.UUID `json:"run_id"`
 	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
@@ -528,6 +531,7 @@ func (q *Queries) AppendRunEventForExecution(ctx context.Context, arg AppendRunE
 		arg.Kind,
 		arg.Payload,
 		arg.OrgID,
+		arg.CellID,
 		arg.RunID,
 		arg.RunLeaseID,
 		arg.WorkerInstanceID,

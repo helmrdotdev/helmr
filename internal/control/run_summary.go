@@ -12,6 +12,7 @@ import (
 type runSummary struct {
 	ID                   pgtype.UUID
 	OrgID                pgtype.UUID
+	CellID               string
 	ProjectID            pgtype.UUID
 	EnvironmentID        pgtype.UUID
 	DeploymentID         pgtype.UUID
@@ -39,6 +40,7 @@ func createScopedRunSummary(run db.CreateScopedRunRow) runSummary {
 	return runSummary{
 		ID:                   run.ID,
 		OrgID:                run.OrgID,
+		CellID:               run.CellID,
 		ProjectID:            run.ProjectID,
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
@@ -67,6 +69,7 @@ func getRunSummary(run db.GetRunSummaryRow) runSummary {
 	return runSummary{
 		ID:                   run.ID,
 		OrgID:                run.OrgID,
+		CellID:               run.CellID,
 		ProjectID:            run.ProjectID,
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
@@ -95,6 +98,7 @@ func listScopedRunSummary(run db.ListScopedRunSummariesRow) runSummary {
 	return runSummary{
 		ID:                   run.ID,
 		OrgID:                run.OrgID,
+		CellID:               run.CellID,
 		ProjectID:            run.ProjectID,
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
@@ -123,6 +127,7 @@ func cancelRunSummary(run db.CancelRunRow) runSummary {
 	return runSummary{
 		ID:                   run.ID,
 		OrgID:                run.OrgID,
+		CellID:               run.CellID,
 		ProjectID:            run.ProjectID,
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,

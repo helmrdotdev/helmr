@@ -165,6 +165,7 @@ func createRunOperationWithStore(ctx context.Context, store db.Querier, actor au
 	return store.CreateRunOperation(ctx, db.CreateRunOperationParams{
 		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          run.OrgID,
+		CellID:         run.CellID,
 		ProjectID:      run.ProjectID,
 		EnvironmentID:  run.EnvironmentID,
 		RunID:          run.ID,

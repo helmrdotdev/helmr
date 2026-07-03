@@ -15,6 +15,7 @@ const createStreamWait = `-- name: CreateStreamWait :one
 INSERT INTO stream_waits (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     run_wait_id,
@@ -24,6 +25,7 @@ INSERT INTO stream_waits (
 )
 SELECT $1,
        run_waits.org_id,
+       run_waits.cell_id,
        run_waits.project_id,
        run_waits.environment_id,
        run_waits.id,

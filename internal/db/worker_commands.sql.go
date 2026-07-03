@@ -486,6 +486,7 @@ victim AS (
 )
 INSERT INTO worker_commands (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     run_id,
@@ -499,6 +500,7 @@ INSERT INTO worker_commands (
     payload
 )
 SELECT victim.org_id,
+       victim.cell_id,
        victim.project_id,
        victim.environment_id,
        victim.run_id,
@@ -631,6 +633,7 @@ WITH due AS (
 )
 INSERT INTO worker_commands (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     run_id,
@@ -644,6 +647,7 @@ INSERT INTO worker_commands (
     payload
 )
 SELECT due.org_id,
+       due.cell_id,
        due.project_id,
        due.environment_id,
        due.run_id,
@@ -769,6 +773,7 @@ WITH due AS (
 )
 INSERT INTO worker_commands (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     run_id,
@@ -782,6 +787,7 @@ INSERT INTO worker_commands (
     payload
 )
 SELECT due.org_id,
+       due.cell_id,
        due.project_id,
        due.environment_id,
        due.run_id,
@@ -932,6 +938,7 @@ WITH resolved AS (
 )
 INSERT INTO worker_commands (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     run_id,
@@ -945,6 +952,7 @@ INSERT INTO worker_commands (
     payload
 )
 SELECT resolved.org_id,
+       resolved.cell_id,
        resolved.project_id,
        resolved.environment_id,
        resolved.run_id,
@@ -1017,6 +1025,7 @@ func (q *Queries) CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx context.
 const createWorkerCommand = `-- name: CreateWorkerCommand :one
 INSERT INTO worker_commands (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     run_id,
@@ -1037,18 +1046,20 @@ INSERT INTO worker_commands (
     $5,
     $6,
     $7,
-    $8::uuid,
+    $8,
     $9::uuid,
-    $10::bigint,
-    $11,
-    $12::worker_command_kind,
-    COALESCE($13::jsonb, '{}'::jsonb)
+    $10::uuid,
+    $11::bigint,
+    $12,
+    $13::worker_command_kind,
+    COALESCE($14::jsonb, '{}'::jsonb)
 )
 RETURNING id, org_id, cell_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
 `
 
 type CreateWorkerCommandParams struct {
 	OrgID               pgtype.UUID       `json:"org_id"`
+	CellID              string            `json:"cell_id"`
 	ProjectID           pgtype.UUID       `json:"project_id"`
 	EnvironmentID       pgtype.UUID       `json:"environment_id"`
 	RunID               pgtype.UUID       `json:"run_id"`
@@ -1066,6 +1077,7 @@ type CreateWorkerCommandParams struct {
 func (q *Queries) CreateWorkerCommand(ctx context.Context, arg CreateWorkerCommandParams) (WorkerCommand, error) {
 	row := q.db.QueryRow(ctx, createWorkerCommand,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.RunID,

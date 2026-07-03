@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
+	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -93,7 +94,24 @@ func main() {
 		log.Error("ping redis", "error", err)
 		os.Exit(1)
 	}
-	telemetryReader := telemetry.NewCompositeReader(telemetry.NewHotReader(queries), nil)
+	clickHouseConfig := clickhouse.Config{
+		URL:      cfg.clickHouseURL,
+		User:     cfg.clickHouseUser,
+		Password: cfg.clickHousePassword,
+	}
+	if err := clickhouseschema.Up(ctx, clickHouseConfig); err != nil {
+		log.Error("migrate clickhouse", "error", err)
+		os.Exit(1)
+	}
+	clickHouseClient, err := clickhouse.New(clickHouseConfig)
+	if err != nil {
+		log.Error("configure clickhouse", "error", err)
+		os.Exit(1)
+	}
+	telemetryReader := telemetry.NewCompositeReader(
+		telemetry.NewHotReader(queries),
+		telemetry.NewHistoricalReader(clickHouseClient),
+	)
 	eventStream, err := control.NewEventStream(log, queries, redisClient, control.EventStreamConfig{
 		CellID:          cfg.cellID,
 		TelemetryReader: telemetryReader,
@@ -102,25 +120,10 @@ func main() {
 		log.Error("configure event stream", "error", err)
 		os.Exit(1)
 	}
-	if cfg.clickHouseURL != "" {
-		clickHouseClient, err := clickhouse.New(clickhouse.Config{
-			URL:      cfg.clickHouseURL,
-			User:     cfg.clickHouseUser,
-			Password: cfg.clickHousePassword,
-		})
-		if err != nil {
-			log.Error("configure clickhouse", "error", err)
-			os.Exit(1)
-		}
-		telemetryReader = telemetry.NewCompositeReader(telemetry.NewHotReader(queries), telemetry.NewHistoricalReader(clickHouseClient))
-		eventStream, err = control.NewEventStream(log, queries, redisClient, control.EventStreamConfig{
-			CellID:          cfg.cellID,
-			TelemetryReader: telemetryReader,
-		})
-		if err != nil {
-			log.Error("configure event stream", "error", err)
-			os.Exit(1)
-		}
+	telemetryIngestor, err := telemetry.NewIngestor(log, queries, telemetry.NewClickHouseWriter(clickHouseClient))
+	if err != nil {
+		log.Error("configure telemetry ingester", "error", err)
+		os.Exit(1)
 	}
 	workspaceStreams, err := control.NewWorkspaceStreamNotifier(log, queries, redisClient)
 	if err != nil {
@@ -145,6 +148,11 @@ func main() {
 	go func() {
 		if err := workerCommands.RunPublisher(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("worker command stream publisher stopped", "error", err)
+		}
+	}()
+	go func() {
+		if err := telemetryIngestor.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("telemetry ingester stopped", "error", err)
 		}
 	}()
 	keyring, err := secret.KeyringFromBase64(cfg.secretEncryptionKey, cfg.secretEncryptionKeyOld)
@@ -269,6 +277,9 @@ func loadConfig() (devConfig, error) {
 	}
 	if cfg.databaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
+	}
+	if cfg.clickHouseURL == "" {
+		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
 	}
 	if err := auth.ValidateTokenSecret([]byte(cfg.authSecret)); err != nil {
 		return cfg, err

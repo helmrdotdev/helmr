@@ -15,5 +15,9 @@ func parseTelemetryCursor(raw string) (int64, error) {
 	if value == "" {
 		return 0, nil
 	}
-	return telemetry.ParseCursor(value)
+	seq, err := telemetry.ParseCursor(value)
+	if err != nil {
+		return 0, errTelemetryInvalidCursor
+	}
+	return seq, nil
 }

@@ -95,7 +95,7 @@ updated_schedule AS (
        AND task_schedules.project_id = $2
        AND task_schedules.id = existing_schedule.id
        AND task_schedules.schedule_type = 'declarative'
-    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.created_at, task_schedules.updated_at,
+    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.cell_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.created_at, task_schedules.updated_at,
               (
                   existing_schedule.cron IS DISTINCT FROM $6
                   OR existing_schedule.timezone IS DISTINCT FROM $7
@@ -105,6 +105,7 @@ inserted_schedule AS (
     INSERT INTO task_schedules (
         id,
         org_id,
+        cell_id,
         project_id,
         schedule_type,
         task_id,
@@ -116,6 +117,7 @@ inserted_schedule AS (
     )
     SELECT $8,
            $1,
+           $9,
            $2,
            'declarative',
            $4,
@@ -126,48 +128,51 @@ inserted_schedule AS (
            true
       FROM schedule_lock
      WHERE NOT EXISTS (SELECT 1 FROM updated_schedule)
-    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at,
+    RETURNING id, org_id, cell_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at,
               false AS timing_changed
 ),
 schedule AS (
-    SELECT id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at, timing_changed
+    SELECT id, org_id, cell_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at, timing_changed
       FROM updated_schedule
     UNION ALL
-    SELECT id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at, timing_changed
+    SELECT id, org_id, cell_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at, timing_changed
       FROM inserted_schedule
 ),
 instance_inputs AS (
-    SELECT $9 AS id,
-	           schedule.id AS schedule_id,
-	           schedule.org_id,
-	           schedule.project_id,
-	           $10::uuid AS environment_id,
+    SELECT $10 AS id,
+		           schedule.id AS schedule_id,
+		           schedule.org_id,
+		           schedule.cell_id,
+		           schedule.project_id,
+	           $11::uuid AS environment_id,
 	           schedule.task_id,
-	           $11::jsonb AS run_options,
-           $12 AS active,
-           CASE WHEN $12 THEN $13::timestamptz ELSE NULL END AS next_fire_at
+	           $12::jsonb AS run_options,
+           $13 AS active,
+           CASE WHEN $13 THEN $14::timestamptz ELSE NULL END AS next_fire_at
       FROM schedule
     UNION ALL
     SELECT uuidv7() AS id,
-	           task_schedule_instances.schedule_id,
-	           task_schedule_instances.org_id,
-	           task_schedule_instances.project_id,
+		           task_schedule_instances.schedule_id,
+		           task_schedule_instances.org_id,
+		           task_schedule_instances.cell_id,
+		           task_schedule_instances.project_id,
 	           task_schedule_instances.environment_id,
 	           schedule.task_id,
 	           task_schedule_instances.run_options,
            task_schedule_instances.active,
-           CASE WHEN task_schedule_instances.active THEN $13::timestamptz ELSE NULL END AS next_fire_at
+           CASE WHEN task_schedule_instances.active THEN $14::timestamptz ELSE NULL END AS next_fire_at
       FROM task_schedule_instances
       JOIN schedule ON schedule.id = task_schedule_instances.schedule_id
-     WHERE task_schedule_instances.environment_id <> $10
+     WHERE task_schedule_instances.environment_id <> $11
        AND schedule.timing_changed
 ),
 instances AS (
     INSERT INTO task_schedule_instances (
         id,
-	        schedule_id,
-	        org_id,
-	        project_id,
+		        schedule_id,
+		        org_id,
+		        cell_id,
+		        project_id,
 	        environment_id,
 	        task_id,
 	        run_options,
@@ -175,9 +180,10 @@ instances AS (
         next_fire_at
     )
     SELECT id,
-	           schedule_id,
-	           org_id,
-	           project_id,
+		           schedule_id,
+		           org_id,
+		           cell_id,
+		           project_id,
 	           environment_id,
 	           task_id,
 	           run_options,
@@ -201,7 +207,7 @@ instances AS (
 instance AS (
     SELECT id, schedule_id, org_id, project_id, environment_id, run_options, active, generation, next_fire_at, last_fire_at, retry_after, trigger_attempt_count, trigger_error_kind, trigger_error_message, last_trigger_run_id, created_at, updated_at
       FROM instances
-     WHERE environment_id = $10
+     WHERE environment_id = $11
 )
 SELECT schedule.id AS schedule_id,
        instance.id AS instance_id,
@@ -241,6 +247,7 @@ type CreateDeclarativeScheduleParams struct {
 	Cron          string             `json:"cron"`
 	Timezone      string             `json:"timezone"`
 	ScheduleID    pgtype.UUID        `json:"schedule_id"`
+	CellID        string             `json:"cell_id"`
 	InstanceID    pgtype.UUID        `json:"instance_id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	RunOptions    []byte             `json:"run_options"`
@@ -286,6 +293,7 @@ func (q *Queries) CreateDeclarativeSchedule(ctx context.Context, arg CreateDecla
 		arg.Cron,
 		arg.Timezone,
 		arg.ScheduleID,
+		arg.CellID,
 		arg.InstanceID,
 		arg.EnvironmentID,
 		arg.RunOptions,
@@ -362,7 +370,7 @@ updated_schedule AS (
        AND task_schedules.project_id = $2
        AND task_schedules.id = existing_schedule.id
        AND task_schedules.schedule_type = 'imperative'
-    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.created_at, task_schedules.updated_at,
+    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.cell_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.created_at, task_schedules.updated_at,
               (
                   existing_schedule.cron IS DISTINCT FROM $7
                   OR existing_schedule.timezone IS DISTINCT FROM $8
@@ -372,6 +380,7 @@ inserted_schedule AS (
     INSERT INTO task_schedules (
         id,
         org_id,
+        cell_id,
         project_id,
         schedule_type,
         task_id,
@@ -384,8 +393,9 @@ inserted_schedule AS (
     )
     SELECT $9,
            $1,
+           $10,
            $2,
-           $10::task_schedule_type,
+           $11::task_schedule_type,
            $5,
            $4,
            $3,
@@ -395,48 +405,51 @@ inserted_schedule AS (
            true
       FROM schedule_lock
      WHERE NOT EXISTS (SELECT 1 FROM updated_schedule)
-    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at,
+    RETURNING id, org_id, cell_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at,
               false AS timing_changed
 ),
 schedule AS (
-    SELECT id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at, timing_changed
+    SELECT id, org_id, cell_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at, timing_changed
       FROM updated_schedule
     UNION ALL
-    SELECT id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at, timing_changed
+    SELECT id, org_id, cell_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at, timing_changed
       FROM inserted_schedule
 ),
 instance_inputs AS (
-    SELECT $11 AS id,
-	           schedule.id AS schedule_id,
-	           schedule.org_id,
-	           schedule.project_id,
-	           $12::uuid AS environment_id,
+    SELECT $12 AS id,
+		           schedule.id AS schedule_id,
+		           schedule.org_id,
+		           schedule.cell_id,
+		           schedule.project_id,
+	           $13::uuid AS environment_id,
 	           schedule.task_id,
-	           $13::jsonb AS run_options,
-           $14 AS active,
-           CASE WHEN $14 THEN $15::timestamptz ELSE NULL END AS next_fire_at
+	           $14::jsonb AS run_options,
+           $15 AS active,
+           CASE WHEN $15 THEN $16::timestamptz ELSE NULL END AS next_fire_at
       FROM schedule
     UNION ALL
     SELECT uuidv7() AS id,
-	           task_schedule_instances.schedule_id,
-	           task_schedule_instances.org_id,
-	           task_schedule_instances.project_id,
+		           task_schedule_instances.schedule_id,
+		           task_schedule_instances.org_id,
+		           task_schedule_instances.cell_id,
+		           task_schedule_instances.project_id,
 	           task_schedule_instances.environment_id,
 	           schedule.task_id,
 	           task_schedule_instances.run_options,
 	           task_schedule_instances.active,
-           CASE WHEN task_schedule_instances.active THEN $15::timestamptz ELSE NULL END AS next_fire_at
+           CASE WHEN task_schedule_instances.active THEN $16::timestamptz ELSE NULL END AS next_fire_at
       FROM task_schedule_instances
       JOIN schedule ON schedule.id = task_schedule_instances.schedule_id
-     WHERE task_schedule_instances.environment_id <> $12
+     WHERE task_schedule_instances.environment_id <> $13
        AND schedule.timing_changed
 ),
 instances AS (
     INSERT INTO task_schedule_instances (
         id,
-	        schedule_id,
-	        org_id,
-	        project_id,
+		        schedule_id,
+		        org_id,
+		        cell_id,
+		        project_id,
 	        environment_id,
 	        task_id,
 	        run_options,
@@ -444,9 +457,10 @@ instances AS (
         next_fire_at
     )
     SELECT id,
-	           schedule_id,
-	           org_id,
-	           project_id,
+		           schedule_id,
+		           org_id,
+		           cell_id,
+		           project_id,
 	           environment_id,
 	           task_id,
 	           run_options,
@@ -470,7 +484,7 @@ instances AS (
 instance AS (
     SELECT id, schedule_id, org_id, project_id, environment_id, run_options, active, generation, next_fire_at, last_fire_at, retry_after, trigger_attempt_count, trigger_error_kind, trigger_error_message, last_trigger_run_id, created_at, updated_at
       FROM instances
-     WHERE environment_id = $12
+     WHERE environment_id = $13
 )
 SELECT schedule.id AS schedule_id,
        instance.id AS instance_id,
@@ -511,6 +525,7 @@ type CreateScheduleParams struct {
 	Cron          string             `json:"cron"`
 	Timezone      string             `json:"timezone"`
 	ScheduleID    pgtype.UUID        `json:"schedule_id"`
+	CellID        string             `json:"cell_id"`
 	ScheduleType  TaskScheduleType   `json:"schedule_type"`
 	InstanceID    pgtype.UUID        `json:"instance_id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
@@ -558,6 +573,7 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		arg.Cron,
 		arg.Timezone,
 		arg.ScheduleID,
+		arg.CellID,
 		arg.ScheduleType,
 		arg.InstanceID,
 		arg.EnvironmentID,

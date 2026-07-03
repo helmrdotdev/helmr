@@ -63,6 +63,7 @@ func (s *Server) workerStopWorkspaceMountTransition(ctx context.Context, orgID s
 
 type workerWorkspaceMountTransitionIDs struct {
 	OrgID                pgtype.UUID
+	CellID               string
 	ID                   pgtype.UUID
 	WorkerInstanceID     pgtype.UUID
 	RuntimeInstanceToken string
@@ -112,6 +113,7 @@ func workerWorkspaceMountTransitionParams(ctx context.Context, orgID string, wor
 	worker := workerFromContext(ctx)
 	return workerWorkspaceMountTransitionIDs{
 		OrgID:                pgvalue.UUID(orgUUID),
+		CellID:               worker.CellID,
 		ID:                   pgvalue.UUID(id),
 		WorkerInstanceID:     pgvalue.UUID(worker.WorkerInstanceID),
 		RuntimeInstanceToken: token,

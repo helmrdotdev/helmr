@@ -3,6 +3,7 @@ package db_test
 import (
 	"bytes"
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 		Kind:             "run.log",
 		Payload:          []byte(`{"stream":"stdout"}`),
 		OrgID:            pgvalue.UUID(ids.orgID),
+		CellID:           testCellID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
@@ -38,6 +40,7 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 		Kind:             "run.log",
 		Payload:          []byte(`{"stream":"stdout"}`),
 		OrgID:            pgvalue.UUID(ids.orgID),
+		CellID:           testCellID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
@@ -55,6 +58,7 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 		Kind:             "run.log",
 		Payload:          []byte(`{"stream":"stderr"}`),
 		OrgID:            pgvalue.UUID(ids.orgID),
+		CellID:           testCellID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
@@ -72,6 +76,7 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 		Kind:             "run.log",
 		Payload:          []byte(`{"stream":"stdout"}`),
 		OrgID:            pgvalue.UUID(ids.orgID),
+		CellID:           testCellID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
@@ -224,10 +229,11 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 		UPDATE telemetry_outbox
 		   SET published_at = now(),
 		       written_at = now()
-		 WHERE stream_kind = 'event'
-		   AND source_kind = 'run'
-		   AND source_id = $2
-		   AND seq = $3
+			 WHERE stream_kind = 'event'
+			   AND source_kind = 'run'
+			   AND org_id = $1
+			   AND source_id = $2
+			   AND seq = $3
 	`, ids.orgID, ids.runID, first.Seq); err != nil {
 		t.Fatal(err)
 	}
@@ -243,6 +249,67 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 	}
 	if len(prunedEvents) != 1 || prunedEvents[0] != first.Seq {
 		t.Fatalf("pruned events = %v, want [%d]", prunedEvents, first.Seq)
+	}
+}
+
+func TestAppendRunLogChunkConcurrentDuplicateDoesNotBurnSeq(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
+
+	const workers = 8
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	results := make(chan db.AppendRunLogChunkRow, workers)
+	errs := make(chan error, workers)
+	for range workers {
+		wg.Go(func() {
+			<-start
+			row, err := db.New(pool).AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+				Kind:             "run.log",
+				Payload:          []byte(`{"stream":"stdout"}`),
+				OrgID:            pgvalue.UUID(ids.orgID),
+				CellID:           testCellID,
+				RunID:            pgvalue.UUID(ids.runID),
+				RunLeaseID:       pgvalue.UUID(runLeaseID),
+				WorkerInstanceID: pgvalue.UUID(workerID),
+				Stream:           db.RunLogStreamStdout,
+				ObservedSeq:      1,
+				Content:          []byte("alpha"),
+			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- row
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		t.Fatalf("append duplicate: %v", err)
+	}
+	for row := range results {
+		if row.Seq != 1 || row.SizeBytes != int64(len("alpha")) || !bytes.Equal(row.Content, []byte("alpha")) {
+			t.Fatalf("duplicate row = %+v", row)
+		}
+	}
+
+	var headSeq, chunkCount, outboxCount, usageCount int64
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			(SELECT seq FROM run_log_cursors WHERE org_id = $1 AND cell_id = $2 AND run_id = $3 AND stream_name = '__run__'),
+			(SELECT count(*) FROM run_log_hot_chunks WHERE org_id = $1 AND cell_id = $2 AND run_id = $3),
+			(SELECT count(*) FROM telemetry_outbox WHERE org_id = $1 AND cell_id = $2 AND source_kind = 'run' AND source_id = $3 AND stream_kind = 'run_log'),
+			(SELECT count(*) FROM usage_facts WHERE org_id = $1 AND cell_id = $2 AND run_id = $3 AND meter = 'log_bytes')
+	`, ids.orgID, testCellID, ids.runID).Scan(&headSeq, &chunkCount, &outboxCount, &usageCount); err != nil {
+		t.Fatal(err)
+	}
+	if headSeq != 1 || chunkCount != 1 || outboxCount != 1 || usageCount != 1 {
+		t.Fatalf("headSeq=%d chunks=%d outbox=%d usage=%d, want headSeq=1 and all counts 1", headSeq, chunkCount, outboxCount, usageCount)
 	}
 }
 
@@ -382,11 +449,11 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 
 	ptyID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO workspace_pty_sessions (
-			id, org_id, cell_id, project_id, environment_id, workspace_id,
-			cols, rows, state, created_by_subject_type, created_by_subject_id
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, 80, 24, 'running', 'test', 'test')
+			INSERT INTO workspace_pty_sessions (
+				id, org_id, cell_id, project_id, environment_id, workspace_id,
+				cols, rows, state, created_by_subject_type, created_by_subject_id
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, 80, 24, 'open', 'test', 'test')
 	`, ptyID, ids.orgID, testCellID, ids.projectID, ids.environmentID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
@@ -678,14 +745,18 @@ func TestDeadLetteredUnpublishedEventDoesNotBlockLaterPublish(t *testing.T) {
 		 WHERE stream_kind = 'event'
 		   AND source_kind = 'run'
 		   AND source_id = $1
-		   AND seq = $2;
-		DELETE FROM event_hot_payloads
-		 WHERE org_id = $3
-		   AND cell_id = $4
-		   AND subject_type = 'run'
-		   AND subject_id = $1
 		   AND seq = $2
-	`, ids.runID, first.Seq, ids.orgID, testCellID); err != nil {
+	`, ids.runID, first.Seq); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM event_hot_payloads
+		 WHERE org_id = $1
+		   AND cell_id = $2
+		   AND subject_type = 'run'
+		   AND subject_id = $3
+		   AND seq = $4
+	`, ids.orgID, testCellID, ids.runID, first.Seq); err != nil {
 		t.Fatal(err)
 	}
 
@@ -712,6 +783,7 @@ func TestRunLogPruneRequiresGracePastWatermark(t *testing.T) {
 		Kind:             "run.log",
 		Payload:          []byte(`{"stream":"stdout"}`),
 		OrgID:            pgvalue.UUID(ids.orgID),
+		CellID:           testCellID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),

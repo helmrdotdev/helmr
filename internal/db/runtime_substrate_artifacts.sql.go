@@ -111,6 +111,7 @@ const upsertRuntimeSubstrateArtifact = `-- name: UpsertRuntimeSubstrateArtifact 
 INSERT INTO runtime_substrate_artifacts (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     deployment_sandbox_id,
@@ -135,8 +136,9 @@ INSERT INTO runtime_substrate_artifacts (
     $9,
     $10,
     $11,
-    COALESCE($12::jsonb, '{}'::jsonb),
-    $13,
+    $12,
+    COALESCE($13::jsonb, '{}'::jsonb),
+    $14,
     now()
 )
 ON CONFLICT (org_id, project_id, environment_id, deployment_sandbox_id, substrate_digest, substrate_format, builder_abi, layout_abi)
@@ -150,6 +152,7 @@ RETURNING id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id
 type UpsertRuntimeSubstrateArtifactParams struct {
 	ID                        pgtype.UUID `json:"id"`
 	OrgID                     pgtype.UUID `json:"org_id"`
+	CellID                    string      `json:"cell_id"`
 	ProjectID                 pgtype.UUID `json:"project_id"`
 	EnvironmentID             pgtype.UUID `json:"environment_id"`
 	DeploymentSandboxID       pgtype.UUID `json:"deployment_sandbox_id"`
@@ -167,6 +170,7 @@ func (q *Queries) UpsertRuntimeSubstrateArtifact(ctx context.Context, arg Upsert
 	row := q.db.QueryRow(ctx, upsertRuntimeSubstrateArtifact,
 		arg.ID,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentSandboxID,

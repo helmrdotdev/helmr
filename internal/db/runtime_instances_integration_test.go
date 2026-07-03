@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/jackc/pgx/v5"
@@ -245,12 +246,12 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 	otherWorkerID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, status, protocol_version,
+			id, org_id, cell_id, resource_id, worker_group_id, status, protocol_version,
 			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
 			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
 			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
-		SELECT $1, $2, worker_group_id, 'active', protocol_version,
+		SELECT $1, org_id, cell_id, $2, worker_group_id, 'active', protocol_version,
 		       2000, 2048, 2048, 2, 2000, 2048, 2048, 2,
 		       runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		  FROM worker_instances
@@ -262,10 +263,10 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 	otherWorkspaceVersionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspaces (
-			id, org_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint
+			id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint
 		)
-		VALUES ($1, $2, $3, $4, $5, 'default', 'sandbox-fingerprint')
-	`, otherWorkspaceID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentSandboxID); err != nil {
+		VALUES ($1, $2, $3, $4, $5, $6, 'default', 'sandbox-fingerprint')
+	`, otherWorkspaceID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentSandboxID); err != nil {
 		t.Fatal(err)
 	}
 	var currentVersionID uuid.UUID
@@ -279,10 +280,10 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, org_id, project_id, environment_id, workspace_id, kind, state,
+			id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		SELECT $1, org_id, project_id, environment_id, $2, kind, state,
+		SELECT $1, org_id, cell_id, project_id, environment_id, $2, kind, state,
 		       artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, now()
 		  FROM workspace_versions
 		 WHERE org_id = $3
@@ -781,6 +782,7 @@ func TestGetWorkspaceMountForWorkerPrimitiveScopeRequiresRuntimeOwnerAndToken(t 
 	}
 	params := db.GetWorkspaceMountForWorkerPrimitiveScopeParams{
 		OrgID:                pgvalue.UUID(ids.orgID),
+		CellID:               testCellID,
 		ProjectID:            pgvalue.UUID(ids.projectID),
 		EnvironmentID:        pgvalue.UUID(ids.environmentID),
 		WorkspaceID:          pgvalue.UUID(ids.workspaceID),
@@ -805,6 +807,11 @@ func TestGetWorkspaceMountForWorkerPrimitiveScopeRequiresRuntimeOwnerAndToken(t 
 	if _, err := queries.GetWorkspaceMountForWorkerPrimitiveScope(ctx, wrongToken); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("wrong runtime token error = %v, want pgx.ErrNoRows", err)
 	}
+	wrongCell := params
+	wrongCell.CellID = "us-east-1-cell-2"
+	if _, err := queries.GetWorkspaceMountForWorkerPrimitiveScope(ctx, wrongCell); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("wrong cell error = %v, want pgx.ErrNoRows", err)
+	}
 }
 
 func TestUpsertRuntimeSubstrateArtifactBlobReusesDigestRow(t *testing.T) {
@@ -814,6 +821,8 @@ func TestUpsertRuntimeSubstrateArtifactBlobReusesDigestRow(t *testing.T) {
 	queries := db.New(pool)
 	digest := testDigest("runtime-substrate-blob")
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
+		OrgID:     pgvalue.UUID(ids.orgID),
+		CellID:    dbtest.DefaultCellID,
 		Digest:    digest,
 		SizeBytes: 10,
 		MediaType: "application/vnd.helmr.runtime-substrate.v0.tar",
@@ -823,6 +832,7 @@ func TestUpsertRuntimeSubstrateArtifactBlobReusesDigestRow(t *testing.T) {
 	first, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		Digest:        digest,
@@ -835,6 +845,7 @@ func TestUpsertRuntimeSubstrateArtifactBlobReusesDigestRow(t *testing.T) {
 	second, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		Digest:        digest,
@@ -866,6 +877,7 @@ func TestUpsertRuntimeSubstrateArtifactIsAtomicForConcurrentIdenticalReports(t *
 			row, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
 				ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:                     pgvalue.UUID(ids.orgID),
+				CellID:                    dbtest.DefaultCellID,
 				ProjectID:                 pgvalue.UUID(ids.projectID),
 				EnvironmentID:             pgvalue.UUID(ids.environmentID),
 				DeploymentSandboxID:       pgvalue.UUID(ids.deploymentSandboxID),
@@ -936,6 +948,7 @@ func TestMarkRuntimeInstanceReadyRejectsRuntimeSubstrateArtifactFromDifferentSan
 	substrate, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     pgvalue.UUID(ids.orgID),
+		CellID:                    dbtest.DefaultCellID,
 		ProjectID:                 pgvalue.UUID(ids.projectID),
 		EnvironmentID:             pgvalue.UUID(ids.environmentID),
 		DeploymentSandboxID:       pgvalue.UUID(otherSandboxID),
@@ -978,9 +991,9 @@ func TestGetDeploymentSandboxForWorkerGroupScopesByDeploymentWorkerGroup(t *test
 	}
 	otherWorkerGroupID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO worker_groups (id, name)
-		VALUES ($1, $2)
-	`, otherWorkerGroupID, "other-"+shortUUID(otherWorkerGroupID)); err != nil {
+		INSERT INTO worker_groups (id, cell_id, name)
+		VALUES ($1, $2, $3)
+	`, otherWorkerGroupID, dbtest.DefaultCellID, "other-"+shortUUID(otherWorkerGroupID)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1015,15 +1028,15 @@ func seedExactCapacityRuntimeWorker(t *testing.T, ctx context.Context, pool *pgx
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, status, protocol_version,
+			id, cell_id, resource_id, worker_group_id, status, protocol_version,
 			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
 			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
 			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
-		VALUES ($1, $2, $3, 'active', $4,
+		VALUES ($1, $2, $3, $4, 'active', $5,
 			1000, 1024, 1024, 1, 1000, 1024, 1024, 1,
-			$5, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, workerID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, runtimeReleaseID); err != nil {
+			$6, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, workerID, dbtest.DefaultCellID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, runtimeReleaseID); err != nil {
 		t.Fatal(err)
 	}
 	return workerID, runtimeReleaseID
@@ -1046,6 +1059,8 @@ func seedRuntimeSubstrateArtifactBlob(t *testing.T, ctx context.Context, queries
 	t.Helper()
 	digest := testDigest(label)
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
+		OrgID:     pgvalue.UUID(ids.orgID),
+		CellID:    dbtest.DefaultCellID,
 		Digest:    digest,
 		SizeBytes: 1024,
 		MediaType: "application/vnd.helmr.runtime-substrate.v0.ext4",
@@ -1055,6 +1070,7 @@ func seedRuntimeSubstrateArtifactBlob(t *testing.T, ctx context.Context, queries
 	artifact, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		Digest:        digest,
@@ -1169,6 +1185,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 	if _, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     pgvalue.UUID(ids.orgID),
+		CellID:                    dbtest.DefaultCellID,
 		ProjectID:                 pgvalue.UUID(ids.projectID),
 		EnvironmentID:             pgvalue.UUID(ids.environmentID),
 		DeploymentSandboxID:       pgvalue.UUID(ids.deploymentSandboxID),
@@ -1198,6 +1215,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 	if _, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     pgvalue.UUID(ids.orgID),
+		CellID:                    dbtest.DefaultCellID,
 		ProjectID:                 pgvalue.UUID(ids.projectID),
 		EnvironmentID:             pgvalue.UUID(ids.environmentID),
 		DeploymentSandboxID:       pgvalue.UUID(ids.deploymentSandboxID),
@@ -1226,6 +1244,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 	}
 	if _, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:               pgvalue.UUID(ids.orgID),
+		CellID:              target.CellID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		WorkerInstanceID:    target.WorkerInstanceID,
@@ -1250,6 +1269,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 	}
 	exactCommand, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:               pgvalue.UUID(ids.orgID),
+		CellID:              target.CellID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		WorkerInstanceID:    target.WorkerInstanceID,
@@ -1296,6 +1316,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 	if _, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     pgvalue.UUID(ids.orgID),
+		CellID:                    dbtest.DefaultCellID,
 		ProjectID:                 pgvalue.UUID(ids.projectID),
 		EnvironmentID:             pgvalue.UUID(ids.environmentID),
 		DeploymentSandboxID:       pgvalue.UUID(ids.deploymentSandboxID),
@@ -1329,9 +1350,10 @@ func seedSiblingDeploymentSandbox(t *testing.T, ctx context.Context, pool *pgxpo
 	otherSandboxID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployment_sandboxes (
-			id,
-			org_id,
-			project_id,
+				id,
+				org_id,
+				cell_id,
+				project_id,
 			environment_id,
 			deployment_id,
 			sandbox_id,
@@ -1348,9 +1370,10 @@ func seedSiblingDeploymentSandbox(t *testing.T, ctx context.Context, pool *pgxpo
 			contract_version,
 			fingerprint
 		)
-		SELECT $1,
-		       org_id,
-		       project_id,
+			SELECT $1,
+			       org_id,
+			       cell_id,
+			       project_id,
 		       environment_id,
 		       deployment_id,
 		       'other',

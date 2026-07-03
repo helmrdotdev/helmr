@@ -423,6 +423,8 @@ func (s *Server) createInitialWorkspaceArtifact(ctx context.Context, store db.Qu
 		return db.Artifact{}, workspace.WorkspaceArtifact{}, errors.New("initial workspace artifact CAS metadata mismatch")
 	}
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
+		OrgID:     pgvalue.UUID(orgID),
+		CellID:    s.cellID,
 		Digest:    object.Digest,
 		SizeBytes: object.SizeBytes,
 		MediaType: object.MediaType,
@@ -432,6 +434,7 @@ func (s *Server) createInitialWorkspaceArtifact(ctx context.Context, store db.Qu
 	workspaceArtifact, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(orgID),
+		CellID:        s.cellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Digest:        object.Digest,

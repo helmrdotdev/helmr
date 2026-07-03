@@ -18,7 +18,7 @@ WITH abandoned AS (
            execution_status = 'queued',
            current_run_lease_id = NULL,
            state_version = state_version + 1,
-           observed_at = now()
+           updated_at = now()
      WHERE runs.org_id = $1
        AND runs.id = $4
        AND runs.status = 'running'
@@ -32,12 +32,12 @@ WITH abandoned AS (
               AND run_leases.worker_instance_id = $3
               AND run_leases.status = 'leased'
        )
-    RETURNING runs.id, runs.org_id, runs.current_attempt_id, runs.state_version
+    RETURNING runs.id, runs.org_id, runs.cell_id, runs.current_attempt_id, runs.state_version
 ),
 requeued_attempt AS (
     UPDATE run_attempts
        SET status = 'queued',
-           observed_at = now()
+           updated_at = now()
       FROM abandoned
      WHERE run_attempts.org_id = abandoned.org_id
        AND run_attempts.run_id = abandoned.id
@@ -49,7 +49,7 @@ abandoned_runtime_checkpoint_restore AS (
        SET status = 'abandoned',
            error_message = 'worker lease abandoned before execution started',
            finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
-           observed_at = now()
+           updated_at = now()
       FROM abandoned
      WHERE runtime_checkpoint_restores.org_id = $1
        AND runtime_checkpoint_restores.run_id = abandoned.id
@@ -72,7 +72,7 @@ released_workspace_leases AS (
        SET state = 'released',
            released_at = now(),
            renewed_at = now(),
-           observed_at = now()
+           updated_at = now()
       FROM abandoned
      WHERE workspace_leases.org_id = $1
        AND workspace_leases.owner_run_id = abandoned.id
@@ -160,6 +160,7 @@ WITH locked_sessions AS MATERIALIZED (
 ),
 eligible AS (
     SELECT runs.org_id,
+           runs.cell_id,
            runs.id AS run_id,
            runs.project_id,
            runs.environment_id,
@@ -196,6 +197,7 @@ eligible AS (
 retry_candidate AS (
     SELECT eligible.run_id,
            eligible.org_id,
+           eligible.cell_id,
            eligible.project_id,
            eligible.environment_id,
            eligible.previous_attempt_id,
@@ -269,7 +271,7 @@ dirty_lost_workspaces AS (
     UPDATE workspaces
        SET state = 'recovery_required',
            dirty_state = 'dirty_state_lost',
-           observed_at = now()
+           updated_at = now()
       FROM checkpointing_dirty_loss_scope
      WHERE workspaces.org_id = $1
        AND workspaces.project_id = checkpointing_dirty_loss_scope.project_id
@@ -301,7 +303,7 @@ dirty_lost_workspaces AS (
     RETURNING checkpointing_dirty_loss_scope.run_id, workspaces.id
 ),
 retry_plan AS (
-    SELECT retry_candidate.run_id, retry_candidate.org_id, retry_candidate.project_id, retry_candidate.environment_id, retry_candidate.previous_attempt_id, retry_candidate.previous_attempt_number, retry_candidate.next_attempt_id, retry_candidate.next_attempt_number, retry_candidate.reason, retry_candidate.delay_ms, retry_candidate.retry_after, retry_candidate.locked_retry_policy
+    SELECT retry_candidate.run_id, retry_candidate.org_id, retry_candidate.cell_id, retry_candidate.project_id, retry_candidate.environment_id, retry_candidate.previous_attempt_id, retry_candidate.previous_attempt_number, retry_candidate.next_attempt_id, retry_candidate.next_attempt_number, retry_candidate.reason, retry_candidate.delay_ms, retry_candidate.retry_after, retry_candidate.locked_retry_policy
       FROM retry_candidate
      WHERE NOT EXISTS (
            SELECT 1
@@ -355,7 +357,7 @@ updated_runs AS (
                runs.max_active_duration_ms
            ),
            active_started_at = NULL,
-           observed_at = now()
+           updated_at = now()
       FROM eligible
       LEFT JOIN retry_plan ON retry_plan.run_id = eligible.run_id
       LEFT JOIN retry_attempt ON retry_attempt.org_id = retry_plan.org_id
@@ -411,7 +413,7 @@ failed_attempts AS (
        SET status = CASE WHEN updated_runs.status = 'cancelled' THEN 'cancelled'::run_attempt_status ELSE 'failed'::run_attempt_status END,
            error_message = CASE WHEN updated_runs.status = 'cancelled' THEN COALESCE(updated_runs.error_message, 'run cancelled') ELSE 'worker lease expired' END,
            finished_at = COALESCE(run_attempts.finished_at, now()),
-           observed_at = now()
+           updated_at = now()
       FROM updated_runs
      WHERE run_attempts.org_id = $1
        AND run_attempts.run_id = updated_runs.run_id
@@ -422,7 +424,7 @@ cancelled_run_waits AS (
     UPDATE run_waits
        SET state = 'cancelled',
            cancelled_at = now(),
-           observed_at = now()
+           updated_at = now()
       FROM updated_runs
      WHERE run_waits.org_id = $1
        AND run_waits.run_id = updated_runs.run_id
@@ -433,7 +435,7 @@ acknowledged_cancelled_worker_commands AS (
     UPDATE worker_commands
        SET acknowledged_at = COALESCE(worker_commands.acknowledged_at, now()),
            delivery_locked_until = NULL,
-           observed_at = now()
+           updated_at = now()
       FROM cancelled_run_waits
      WHERE worker_commands.org_id = cancelled_run_waits.org_id
        AND worker_commands.run_id = cancelled_run_waits.run_id
@@ -456,7 +458,7 @@ failed_runtime_checkpoint_restores AS (
        SET status = 'failed',
            error_message = CASE WHEN updated_runs.status = 'cancelled' THEN COALESCE(updated_runs.error_message, 'run cancelled') ELSE 'worker lease expired' END,
            finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
-           observed_at = now()
+           updated_at = now()
       FROM updated_runs
      WHERE runtime_checkpoint_restores.org_id = $1
        AND runtime_checkpoint_restores.run_id = updated_runs.run_id
@@ -475,7 +477,7 @@ completed_queue_entries AS (
            dispatch_generation = dispatch_generation + 1,
            last_error = CASE WHEN retry_plan.run_id IS NOT NULL THEN '' ELSE run_queue_items.last_error END,
            enqueued_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN now() ELSE run_queue_items.enqueued_at END,
-           observed_at = now(),
+           updated_at = now(),
            finished_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE now() END
       FROM updated_runs
       JOIN run_leases ON run_leases.org_id = $1
@@ -504,7 +506,7 @@ released_workspace_leases AS (
        SET state = 'released',
            released_at = now(),
            renewed_at = now(),
-           observed_at = now()
+           updated_at = now()
       FROM updated_runs
      WHERE workspace_leases.org_id = $1
        AND workspace_leases.owner_run_id = updated_runs.run_id
@@ -534,8 +536,9 @@ failed_snapshots AS (
     RETURNING run_snapshots.run_id
 ),
 retry_decision AS (
-    INSERT INTO run_retry_decisions (org_id, project_id, environment_id, run_id, attempt_id, run_lease_id, snapshot_version, decision, reason, error_class, retry_after, next_attempt_number, policy_snapshot, error)
+    INSERT INTO run_retry_decisions (org_id, cell_id, project_id, environment_id, run_id, attempt_id, run_lease_id, snapshot_version, decision, reason, error_class, retry_after, next_attempt_number, policy_snapshot, error)
     SELECT $1,
+           updated_runs.cell_id,
            updated_runs.project_id,
            updated_runs.environment_id,
            updated_runs.run_id,
@@ -817,6 +820,7 @@ func (q *Queries) FailExpiredRunningRunLeases(ctx context.Context, orgID pgtype.
 const getCurrentRunningRunLease = `-- name: GetCurrentRunningRunLease :one
 SELECT run_leases.id,
        run_leases.run_id,
+       runs.cell_id,
        runs.project_id,
        runs.environment_id,
        runs.deployment_id,
@@ -832,6 +836,7 @@ SELECT run_leases.id,
        run_queue_items.queue_name
   FROM run_leases
   JOIN runs ON runs.org_id = run_leases.org_id
+           AND runs.cell_id = run_leases.cell_id
            AND runs.id = run_leases.run_id
   JOIN run_attempts ON run_attempts.org_id = run_leases.org_id
                    AND run_attempts.run_id = run_leases.run_id
@@ -842,8 +847,9 @@ SELECT run_leases.id,
                      AND run_queue_items.reserved_by_worker_instance_id = run_leases.worker_instance_id
  WHERE run_leases.org_id = $1
    AND run_leases.run_id = $2
-   AND run_leases.id = $3
-   AND run_leases.worker_instance_id = $4
+   AND run_leases.cell_id = $3
+   AND run_leases.id = $4
+   AND run_leases.worker_instance_id = $5
    AND run_leases.status = 'running'
    AND run_leases.lease_expires_at > now()
    AND runs.status = 'running'
@@ -856,6 +862,7 @@ SELECT run_leases.id,
 type GetCurrentRunningRunLeaseParams struct {
 	OrgID            pgtype.UUID `json:"org_id"`
 	RunID            pgtype.UUID `json:"run_id"`
+	CellID           string      `json:"cell_id"`
 	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 }
@@ -863,6 +870,7 @@ type GetCurrentRunningRunLeaseParams struct {
 type GetCurrentRunningRunLeaseRow struct {
 	ID                    pgtype.UUID        `json:"id"`
 	RunID                 pgtype.UUID        `json:"run_id"`
+	CellID                string             `json:"cell_id"`
 	ProjectID             pgtype.UUID        `json:"project_id"`
 	EnvironmentID         pgtype.UUID        `json:"environment_id"`
 	DeploymentID          pgtype.UUID        `json:"deployment_id"`
@@ -882,6 +890,7 @@ func (q *Queries) GetCurrentRunningRunLease(ctx context.Context, arg GetCurrentR
 	row := q.db.QueryRow(ctx, getCurrentRunningRunLease,
 		arg.OrgID,
 		arg.RunID,
+		arg.CellID,
 		arg.RunLeaseID,
 		arg.WorkerInstanceID,
 	)
@@ -889,6 +898,7 @@ func (q *Queries) GetCurrentRunningRunLease(ctx context.Context, arg GetCurrentR
 	err := row.Scan(
 		&i.ID,
 		&i.RunID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
@@ -909,6 +919,7 @@ func (q *Queries) GetCurrentRunningRunLease(ctx context.Context, arg GetCurrentR
 const getRunLeaseQueueLease = `-- name: GetRunLeaseQueueLease :one
 SELECT run_leases.id,
        run_leases.run_id,
+       runs.cell_id,
        runs.project_id,
        runs.environment_id,
        runs.deployment_id,
@@ -924,6 +935,7 @@ SELECT run_leases.id,
        run_queue_items.queue_name
   FROM run_leases
   JOIN runs ON runs.org_id = run_leases.org_id
+           AND runs.cell_id = run_leases.cell_id
            AND runs.id = run_leases.run_id
   JOIN run_attempts ON run_attempts.org_id = run_leases.org_id
                    AND run_attempts.run_id = run_leases.run_id
@@ -934,8 +946,9 @@ SELECT run_leases.id,
                      AND run_queue_items.reserved_by_worker_instance_id = run_leases.worker_instance_id
  WHERE run_leases.org_id = $1
    AND run_leases.run_id = $2
-   AND run_leases.id = $3
-   AND run_leases.worker_instance_id = $4
+   AND run_leases.cell_id = $3
+   AND run_leases.id = $4
+   AND run_leases.worker_instance_id = $5
    AND run_leases.status IN ('leased', 'running')
    AND run_leases.lease_expires_at > now()
    AND run_queue_items.status = 'reserved'
@@ -945,6 +958,7 @@ SELECT run_leases.id,
 type GetRunLeaseQueueLeaseParams struct {
 	OrgID            pgtype.UUID `json:"org_id"`
 	RunID            pgtype.UUID `json:"run_id"`
+	CellID           string      `json:"cell_id"`
 	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 }
@@ -952,6 +966,7 @@ type GetRunLeaseQueueLeaseParams struct {
 type GetRunLeaseQueueLeaseRow struct {
 	ID                    pgtype.UUID        `json:"id"`
 	RunID                 pgtype.UUID        `json:"run_id"`
+	CellID                string             `json:"cell_id"`
 	ProjectID             pgtype.UUID        `json:"project_id"`
 	EnvironmentID         pgtype.UUID        `json:"environment_id"`
 	DeploymentID          pgtype.UUID        `json:"deployment_id"`
@@ -971,6 +986,7 @@ func (q *Queries) GetRunLeaseQueueLease(ctx context.Context, arg GetRunLeaseQueu
 	row := q.db.QueryRow(ctx, getRunLeaseQueueLease,
 		arg.OrgID,
 		arg.RunID,
+		arg.CellID,
 		arg.RunLeaseID,
 		arg.WorkerInstanceID,
 	)
@@ -978,6 +994,7 @@ func (q *Queries) GetRunLeaseQueueLease(ctx context.Context, arg GetRunLeaseQueu
 	err := row.Scan(
 		&i.ID,
 		&i.RunID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
@@ -1136,6 +1153,7 @@ dispatch AS (
 candidate AS (
     SELECT runs.id,
            runs.org_id,
+           runs.cell_id,
            runs.project_id,
            runs.environment_id,
            runs.workspace_id,
@@ -1230,6 +1248,7 @@ candidate AS (
 workspace_candidate AS (
     SELECT candidate.id AS run_id,
            candidate.org_id,
+           candidate.cell_id,
            candidate.project_id,
            candidate.environment_id,
            workspaces.id AS workspace_id,
@@ -1326,7 +1345,7 @@ workspace_mount AS (
     SELECT id, org_id, project_id, environment_id, workspace_id, fencing_generation, runtime_instance_id, reserved_cpu_millis, reserved_memory_mib, reserved_disk_mib, reserved_execution_slots FROM existing_workspace_mount
 ),
 workspace_ready_candidate AS (
-    SELECT candidate.id, candidate.org_id, candidate.project_id, candidate.environment_id, candidate.workspace_id, candidate.trace_id, candidate.root_span_id, candidate.latest_runtime_checkpoint_id, candidate.session_id, candidate.queue_name, candidate.queue_concurrency_limit, candidate.concurrency_key, candidate.active_elapsed_ms, candidate.current_attempt_id, candidate.current_attempt_number, candidate.runtime_id
+    SELECT candidate.id, candidate.org_id, candidate.cell_id, candidate.project_id, candidate.environment_id, candidate.workspace_id, candidate.trace_id, candidate.root_span_id, candidate.latest_runtime_checkpoint_id, candidate.session_id, candidate.queue_name, candidate.queue_concurrency_limit, candidate.concurrency_key, candidate.active_elapsed_ms, candidate.current_attempt_id, candidate.current_attempt_number, candidate.runtime_id
       FROM candidate
       JOIN dispatch ON dispatch.run_id = candidate.id
       JOIN workspace_candidate ON workspace_candidate.run_id = candidate.id
@@ -1349,7 +1368,7 @@ workspace_ready_candidate AS (
        )
 ),
 runtime_resume_capacity AS (
-    SELECT workspace_ready_candidate.id, workspace_ready_candidate.org_id, workspace_ready_candidate.project_id, workspace_ready_candidate.environment_id, workspace_ready_candidate.workspace_id, workspace_ready_candidate.trace_id, workspace_ready_candidate.root_span_id, workspace_ready_candidate.latest_runtime_checkpoint_id, workspace_ready_candidate.session_id, workspace_ready_candidate.queue_name, workspace_ready_candidate.queue_concurrency_limit, workspace_ready_candidate.concurrency_key, workspace_ready_candidate.active_elapsed_ms, workspace_ready_candidate.current_attempt_id, workspace_ready_candidate.current_attempt_number, workspace_ready_candidate.runtime_id
+    SELECT workspace_ready_candidate.id, workspace_ready_candidate.org_id, workspace_ready_candidate.cell_id, workspace_ready_candidate.project_id, workspace_ready_candidate.environment_id, workspace_ready_candidate.workspace_id, workspace_ready_candidate.trace_id, workspace_ready_candidate.root_span_id, workspace_ready_candidate.latest_runtime_checkpoint_id, workspace_ready_candidate.session_id, workspace_ready_candidate.queue_name, workspace_ready_candidate.queue_concurrency_limit, workspace_ready_candidate.concurrency_key, workspace_ready_candidate.active_elapsed_ms, workspace_ready_candidate.current_attempt_id, workspace_ready_candidate.current_attempt_number, workspace_ready_candidate.runtime_id
       FROM workspace_ready_candidate
       JOIN workspace_candidate ON workspace_candidate.run_id = workspace_ready_candidate.id
      WHERE workspace_ready_candidate.latest_runtime_checkpoint_id IS NULL
@@ -1377,7 +1396,7 @@ concurrency_scope_lock AS MATERIALIZED (
      WHERE runtime_resume_capacity.queue_concurrency_limit IS NOT NULL
 ),
 concurrency_capacity AS (
-    SELECT runtime_resume_capacity.id, runtime_resume_capacity.org_id, runtime_resume_capacity.project_id, runtime_resume_capacity.environment_id, runtime_resume_capacity.workspace_id, runtime_resume_capacity.trace_id, runtime_resume_capacity.root_span_id, runtime_resume_capacity.latest_runtime_checkpoint_id, runtime_resume_capacity.session_id, runtime_resume_capacity.queue_name, runtime_resume_capacity.queue_concurrency_limit, runtime_resume_capacity.concurrency_key, runtime_resume_capacity.active_elapsed_ms, runtime_resume_capacity.current_attempt_id, runtime_resume_capacity.current_attempt_number, runtime_resume_capacity.runtime_id
+    SELECT runtime_resume_capacity.id, runtime_resume_capacity.org_id, runtime_resume_capacity.cell_id, runtime_resume_capacity.project_id, runtime_resume_capacity.environment_id, runtime_resume_capacity.workspace_id, runtime_resume_capacity.trace_id, runtime_resume_capacity.root_span_id, runtime_resume_capacity.latest_runtime_checkpoint_id, runtime_resume_capacity.session_id, runtime_resume_capacity.queue_name, runtime_resume_capacity.queue_concurrency_limit, runtime_resume_capacity.concurrency_key, runtime_resume_capacity.active_elapsed_ms, runtime_resume_capacity.current_attempt_id, runtime_resume_capacity.current_attempt_number, runtime_resume_capacity.runtime_id
       FROM runtime_resume_capacity
       LEFT JOIN concurrency_scope_lock ON concurrency_scope_lock.run_id = runtime_resume_capacity.id
      WHERE runtime_resume_capacity.queue_concurrency_limit IS NULL
@@ -1395,7 +1414,7 @@ concurrency_capacity AS (
         )
 ),
 concurrency_slot_candidate AS (
-    SELECT concurrency_capacity.id, concurrency_capacity.org_id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.workspace_id, concurrency_capacity.trace_id, concurrency_capacity.root_span_id, concurrency_capacity.latest_runtime_checkpoint_id, concurrency_capacity.session_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.active_elapsed_ms, concurrency_capacity.current_attempt_id, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id,
+    SELECT concurrency_capacity.id, concurrency_capacity.org_id, concurrency_capacity.cell_id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.workspace_id, concurrency_capacity.trace_id, concurrency_capacity.root_span_id, concurrency_capacity.latest_runtime_checkpoint_id, concurrency_capacity.session_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.active_elapsed_ms, concurrency_capacity.current_attempt_id, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id,
            slots.slot_ordinal
       FROM concurrency_capacity
       CROSS JOIN LATERAL generate_series(1, concurrency_capacity.queue_concurrency_limit) AS slots(slot_ordinal)
@@ -1416,6 +1435,7 @@ concurrency_slot_candidate AS (
 concurrency_slot AS (
     INSERT INTO run_queue_concurrency_leases (
         org_id,
+        cell_id,
         project_id,
         environment_id,
         run_id,
@@ -1425,6 +1445,7 @@ concurrency_slot AS (
         slot_ordinal
     )
     SELECT $1,
+           concurrency_slot_candidate.cell_id,
            concurrency_slot_candidate.project_id,
            concurrency_slot_candidate.environment_id,
            concurrency_slot_candidate.id,
@@ -1437,11 +1458,11 @@ concurrency_slot AS (
     RETURNING id
 ),
 leaseable_capacity AS (
-    SELECT concurrency_capacity.id, concurrency_capacity.org_id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.workspace_id, concurrency_capacity.trace_id, concurrency_capacity.root_span_id, concurrency_capacity.latest_runtime_checkpoint_id, concurrency_capacity.session_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.active_elapsed_ms, concurrency_capacity.current_attempt_id, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id
+    SELECT concurrency_capacity.id, concurrency_capacity.org_id, concurrency_capacity.cell_id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.workspace_id, concurrency_capacity.trace_id, concurrency_capacity.root_span_id, concurrency_capacity.latest_runtime_checkpoint_id, concurrency_capacity.session_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.active_elapsed_ms, concurrency_capacity.current_attempt_id, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id
       FROM concurrency_capacity
      WHERE concurrency_capacity.queue_concurrency_limit IS NULL
     UNION ALL
-    SELECT concurrency_capacity.id, concurrency_capacity.org_id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.workspace_id, concurrency_capacity.trace_id, concurrency_capacity.root_span_id, concurrency_capacity.latest_runtime_checkpoint_id, concurrency_capacity.session_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.active_elapsed_ms, concurrency_capacity.current_attempt_id, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id
+    SELECT concurrency_capacity.id, concurrency_capacity.org_id, concurrency_capacity.cell_id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.workspace_id, concurrency_capacity.trace_id, concurrency_capacity.root_span_id, concurrency_capacity.latest_runtime_checkpoint_id, concurrency_capacity.session_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.active_elapsed_ms, concurrency_capacity.current_attempt_id, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id
       FROM concurrency_capacity
      WHERE concurrency_capacity.queue_concurrency_limit IS NOT NULL
        AND EXISTS (SELECT 1 FROM concurrency_slot)
@@ -1470,7 +1491,7 @@ restore_runtime_checkpoint AS (
 fenced_workspace_mount AS (
     UPDATE workspace_mounts
        SET fencing_generation = workspace_mounts.fencing_generation + 1,
-           observed_at = now()
+           updated_at = now()
       FROM workspace_mount
       JOIN workspace_candidate
         ON workspace_candidate.project_id = workspace_mount.project_id
@@ -1503,6 +1524,7 @@ fenced_workspace_mount AS (
 workspace_write_lease AS (
     INSERT INTO workspace_leases (
         org_id,
+        cell_id,
         project_id,
         environment_id,
         workspace_id,
@@ -1518,6 +1540,7 @@ workspace_write_lease AS (
         expires_at
     )
     SELECT $1,
+           workspace_candidate.cell_id,
            workspace_candidate.project_id,
            workspace_candidate.environment_id,
            workspace_candidate.workspace_id,
@@ -1550,7 +1573,7 @@ released_concurrency_slot_without_workspace AS (
     RETURNING run_queue_concurrency_leases.id
 ),
 leaseable_workspace AS (
-    SELECT leaseable_capacity.id, leaseable_capacity.org_id, leaseable_capacity.project_id, leaseable_capacity.environment_id, leaseable_capacity.workspace_id, leaseable_capacity.trace_id, leaseable_capacity.root_span_id, leaseable_capacity.latest_runtime_checkpoint_id, leaseable_capacity.session_id, leaseable_capacity.queue_name, leaseable_capacity.queue_concurrency_limit, leaseable_capacity.concurrency_key, leaseable_capacity.active_elapsed_ms, leaseable_capacity.current_attempt_id, leaseable_capacity.current_attempt_number, leaseable_capacity.runtime_id,
+    SELECT leaseable_capacity.id, leaseable_capacity.org_id, leaseable_capacity.cell_id, leaseable_capacity.project_id, leaseable_capacity.environment_id, leaseable_capacity.workspace_id, leaseable_capacity.trace_id, leaseable_capacity.root_span_id, leaseable_capacity.latest_runtime_checkpoint_id, leaseable_capacity.session_id, leaseable_capacity.queue_name, leaseable_capacity.queue_concurrency_limit, leaseable_capacity.concurrency_key, leaseable_capacity.active_elapsed_ms, leaseable_capacity.current_attempt_id, leaseable_capacity.current_attempt_number, leaseable_capacity.runtime_id,
            workspace_write_lease.id AS workspace_lease_id,
            workspace_write_lease.workspace_mount_id AS workspace_mount_id,
            workspace_write_lease.acquired_fencing_generation AS workspace_mount_fencing_generation,
@@ -1662,6 +1685,7 @@ leased_run_lease AS (
     INSERT INTO run_leases (
         id,
         org_id,
+        cell_id,
         run_id,
         attempt_id,
         worker_instance_id,
@@ -1681,6 +1705,7 @@ leased_run_lease AS (
     )
     SELECT $5,
            $1,
+           candidate.cell_id,
            candidate.id,
            candidate.current_attempt_id,
            $3,
@@ -1707,6 +1732,7 @@ runtime_checkpoint_restore AS (
     INSERT INTO runtime_checkpoint_restores (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         run_id,
@@ -1721,6 +1747,7 @@ runtime_checkpoint_restore AS (
     )
     SELECT uuidv7(),
            $1,
+           leaseable_workspace.cell_id,
            leaseable_workspace.project_id,
            leaseable_workspace.environment_id,
            leaseable_workspace.id,
@@ -1753,7 +1780,7 @@ released_workspace_lease_without_run_lease AS (
     UPDATE workspace_leases
        SET state = 'released',
            released_at = now(),
-           observed_at = now()
+           updated_at = now()
       FROM workspace_write_lease
      WHERE workspace_leases.org_id = $1
        AND workspace_leases.id = workspace_write_lease.id
@@ -1788,7 +1815,7 @@ updated AS (
            current_run_lease_id = (SELECT id FROM leased_run_lease),
            workspace_mount_id = (SELECT workspace_mount_id FROM workspace_write_lease),
            state_version = state_version + 1,
-           observed_at = now()
+           updated_at = now()
      WHERE id = (SELECT id FROM leaseable_workspace)
       AND EXISTS (SELECT 1 FROM leased_run_lease)
     RETURNING id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_run_lease_id, latest_runtime_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
@@ -1809,7 +1836,7 @@ activated_runtime_instance AS (
            owner_run_state_version = updated.state_version,
            running_at = COALESCE(runtime_instances.running_at, now()),
            last_heartbeat_at = now(),
-           observed_at = now()
+           updated_at = now()
       FROM updated
       JOIN leased_run_lease ON true
       JOIN workspace_mounts
@@ -1830,7 +1857,7 @@ activated_runtime_instance AS (
 updated_attempt AS (
     UPDATE run_attempts
        SET status = 'running',
-           observed_at = now()
+           updated_at = now()
       FROM updated
      WHERE run_attempts.org_id = updated.org_id
       AND run_attempts.run_id = updated.id
@@ -2215,6 +2242,7 @@ WITH locked_session AS MATERIALIZED (
 ),
 eligible AS (
     SELECT runs.org_id,
+           runs.cell_id,
            runs.id AS run_id,
            runs.project_id,
            runs.environment_id,
@@ -2362,6 +2390,7 @@ retry_failure AS (
 retry_plan AS (
     SELECT eligible.run_id,
            eligible.org_id,
+           eligible.cell_id,
            eligible.project_id,
            eligible.environment_id,
            eligible.previous_attempt_id,
@@ -2426,7 +2455,7 @@ completed_queue_entry AS (
            dispatch_generation = dispatch_generation + 1,
            last_error = CASE WHEN retry_plan.run_id IS NOT NULL THEN '' ELSE run_queue_items.last_error END,
            enqueued_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN now() ELSE run_queue_items.enqueued_at END,
-           observed_at = now(),
+           updated_at = now(),
            finished_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE now() END
       FROM eligible
       LEFT JOIN retry_plan ON retry_plan.run_id = eligible.run_id
@@ -2460,7 +2489,7 @@ released AS (
            output = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE effective_release.output END,
            error_message = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE effective_release.error_message END,
            finished_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE now() END,
-           observed_at = now()
+           updated_at = now()
       FROM eligible
       JOIN effective_release ON effective_release.run_id = eligible.run_id
       JOIN completed_queue_entry ON completed_queue_entry.run_id = eligible.run_id
@@ -2593,6 +2622,7 @@ published_workspace_version AS (
     INSERT INTO workspace_versions (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         workspace_id,
@@ -2610,6 +2640,7 @@ published_workspace_version AS (
     )
     SELECT workspace_commit_input.workspace_version_id,
            workspace_commit_input.org_id,
+           workspace_commit_input.cell_id,
            workspace_commit_input.project_id,
            workspace_commit_input.environment_id,
            workspace_commit_input.workspace_id,
@@ -2633,7 +2664,7 @@ advanced_workspace AS (
        SET current_version_id = published_workspace_version.id,
            dirty_state = 'clean',
            last_activity_at = now(),
-           observed_at = now()
+           updated_at = now()
       FROM published_workspace_version
       JOIN workspace_commit_input
         ON workspace_commit_input.workspace_version_id = published_workspace_version.id
@@ -2647,7 +2678,7 @@ released_workspace_lease AS (
        SET state = 'released',
            released_at = now(),
            renewed_at = now(),
-           observed_at = now()
+           updated_at = now()
       FROM released
      WHERE workspace_leases.org_id = released.org_id
        AND workspace_leases.owner_run_id = released.id
@@ -2665,7 +2696,7 @@ waiting_runtime_instance AS (
            owner_run_wait_id = NULL,
            owner_run_state_version = NULL,
            waiting_at = now(),
-           observed_at = now()
+           updated_at = now()
       FROM released
       JOIN workspace_mounts
         ON workspace_mounts.org_id = released.org_id
@@ -2770,7 +2801,7 @@ cancelled_run_waits AS (
     UPDATE run_waits
        SET state = 'cancelled',
            cancelled_at = now(),
-           observed_at = now()
+           updated_at = now()
       FROM released
      WHERE run_waits.org_id = $1
        AND run_waits.run_id = released.id
@@ -2781,7 +2812,7 @@ acknowledged_cancelled_worker_commands AS (
     UPDATE worker_commands
        SET acknowledged_at = COALESCE(worker_commands.acknowledged_at, now()),
            delivery_locked_until = NULL,
-           observed_at = now()
+           updated_at = now()
       FROM cancelled_run_waits
      WHERE worker_commands.org_id = cancelled_run_waits.org_id
        AND worker_commands.run_id = cancelled_run_waits.run_id
@@ -2812,7 +2843,7 @@ completed_runtime_checkpoint_restore AS (
        SET status = 'restored',
            error_message = NULL,
            finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
-           observed_at = now()
+           updated_at = now()
       FROM released
       JOIN released_run_lease ON true
      WHERE runtime_checkpoint_restores.org_id = $1
@@ -2828,7 +2859,7 @@ failed_runtime_checkpoint_restore AS (
        SET status = 'failed',
            error_message = released.error_message,
            finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
-           observed_at = now()
+           updated_at = now()
       FROM released
       JOIN released_run_lease ON true
      WHERE runtime_checkpoint_restores.org_id = $1
@@ -2845,7 +2876,7 @@ released_attempt AS (
            output = effective_release.output,
            error_message = effective_release.error_message,
            finished_at = now(),
-           observed_at = now()
+           updated_at = now()
       FROM released
       JOIN released_run_lease ON true
       JOIN effective_release ON true
@@ -2955,8 +2986,9 @@ released_snapshot AS (
     RETURNING version
 ),
 retry_decision AS (
-    INSERT INTO run_retry_decisions (org_id, project_id, environment_id, run_id, attempt_id, run_lease_id, snapshot_version, decision, reason, error_class, retry_after, next_attempt_number, policy_snapshot, error)
+    INSERT INTO run_retry_decisions (org_id, cell_id, project_id, environment_id, run_id, attempt_id, run_lease_id, snapshot_version, decision, reason, error_class, retry_after, next_attempt_number, policy_snapshot, error)
     SELECT released.org_id,
+           released.cell_id,
            released.project_id,
            released.environment_id,
            released.id,
@@ -3499,7 +3531,7 @@ updated_runs AS (
            execution_status = 'queued',
            current_run_lease_id = NULL,
            state_version = state_version + 1,
-           observed_at = now()
+           updated_at = now()
       FROM eligible
      WHERE runs.id = eligible.run_id
        AND runs.status = 'running'
@@ -3509,7 +3541,7 @@ updated_runs AS (
 requeued_attempts AS (
     UPDATE run_attempts
        SET status = 'queued',
-           observed_at = now()
+           updated_at = now()
       FROM updated_runs
      WHERE run_attempts.org_id = $1
        AND run_attempts.run_id = updated_runs.run_id
@@ -3521,7 +3553,7 @@ abandoned_runtime_checkpoint_restore AS (
        SET status = 'abandoned',
            error_message = 'worker lease expired before execution started',
            finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
-           observed_at = now()
+           updated_at = now()
       FROM updated_runs
      WHERE runtime_checkpoint_restores.org_id = $1
        AND runtime_checkpoint_restores.run_id = updated_runs.run_id
@@ -3540,7 +3572,7 @@ requeued_queue_entries AS (
            dispatch_generation = dispatch_generation + 1,
            last_error = 'worker lease expired before execution started',
            enqueued_at = now(),
-           observed_at = now(),
+           updated_at = now(),
            finished_at = NULL
       FROM updated_runs
       JOIN run_leases ON run_leases.org_id = $1
@@ -3568,7 +3600,7 @@ released_workspace_leases AS (
        SET state = 'released',
            released_at = now(),
            renewed_at = now(),
-           observed_at = now()
+           updated_at = now()
       FROM updated_runs
      WHERE workspace_leases.org_id = $1
        AND workspace_leases.owner_run_id = updated_runs.run_id
@@ -3701,11 +3733,11 @@ started_run AS (
            active_started_at = COALESCE(runs.active_started_at, now()),
            queued_expires_at = NULL,
            state_version = state_version + CASE WHEN current_run_lease.run_lease_status = 'leased' THEN 1 ELSE 0 END,
-           observed_at = now()
+           updated_at = now()
       FROM current_run_lease
      WHERE runs.org_id = current_run_lease.org_id
        AND runs.id = current_run_lease.run_id
-    RETURNING status, id, runs.org_id, runs.current_attempt_id, runs.current_run_lease_id, runs.state_version, current_run_lease.run_lease_status
+    RETURNING status, id, runs.org_id, runs.cell_id, runs.current_attempt_id, runs.current_run_lease_id, runs.state_version, current_run_lease.run_lease_status
 ),
 started_run_lease AS (
     UPDATE run_leases
@@ -3722,7 +3754,7 @@ started_attempt AS (
     UPDATE run_attempts
        SET status = 'running',
            started_at = COALESCE(run_attempts.started_at, now()),
-           observed_at = now()
+           updated_at = now()
       FROM started_run
      WHERE run_attempts.org_id = started_run.org_id
        AND run_attempts.run_id = started_run.id

@@ -15,7 +15,7 @@ const completeRunQueueItem = `-- name: CompleteRunQueueItem :one
 UPDATE run_queue_items
    SET status = 'completed',
        dispatch_generation = dispatch_generation + 1,
-       observed_at = now(),
+       updated_at = now(),
        finished_at = now()
  WHERE org_id = $1
    AND run_id = $2
@@ -83,7 +83,7 @@ queue_entry AS (
            reservation_expires_at = NULL,
            dispatch_generation = dispatch_generation + 1,
            last_error = $3,
-           observed_at = now(),
+           updated_at = now(),
            finished_at = now()
      WHERE run_queue_items.org_id = $1
        AND run_queue_items.run_id = $2
@@ -100,76 +100,76 @@ queue_entry AS (
        )
     RETURNING run_id, org_id, cell_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 ),
-	failed_run AS (
-		    UPDATE runs
-		       SET status = 'failed',
-		           execution_status = 'finished',
-		           terminal_outcome = 'dead_lettered',
-		           current_run_lease_id = NULL,
-	           error_message = $3,
-	           state_version = state_version + 1,
-	           observed_at = now(),
-	           finished_at = now()
+failed_run AS (
+    UPDATE runs
+       SET status = 'failed',
+           execution_status = 'finished',
+           terminal_outcome = 'dead_lettered',
+           current_run_lease_id = NULL,
+           error_message = $3,
+           state_version = state_version + 1,
+           updated_at = now(),
+           finished_at = now()
 	      FROM queue_entry
 	     WHERE runs.org_id = queue_entry.org_id
-	       AND runs.id = queue_entry.run_id
-	       AND runs.status = 'queued'
-	       AND runs.current_run_lease_id IS NULL
-	    RETURNING runs.org_id, runs.cell_id, runs.project_id, runs.environment_id, runs.id, runs.session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version
-	),
-	failed_attempt AS (
-	    UPDATE run_attempts
-	       SET status = 'failed',
-	           error_message = $3,
-	           finished_at = now(),
-	           observed_at = now()
-	      FROM failed_run
-	     WHERE run_attempts.org_id = failed_run.org_id
-	       AND run_attempts.run_id = failed_run.id
-	       AND run_attempts.id = failed_run.current_attempt_id
-	    RETURNING run_attempts.id, run_attempts.run_id
-	),
-	failed_snapshot AS (
-		    INSERT INTO run_snapshots (org_id, cell_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
-		    SELECT failed_run.org_id,
-		           failed_run.cell_id,
-		           failed_run.id,
-		           failed_run.state_version,
-		           'failed',
-		           'finished',
-		           'dead_lettered',
-		           failed_run.current_attempt_id,
-	           $5,
-	           $6
-	      FROM failed_run
-	      JOIN failed_attempt ON failed_attempt.run_id = failed_run.id
-	    RETURNING run_snapshots.run_id
-	),
-	failed_session_runs AS (
-	    UPDATE session_runs
-	       SET ended_at = now()
+       AND runs.id = queue_entry.run_id
+       AND runs.status = 'queued'
+       AND runs.current_run_lease_id IS NULL
+    RETURNING runs.org_id, runs.cell_id, runs.project_id, runs.environment_id, runs.id, runs.session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version
+),
+failed_attempt AS (
+    UPDATE run_attempts
+       SET status = 'failed',
+           error_message = $3,
+           finished_at = now(),
+           updated_at = now()
+      FROM failed_run
+     WHERE run_attempts.org_id = failed_run.org_id
+       AND run_attempts.run_id = failed_run.id
+       AND run_attempts.id = failed_run.current_attempt_id
+    RETURNING run_attempts.id, run_attempts.run_id
+),
+failed_snapshot AS (
+    INSERT INTO run_snapshots (org_id, cell_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
+    SELECT failed_run.org_id,
+           failed_run.cell_id,
+           failed_run.id,
+           failed_run.state_version,
+           'failed',
+           'finished',
+           'dead_lettered',
+           failed_run.current_attempt_id,
+           $5,
+           $6
+      FROM failed_run
+      JOIN failed_attempt ON failed_attempt.run_id = failed_run.id
+    RETURNING run_snapshots.run_id
+),
+failed_session_runs AS (
+    UPDATE session_runs
+       SET ended_at = now()
       FROM failed_run
      WHERE session_runs.org_id = failed_run.org_id
-	       AND session_runs.project_id = failed_run.project_id
-	       AND session_runs.environment_id = failed_run.environment_id
-	       AND session_runs.session_id = failed_run.session_id
-	       AND session_runs.run_id = failed_run.id
-	    RETURNING session_runs.id
-	),
-	failed_sessions AS (
-	    SELECT failed_run.session_id AS id
-	      FROM failed_run
-	),
-	run_event_seq AS (
-	    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
-	    SELECT failed_run.org_id, failed_run.cell_id, 'run', failed_run.id, 1
-	      FROM failed_run
-	      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
-	    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
-	    DO UPDATE SET seq = event_cursors.seq + 1,
-	                  observed_at = now()
-	    RETURNING org_id, subject_kind, subject_id, seq
-	),
+       AND session_runs.project_id = failed_run.project_id
+       AND session_runs.environment_id = failed_run.environment_id
+       AND session_runs.session_id = failed_run.session_id
+       AND session_runs.run_id = failed_run.id
+    RETURNING session_runs.id
+),
+failed_sessions AS (
+    SELECT failed_run.session_id AS id
+      FROM failed_run
+),
+run_event_seq AS (
+    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
+    SELECT failed_run.org_id, failed_run.cell_id, 'run', failed_run.id, 1
+      FROM failed_run
+      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
+    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
+    DO UPDATE SET seq = event_cursors.seq + 1,
+                  observed_at = now()
+    RETURNING org_id, subject_kind, subject_id, seq
+),
 	run_event AS (
 	    INSERT INTO event_hot_payloads (org_id, cell_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
 	    SELECT failed_run.org_id,
@@ -878,7 +878,7 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 const markRunQueueItemEnqueueError = `-- name: MarkRunQueueItemEnqueueError :one
 UPDATE run_queue_items
    SET last_error = $1,
-       observed_at = now()
+       updated_at = now()
  WHERE org_id = $2
    AND run_id = $3
    AND status = 'queued'
@@ -929,7 +929,7 @@ UPDATE run_queue_items
        dispatch_message_id = $1,
        last_error = '',
        enqueued_at = now(),
-       observed_at = now()
+       updated_at = now()
  WHERE org_id = $2
    AND run_id = $3
    AND status = 'queued'
@@ -1150,7 +1150,7 @@ dispatch AS (
            dispatch_generation = run_queue_items.dispatch_generation + 1,
            last_error = '',
            enqueued_at = now(),
-           observed_at = now(),
+           updated_at = now(),
            finished_at = NULL
      WHERE run_queue_items.status = 'queued'
         OR (
@@ -1265,7 +1265,7 @@ func (q *Queries) PrepareQueuedRunQueueItem(ctx context.Context, arg PrepareQueu
 const renewRunQueueReservation = `-- name: RenewRunQueueReservation :one
 UPDATE run_queue_items
    SET reservation_expires_at = $1,
-       observed_at = now()
+       updated_at = now()
  WHERE org_id = $2
    AND run_id = $3
    AND reserved_by_worker_instance_id = $4
@@ -1323,7 +1323,7 @@ UPDATE run_queue_items
        dispatch_generation = dispatch_generation + 1,
        last_error = $1,
        enqueued_at = now(),
-       observed_at = now(),
+       updated_at = now(),
        finished_at = NULL
  WHERE org_id = $2
    AND run_id = $3
@@ -1493,7 +1493,7 @@ reserved AS (
            queued_expires_at = NULL,
            dispatch_generation = candidate.dispatch_generation + 1,
            last_error = '',
-           observed_at = now(),
+           updated_at = now(),
            finished_at = NULL
       FROM candidate
      WHERE run_queue_items.org_id = candidate.org_id
@@ -1612,7 +1612,7 @@ reserved AS (
            queued_expires_at = NULL,
            dispatch_generation = candidate.dispatch_generation + 1,
            last_error = '',
-           observed_at = now(),
+           updated_at = now(),
            finished_at = NULL
       FROM candidate
      WHERE run_queue_items.org_id = candidate.org_id
@@ -1681,7 +1681,7 @@ UPDATE run_queue_items
        reservation_expires_at = $3,
        queued_expires_at = NULL,
        dispatch_generation = dispatch_generation + 1,
-       observed_at = now(),
+       updated_at = now(),
        finished_at = NULL
  WHERE run_queue_items.org_id = $4
    AND run_queue_items.run_id = $5
@@ -1879,7 +1879,7 @@ WITH upserted AS (
            dispatch_generation = run_queue_items.dispatch_generation + 1,
            last_error = '',
            enqueued_at = now(),
-           observed_at = now(),
+           updated_at = now(),
            finished_at = NULL
     RETURNING run_queue_items.run_id, run_queue_items.org_id, run_queue_items.cell_id, run_queue_items.status, run_queue_items.priority, run_queue_items.queue_name, run_queue_items.concurrency_key, run_queue_items.queue_timestamp, run_queue_items.queued_expires_at, run_queue_items.dispatch_message_id, run_queue_items.reserved_by_worker_instance_id, run_queue_items.reservation_expires_at, run_queue_items.dispatch_generation, run_queue_items.last_error, run_queue_items.enqueued_at, run_queue_items.updated_at, run_queue_items.finished_at
 )
@@ -2007,7 +2007,7 @@ ON CONFLICT (run_id) DO UPDATE
        network_policy = excluded.network_policy,
        placement = excluded.placement,
        worker_group_id = excluded.worker_group_id,
-       observed_at = now()
+       updated_at = now()
 RETURNING run_id, org_id, cell_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at
 `
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,9 +28,9 @@ func TestDeleteScheduleKeepsParentUntilLastInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO tasks (org_id, project_id, environment_id, task_id)
-		VALUES ($1, $2, $3, 'approval-task')
-	`, ids.orgID, ids.projectID, secondEnvironmentID); err != nil {
+		INSERT INTO tasks (org_id, cell_id, project_id, environment_id, task_id)
+		VALUES ($1, $2, $3, $4, 'approval-task')
+	`, ids.orgID, dbtest.DefaultCellID, ids.projectID, secondEnvironmentID); err != nil {
 		t.Fatal(err)
 	}
 

@@ -50,6 +50,7 @@ active_runtime_instance_usage AS MATERIALIZED (
 candidate AS (
     SELECT workspace_mounts.id,
            workspace_mounts.org_id,
+           workspace_mounts.cell_id,
            workspace_mounts.project_id,
            workspace_mounts.environment_id,
            workspace_mounts.workspace_id,
@@ -232,6 +233,7 @@ cold_runtime_instance AS (
     INSERT INTO runtime_instances (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         worker_instance_id,
@@ -265,6 +267,7 @@ cold_runtime_instance AS (
     )
     SELECT $8,
            candidate.org_id,
+           candidate.cell_id,
            candidate.project_id,
            candidate.environment_id,
            $2,
@@ -723,6 +726,7 @@ inserted AS (
     INSERT INTO workspace_mounts (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         workspace_id,
@@ -750,6 +754,7 @@ inserted AS (
     )
     SELECT $5,
            workspaces.org_id,
+           workspaces.cell_id,
            workspaces.project_id,
            workspaces.environment_id,
            workspaces.id,
@@ -1388,15 +1393,18 @@ SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, w
   FROM workspace_mounts
   JOIN runtime_instances
     ON runtime_instances.org_id = workspace_mounts.org_id
+   AND runtime_instances.cell_id = workspace_mounts.cell_id
    AND runtime_instances.id = workspace_mounts.runtime_instance_id
  WHERE workspace_mounts.org_id = $1
-   AND workspace_mounts.project_id = $2
-   AND workspace_mounts.environment_id = $3
-   AND workspace_mounts.workspace_id = $4
-   AND workspace_mounts.id = $5
+   AND workspace_mounts.cell_id = $2
+   AND workspace_mounts.project_id = $3
+   AND workspace_mounts.environment_id = $4
+   AND workspace_mounts.workspace_id = $5
+   AND workspace_mounts.id = $6
    AND workspace_mounts.state IN ('mounted', 'unmounting')
-   AND runtime_instances.worker_instance_id = $6
-   AND runtime_instances.instance_token = $7
+   AND runtime_instances.worker_instance_id = $7
+   AND runtime_instances.cell_id = $2
+   AND runtime_instances.instance_token = $8
    AND runtime_instances.workspace_mount_id = workspace_mounts.id
    AND runtime_instances.state IN ('running', 'waiting_hot', 'checkpointing', 'stopping')
    AND (
@@ -1407,6 +1415,7 @@ SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, w
 
 type GetWorkspaceMountForWorkerPrimitiveScopeParams struct {
 	OrgID                pgtype.UUID `json:"org_id"`
+	CellID               string      `json:"cell_id"`
 	ProjectID            pgtype.UUID `json:"project_id"`
 	EnvironmentID        pgtype.UUID `json:"environment_id"`
 	WorkspaceID          pgtype.UUID `json:"workspace_id"`
@@ -1418,6 +1427,7 @@ type GetWorkspaceMountForWorkerPrimitiveScopeParams struct {
 func (q *Queries) GetWorkspaceMountForWorkerPrimitiveScope(ctx context.Context, arg GetWorkspaceMountForWorkerPrimitiveScopeParams) (WorkspaceMount, error) {
 	row := q.db.QueryRow(ctx, getWorkspaceMountForWorkerPrimitiveScope,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
@@ -2088,6 +2098,7 @@ created_version AS (
     INSERT INTO workspace_versions (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         workspace_id,
@@ -2106,6 +2117,7 @@ created_version AS (
     )
     SELECT $12,
            target.org_id,
+           target.cell_id,
            target.project_id,
            target.environment_id,
            target.workspace_id,

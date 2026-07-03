@@ -330,6 +330,7 @@ func (s *Server) appendWorkerEvent(w http.ResponseWriter, r *http.Request, lease
 	}
 	_, err := s.db.AppendRunEventForExecution(r.Context(), db.AppendRunEventForExecutionParams{
 		OrgID:            pgvalue.UUID(leaseIDs.orgID),
+		CellID:           worker.CellID,
 		RunID:            pgvalue.UUID(leaseIDs.runID),
 		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),

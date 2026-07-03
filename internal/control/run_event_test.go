@@ -331,12 +331,13 @@ func (f *fakeStore) ListSubjectEvents(_ context.Context, arg db.ListSubjectEvent
 }
 
 func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendRunEventForExecutionParams) (db.AppendRunEventForExecutionRow, error) {
-	if f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+	if f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.CellID != dbtest.DefaultCellID {
 		return db.AppendRunEventForExecutionRow{}, pgx.ErrNoRows
 	}
 	event := db.EventHotPayload{
 		Seq:            int64(len(f.events) + 1),
 		OrgID:          arg.OrgID,
+		CellID:         arg.CellID,
 		RunID:          arg.RunID,
 		RunLeaseID:     arg.RunLeaseID,
 		AttemptNumber:  pgtype.Int4{Int32: 1, Valid: true},

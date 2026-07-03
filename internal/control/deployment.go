@@ -409,6 +409,8 @@ func validateDeploymentContentHash(archivePath string, contentHash string) error
 
 func createDeploymentRecords(ctx context.Context, store deploymentStore, cellID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (api.DeploymentResponse, error) {
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
+		OrgID:     pgvalue.UUID(orgID),
+		CellID:    cellID,
 		Digest:    artifact.Digest,
 		SizeBytes: artifact.SizeBytes,
 		MediaType: artifact.MediaType,
@@ -456,6 +458,7 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, cellID s
 	sourceArtifact, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(orgID),
+		CellID:        cellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Digest:        artifact.Digest,

@@ -56,6 +56,9 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
+	if s.rejectRunFromWrongCell(w, summary.CellID) {
+		return
+	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
 		cursor, err := eventCursor(r)
 		if err != nil {
@@ -74,7 +77,7 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		s.log.Error("get run logs failed", "run_id", runID.String(), "error", err)
-		writeError(w, errors.New("get run logs"))
+		writeRunTelemetryError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.LogSnapshotResponse{

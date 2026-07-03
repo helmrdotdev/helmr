@@ -512,6 +512,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if _, err := work.q.CreateSessionRun(ctx, db.CreateSessionRunParams{
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:         pgvalue.UUID(actor.OrgID),
+			CellID:        session.CellID,
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			SessionID:     session.ID,

@@ -23,10 +23,12 @@ current_run_lease AS (
       JOIN run_attempts ON run_attempts.org_id = run_leases.org_id
                        AND run_attempts.run_id = run_leases.run_id
                        AND run_attempts.id = run_leases.attempt_id
-     WHERE runs.org_id = sqlc.arg(org_id)
-       AND runs.id = sqlc.arg(run_id)
-       AND runs.status = 'running'
-       AND run_leases.id = sqlc.arg(run_lease_id)
+	     WHERE runs.org_id = sqlc.arg(org_id)
+	       AND runs.cell_id = sqlc.arg(cell_id)
+	       AND runs.id = sqlc.arg(run_id)
+	       AND runs.status = 'running'
+	       AND run_leases.cell_id = sqlc.arg(cell_id)
+	       AND run_leases.id = sqlc.arg(run_lease_id)
        AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
        AND run_leases.status IN ('leased', 'running')
        AND run_leases.lease_expires_at > now()

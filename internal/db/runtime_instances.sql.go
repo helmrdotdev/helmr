@@ -44,6 +44,7 @@ stopping_runtime_instances AS (
 )
 INSERT INTO worker_commands (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     worker_instance_id,
@@ -53,6 +54,7 @@ INSERT INTO worker_commands (
     payload
 )
 SELECT stopping_runtime_instances.org_id,
+       stopping_runtime_instances.cell_id,
        stopping_runtime_instances.project_id,
        stopping_runtime_instances.environment_id,
        stopping_runtime_instances.worker_instance_id,
@@ -182,6 +184,7 @@ candidate AS MATERIALIZED (
 INSERT INTO runtime_instances (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     worker_instance_id,
@@ -211,6 +214,7 @@ INSERT INTO runtime_instances (
 )
 SELECT $1,
        candidate.org_id,
+       candidate.cell_id,
        candidate.project_id,
        candidate.environment_id,
        $2,
@@ -414,6 +418,7 @@ inserted AS (
     INSERT INTO runtime_instances (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         worker_instance_id,
@@ -443,6 +448,7 @@ inserted AS (
     )
     SELECT $6,
            candidate.org_id,
+           candidate.cell_id,
            candidate.project_id,
            candidate.environment_id,
            $1,
@@ -676,6 +682,7 @@ stopping_runtime_instances AS (
 )
 INSERT INTO worker_commands (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     worker_instance_id,
@@ -685,6 +692,7 @@ INSERT INTO worker_commands (
     payload
 )
 SELECT stopping_runtime_instances.org_id,
+       stopping_runtime_instances.cell_id,
        stopping_runtime_instances.project_id,
        stopping_runtime_instances.environment_id,
        stopping_runtime_instances.worker_instance_id,
@@ -788,6 +796,7 @@ worker_sandbox_scope AS MATERIALIZED (
            worker_instances.runtime_abi,
            current_sandboxes.id AS deployment_sandbox_id,
            current_sandboxes.org_id,
+           current_sandboxes.cell_id,
            current_sandboxes.project_id,
            current_sandboxes.environment_id,
            current_sandboxes.requested_cpu_millis,
@@ -940,6 +949,7 @@ sandbox_demand AS MATERIALIZED (
 ),
 eligible_warm_targets AS MATERIALIZED (
     SELECT worker_sandbox_scope.org_id,
+           worker_sandbox_scope.cell_id,
            worker_sandbox_scope.project_id,
            worker_sandbox_scope.environment_id,
            worker_sandbox_scope.worker_instance_id,
@@ -996,6 +1006,7 @@ eligible_warm_targets AS MATERIALIZED (
        AND worker_sandbox_scope.requested_execution_slots <= GREATEST(worker_sandbox_scope.available_execution_slots - active_run_usage.used_slots - active_runtime_instance_usage.used_slots - 1, 0)
 )
 SELECT org_id,
+       cell_id,
        project_id,
        environment_id,
        worker_instance_id,
@@ -1036,6 +1047,7 @@ type ListRuntimeInstanceWarmTargetsParams struct {
 
 type ListRuntimeInstanceWarmTargetsRow struct {
 	OrgID                         pgtype.UUID `json:"org_id"`
+	CellID                        string      `json:"cell_id"`
 	ProjectID                     pgtype.UUID `json:"project_id"`
 	EnvironmentID                 pgtype.UUID `json:"environment_id"`
 	WorkerInstanceID              pgtype.UUID `json:"worker_instance_id"`
@@ -1069,6 +1081,7 @@ func (q *Queries) ListRuntimeInstanceWarmTargets(ctx context.Context, arg ListRu
 		var i ListRuntimeInstanceWarmTargetsRow
 		if err := rows.Scan(
 			&i.OrgID,
+			&i.CellID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkerInstanceID,
@@ -1134,6 +1147,7 @@ worker_sandbox_scope AS MATERIALIZED (
            worker_instances.runtime_abi,
            current_sandboxes.id AS deployment_sandbox_id,
            current_sandboxes.org_id,
+           current_sandboxes.cell_id,
            current_sandboxes.project_id,
            current_sandboxes.environment_id,
            current_sandboxes.image_artifact_format,
@@ -1166,6 +1180,7 @@ sandbox_demand AS MATERIALIZED (
      GROUP BY worker_sandbox_scope.worker_instance_id, worker_sandbox_scope.deployment_sandbox_id
 )
 SELECT worker_sandbox_scope.org_id,
+       worker_sandbox_scope.cell_id,
        worker_sandbox_scope.project_id,
        worker_sandbox_scope.environment_id,
        worker_sandbox_scope.worker_instance_id,
@@ -1242,6 +1257,7 @@ type ListRuntimeSubstratePrepareTargetsParams struct {
 
 type ListRuntimeSubstratePrepareTargetsRow struct {
 	OrgID                         pgtype.UUID `json:"org_id"`
+	CellID                        string      `json:"cell_id"`
 	ProjectID                     pgtype.UUID `json:"project_id"`
 	EnvironmentID                 pgtype.UUID `json:"environment_id"`
 	WorkerInstanceID              pgtype.UUID `json:"worker_instance_id"`
@@ -1280,6 +1296,7 @@ func (q *Queries) ListRuntimeSubstratePrepareTargets(ctx context.Context, arg Li
 		var i ListRuntimeSubstratePrepareTargetsRow
 		if err := rows.Scan(
 			&i.OrgID,
+			&i.CellID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkerInstanceID,

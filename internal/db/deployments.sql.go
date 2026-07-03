@@ -243,6 +243,7 @@ const createDeploymentQueue = `-- name: CreateDeploymentQueue :one
 INSERT INTO deployment_queues (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     deployment_id,
@@ -255,7 +256,8 @@ INSERT INTO deployment_queues (
     $4,
     $5,
     $6,
-    $7
+    $7,
+    $8
 )
 RETURNING id, org_id, cell_id, project_id, environment_id, deployment_id, name, concurrency_limit, created_at
 `
@@ -263,6 +265,7 @@ RETURNING id, org_id, cell_id, project_id, environment_id, deployment_id, name, 
 type CreateDeploymentQueueParams struct {
 	ID               pgtype.UUID `json:"id"`
 	OrgID            pgtype.UUID `json:"org_id"`
+	CellID           string      `json:"cell_id"`
 	ProjectID        pgtype.UUID `json:"project_id"`
 	EnvironmentID    pgtype.UUID `json:"environment_id"`
 	DeploymentID     pgtype.UUID `json:"deployment_id"`
@@ -274,6 +277,7 @@ func (q *Queries) CreateDeploymentQueue(ctx context.Context, arg CreateDeploymen
 	row := q.db.QueryRow(ctx, createDeploymentQueue,
 		arg.ID,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentID,
@@ -299,6 +303,7 @@ const createDeploymentSandbox = `-- name: CreateDeploymentSandbox :one
 INSERT INTO deployment_sandboxes (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     deployment_id,
@@ -334,10 +339,10 @@ INSERT INTO deployment_sandboxes (
     $10,
     $11,
     $12,
-    coalesce($13::jsonb, '{}'::jsonb),
-    $14,
-    coalesce($15::jsonb, '{}'::jsonb),
-    $16,
+    $13,
+    coalesce($14::jsonb, '{}'::jsonb),
+    $15,
+    coalesce($16::jsonb, '{}'::jsonb),
     $17,
     $18,
     $19,
@@ -345,7 +350,8 @@ INSERT INTO deployment_sandboxes (
     $21,
     $22,
     $23,
-    $24
+    $24,
+    $25
 )
 RETURNING id, org_id, cell_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, resource_floor, disk_floor_mib, network_policy, runtime_abi, guestd_abi, adapter_abi, filesystem_format, default_uid, default_gid, default_workdir, contract_version, fingerprint, created_at
 `
@@ -353,6 +359,7 @@ RETURNING id, org_id, cell_id, project_id, environment_id, deployment_id, sandbo
 type CreateDeploymentSandboxParams struct {
 	ID                  pgtype.UUID `json:"id"`
 	OrgID               pgtype.UUID `json:"org_id"`
+	CellID              string      `json:"cell_id"`
 	ProjectID           pgtype.UUID `json:"project_id"`
 	EnvironmentID       pgtype.UUID `json:"environment_id"`
 	DeploymentID        pgtype.UUID `json:"deployment_id"`
@@ -381,6 +388,7 @@ func (q *Queries) CreateDeploymentSandbox(ctx context.Context, arg CreateDeploym
 	row := q.db.QueryRow(ctx, createDeploymentSandbox,
 		arg.ID,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentID,
@@ -440,6 +448,7 @@ const createDeploymentTask = `-- name: CreateDeploymentTask :one
 WITH catalog_task AS (
     INSERT INTO tasks (
         org_id,
+        cell_id,
         project_id,
         environment_id,
         task_id,
@@ -449,7 +458,8 @@ WITH catalog_task AS (
         $2,
         $3,
         $4,
-        $7,
+        $5,
+        $8,
         NULL,
         now()
     )
@@ -461,6 +471,7 @@ WITH catalog_task AS (
 INSERT INTO deployment_tasks (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     deployment_id,
@@ -502,12 +513,13 @@ INSERT INTO deployment_tasks (
     $16,
     $17,
     $18,
-    coalesce($19::jsonb, '[]'::jsonb),
-    $20,
+    $19,
+    coalesce($20::jsonb, '[]'::jsonb),
     $21,
     $22,
     $23,
-    coalesce($24::jsonb, '{"enabled": false}'::jsonb)
+    $24,
+    coalesce($25::jsonb, '{"enabled": false}'::jsonb)
   FROM catalog_task
 RETURNING id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, secret_declarations, resource_requirements, network_policy, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_active_duration_ms, retry_policy, created_at
 `
@@ -515,6 +527,7 @@ RETURNING id, org_id, cell_id, project_id, environment_id, deployment_id, deploy
 type CreateDeploymentTaskParams struct {
 	ID                    pgtype.UUID `json:"id"`
 	OrgID                 pgtype.UUID `json:"org_id"`
+	CellID                string      `json:"cell_id"`
 	ProjectID             pgtype.UUID `json:"project_id"`
 	EnvironmentID         pgtype.UUID `json:"environment_id"`
 	DeploymentID          pgtype.UUID `json:"deployment_id"`
@@ -543,6 +556,7 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 	row := q.db.QueryRow(ctx, createDeploymentTask,
 		arg.ID,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentID,

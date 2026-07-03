@@ -2,6 +2,7 @@
 INSERT INTO deployment_streams (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     deployment_id,
@@ -14,6 +15,7 @@ INSERT INTO deployment_streams (
 VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(deployment_id),

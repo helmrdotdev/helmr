@@ -44,14 +44,14 @@ func promoteDeploymentAndSyncSchedules(ctx context.Context, store interface {
 			return nil, err
 		}
 	}
-	_, err := store.PromoteDeployment(ctx, params)
+	promoted, err := store.PromoteDeployment(ctx, params)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
 		return nil, nil
 	}
-	changed, err := syncDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID)
+	changed, err := syncDeclarativeSchedulesForDeployment(ctx, syncStore, promoted.CellID, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func validateDeclarativeSchedulesForDeployment(ctx context.Context, store declar
 	return nil
 }
 
-func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativeScheduleSyncStore, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID) ([]scheduleView, error) {
+func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativeScheduleSyncStore, cellID string, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID) ([]scheduleView, error) {
 	desired, err := deploymentDeclarativeScheduleSpecs(ctx, store, orgID, projectID, environmentID, deploymentID)
 	if err != nil {
 		return nil, err
@@ -124,6 +124,7 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 		created, err := store.CreateDeclarativeSchedule(ctx, db.CreateDeclarativeScheduleParams{
 			ScheduleID:    pgvalue.UUID(scheduleID),
 			OrgID:         orgID,
+			CellID:        cellID,
 			ProjectID:     projectID,
 			TaskID:        spec.TaskID,
 			DedupKey:      spec.DedupKey,

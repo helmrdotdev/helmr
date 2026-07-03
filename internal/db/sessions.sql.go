@@ -292,6 +292,7 @@ const createSessionRun = `-- name: CreateSessionRun :one
 INSERT INTO session_runs (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     session_id,
@@ -310,7 +311,8 @@ INSERT INTO session_runs (
     $7,
     $8,
     $9,
-    $10
+    $10,
+    $11
 )
 RETURNING id, org_id, cell_id, project_id, environment_id, session_id, run_id, deployment_id, previous_run_id, turn_index, reason, created_at, ended_at
 `
@@ -318,6 +320,7 @@ RETURNING id, org_id, cell_id, project_id, environment_id, session_id, run_id, d
 type CreateSessionRunParams struct {
 	ID            pgtype.UUID `json:"id"`
 	OrgID         pgtype.UUID `json:"org_id"`
+	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	SessionID     pgtype.UUID `json:"session_id"`
@@ -332,6 +335,7 @@ func (q *Queries) CreateSessionRun(ctx context.Context, arg CreateSessionRunPara
 	row := q.db.QueryRow(ctx, createSessionRun,
 		arg.ID,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.SessionID,

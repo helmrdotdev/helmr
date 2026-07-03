@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -184,19 +185,19 @@ func TestDeadLetterRunQueueItemTerminalizesSession(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_runtime_requirements (
-			run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
+			run_id, org_id, cell_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
 			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
 		)
-		VALUES ($1, $2, 1000, 1024, 4096, 1, $3, 'arm64', 'test', 'sha256:kernel',
-			'sha256:initramfs', 'sha256:rootfs', 'default', $4)
-	`, ids.runID, ids.orgID, runtimeID, workerGroupID); err != nil {
+		VALUES ($1, $2, $3, 1000, 1024, 4096, 1, $4, 'arm64', 'test', 'sha256:kernel',
+			'sha256:initramfs', 'sha256:rootfs', 'default', $5)
+	`, ids.runID, ids.orgID, dbtest.DefaultCellID, runtimeID, workerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_queue_items (run_id, org_id, status, queue_name, dispatch_message_id)
-		VALUES ($1, $2, 'queued', 'default', 'dispatch-1')
-	`, ids.runID, ids.orgID); err != nil {
+		INSERT INTO run_queue_items (run_id, org_id, cell_id, status, queue_name, dispatch_message_id)
+		VALUES ($1, $2, $3, 'queued', 'default', 'dispatch-1')
+	`, ids.runID, ids.orgID, dbtest.DefaultCellID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -245,9 +246,9 @@ func seedCurrentAttempt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, i
 	t.Helper()
 	attemptID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
-		VALUES ($1, $2, $3, 1, $4)
-	`, attemptID, ids.orgID, ids.runID, status); err != nil {
+		INSERT INTO run_attempts (id, org_id, cell_id, run_id, attempt_number, status)
+		VALUES ($1, $2, $3, $4, 1, $5)
+	`, attemptID, ids.orgID, dbtest.DefaultCellID, ids.runID, status); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -265,10 +266,10 @@ func seedSessionRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids i
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO session_runs (
-			id, org_id, project_id, environment_id, session_id, run_id, deployment_id, turn_index, reason
+			id, org_id, cell_id, project_id, environment_id, session_id, run_id, deployment_id, turn_index, reason
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 1, 'initial')
-	`, uuid.Must(uuid.NewV7()), ids.orgID, ids.projectID, ids.environmentID, sessionID, ids.runID, ids.deploymentID); err != nil {
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, 'initial')
+	`, uuid.Must(uuid.NewV7()), ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, sessionID, ids.runID, ids.deploymentID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -278,6 +279,7 @@ func seedCancelOperation(t *testing.T, ctx context.Context, queries *db.Queries,
 	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
 		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          pgvalue.UUID(ids.orgID),
+		CellID:         dbtest.DefaultCellID,
 		ProjectID:      pgvalue.UUID(ids.projectID),
 		EnvironmentID:  pgvalue.UUID(ids.environmentID),
 		RunID:          pgvalue.UUID(ids.runID),
@@ -286,7 +288,7 @@ func seedCancelOperation(t *testing.T, ctx context.Context, queries *db.Queries,
 		ActorID:        "test",
 		Reason:         reason,
 		Request:        []byte(`{}`),
-		IdempotencyKey: "",
+		IdempotencyKey: "cancel:" + ids.runID.String() + ":" + reason,
 	})
 	if err != nil {
 		t.Fatal(err)

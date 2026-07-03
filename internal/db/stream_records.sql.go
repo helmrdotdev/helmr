@@ -46,6 +46,7 @@ inserted_record AS (
     INSERT INTO stream_records (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         session_id,
@@ -63,6 +64,7 @@ inserted_record AS (
     )
     SELECT $8,
            allocated_stream.org_id,
+           allocated_stream.cell_id,
            allocated_stream.project_id,
            allocated_stream.environment_id,
            allocated_stream.session_id,

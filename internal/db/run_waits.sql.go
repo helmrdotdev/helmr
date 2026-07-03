@@ -15,7 +15,7 @@ const cancelRunWait = `-- name: CancelRunWait :one
 UPDATE run_waits
    SET state = 'cancelled',
        cancelled_at = COALESCE(run_waits.cancelled_at, now()),
-       observed_at = now()
+       updated_at = now()
  WHERE org_id = $1
    AND id = $2
    AND state = 'checkpointed_waiting'
@@ -68,7 +68,7 @@ const cancelRunWaitsForRun = `-- name: CancelRunWaitsForRun :many
 UPDATE run_waits
    SET state = 'cancelled',
        cancelled_at = COALESCE(run_waits.cancelled_at, now()),
-       observed_at = now()
+       updated_at = now()
  WHERE org_id = $1
    AND run_id = $2
    AND state = 'checkpointed_waiting'
@@ -212,6 +212,7 @@ claimed_checkpoint AS (
     INSERT INTO runtime_checkpoints (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         workspace_id,
@@ -241,6 +242,7 @@ claimed_checkpoint AS (
     )
     SELECT $8,
            scope.org_id,
+           scope.cell_id,
            scope.project_id,
            scope.environment_id,
            scope.workspace_id,
@@ -278,7 +280,7 @@ claimed_wait AS (
        SET state = 'checkpointing',
            runtime_checkpoint_started_at = COALESCE(run_waits.runtime_checkpoint_started_at, now()),
            runtime_checkpoint_id = $8,
-           observed_at = now()
+           updated_at = now()
       FROM scope
      WHERE run_waits.org_id = scope.org_id
        AND run_waits.id = scope.id
@@ -330,7 +332,7 @@ checkpointing_runtime_instance AS (
            owner_run_wait_id = selected_wait.id,
            owner_run_state_version = selected_wait.owner_run_state_version,
            checkpointing_at = COALESCE(runtime_instances.checkpointing_at, now()),
-           observed_at = now()
+           updated_at = now()
       FROM scope, selected_wait
      WHERE runtime_instances.org_id = scope.org_id
        AND runtime_instances.id = scope.runtime_instance_id
@@ -424,6 +426,7 @@ func (q *Queries) ClaimRuntimeCheckpointWait(ctx context.Context, arg ClaimRunti
 const createHotRunWait = `-- name: CreateHotRunWait :one
 WITH scope AS MATERIALIZED (
     SELECT runs.org_id,
+           runs.cell_id,
            runs.project_id,
            runs.environment_id,
            runs.id AS run_id,
@@ -463,6 +466,7 @@ inserted_wait AS (
     INSERT INTO run_waits (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         run_id,
@@ -481,6 +485,7 @@ inserted_wait AS (
     )
     SELECT $7,
            scope.org_id,
+           scope.cell_id,
            scope.project_id,
            scope.environment_id,
            scope.run_id,
@@ -510,7 +515,7 @@ waiting_runtime_instance AS (
            owner_run_wait_id = inserted_wait.id,
            owner_run_state_version = inserted_wait.owner_run_state_version,
            waiting_at = now(),
-           observed_at = now()
+           updated_at = now()
       FROM scope, inserted_wait
      WHERE runtime_instances.org_id = scope.org_id
        AND runtime_instances.id = scope.runtime_instance_id
@@ -624,7 +629,7 @@ UPDATE run_waits
          ELSE 'expired'::run_wait_state
        END,
        resolved_at = COALESCE(run_waits.resolved_at, now()),
-       observed_at = now()
+       updated_at = now()
  WHERE org_id = $1
    AND state IN ('live_waiting', 'checkpointed_waiting')
    AND timeout_at IS NOT NULL
@@ -686,6 +691,7 @@ const failStaleResolvedRunWaits = `-- name: FailStaleResolvedRunWaits :many
 WITH stale_waits AS MATERIALIZED (
     SELECT run_waits.id AS run_wait_id,
            run_waits.org_id,
+           run_waits.cell_id,
            run_waits.project_id,
            run_waits.environment_id,
            run_waits.run_id,
@@ -749,7 +755,7 @@ WITH stale_waits AS MATERIALIZED (
 failed_waits AS (
     UPDATE run_waits
        SET state = 'failed',
-           observed_at = now()
+           updated_at = now()
       FROM stale_waits
      WHERE run_waits.org_id = stale_waits.org_id
        AND run_waits.id = stale_waits.run_wait_id
@@ -764,7 +770,7 @@ failed_runs AS (
            error_message = stale_waits.failure_message,
            state_version = stale_waits.next_state_version,
            finished_at = now(),
-           observed_at = now()
+           updated_at = now()
       FROM stale_waits
       JOIN failed_waits ON failed_waits.org_id = stale_waits.org_id
                        AND failed_waits.id = stale_waits.run_wait_id
@@ -772,7 +778,7 @@ failed_runs AS (
        AND runs.id = stale_waits.run_id
        AND runs.status = stale_waits.run_status
        AND runs.current_run_lease_id IS NULL
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.session_id,
+    RETURNING runs.id, runs.org_id, runs.cell_id, runs.project_id, runs.environment_id, runs.session_id,
               runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id,
               runs.state_version, runs.error_message, stale_waits.runtime_checkpoint_id,
               stale_waits.base_workspace_version_id, stale_waits.current_version_id,
@@ -812,7 +818,7 @@ failed_attempts AS (
        SET status = 'failed',
            error_message = failed_runs.error_message,
            finished_at = now(),
-           observed_at = now()
+           updated_at = now()
       FROM failed_runs
      WHERE run_attempts.org_id = failed_runs.org_id
        AND run_attempts.run_id = failed_runs.id
@@ -823,7 +829,7 @@ completed_queue_entries AS (
     UPDATE run_queue_items
        SET status = 'completed',
            dispatch_generation = dispatch_generation + 1,
-           observed_at = now(),
+           updated_at = now(),
            finished_at = now()
      FROM failed_runs
      WHERE run_queue_items.org_id = failed_runs.org_id
@@ -1123,6 +1129,7 @@ func (q *Queries) GetRunWaitByRun(ctx context.Context, arg GetRunWaitByRunParams
 
 const getWorkerRunWaitScope = `-- name: GetWorkerRunWaitScope :one
 SELECT runs.org_id,
+       runs.cell_id,
        runs.project_id,
        runs.environment_id,
        runs.deployment_id,
@@ -1181,6 +1188,7 @@ type GetWorkerRunWaitScopeParams struct {
 
 type GetWorkerRunWaitScopeRow struct {
 	OrgID                     pgtype.UUID `json:"org_id"`
+	CellID                    string      `json:"cell_id"`
 	ProjectID                 pgtype.UUID `json:"project_id"`
 	EnvironmentID             pgtype.UUID `json:"environment_id"`
 	DeploymentID              pgtype.UUID `json:"deployment_id"`
@@ -1209,6 +1217,7 @@ func (q *Queries) GetWorkerRunWaitScope(ctx context.Context, arg GetWorkerRunWai
 	var i GetWorkerRunWaitScopeRow
 	err := row.Scan(
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
@@ -1349,7 +1358,7 @@ updated_restore AS (
            error_message = NULL,
            acknowledged_at = COALESCE(runtime_checkpoint_restores.acknowledged_at, now()),
            finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
-           observed_at = now()
+           updated_at = now()
       FROM current_wait
       JOIN restore_phase_payload ON true
      WHERE runtime_checkpoint_restores.org_id = $1
@@ -1370,7 +1379,7 @@ updated_wait AS (
     UPDATE run_waits
        SET resumed_at = COALESCE(run_waits.resumed_at, now()),
            state = 'resumed',
-           observed_at = now()
+           updated_at = now()
       FROM current_wait
       JOIN updated_restore ON true
      WHERE run_waits.org_id = current_wait.org_id
@@ -1503,7 +1512,7 @@ updated_waits AS (
     UPDATE run_waits
        SET state = 'resuming',
            resuming_at = COALESCE(run_waits.resuming_at, now()),
-           observed_at = now()
+           updated_at = now()
       FROM eligible_waits
      WHERE run_waits.org_id = eligible_waits.org_id
        AND run_waits.id = eligible_waits.id
@@ -1515,7 +1524,7 @@ updated_runs AS (
        SET status = 'queued',
            execution_status = 'queued',
            state_version = runs.state_version + 1,
-           observed_at = now()
+           updated_at = now()
       FROM eligible_waits
       JOIN updated_waits ON updated_waits.org_id = eligible_waits.org_id
                         AND updated_waits.id = eligible_waits.id
@@ -1528,7 +1537,7 @@ updated_runs AS (
 updated_attempts AS (
     UPDATE run_attempts
        SET status = 'queued',
-           observed_at = now()
+           updated_at = now()
       FROM updated_runs
      WHERE run_attempts.org_id = updated_runs.org_id
        AND run_attempts.run_id = updated_runs.id
@@ -1546,7 +1555,7 @@ updated_queue AS (
            dispatch_generation = run_queue_items.dispatch_generation + 1,
            last_error = '',
            enqueued_at = now(),
-           observed_at = now(),
+           updated_at = now(),
            finished_at = NULL
       FROM updated_runs
       JOIN eligible_waits ON eligible_waits.org_id = updated_runs.org_id
@@ -1667,7 +1676,7 @@ UPDATE run_waits
          ELSE state
        END,
        resolved_at = COALESCE(run_waits.resolved_at, now()),
-       observed_at = now()
+       updated_at = now()
  WHERE org_id = $1
    AND id = $2
    AND state IN ('live_waiting', 'checkpointed_waiting')
@@ -1719,7 +1728,7 @@ func (q *Queries) ResolveRunWait(ctx context.Context, arg ResolveRunWaitParams) 
 const setRunWaitWorkspaceVersion = `-- name: SetRunWaitWorkspaceVersion :one
 UPDATE run_waits
    SET workspace_version_id = workspace_versions.id,
-       observed_at = now()
+       updated_at = now()
   FROM runs
   JOIN workspace_versions
     ON workspace_versions.org_id = runs.org_id

@@ -271,7 +271,7 @@ func verifyHistoricalSeqCoverage(afterSeq int64, watermark int64, limit int32, r
 			expected++
 		}
 	}
-	for idx := 0; idx < rowCount; idx++ {
+	for idx := range rowCount {
 		skipAllowed()
 		seq := seqAt(idx)
 		if seq <= 0 {

@@ -1,6 +1,7 @@
 -- name: CreateWorkerCommand :one
 INSERT INTO worker_commands (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     run_id,
@@ -15,6 +16,7 @@ INSERT INTO worker_commands (
     payload
 ) VALUES (
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(run_id),
@@ -283,6 +285,7 @@ WITH due AS (
 )
 INSERT INTO worker_commands (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     run_id,
@@ -296,6 +299,7 @@ INSERT INTO worker_commands (
     payload
 )
 SELECT due.org_id,
+       due.cell_id,
        due.project_id,
        due.environment_id,
        due.run_id,
@@ -370,6 +374,7 @@ WITH due AS (
 )
 INSERT INTO worker_commands (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     run_id,
@@ -383,6 +388,7 @@ INSERT INTO worker_commands (
     payload
 )
 SELECT due.org_id,
+       due.cell_id,
        due.project_id,
        due.environment_id,
        due.run_id,
@@ -478,6 +484,7 @@ victim AS (
 )
 INSERT INTO worker_commands (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     run_id,
@@ -491,6 +498,7 @@ INSERT INTO worker_commands (
     payload
 )
 SELECT victim.org_id,
+       victim.cell_id,
        victim.project_id,
        victim.environment_id,
        victim.run_id,
@@ -590,6 +598,7 @@ WITH resolved AS (
 )
 INSERT INTO worker_commands (
     org_id,
+    cell_id,
     project_id,
     environment_id,
     run_id,
@@ -603,6 +612,7 @@ INSERT INTO worker_commands (
     payload
 )
 SELECT resolved.org_id,
+       resolved.cell_id,
        resolved.project_id,
        resolved.environment_id,
        resolved.run_id,

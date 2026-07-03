@@ -65,6 +65,9 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
+	if s.rejectRunFromWrongCell(w, summary.CellID) {
+		return
+	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
 		s.followRunEvents(w, r, actor.OrgID, runID, cursor)
 		return
@@ -72,7 +75,7 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 	page, err := s.listRunEvents(r, actor.OrgID, runID, cursor, limit)
 	if err != nil {
 		s.log.Error("list run events failed", "run_id", runID.String(), "error", err)
-		writeError(w, errors.New("list run events"))
+		writeRunTelemetryError(w, err)
 		return
 	}
 	rows := page.Events
@@ -159,8 +162,4 @@ func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID u
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		s.log.Warn("follow run events failed", "error", err)
 	}
-}
-
-func runEventResponse(event db.EventHotPayload) api.RunEvent {
-	return eventResponseFromRecord(event)
 }

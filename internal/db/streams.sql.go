@@ -15,6 +15,7 @@ const ensureSessionStream = `-- name: EnsureSessionStream :one
 INSERT INTO streams (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     session_id,
@@ -26,6 +27,7 @@ INSERT INTO streams (
 )
 SELECT $1,
        sessions.org_id,
+       sessions.cell_id,
        sessions.project_id,
        sessions.environment_id,
        sessions.id,

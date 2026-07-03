@@ -305,6 +305,7 @@ inserted_token AS (
     INSERT INTO tokens (
         id,
         org_id,
+        cell_id,
         project_id,
         environment_id,
         timeout_at,
@@ -319,17 +320,18 @@ inserted_token AS (
     )
     SELECT $6,
            $2,
+           $7,
            $3,
            $4,
-           $7,
+           $8,
            COALESCE($5::text, ''),
-           $8::timestamptz,
+           $9::timestamptz,
            COALESCE($1::text, ''),
-           COALESCE($9::text, ''),
            COALESCE($10::text, ''),
-           $11::timestamptz,
-           COALESCE($12::jsonb, '{}'::jsonb),
-           COALESCE($13::text[], '{}'::text[])
+           COALESCE($11::text, ''),
+           $12::timestamptz,
+           COALESCE($13::jsonb, '{}'::jsonb),
+           COALESCE($14::text[], '{}'::text[])
      WHERE NOT EXISTS (SELECT 1 FROM existing_token)
     RETURNING tokens.id, tokens.org_id, tokens.cell_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
 ),
@@ -355,6 +357,7 @@ type CreateTokenParams struct {
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	IdempotencyKey            string             `json:"idempotency_key"`
 	ID                        pgtype.UUID        `json:"id"`
+	CellID                    string             `json:"cell_id"`
 	TimeoutAt                 pgtype.Timestamptz `json:"timeout_at"`
 	IdempotencyKeyExpiresAt   pgtype.Timestamptz `json:"idempotency_key_expires_at"`
 	CallbackKeyID             string             `json:"callback_key_id"`
@@ -400,6 +403,7 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Creat
 		arg.EnvironmentID,
 		arg.IdempotencyKey,
 		arg.ID,
+		arg.CellID,
 		arg.TimeoutAt,
 		arg.IdempotencyKeyExpiresAt,
 		arg.CallbackKeyID,
