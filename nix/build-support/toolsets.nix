@@ -112,6 +112,7 @@ rec {
   infra = base ++ [
     pkgs.opentofu
     pkgs.awscli2
+    pkgs.clickhouse
     pkgs.ssm-session-manager-plugin
   ];
 }
