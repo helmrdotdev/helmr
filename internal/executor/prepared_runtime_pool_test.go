@@ -735,7 +735,7 @@ func TestPreparedRuntimePoolCheckoutRejectsMarkReadyFailure(t *testing.T) {
 	if closeCount := session.closeCountSnapshot(); closeCount > 1 {
 		t.Fatalf("session close count = %d, want at most one cleanup close after ready failure", closeCount)
 	}
-	failed := instances.failedSnapshot()
+	failed := waitPreparedRuntimeFailedCount(t, instances, 1)
 	if len(failed) != 1 || failed[0].ID != "instance-1" {
 		t.Fatalf("failed instances = %+v, want instance-1", failed)
 	}
@@ -953,7 +953,7 @@ func TestPreparedRuntimePoolCheckoutRejectsExitedSessionAfterMarkReady(t *testin
 	if closeCount := session.closeCountSnapshot(); closeCount > 1 {
 		t.Fatalf("session close count = %d, want at most one cleanup close after session exit", closeCount)
 	}
-	failed := instances.failedSnapshot()
+	failed := waitPreparedRuntimeFailedCount(t, instances, 1)
 	if len(failed) != 1 || failed[0].ID != "instance-1" {
 		t.Fatalf("failed instances = %+v, want instance-1", failed)
 	}
@@ -1727,6 +1727,24 @@ func (c *fakePreparedRuntimeInstanceClient) failedSnapshot() []api.WorkerRuntime
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]api.WorkerRuntimeInstanceStateRequest(nil), c.failed...)
+}
+
+func waitPreparedRuntimeFailedCount(t *testing.T, client *fakePreparedRuntimeInstanceClient, want int) []api.WorkerRuntimeInstanceStateRequest {
+	t.Helper()
+	deadline := time.After(time.Second)
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		failed := client.failedSnapshot()
+		if len(failed) >= want {
+			return failed
+		}
+		select {
+		case <-deadline:
+			return failed
+		case <-ticker.C:
+		}
+	}
 }
 
 func (p *PreparedRuntimePool) readyCount() int {
