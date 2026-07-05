@@ -12,14 +12,14 @@ import (
 )
 
 const getRuntimeSubstrateArtifactForSandbox = `-- name: GetRuntimeSubstrateArtifactForSandbox :one
-SELECT runtime_substrate_artifacts.id, runtime_substrate_artifacts.org_id, runtime_substrate_artifacts.cell_id, runtime_substrate_artifacts.project_id, runtime_substrate_artifacts.environment_id, runtime_substrate_artifacts.deployment_sandbox_id, runtime_substrate_artifacts.artifact_id, runtime_substrate_artifacts.substrate_digest, runtime_substrate_artifacts.substrate_format, runtime_substrate_artifacts.builder_abi, runtime_substrate_artifacts.layout_abi, runtime_substrate_artifacts.substrate_size_bytes, runtime_substrate_artifacts.source, runtime_substrate_artifacts.created_by_worker_instance_id, runtime_substrate_artifacts.created_at, runtime_substrate_artifacts.updated_at, runtime_substrate_artifacts.retired_at, runtime_substrate_artifacts.last_referenced_at,
+SELECT runtime_substrate_artifacts.id, runtime_substrate_artifacts.org_id, runtime_substrate_artifacts.worker_group_id, runtime_substrate_artifacts.project_id, runtime_substrate_artifacts.environment_id, runtime_substrate_artifacts.deployment_sandbox_id, runtime_substrate_artifacts.artifact_id, runtime_substrate_artifacts.substrate_digest, runtime_substrate_artifacts.substrate_format, runtime_substrate_artifacts.builder_abi, runtime_substrate_artifacts.layout_abi, runtime_substrate_artifacts.substrate_size_bytes, runtime_substrate_artifacts.source, runtime_substrate_artifacts.created_by_worker_instance_id, runtime_substrate_artifacts.created_at, runtime_substrate_artifacts.updated_at, runtime_substrate_artifacts.retired_at, runtime_substrate_artifacts.last_referenced_at,
        artifacts.digest AS artifact_digest,
        artifacts.size_bytes AS artifact_size_bytes,
        artifacts.media_type AS artifact_media_type
   FROM runtime_substrate_artifacts
   JOIN artifacts
     ON artifacts.org_id = runtime_substrate_artifacts.org_id
-   AND artifacts.cell_id = runtime_substrate_artifacts.cell_id
+   AND artifacts.worker_group_id = runtime_substrate_artifacts.worker_group_id
    AND artifacts.project_id = runtime_substrate_artifacts.project_id
    AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
    AND artifacts.id = runtime_substrate_artifacts.artifact_id
@@ -33,22 +33,31 @@ SELECT runtime_substrate_artifacts.id, runtime_substrate_artifacts.org_id, runti
    AND deployments.project_id = deployment_sandboxes.project_id
    AND deployments.environment_id = deployment_sandboxes.environment_id
    AND deployments.id = deployment_sandboxes.deployment_id
-   AND deployments.build_cell_id = runtime_substrate_artifacts.cell_id
-  JOIN environment_cells
-    ON environment_cells.org_id = runtime_substrate_artifacts.org_id
-   AND environment_cells.project_id = runtime_substrate_artifacts.project_id
-   AND environment_cells.environment_id = runtime_substrate_artifacts.environment_id
-   AND environment_cells.cell_id = runtime_substrate_artifacts.cell_id
-   AND environment_cells.route_generation = deployments.build_route_generation
-   AND environment_cells.route_state IN ('active', 'draining')
-  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                AND org_cells.cell_id = environment_cells.cell_id
-                AND org_cells.state = 'active'
-  JOIN cells ON cells.id = environment_cells.cell_id
-            AND cells.region_id = environment_cells.region_id
-            AND cells.state = 'active'
+   AND deployments.build_worker_group_id = runtime_substrate_artifacts.worker_group_id
+  JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement
+    ON project_worker_group_placement.org_id = runtime_substrate_artifacts.org_id
+   AND project_worker_group_placement.project_id = runtime_substrate_artifacts.project_id
+   AND project_worker_group_placement.environment_id = runtime_substrate_artifacts.environment_id
+   AND project_worker_group_placement.worker_group_id = runtime_substrate_artifacts.worker_group_id
+   AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
+  JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+            AND worker_groups.region_id = project_worker_group_placement.region_id
+            AND worker_groups.state = 'active'
  WHERE runtime_substrate_artifacts.org_id = $1
-   AND runtime_substrate_artifacts.cell_id = $2
+   AND runtime_substrate_artifacts.worker_group_id = $2
    AND runtime_substrate_artifacts.project_id = $3
    AND runtime_substrate_artifacts.environment_id = $4
    AND runtime_substrate_artifacts.deployment_sandbox_id = $5
@@ -62,7 +71,7 @@ SELECT runtime_substrate_artifacts.id, runtime_substrate_artifacts.org_id, runti
 
 type GetRuntimeSubstrateArtifactForSandboxParams struct {
 	OrgID               pgtype.UUID `json:"org_id"`
-	CellID              string      `json:"cell_id"`
+	WorkerGroupID       string      `json:"worker_group_id"`
 	ProjectID           pgtype.UUID `json:"project_id"`
 	EnvironmentID       pgtype.UUID `json:"environment_id"`
 	DeploymentSandboxID pgtype.UUID `json:"deployment_sandbox_id"`
@@ -75,7 +84,7 @@ type GetRuntimeSubstrateArtifactForSandboxParams struct {
 type GetRuntimeSubstrateArtifactForSandboxRow struct {
 	ID                        pgtype.UUID        `json:"id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
-	CellID                    string             `json:"cell_id"`
+	WorkerGroupID             string             `json:"worker_group_id"`
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	DeploymentSandboxID       pgtype.UUID        `json:"deployment_sandbox_id"`
@@ -99,7 +108,7 @@ type GetRuntimeSubstrateArtifactForSandboxRow struct {
 func (q *Queries) GetRuntimeSubstrateArtifactForSandbox(ctx context.Context, arg GetRuntimeSubstrateArtifactForSandboxParams) (GetRuntimeSubstrateArtifactForSandboxRow, error) {
 	row := q.db.QueryRow(ctx, getRuntimeSubstrateArtifactForSandbox,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentSandboxID,
@@ -112,7 +121,7 @@ func (q *Queries) GetRuntimeSubstrateArtifactForSandbox(ctx context.Context, arg
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.CellID,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentSandboxID,
@@ -139,7 +148,7 @@ const upsertRuntimeSubstrateArtifact = `-- name: UpsertRuntimeSubstrateArtifact 
 INSERT INTO runtime_substrate_artifacts (
     id,
     org_id,
-    cell_id,
+    worker_group_id,
     project_id,
     environment_id,
     deployment_sandbox_id,
@@ -169,18 +178,18 @@ INSERT INTO runtime_substrate_artifacts (
     $14,
     now()
 )
-ON CONFLICT (org_id, cell_id, project_id, environment_id, deployment_sandbox_id, substrate_digest, substrate_format, builder_abi, layout_abi)
+ON CONFLICT (org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, substrate_digest, substrate_format, builder_abi, layout_abi)
 DO UPDATE
    SET retired_at = NULL,
        last_referenced_at = now(),
        updated_at = now()
-RETURNING id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id, artifact_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, source, created_by_worker_instance_id, created_at, updated_at, retired_at, last_referenced_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, artifact_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, source, created_by_worker_instance_id, created_at, updated_at, retired_at, last_referenced_at
 `
 
 type UpsertRuntimeSubstrateArtifactParams struct {
 	ID                        pgtype.UUID `json:"id"`
 	OrgID                     pgtype.UUID `json:"org_id"`
-	CellID                    string      `json:"cell_id"`
+	WorkerGroupID             string      `json:"worker_group_id"`
 	ProjectID                 pgtype.UUID `json:"project_id"`
 	EnvironmentID             pgtype.UUID `json:"environment_id"`
 	DeploymentSandboxID       pgtype.UUID `json:"deployment_sandbox_id"`
@@ -198,7 +207,7 @@ func (q *Queries) UpsertRuntimeSubstrateArtifact(ctx context.Context, arg Upsert
 	row := q.db.QueryRow(ctx, upsertRuntimeSubstrateArtifact,
 		arg.ID,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentSandboxID,
@@ -215,7 +224,7 @@ func (q *Queries) UpsertRuntimeSubstrateArtifact(ctx context.Context, arg Upsert
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.CellID,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentSandboxID,

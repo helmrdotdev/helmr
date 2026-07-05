@@ -43,13 +43,13 @@ variable "deployment_mode" {
   }
 }
 
-variable "cell_id" {
-  description = "Opaque cell ID for this control-plane stack."
+variable "worker_group_id" {
+  description = "Worker group ID bootstrapped by this control-plane stack."
   type        = string
 
   validation {
-    condition     = trimspace(var.cell_id) != ""
-    error_message = "cell_id must be non-empty."
+    condition     = trimspace(var.worker_group_id) != ""
+    error_message = "worker_group_id must be non-empty."
   }
 }
 
@@ -86,18 +86,6 @@ variable "region_display_name" {
   validation {
     condition     = var.region_display_name == null || trimspace(var.region_display_name) != ""
     error_message = "region_display_name must be null or non-empty."
-  }
-}
-
-variable "cell_environment_class" {
-  description = "Environment class stored for the bootstrapped cell. Defaults to deployment_mode."
-  type        = string
-  default     = null
-  nullable    = true
-
-  validation {
-    condition     = var.cell_environment_class == null || trimspace(var.cell_environment_class) != ""
-    error_message = "cell_environment_class must be null or non-empty."
   }
 }
 

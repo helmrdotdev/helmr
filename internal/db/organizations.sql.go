@@ -24,7 +24,12 @@ func (q *Queries) CountOrganizations(ctx context.Context) (int64, error) {
 
 const createOrganization = `-- name: CreateOrganization :one
 INSERT INTO organizations (id, public_id, name, slug)
-VALUES ($1, $2, $3, $4)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4
+)
 RETURNING id, public_id, name, slug, created_at, updated_at
 `
 

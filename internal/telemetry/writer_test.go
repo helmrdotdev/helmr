@@ -22,7 +22,7 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	writer := NewClickHouseWriter(client)
 
 	if err := writer.WriteEvents(context.Background(), []EventRecord{{
-		CellID:         "us-east-1-cell-1",
+		WorkerGroupID:  "us-east-1-worker-group-1",
 		OrgID:          uuid.Must(uuid.NewV7()),
 		ProjectID:      uuid.Must(uuid.NewV7()),
 		EnvironmentID:  uuid.Must(uuid.NewV7()),
@@ -62,7 +62,7 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	}
 
 	if err := writer.WriteRunLogs(context.Background(), []RunLogRecord{{
-		CellID:         "us-east-1-cell-1",
+		WorkerGroupID:  "us-east-1-worker-group-1",
 		OrgID:          uuid.Must(uuid.NewV7()),
 		ProjectID:      uuid.Must(uuid.NewV7()),
 		EnvironmentID:  uuid.Must(uuid.NewV7()),
@@ -91,7 +91,7 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	}
 
 	if err := writer.WriteTerminalOutput(context.Background(), []TerminalOutputRecord{{
-		CellID:         "us-east-1-cell-1",
+		WorkerGroupID:  "us-east-1-worker-group-1",
 		OrgID:          uuid.Must(uuid.NewV7()),
 		ProjectID:      uuid.Must(uuid.NewV7()),
 		EnvironmentID:  uuid.Must(uuid.NewV7()),

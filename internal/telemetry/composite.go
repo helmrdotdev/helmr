@@ -146,11 +146,11 @@ func (r *CompositeReader) GetRunLogSnapshot(ctx context.Context, q RunLogSnapsho
 	const pageLimit = int32(1000)
 	for {
 		page, err := r.ListRunLogChunks(ctx, RunLogChunkQuery{
-			OrgID:    q.OrgID,
-			CellID:   q.CellID,
-			RunID:    q.RunID,
-			AfterSeq: cursor,
-			Limit:    pageLimit,
+			OrgID:         q.OrgID,
+			WorkerGroupID: q.WorkerGroupID,
+			RunID:         q.RunID,
+			AfterSeq:      cursor,
+			Limit:         pageLimit,
 		})
 		if err != nil {
 			return RunLogSnapshot{}, err
@@ -183,13 +183,13 @@ func (r *CompositeReader) GetRunLogSnapshot(ctx context.Context, q RunLogSnapsho
 
 func (r *CompositeReader) verifyHistoricalEventCoverage(ctx context.Context, q EventQuery, watermark int64, rows []api.RunEvent) error {
 	gaps, err := r.hot.DeadLetteredTelemetrySeqs(ctx, DeadLetteredTelemetryQuery{
-		OrgID:      q.OrgID,
-		CellID:     q.CellID,
-		StreamKind: "event",
-		SourceKind: q.SubjectType,
-		SourceID:   q.SubjectID,
-		AfterSeq:   q.AfterSeq,
-		Watermark:  watermark,
+		OrgID:         q.OrgID,
+		WorkerGroupID: q.WorkerGroupID,
+		StreamKind:    "event",
+		SourceKind:    q.SubjectType,
+		SourceID:      q.SubjectID,
+		AfterSeq:      q.AfterSeq,
+		Watermark:     watermark,
 	})
 	if err != nil {
 		return err
@@ -205,13 +205,13 @@ func (r *CompositeReader) verifyHistoricalEventCoverage(ctx context.Context, q E
 
 func (r *CompositeReader) verifyHistoricalRunLogCoverage(ctx context.Context, q RunLogChunkQuery, watermark int64, rows []api.RunLogChunk) error {
 	gaps, err := r.hot.DeadLetteredTelemetrySeqs(ctx, DeadLetteredTelemetryQuery{
-		OrgID:      q.OrgID,
-		CellID:     q.CellID,
-		StreamKind: "run_log",
-		SourceKind: "run",
-		SourceID:   q.RunID,
-		AfterSeq:   q.AfterSeq,
-		Watermark:  watermark,
+		OrgID:         q.OrgID,
+		WorkerGroupID: q.WorkerGroupID,
+		StreamKind:    "run_log",
+		SourceKind:    "run",
+		SourceID:      q.RunID,
+		AfterSeq:      q.AfterSeq,
+		Watermark:     watermark,
 	})
 	if err != nil {
 		return err

@@ -56,11 +56,11 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 	var publicToken string
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		var err error
-		cellID, err := s.requireRoutableEnvironmentCell(r.Context(), work.q, actor.OrgID, projectID, environmentID)
+		workerGroupID, err := s.requireEnvironmentPlacementWorkerGroup(r.Context(), work.q, actor.OrgID, projectID, environmentID)
 		if err != nil {
 			return err
 		}
-		token, publicToken, err = s.createTokenRecord(r.Context(), work.q, actor, cellID, projectID, environmentID, request)
+		token, publicToken, err = s.createTokenRecord(r.Context(), work.q, actor, workerGroupID, projectID, environmentID, request)
 		return err
 	})
 	if err != nil {
@@ -74,7 +74,7 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, tokenResponse(tokenFromCreateRow(token), publicToken, s.tokenCallbackURL(pgvalue.MustUUIDValue(token.ID))))
 }
 
-func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor auth.Actor, cellID string, projectID pgtype.UUID, environmentID pgtype.UUID, request api.CreateTokenRequest) (db.CreateTokenRow, string, error) {
+func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor auth.Actor, workerGroupID string, projectID pgtype.UUID, environmentID pgtype.UUID, request api.CreateTokenRequest) (db.CreateTokenRow, string, error) {
 	timeoutAt, err := tokenTimeoutAt(request.Timeout)
 	if err != nil {
 		return db.CreateTokenRow{}, "", badRequest(err)
@@ -110,7 +110,7 @@ func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor 
 			ID:                        pgvalue.UUID(tokenID),
 			PublicID:                  tokenPublicID,
 			OrgID:                     pgvalue.UUID(actor.OrgID),
-			CellID:                    cellID,
+			WorkerGroupID:             workerGroupID,
 			ProjectID:                 projectID,
 			EnvironmentID:             environmentID,
 			TimeoutAt:                 pgvalue.Timestamptz(timeoutAt),
@@ -143,7 +143,7 @@ func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor 
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			PublicID:      publicAccessTokenPublicID,
 			OrgID:         pgvalue.UUID(actor.OrgID),
-			CellID:        cellID,
+			WorkerGroupID: workerGroupID,
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			TokenHash:     publicTokenHash,
@@ -159,7 +159,7 @@ func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor 
 	if _, err := store.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(actor.OrgID),
-		CellID:              cellID,
+		WorkerGroupID:       workerGroupID,
 		ProjectID:           projectID,
 		EnvironmentID:       environmentID,
 		PublicAccessTokenID: publicAccessToken.ID,
@@ -211,14 +211,14 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	cellID, err := s.requireRoutableEnvironmentCell(r.Context(), s.db, actor.OrgID, projectID, environmentID)
+	workerGroupID, err := s.requireEnvironmentPlacementWorkerGroup(r.Context(), s.db, actor.OrgID, projectID, environmentID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	rows, err := s.db.ListTokens(r.Context(), db.ListTokensParams{
 		OrgID:         pgvalue.UUID(actor.OrgID),
-		CellID:        cellID,
+		WorkerGroupID: workerGroupID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		State:         state,
@@ -279,7 +279,7 @@ func (s *Server) cancelToken(w http.ResponseWriter, r *http.Request) {
 	}
 	cancelled, err := s.db.CancelToken(r.Context(), db.CancelTokenParams{
 		OrgID:         token.OrgID,
-		CellID:        token.CellID,
+		WorkerGroupID: token.WorkerGroupID,
 		ProjectID:     token.ProjectID,
 		EnvironmentID: token.EnvironmentID,
 		ID:            token.ID,
@@ -302,9 +302,9 @@ func (s *Server) cancelToken(w http.ResponseWriter, r *http.Request) {
 	}
 	if cancelled.ResolvedWaitCount > 0 {
 		if _, err := s.db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(r.Context(), db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
-			OrgID:      token.OrgID,
-			CellID:     token.CellID,
-			LimitCount: int32(cancelled.ResolvedWaitCount),
+			OrgID:         token.OrgID,
+			WorkerGroupID: token.WorkerGroupID,
+			LimitCount:    int32(cancelled.ResolvedWaitCount),
 		}); err != nil {
 			writeError(w, errors.New("publish hot token cancellation"))
 			return
@@ -348,7 +348,7 @@ func (s *Server) completeTokenWithCallbackSecret(w http.ResponseWriter, r *http.
 		writeError(w, errors.New("authorize token callback"))
 		return
 	}
-	if err := s.requireRoutableRecordCell(r.Context(), s.db, pgvalue.MustUUIDValue(token.OrgID), token.ProjectID, token.EnvironmentID, token.CellID); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, pgvalue.MustUUIDValue(token.OrgID), token.ProjectID, token.EnvironmentID, token.WorkerGroupID); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -376,7 +376,7 @@ func (s *Server) authorizeTokenRecord(w http.ResponseWriter, r *http.Request, ac
 		writeError(w, errors.New("load token"))
 		return db.Token{}, false
 	}
-	if err := s.requireRoutableRecordCell(r.Context(), s.db, actor.OrgID, token.ProjectID, token.EnvironmentID, token.CellID); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, actor.OrgID, token.ProjectID, token.EnvironmentID, token.WorkerGroupID); err != nil {
 		writeError(w, err)
 		return db.Token{}, false
 	}
@@ -415,7 +415,7 @@ func (s *Server) completeTokenRecord(ctx context.Context, store db.Querier, toke
 	}
 	completed, err := store.CompleteToken(ctx, db.CompleteTokenParams{
 		OrgID:                 token.OrgID,
-		CellID:                token.CellID,
+		WorkerGroupID:         token.WorkerGroupID,
 		ProjectID:             token.ProjectID,
 		EnvironmentID:         token.EnvironmentID,
 		ID:                    token.ID,
@@ -437,9 +437,9 @@ func (s *Server) completeTokenRecord(ctx context.Context, store db.Querier, toke
 	}
 	if completed.ResolvedWaitCount > 0 {
 		if _, err := store.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
-			OrgID:      token.OrgID,
-			CellID:     token.CellID,
-			LimitCount: int32(completed.ResolvedWaitCount),
+			OrgID:         token.OrgID,
+			WorkerGroupID: token.WorkerGroupID,
+			LimitCount:    int32(completed.ResolvedWaitCount),
 		}); err != nil {
 			return db.CompleteTokenRow{}, err
 		}
@@ -485,7 +485,7 @@ func tokenFromCreateRow(row db.CreateTokenRow) db.Token {
 	return db.Token{
 		ID:                        row.ID,
 		OrgID:                     row.OrgID,
-		CellID:                    row.CellID,
+		WorkerGroupID:             row.WorkerGroupID,
 		ProjectID:                 row.ProjectID,
 		EnvironmentID:             row.EnvironmentID,
 		State:                     row.State,
@@ -513,7 +513,7 @@ func tokenFromCompleteRow(row db.CompleteTokenRow) db.Token {
 	return db.Token{
 		ID:                        row.ID,
 		OrgID:                     row.OrgID,
-		CellID:                    row.CellID,
+		WorkerGroupID:             row.WorkerGroupID,
 		ProjectID:                 row.ProjectID,
 		EnvironmentID:             row.EnvironmentID,
 		State:                     row.State,
@@ -541,7 +541,7 @@ func tokenFromCancelRow(row db.CancelTokenRow) db.Token {
 	return db.Token{
 		ID:                        row.ID,
 		OrgID:                     row.OrgID,
-		CellID:                    row.CellID,
+		WorkerGroupID:             row.WorkerGroupID,
 		ProjectID:                 row.ProjectID,
 		EnvironmentID:             row.EnvironmentID,
 		State:                     row.State,

@@ -47,7 +47,7 @@ func (s *Server) stopWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
-	routeCellID, err := s.requireRoutableEnvironmentCell(r.Context(), s.db, actor.OrgID, projectID, environmentID)
+	placementWorkerGroupID, err := s.requireEnvironmentPlacementWorkerGroup(r.Context(), s.db, actor.OrgID, projectID, environmentID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -62,7 +62,7 @@ func (s *Server) stopWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("reap stale workspace mounts"))
 		return
 	}
-	response, err := s.requestWorkspaceStopForRequest(r.Context(), actor, routeCellID, projectID, environmentID, pgvalue.UUID(workspaceID), request, fingerprint)
+	response, err := s.requestWorkspaceStopForRequest(r.Context(), actor, placementWorkerGroupID, projectID, environmentID, pgvalue.UUID(workspaceID), request, fingerprint)
 	if err != nil {
 		s.writeWorkspaceError(w, "request workspace stop", err)
 		return
@@ -70,7 +70,7 @@ func (s *Server) stopWorkspace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) requestWorkspaceStopForRequest(ctx context.Context, actor auth.Actor, cellID string, projectID pgtype.UUID, environmentID pgtype.UUID, workspaceID pgtype.UUID, request api.WorkspaceStopRequest, fingerprint string) (api.WorkspaceStopResponse, error) {
+func (s *Server) requestWorkspaceStopForRequest(ctx context.Context, actor auth.Actor, workerGroupID string, projectID pgtype.UUID, environmentID pgtype.UUID, workspaceID pgtype.UUID, request api.WorkspaceStopRequest, fingerprint string) (api.WorkspaceStopResponse, error) {
 	idempotencyKey := strings.TrimSpace(request.IdempotencyKey)
 	var response api.WorkspaceStopResponse
 	err := s.inTx(ctx, func(work *txWork) error {
@@ -109,7 +109,7 @@ func (s *Server) requestWorkspaceStopForRequest(ctx context.Context, actor auth.
 		}
 		row, err := work.q.RequestWorkspaceMountStop(ctx, db.RequestWorkspaceMountStopParams{
 			OrgID:         pgvalue.UUID(actor.OrgID),
-			CellID:        cellID,
+			WorkerGroupID: workerGroupID,
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			WorkspaceID:   workspaceID,
@@ -118,7 +118,7 @@ func (s *Server) requestWorkspaceStopForRequest(ctx context.Context, actor auth.
 		if isNoRows(err) {
 			_, err = work.q.SetWorkspaceDesiredStopped(ctx, db.SetWorkspaceDesiredStoppedParams{
 				OrgID:         pgvalue.UUID(actor.OrgID),
-				CellID:        cellID,
+				WorkerGroupID: workerGroupID,
 				ProjectID:     projectID,
 				EnvironmentID: environmentID,
 				ID:            workspaceID,

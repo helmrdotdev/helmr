@@ -71,7 +71,7 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	if err := s.requireRoutableRecordCellGeneration(r.Context(), s.db, actor.OrgID, summary.ProjectID, summary.EnvironmentID, summary.CellID, summary.RouteGeneration); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, actor.OrgID, summary.ProjectID, summary.EnvironmentID, summary.WorkerGroupID); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -102,12 +102,12 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cancelled, err := s.db.CancelRun(r.Context(), db.CancelRunParams{
-		OrgID:       pgvalue.UUID(actor.OrgID),
-		CellID:      summary.CellID,
-		RunID:       pgvalue.UUID(runID),
-		Reason:      request.Reason,
-		Force:       request.Force,
-		OperationID: operation.ID,
+		OrgID:         pgvalue.UUID(actor.OrgID),
+		WorkerGroupID: summary.WorkerGroupID,
+		RunID:         pgvalue.UUID(runID),
+		Reason:        request.Reason,
+		Force:         request.Force,
+		OperationID:   operation.ID,
 	})
 	if err != nil {
 		if isNoRows(err) {
@@ -174,7 +174,7 @@ func createRunOperationWithStore(ctx context.Context, store db.Querier, actor au
 			ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			PublicID:       publicID,
 			OrgID:          run.OrgID,
-			CellID:         run.CellID,
+			WorkerGroupID:  run.WorkerGroupID,
 			ProjectID:      run.ProjectID,
 			EnvironmentID:  run.EnvironmentID,
 			RunID:          run.ID,

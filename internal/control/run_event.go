@@ -65,7 +65,7 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	if s.rejectRunFromWrongCell(r.Context(), w, actor, summary) {
+	if s.rejectRunFromWrongWorkerGroup(r.Context(), w, actor, summary) {
 		return
 	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
@@ -93,12 +93,12 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listRunEvents(r *http.Request, orgID uuid.UUID, runID uuid.UUID, cursor int64, limit int32) (telemetry.EventPage, error) {
 	return s.telemetryReader.ListEvents(r.Context(), telemetry.EventQuery{
-		OrgID:       orgID,
-		CellID:      s.cellID,
-		SubjectType: string(db.EventSubjectTypeRun),
-		SubjectID:   runID,
-		AfterSeq:    cursor,
-		Limit:       limit + 1,
+		OrgID:         orgID,
+		WorkerGroupID: s.workerGroupID,
+		SubjectType:   string(db.EventSubjectTypeRun),
+		SubjectID:     runID,
+		AfterSeq:      cursor,
+		Limit:         limit + 1,
 	})
 }
 

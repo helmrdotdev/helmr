@@ -13,10 +13,10 @@ import (
 
 const cancelSession = `-- name: CancelSession :one
 WITH target_session AS (
-    SELECT id, public_id, org_id, cell_id, route_generation, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+    SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
       FROM sessions
      WHERE sessions.org_id = $1
-       AND sessions.cell_id = $2
+       AND sessions.worker_group_id = $2
        AND sessions.project_id = $3
        AND sessions.environment_id = $4
        AND sessions.id = $5
@@ -38,10 +38,10 @@ cancelled_session AS (
            updated_at = now()
       FROM target_session
      WHERE sessions.org_id = target_session.org_id
-       AND sessions.cell_id = target_session.cell_id
+       AND sessions.worker_group_id = target_session.worker_group_id
        AND sessions.id = target_session.id
        AND sessions.status = 'open'
-    RETURNING sessions.id, sessions.public_id, sessions.org_id, sessions.cell_id, sessions.route_generation, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
+    RETURNING sessions.id, sessions.public_id, sessions.org_id, sessions.worker_group_id, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
 ),
 ended_session_run AS (
     UPDATE session_runs
@@ -50,23 +50,23 @@ ended_session_run AS (
       JOIN cancelled_session ON true
      WHERE target_session.current_run_id IS NOT NULL
        AND session_runs.org_id = target_session.org_id
-       AND session_runs.cell_id = target_session.cell_id
+       AND session_runs.worker_group_id = target_session.worker_group_id
        AND session_runs.project_id = target_session.project_id
        AND session_runs.environment_id = target_session.environment_id
        AND session_runs.session_id = target_session.id
        AND session_runs.run_id = target_session.current_run_id
     RETURNING session_runs.id
 )
-SELECT sessions.id, sessions.public_id, sessions.org_id, sessions.cell_id, sessions.route_generation, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
+SELECT sessions.id, sessions.public_id, sessions.org_id, sessions.worker_group_id, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
   FROM sessions
   JOIN cancelled_session ON cancelled_session.org_id = sessions.org_id
-                        AND cancelled_session.cell_id = sessions.cell_id
+                        AND cancelled_session.worker_group_id = sessions.worker_group_id
                         AND cancelled_session.id = sessions.id
 `
 
 type CancelSessionParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -76,7 +76,7 @@ type CancelSessionParams struct {
 func (q *Queries) CancelSession(ctx context.Context, arg CancelSessionParams) (Session, error) {
 	row := q.db.QueryRow(ctx, cancelSession,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -87,8 +87,7 @@ func (q *Queries) CancelSession(ctx context.Context, arg CancelSessionParams) (S
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -123,7 +122,7 @@ UPDATE sessions
        terminal_reason = jsonb_build_object('reason', $1::text, 'origin', 'api'),
        updated_at = now()
  WHERE sessions.org_id = $2
-   AND sessions.cell_id = $3
+   AND sessions.worker_group_id = $3
    AND sessions.project_id = $4
    AND sessions.environment_id = $5
    AND sessions.id = $6
@@ -147,13 +146,13 @@ UPDATE sessions
           AND session_run_requests.session_id = sessions.id
           AND session_run_requests.status IN ('accepted', 'claimed')
    )
-RETURNING id, public_id, org_id, cell_id, route_generation, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
 type CloseSessionParams struct {
 	Reason        string      `json:"reason"`
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -163,7 +162,7 @@ func (q *Queries) CloseSession(ctx context.Context, arg CloseSessionParams) (Ses
 	row := q.db.QueryRow(ctx, closeSession,
 		arg.Reason,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -173,8 +172,7 @@ func (q *Queries) CloseSession(ctx context.Context, arg CloseSessionParams) (Ses
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -206,8 +204,7 @@ INSERT INTO sessions (
     id,
     public_id,
     org_id,
-    cell_id,
-    route_generation,
+    worker_group_id,
     project_id,
     environment_id,
     task_id,
@@ -232,20 +229,18 @@ INSERT INTO sessions (
     $10,
     $11,
     $12,
-    $13,
-    coalesce($14::jsonb, '{}'::jsonb),
-    coalesce($15::text[], '{}'::text[]),
-    $16
+    coalesce($13::jsonb, '{}'::jsonb),
+    coalesce($14::text[], '{}'::text[]),
+    $15
 )
-RETURNING id, public_id, org_id, cell_id, route_generation, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
 type CreateSessionParams struct {
 	ID                  pgtype.UUID        `json:"id"`
 	PublicID            string             `json:"public_id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
-	CellID              string             `json:"cell_id"`
-	RouteGeneration     int64              `json:"route_generation"`
+	WorkerGroupID       string             `json:"worker_group_id"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	TaskID              string             `json:"task_id"`
@@ -264,8 +259,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		arg.ID,
 		arg.PublicID,
 		arg.OrgID,
-		arg.CellID,
-		arg.RouteGeneration,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.TaskID,
@@ -283,8 +277,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -316,7 +309,7 @@ INSERT INTO session_runs (
     id,
     public_id,
     org_id,
-    cell_id,
+    worker_group_id,
     project_id,
     environment_id,
     session_id,
@@ -339,14 +332,14 @@ INSERT INTO session_runs (
     $11,
     $12
 )
-RETURNING id, public_id, org_id, cell_id, project_id, environment_id, session_id, run_id, deployment_id, previous_run_id, turn_index, reason, created_at, ended_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, run_id, deployment_id, previous_run_id, turn_index, reason, created_at, ended_at
 `
 
 type CreateSessionRunParams struct {
 	ID            pgtype.UUID `json:"id"`
 	PublicID      string      `json:"public_id"`
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	SessionID     pgtype.UUID `json:"session_id"`
@@ -362,7 +355,7 @@ func (q *Queries) CreateSessionRun(ctx context.Context, arg CreateSessionRunPara
 		arg.ID,
 		arg.PublicID,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.SessionID,
@@ -377,7 +370,7 @@ func (q *Queries) CreateSessionRun(ctx context.Context, arg CreateSessionRunPara
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -396,8 +389,7 @@ const createSessionStartIdempotency = `-- name: CreateSessionStartIdempotency :o
 INSERT INTO session_start_idempotencies (
     id,
     org_id,
-    cell_id,
-    route_generation,
+    worker_group_id,
     project_id,
     environment_id,
     task_id,
@@ -417,12 +409,10 @@ INSERT INTO session_start_idempotencies (
     $8,
     $9,
     $10,
-    $11,
-    $12
+    $11
 )
 ON CONFLICT (org_id, project_id, environment_id, task_id, idempotency_key) DO UPDATE
-   SET cell_id = EXCLUDED.cell_id,
-       route_generation = EXCLUDED.route_generation,
+   SET worker_group_id = EXCLUDED.worker_group_id,
        request_fingerprint = EXCLUDED.request_fingerprint,
        session_id = EXCLUDED.session_id,
        first_run_id = EXCLUDED.first_run_id,
@@ -430,17 +420,15 @@ ON CONFLICT (org_id, project_id, environment_id, task_id, idempotency_key) DO UP
        last_used_at = now()
  WHERE session_start_idempotencies.request_fingerprint = EXCLUDED.request_fingerprint
    AND (
-       session_start_idempotencies.cell_id <> EXCLUDED.cell_id
-       OR session_start_idempotencies.route_generation <> EXCLUDED.route_generation
+       session_start_idempotencies.worker_group_id <> EXCLUDED.worker_group_id
    )
-RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, task_id, idempotency_key, request_fingerprint, session_id, first_run_id, expires_at, created_at, last_used_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, task_id, idempotency_key, request_fingerprint, session_id, first_run_id, expires_at, created_at, last_used_at
 `
 
 type CreateSessionStartIdempotencyParams struct {
 	ID                 pgtype.UUID        `json:"id"`
 	OrgID              pgtype.UUID        `json:"org_id"`
-	CellID             string             `json:"cell_id"`
-	RouteGeneration    int64              `json:"route_generation"`
+	WorkerGroupID      string             `json:"worker_group_id"`
 	ProjectID          pgtype.UUID        `json:"project_id"`
 	EnvironmentID      pgtype.UUID        `json:"environment_id"`
 	TaskID             string             `json:"task_id"`
@@ -455,8 +443,7 @@ func (q *Queries) CreateSessionStartIdempotency(ctx context.Context, arg CreateS
 	row := q.db.QueryRow(ctx, createSessionStartIdempotency,
 		arg.ID,
 		arg.OrgID,
-		arg.CellID,
-		arg.RouteGeneration,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.TaskID,
@@ -470,8 +457,7 @@ func (q *Queries) CreateSessionStartIdempotency(ctx context.Context, arg CreateS
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -491,8 +477,7 @@ INSERT INTO workspaces (
     id,
     public_id,
     org_id,
-    cell_id,
-    route_generation,
+    worker_group_id,
     project_id,
     environment_id,
     deployment_sandbox_id,
@@ -512,21 +497,19 @@ INSERT INTO workspaces (
     $7,
     $8,
     $9,
-    $10,
-    coalesce($11::text, ''),
-    coalesce($12::jsonb, '{}'::jsonb),
-    coalesce($13::text[], '{}'::text[]),
-    coalesce($14::jsonb, '{}'::jsonb)
+    coalesce($10::text, ''),
+    coalesce($11::jsonb, '{}'::jsonb),
+    coalesce($12::text[], '{}'::text[]),
+    coalesce($13::jsonb, '{}'::jsonb)
 )
-RETURNING id, public_id, org_id, cell_id, route_generation, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
 `
 
 type CreateWorkspaceParams struct {
 	ID                  pgtype.UUID `json:"id"`
 	PublicID            string      `json:"public_id"`
 	OrgID               pgtype.UUID `json:"org_id"`
-	CellID              string      `json:"cell_id"`
-	RouteGeneration     int64       `json:"route_generation"`
+	WorkerGroupID       string      `json:"worker_group_id"`
 	ProjectID           pgtype.UUID `json:"project_id"`
 	EnvironmentID       pgtype.UUID `json:"environment_id"`
 	DeploymentSandboxID pgtype.UUID `json:"deployment_sandbox_id"`
@@ -543,8 +526,7 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		arg.ID,
 		arg.PublicID,
 		arg.OrgID,
-		arg.CellID,
-		arg.RouteGeneration,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentSandboxID,
@@ -560,8 +542,7 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentSandboxID,
@@ -633,7 +614,7 @@ UPDATE sessions
        ),
        updated_at = now()
  WHERE sessions.org_id = $1
-   AND sessions.cell_id = $2
+   AND sessions.worker_group_id = $2
    AND sessions.status = 'open'
    AND sessions.expires_at IS NOT NULL
    AND sessions.expires_at <= now()
@@ -641,7 +622,7 @@ UPDATE sessions
        SELECT 1
          FROM runs
         WHERE runs.org_id = sessions.org_id
-          AND runs.cell_id = sessions.cell_id
+          AND runs.worker_group_id = sessions.worker_group_id
           AND runs.project_id = sessions.project_id
           AND runs.environment_id = sessions.environment_id
           AND runs.id = sessions.current_run_id
@@ -651,22 +632,22 @@ UPDATE sessions
        SELECT 1
          FROM session_run_requests
         WHERE session_run_requests.org_id = sessions.org_id
-          AND session_run_requests.cell_id = sessions.cell_id
+          AND session_run_requests.worker_group_id = sessions.worker_group_id
           AND session_run_requests.project_id = sessions.project_id
           AND session_run_requests.environment_id = sessions.environment_id
           AND session_run_requests.session_id = sessions.id
           AND session_run_requests.status IN ('accepted', 'claimed')
    )
-RETURNING id, public_id, org_id, cell_id, route_generation, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
 type ExpireDueSessionsParams struct {
-	OrgID  pgtype.UUID `json:"org_id"`
-	CellID string      `json:"cell_id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
 }
 
 func (q *Queries) ExpireDueSessions(ctx context.Context, arg ExpireDueSessionsParams) ([]Session, error) {
-	rows, err := q.db.Query(ctx, expireDueSessions, arg.OrgID, arg.CellID)
+	rows, err := q.db.Query(ctx, expireDueSessions, arg.OrgID, arg.WorkerGroupID)
 	if err != nil {
 		return nil, err
 	}
@@ -678,8 +659,7 @@ func (q *Queries) ExpireDueSessions(ctx context.Context, arg ExpireDueSessionsPa
 			&i.ID,
 			&i.PublicID,
 			&i.OrgID,
-			&i.CellID,
-			&i.RouteGeneration,
+			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.TaskID,
@@ -728,7 +708,7 @@ UPDATE sessions
        ),
        updated_at = now()
  WHERE sessions.org_id = $1
-   AND sessions.cell_id = $2
+   AND sessions.worker_group_id = $2
    AND sessions.project_id = $3
    AND sessions.environment_id = $4
    AND sessions.id = $5
@@ -753,12 +733,12 @@ UPDATE sessions
           AND session_run_requests.session_id = sessions.id
           AND session_run_requests.status IN ('accepted', 'claimed')
    )
-RETURNING id, public_id, org_id, cell_id, route_generation, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
 type ExpireSessionIfDueParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -767,7 +747,7 @@ type ExpireSessionIfDueParams struct {
 func (q *Queries) ExpireSessionIfDue(ctx context.Context, arg ExpireSessionIfDueParams) (Session, error) {
 	row := q.db.QueryRow(ctx, expireSessionIfDue,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -777,8 +757,7 @@ func (q *Queries) ExpireSessionIfDue(ctx context.Context, arg ExpireSessionIfDue
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -806,7 +785,7 @@ func (q *Queries) ExpireSessionIfDue(ctx context.Context, arg ExpireSessionIfDue
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, public_id, org_id, cell_id, route_generation, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
   FROM sessions
  WHERE org_id = $1
    AND project_id = $2
@@ -833,8 +812,7 @@ func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (Session
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -903,7 +881,7 @@ SELECT sessions.id,
   FROM sessions
   LEFT JOIN runs
     ON runs.org_id = sessions.org_id
-   AND runs.cell_id = sessions.cell_id
+   AND runs.worker_group_id = sessions.worker_group_id
    AND runs.project_id = sessions.project_id
    AND runs.environment_id = sessions.environment_id
    AND runs.id = sessions.current_run_id
@@ -911,7 +889,7 @@ SELECT sessions.id,
        SELECT run_waits.state
          FROM run_waits
         WHERE run_waits.org_id = sessions.org_id
-          AND run_waits.cell_id = sessions.cell_id
+          AND run_waits.worker_group_id = sessions.worker_group_id
           AND run_waits.project_id = sessions.project_id
           AND run_waits.environment_id = sessions.environment_id
           AND run_waits.run_id = sessions.current_run_id
@@ -951,7 +929,7 @@ func (q *Queries) GetSessionActivity(ctx context.Context, arg GetSessionActivity
 }
 
 const getSessionByExternalID = `-- name: GetSessionByExternalID :one
-SELECT id, public_id, org_id, cell_id, route_generation, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
   FROM sessions
  WHERE org_id = $1
    AND project_id = $2
@@ -979,8 +957,7 @@ func (q *Queries) GetSessionByExternalID(ctx context.Context, arg GetSessionByEx
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -1007,29 +984,29 @@ func (q *Queries) GetSessionByExternalID(ctx context.Context, arg GetSessionByEx
 	return i, err
 }
 
-const getSessionByExternalIDInCell = `-- name: GetSessionByExternalIDInCell :one
-SELECT id, public_id, org_id, cell_id, route_generation, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+const getSessionByExternalIDInWorkerGroup = `-- name: GetSessionByExternalIDInWorkerGroup :one
+SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
   FROM sessions
  WHERE org_id = $1
-   AND cell_id = $2
+   AND worker_group_id = $2
    AND project_id = $3
    AND environment_id = $4
    AND external_id = $5
    AND external_id <> ''
 `
 
-type GetSessionByExternalIDInCellParams struct {
+type GetSessionByExternalIDInWorkerGroupParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ExternalID    string      `json:"external_id"`
 }
 
-func (q *Queries) GetSessionByExternalIDInCell(ctx context.Context, arg GetSessionByExternalIDInCellParams) (Session, error) {
-	row := q.db.QueryRow(ctx, getSessionByExternalIDInCell,
+func (q *Queries) GetSessionByExternalIDInWorkerGroup(ctx context.Context, arg GetSessionByExternalIDInWorkerGroupParams) (Session, error) {
+	row := q.db.QueryRow(ctx, getSessionByExternalIDInWorkerGroup,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ExternalID,
@@ -1039,8 +1016,7 @@ func (q *Queries) GetSessionByExternalIDInCell(ctx context.Context, arg GetSessi
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -1068,7 +1044,7 @@ func (q *Queries) GetSessionByExternalIDInCell(ctx context.Context, arg GetSessi
 }
 
 const getSessionByOrgID = `-- name: GetSessionByOrgID :one
-SELECT id, public_id, org_id, cell_id, route_generation, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
   FROM sessions
  WHERE org_id = $1
    AND id = $2
@@ -1086,8 +1062,7 @@ func (q *Queries) GetSessionByOrgID(ctx context.Context, arg GetSessionByOrgIDPa
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -1114,28 +1089,28 @@ func (q *Queries) GetSessionByOrgID(ctx context.Context, arg GetSessionByOrgIDPa
 	return i, err
 }
 
-const getSessionInCell = `-- name: GetSessionInCell :one
-SELECT id, public_id, org_id, cell_id, route_generation, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+const getSessionInWorkerGroup = `-- name: GetSessionInWorkerGroup :one
+SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
   FROM sessions
  WHERE org_id = $1
-   AND cell_id = $2
+   AND worker_group_id = $2
    AND project_id = $3
    AND environment_id = $4
    AND id = $5
 `
 
-type GetSessionInCellParams struct {
+type GetSessionInWorkerGroupParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
 }
 
-func (q *Queries) GetSessionInCell(ctx context.Context, arg GetSessionInCellParams) (Session, error) {
-	row := q.db.QueryRow(ctx, getSessionInCell,
+func (q *Queries) GetSessionInWorkerGroup(ctx context.Context, arg GetSessionInWorkerGroupParams) (Session, error) {
+	row := q.db.QueryRow(ctx, getSessionInWorkerGroup,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -1145,8 +1120,7 @@ func (q *Queries) GetSessionInCell(ctx context.Context, arg GetSessionInCellPara
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -1174,10 +1148,10 @@ func (q *Queries) GetSessionInCell(ctx context.Context, arg GetSessionInCellPara
 }
 
 const getSessionRunByRunID = `-- name: GetSessionRunByRunID :one
-SELECT id, public_id, org_id, cell_id, project_id, environment_id, session_id, run_id, deployment_id, previous_run_id, turn_index, reason, created_at, ended_at
+SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, run_id, deployment_id, previous_run_id, turn_index, reason, created_at, ended_at
   FROM session_runs
  WHERE org_id = $1
-   AND cell_id = $2
+   AND worker_group_id = $2
    AND project_id = $3
    AND environment_id = $4
    AND session_id = $5
@@ -1186,7 +1160,7 @@ SELECT id, public_id, org_id, cell_id, project_id, environment_id, session_id, r
 
 type GetSessionRunByRunIDParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	SessionID     pgtype.UUID `json:"session_id"`
@@ -1196,7 +1170,7 @@ type GetSessionRunByRunIDParams struct {
 func (q *Queries) GetSessionRunByRunID(ctx context.Context, arg GetSessionRunByRunIDParams) (SessionRun, error) {
 	row := q.db.QueryRow(ctx, getSessionRunByRunID,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.SessionID,
@@ -1207,7 +1181,7 @@ func (q *Queries) GetSessionRunByRunID(ctx context.Context, arg GetSessionRunByR
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -1223,7 +1197,7 @@ func (q *Queries) GetSessionRunByRunID(ctx context.Context, arg GetSessionRunByR
 }
 
 const getSessionStartIdempotency = `-- name: GetSessionStartIdempotency :one
-SELECT session_start_idempotencies.id, session_start_idempotencies.org_id, session_start_idempotencies.cell_id, session_start_idempotencies.route_generation, session_start_idempotencies.project_id, session_start_idempotencies.environment_id, session_start_idempotencies.task_id, session_start_idempotencies.idempotency_key, session_start_idempotencies.request_fingerprint, session_start_idempotencies.session_id, session_start_idempotencies.first_run_id, session_start_idempotencies.expires_at, session_start_idempotencies.created_at, session_start_idempotencies.last_used_at,
+SELECT session_start_idempotencies.id, session_start_idempotencies.org_id, session_start_idempotencies.worker_group_id, session_start_idempotencies.project_id, session_start_idempotencies.environment_id, session_start_idempotencies.task_id, session_start_idempotencies.idempotency_key, session_start_idempotencies.request_fingerprint, session_start_idempotencies.session_id, session_start_idempotencies.first_run_id, session_start_idempotencies.expires_at, session_start_idempotencies.created_at, session_start_idempotencies.last_used_at,
        sessions.id AS session_id,
        sessions.org_id AS session_org_id,
        sessions.project_id AS session_project_id,
@@ -1270,12 +1244,12 @@ SELECT session_start_idempotencies.id, session_start_idempotencies.org_id, sessi
        runs.updated_at AS run_updated_at
   FROM session_start_idempotencies
   JOIN sessions ON sessions.org_id = session_start_idempotencies.org_id
-                    AND sessions.cell_id = session_start_idempotencies.cell_id
+                    AND sessions.worker_group_id = session_start_idempotencies.worker_group_id
                     AND sessions.project_id = session_start_idempotencies.project_id
                     AND sessions.environment_id = session_start_idempotencies.environment_id
                     AND sessions.id = session_start_idempotencies.session_id
   JOIN runs ON runs.org_id = session_start_idempotencies.org_id
-           AND runs.cell_id = session_start_idempotencies.cell_id
+           AND runs.worker_group_id = session_start_idempotencies.worker_group_id
            AND runs.project_id = session_start_idempotencies.project_id
            AND runs.environment_id = session_start_idempotencies.environment_id
            AND runs.id = session_start_idempotencies.first_run_id
@@ -1298,8 +1272,7 @@ type GetSessionStartIdempotencyParams struct {
 type GetSessionStartIdempotencyRow struct {
 	ID                         pgtype.UUID            `json:"id"`
 	OrgID                      pgtype.UUID            `json:"org_id"`
-	CellID                     string                 `json:"cell_id"`
-	RouteGeneration            int64                  `json:"route_generation"`
+	WorkerGroupID              string                 `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID            `json:"project_id"`
 	EnvironmentID              pgtype.UUID            `json:"environment_id"`
 	TaskID                     string                 `json:"task_id"`
@@ -1368,8 +1341,7 @@ func (q *Queries) GetSessionStartIdempotency(ctx context.Context, arg GetSession
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -1470,8 +1442,7 @@ func (q *Queries) GetTaskForStart(ctx context.Context, arg GetTaskForStartParams
 const getWorkspaceForSessionStart = `-- name: GetWorkspaceForSessionStart :one
 SELECT workspaces.id,
        workspaces.org_id,
-       workspaces.cell_id,
-       workspaces.route_generation,
+       workspaces.worker_group_id,
        workspaces.project_id,
        workspaces.environment_id,
        workspaces.deployment_sandbox_id,
@@ -1498,19 +1469,28 @@ SELECT workspaces.id,
    AND deployment_sandboxes.project_id = workspaces.project_id
    AND deployment_sandboxes.environment_id = workspaces.environment_id
    AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
-  JOIN environment_cells
-    ON environment_cells.org_id = workspaces.org_id
-   AND environment_cells.project_id = workspaces.project_id
-   AND environment_cells.environment_id = workspaces.environment_id
-   AND environment_cells.cell_id = workspaces.cell_id
-   AND environment_cells.route_generation = workspaces.route_generation
-   AND environment_cells.route_state IN ('active', 'draining')
-  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                AND org_cells.cell_id = environment_cells.cell_id
-                AND org_cells.state = 'active'
-  JOIN cells ON cells.id = environment_cells.cell_id
-            AND cells.region_id = environment_cells.region_id
-            AND cells.state IN ('active', 'draining')
+  JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement
+    ON project_worker_group_placement.org_id = workspaces.org_id
+   AND project_worker_group_placement.project_id = workspaces.project_id
+   AND project_worker_group_placement.environment_id = workspaces.environment_id
+   AND project_worker_group_placement.worker_group_id = workspaces.worker_group_id
+   AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
+  JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+            AND worker_groups.region_id = project_worker_group_placement.region_id
+            AND worker_groups.state IN ('active', 'draining')
  WHERE workspaces.org_id = $1
    AND workspaces.project_id = $2
    AND workspaces.environment_id = $3
@@ -1529,8 +1509,7 @@ type GetWorkspaceForSessionStartParams struct {
 type GetWorkspaceForSessionStartRow struct {
 	ID                                pgtype.UUID        `json:"id"`
 	OrgID                             pgtype.UUID        `json:"org_id"`
-	CellID                            string             `json:"cell_id"`
-	RouteGeneration                   int64              `json:"route_generation"`
+	WorkerGroupID                     string             `json:"worker_group_id"`
 	ProjectID                         pgtype.UUID        `json:"project_id"`
 	EnvironmentID                     pgtype.UUID        `json:"environment_id"`
 	DeploymentSandboxID               pgtype.UUID        `json:"deployment_sandbox_id"`
@@ -1564,8 +1543,7 @@ func (q *Queries) GetWorkspaceForSessionStart(ctx context.Context, arg GetWorksp
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentSandboxID,
@@ -1593,8 +1571,7 @@ func (q *Queries) GetWorkspaceForSessionStart(ctx context.Context, arg GetWorksp
 const getWorkspaceSourceForSessionStart = `-- name: GetWorkspaceSourceForSessionStart :one
 SELECT workspaces.id,
        workspaces.org_id,
-       workspaces.cell_id,
-       workspaces.route_generation,
+       workspaces.worker_group_id,
        workspaces.project_id,
        workspaces.environment_id,
        workspaces.deployment_sandbox_id,
@@ -1623,8 +1600,7 @@ type GetWorkspaceSourceForSessionStartParams struct {
 type GetWorkspaceSourceForSessionStartRow struct {
 	ID                  pgtype.UUID `json:"id"`
 	OrgID               pgtype.UUID `json:"org_id"`
-	CellID              string      `json:"cell_id"`
-	RouteGeneration     int64       `json:"route_generation"`
+	WorkerGroupID       string      `json:"worker_group_id"`
 	ProjectID           pgtype.UUID `json:"project_id"`
 	EnvironmentID       pgtype.UUID `json:"environment_id"`
 	DeploymentSandboxID pgtype.UUID `json:"deployment_sandbox_id"`
@@ -1642,8 +1618,7 @@ func (q *Queries) GetWorkspaceSourceForSessionStart(ctx context.Context, arg Get
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentSandboxID,
@@ -1660,7 +1635,7 @@ SELECT sessions.id,
              SELECT 1
               FROM session_run_requests
              WHERE session_run_requests.org_id = sessions.org_id
-               AND session_run_requests.cell_id = sessions.cell_id
+               AND session_run_requests.worker_group_id = sessions.worker_group_id
                AND session_run_requests.project_id = sessions.project_id
                AND session_run_requests.environment_id = sessions.environment_id
                AND session_run_requests.session_id = sessions.id
@@ -1686,7 +1661,7 @@ SELECT sessions.id,
              SELECT 1
               FROM session_run_requests
              WHERE session_run_requests.org_id = sessions.org_id
-               AND session_run_requests.cell_id = sessions.cell_id
+               AND session_run_requests.worker_group_id = sessions.worker_group_id
                AND session_run_requests.project_id = sessions.project_id
                AND session_run_requests.environment_id = sessions.environment_id
                AND session_run_requests.session_id = sessions.id
@@ -1698,7 +1673,7 @@ SELECT sessions.id,
     ON target.id = sessions.id
   LEFT JOIN runs
     ON runs.org_id = sessions.org_id
-   AND runs.cell_id = sessions.cell_id
+   AND runs.worker_group_id = sessions.worker_group_id
    AND runs.project_id = sessions.project_id
    AND runs.environment_id = sessions.environment_id
    AND runs.id = sessions.current_run_id
@@ -1706,7 +1681,7 @@ SELECT sessions.id,
        SELECT run_waits.state
          FROM run_waits
         WHERE run_waits.org_id = sessions.org_id
-          AND run_waits.cell_id = sessions.cell_id
+          AND run_waits.worker_group_id = sessions.worker_group_id
           AND run_waits.project_id = sessions.project_id
           AND run_waits.environment_id = sessions.environment_id
           AND run_waits.run_id = sessions.current_run_id
@@ -1719,19 +1694,28 @@ SELECT sessions.id,
    AND sessions.environment_id = $4
    AND EXISTS (
        SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = sessions.org_id
-          AND environment_cells.project_id = sessions.project_id
-          AND environment_cells.environment_id = sessions.environment_id
-          AND environment_cells.cell_id = sessions.cell_id
-          AND environment_cells.route_generation = sessions.route_generation
-          AND environment_cells.route_state IN ('active', 'draining')
+         FROM (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement
+         JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+                   AND worker_groups.region_id = project_worker_group_placement.region_id
+                   AND worker_groups.state IN ('active', 'draining')
+        WHERE project_worker_group_placement.org_id = sessions.org_id
+          AND project_worker_group_placement.project_id = sessions.project_id
+          AND project_worker_group_placement.environment_id = sessions.environment_id
+          AND project_worker_group_placement.worker_group_id = sessions.worker_group_id
+          AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
    )
 `
 
@@ -1774,7 +1758,7 @@ func (q *Queries) ListSessionActivities(ctx context.Context, arg ListSessionActi
 }
 
 const listSessionRuns = `-- name: ListSessionRuns :many
-SELECT session_runs.id, session_runs.public_id, session_runs.org_id, session_runs.cell_id, session_runs.project_id, session_runs.environment_id, session_runs.session_id, session_runs.run_id, session_runs.deployment_id, session_runs.previous_run_id, session_runs.turn_index, session_runs.reason, session_runs.created_at, session_runs.ended_at,
+SELECT session_runs.id, session_runs.public_id, session_runs.org_id, session_runs.worker_group_id, session_runs.project_id, session_runs.environment_id, session_runs.session_id, session_runs.run_id, session_runs.deployment_id, session_runs.previous_run_id, session_runs.turn_index, session_runs.reason, session_runs.created_at, session_runs.ended_at,
        runs.status,
        runs.execution_status,
        runs.terminal_outcome,
@@ -1803,7 +1787,7 @@ type ListSessionRunsRow struct {
 	ID              pgtype.UUID            `json:"id"`
 	PublicID        string                 `json:"public_id"`
 	OrgID           pgtype.UUID            `json:"org_id"`
-	CellID          string                 `json:"cell_id"`
+	WorkerGroupID   string                 `json:"worker_group_id"`
 	ProjectID       pgtype.UUID            `json:"project_id"`
 	EnvironmentID   pgtype.UUID            `json:"environment_id"`
 	SessionID       pgtype.UUID            `json:"session_id"`
@@ -1839,7 +1823,7 @@ func (q *Queries) ListSessionRuns(ctx context.Context, arg ListSessionRunsParams
 			&i.ID,
 			&i.PublicID,
 			&i.OrgID,
-			&i.CellID,
+			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.SessionID,
@@ -1867,26 +1851,35 @@ func (q *Queries) ListSessionRuns(ctx context.Context, arg ListSessionRunsParams
 }
 
 const listSessions = `-- name: ListSessions :many
-SELECT sessions.id, sessions.public_id, sessions.org_id, sessions.cell_id, sessions.route_generation, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
+SELECT sessions.id, sessions.public_id, sessions.org_id, sessions.worker_group_id, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
  FROM sessions
  WHERE sessions.org_id = $1
    AND sessions.project_id = $2
    AND sessions.environment_id = $3
    AND EXISTS (
        SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = sessions.org_id
-          AND environment_cells.project_id = sessions.project_id
-          AND environment_cells.environment_id = sessions.environment_id
-          AND environment_cells.cell_id = sessions.cell_id
-          AND environment_cells.route_generation = sessions.route_generation
-          AND environment_cells.route_state IN ('active', 'draining')
+         FROM (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement
+         JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+                   AND worker_groups.region_id = project_worker_group_placement.region_id
+                   AND worker_groups.state IN ('active', 'draining')
+        WHERE project_worker_group_placement.org_id = sessions.org_id
+          AND project_worker_group_placement.project_id = sessions.project_id
+          AND project_worker_group_placement.environment_id = sessions.environment_id
+          AND project_worker_group_placement.worker_group_id = sessions.worker_group_id
+          AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
    )
    AND (
        $4::text = ''
@@ -1935,8 +1928,7 @@ func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]S
 			&i.ID,
 			&i.PublicID,
 			&i.OrgID,
-			&i.CellID,
-			&i.RouteGeneration,
+			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.TaskID,
@@ -1971,10 +1963,10 @@ func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]S
 }
 
 const lockSession = `-- name: LockSession :one
-SELECT id, public_id, org_id, cell_id, route_generation, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
   FROM sessions
  WHERE org_id = $1
-   AND cell_id = $2
+   AND worker_group_id = $2
    AND project_id = $3
    AND environment_id = $4
    AND id = $5
@@ -1983,7 +1975,7 @@ SELECT id, public_id, org_id, cell_id, route_generation, project_id, environment
 
 type LockSessionParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -1992,7 +1984,7 @@ type LockSessionParams struct {
 func (q *Queries) LockSession(ctx context.Context, arg LockSessionParams) (Session, error) {
 	row := q.db.QueryRow(ctx, lockSession,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -2002,8 +1994,7 @@ func (q *Queries) LockSession(ctx context.Context, arg LockSessionParams) (Sessi
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -2040,7 +2031,7 @@ UPDATE sessions
        END,
        updated_at = now()
  WHERE sessions.org_id = $4
-   AND sessions.cell_id = $5
+   AND sessions.worker_group_id = $5
    AND sessions.project_id = $6
    AND sessions.environment_id = $7
    AND sessions.id = $8
@@ -2053,7 +2044,7 @@ UPDATE sessions
            AND $3::timestamptz > sessions.expires_at
        )
    )
-RETURNING id, public_id, org_id, cell_id, route_generation, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
 type PatchSessionParams struct {
@@ -2061,7 +2052,7 @@ type PatchSessionParams struct {
 	Tags          []string           `json:"tags"`
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 	OrgID         pgtype.UUID        `json:"org_id"`
-	CellID        string             `json:"cell_id"`
+	WorkerGroupID string             `json:"worker_group_id"`
 	ProjectID     pgtype.UUID        `json:"project_id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	ID            pgtype.UUID        `json:"id"`
@@ -2073,7 +2064,7 @@ func (q *Queries) PatchSession(ctx context.Context, arg PatchSessionParams) (Ses
 		arg.Tags,
 		arg.ExpiresAt,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -2083,8 +2074,7 @@ func (q *Queries) PatchSession(ctx context.Context, arg PatchSessionParams) (Ses
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -2117,7 +2107,7 @@ UPDATE sessions
        current_run_version = current_run_version + 1,
        updated_at = now()
 WHERE sessions.org_id = $2
-   AND sessions.cell_id = $3
+   AND sessions.worker_group_id = $3
    AND sessions.project_id = $4
    AND sessions.environment_id = $5
    AND sessions.id = $6
@@ -2134,13 +2124,13 @@ WHERE sessions.org_id = $2
               AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
        )
    )
-RETURNING id, public_id, org_id, cell_id, route_generation, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
 type SetSessionCurrentRunParams struct {
 	RunID         pgtype.UUID `json:"run_id"`
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	SessionID     pgtype.UUID `json:"session_id"`
@@ -2150,7 +2140,7 @@ func (q *Queries) SetSessionCurrentRun(ctx context.Context, arg SetSessionCurren
 	row := q.db.QueryRow(ctx, setSessionCurrentRun,
 		arg.RunID,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.SessionID,
@@ -2160,8 +2150,7 @@ func (q *Queries) SetSessionCurrentRun(ctx context.Context, arg SetSessionCurren
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,

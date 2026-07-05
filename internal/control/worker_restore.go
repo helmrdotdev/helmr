@@ -40,8 +40,7 @@ func (s *Server) tryLeaseCheckpointRestoreRun(ctx context.Context, worker worker
 		Message: dispatch.Message{
 			RunID:           pgvalue.UUIDString(entry.RunID),
 			OrgID:           pgvalue.UUIDString(entry.OrgID),
-			CellID:          entry.CellID,
-			RouteGeneration: entry.RouteGeneration,
+			WorkerGroupID:   entry.WorkerGroupID,
 			QueueClass:      entry.QueueClass,
 			QueueName:       entry.QueueName,
 			Priority:        entry.Priority,

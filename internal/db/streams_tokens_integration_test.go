@@ -28,7 +28,7 @@ func TestCurrentRunningRunLeaseAcceptsExecutingRun(t *testing.T) {
 
 	row, err := queries.GetCurrentRunningRunLease(ctx, db.GetCurrentRunningRunLeaseParams{
 		OrgID:            pgvalue.UUID(ids.orgID),
-		CellID:           testCellID,
+		WorkerGroupID:    testWorkerGroupID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
@@ -64,11 +64,11 @@ func TestMarkRuntimeResumeWaitResumedAcceptsExecutingRun(t *testing.T) {
 	restoreID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 			INSERT INTO runtime_checkpoint_restores (
-				id, org_id, cell_id, project_id, environment_id, run_id, runtime_checkpoint_id,
+				id, org_id, worker_group_id, project_id, environment_id, run_id, runtime_checkpoint_id,
 				run_wait_id, run_lease_id, worker_instance_id
 			)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		`, restoreID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.runID, pgvalue.MustUUIDValue(storedWait.RuntimeCheckpointID), pgvalue.MustUUIDValue(runWait.ID), runLeaseID, workerID); err != nil {
+		`, restoreID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.runID, pgvalue.MustUUIDValue(storedWait.RuntimeCheckpointID), pgvalue.MustUUIDValue(runWait.ID), runLeaseID, workerID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -264,9 +264,9 @@ func TestLeaseRunLeaseCreatesRuntimeCheckpointRestoreAttempt(t *testing.T) {
 	}
 	resolveCheckpointedRunWaitForTest(t, ctx, pool, ids, runWaitFromCreateHotRunWaitRow(runWait))
 	requeued, err := queries.RequeueResolvedRunWaits(ctx, db.RequeueResolvedRunWaitsParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 100,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -449,8 +449,7 @@ func TestAcknowledgeWorkerCommandMarksHotWaitResumed(t *testing.T) {
 	}
 	command, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
-		CellID:            dbtest.DefaultCellID,
-		RouteGeneration:   1,
+		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -469,7 +468,7 @@ func TestAcknowledgeWorkerCommandMarksHotWaitResumed(t *testing.T) {
 
 	acked, err := queries.AcknowledgeWorkerCommand(ctx, db.AcknowledgeWorkerCommandParams{
 		WorkerInstanceID: pgvalue.UUID(workerID),
-		CellID:           dbtest.DefaultCellID,
+		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 		ID:               command.ID,
 	})
 	if err != nil {
@@ -610,8 +609,7 @@ func TestAcknowledgeWorkerCommandRetiresStaleHotResumeAfterRuntimeCheckpointing(
 	}
 	command, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
-		CellID:            dbtest.DefaultCellID,
-		RouteGeneration:   1,
+		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -630,7 +628,7 @@ func TestAcknowledgeWorkerCommandRetiresStaleHotResumeAfterRuntimeCheckpointing(
 
 	acked, err := queries.AcknowledgeWorkerCommand(ctx, db.AcknowledgeWorkerCommandParams{
 		WorkerInstanceID: pgvalue.UUID(workerID),
-		CellID:           dbtest.DefaultCellID,
+		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 		ID:               command.ID,
 	})
 	if err != nil {
@@ -706,9 +704,9 @@ func TestCreateResolvedLiveRuntimeResumeWaitCommandsSkipsCheckpointingRuntime(t 
 	}
 
 	commands, err := queries.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 10,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -751,9 +749,9 @@ func TestResolvedTimerWorkerCommandCompletesEvenWhenLegacyTimeoutMatchesFireTime
 	}
 
 	commands, err := queries.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 10,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -800,9 +798,9 @@ func TestCheckpointWorkerCommandSkipsDueTimerWait(t *testing.T) {
 	}
 
 	checkpointCommands, err := queries.CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx, db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 10,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -834,9 +832,9 @@ func TestCheckpointWorkerCommandCanRetryAfterAcknowledgedFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := queries.CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx, db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 10,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -847,15 +845,15 @@ func TestCheckpointWorkerCommandCanRetryAfterAcknowledgedFailure(t *testing.T) {
 	if _, err := queries.AcknowledgeWorkerCommand(ctx, db.AcknowledgeWorkerCommandParams{
 		ID:               first[0].ID,
 		WorkerInstanceID: pgvalue.UUID(workerID),
-		CellID:           dbtest.DefaultCellID,
+		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	second, err := queries.CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx, db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 10,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -922,8 +920,7 @@ func TestClaimWorkerCommandsKeepsRetryingNotifyAttempts(t *testing.T) {
 	}
 	command, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
-		CellID:            dbtest.DefaultCellID,
-		RouteGeneration:   1,
+		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -949,7 +946,7 @@ func TestClaimWorkerCommandsKeepsRetryingNotifyAttempts(t *testing.T) {
 	}
 
 	claimed, err := queries.ClaimWorkerCommands(ctx, db.ClaimWorkerCommandsParams{
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		RowLimit:      1,
 		LeaseDuration: pgvalue.Interval(30 * time.Second),
 	})
@@ -1021,7 +1018,7 @@ func TestAcceptWorkerCommandRequiresCommandOwnerScope(t *testing.T) {
 	_, err := queries.AcceptWorkerCommand(ctx, db.AcceptWorkerCommandParams{
 		ID:               command.ID,
 		WorkerInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		CellID:           dbtest.DefaultCellID,
+		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("accept with wrong worker error = %v, want ErrNoRows", err)
@@ -1041,7 +1038,7 @@ func TestAcceptWorkerCommandRequiresCommandOwnerScope(t *testing.T) {
 	accepted, err := queries.AcceptWorkerCommand(ctx, db.AcceptWorkerCommandParams{
 		ID:               command.ID,
 		WorkerInstanceID: pgvalue.UUID(workerID),
-		CellID:           dbtest.DefaultCellID,
+		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1058,10 +1055,10 @@ func TestWorkerCommandQueriesRejectDisabledSourceRoute(t *testing.T) {
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	command := seedWorkerCommandForScopeTest(t, ctx, queries, ids, runLeaseID, workerID)
-	disableDefaultEnvironmentRoute(t, ctx, pool, ids)
+	disableDefaultWorkerGroupPlacement(t, ctx, pool, ids)
 
 	claimed, err := queries.ClaimWorkerCommands(ctx, db.ClaimWorkerCommandsParams{
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		RowLimit:      10,
 		LeaseDuration: pgvalue.Interval(time.Minute),
 	})
@@ -1076,7 +1073,7 @@ func TestWorkerCommandQueriesRejectDisabledSourceRoute(t *testing.T) {
 
 	listed, err := queries.ListWorkerCommandsAfter(ctx, db.ListWorkerCommandsAfterParams{
 		WorkerInstanceID: pgvalue.UUID(workerID),
-		CellID:           dbtest.DefaultCellID,
+		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 		AfterID:          0,
 		LimitCount:       10,
 	})
@@ -1091,7 +1088,7 @@ func TestWorkerCommandQueriesRejectDisabledSourceRoute(t *testing.T) {
 
 	_, err = queries.AcceptWorkerCommand(ctx, db.AcceptWorkerCommandParams{
 		WorkerInstanceID: pgvalue.UUID(workerID),
-		CellID:           dbtest.DefaultCellID,
+		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 		ID:               command.ID,
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -1099,7 +1096,7 @@ func TestWorkerCommandQueriesRejectDisabledSourceRoute(t *testing.T) {
 	}
 	_, err = queries.AcknowledgeWorkerCommand(ctx, db.AcknowledgeWorkerCommandParams{
 		WorkerInstanceID: pgvalue.UUID(workerID),
-		CellID:           dbtest.DefaultCellID,
+		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 		ID:               command.ID,
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -1109,7 +1106,7 @@ func TestWorkerCommandQueriesRejectDisabledSourceRoute(t *testing.T) {
 		WorkerInstanceID: pgvalue.UUID(workerID),
 		ID:               command.ID,
 		OrgID:            pgvalue.UUID(ids.orgID),
-		CellID:           dbtest.DefaultCellID,
+		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunWaitID:        command.RunWaitID,
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
@@ -1156,8 +1153,7 @@ func TestWorkerCommandTargetShapeRejectsPrepareRunTargets(t *testing.T) {
 
 	_, err = queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
-		CellID:            dbtest.DefaultCellID,
-		RouteGeneration:   1,
+		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -1176,8 +1172,7 @@ func TestWorkerCommandTargetShapeRejectsPrepareRunTargets(t *testing.T) {
 
 	command, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
-		CellID:            dbtest.DefaultCellID,
-		RouteGeneration:   1,
+		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		WorkerInstanceID:  pgvalue.UUID(workerID),
@@ -1195,8 +1190,7 @@ func TestWorkerCommandTargetShapeRejectsPrepareRunTargets(t *testing.T) {
 
 	_, err = queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:            pgvalue.UUID(ids.orgID),
-		CellID:           dbtest.DefaultCellID,
-		RouteGeneration:  1,
+		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 		ProjectID:        pgvalue.UUID(ids.projectID),
 		EnvironmentID:    pgvalue.UUID(ids.environmentID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
@@ -1209,8 +1203,7 @@ func TestWorkerCommandTargetShapeRejectsPrepareRunTargets(t *testing.T) {
 
 	substrateCommand, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:               pgvalue.UUID(ids.orgID),
-		CellID:              dbtest.DefaultCellID,
-		RouteGeneration:     1,
+		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		WorkerInstanceID:    pgvalue.UUID(workerID),
@@ -1305,8 +1298,7 @@ func seedWorkerCommandForScopeTest(t *testing.T, ctx context.Context, queries *d
 	}
 	command, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
-		CellID:            dbtest.DefaultCellID,
-		RouteGeneration:   1,
+		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -1368,8 +1360,7 @@ func TestWorkerCommandCreationSkipsExistingCommandsBeforeLimit(t *testing.T) {
 	}
 	if _, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
-		CellID:            dbtest.DefaultCellID,
-		RouteGeneration:   1,
+		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -1385,9 +1376,9 @@ func TestWorkerCommandCreationSkipsExistingCommandsBeforeLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	resumeCommands, err := queries.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 1,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1411,8 +1402,7 @@ func TestWorkerCommandCreationSkipsExistingCommandsBeforeLimit(t *testing.T) {
 	}
 	if _, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
-		CellID:            dbtest.DefaultCellID,
-		RouteGeneration:   1,
+		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -1428,9 +1418,9 @@ func TestWorkerCommandCreationSkipsExistingCommandsBeforeLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkpointCommands, err := queries.CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx, db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 1,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1456,18 +1446,18 @@ func TestFailStaleResolvedRunWaitsTerminalizesWorkspaceVersionMismatch(t *testin
 	nextVersionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
 		SELECT $1, $8, $2, $3, $4, $5, $6, 'system', 'ready',
 		       artifacts.id, 'tar', 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
-		   AND artifacts.cell_id = $3
+		   AND artifacts.worker_group_id = $3
 		   AND artifacts.project_id = $4
 		   AND artifacts.environment_id = $5
 		   AND artifacts.id = $7
-	`, nextVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID, testWorkspaceVersionPublicID(t)); err != nil {
+	`, nextVersionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID, testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1480,9 +1470,9 @@ func TestFailStaleResolvedRunWaitsTerminalizesWorkspaceVersionMismatch(t *testin
 	}
 
 	failed, err := queries.FailStaleResolvedRunWaits(ctx, db.FailStaleResolvedRunWaitsParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 100,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1491,9 +1481,9 @@ func TestFailStaleResolvedRunWaitsTerminalizesWorkspaceVersionMismatch(t *testin
 		t.Fatalf("failed waits = %+v, want single failed wait %s", failed, pgvalue.MustUUIDValue(runWait.ID))
 	}
 	requeued, err := queries.RequeueResolvedRunWaits(ctx, db.RequeueResolvedRunWaitsParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 100,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1564,9 +1554,9 @@ func TestFailStaleResolvedRunWaitsTerminalizesResolvedCheckpointedMismatch(t *te
 	advanceWorkspaceCurrentVersion(t, ctx, pool, ids)
 
 	failed, err := queries.FailStaleResolvedRunWaits(ctx, db.FailStaleResolvedRunWaitsParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 100,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1575,9 +1565,9 @@ func TestFailStaleResolvedRunWaitsTerminalizesResolvedCheckpointedMismatch(t *te
 		t.Fatalf("failed waits = %+v, want resolved_live_checkpointed wait failed", failed)
 	}
 	requeued, err := queries.RequeueResolvedRunWaits(ctx, db.RequeueResolvedRunWaitsParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 100,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1600,9 +1590,9 @@ func TestFailStaleResolvedRunWaitsTerminalizesQueuedWorkspaceVersionMismatch(t *
 	}
 	resolveCheckpointedRunWaitForTest(t, ctx, pool, ids, runWait)
 	requeued, err := queries.RequeueResolvedRunWaits(ctx, db.RequeueResolvedRunWaitsParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 100,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1613,9 +1603,9 @@ func TestFailStaleResolvedRunWaitsTerminalizesQueuedWorkspaceVersionMismatch(t *
 	advanceWorkspaceCurrentVersion(t, ctx, pool, ids)
 
 	failed, err := queries.FailStaleResolvedRunWaits(ctx, db.FailStaleResolvedRunWaitsParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 100,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1657,9 +1647,9 @@ func TestFailStaleResolvedRunWaitsRejectsExpiredRuntimeCheckpoint(t *testing.T) 
 	}
 
 	requeued, err := queries.RequeueResolvedRunWaits(ctx, db.RequeueResolvedRunWaitsParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 100,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1668,9 +1658,9 @@ func TestFailStaleResolvedRunWaitsRejectsExpiredRuntimeCheckpoint(t *testing.T) 
 		t.Fatalf("requeued expired checkpoint waits = %+v, want none", requeued)
 	}
 	failed, err := queries.FailStaleResolvedRunWaits(ctx, db.FailStaleResolvedRunWaitsParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 100,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1768,7 +1758,7 @@ func TestExpiredRunningLeaseCancelsParkingRunWait(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := queries.FailExpiredRunningRunLeases(ctx, db.FailExpiredRunningRunLeasesParams{OrgID: pgvalue.UUID(ids.orgID), CellID: dbtest.DefaultCellID}); err != nil {
+	if err := queries.FailExpiredRunningRunLeases(ctx, db.FailExpiredRunningRunLeasesParams{OrgID: pgvalue.UUID(ids.orgID), WorkerGroupID: dbtest.DefaultWorkerGroupID}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1844,8 +1834,7 @@ func TestExpiredRunningLeaseCancelsCheckpointingRunWait(t *testing.T) {
 	}
 	command, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
-		CellID:            dbtest.DefaultCellID,
-		RouteGeneration:   1,
+		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		RunID:             pgvalue.UUID(ids.runID),
@@ -1872,7 +1861,7 @@ func TestExpiredRunningLeaseCancelsCheckpointingRunWait(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := queries.FailExpiredRunningRunLeases(ctx, db.FailExpiredRunningRunLeasesParams{OrgID: pgvalue.UUID(ids.orgID), CellID: dbtest.DefaultCellID}); err != nil {
+	if err := queries.FailExpiredRunningRunLeases(ctx, db.FailExpiredRunningRunLeasesParams{OrgID: pgvalue.UUID(ids.orgID), WorkerGroupID: dbtest.DefaultWorkerGroupID}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1946,7 +1935,7 @@ func TestExpiredParkingLeaseMarksDirtyWorkspaceRecoveryRequired(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := queries.FailExpiredRunningRunLeases(ctx, db.FailExpiredRunningRunLeasesParams{OrgID: pgvalue.UUID(ids.orgID), CellID: dbtest.DefaultCellID}); err != nil {
+	if err := queries.FailExpiredRunningRunLeases(ctx, db.FailExpiredRunningRunLeasesParams{OrgID: pgvalue.UUID(ids.orgID), WorkerGroupID: dbtest.DefaultWorkerGroupID}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2029,7 +2018,7 @@ func TestExpiredParkingLeaseAfterWorkspaceCaptureKeepsVersionAndInvalidatesCheck
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_checkpoints (
-			id, org_id, cell_id, project_id, environment_id, workspace_id, run_id,
+			id, org_id, worker_group_id, project_id, environment_id, workspace_id, run_id,
 			source_workspace_lease_id, workspace_mount_id, base_workspace_version_id,
 			state, runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, runtime_config_digest, cni_profile, manifest
@@ -2037,7 +2026,7 @@ func TestExpiredParkingLeaseAfterWorkspaceCaptureKeepsVersionAndInvalidatesCheck
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
 		        'creating', 'test', 'test-runtime', 'arm64', 'test-abi', 'sha256:kernel',
 		        'sha256:initramfs', 'sha256:rootfs', 'sha256:config', 'test-cni', '{}')
-	`, checkpointID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, ids.runID, workspaceLeaseID, workspaceMountID, currentVersionID); err != nil {
+	`, checkpointID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID, ids.runID, workspaceLeaseID, workspaceMountID, currentVersionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -2057,7 +2046,7 @@ func TestExpiredParkingLeaseAfterWorkspaceCaptureKeepsVersionAndInvalidatesCheck
 		t.Fatal(err)
 	}
 
-	if err := queries.FailExpiredRunningRunLeases(ctx, db.FailExpiredRunningRunLeasesParams{OrgID: pgvalue.UUID(ids.orgID), CellID: dbtest.DefaultCellID}); err != nil {
+	if err := queries.FailExpiredRunningRunLeases(ctx, db.FailExpiredRunningRunLeasesParams{OrgID: pgvalue.UUID(ids.orgID), WorkerGroupID: dbtest.DefaultWorkerGroupID}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2198,7 +2187,7 @@ func TestCreateReadyRuntimeCheckpointForRunWaitDetachesCurrentRunLease(t *testin
 	}
 }
 
-func TestCreateRuntimeCheckpointArtifactRejectsWrongCellArtifact(t *testing.T) {
+func TestCreateRuntimeCheckpointArtifactRejectsWrongWorkerGroupArtifact(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -2207,35 +2196,34 @@ func TestCreateRuntimeCheckpointArtifactRejectsWrongCellArtifact(t *testing.T) {
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	runWait, checkpointID := seedCheckpointingRunWait(t, ctx, queries, pool, ids, runLeaseID, workerID, db.RunWaitKindTimer)
 
-	otherCellID := "us-east-1-cell-2"
+	otherWorkerGroupID := "us-east-1-worker-group-2"
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cells (id, region_id, environment_class)
-		VALUES ($1, $2, $3)
+		INSERT INTO worker_groups (id, region_id, name, state, health_state, routing_fresh_until)
+		VALUES ($1, $2, $1, 'active', 'healthy', now() + interval '5 minutes')
 		ON CONFLICT (id) DO NOTHING
-	`, otherCellID, dbtest.DefaultRegionID, dbtest.DefaultEnvironmentClass); err != nil {
+	`, otherWorkerGroupID, dbtest.DefaultRegionID); err != nil {
 		t.Fatal(err)
 	}
-	digest := testDigest("wrong-cell-runtime-checkpoint-artifact")
+	digest := testDigest("wrong-worker-group-runtime-checkpoint-artifact")
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
-		OrgID:     pgvalue.UUID(ids.orgID),
-		CellID:    otherCellID,
-		Digest:    digest,
-		SizeBytes: 256,
-		MediaType: "application/vnd.helmr.runtime-checkpoint.config.v0+json",
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: otherWorkerGroupID,
+		Digest:        digest,
+		SizeBytes:     256,
+		MediaType:     "application/vnd.helmr.runtime-checkpoint.config.v0+json",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	artifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          otherCellID,
-		RouteGeneration: 1,
-		ProjectID:       pgvalue.UUID(ids.projectID),
-		EnvironmentID:   pgvalue.UUID(ids.environmentID),
-		Digest:          digest,
-		Kind:            db.ArtifactKindRuntimeCheckpointConfig,
-		SizeBytes:       256,
-		MediaType:       "application/vnd.helmr.runtime-checkpoint.config.v0+json",
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: otherWorkerGroupID,
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		Digest:        digest,
+		Kind:          db.ArtifactKindRuntimeCheckpointConfig,
+		SizeBytes:     256,
+		MediaType:     "application/vnd.helmr.runtime-checkpoint.config.v0+json",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2253,7 +2241,7 @@ func TestCreateRuntimeCheckpointArtifactRejectsWrongCellArtifact(t *testing.T) {
 		RuntimeCheckpointID: pgvalue.UUID(checkpointID),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("CreateRuntimeCheckpointArtifact wrong-cell artifact for wait %s error = %v, want pgx.ErrNoRows", pgvalue.UUIDString(runWait.ID), err)
+		t.Fatalf("CreateRuntimeCheckpointArtifact wrong-worker-group artifact for wait %s error = %v, want pgx.ErrNoRows", pgvalue.UUIDString(runWait.ID), err)
 	}
 }
 
@@ -2379,10 +2367,10 @@ func TestCreateReadyRuntimeCheckpointRejectsSharedActiveWorkspaceMount(t *testin
 	execID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_execs (
-			id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id,
+			id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id,
 			command, state, detached, created_by_subject_type, created_by_subject_id
 		)
-		SELECT $1, org_id, cell_id, project_id, environment_id, id, $2,
+		SELECT $1, org_id, worker_group_id, project_id, environment_id, id, $2,
 		       '["true"]'::jsonb, 'running', true, 'test', 'test'
 		  FROM workspaces
 		 WHERE org_id = $3
@@ -2392,11 +2380,11 @@ func TestCreateReadyRuntimeCheckpointRejectsSharedActiveWorkspaceMount(t *testin
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_leases (
-			id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id,
+			id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id,
 			lease_kind, state, owner_exec_id, base_version_id, acquired_version_id,
 			acquired_fencing_generation, fencing_token, expires_at
 		)
-		SELECT $1, org_id, cell_id, project_id, environment_id, id, $2,
+		SELECT $1, org_id, worker_group_id, project_id, environment_id, id, $2,
 		       'instance', 'active', $3, current_version_id, current_version_id,
 		       1, 'exec-instance-token', now() + interval '1 hour'
 		  FROM workspaces
@@ -2484,15 +2472,15 @@ func TestDirtyRunWaitCapturePromotesSystemVersionBeforeCheckpointReady(t *testin
 	captureVersionID := uuid.Must(uuid.NewV7())
 	captureDigest := "sha256:" + strings.Repeat("b", 64)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, cell_id, digest, size_bytes, media_type)
+		INSERT INTO cas_objects (org_id, worker_group_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, $3, 42, 'application/vnd.helmr.workspace.v0.tar')
-	`, ids.orgID, dbtest.DefaultCellID, captureDigest); err != nil {
+	`, ids.orgID, dbtest.DefaultWorkerGroupID, captureDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (id, org_id, cell_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		INSERT INTO artifacts (id, org_id, worker_group_id, project_id, environment_id, digest, kind, size_bytes, media_type)
 		VALUES ($1, $2, $3, $4, $5, $6, 'workspace_version', 42, 'application/vnd.helmr.workspace.v0.tar')
-	`, captureArtifactID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, captureDigest); err != nil {
+	`, captureArtifactID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, captureDigest); err != nil {
 		t.Fatal(err)
 	}
 	var workspaceLeaseID uuid.UUID
@@ -2635,7 +2623,7 @@ func TestStreamRecordAppendUsesStreamSequenceAndIdempotency(t *testing.T) {
 		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
+		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               stream.ID,
@@ -2658,7 +2646,7 @@ func TestStreamRecordAppendUsesStreamSequenceAndIdempotency(t *testing.T) {
 		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
+		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               stream.ID,
@@ -2680,7 +2668,7 @@ func TestStreamRecordAppendUsesStreamSequenceAndIdempotency(t *testing.T) {
 		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
+		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               stream.ID,
@@ -2700,7 +2688,7 @@ func TestStreamRecordAppendUsesStreamSequenceAndIdempotency(t *testing.T) {
 	}
 	records, err := queries.ListStreamRecords(ctx, db.ListStreamRecordsParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		StreamID:      stream.ID,
@@ -2723,7 +2711,7 @@ func TestStreamRecordAppendUsesStreamSequenceAndIdempotency(t *testing.T) {
 	}
 	records, err = queries.ListStreamRecords(ctx, db.ListStreamRecordsParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		StreamID:      stream.ID,
@@ -2742,7 +2730,7 @@ func TestStreamRecordAppendUsesStreamSequenceAndIdempotency(t *testing.T) {
 		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
+		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               stream.ID,
@@ -2779,7 +2767,7 @@ func TestConcurrentStreamRecordAppendAllocatesContiguousSequences(t *testing.T) 
 				PublicID:               testStreamRecordPublicID(t),
 				ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:                  pgvalue.UUID(ids.orgID),
-				CellID:                 dbtest.DefaultCellID,
+				WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 				ProjectID:              pgvalue.UUID(ids.projectID),
 				EnvironmentID:          pgvalue.UUID(ids.environmentID),
 				StreamID:               stream.ID,
@@ -2817,7 +2805,7 @@ func TestConcurrentStreamRecordAppendAllocatesContiguousSequences(t *testing.T) 
 	}
 	stored, err := queries.GetStream(ctx, db.GetStreamParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            stream.ID,
@@ -2840,7 +2828,7 @@ func TestResolveStreamWaitsRequiresWaitingState(t *testing.T) {
 		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
+		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               stream.ID,
@@ -2870,7 +2858,7 @@ func TestResolveStreamWaitsRequiresWaitingState(t *testing.T) {
 	}
 	resolved, err := queries.ResolveStreamWaitsForStream(ctx, db.ResolveStreamWaitsForStreamParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		StreamID:      stream.ID,
@@ -2884,7 +2872,7 @@ func TestResolveStreamWaitsRequiresWaitingState(t *testing.T) {
 	markRunWaitLiveWaiting(t, ctx, pool, ids, runWait)
 	resolved, err = queries.ResolveStreamWaitsForStream(ctx, db.ResolveStreamWaitsForStreamParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		StreamID:      stream.ID,
@@ -2930,12 +2918,12 @@ func TestResolveStreamWaitsBroadcastsRecordToMatchingWaiters(t *testing.T) {
 	secondRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, public_id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
 		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, secondRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID, testRunPublicID(t)); err != nil {
+	`, secondRunID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID, testRunPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	secondIDs := ids
@@ -2968,7 +2956,7 @@ func TestResolveStreamWaitsBroadcastsRecordToMatchingWaiters(t *testing.T) {
 		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
+		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               stream.ID,
@@ -2987,7 +2975,7 @@ func TestResolveStreamWaitsBroadcastsRecordToMatchingWaiters(t *testing.T) {
 
 	resolved, err := queries.ResolveStreamWaitsForStream(ctx, db.ResolveStreamWaitsForStreamParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		StreamID:      stream.ID,
@@ -3018,12 +3006,12 @@ func TestResolveStreamWaitForRunWaitDoesNotFanOutToOtherWaiters(t *testing.T) {
 	secondRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, public_id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
 		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, secondRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID, testRunPublicID(t)); err != nil {
+	`, secondRunID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID, testRunPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	secondIDs := ids
@@ -3056,7 +3044,7 @@ func TestResolveStreamWaitForRunWaitDoesNotFanOutToOtherWaiters(t *testing.T) {
 		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
+		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               stream.ID,
@@ -3075,7 +3063,7 @@ func TestResolveStreamWaitForRunWaitDoesNotFanOutToOtherWaiters(t *testing.T) {
 
 	resolved, err := queries.ResolveStreamWaitForRunWait(ctx, db.ResolveStreamWaitForRunWaitParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		RunWaitID:     firstWait.ID,
@@ -3122,7 +3110,7 @@ func TestResolveStreamWaitsDoesNotRematchResolvedWait(t *testing.T) {
 		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
+		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               stream.ID,
@@ -3152,7 +3140,7 @@ func TestResolveStreamWaitsDoesNotRematchResolvedWait(t *testing.T) {
 	}
 	resolved, err := queries.ResolveStreamWaitsForStream(ctx, db.ResolveStreamWaitsForStreamParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		StreamID:      stream.ID,
@@ -3167,7 +3155,7 @@ func TestResolveStreamWaitsDoesNotRematchResolvedWait(t *testing.T) {
 		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
+		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               stream.ID,
@@ -3183,7 +3171,7 @@ func TestResolveStreamWaitsDoesNotRematchResolvedWait(t *testing.T) {
 	}
 	resolved, err = queries.ResolveStreamWaitsForStream(ctx, db.ResolveStreamWaitsForStreamParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		StreamID:      stream.ID,
@@ -3218,7 +3206,7 @@ func TestResolveStreamWaitsMatchesCorrelationLane(t *testing.T) {
 		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
+		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               stream.ID,
@@ -3238,7 +3226,7 @@ func TestResolveStreamWaitsMatchesCorrelationLane(t *testing.T) {
 		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
+		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               stream.ID,
@@ -3274,7 +3262,7 @@ func TestResolveStreamWaitsMatchesCorrelationLane(t *testing.T) {
 	}
 	resolved, err := queries.ResolveStreamWaitsForStream(ctx, db.ResolveStreamWaitsForStreamParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		StreamID:      stream.ID,
@@ -3338,7 +3326,7 @@ func TestResolveStreamWaitsDoesNotBlockIndependentCorrelationLane(t *testing.T) 
 		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
+		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               stream.ID,
@@ -3356,7 +3344,7 @@ func TestResolveStreamWaitsDoesNotBlockIndependentCorrelationLane(t *testing.T) 
 	}
 	resolved, err := queries.ResolveStreamWaitsForStream(ctx, db.ResolveStreamWaitsForStreamParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		StreamID:      stream.ID,
@@ -3390,7 +3378,7 @@ func TestDeploymentStreamNameResolutionAndSessionEnsure(t *testing.T) {
 
 	deployed, err := queries.GetDeploymentStreamByName(ctx, db.GetDeploymentStreamByNameParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		DeploymentID:  pgvalue.UUID(ids.deploymentID),
@@ -3405,7 +3393,7 @@ func TestDeploymentStreamNameResolutionAndSessionEnsure(t *testing.T) {
 	}
 	byName, err := queries.GetSessionStreamByName(ctx, db.GetSessionStreamByNameParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		SessionID:     stream.SessionID,
@@ -3431,7 +3419,7 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 		PublicID:                  testTokenPublicID(t),
 		ID:                        pgvalue.UUID(tokenID),
 		OrgID:                     pgvalue.UUID(ids.orgID),
-		CellID:                    dbtest.DefaultCellID,
+		WorkerGroupID:             dbtest.DefaultWorkerGroupID,
 		ProjectID:                 pgvalue.UUID(ids.projectID),
 		EnvironmentID:             pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                 pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3449,7 +3437,7 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
-		CellID:                   dbtest.DefaultCellID,
+		WorkerGroupID:            dbtest.DefaultWorkerGroupID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3467,7 +3455,7 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
-		CellID:                   dbtest.DefaultCellID,
+		WorkerGroupID:            dbtest.DefaultWorkerGroupID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3485,7 +3473,7 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 	if _, err := queries.CreateTokenWait(ctx, db.CreateTokenWaitParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		RunWaitID:     runWait.ID,
@@ -3497,7 +3485,7 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 	completionData := []byte(`{"approved":true}`)
 	completed, err := queries.CompleteToken(ctx, db.CompleteTokenParams{
 		OrgID:                 pgvalue.UUID(ids.orgID),
-		CellID:                dbtest.DefaultCellID,
+		WorkerGroupID:         dbtest.DefaultWorkerGroupID,
 		ProjectID:             pgvalue.UUID(ids.projectID),
 		EnvironmentID:         pgvalue.UUID(ids.environmentID),
 		ID:                    token.ID,
@@ -3513,7 +3501,7 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 	}
 	again, err := queries.CompleteToken(ctx, db.CompleteTokenParams{
 		OrgID:                 pgvalue.UUID(ids.orgID),
-		CellID:                dbtest.DefaultCellID,
+		WorkerGroupID:         dbtest.DefaultWorkerGroupID,
 		ProjectID:             pgvalue.UUID(ids.projectID),
 		EnvironmentID:         pgvalue.UUID(ids.environmentID),
 		ID:                    token.ID,
@@ -3529,7 +3517,7 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 	}
 	different, err := queries.CompleteToken(ctx, db.CompleteTokenParams{
 		OrgID:                 pgvalue.UUID(ids.orgID),
-		CellID:                dbtest.DefaultCellID,
+		WorkerGroupID:         dbtest.DefaultWorkerGroupID,
 		ProjectID:             pgvalue.UUID(ids.projectID),
 		EnvironmentID:         pgvalue.UUID(ids.environmentID),
 		ID:                    token.ID,
@@ -3545,21 +3533,21 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 	}
 }
 
-func TestTokenQueriesRejectWrongCell(t *testing.T) {
+func TestTokenQueriesRejectWrongWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	wrongCellID := "wrong-cell"
+	wrongWorkerGroupID := "wrong-worker-group"
 	token, err := queries.CreateToken(ctx, db.CreateTokenParams{
 		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
-		CellID:                   dbtest.DefaultCellID,
+		WorkerGroupID:            dbtest.DefaultWorkerGroupID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(time.Hour)),
-		CreateRequestFingerprint: "wrong-cell-token",
+		CreateRequestFingerprint: "wrong-worker-group-token",
 		Metadata:                 []byte(`{}`),
 	})
 	if err != nil {
@@ -3567,16 +3555,16 @@ func TestTokenQueriesRejectWrongCell(t *testing.T) {
 	}
 	if _, err := queries.GetToken(ctx, db.GetTokenParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        wrongCellID,
+		WorkerGroupID: wrongWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            token.ID,
 	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("GetToken wrong cell err = %v, want no rows", err)
+		t.Fatalf("GetToken wrong worker group err = %v, want no rows", err)
 	}
 	listed, err := queries.ListTokens(ctx, db.ListTokensParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        wrongCellID,
+		WorkerGroupID: wrongWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		LimitCount:    10,
@@ -3585,23 +3573,23 @@ func TestTokenQueriesRejectWrongCell(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(listed) != 0 {
-		t.Fatalf("ListTokens wrong cell returned %d rows", len(listed))
+		t.Fatalf("ListTokens wrong worker group returned %d rows", len(listed))
 	}
 	runWait := seedRunWait(t, ctx, pool, ids, db.RunWaitKindToken)
 	if _, err := queries.CreateTokenWait(ctx, db.CreateTokenWaitParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        wrongCellID,
+		WorkerGroupID: wrongWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		RunWaitID:     runWait.ID,
 		TokenID:       token.ID,
 	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("CreateTokenWait wrong cell err = %v, want no rows", err)
+		t.Fatalf("CreateTokenWait wrong worker group err = %v, want no rows", err)
 	}
 	if _, err := queries.CompleteToken(ctx, db.CompleteTokenParams{
 		OrgID:                 pgvalue.UUID(ids.orgID),
-		CellID:                wrongCellID,
+		WorkerGroupID:         wrongWorkerGroupID,
 		ProjectID:             pgvalue.UUID(ids.projectID),
 		EnvironmentID:         pgvalue.UUID(ids.environmentID),
 		ID:                    token.ID,
@@ -3609,25 +3597,25 @@ func TestTokenQueriesRejectWrongCell(t *testing.T) {
 		CompletionContentType: "application/json",
 		CompletionFingerprint: canonicalFingerprint(t, []byte(`{"ok":true}`)),
 	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("CompleteToken wrong cell err = %v, want no rows", err)
+		t.Fatalf("CompleteToken wrong worker group err = %v, want no rows", err)
 	}
 	if _, err := queries.CancelToken(ctx, db.CancelTokenParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        wrongCellID,
+		WorkerGroupID: wrongWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            token.ID,
 	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("CancelToken wrong cell err = %v, want no rows", err)
+		t.Fatalf("CancelToken wrong worker group err = %v, want no rows", err)
 	}
 	publicToken, err := queries.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
 		PublicID:      testPublicAccessTokenPublicID(t),
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
-		TokenHash:     []byte("wrong-cell-public-token-hash"),
+		TokenHash:     []byte("wrong-worker-group-public-token-hash"),
 		ExpiresAt:     pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		Metadata:      []byte(`{}`),
 		CreatedBy:     []byte(`{}`),
@@ -3638,7 +3626,7 @@ func TestTokenQueriesRejectWrongCell(t *testing.T) {
 	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
-		CellID:              dbtest.DefaultCellID,
+		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3649,19 +3637,19 @@ func TestTokenQueriesRejectWrongCell(t *testing.T) {
 	}
 	if _, err := queries.GetPublicAccessTokenTokenScope(ctx, db.GetPublicAccessTokenTokenScopeParams{
 		OrgID:               pgvalue.UUID(ids.orgID),
-		CellID:              wrongCellID,
+		WorkerGroupID:       wrongWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
 		TokenID:             token.ID,
 	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("GetPublicAccessTokenTokenScope wrong cell err = %v, want no rows", err)
+		t.Fatalf("GetPublicAccessTokenTokenScope wrong worker group err = %v, want no rows", err)
 	}
-	inputStream := seedSessionStream(t, ctx, queries, ids, db.StreamDirectionInput, "wrong-cell-input")
+	inputStream := seedSessionStream(t, ctx, queries, ids, db.StreamDirectionInput, "wrong-worker-group-input")
 	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
-		CellID:              dbtest.DefaultCellID,
+		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3672,21 +3660,21 @@ func TestTokenQueriesRejectWrongCell(t *testing.T) {
 	}
 	if _, err := queries.GetPublicAccessTokenStreamScope(ctx, db.GetPublicAccessTokenStreamScopeParams{
 		OrgID:               pgvalue.UUID(ids.orgID),
-		CellID:              wrongCellID,
+		WorkerGroupID:       wrongWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
 		ScopeType:           db.PublicAccessTokenScopeTypeSessioninputsend,
 		StreamID:            inputStream.ID,
 	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("GetPublicAccessTokenStreamScope wrong cell err = %v, want no rows", err)
+		t.Fatalf("GetPublicAccessTokenStreamScope wrong worker group err = %v, want no rows", err)
 	}
 	if _, err := queries.ConsumePublicAccessToken(ctx, db.ConsumePublicAccessTokenParams{
-		OrgID:  pgvalue.UUID(ids.orgID),
-		CellID: wrongCellID,
-		ID:     publicToken.ID,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: wrongWorkerGroupID,
+		ID:            publicToken.ID,
 	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("ConsumePublicAccessToken wrong cell err = %v, want no rows", err)
+		t.Fatalf("ConsumePublicAccessToken wrong worker group err = %v, want no rows", err)
 	}
 }
 
@@ -3699,7 +3687,7 @@ func TestConcurrentTokenCompletionIsFirstResolveWins(t *testing.T) {
 		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
-		CellID:                   dbtest.DefaultCellID,
+		WorkerGroupID:            dbtest.DefaultWorkerGroupID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3720,7 +3708,7 @@ func TestConcurrentTokenCompletionIsFirstResolveWins(t *testing.T) {
 			data := []byte(`{"winner":` + string(rune('0'+i)) + `}`)
 			row, err := queries.CompleteToken(ctx, db.CompleteTokenParams{
 				OrgID:                 pgvalue.UUID(ids.orgID),
-				CellID:                dbtest.DefaultCellID,
+				WorkerGroupID:         dbtest.DefaultWorkerGroupID,
 				ProjectID:             pgvalue.UUID(ids.projectID),
 				EnvironmentID:         pgvalue.UUID(ids.environmentID),
 				ID:                    token.ID,
@@ -3765,7 +3753,7 @@ func TestTokenAndTimerWaitExpiryBoundaries(t *testing.T) {
 		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
-		CellID:                   dbtest.DefaultCellID,
+		WorkerGroupID:            dbtest.DefaultWorkerGroupID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(-time.Second)),
@@ -3779,7 +3767,7 @@ func TestTokenAndTimerWaitExpiryBoundaries(t *testing.T) {
 	if _, err := queries.CreateTokenWait(ctx, db.CreateTokenWaitParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		RunWaitID:     tokenRunWait.ID,
@@ -3789,8 +3777,8 @@ func TestTokenAndTimerWaitExpiryBoundaries(t *testing.T) {
 	}
 	markRunWaitLiveWaiting(t, ctx, pool, ids, tokenRunWait)
 	expired, err := queries.ExpireDueTokens(ctx, db.ExpireDueTokensParams{
-		OrgID:  pgvalue.UUID(ids.orgID),
-		CellID: dbtest.DefaultCellID,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -3824,9 +3812,9 @@ func TestTokenAndTimerWaitExpiryBoundaries(t *testing.T) {
 	}
 	markRunWaitLiveWaiting(t, ctx, pool, ids, timerRunWait)
 	resolved, err := queries.ResolveDueTimerWaits(ctx, db.ResolveDueTimerWaitsParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     dbtest.DefaultCellID,
-		LimitCount: 10,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -3845,12 +3833,12 @@ func TestResolveDueTimerWaitForRunWaitDoesNotFanOutToOtherTimers(t *testing.T) {
 	secondRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, public_id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
 		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, secondRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID, testRunPublicID(t)); err != nil {
+	`, secondRunID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID, testRunPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	secondIDs := ids
@@ -3918,7 +3906,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
-		CellID:                   dbtest.DefaultCellID,
+		WorkerGroupID:            dbtest.DefaultWorkerGroupID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3932,7 +3920,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 		PublicID:      testPublicAccessTokenPublicID(t),
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		TokenHash:     []byte("public-token-hash"),
@@ -3946,7 +3934,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
-		CellID:              dbtest.DefaultCellID,
+		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3958,7 +3946,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
-		CellID:              dbtest.DefaultCellID,
+		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3970,7 +3958,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
-		CellID:              dbtest.DefaultCellID,
+		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3982,7 +3970,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	_, err = queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
-		CellID:              dbtest.DefaultCellID,
+		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3995,7 +3983,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	_, err = queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
-		CellID:              dbtest.DefaultCellID,
+		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -4007,10 +3995,10 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	}
 	_, err = pool.Exec(ctx, `
 			INSERT INTO public_access_token_scopes (
-				id, org_id, cell_id, project_id, environment_id, public_access_token_id, scope_type, token_id, stream_id
+				id, org_id, worker_group_id, project_id, environment_id, public_access_token_id, scope_type, token_id, stream_id
 			)
 			VALUES ($1, $2, $3, $4, $5, $6, 'session.input.send', $7, NULL)
-		`, uuid.Must(uuid.NewV7()), ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, pgvalue.MustUUIDValue(publicToken.ID), pgvalue.MustUUIDValue(token.ID))
+		`, uuid.Must(uuid.NewV7()), ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, pgvalue.MustUUIDValue(publicToken.ID), pgvalue.MustUUIDValue(token.ID))
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
 		t.Fatalf("invalid direct scope err = %v, want check violation", err)
@@ -4022,7 +4010,7 @@ func seedSessionStream(t *testing.T, ctx context.Context, queries *db.Queries, i
 	deploymentStream, err := queries.UpsertDeploymentStream(ctx, db.UpsertDeploymentStreamParams{
 		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:             pgvalue.UUID(ids.orgID),
-		CellID:            dbtest.DefaultCellID,
+		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		DeploymentID:      pgvalue.UUID(ids.deploymentID),
@@ -4046,7 +4034,7 @@ func seedSessionStream(t *testing.T, ctx context.Context, queries *db.Queries, i
 		PublicID:           testStreamPublicID(t),
 		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:              pgvalue.UUID(ids.orgID),
-		CellID:             dbtest.DefaultCellID,
+		WorkerGroupID:      dbtest.DefaultWorkerGroupID,
 		ProjectID:          pgvalue.UUID(ids.projectID),
 		EnvironmentID:      pgvalue.UUID(ids.environmentID),
 		SessionID:          run.SessionID,
@@ -4065,7 +4053,7 @@ func seedRunWait(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids inte
 	if _, err := pool.Exec(ctx, `
 		WITH run_scope AS (
 			SELECT runs.org_id,
-			       runs.cell_id,
+			       runs.worker_group_id,
 			       runs.project_id,
 			       runs.environment_id,
 			       runs.id AS run_id,
@@ -4098,12 +4086,12 @@ func seedRunWait(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids inte
 			   AND runs.id = $5
 		)
 			INSERT INTO run_waits (
-				id, public_id, org_id, cell_id, project_id, environment_id, run_id, kind, state,
+				id, public_id, org_id, worker_group_id, project_id, environment_id, run_id, kind, state,
 				live_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch,
 				owner_run_id, owner_run_lease_id, owner_worker_instance_id,
 				owner_run_state_version
 			)
-			SELECT $1, $7, org_id, cell_id, project_id, environment_id, run_id, $6::run_wait_kind,
+			SELECT $1, $7, org_id, worker_group_id, project_id, environment_id, run_id, $6::run_wait_kind,
 		       CASE WHEN runtime_instance_id IS NULL THEN 'cancelled'::run_wait_state ELSE 'live_waiting'::run_wait_state END,
 		       CASE WHEN runtime_instance_id IS NULL THEN NULL ELSE now() END,
 		       runtime_instance_id,
@@ -4235,12 +4223,12 @@ func seedAcceptedRuntimeCheckpointWorkerCommand(t *testing.T, ctx context.Contex
 	var workerCommandID int64
 	if err := pool.QueryRow(ctx, `
 			INSERT INTO worker_commands (
-				org_id, cell_id, project_id, environment_id, run_id, run_wait_id,
+				org_id, worker_group_id, project_id, environment_id, run_id, run_wait_id,
 				run_lease_id, worker_instance_id, runtime_instance_id,
 				runtime_epoch, run_state_version, kind, payload, accepted_at
 			)
 			SELECT run_waits.org_id,
-			       run_waits.cell_id,
+			       run_waits.worker_group_id,
 			       run_waits.project_id,
 		       run_waits.environment_id,
 		       run_waits.run_id,
@@ -4284,13 +4272,13 @@ func seedRestoreReadyWorkspaceMount(t *testing.T, ctx context.Context, pool *pgx
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_mounts (
-			id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
+			id, org_id, worker_group_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
 			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id,
 			workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest,
 			workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path,
 			runtime_abi, guestd_abi, adapter_abi, state, mounted_at, last_heartbeat_at
 		)
-		SELECT $1, workspaces.org_id, workspaces.cell_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
+		SELECT $1, workspaces.org_id, workspaces.worker_group_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
 		       deployment_sandboxes.id, workspaces.sandbox_fingerprint,
 		       image_artifact.id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest,
 		       deployment_sandboxes.image_digest, deployment_sandboxes.image_format,
@@ -4327,7 +4315,7 @@ func seedRestoreReadyWorkspaceMount(t *testing.T, ctx context.Context, pool *pgx
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_instances (
-			id, org_id, cell_id, project_id, environment_id, worker_instance_id,
+			id, org_id, worker_group_id, project_id, environment_id, worker_instance_id,
 			runtime_release_id, deployment_sandbox_id, runtime_key_hash, runtime_key,
 			sandbox_fingerprint, rootfs_digest, image_digest, image_format,
 			sandbox_image_artifact_id, sandbox_image_artifact_digest,
@@ -4337,7 +4325,7 @@ func seedRestoreReadyWorkspaceMount(t *testing.T, ctx context.Context, pool *pgx
 			workspace_mount_id, state, instance_token, expires_at,
 			last_heartbeat_at, bound_at
 		)
-		SELECT $1, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id,
+		SELECT $1, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id,
 		       workspace_mounts.environment_id, $2, $3,
 		       workspace_mounts.deployment_sandbox_id, $4, '{}'::jsonb,
 		       workspace_mounts.sandbox_fingerprint, workspace_mounts.rootfs_digest,
@@ -4507,13 +4495,13 @@ func ensureRunningWorkspaceMount(t *testing.T, ctx context.Context, pool interfa
 		),
 		inserted AS (
 			INSERT INTO workspace_mounts (
-				id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
+				id, org_id, worker_group_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
 				image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
 				workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count,
 				workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type,
 				workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, state
 			)
-			SELECT $1, workspaces.org_id, workspaces.cell_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
+			SELECT $1, workspaces.org_id, workspaces.worker_group_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
 			       deployment_sandboxes.id, workspaces.sandbox_fingerprint,
 			       image_artifact.id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest,
 		       deployment_sandboxes.image_digest, deployment_sandboxes.image_format,
@@ -4577,11 +4565,11 @@ func seedActiveWorkspaceLeaseForRun(t *testing.T, ctx context.Context, pool inte
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_leases (
-			id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id,
+			id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id,
 			lease_kind, state, owner_run_id, base_version_id, acquired_version_id,
 			acquired_fencing_generation, fencing_token, expires_at
 		)
-		SELECT $1, org_id, cell_id, project_id, environment_id, id, $2,
+		SELECT $1, org_id, worker_group_id, project_id, environment_id, id, $2,
 		       'write', 'active', $3, current_version_id, current_version_id,
 		       1, 'test-fencing-token', now() + interval '1 hour'
 		  FROM workspaces
@@ -4614,18 +4602,18 @@ func advanceWorkspaceCurrentVersion(t *testing.T, ctx context.Context, pool *pgx
 	nextVersionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
 		SELECT $1, $8, $2, $3, $4, $5, $6, 'system', 'ready',
 		       artifacts.id, 'tar', 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
-		   AND artifacts.cell_id = $3
+		   AND artifacts.worker_group_id = $3
 		   AND artifacts.project_id = $4
 		   AND artifacts.environment_id = $5
 		   AND artifacts.id = $7
-	`, nextVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID, testWorkspaceVersionPublicID(t)); err != nil {
+	`, nextVersionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID, testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -4660,11 +4648,11 @@ func markRunWaitWaiting(t *testing.T, ctx context.Context, pool interface {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_leases (
-			id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id,
+			id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id,
 			lease_kind, state, owner_run_id, base_version_id, acquired_version_id,
 			acquired_fencing_generation, fencing_token, expires_at
 		)
-		SELECT $1, org_id, cell_id, project_id, environment_id, id, $2,
+		SELECT $1, org_id, worker_group_id, project_id, environment_id, id, $2,
 		       'write', 'released', $3, current_version_id, current_version_id,
 		       1, 'test-fencing-token', now() + interval '1 hour'
 		  FROM workspaces
@@ -4675,12 +4663,12 @@ func markRunWaitWaiting(t *testing.T, ctx context.Context, pool interface {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_checkpoints (
-			id, org_id, cell_id, project_id, environment_id, workspace_id, run_id,
+			id, org_id, worker_group_id, project_id, environment_id, workspace_id, run_id,
 			source_workspace_lease_id, workspace_mount_id, base_workspace_version_id,
 			state, runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, runtime_config_digest, cni_profile, manifest, ready_at
 		)
-		SELECT $1, workspaces.org_id, workspaces.cell_id, workspaces.project_id, workspaces.environment_id,
+		SELECT $1, workspaces.org_id, workspaces.worker_group_id, workspaces.project_id, workspaces.environment_id,
 		       workspaces.id, $2, $3, $4, workspaces.current_version_id,
 		       'ready', 'test', 'test-runtime', 'arm64', 'test-abi', 'sha256:kernel',
 		       'sha256:initramfs', 'sha256:rootfs', 'sha256:config', 'test-cni', '{}', now()

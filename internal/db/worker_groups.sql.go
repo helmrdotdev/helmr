@@ -7,27 +7,38 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const ensureDefaultWorkerGroup = `-- name: EnsureDefaultWorkerGroup :one
-INSERT INTO worker_groups (cell_id, name, description)
-VALUES ($1, 'default', 'Default worker group')
-ON CONFLICT (cell_id, name) DO UPDATE
+INSERT INTO worker_groups (id, region_id, name, description)
+VALUES ($1, $2, 'default', 'Default worker group')
+ON CONFLICT (region_id, name) DO UPDATE
    SET description = worker_groups.description
-RETURNING id, owner_org_id, cell_id, name, description, provider, state, trust_tier, claim_version, created_by, deleted_at, created_at, updated_at
+RETURNING id, owner_org_id, region_id, name, description, provider, state, health_state, health_checked_at, routing_fresh_until, health_details, trust_tier, claim_version, created_by, deleted_at, created_at, updated_at
 `
 
-func (q *Queries) EnsureDefaultWorkerGroup(ctx context.Context, cellID string) (WorkerGroup, error) {
-	row := q.db.QueryRow(ctx, ensureDefaultWorkerGroup, cellID)
+type EnsureDefaultWorkerGroupParams struct {
+	ID       string `json:"id"`
+	RegionID string `json:"region_id"`
+}
+
+func (q *Queries) EnsureDefaultWorkerGroup(ctx context.Context, arg EnsureDefaultWorkerGroupParams) (WorkerGroup, error) {
+	row := q.db.QueryRow(ctx, ensureDefaultWorkerGroup, arg.ID, arg.RegionID)
 	var i WorkerGroup
 	err := row.Scan(
 		&i.ID,
 		&i.OwnerOrgID,
-		&i.CellID,
+		&i.RegionID,
 		&i.Name,
 		&i.Description,
 		&i.Provider,
 		&i.State,
+		&i.HealthState,
+		&i.HealthCheckedAt,
+		&i.RoutingFreshUntil,
+		&i.HealthDetails,
 		&i.TrustTier,
 		&i.ClaimVersion,
 		&i.CreatedBy,
@@ -38,21 +49,56 @@ func (q *Queries) EnsureDefaultWorkerGroup(ctx context.Context, cellID string) (
 	return i, err
 }
 
-const listWorkerGroups = `-- name: ListWorkerGroups :many
-SELECT id, owner_org_id, cell_id, name, description, provider, state, trust_tier, claim_version, created_by, deleted_at, created_at, updated_at
+const getControlWorkerGroupReadiness = `-- name: GetControlWorkerGroupReadiness :one
+SELECT id AS worker_group_id,
+       state,
+       health_state,
+       routing_fresh_until,
+       (
+           state = 'active'
+           AND health_state IN ('healthy', 'degraded')
+           AND routing_fresh_until > now()
+       ) AS routable
   FROM worker_groups
- WHERE cell_id = $1
+ WHERE id = $1
+`
+
+type GetControlWorkerGroupReadinessRow struct {
+	WorkerGroupID     string                 `json:"worker_group_id"`
+	State             WorkerGroupState       `json:"state"`
+	HealthState       WorkerGroupHealthState `json:"health_state"`
+	RoutingFreshUntil pgtype.Timestamptz     `json:"routing_fresh_until"`
+	Routable          pgtype.Bool            `json:"routable"`
+}
+
+func (q *Queries) GetControlWorkerGroupReadiness(ctx context.Context, workerGroupID string) (GetControlWorkerGroupReadinessRow, error) {
+	row := q.db.QueryRow(ctx, getControlWorkerGroupReadiness, workerGroupID)
+	var i GetControlWorkerGroupReadinessRow
+	err := row.Scan(
+		&i.WorkerGroupID,
+		&i.State,
+		&i.HealthState,
+		&i.RoutingFreshUntil,
+		&i.Routable,
+	)
+	return i, err
+}
+
+const listWorkerGroups = `-- name: ListWorkerGroups :many
+SELECT id, owner_org_id, region_id, name, description, provider, state, health_state, health_checked_at, routing_fresh_until, health_details, trust_tier, claim_version, created_by, deleted_at, created_at, updated_at
+  FROM worker_groups
+ WHERE region_id = $1
  ORDER BY name ASC
  LIMIT $2
 `
 
 type ListWorkerGroupsParams struct {
-	CellID   string `json:"cell_id"`
+	RegionID string `json:"region_id"`
 	RowLimit int32  `json:"row_limit"`
 }
 
 func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsParams) ([]WorkerGroup, error) {
-	rows, err := q.db.Query(ctx, listWorkerGroups, arg.CellID, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listWorkerGroups, arg.RegionID, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -63,11 +109,15 @@ func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsPara
 		if err := rows.Scan(
 			&i.ID,
 			&i.OwnerOrgID,
-			&i.CellID,
+			&i.RegionID,
 			&i.Name,
 			&i.Description,
 			&i.Provider,
 			&i.State,
+			&i.HealthState,
+			&i.HealthCheckedAt,
+			&i.RoutingFreshUntil,
+			&i.HealthDetails,
 			&i.TrustTier,
 			&i.ClaimVersion,
 			&i.CreatedBy,
@@ -83,4 +133,51 @@ func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsPara
 		return nil, err
 	}
 	return items, nil
+}
+
+const reportWorkerGroupHealth = `-- name: ReportWorkerGroupHealth :one
+UPDATE worker_groups
+   SET health_state = $1::worker_group_health_state,
+       health_checked_at = now(),
+       routing_fresh_until = now() + $2::interval,
+       health_details = $3::jsonb
+ WHERE id = $4
+RETURNING id, owner_org_id, region_id, name, description, provider, state, health_state, health_checked_at, routing_fresh_until, health_details, trust_tier, claim_version, created_by, deleted_at, created_at, updated_at
+`
+
+type ReportWorkerGroupHealthParams struct {
+	HealthState   WorkerGroupHealthState `json:"health_state"`
+	FreshFor      pgtype.Interval        `json:"fresh_for"`
+	HealthDetails []byte                 `json:"health_details"`
+	WorkerGroupID string                 `json:"worker_group_id"`
+}
+
+func (q *Queries) ReportWorkerGroupHealth(ctx context.Context, arg ReportWorkerGroupHealthParams) (WorkerGroup, error) {
+	row := q.db.QueryRow(ctx, reportWorkerGroupHealth,
+		arg.HealthState,
+		arg.FreshFor,
+		arg.HealthDetails,
+		arg.WorkerGroupID,
+	)
+	var i WorkerGroup
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerOrgID,
+		&i.RegionID,
+		&i.Name,
+		&i.Description,
+		&i.Provider,
+		&i.State,
+		&i.HealthState,
+		&i.HealthCheckedAt,
+		&i.RoutingFreshUntil,
+		&i.HealthDetails,
+		&i.TrustTier,
+		&i.ClaimVersion,
+		&i.CreatedBy,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

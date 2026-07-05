@@ -151,8 +151,8 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
-	routeCellID := placement.CellID
-	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, routeCellID, placement.RouteGeneration, actor.OrgID, current.ProjectID, current.EnvironmentID, request.Task, runDeploymentSelection{})
+	placementWorkerGroupID := placement.WorkerGroupID
+	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, placementWorkerGroupID, actor.OrgID, current.ProjectID, current.EnvironmentID, request.Task, runDeploymentSelection{})
 	if isNoRows(err) {
 		return db.UpdateScheduleRow{}, fmt.Errorf("task %q is not deployed in the selected deployment", request.Task)
 	}
@@ -224,8 +224,8 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
-	routeCellID := placement.CellID
-	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, routeCellID, placement.RouteGeneration, actor.OrgID, projectID, environmentID, request.Task, runDeploymentSelection{})
+	placementWorkerGroupID := placement.WorkerGroupID
+	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, placementWorkerGroupID, actor.OrgID, projectID, environmentID, request.Task, runDeploymentSelection{})
 	if isNoRows(err) {
 		return db.CreateScheduleRow{}, fmt.Errorf("task %q is not deployed in the selected deployment", request.Task)
 	}
@@ -334,15 +334,6 @@ func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("declarative schedules are managed by task definitions")))
 		return
 	}
-	indexCells, err := s.db.ListEnvironmentCellRoutes(r.Context(), db.ListEnvironmentCellRoutesParams{
-		OrgID:         row.OrgID,
-		ProjectID:     row.ProjectID,
-		EnvironmentID: row.EnvironmentID,
-	})
-	if err != nil {
-		writeError(w, err)
-		return
-	}
 	affected, err := s.db.DeleteSchedule(r.Context(), db.DeleteScheduleParams{
 		OrgID:         row.OrgID,
 		ProjectID:     row.ProjectID,
@@ -357,14 +348,7 @@ func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound(errors.New("schedule not found")))
 		return
 	}
-	deletedIndexCells := map[string]struct{}{}
-	for _, route := range indexCells {
-		if _, seen := deletedIndexCells[route.CellID]; seen {
-			continue
-		}
-		deletedIndexCells[route.CellID] = struct{}{}
-		s.deleteScheduleIndexEntry(r.Context(), route.CellID, row.ScheduleID, row.InstanceID)
-	}
+	s.deleteScheduleIndexEntry(r.Context(), s.workerGroupID, row.ScheduleID, row.InstanceID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -412,10 +396,10 @@ func (s *Server) registerScheduleInstances(ctx context.Context, orgID pgtype.UUI
 		return
 	}
 	rows, err := s.db.ListScheduleInstancesForRegistration(ctx, db.ListScheduleInstancesForRegistrationParams{
-		OrgID:      orgID,
-		CellID:     s.cellID,
-		ProjectID:  projectID,
-		ScheduleID: scheduleID,
+		WorkerGroupID: s.workerGroupID,
+		OrgID:         orgID,
+		ProjectID:     projectID,
+		ScheduleID:    scheduleID,
 	})
 	if err != nil {
 		s.log.Warn("list schedule instances for registration failed", "schedule_id", pgvalue.MustUUIDValue(scheduleID).String(), "error", err)
@@ -423,27 +407,27 @@ func (s *Server) registerScheduleInstances(ctx context.Context, orgID pgtype.UUI
 	}
 	for _, row := range rows {
 		if err := s.scheduleEngine.RegisterNext(ctx, schedule.Instance{
-			CellID:     row.CellID,
-			InstanceID: row.InstanceID,
-			Generation: row.Generation,
-			Active:     row.ScheduleActive && row.InstanceActive,
-			NextFireAt: row.NextFireAt,
-			RetryAfter: row.RetryAfter,
+			WorkerGroupID: row.WorkerGroupID,
+			InstanceID:    row.InstanceID,
+			Generation:    row.Generation,
+			Active:        row.ScheduleActive && row.InstanceActive,
+			NextFireAt:    row.NextFireAt,
+			RetryAfter:    row.RetryAfter,
 		}); err != nil {
 			s.log.Warn("register schedule next fire failed", "schedule_id", pgvalue.MustUUIDValue(scheduleID).String(), "instance_id", pgvalue.MustUUIDValue(row.InstanceID).String(), "error", err)
 		}
 	}
 }
 
-func (s *Server) deleteScheduleIndexEntry(ctx context.Context, cellID string, scheduleID pgtype.UUID, instanceID pgtype.UUID) {
+func (s *Server) deleteScheduleIndexEntry(ctx context.Context, workerGroupID string, scheduleID pgtype.UUID, instanceID pgtype.UUID) {
 	if s.scheduleEngine == nil {
 		return
 	}
-	cellID = strings.TrimSpace(cellID)
-	if cellID == "" {
+	workerGroupID = strings.TrimSpace(workerGroupID)
+	if workerGroupID == "" {
 		return
 	}
-	if err := s.scheduleEngine.DeleteInstance(ctx, cellID, instanceID); err != nil {
+	if err := s.scheduleEngine.DeleteInstance(ctx, workerGroupID, instanceID); err != nil {
 		s.log.Warn("delete schedule index entry failed", "schedule_id", pgvalue.MustUUIDValue(scheduleID).String(), "instance_id", pgvalue.MustUUIDValue(instanceID).String(), "error", err)
 	}
 }

@@ -282,7 +282,7 @@ func (s *Server) writeWorkspacePtyOutputChunksAfter(ctx context.Context, w http.
 func (s *Server) listWorkspaceExecTerminalOutput(ctx context.Context, exec db.WorkspaceExec, stream db.WorkspaceExecStream, cursor int64, limit int32) ([]api.WorkspaceExecStreamChunkResponse, int64, error) {
 	page, err := s.telemetryReader.ListTerminalOutput(ctx, telemetry.TerminalOutputQuery{
 		OrgID:         pgvalue.MustUUIDValue(exec.OrgID),
-		CellID:        exec.CellID,
+		WorkerGroupID: exec.WorkerGroupID,
 		ProjectID:     pgvalue.MustUUIDValue(exec.ProjectID),
 		EnvironmentID: pgvalue.MustUUIDValue(exec.EnvironmentID),
 		WorkspaceID:   pgvalue.MustUUIDValue(exec.WorkspaceID),
@@ -305,7 +305,7 @@ func (s *Server) listWorkspaceExecTerminalOutput(ctx context.Context, exec db.Wo
 func (s *Server) listWorkspacePtyTerminalOutput(ctx context.Context, pty db.WorkspacePtySession, cursor int64, limit int32) ([]api.WorkspacePtyStreamChunkResponse, int64, error) {
 	page, err := s.telemetryReader.ListTerminalOutput(ctx, telemetry.TerminalOutputQuery{
 		OrgID:         pgvalue.MustUUIDValue(pty.OrgID),
-		CellID:        pty.CellID,
+		WorkerGroupID: pty.WorkerGroupID,
 		ProjectID:     pgvalue.MustUUIDValue(pty.ProjectID),
 		EnvironmentID: pgvalue.MustUUIDValue(pty.EnvironmentID),
 		WorkspaceID:   pgvalue.MustUUIDValue(pty.WorkspaceID),

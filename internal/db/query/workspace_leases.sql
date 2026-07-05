@@ -175,7 +175,7 @@ verified_artifact AS (
       FROM artifacts
       JOIN cas_objects
         ON cas_objects.org_id = artifacts.org_id
-       AND cas_objects.cell_id = artifacts.cell_id
+       AND cas_objects.worker_group_id = artifacts.worker_group_id
        AND cas_objects.digest = artifacts.digest
      WHERE artifacts.org_id = sqlc.arg(org_id)
        AND artifacts.id = sqlc.arg(artifact_id)
@@ -190,7 +190,7 @@ created_version AS (
         id,
         public_id,
         org_id,
-        cell_id,
+        worker_group_id,
         project_id,
         environment_id,
         workspace_id,
@@ -210,7 +210,7 @@ created_version AS (
     SELECT sqlc.arg(version_id),
            sqlc.arg(version_public_id),
            active_writer.org_id,
-           active_writer.cell_id,
+           active_writer.worker_group_id,
            active_writer.project_id,
            active_writer.environment_id,
            active_writer.workspace_id,

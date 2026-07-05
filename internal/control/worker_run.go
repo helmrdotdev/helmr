@@ -154,9 +154,8 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 	expiresAt := time.Now().Add(workerLeaseDuration)
 	if _, err := s.db.RenewRunQueueReservation(r.Context(), db.RenewRunQueueReservationParams{
 		OrgID:                pgvalue.UUID(leaseIDs.orgID),
-		CellID:               queueLease.Message.CellID,
+		WorkerGroupID:        queueLease.Message.WorkerGroupID,
 		RunID:                pgvalue.UUID(leaseIDs.runID),
-		RouteGeneration:      queueLease.Message.RouteGeneration,
 		QueueClass:           queueLease.Message.QueueClass,
 		WorkerInstanceID:     pgvalue.UUID(worker.WorkerInstanceID),
 		DispatchMessageID:    pgtype.Text{String: leaseRow.DispatchMessageID, Valid: true},
@@ -338,7 +337,7 @@ func (s *Server) appendWorkerEvent(w http.ResponseWriter, r *http.Request, lease
 	}
 	_, err := s.db.AppendRunEventForExecution(r.Context(), db.AppendRunEventForExecutionParams{
 		OrgID:            pgvalue.UUID(leaseIDs.orgID),
-		CellID:           worker.CellID,
+		WorkerGroupID:    worker.WorkerGroupID,
 		RunID:            pgvalue.UUID(leaseIDs.runID),
 		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),

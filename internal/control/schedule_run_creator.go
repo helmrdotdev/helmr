@@ -19,19 +19,19 @@ func NewScheduleRunCreator(log *slog.Logger, database dbTXBeginner, secrets Secr
 	if eventStream == nil || eventStream.redis == nil {
 		return nil, errors.New("event stream is required")
 	}
-	cellID := strings.TrimSpace(eventStream.cellID)
-	if cellID == "" {
-		return nil, errors.New("event stream cell id is required")
+	workerGroupID := strings.TrimSpace(eventStream.workerGroupID)
+	if workerGroupID == "" {
+		return nil, errors.New("event stream worker group id is required")
 	}
 	queries := db.New(database)
 	return &Server{
-		log:         log,
-		cellID:      cellID,
-		db:          queries,
-		tx:          database,
-		auth:        auth.NewDBAuthenticator(queries),
-		secrets:     secrets,
-		runEnqueuer: enqueuer,
-		eventStream: eventStream,
+		log:           log,
+		workerGroupID: workerGroupID,
+		db:            queries,
+		tx:            database,
+		auth:          auth.NewDBAuthenticator(queries),
+		secrets:       secrets,
+		runEnqueuer:   enqueuer,
+		eventStream:   eventStream,
 	}, nil
 }

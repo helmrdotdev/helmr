@@ -17,7 +17,7 @@ func LoadControl() (Control, error) {
 	cfg := Control{
 		Addr:                    env("HELMR_CONTROL_ADDR", ":8080"),
 		DeploymentMode:          env("HELMR_DEPLOYMENT_MODE", DeploymentModeSelfHosted),
-		CellID:                  envString("HELMR_CELL_ID"),
+		WorkerGroupID:           envString("HELMR_WORKER_GROUP_ID"),
 		RegionID:                envString("HELMR_REGION_ID"),
 		DefaultRegionID:         envString("HELMR_DEFAULT_REGION_ID"),
 		DatabaseURL:             envString("HELMR_DATABASE_URL"),
@@ -67,8 +67,8 @@ func LoadControl() (Control, error) {
 	if cfg.DeploymentMode != DeploymentModeSelfHosted && cfg.DeploymentMode != DeploymentModeManagedCloud {
 		return cfg, errors.New("HELMR_DEPLOYMENT_MODE must be self-hosted or managed-cloud")
 	}
-	if cfg.CellID == "" {
-		return cfg, errors.New("HELMR_CELL_ID is required")
+	if cfg.WorkerGroupID == "" {
+		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
 	}
 	if cfg.RegionID == "" {
 		return cfg, errors.New("HELMR_REGION_ID is required")

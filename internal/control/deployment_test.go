@@ -31,7 +31,7 @@ func newDeploymentTestServer(store *fakeStore, casStore cas.Store) *Server {
 	return &Server{
 		db:              store,
 		cas:             casStore,
-		cellID:          "us-east-1-cell-1",
+		workerGroupID:   "us-east-1-worker-group-1",
 		defaultRegionID: "us-east-1",
 		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -163,7 +163,7 @@ func TestCreateDeploymentRejectsStandaloneScopeFields(t *testing.T) {
 	server := &Server{
 		db:              &fakeStore{},
 		cas:             &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 12, MediaType: api.DeploymentSourceArtifactMediaType}},
-		cellID:          "us-east-1-cell-1",
+		workerGroupID:   "us-east-1-worker-group-1",
 		defaultRegionID: "us-east-1",
 		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -218,7 +218,7 @@ func TestCreateDeploymentRejectsUnsupportedVersionMetadata(t *testing.T) {
 			server := &Server{
 				db:              &fakeStore{},
 				cas:             &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 12, MediaType: api.DeploymentSourceArtifactMediaType}},
-				cellID:          "us-east-1-cell-1",
+				workerGroupID:   "us-east-1-worker-group-1",
 				defaultRegionID: "us-east-1",
 				log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 			}
@@ -257,7 +257,7 @@ func TestCreateDeploymentReusesDeployedContentHashWithoutPromotion(t *testing.T)
 		artifacts: []db.Artifact{{
 			ID:            testArtifactID(),
 			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:        "us-east-1-cell-1",
+			WorkerGroupID: "us-east-1-worker-group-1",
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Digest:        digest,
@@ -391,7 +391,7 @@ func TestGetCurrentDeploymentReturnsDeploymentSnapshot(t *testing.T) {
 			},
 		},
 	}
-	server := &Server{db: store, cellID: "us-east-1-cell-1", defaultRegionID: "us-east-1", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	server := &Server{db: store, workerGroupID: "us-east-1-worker-group-1", defaultRegionID: "us-east-1", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	req := currentDeploymentRequest()
 	rec := httptest.NewRecorder()
 
@@ -416,7 +416,7 @@ func TestGetCurrentDeploymentReturnsDeploymentSnapshot(t *testing.T) {
 }
 
 func TestGetCurrentDeploymentReturnsEmptyWhenNotDeployed(t *testing.T) {
-	server := &Server{db: &fakeStore{currentDeploymentMissing: true}, cellID: "us-east-1-cell-1", defaultRegionID: "us-east-1", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	server := &Server{db: &fakeStore{currentDeploymentMissing: true}, workerGroupID: "us-east-1-worker-group-1", defaultRegionID: "us-east-1", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	req := currentDeploymentRequest()
 	rec := httptest.NewRecorder()
 
@@ -448,7 +448,7 @@ func TestGetDeploymentReturnsFailedDeploymentError(t *testing.T) {
 			FailedAt:                   testTime(),
 		},
 	}
-	server := &Server{db: store, cellID: "us-east-1-cell-1", defaultRegionID: "us-east-1", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	server := &Server{db: store, workerGroupID: "us-east-1-worker-group-1", defaultRegionID: "us-east-1", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	req := deploymentStatusRequest(testDeploymentID())
 	rec := httptest.NewRecorder()
 
@@ -488,7 +488,7 @@ func TestGetDeploymentAllowsDeployPermission(t *testing.T) {
 			CreatedAt:                  testTime(),
 		},
 	}
-	server := &Server{db: store, cellID: "us-east-1-cell-1", defaultRegionID: "us-east-1", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	server := &Server{db: store, workerGroupID: "us-east-1-worker-group-1", defaultRegionID: "us-east-1", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	id := pgvalue.MustUUIDValue(testDeploymentID())
 	req := httptest.NewRequest(http.MethodGet, "/api/deployments/"+id.String(), nil)
 	routeContext := chi.NewRouteContext()
@@ -557,7 +557,7 @@ func TestGetDeploymentReturnsTasksWhenDeployed(t *testing.T) {
 			testScopedArtifact(deploymentManifestArtifactID, db.ArtifactKindDeploymentManifest, "sha256:"+strings.Repeat("e", 64), api.DeploymentManifestArtifactMediaType),
 		},
 	}
-	server := &Server{db: store, cellID: "us-east-1-cell-1", defaultRegionID: "us-east-1", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	server := &Server{db: store, workerGroupID: "us-east-1-worker-group-1", defaultRegionID: "us-east-1", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	req := deploymentStatusRequest(testDeploymentID())
 	rec := httptest.NewRecorder()
 
@@ -587,8 +587,7 @@ func TestPromoteDeploymentResolvesVersionInPathScope(t *testing.T) {
 		deployment: db.Deployment{
 			ID:                         testDeploymentID(),
 			OrgID:                      pgvalue.UUID(dbtest.DefaultOrgID),
-			BuildCellID:                dbtest.DefaultCellID,
-			BuildRouteGeneration:       1,
+			BuildWorkerGroupID:         dbtest.DefaultWorkerGroupID,
 			ProjectID:                  testProjectID(),
 			EnvironmentID:              environmentID,
 			Version:                    "20260101.2",
@@ -622,7 +621,7 @@ func TestCreateDeploymentRejectsUnsafeSourceTar(t *testing.T) {
 	server := &Server{
 		db:              store,
 		cas:             artifactStore,
-		cellID:          "us-east-1-cell-1",
+		workerGroupID:   "us-east-1-worker-group-1",
 		defaultRegionID: "us-east-1",
 		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -649,7 +648,7 @@ func TestCreateDeploymentRejectsContentHashMismatch(t *testing.T) {
 	server := &Server{
 		db:              store,
 		cas:             artifactStore,
-		cellID:          "us-east-1-cell-1",
+		workerGroupID:   "us-east-1-worker-group-1",
 		defaultRegionID: "us-east-1",
 		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -742,8 +741,7 @@ func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDep
 		return db.Deployment{
 			ID:                         testDeploymentID(),
 			OrgID:                      arg.OrgID,
-			BuildCellID:                firstNonEmptyString(f.environmentRouteCellID, "us-east-1-cell-1"),
-			BuildRouteGeneration:       1,
+			BuildWorkerGroupID:         firstNonEmptyString(f.environmentPlacementWorkerGroupID, "us-east-1-worker-group-1"),
 			ProjectID:                  arg.ProjectID,
 			EnvironmentID:              arg.EnvironmentID,
 			Version:                    "20260101.1",
@@ -763,8 +761,7 @@ func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDep
 	return db.Deployment{
 		ID:                           f.deployment.ID,
 		OrgID:                        f.deployment.OrgID,
-		BuildCellID:                  firstNonEmptyString(f.deployment.BuildCellID, f.environmentRouteCellID, "us-east-1-cell-1"),
-		BuildRouteGeneration:         firstNonZeroInt64(f.deployment.BuildRouteGeneration, 1),
+		BuildWorkerGroupID:           firstNonEmptyString(f.deployment.BuildWorkerGroupID, f.environmentPlacementWorkerGroupID, "us-east-1-worker-group-1"),
 		ProjectID:                    f.deployment.ProjectID,
 		EnvironmentID:                f.deployment.EnvironmentID,
 		DeploymentSourceArtifactID:   f.deployment.DeploymentSourceArtifactID,
@@ -789,7 +786,7 @@ func (f *fakeStore) GetCurrentDeploymentForRoute(ctx context.Context, arg db.Get
 	if err != nil {
 		return db.Deployment{}, err
 	}
-	if deployment.BuildCellID != arg.CellID || deployment.BuildRouteGeneration != arg.RouteGeneration {
+	if deployment.BuildWorkerGroupID != arg.WorkerGroupID {
 		return db.Deployment{}, pgx.ErrNoRows
 	}
 	return deployment, nil
@@ -818,14 +815,13 @@ func (f *fakeStore) GetEnvironment(_ context.Context, arg db.GetEnvironmentParam
 		return db.Environment{}, pgx.ErrNoRows
 	}
 	return db.Environment{
-		ID:              arg.ID,
-		OrgID:           arg.OrgID,
-		ProjectID:       arg.ProjectID,
-		DefaultRegionID: firstNonEmptyString(f.environmentRouteRegionID, "us-east-1"),
-		Slug:            "prod",
-		Name:            "Production",
-		CreatedAt:       testTime(),
-		UpdatedAt:       testTime(),
+		ID:        arg.ID,
+		OrgID:     arg.OrgID,
+		ProjectID: arg.ProjectID,
+		Slug:      "prod",
+		Name:      "Production",
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
 	}, nil
 }
 
@@ -909,22 +905,19 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		if f.deployment.WorkerProtocolVersion == "" {
 			f.deployment.WorkerProtocolVersion = arg.WorkerProtocolVersion
 		}
-		if !f.deployment.WorkerGroupID.Valid {
+		if f.deployment.WorkerGroupID == "" {
 			f.deployment.WorkerGroupID = arg.WorkerGroupID
 		}
-		if f.deployment.BuildCellID == "" {
-			f.deployment.BuildCellID = arg.BuildCellID
+		if f.deployment.BuildWorkerGroupID == "" {
+			f.deployment.BuildWorkerGroupID = arg.BuildWorkerGroupID
 		}
-		if f.deployment.BuildRouteGeneration == 0 {
-			f.deployment.BuildRouteGeneration = arg.BuildRouteGeneration
-		}
+
 		return f.deployment, nil
 	}
 	f.deployment = db.Deployment{
 		ID:                         arg.ID,
 		OrgID:                      arg.OrgID,
-		BuildCellID:                arg.BuildCellID,
-		BuildRouteGeneration:       arg.BuildRouteGeneration,
+		BuildWorkerGroupID:         arg.BuildWorkerGroupID,
 		ProjectID:                  arg.ProjectID,
 		EnvironmentID:              arg.EnvironmentID,
 		Version:                    arg.Version,
@@ -961,7 +954,7 @@ func (f *fakeStore) CreateArtifact(_ context.Context, arg db.CreateArtifactParam
 	artifact := db.Artifact{
 		ID:                        arg.ID,
 		OrgID:                     arg.OrgID,
-		CellID:                    arg.CellID,
+		WorkerGroupID:             arg.WorkerGroupID,
 		ProjectID:                 arg.ProjectID,
 		EnvironmentID:             arg.EnvironmentID,
 		Digest:                    arg.Digest,
@@ -979,12 +972,12 @@ func (f *fakeStore) UpsertCasObject(_ context.Context, arg db.UpsertCasObjectPar
 	f.artifactAuthorityEvents = append(f.artifactAuthorityEvents, "cas:"+arg.Digest)
 	f.casObjects = append(f.casObjects, arg)
 	return db.CasObject{
-		OrgID:     arg.OrgID,
-		CellID:    arg.CellID,
-		Digest:    arg.Digest,
-		SizeBytes: arg.SizeBytes,
-		MediaType: arg.MediaType,
-		CreatedAt: testTime(),
+		OrgID:         arg.OrgID,
+		WorkerGroupID: arg.WorkerGroupID,
+		Digest:        arg.Digest,
+		SizeBytes:     arg.SizeBytes,
+		MediaType:     arg.MediaType,
+		CreatedAt:     testTime(),
 	}, nil
 }
 
@@ -993,14 +986,14 @@ func (f *fakeStore) GetCasObject(_ context.Context, arg db.GetCasObjectParams) (
 		return db.CasObject{}, f.getCasObjectErr
 	}
 	for _, object := range f.casObjects {
-		if object.OrgID == arg.OrgID && object.CellID == arg.CellID && object.Digest == arg.Digest {
+		if object.OrgID == arg.OrgID && object.WorkerGroupID == arg.WorkerGroupID && object.Digest == arg.Digest {
 			return db.CasObject{
-				OrgID:     object.OrgID,
-				CellID:    object.CellID,
-				Digest:    object.Digest,
-				SizeBytes: object.SizeBytes,
-				MediaType: object.MediaType,
-				CreatedAt: testTime(),
+				OrgID:         object.OrgID,
+				WorkerGroupID: object.WorkerGroupID,
+				Digest:        object.Digest,
+				SizeBytes:     object.SizeBytes,
+				MediaType:     object.MediaType,
+				CreatedAt:     testTime(),
 			}, nil
 		}
 	}
@@ -1057,17 +1050,6 @@ func (f *fakeStore) AllocateDeploymentVersion(_ context.Context, _ db.AllocateDe
 	return "20260101.1", nil
 }
 
-func (f *fakeStore) EnsureDefaultWorkerGroup(_ context.Context, cellID string) (db.WorkerGroup, error) {
-	return db.WorkerGroup{
-		ID:          testWorkerGroupID(),
-		CellID:      cellID,
-		Name:        "default",
-		Description: "Default worker group",
-		CreatedAt:   testTime(),
-		UpdatedAt:   testTime(),
-	}, nil
-}
-
 func (f *fakeStore) GetReusableDeploymentByContentHash(_ context.Context, arg db.GetReusableDeploymentByContentHashParams) (db.Deployment, error) {
 	if f.deployment.OrgID == arg.OrgID && f.deployment.ProjectID == arg.ProjectID && f.deployment.EnvironmentID == arg.EnvironmentID && f.deployment.ContentHash == arg.ContentHash && f.deployment.WorkerGroupID == arg.WorkerGroupID {
 		return f.deployment, nil
@@ -1098,12 +1080,10 @@ func (f *fakeStore) GetDeploymentByVersion(_ context.Context, arg db.GetDeployme
 
 func (f *fakeStore) GetDeploymentForOrg(_ context.Context, arg db.GetDeploymentForOrgParams) (db.Deployment, error) {
 	if f.deployment.ID == arg.ID && f.deployment.OrgID == arg.OrgID {
-		if f.deployment.BuildCellID == "" {
-			f.deployment.BuildCellID = firstNonEmptyString(f.environmentRouteCellID, "us-east-1-cell-1")
+		if f.deployment.BuildWorkerGroupID == "" {
+			f.deployment.BuildWorkerGroupID = firstNonEmptyString(f.environmentPlacementWorkerGroupID, "us-east-1-worker-group-1")
 		}
-		if f.deployment.BuildRouteGeneration == 0 {
-			f.deployment.BuildRouteGeneration = 1
-		}
+
 		return f.deployment, nil
 	}
 	return db.Deployment{}, pgx.ErrNoRows

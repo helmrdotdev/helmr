@@ -66,7 +66,7 @@ UPDATE deployments
        built_at = COALESCE(built_at, now()),
        deployed_at = now()
 WHERE deployments.org_id = $3
-   AND deployments.build_cell_id = $4
+   AND deployments.build_worker_group_id = $4
    AND deployments.project_id = $5
    AND deployments.environment_id = $6
    AND deployments.id = $7
@@ -75,28 +75,19 @@ WHERE deployments.org_id = $3
    AND deployments.build_worker_instance_id = $9
    AND deployments.build_lease_expires_at > now()
    AND EXISTS (
-	       SELECT 1
-	         FROM environment_cells
-		         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-		                       AND org_cells.cell_id = environment_cells.cell_id
-		                       AND org_cells.state = 'active'
-		         JOIN cells ON cells.id = environment_cells.cell_id
-		                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = deployments.org_id
-          AND environment_cells.project_id = deployments.project_id
-          AND environment_cells.environment_id = deployments.environment_id
-          AND environment_cells.cell_id = deployments.build_cell_id
-          AND environment_cells.route_generation = deployments.build_route_generation
-          AND environment_cells.route_state IN ('active', 'draining')
-   )
-RETURNING id, public_id, org_id, build_cell_id, build_route_generation, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+       SELECT 1
+         FROM worker_groups
+        WHERE worker_groups.id = deployments.build_worker_group_id
+          AND worker_groups.state IN ('active', 'draining')
+	   )
+RETURNING id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 
 type CompleteDeploymentBuildParams struct {
 	BuildManifestArtifactID      pgtype.UUID `json:"build_manifest_artifact_id"`
 	DeploymentManifestArtifactID pgtype.UUID `json:"deployment_manifest_artifact_id"`
 	OrgID                        pgtype.UUID `json:"org_id"`
-	CellID                       string      `json:"cell_id"`
+	WorkerGroupID                string      `json:"worker_group_id"`
 	ProjectID                    pgtype.UUID `json:"project_id"`
 	EnvironmentID                pgtype.UUID `json:"environment_id"`
 	ID                           pgtype.UUID `json:"id"`
@@ -109,7 +100,7 @@ func (q *Queries) CompleteDeploymentBuild(ctx context.Context, arg CompleteDeplo
 		arg.BuildManifestArtifactID,
 		arg.DeploymentManifestArtifactID,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -121,8 +112,7 @@ func (q *Queries) CompleteDeploymentBuild(ctx context.Context, arg CompleteDeplo
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.BuildCellID,
-		&i.BuildRouteGeneration,
+		&i.BuildWorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkerGroupID,
@@ -157,8 +147,7 @@ INSERT INTO deployments (
     id,
     public_id,
     org_id,
-    build_cell_id,
-    build_route_generation,
+    build_worker_group_id,
     project_id,
     environment_id,
     version,
@@ -187,36 +176,32 @@ SELECT $1,
        $13,
        $14,
        $15,
-       $16,
-       $17::deployment_status
+       $16::deployment_status
  WHERE EXISTS (
        SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state = 'active'
-         JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                         AND cell_health.state IN ('healthy', 'degraded')
-                         AND cell_health.routing_fresh_until > now()
-        WHERE environment_cells.org_id = $3
-          AND environment_cells.project_id = $6
-          AND environment_cells.environment_id = $7
-          AND environment_cells.cell_id = $4
-          AND environment_cells.route_generation = $5
-          AND environment_cells.route_state = 'active'
- )
-RETURNING id, public_id, org_id, build_cell_id, build_route_generation, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+         FROM projects
+         JOIN environments
+           ON environments.org_id = projects.org_id
+          AND environments.project_id = projects.id
+         JOIN worker_groups
+           ON worker_groups.id = $4
+          AND worker_groups.region_id = projects.default_region_id
+          AND worker_groups.state = 'active'
+          AND worker_groups.health_state IN ('healthy', 'degraded')
+          AND worker_groups.routing_fresh_until > now()
+        WHERE projects.org_id = $3
+          AND projects.id = $5
+          AND environments.id = $6
+          AND $13 = $4
+	 )
+RETURNING id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 
 type CreateDeploymentParams struct {
 	ID                         pgtype.UUID      `json:"id"`
 	PublicID                   string           `json:"public_id"`
 	OrgID                      pgtype.UUID      `json:"org_id"`
-	BuildCellID                string           `json:"build_cell_id"`
-	BuildRouteGeneration       int64            `json:"build_route_generation"`
+	BuildWorkerGroupID         string           `json:"build_worker_group_id"`
 	ProjectID                  pgtype.UUID      `json:"project_id"`
 	EnvironmentID              pgtype.UUID      `json:"environment_id"`
 	Version                    string           `json:"version"`
@@ -225,7 +210,7 @@ type CreateDeploymentParams struct {
 	CliVersion                 string           `json:"cli_version"`
 	BundleFormatVersion        int32            `json:"bundle_format_version"`
 	WorkerProtocolVersion      string           `json:"worker_protocol_version"`
-	WorkerGroupID              pgtype.UUID      `json:"worker_group_id"`
+	WorkerGroupID              string           `json:"worker_group_id"`
 	ContentHash                string           `json:"content_hash"`
 	DeploymentSourceArtifactID pgtype.UUID      `json:"deployment_source_artifact_id"`
 	Status                     DeploymentStatus `json:"status"`
@@ -236,8 +221,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		arg.ID,
 		arg.PublicID,
 		arg.OrgID,
-		arg.BuildCellID,
-		arg.BuildRouteGeneration,
+		arg.BuildWorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Version,
@@ -256,8 +240,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.BuildCellID,
-		&i.BuildRouteGeneration,
+		&i.BuildWorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkerGroupID,
@@ -352,7 +335,7 @@ INSERT INTO deployment_sandboxes (
     deployment_id,
     sandbox_id,
     image_artifact_id,
-    image_artifact_cell_id,
+    image_artifact_worker_group_id,
     image_artifact_format,
     rootfs_digest,
     image_digest,
@@ -398,36 +381,36 @@ INSERT INTO deployment_sandboxes (
     $25,
     $26
 )
-RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_cell_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, resource_floor, disk_floor_mib, network_policy, runtime_abi, guestd_abi, adapter_abi, filesystem_format, default_uid, default_gid, default_workdir, contract_version, fingerprint, created_at
+RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_worker_group_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, resource_floor, disk_floor_mib, network_policy, runtime_abi, guestd_abi, adapter_abi, filesystem_format, default_uid, default_gid, default_workdir, contract_version, fingerprint, created_at
 `
 
 type CreateDeploymentSandboxParams struct {
-	ID                  pgtype.UUID `json:"id"`
-	PublicID            string      `json:"public_id"`
-	OrgID               pgtype.UUID `json:"org_id"`
-	ProjectID           pgtype.UUID `json:"project_id"`
-	EnvironmentID       pgtype.UUID `json:"environment_id"`
-	DeploymentID        pgtype.UUID `json:"deployment_id"`
-	SandboxID           string      `json:"sandbox_id"`
-	ImageArtifactID     pgtype.UUID `json:"image_artifact_id"`
-	ImageArtifactCellID string      `json:"image_artifact_cell_id"`
-	ImageArtifactFormat string      `json:"image_artifact_format"`
-	RootfsDigest        string      `json:"rootfs_digest"`
-	ImageDigest         string      `json:"image_digest"`
-	ImageFormat         string      `json:"image_format"`
-	WorkspaceMountPath  string      `json:"workspace_mount_path"`
-	ResourceFloor       []byte      `json:"resource_floor"`
-	DiskFloorMib        int64       `json:"disk_floor_mib"`
-	NetworkPolicy       []byte      `json:"network_policy"`
-	RuntimeABI          string      `json:"runtime_abi"`
-	GuestdAbi           string      `json:"guestd_abi"`
-	AdapterAbi          string      `json:"adapter_abi"`
-	FilesystemFormat    string      `json:"filesystem_format"`
-	DefaultUid          pgtype.Int8 `json:"default_uid"`
-	DefaultGid          pgtype.Int8 `json:"default_gid"`
-	DefaultWorkdir      string      `json:"default_workdir"`
-	ContractVersion     int32       `json:"contract_version"`
-	Fingerprint         string      `json:"fingerprint"`
+	ID                         pgtype.UUID `json:"id"`
+	PublicID                   string      `json:"public_id"`
+	OrgID                      pgtype.UUID `json:"org_id"`
+	ProjectID                  pgtype.UUID `json:"project_id"`
+	EnvironmentID              pgtype.UUID `json:"environment_id"`
+	DeploymentID               pgtype.UUID `json:"deployment_id"`
+	SandboxID                  string      `json:"sandbox_id"`
+	ImageArtifactID            pgtype.UUID `json:"image_artifact_id"`
+	ImageArtifactWorkerGroupID string      `json:"image_artifact_worker_group_id"`
+	ImageArtifactFormat        string      `json:"image_artifact_format"`
+	RootfsDigest               string      `json:"rootfs_digest"`
+	ImageDigest                string      `json:"image_digest"`
+	ImageFormat                string      `json:"image_format"`
+	WorkspaceMountPath         string      `json:"workspace_mount_path"`
+	ResourceFloor              []byte      `json:"resource_floor"`
+	DiskFloorMib               int64       `json:"disk_floor_mib"`
+	NetworkPolicy              []byte      `json:"network_policy"`
+	RuntimeABI                 string      `json:"runtime_abi"`
+	GuestdAbi                  string      `json:"guestd_abi"`
+	AdapterAbi                 string      `json:"adapter_abi"`
+	FilesystemFormat           string      `json:"filesystem_format"`
+	DefaultUid                 pgtype.Int8 `json:"default_uid"`
+	DefaultGid                 pgtype.Int8 `json:"default_gid"`
+	DefaultWorkdir             string      `json:"default_workdir"`
+	ContractVersion            int32       `json:"contract_version"`
+	Fingerprint                string      `json:"fingerprint"`
 }
 
 func (q *Queries) CreateDeploymentSandbox(ctx context.Context, arg CreateDeploymentSandboxParams) (DeploymentSandbox, error) {
@@ -440,7 +423,7 @@ func (q *Queries) CreateDeploymentSandbox(ctx context.Context, arg CreateDeploym
 		arg.DeploymentID,
 		arg.SandboxID,
 		arg.ImageArtifactID,
-		arg.ImageArtifactCellID,
+		arg.ImageArtifactWorkerGroupID,
 		arg.ImageArtifactFormat,
 		arg.RootfsDigest,
 		arg.ImageDigest,
@@ -469,7 +452,7 @@ func (q *Queries) CreateDeploymentSandbox(ctx context.Context, arg CreateDeploym
 		&i.DeploymentID,
 		&i.SandboxID,
 		&i.ImageArtifactID,
-		&i.ImageArtifactCellID,
+		&i.ImageArtifactWorkerGroupID,
 		&i.ImageArtifactFormat,
 		&i.RootfsDigest,
 		&i.ImageDigest,
@@ -529,7 +512,7 @@ INSERT INTO deployment_tasks (
     export_name,
     handler_entrypoint,
     bundle_artifact_id,
-    bundle_artifact_cell_id,
+    bundle_artifact_worker_group_id,
     bundle_format_version,
     requested_milli_cpu,
     requested_memory_mib,
@@ -571,37 +554,37 @@ INSERT INTO deployment_tasks (
     $25,
     coalesce($26::jsonb, '{"enabled": false}'::jsonb)
   FROM catalog_task
-RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_artifact_cell_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, secret_declarations, resource_requirements, network_policy, placement, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_active_duration_ms, retry_policy, created_at
+RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_artifact_worker_group_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, secret_declarations, resource_requirements, network_policy, placement, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_active_duration_ms, retry_policy, created_at
 `
 
 type CreateDeploymentTaskParams struct {
-	ID                    pgtype.UUID `json:"id"`
-	PublicID              string      `json:"public_id"`
-	OrgID                 pgtype.UUID `json:"org_id"`
-	ProjectID             pgtype.UUID `json:"project_id"`
-	EnvironmentID         pgtype.UUID `json:"environment_id"`
-	DeploymentID          pgtype.UUID `json:"deployment_id"`
-	DeploymentSandboxID   pgtype.UUID `json:"deployment_sandbox_id"`
-	TaskID                string      `json:"task_id"`
-	FilePath              string      `json:"file_path"`
-	ExportName            string      `json:"export_name"`
-	HandlerEntrypoint     string      `json:"handler_entrypoint"`
-	BundleArtifactID      pgtype.UUID `json:"bundle_artifact_id"`
-	BundleArtifactCellID  string      `json:"bundle_artifact_cell_id"`
-	BundleFormatVersion   int32       `json:"bundle_format_version"`
-	RequestedMilliCpu     int64       `json:"requested_milli_cpu"`
-	RequestedMemoryMib    int64       `json:"requested_memory_mib"`
-	RequestedDiskMib      int64       `json:"requested_disk_mib"`
-	SecretDeclarations    []byte      `json:"secret_declarations"`
-	ResourceRequirements  []byte      `json:"resource_requirements"`
-	NetworkPolicy         []byte      `json:"network_policy"`
-	ScheduleDeclarations  []byte      `json:"schedule_declarations"`
-	QueueName             string      `json:"queue_name"`
-	QueueConcurrencyLimit pgtype.Int4 `json:"queue_concurrency_limit"`
-	Ttl                   string      `json:"ttl"`
-	MaxActiveDurationMs   int64       `json:"max_active_duration_ms"`
-	RetryPolicy           []byte      `json:"retry_policy"`
-	TaskPublicID          string      `json:"task_public_id"`
+	ID                          pgtype.UUID `json:"id"`
+	PublicID                    string      `json:"public_id"`
+	OrgID                       pgtype.UUID `json:"org_id"`
+	ProjectID                   pgtype.UUID `json:"project_id"`
+	EnvironmentID               pgtype.UUID `json:"environment_id"`
+	DeploymentID                pgtype.UUID `json:"deployment_id"`
+	DeploymentSandboxID         pgtype.UUID `json:"deployment_sandbox_id"`
+	TaskID                      string      `json:"task_id"`
+	FilePath                    string      `json:"file_path"`
+	ExportName                  string      `json:"export_name"`
+	HandlerEntrypoint           string      `json:"handler_entrypoint"`
+	BundleArtifactID            pgtype.UUID `json:"bundle_artifact_id"`
+	BundleArtifactWorkerGroupID string      `json:"bundle_artifact_worker_group_id"`
+	BundleFormatVersion         int32       `json:"bundle_format_version"`
+	RequestedMilliCpu           int64       `json:"requested_milli_cpu"`
+	RequestedMemoryMib          int64       `json:"requested_memory_mib"`
+	RequestedDiskMib            int64       `json:"requested_disk_mib"`
+	SecretDeclarations          []byte      `json:"secret_declarations"`
+	ResourceRequirements        []byte      `json:"resource_requirements"`
+	NetworkPolicy               []byte      `json:"network_policy"`
+	ScheduleDeclarations        []byte      `json:"schedule_declarations"`
+	QueueName                   string      `json:"queue_name"`
+	QueueConcurrencyLimit       pgtype.Int4 `json:"queue_concurrency_limit"`
+	Ttl                         string      `json:"ttl"`
+	MaxActiveDurationMs         int64       `json:"max_active_duration_ms"`
+	RetryPolicy                 []byte      `json:"retry_policy"`
+	TaskPublicID                string      `json:"task_public_id"`
 }
 
 func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeploymentTaskParams) (DeploymentTask, error) {
@@ -618,7 +601,7 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		arg.ExportName,
 		arg.HandlerEntrypoint,
 		arg.BundleArtifactID,
-		arg.BundleArtifactCellID,
+		arg.BundleArtifactWorkerGroupID,
 		arg.BundleFormatVersion,
 		arg.RequestedMilliCpu,
 		arg.RequestedMemoryMib,
@@ -648,7 +631,7 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		&i.ExportName,
 		&i.HandlerEntrypoint,
 		&i.BundleArtifactID,
-		&i.BundleArtifactCellID,
+		&i.BundleArtifactWorkerGroupID,
 		&i.BundleFormatVersion,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
@@ -678,7 +661,7 @@ UPDATE deployments
        build_lease_expires_at = NULL,
        failed_at = now()
  WHERE deployments.org_id = $2
-   AND deployments.build_cell_id = $3
+   AND deployments.build_worker_group_id = $3
    AND deployments.project_id = $4
    AND deployments.environment_id = $5
    AND deployments.id = $6
@@ -687,27 +670,18 @@ UPDATE deployments
    AND deployments.build_worker_instance_id = $8
    AND deployments.build_lease_expires_at > now()
    AND EXISTS (
-	       SELECT 1
-	         FROM environment_cells
-		         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-		                       AND org_cells.cell_id = environment_cells.cell_id
-		                       AND org_cells.state = 'active'
-		         JOIN cells ON cells.id = environment_cells.cell_id
-		                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = deployments.org_id
-          AND environment_cells.project_id = deployments.project_id
-          AND environment_cells.environment_id = deployments.environment_id
-          AND environment_cells.cell_id = deployments.build_cell_id
-          AND environment_cells.route_generation = deployments.build_route_generation
-          AND environment_cells.route_state IN ('active', 'draining')
-   )
-RETURNING id, public_id, org_id, build_cell_id, build_route_generation, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+       SELECT 1
+         FROM worker_groups
+        WHERE worker_groups.id = deployments.build_worker_group_id
+          AND worker_groups.state IN ('active', 'draining')
+	   )
+RETURNING id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 
 type FailDeploymentBuildParams struct {
 	Failure               []byte      `json:"failure"`
 	OrgID                 pgtype.UUID `json:"org_id"`
-	CellID                string      `json:"cell_id"`
+	WorkerGroupID         string      `json:"worker_group_id"`
 	ProjectID             pgtype.UUID `json:"project_id"`
 	EnvironmentID         pgtype.UUID `json:"environment_id"`
 	ID                    pgtype.UUID `json:"id"`
@@ -719,7 +693,7 @@ func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBui
 	row := q.db.QueryRow(ctx, failDeploymentBuild,
 		arg.Failure,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -731,8 +705,7 @@ func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBui
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.BuildCellID,
-		&i.BuildRouteGeneration,
+		&i.BuildWorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkerGroupID,
@@ -763,7 +736,7 @@ func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBui
 }
 
 const getCurrentDeployment = `-- name: GetCurrentDeployment :one
-SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.build_cell_id, deployments.build_route_generation, deployments.project_id, deployments.environment_id, deployments.worker_group_id, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.bundle_format_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.build_manifest_artifact_id, deployments.deployment_manifest_artifact_id, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.build_worker_group_id, deployments.project_id, deployments.environment_id, deployments.worker_group_id, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.bundle_format_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.build_manifest_artifact_id, deployments.deployment_manifest_artifact_id, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
   FROM deployments
   JOIN environments ON environments.org_id = deployments.org_id
                    AND environments.project_id = deployments.project_id
@@ -789,8 +762,7 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.BuildCellID,
-		&i.BuildRouteGeneration,
+		&i.BuildWorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkerGroupID,
@@ -821,7 +793,7 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 }
 
 const getCurrentDeploymentForRoute = `-- name: GetCurrentDeploymentForRoute :one
-SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.build_cell_id, deployments.build_route_generation, deployments.project_id, deployments.environment_id, deployments.worker_group_id, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.bundle_format_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.build_manifest_artifact_id, deployments.deployment_manifest_artifact_id, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.build_worker_group_id, deployments.project_id, deployments.environment_id, deployments.worker_group_id, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.bundle_format_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.build_manifest_artifact_id, deployments.deployment_manifest_artifact_id, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
   FROM deployments
   JOIN environments ON environments.org_id = deployments.org_id
                    AND environments.project_id = deployments.project_id
@@ -831,33 +803,22 @@ SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.bu
    AND deployments.project_id = $2
    AND deployments.environment_id = $3
    AND deployments.status = 'deployed'
-   AND deployments.build_cell_id = $4
-   AND deployments.build_route_generation = $5
+   AND deployments.build_worker_group_id = $4
    AND EXISTS (
        SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state = 'active'
-        WHERE environment_cells.org_id = deployments.org_id
-          AND environment_cells.project_id = deployments.project_id
-          AND environment_cells.environment_id = deployments.environment_id
-          AND environment_cells.cell_id = $4
-          AND environment_cells.route_generation = $5
-          AND environment_cells.route_state = 'active'
-   )
+         FROM worker_groups
+        WHERE worker_groups.id = deployments.build_worker_group_id
+          AND worker_groups.id = $4
+          AND worker_groups.state = 'active'
+	   )
  LIMIT 1
 `
 
 type GetCurrentDeploymentForRouteParams struct {
-	OrgID           pgtype.UUID `json:"org_id"`
-	ProjectID       pgtype.UUID `json:"project_id"`
-	EnvironmentID   pgtype.UUID `json:"environment_id"`
-	CellID          string      `json:"cell_id"`
-	RouteGeneration int64       `json:"route_generation"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
 }
 
 func (q *Queries) GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurrentDeploymentForRouteParams) (Deployment, error) {
@@ -865,16 +826,14 @@ func (q *Queries) GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurre
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.CellID,
-		arg.RouteGeneration,
+		arg.WorkerGroupID,
 	)
 	var i Deployment
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.BuildCellID,
-		&i.BuildRouteGeneration,
+		&i.BuildWorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkerGroupID,
@@ -905,7 +864,7 @@ func (q *Queries) GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurre
 }
 
 const getCurrentDeploymentSandbox = `-- name: GetCurrentDeploymentSandbox :one
-SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_cell_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
+SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_worker_group_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
   FROM deployment_sandboxes
   JOIN environments ON environments.org_id = deployment_sandboxes.org_id
                    AND environments.project_id = deployment_sandboxes.project_id
@@ -947,7 +906,7 @@ func (q *Queries) GetCurrentDeploymentSandbox(ctx context.Context, arg GetCurren
 		&i.DeploymentID,
 		&i.SandboxID,
 		&i.ImageArtifactID,
-		&i.ImageArtifactCellID,
+		&i.ImageArtifactWorkerGroupID,
 		&i.ImageArtifactFormat,
 		&i.RootfsDigest,
 		&i.ImageDigest,
@@ -971,7 +930,7 @@ func (q *Queries) GetCurrentDeploymentSandbox(ctx context.Context, arg GetCurren
 }
 
 const getCurrentDeploymentTask = `-- name: GetCurrentDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_artifact_cell_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.requested_execution_slots, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.placement, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at,
+SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_artifact_worker_group_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.requested_execution_slots, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.placement, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at,
        deployment_sandboxes.sandbox_id,
        deployment_sandboxes.fingerprint AS sandbox_fingerprint,
        deployment_sandboxes.workspace_mount_path,
@@ -1043,7 +1002,7 @@ type GetCurrentDeploymentTaskRow struct {
 	ExportName                        string             `json:"export_name"`
 	HandlerEntrypoint                 string             `json:"handler_entrypoint"`
 	BundleArtifactID                  pgtype.UUID        `json:"bundle_artifact_id"`
-	BundleArtifactCellID              string             `json:"bundle_artifact_cell_id"`
+	BundleArtifactWorkerGroupID       string             `json:"bundle_artifact_worker_group_id"`
 	BundleFormatVersion               int32              `json:"bundle_format_version"`
 	RequestedMilliCpu                 int64              `json:"requested_milli_cpu"`
 	RequestedMemoryMib                int64              `json:"requested_memory_mib"`
@@ -1102,7 +1061,7 @@ func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDe
 		&i.ExportName,
 		&i.HandlerEntrypoint,
 		&i.BundleArtifactID,
-		&i.BundleArtifactCellID,
+		&i.BundleArtifactWorkerGroupID,
 		&i.BundleFormatVersion,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
@@ -1143,7 +1102,7 @@ func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDe
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, public_id, org_id, build_cell_id, build_route_generation, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND project_id = $2
@@ -1170,8 +1129,7 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.BuildCellID,
-		&i.BuildRouteGeneration,
+		&i.BuildWorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkerGroupID,
@@ -1202,10 +1160,10 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 }
 
 const getDeploymentBuildLease = `-- name: GetDeploymentBuildLease :one
-SELECT id, public_id, org_id, build_cell_id, build_route_generation, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
  FROM deployments
  WHERE deployments.org_id = $1
-   AND deployments.build_cell_id = $2
+   AND deployments.build_worker_group_id = $2
    AND deployments.project_id = $3
    AND deployments.environment_id = $4
    AND deployments.id = $5
@@ -1214,26 +1172,17 @@ SELECT id, public_id, org_id, build_cell_id, build_route_generation, project_id,
    AND deployments.build_worker_instance_id = $7
    AND deployments.build_lease_expires_at > now()
    AND EXISTS (
-	       SELECT 1
-	         FROM environment_cells
-		         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-		                       AND org_cells.cell_id = environment_cells.cell_id
-		                       AND org_cells.state = 'active'
-		         JOIN cells ON cells.id = environment_cells.cell_id
-		                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = deployments.org_id
-          AND environment_cells.project_id = deployments.project_id
-          AND environment_cells.environment_id = deployments.environment_id
-          AND environment_cells.cell_id = deployments.build_cell_id
-          AND environment_cells.route_generation = deployments.build_route_generation
-          AND environment_cells.route_state IN ('active', 'draining')
-   )
+       SELECT 1
+         FROM worker_groups
+        WHERE worker_groups.id = deployments.build_worker_group_id
+          AND worker_groups.state IN ('active', 'draining')
+	   )
  FOR UPDATE
 `
 
 type GetDeploymentBuildLeaseParams struct {
 	OrgID                 pgtype.UUID `json:"org_id"`
-	CellID                string      `json:"cell_id"`
+	WorkerGroupID         string      `json:"worker_group_id"`
 	ProjectID             pgtype.UUID `json:"project_id"`
 	EnvironmentID         pgtype.UUID `json:"environment_id"`
 	ID                    pgtype.UUID `json:"id"`
@@ -1244,7 +1193,7 @@ type GetDeploymentBuildLeaseParams struct {
 func (q *Queries) GetDeploymentBuildLease(ctx context.Context, arg GetDeploymentBuildLeaseParams) (Deployment, error) {
 	row := q.db.QueryRow(ctx, getDeploymentBuildLease,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -1256,8 +1205,7 @@ func (q *Queries) GetDeploymentBuildLease(ctx context.Context, arg GetDeployment
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.BuildCellID,
-		&i.BuildRouteGeneration,
+		&i.BuildWorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkerGroupID,
@@ -1288,7 +1236,7 @@ func (q *Queries) GetDeploymentBuildLease(ctx context.Context, arg GetDeployment
 }
 
 const getDeploymentByVersion = `-- name: GetDeploymentByVersion :one
-SELECT id, public_id, org_id, build_cell_id, build_route_generation, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND project_id = $2
@@ -1315,8 +1263,7 @@ func (q *Queries) GetDeploymentByVersion(ctx context.Context, arg GetDeploymentB
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.BuildCellID,
-		&i.BuildRouteGeneration,
+		&i.BuildWorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkerGroupID,
@@ -1347,7 +1294,7 @@ func (q *Queries) GetDeploymentByVersion(ctx context.Context, arg GetDeploymentB
 }
 
 const getDeploymentForOrg = `-- name: GetDeploymentForOrg :one
-SELECT id, public_id, org_id, build_cell_id, build_route_generation, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND id = $2
@@ -1365,8 +1312,7 @@ func (q *Queries) GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForO
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.BuildCellID,
-		&i.BuildRouteGeneration,
+		&i.BuildWorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkerGroupID,
@@ -1435,7 +1381,7 @@ func (q *Queries) GetDeploymentQueueConfig(ctx context.Context, arg GetDeploymen
 }
 
 const getDeploymentSandboxByID = `-- name: GetDeploymentSandboxByID :one
-SELECT id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_cell_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, resource_floor, disk_floor_mib, network_policy, runtime_abi, guestd_abi, adapter_abi, filesystem_format, default_uid, default_gid, default_workdir, contract_version, fingerprint, created_at
+SELECT id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_worker_group_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, resource_floor, disk_floor_mib, network_policy, runtime_abi, guestd_abi, adapter_abi, filesystem_format, default_uid, default_gid, default_workdir, contract_version, fingerprint, created_at
   FROM deployment_sandboxes
  WHERE id = $1
  LIMIT 1
@@ -1453,7 +1399,7 @@ func (q *Queries) GetDeploymentSandboxByID(ctx context.Context, id pgtype.UUID) 
 		&i.DeploymentID,
 		&i.SandboxID,
 		&i.ImageArtifactID,
-		&i.ImageArtifactCellID,
+		&i.ImageArtifactWorkerGroupID,
 		&i.ImageArtifactFormat,
 		&i.RootfsDigest,
 		&i.ImageDigest,
@@ -1477,73 +1423,30 @@ func (q *Queries) GetDeploymentSandboxByID(ctx context.Context, id pgtype.UUID) 
 }
 
 const getDeploymentSandboxForWorkerGroup = `-- name: GetDeploymentSandboxForWorkerGroup :one
-SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_cell_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at,
-       deployments.build_route_generation
+SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_worker_group_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
   FROM deployment_sandboxes
-  JOIN worker_groups ON worker_groups.id = $1
+  JOIN worker_groups
+    ON worker_groups.id = $1
+   AND worker_groups.state IN ('active', 'draining')
   JOIN deployments
     ON deployments.org_id = deployment_sandboxes.org_id
    AND deployments.project_id = deployment_sandboxes.project_id
    AND deployments.environment_id = deployment_sandboxes.environment_id
    AND deployments.id = deployment_sandboxes.deployment_id
    AND deployments.worker_group_id = worker_groups.id
-   AND deployments.build_cell_id = worker_groups.cell_id
-  JOIN environment_cells
-    ON environment_cells.org_id = deployment_sandboxes.org_id
-   AND environment_cells.project_id = deployment_sandboxes.project_id
-   AND environment_cells.environment_id = deployment_sandboxes.environment_id
-   AND environment_cells.cell_id = worker_groups.cell_id
-   AND environment_cells.route_generation = deployments.build_route_generation
-   AND environment_cells.route_state IN ('active', 'draining')
-  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                AND org_cells.cell_id = environment_cells.cell_id
-                AND org_cells.state = 'active'
-  JOIN cells ON cells.id = environment_cells.cell_id
-            AND cells.region_id = environment_cells.region_id
-            AND cells.state IN ('active', 'draining')
+   AND deployments.build_worker_group_id = worker_groups.id
  WHERE deployment_sandboxes.id = $2
  LIMIT 1
 `
 
 type GetDeploymentSandboxForWorkerGroupParams struct {
-	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
 	ID            pgtype.UUID `json:"id"`
 }
 
-type GetDeploymentSandboxForWorkerGroupRow struct {
-	ID                   pgtype.UUID        `json:"id"`
-	PublicID             string             `json:"public_id"`
-	OrgID                pgtype.UUID        `json:"org_id"`
-	ProjectID            pgtype.UUID        `json:"project_id"`
-	EnvironmentID        pgtype.UUID        `json:"environment_id"`
-	DeploymentID         pgtype.UUID        `json:"deployment_id"`
-	SandboxID            string             `json:"sandbox_id"`
-	ImageArtifactID      pgtype.UUID        `json:"image_artifact_id"`
-	ImageArtifactCellID  string             `json:"image_artifact_cell_id"`
-	ImageArtifactFormat  string             `json:"image_artifact_format"`
-	RootfsDigest         string             `json:"rootfs_digest"`
-	ImageDigest          string             `json:"image_digest"`
-	ImageFormat          string             `json:"image_format"`
-	WorkspaceMountPath   string             `json:"workspace_mount_path"`
-	ResourceFloor        []byte             `json:"resource_floor"`
-	DiskFloorMib         int64              `json:"disk_floor_mib"`
-	NetworkPolicy        []byte             `json:"network_policy"`
-	RuntimeABI           string             `json:"runtime_abi"`
-	GuestdAbi            string             `json:"guestd_abi"`
-	AdapterAbi           string             `json:"adapter_abi"`
-	FilesystemFormat     string             `json:"filesystem_format"`
-	DefaultUid           pgtype.Int8        `json:"default_uid"`
-	DefaultGid           pgtype.Int8        `json:"default_gid"`
-	DefaultWorkdir       string             `json:"default_workdir"`
-	ContractVersion      int32              `json:"contract_version"`
-	Fingerprint          string             `json:"fingerprint"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	BuildRouteGeneration int64              `json:"build_route_generation"`
-}
-
-func (q *Queries) GetDeploymentSandboxForWorkerGroup(ctx context.Context, arg GetDeploymentSandboxForWorkerGroupParams) (GetDeploymentSandboxForWorkerGroupRow, error) {
+func (q *Queries) GetDeploymentSandboxForWorkerGroup(ctx context.Context, arg GetDeploymentSandboxForWorkerGroupParams) (DeploymentSandbox, error) {
 	row := q.db.QueryRow(ctx, getDeploymentSandboxForWorkerGroup, arg.WorkerGroupID, arg.ID)
-	var i GetDeploymentSandboxForWorkerGroupRow
+	var i DeploymentSandbox
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
@@ -1553,7 +1456,7 @@ func (q *Queries) GetDeploymentSandboxForWorkerGroup(ctx context.Context, arg Ge
 		&i.DeploymentID,
 		&i.SandboxID,
 		&i.ImageArtifactID,
-		&i.ImageArtifactCellID,
+		&i.ImageArtifactWorkerGroupID,
 		&i.ImageArtifactFormat,
 		&i.RootfsDigest,
 		&i.ImageDigest,
@@ -1572,13 +1475,12 @@ func (q *Queries) GetDeploymentSandboxForWorkerGroup(ctx context.Context, arg Ge
 		&i.ContractVersion,
 		&i.Fingerprint,
 		&i.CreatedAt,
-		&i.BuildRouteGeneration,
 	)
 	return i, err
 }
 
 const getDeploymentTask = `-- name: GetDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_artifact_cell_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.requested_execution_slots, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.placement, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at,
+SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_artifact_worker_group_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.requested_execution_slots, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.placement, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at,
        deployment_sandboxes.sandbox_id,
        deployment_sandboxes.fingerprint AS sandbox_fingerprint,
        deployment_sandboxes.workspace_mount_path,
@@ -1618,41 +1520,28 @@ SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id,
    AND source_artifacts.project_id = deployments.project_id
    AND source_artifacts.environment_id = deployments.environment_id
    AND source_artifacts.id = deployments.deployment_source_artifact_id
-  JOIN environment_cells
-    ON environment_cells.org_id = deployment_tasks.org_id
-   AND environment_cells.project_id = deployment_tasks.project_id
-   AND environment_cells.environment_id = deployment_tasks.environment_id
-   AND environment_cells.cell_id = $1
-   AND environment_cells.route_generation = $2
-   AND environment_cells.route_state IN ('active', 'draining')
-  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                AND org_cells.cell_id = environment_cells.cell_id
-                AND org_cells.state = 'active'
-  JOIN cells ON cells.id = environment_cells.cell_id
-            AND cells.region_id = environment_cells.region_id
-            AND cells.state IN ('active', 'draining')
-  JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                  AND cell_health.state IN ('healthy', 'degraded')
-                  AND cell_health.routing_fresh_until > now()
-WHERE deployment_tasks.org_id = $3
-   AND deployment_tasks.project_id = $4
-   AND deployment_tasks.environment_id = $5
-   AND deployment_tasks.deployment_id = $6
-   AND deployment_tasks.task_id = $7
+  JOIN worker_groups
+    ON worker_groups.id = $1
+   AND worker_groups.state IN ('active', 'draining')
+   AND worker_groups.health_state IN ('healthy', 'degraded')
+   AND worker_groups.routing_fresh_until > now()
+WHERE deployment_tasks.org_id = $2
+   AND deployment_tasks.project_id = $3
+   AND deployment_tasks.environment_id = $4
+   AND deployment_tasks.deployment_id = $5
+   AND deployment_tasks.task_id = $6
    AND deployments.status = 'deployed'
-   AND deployments.build_cell_id = $1
-   AND deployments.build_route_generation = $2
+   AND deployments.build_worker_group_id = $1
  LIMIT 1
 `
 
 type GetDeploymentTaskParams struct {
-	CellID          string      `json:"cell_id"`
-	RouteGeneration int64       `json:"route_generation"`
-	OrgID           pgtype.UUID `json:"org_id"`
-	ProjectID       pgtype.UUID `json:"project_id"`
-	EnvironmentID   pgtype.UUID `json:"environment_id"`
-	DeploymentID    pgtype.UUID `json:"deployment_id"`
-	TaskID          string      `json:"task_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	DeploymentID  pgtype.UUID `json:"deployment_id"`
+	TaskID        string      `json:"task_id"`
 }
 
 type GetDeploymentTaskRow struct {
@@ -1668,7 +1557,7 @@ type GetDeploymentTaskRow struct {
 	ExportName                        string             `json:"export_name"`
 	HandlerEntrypoint                 string             `json:"handler_entrypoint"`
 	BundleArtifactID                  pgtype.UUID        `json:"bundle_artifact_id"`
-	BundleArtifactCellID              string             `json:"bundle_artifact_cell_id"`
+	BundleArtifactWorkerGroupID       string             `json:"bundle_artifact_worker_group_id"`
 	BundleFormatVersion               int32              `json:"bundle_format_version"`
 	RequestedMilliCpu                 int64              `json:"requested_milli_cpu"`
 	RequestedMemoryMib                int64              `json:"requested_memory_mib"`
@@ -1708,8 +1597,7 @@ type GetDeploymentTaskRow struct {
 
 func (q *Queries) GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskParams) (GetDeploymentTaskRow, error) {
 	row := q.db.QueryRow(ctx, getDeploymentTask,
-		arg.CellID,
-		arg.RouteGeneration,
+		arg.WorkerGroupID,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
@@ -1730,7 +1618,7 @@ func (q *Queries) GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskPa
 		&i.ExportName,
 		&i.HandlerEntrypoint,
 		&i.BundleArtifactID,
-		&i.BundleArtifactCellID,
+		&i.BundleArtifactWorkerGroupID,
 		&i.BundleFormatVersion,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
@@ -1771,33 +1659,30 @@ func (q *Queries) GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskPa
 }
 
 const getReusableDeploymentByContentHash = `-- name: GetReusableDeploymentByContentHash :one
-SELECT id, public_id, org_id, build_cell_id, build_route_generation, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
-   AND build_cell_id = $2
-   AND build_route_generation = $3
-   AND project_id = $4
-   AND environment_id = $5
-   AND content_hash = $6
-   AND worker_group_id = $7
+   AND build_worker_group_id = $2
+   AND project_id = $3
+   AND environment_id = $4
+   AND content_hash = $5
+   AND worker_group_id = $6
    AND status IN ('queued', 'building')
 `
 
 type GetReusableDeploymentByContentHashParams struct {
-	OrgID                pgtype.UUID `json:"org_id"`
-	BuildCellID          string      `json:"build_cell_id"`
-	BuildRouteGeneration int64       `json:"build_route_generation"`
-	ProjectID            pgtype.UUID `json:"project_id"`
-	EnvironmentID        pgtype.UUID `json:"environment_id"`
-	ContentHash          string      `json:"content_hash"`
-	WorkerGroupID        pgtype.UUID `json:"worker_group_id"`
+	OrgID              pgtype.UUID `json:"org_id"`
+	BuildWorkerGroupID string      `json:"build_worker_group_id"`
+	ProjectID          pgtype.UUID `json:"project_id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	ContentHash        string      `json:"content_hash"`
+	WorkerGroupID      string      `json:"worker_group_id"`
 }
 
 func (q *Queries) GetReusableDeploymentByContentHash(ctx context.Context, arg GetReusableDeploymentByContentHashParams) (Deployment, error) {
 	row := q.db.QueryRow(ctx, getReusableDeploymentByContentHash,
 		arg.OrgID,
-		arg.BuildCellID,
-		arg.BuildRouteGeneration,
+		arg.BuildWorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ContentHash,
@@ -1808,8 +1693,7 @@ func (q *Queries) GetReusableDeploymentByContentHash(ctx context.Context, arg Ge
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.BuildCellID,
-		&i.BuildRouteGeneration,
+		&i.BuildWorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkerGroupID,
@@ -1843,21 +1727,11 @@ const leaseQueuedDeploymentBuild = `-- name: LeaseQueuedDeploymentBuild :one
 WITH candidate AS (
     SELECT deployments.id
       FROM deployments
-      JOIN environment_cells
-        ON environment_cells.org_id = deployments.org_id
-       AND environment_cells.project_id = deployments.project_id
-       AND environment_cells.environment_id = deployments.environment_id
-       AND environment_cells.cell_id = deployments.build_cell_id
-       AND environment_cells.route_generation = deployments.build_route_generation
-       AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state IN ('active', 'draining')
-      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                      AND cell_health.state IN ('healthy', 'degraded')
-                      AND cell_health.routing_fresh_until > now()
+      JOIN worker_groups
+        ON worker_groups.id = deployments.build_worker_group_id
+       AND worker_groups.state IN ('active', 'draining')
+       AND worker_groups.health_state IN ('healthy', 'degraded')
+       AND worker_groups.routing_fresh_until > now()
      WHERE (
             deployments.status = 'queued'
             OR (
@@ -1865,8 +1739,8 @@ WITH candidate AS (
                 AND deployments.build_lease_expires_at < now()
             )
      )
-       AND deployments.build_cell_id = $1
-       AND deployments.worker_group_id = $2
+       AND deployments.build_worker_group_id = $1
+       AND deployments.worker_group_id = $1
      ORDER BY deployments.created_at ASC
      LIMIT 1
      FOR UPDATE OF deployments SKIP LOCKED
@@ -1875,17 +1749,17 @@ updated AS (
     UPDATE deployments
        SET status = 'building',
            building_at = COALESCE(deployments.building_at, now()),
-           build_lease_id = $3,
-           build_worker_instance_id = $4,
-           build_lease_expires_at = $5,
+           build_lease_id = $2,
+           build_worker_instance_id = $3,
+           build_lease_expires_at = $4,
            build_attempt = deployments.build_attempt + 1
       FROM candidate
      WHERE deployments.id = candidate.id
-    RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments.build_cell_id, deployments.build_route_generation, deployments.project_id, deployments.environment_id, deployments.worker_group_id, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.bundle_format_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.build_manifest_artifact_id, deployments.deployment_manifest_artifact_id, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+    RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments.build_worker_group_id, deployments.project_id, deployments.environment_id, deployments.worker_group_id, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.bundle_format_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.build_manifest_artifact_id, deployments.deployment_manifest_artifact_id, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
 )
 SELECT updated.id,
        updated.org_id,
-       updated.build_cell_id,
+       updated.build_worker_group_id,
        updated.project_id,
        updated.environment_id,
        updated.version,
@@ -1914,27 +1788,26 @@ SELECT updated.id,
   FROM updated
   JOIN artifacts AS source_artifacts
     ON source_artifacts.org_id = updated.org_id
-   AND source_artifacts.cell_id = updated.build_cell_id
+   AND source_artifacts.worker_group_id = updated.build_worker_group_id
    AND source_artifacts.project_id = updated.project_id
    AND source_artifacts.environment_id = updated.environment_id
    AND source_artifacts.id = updated.deployment_source_artifact_id
   LEFT JOIN artifacts AS build_manifest_artifacts
     ON build_manifest_artifacts.org_id = updated.org_id
-   AND build_manifest_artifacts.cell_id = updated.build_cell_id
+   AND build_manifest_artifacts.worker_group_id = updated.build_worker_group_id
    AND build_manifest_artifacts.project_id = updated.project_id
    AND build_manifest_artifacts.environment_id = updated.environment_id
    AND build_manifest_artifacts.id = updated.build_manifest_artifact_id
   LEFT JOIN artifacts AS deployment_manifest_artifacts
     ON deployment_manifest_artifacts.org_id = updated.org_id
-   AND deployment_manifest_artifacts.cell_id = updated.build_cell_id
+   AND deployment_manifest_artifacts.worker_group_id = updated.build_worker_group_id
    AND deployment_manifest_artifacts.project_id = updated.project_id
    AND deployment_manifest_artifacts.environment_id = updated.environment_id
    AND deployment_manifest_artifacts.id = updated.deployment_manifest_artifact_id
 `
 
 type LeaseQueuedDeploymentBuildParams struct {
-	CellID                string             `json:"cell_id"`
-	WorkerGroupID         pgtype.UUID        `json:"worker_group_id"`
+	WorkerGroupID         string             `json:"worker_group_id"`
 	BuildLeaseID          pgtype.Text        `json:"build_lease_id"`
 	BuildWorkerInstanceID pgtype.UUID        `json:"build_worker_instance_id"`
 	BuildLeaseExpiresAt   pgtype.Timestamptz `json:"build_lease_expires_at"`
@@ -1943,7 +1816,7 @@ type LeaseQueuedDeploymentBuildParams struct {
 type LeaseQueuedDeploymentBuildRow struct {
 	ID                       pgtype.UUID        `json:"id"`
 	OrgID                    pgtype.UUID        `json:"org_id"`
-	BuildCellID              string             `json:"build_cell_id"`
+	BuildWorkerGroupID       string             `json:"build_worker_group_id"`
 	ProjectID                pgtype.UUID        `json:"project_id"`
 	EnvironmentID            pgtype.UUID        `json:"environment_id"`
 	Version                  string             `json:"version"`
@@ -1973,7 +1846,6 @@ type LeaseQueuedDeploymentBuildRow struct {
 
 func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueuedDeploymentBuildParams) (LeaseQueuedDeploymentBuildRow, error) {
 	row := q.db.QueryRow(ctx, leaseQueuedDeploymentBuild,
-		arg.CellID,
 		arg.WorkerGroupID,
 		arg.BuildLeaseID,
 		arg.BuildWorkerInstanceID,
@@ -1983,7 +1855,7 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.BuildCellID,
+		&i.BuildWorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.Version,
@@ -2014,7 +1886,7 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 }
 
 const listCurrentDeploymentSandboxes = `-- name: ListCurrentDeploymentSandboxes :many
-SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_cell_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
+SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_worker_group_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
   FROM deployment_sandboxes
   JOIN environments ON environments.org_id = deployment_sandboxes.org_id
                    AND environments.project_id = deployment_sandboxes.project_id
@@ -2055,7 +1927,7 @@ func (q *Queries) ListCurrentDeploymentSandboxes(ctx context.Context, arg ListCu
 			&i.DeploymentID,
 			&i.SandboxID,
 			&i.ImageArtifactID,
-			&i.ImageArtifactCellID,
+			&i.ImageArtifactWorkerGroupID,
 			&i.ImageArtifactFormat,
 			&i.RootfsDigest,
 			&i.ImageDigest,
@@ -2086,7 +1958,7 @@ func (q *Queries) ListCurrentDeploymentSandboxes(ctx context.Context, arg ListCu
 }
 
 const listCurrentDeploymentTasks = `-- name: ListCurrentDeploymentTasks :many
-SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_artifact_cell_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.requested_execution_slots, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.placement, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at
+SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_artifact_worker_group_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.requested_execution_slots, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.placement, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at
   FROM deployment_tasks
   JOIN environments ON environments.org_id = deployment_tasks.org_id
                    AND environments.project_id = deployment_tasks.project_id
@@ -2131,7 +2003,7 @@ func (q *Queries) ListCurrentDeploymentTasks(ctx context.Context, arg ListCurren
 			&i.ExportName,
 			&i.HandlerEntrypoint,
 			&i.BundleArtifactID,
-			&i.BundleArtifactCellID,
+			&i.BundleArtifactWorkerGroupID,
 			&i.BundleFormatVersion,
 			&i.RequestedMilliCpu,
 			&i.RequestedMemoryMib,
@@ -2160,7 +2032,7 @@ func (q *Queries) ListCurrentDeploymentTasks(ctx context.Context, arg ListCurren
 }
 
 const listDeploymentTasks = `-- name: ListDeploymentTasks :many
-SELECT id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_artifact_cell_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, secret_declarations, resource_requirements, network_policy, placement, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_active_duration_ms, retry_policy, created_at
+SELECT id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_artifact_worker_group_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, secret_declarations, resource_requirements, network_policy, placement, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_active_duration_ms, retry_policy, created_at
   FROM deployment_tasks
  WHERE org_id = $1
    AND project_id = $2
@@ -2203,7 +2075,7 @@ func (q *Queries) ListDeploymentTasks(ctx context.Context, arg ListDeploymentTas
 			&i.ExportName,
 			&i.HandlerEntrypoint,
 			&i.BundleArtifactID,
-			&i.BundleArtifactCellID,
+			&i.BundleArtifactWorkerGroupID,
 			&i.BundleFormatVersion,
 			&i.RequestedMilliCpu,
 			&i.RequestedMemoryMib,
@@ -2232,7 +2104,7 @@ func (q *Queries) ListDeploymentTasks(ctx context.Context, arg ListDeploymentTas
 }
 
 const listDeploymentsByVersionForOrg = `-- name: ListDeploymentsByVersionForOrg :many
-SELECT id, public_id, org_id, build_cell_id, build_route_generation, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND version = $2
@@ -2257,8 +2129,7 @@ func (q *Queries) ListDeploymentsByVersionForOrg(ctx context.Context, arg ListDe
 			&i.ID,
 			&i.PublicID,
 			&i.OrgID,
-			&i.BuildCellID,
-			&i.BuildRouteGeneration,
+			&i.BuildWorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkerGroupID,
@@ -2296,7 +2167,7 @@ func (q *Queries) ListDeploymentsByVersionForOrg(ctx context.Context, arg ListDe
 }
 
 const listScopedDeployments = `-- name: ListScopedDeployments :many
-SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.build_cell_id, deployments.build_route_generation, deployments.project_id, deployments.environment_id, deployments.worker_group_id, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.bundle_format_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.build_manifest_artifact_id, deployments.deployment_manifest_artifact_id, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.build_worker_group_id, deployments.project_id, deployments.environment_id, deployments.worker_group_id, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.bundle_format_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.build_manifest_artifact_id, deployments.deployment_manifest_artifact_id, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
   FROM deployments
  WHERE deployments.org_id = $1
    AND deployments.project_id = $2
@@ -2330,8 +2201,7 @@ func (q *Queries) ListScopedDeployments(ctx context.Context, arg ListScopedDeplo
 			&i.ID,
 			&i.PublicID,
 			&i.OrgID,
-			&i.BuildCellID,
-			&i.BuildRouteGeneration,
+			&i.BuildWorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkerGroupID,
@@ -2375,11 +2245,10 @@ SELECT pg_advisory_xact_lock(
             ':',
             $1::uuid::text,
             $2::text,
-            $3::bigint::text,
+            $3::uuid::text,
             $4::uuid::text,
-            $5::uuid::text,
-            $6::uuid::text,
-            $7::text
+            $5::text,
+            $6::text
         ),
         0
     )
@@ -2387,20 +2256,18 @@ SELECT pg_advisory_xact_lock(
 `
 
 type LockDeploymentReusableBuildKeyParams struct {
-	OrgID                pgtype.UUID `json:"org_id"`
-	BuildCellID          string      `json:"build_cell_id"`
-	BuildRouteGeneration int64       `json:"build_route_generation"`
-	ProjectID            pgtype.UUID `json:"project_id"`
-	EnvironmentID        pgtype.UUID `json:"environment_id"`
-	WorkerGroupID        pgtype.UUID `json:"worker_group_id"`
-	ContentHash          string      `json:"content_hash"`
+	OrgID              pgtype.UUID `json:"org_id"`
+	BuildWorkerGroupID string      `json:"build_worker_group_id"`
+	ProjectID          pgtype.UUID `json:"project_id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	WorkerGroupID      string      `json:"worker_group_id"`
+	ContentHash        string      `json:"content_hash"`
 }
 
 func (q *Queries) LockDeploymentReusableBuildKey(ctx context.Context, arg LockDeploymentReusableBuildKeyParams) error {
 	_, err := q.db.Exec(ctx, lockDeploymentReusableBuildKey,
 		arg.OrgID,
-		arg.BuildCellID,
-		arg.BuildRouteGeneration,
+		arg.BuildWorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkerGroupID,
@@ -2419,7 +2286,7 @@ UPDATE deployments
    AND deployments.environment_id = $4
    AND deployments.id = $5
    AND deployments.status IN ('queued', 'building')
-RETURNING id, public_id, org_id, build_cell_id, build_route_generation, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version, content_hash, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 
 type MarkDeploymentFailedParams struct {
@@ -2443,8 +2310,7 @@ func (q *Queries) MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFa
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.BuildCellID,
-		&i.BuildRouteGeneration,
+		&i.BuildWorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkerGroupID,
@@ -2478,33 +2344,20 @@ const promoteDeployment = `-- name: PromoteDeployment :one
 WITH target AS (
     SELECT deployments.id,
            deployments.org_id,
-           deployments.build_cell_id,
-           deployments.build_route_generation,
+           deployments.build_worker_group_id,
            deployments.project_id,
            deployments.environment_id
       FROM deployments
-      JOIN environment_cells
-        ON environment_cells.org_id = deployments.org_id
-       AND environment_cells.project_id = deployments.project_id
-       AND environment_cells.environment_id = deployments.environment_id
-       AND environment_cells.cell_id = deployments.build_cell_id
-       AND environment_cells.route_generation = deployments.build_route_generation
-       AND environment_cells.route_state = 'active'
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.region_id = environment_cells.region_id
-                AND cells.state = 'active'
-      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                      AND cell_health.state IN ('healthy', 'degraded')
-                      AND cell_health.routing_fresh_until > now()
+      JOIN worker_groups
+        ON worker_groups.id = deployments.build_worker_group_id
+       AND worker_groups.state = 'active'
+       AND worker_groups.health_state IN ('healthy', 'degraded')
+       AND worker_groups.routing_fresh_until > now()
      WHERE deployments.org_id = $1
        AND deployments.project_id = $2
        AND deployments.environment_id = $3
        AND deployments.id = $4
-       AND deployments.build_cell_id = $5
-       AND deployments.build_route_generation = $6
+       AND deployments.build_worker_group_id = $5
        AND deployments.status = 'deployed'
 ),
 previous AS (
@@ -2529,8 +2382,7 @@ promotion AS (
     INSERT INTO deployment_promotions (
         id,
         org_id,
-        promotion_cell_id,
-        promotion_route_generation,
+        promotion_worker_group_id,
         project_id,
         environment_id,
         deployment_id,
@@ -2538,22 +2390,21 @@ promotion AS (
         promoted_by_principal,
         reason
     )
-    SELECT $7,
+    SELECT $6,
            target.org_id,
-           target.build_cell_id,
-           target.build_route_generation,
+           target.build_worker_group_id,
            target.project_id,
            target.environment_id,
            target.id,
            previous.current_deployment_id,
-           $8,
-           $9
+           $7,
+           $8
       FROM target
       JOIN previous ON true
       JOIN updated_environment ON true
-    RETURNING id, org_id, promotion_cell_id, promotion_route_generation, project_id, environment_id, deployment_id, previous_deployment_id, promoted_by_principal, reason, created_at
+    RETURNING id, org_id, promotion_worker_group_id, project_id, environment_id, deployment_id, previous_deployment_id, promoted_by_principal, reason, created_at
 )
-SELECT id, org_id, promotion_cell_id, promotion_route_generation, project_id, environment_id, deployment_id, previous_deployment_id, promoted_by_principal, reason, created_at FROM promotion
+SELECT id, org_id, promotion_worker_group_id, project_id, environment_id, deployment_id, previous_deployment_id, promoted_by_principal, reason, created_at FROM promotion
 `
 
 type PromoteDeploymentParams struct {
@@ -2561,25 +2412,23 @@ type PromoteDeploymentParams struct {
 	ProjectID           pgtype.UUID `json:"project_id"`
 	EnvironmentID       pgtype.UUID `json:"environment_id"`
 	DeploymentID        pgtype.UUID `json:"deployment_id"`
-	CellID              string      `json:"cell_id"`
-	RouteGeneration     int64       `json:"route_generation"`
+	WorkerGroupID       string      `json:"worker_group_id"`
 	ID                  pgtype.UUID `json:"id"`
 	PromotedByPrincipal string      `json:"promoted_by_principal"`
 	Reason              string      `json:"reason"`
 }
 
 type PromoteDeploymentRow struct {
-	ID                       pgtype.UUID        `json:"id"`
-	OrgID                    pgtype.UUID        `json:"org_id"`
-	PromotionCellID          string             `json:"promotion_cell_id"`
-	PromotionRouteGeneration int64              `json:"promotion_route_generation"`
-	ProjectID                pgtype.UUID        `json:"project_id"`
-	EnvironmentID            pgtype.UUID        `json:"environment_id"`
-	DeploymentID             pgtype.UUID        `json:"deployment_id"`
-	PreviousDeploymentID     pgtype.UUID        `json:"previous_deployment_id"`
-	PromotedByPrincipal      string             `json:"promoted_by_principal"`
-	Reason                   string             `json:"reason"`
-	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	PromotionWorkerGroupID string             `json:"promotion_worker_group_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	DeploymentID           pgtype.UUID        `json:"deployment_id"`
+	PreviousDeploymentID   pgtype.UUID        `json:"previous_deployment_id"`
+	PromotedByPrincipal    string             `json:"promoted_by_principal"`
+	Reason                 string             `json:"reason"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) (PromoteDeploymentRow, error) {
@@ -2588,8 +2437,7 @@ func (q *Queries) PromoteDeployment(ctx context.Context, arg PromoteDeploymentPa
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentID,
-		arg.CellID,
-		arg.RouteGeneration,
+		arg.WorkerGroupID,
 		arg.ID,
 		arg.PromotedByPrincipal,
 		arg.Reason,
@@ -2598,8 +2446,7 @@ func (q *Queries) PromoteDeployment(ctx context.Context, arg PromoteDeploymentPa
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.PromotionCellID,
-		&i.PromotionRouteGeneration,
+		&i.PromotionWorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,

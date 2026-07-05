@@ -13,7 +13,7 @@ func LoadDispatcher() (Dispatcher, error) {
 	cfg := Dispatcher{
 		DatabaseURL:                envString("HELMR_DATABASE_URL"),
 		RedisURL:                   env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
-		CellID:                     envString("HELMR_CELL_ID"),
+		WorkerGroupID:              envString("HELMR_WORKER_GROUP_ID"),
 		ClickHouseURL:              envString("HELMR_CLICKHOUSE_URL"),
 		ClickHouseUser:             envString("HELMR_CLICKHOUSE_USER"),
 		ClickHousePassword:         envString("HELMR_CLICKHOUSE_PASSWORD"),
@@ -81,8 +81,8 @@ func LoadDispatcher() (Dispatcher, error) {
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
 	}
-	if cfg.CellID == "" {
-		return cfg, errors.New("HELMR_CELL_ID is required")
+	if cfg.WorkerGroupID == "" {
+		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
 	}
 	if cfg.ClickHouseURL == "" {
 		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")

@@ -48,7 +48,7 @@ func TestGetWorkerRunWaitScopeRejectsDisabledSourceRoute(t *testing.T) {
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
-	disableDefaultEnvironmentRoute(t, ctx, pool, ids)
+	disableDefaultWorkerGroupPlacement(t, ctx, pool, ids)
 
 	_, err := queries.GetWorkerRunWaitScope(ctx, db.GetWorkerRunWaitScopeParams{
 		OrgID:            pgvalue.UUID(ids.orgID),

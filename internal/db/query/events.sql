@@ -5,7 +5,7 @@ WITH event_args AS (
 ),
 current_run_lease AS (
     SELECT runs.id,
-           runs.cell_id,
+           runs.worker_group_id,
            runs.project_id,
            runs.environment_id,
            runs.trace_id,
@@ -20,26 +20,35 @@ current_run_lease AS (
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
                           AND run_leases.org_id = runs.org_id
                           AND run_leases.run_id = runs.id
-      JOIN environment_cells
-        ON environment_cells.org_id = runs.org_id
-       AND environment_cells.project_id = runs.project_id
-       AND environment_cells.environment_id = runs.environment_id
-       AND environment_cells.cell_id = runs.cell_id
-       AND environment_cells.route_generation = run_leases.route_generation
-       AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state IN ('active', 'draining')
+      JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement
+        ON project_worker_group_placement.org_id = runs.org_id
+       AND project_worker_group_placement.project_id = runs.project_id
+       AND project_worker_group_placement.environment_id = runs.environment_id
+       AND project_worker_group_placement.worker_group_id = runs.worker_group_id
+       AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
+      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+                AND worker_groups.state IN ('active', 'draining')
       JOIN run_attempts ON run_attempts.org_id = run_leases.org_id
                        AND run_attempts.run_id = run_leases.run_id
                        AND run_attempts.id = run_leases.attempt_id
 	     WHERE runs.org_id = sqlc.arg(org_id)
-	       AND runs.cell_id = sqlc.arg(cell_id)
+	       AND runs.worker_group_id = sqlc.arg(worker_group_id)
 	       AND runs.id = sqlc.arg(run_id)
 	       AND runs.status = 'running'
-	       AND run_leases.cell_id = sqlc.arg(cell_id)
+	       AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
 	       AND run_leases.id = sqlc.arg(run_lease_id)
        AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
        AND run_leases.status IN ('leased', 'running')
@@ -47,7 +56,7 @@ current_run_lease AS (
 ),
 event_input AS (
     SELECT sqlc.arg(org_id) AS org_id,
-           current_run_lease.cell_id,
+           current_run_lease.worker_group_id,
            current_run_lease.project_id,
            current_run_lease.environment_id,
            current_run_lease.id AS run_id,
@@ -70,22 +79,22 @@ event_input AS (
   CROSS JOIN event_args
 ),
 event_seq AS (
-    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
     SELECT event_input.org_id,
-           event_input.cell_id,
+           event_input.worker_group_id,
            'run',
            event_input.run_id,
            1
       FROM event_input
-    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
-    RETURNING event_cursors.org_id, event_cursors.cell_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
+    RETURNING event_cursors.org_id, event_cursors.worker_group_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
 ),
 inserted_event AS (
-    INSERT INTO event_hot_payloads (org_id, cell_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT event_input.org_id,
-           event_input.cell_id,
+           event_input.worker_group_id,
            event_input.project_id,
            event_input.environment_id,
            event_input.run_id,
@@ -107,15 +116,15 @@ inserted_event AS (
            event_input.snapshot_version
       FROM event_input
       JOIN event_seq ON event_seq.org_id = event_input.org_id
-                    AND event_seq.cell_id = event_input.cell_id
+                    AND event_seq.worker_group_id = event_input.worker_group_id
                     AND event_seq.subject_kind = 'run'
                     AND event_seq.subject_id = event_input.run_id
     RETURNING *
 ),
 inserted_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT inserted_event.org_id,
-           inserted_event.cell_id,
+           inserted_event.worker_group_id,
            'event',
            inserted_event.subject_type,
            inserted_event.subject_id,
@@ -135,7 +144,7 @@ WITH event_args AS (
 ),
 target_run AS (
     SELECT runs.id,
-           runs.cell_id,
+           runs.worker_group_id,
            runs.project_id,
            runs.environment_id,
            runs.current_attempt_id,
@@ -149,7 +158,7 @@ target_run AS (
 ),
 event_input AS (
     SELECT sqlc.arg(org_id) AS org_id,
-           target_run.cell_id,
+           target_run.worker_group_id,
            target_run.project_id,
            target_run.environment_id,
            target_run.id AS run_id,
@@ -172,22 +181,22 @@ event_input AS (
   CROSS JOIN event_args
 ),
 event_seq AS (
-    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
     SELECT event_input.org_id,
-           event_input.cell_id,
+           event_input.worker_group_id,
            'run',
            event_input.run_id,
            1
       FROM event_input
-    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
-    RETURNING event_cursors.org_id, event_cursors.cell_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
+    RETURNING event_cursors.org_id, event_cursors.worker_group_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
 ),
 inserted_event AS (
-    INSERT INTO event_hot_payloads (org_id, cell_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT event_input.org_id,
-           event_input.cell_id,
+           event_input.worker_group_id,
            event_input.project_id,
            event_input.environment_id,
            event_input.run_id,
@@ -209,15 +218,15 @@ inserted_event AS (
            event_input.snapshot_version
       FROM event_input
       JOIN event_seq ON event_seq.org_id = event_input.org_id
-                    AND event_seq.cell_id = event_input.cell_id
+                    AND event_seq.worker_group_id = event_input.worker_group_id
                     AND event_seq.subject_kind = 'run'
                     AND event_seq.subject_id = event_input.run_id
     RETURNING *
 ),
 inserted_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT inserted_event.org_id,
-           inserted_event.cell_id,
+           inserted_event.worker_group_id,
            'event',
            inserted_event.subject_type,
            inserted_event.subject_id,
@@ -234,7 +243,7 @@ JOIN inserted_outbox ON true;
 WITH target_deployment AS (
     SELECT deployments.id,
            deployments.org_id,
-           deployments.build_cell_id AS cell_id,
+           deployments.build_worker_group_id AS worker_group_id,
            deployments.project_id,
            deployments.environment_id
       FROM deployments
@@ -245,7 +254,7 @@ WITH target_deployment AS (
 ),
 event_input AS (
     SELECT target_deployment.org_id,
-           target_deployment.cell_id,
+           target_deployment.worker_group_id,
            target_deployment.project_id,
            target_deployment.environment_id,
            target_deployment.id AS deployment_id,
@@ -259,22 +268,22 @@ event_input AS (
   FROM target_deployment
 ),
 event_seq AS (
-    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
     SELECT event_input.org_id,
-           event_input.cell_id,
+           event_input.worker_group_id,
            'deployment',
            event_input.deployment_id,
            1
       FROM event_input
-    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
-    RETURNING event_cursors.org_id, event_cursors.cell_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
+    RETURNING event_cursors.org_id, event_cursors.worker_group_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
 ),
 inserted_event AS (
-    INSERT INTO event_hot_payloads (org_id, cell_id, project_id, environment_id, deployment_id, seq, category, severity, source, kind, message, payload, redaction_class)
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, deployment_id, seq, category, severity, source, kind, message, payload, redaction_class)
     SELECT event_input.org_id,
-           event_input.cell_id,
+           event_input.worker_group_id,
            event_input.project_id,
            event_input.environment_id,
            event_input.deployment_id,
@@ -288,15 +297,15 @@ inserted_event AS (
            event_input.redaction_class
       FROM event_input
       JOIN event_seq ON event_seq.org_id = event_input.org_id
-                    AND event_seq.cell_id = event_input.cell_id
+                    AND event_seq.worker_group_id = event_input.worker_group_id
                     AND event_seq.subject_kind = 'deployment'
                     AND event_seq.subject_id = event_input.deployment_id
     RETURNING *
 ),
 inserted_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT inserted_event.org_id,
-           inserted_event.cell_id,
+           inserted_event.worker_group_id,
            'event',
            inserted_event.subject_type,
            inserted_event.subject_id,
@@ -333,7 +342,7 @@ WITH claimed AS (
                AND earlier_outbox.published_at IS NULL
                AND earlier_outbox.state <> 'dead_lettered'
                AND earlier_outbox.org_id = telemetry_outbox.org_id
-               AND earlier_outbox.cell_id = telemetry_outbox.cell_id
+               AND earlier_outbox.worker_group_id = telemetry_outbox.worker_group_id
                AND earlier_outbox.source_kind = telemetry_outbox.source_kind
                AND earlier_outbox.source_id = telemetry_outbox.source_id
                AND earlier_outbox.seq < telemetry_outbox.seq
@@ -342,7 +351,7 @@ WITH claimed AS (
              SELECT 1
                FROM event_hot_payloads AS events
               WHERE events.org_id = telemetry_outbox.org_id
-                AND events.cell_id = telemetry_outbox.cell_id
+                AND events.worker_group_id = telemetry_outbox.worker_group_id
                 AND events.subject_type = telemetry_outbox.source_kind::event_subject_type
                 AND events.subject_id = telemetry_outbox.source_id
                 AND events.seq = telemetry_outbox.seq
@@ -362,7 +371,7 @@ updated AS (
     RETURNING telemetry_outbox.*
 )
 SELECT updated.id AS outbox_id,
-       ('helmr:events:' || updated.org_id::text || ':' || updated.cell_id || ':' || updated.source_kind || ':' || updated.source_id::text)::text AS stream_key,
+       ('helmr:events:' || updated.org_id::text || ':' || updated.worker_group_id || ':' || updated.source_kind || ':' || updated.source_id::text)::text AS stream_key,
        updated.publish_attempts AS attempts,
        events.id AS event_record_id,
        events.subject_type,
@@ -392,7 +401,7 @@ SELECT updated.id AS outbox_id,
        events.created_at
   FROM updated
   JOIN event_hot_payloads AS events ON events.org_id = updated.org_id
-                                   AND events.cell_id = updated.cell_id
+                                   AND events.worker_group_id = updated.worker_group_id
                                    AND events.subject_type = updated.source_kind::event_subject_type
                                    AND events.subject_id = updated.source_id
                                    AND events.seq = updated.seq

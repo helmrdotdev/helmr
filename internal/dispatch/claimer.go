@@ -151,8 +151,7 @@ func (c *Claimer) deliveryAttemptsExhausted(ctx context.Context, lease Lease) (b
 	}
 	return c.store.RunLeaseDispatchAttemptsExhausted(ctx, db.RunLeaseDispatchAttemptsExhaustedParams{
 		OrgID:               scope.orgID,
-		CellID:              scope.cellID,
-		RouteGeneration:     scope.routeGeneration,
+		WorkerGroupID:       scope.workerGroupID,
 		QueueClass:          scope.queueClass,
 		RunID:               scope.runID,
 		MaxDispatchAttempts: c.maxDispatchAttempts,
@@ -168,12 +167,9 @@ func (c *Claimer) deadLetter(ctx context.Context, lease Lease) error {
 	if err != nil {
 		return err
 	}
-	cellID := strings.TrimSpace(lease.Message.CellID)
-	if cellID == "" {
-		return fmt.Errorf("%w: cell id is required", errInvalidLease)
-	}
-	if lease.Message.RouteGeneration <= 0 {
-		return fmt.Errorf("%w: route generation must be positive", errInvalidLease)
+	workerGroupID := strings.TrimSpace(lease.Message.WorkerGroupID)
+	if workerGroupID == "" {
+		return fmt.Errorf("%w: worker group id is required", errInvalidLease)
 	}
 	queueClass := strings.TrimSpace(lease.Message.QueueClass)
 	if queueClass == "" {
@@ -190,8 +186,7 @@ func (c *Claimer) deadLetter(ctx context.Context, lease Lease) error {
 	}
 	_, err = c.store.DeadLetterRunQueueItem(ctx, db.DeadLetterRunQueueItemParams{
 		OrgID:             orgID,
-		CellID:            cellID,
-		RouteGeneration:   lease.Message.RouteGeneration,
+		WorkerGroupID:     workerGroupID,
 		QueueClass:        queueClass,
 		RunID:             runID,
 		DispatchMessageID: pgtype.Text{String: lease.MessageID, Valid: true},
@@ -215,12 +210,9 @@ func (c *Claimer) markLeased(ctx context.Context, lease Lease) (db.RunQueueItem,
 	if err != nil {
 		return db.RunQueueItem{}, err
 	}
-	cellID := strings.TrimSpace(lease.Message.CellID)
-	if cellID == "" {
-		return db.RunQueueItem{}, fmt.Errorf("%w: cell id is required", errInvalidLease)
-	}
-	if lease.Message.RouteGeneration <= 0 {
-		return db.RunQueueItem{}, fmt.Errorf("%w: route generation must be positive", errInvalidLease)
+	workerGroupID := strings.TrimSpace(lease.Message.WorkerGroupID)
+	if workerGroupID == "" {
+		return db.RunQueueItem{}, fmt.Errorf("%w: worker group id is required", errInvalidLease)
 	}
 	queueClass := strings.TrimSpace(lease.Message.QueueClass)
 	if queueClass == "" {
@@ -228,8 +220,7 @@ func (c *Claimer) markLeased(ctx context.Context, lease Lease) (db.RunQueueItem,
 	}
 	return c.store.ReserveRunQueueItem(ctx, db.ReserveRunQueueItemParams{
 		OrgID:                orgID,
-		CellID:               cellID,
-		RouteGeneration:      lease.Message.RouteGeneration,
+		WorkerGroupID:        workerGroupID,
 		QueueClass:           queueClass,
 		RunID:                runID,
 		WorkerInstanceID:     workerInstanceID,
@@ -245,8 +236,7 @@ func (c *Claimer) isLeaseConflict(ctx context.Context, lease Lease) (bool, error
 	}
 	return c.store.IsRunQueueLeaseConflict(ctx, db.IsRunQueueLeaseConflictParams{
 		OrgID:             scope.orgID,
-		CellID:            scope.cellID,
-		RouteGeneration:   scope.routeGeneration,
+		WorkerGroupID:     scope.workerGroupID,
 		QueueClass:        scope.queueClass,
 		RunID:             scope.runID,
 		DispatchMessageID: pgtype.Text{String: lease.MessageID, Valid: true},
@@ -254,11 +244,10 @@ func (c *Claimer) isLeaseConflict(ctx context.Context, lease Lease) (bool, error
 }
 
 type runQueueScope struct {
-	orgID           pgtype.UUID
-	cellID          string
-	routeGeneration int64
-	queueClass      string
-	runID           pgtype.UUID
+	orgID         pgtype.UUID
+	workerGroupID string
+	queueClass    string
+	runID         pgtype.UUID
 }
 
 func runQueueLeaseScope(lease Lease) (runQueueScope, error) {
@@ -270,23 +259,19 @@ func runQueueLeaseScope(lease Lease) (runQueueScope, error) {
 	if err != nil {
 		return runQueueScope{}, err
 	}
-	cellID := strings.TrimSpace(lease.Message.CellID)
-	if cellID == "" {
-		return runQueueScope{}, fmt.Errorf("%w: cell id is required", errInvalidLease)
-	}
-	if lease.Message.RouteGeneration <= 0 {
-		return runQueueScope{}, fmt.Errorf("%w: route generation must be positive", errInvalidLease)
+	workerGroupID := strings.TrimSpace(lease.Message.WorkerGroupID)
+	if workerGroupID == "" {
+		return runQueueScope{}, fmt.Errorf("%w: worker group id is required", errInvalidLease)
 	}
 	queueClass := strings.TrimSpace(lease.Message.QueueClass)
 	if queueClass == "" {
 		return runQueueScope{}, fmt.Errorf("%w: queue class is required", errInvalidLease)
 	}
 	return runQueueScope{
-		orgID:           orgID,
-		cellID:          cellID,
-		routeGeneration: lease.Message.RouteGeneration,
-		queueClass:      queueClass,
-		runID:           runID,
+		orgID:         orgID,
+		workerGroupID: workerGroupID,
+		queueClass:    queueClass,
+		runID:         runID,
 	}, nil
 }
 

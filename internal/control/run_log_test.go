@@ -100,17 +100,18 @@ func TestGetRunLogsReportsTruncatedSnapshot(t *testing.T) {
 	}
 }
 
-func TestGetRunLogsRejectsWrongCell(t *testing.T) {
+func TestGetRunLogsRejectsWrongWorkerGroup(t *testing.T) {
 	runID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
+		recordPlacementUnavailable: true,
 		run: db.Run{
-			ID:        pgvalue.UUID(runID),
-			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:    "us-east-1-cell-2",
-			TaskID:    "deploy",
-			Status:    db.RunStatusRunning,
-			CreatedAt: testTime(),
-			UpdatedAt: testTime(),
+			ID:            pgvalue.UUID(runID),
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			WorkerGroupID: "us-east-1-worker-group-2",
+			TaskID:        "deploy",
+			Status:        db.RunStatusRunning,
+			CreatedAt:     testTime(),
+			UpdatedAt:     testTime(),
 		},
 		stdout: []byte("hello\n"),
 	}
@@ -126,7 +127,7 @@ func TestGetRunLogsRejectsWrongCell(t *testing.T) {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	if store.runLogSnapshot.RunID.Valid {
-		t.Fatalf("wrong-cell request read run logs: %+v", store.runLogSnapshot)
+		t.Fatalf("wrong-worker-group request read run logs: %+v", store.runLogSnapshot)
 	}
 }
 
@@ -253,7 +254,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
-	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient, cellID: dbtest.DefaultCellID, telemetryReader: fakeTelemetryReader{store: store}}
+	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient, workerGroupID: dbtest.DefaultWorkerGroupID, telemetryReader: fakeTelemetryReader{store: store}}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour, EventStream: eventStream})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
@@ -337,7 +338,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 	}
 }
 
-func TestWorkerAppendLogsRejectsWrongCellLease(t *testing.T) {
+func TestWorkerAppendLogsRejectsWrongWorkerGroupLease(t *testing.T) {
 	runID := uuid.Must(uuid.NewV7())
 	runLeaseID := uuid.Must(uuid.NewV7())
 	workerID := uuid.MustParse("00000000-0000-0000-0000-000000000401")
@@ -352,22 +353,22 @@ func TestWorkerAppendLogsRejectsWrongCellLease(t *testing.T) {
 			CreatedAt:           testTime(),
 			UpdatedAt:           testTime(),
 		},
-		sessionID:                 pgvalue.UUID(runLeaseID),
-		executionWorkerInstanceID: pgvalue.UUID(workerID),
-		executionLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
-		workerCredentialCellID:    "us-east-1-cell-2",
+		sessionID:                     pgvalue.UUID(runLeaseID),
+		executionWorkerInstanceID:     pgvalue.UUID(workerID),
+		executionLeaseExpiresAt:       pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+		workerCredentialWorkerGroupID: "us-east-1-worker-group-2",
 	}
 	server := newTestServer(testServerConfig{
 		Log:               slog.New(slog.NewTextHandler(io.Discard, nil)),
 		DB:                store,
-		CellID:            "us-east-1-cell-2",
+		WorkerGroupID:     "us-east-1-worker-group-2",
 		WorkerTokenSecret: []byte(testWorkerTokenSecret),
 		WorkerTokenTTL:    time.Hour,
 	})
 	workerBearer, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
 		WorkerInstanceID: workerID.String(),
 		CredentialID:     testWorkerInstanceCredentialID,
-		CellID:           "us-east-1-cell-2",
+		WorkerGroupID:    "us-east-1-worker-group-2",
 		ClaimVersion:     1,
 		IssuedAt:         time.Now(),
 		ExpiresAt:        time.Now().Add(time.Hour),
@@ -387,7 +388,7 @@ func TestWorkerAppendLogsRejectsWrongCellLease(t *testing.T) {
 			DispatchLeaseID:   "lease-1",
 		},
 		Stream:        api.WorkerLogStreamStdout,
-		ContentBase64: base64.StdEncoding.EncodeToString([]byte("cross-cell\n")),
+		ContentBase64: base64.StdEncoding.EncodeToString([]byte("cross-worker-group\n")),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -402,12 +403,12 @@ func TestWorkerAppendLogsRejectsWrongCellLease(t *testing.T) {
 		t.Fatalf("logs status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	if len(store.stdout) != 0 || len(store.events) != 0 {
-		t.Fatalf("wrong-cell append mutated stdout=%q events=%d", string(store.stdout), len(store.events))
+		t.Fatalf("wrong-worker-group append mutated stdout=%q events=%d", string(store.stdout), len(store.events))
 	}
 }
 
 func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChunkParams) (db.AppendRunLogChunkRow, error) {
-	if f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.CellID != dbtest.DefaultCellID {
+	if f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.WorkerGroupID != dbtest.DefaultWorkerGroupID {
 		return db.AppendRunLogChunkRow{}, pgx.ErrNoRows
 	}
 	switch arg.Stream {
@@ -419,7 +420,7 @@ func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChun
 	event := db.EventHotPayload{
 		Seq:            int64(len(f.events) + 1),
 		OrgID:          arg.OrgID,
-		CellID:         arg.CellID,
+		WorkerGroupID:  arg.WorkerGroupID,
 		RunID:          arg.RunID,
 		RunLeaseID:     arg.RunLeaseID,
 		AttemptNumber:  pgtype.Int4{Int32: 1, Valid: true},

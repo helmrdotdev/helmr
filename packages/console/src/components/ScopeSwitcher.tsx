@@ -1,9 +1,9 @@
-import { useQueryClient } from "@tanstack/solid-query";
+import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { A } from "@solidjs/router";
 import { defaultEnvironmentColor, ENVIRONMENT_COLOR_PRESETS, normalizeEnvironmentColor } from "../features/projects/display";
 import { ApiError } from "../lib/api";
-import { createEnvironment, createProject } from "../lib/projects";
+import { createEnvironment, createProject, listRegions } from "../lib/projects";
 import { rememberProjectScope, useScope } from "../lib/scope";
 import { Modal } from "../ui/Modal";
 import { cx, envDotClass, envDotStyle, ui } from "../ui/styles";
@@ -38,6 +38,7 @@ export function ScopeSwitcher() {
   const [formName, setFormName] = createSignal("");
   const [formSlug, setFormSlug] = createSignal("");
   const [slugTouched, setSlugTouched] = createSignal(false);
+  const [selectedRegionID, setSelectedRegionID] = createSignal("");
   const [formColorHex, setFormColorHex] = createSignal(defaultEnvironmentColor(""));
   const [colorTouched, setColorTouched] = createSignal(false);
   const [submitting, setSubmitting] = createSignal(false);
@@ -48,6 +49,15 @@ export function ScopeSwitcher() {
   let formNameRef: HTMLInputElement | undefined;
 
   const activeProject = createMemo(() => scope.selectedProject());
+  const regions = createQuery(() => ({
+    queryKey: ["regions"],
+    queryFn: listRegions,
+    retry: false,
+    staleTime: 60_000,
+  }));
+  const availableRegions = createMemo(() =>
+    (regions.data?.regions ?? []).filter((region) => region.state === "available"),
+  );
 
   const filteredProjects = createMemo(() => {
     const q = projectQuery().trim().toLowerCase();
@@ -114,6 +124,11 @@ export function ScopeSwitcher() {
     }
   });
 
+  createEffect(() => {
+    if (creating() !== "project") return;
+    if (!selectedRegionID()) setSelectedRegionID(availableRegions()[0]?.id ?? "");
+  });
+
   function closeAll() {
     setOpen(false);
     setCreating(null);
@@ -123,6 +138,7 @@ export function ScopeSwitcher() {
     setFormName("");
     setFormSlug("");
     setSlugTouched(false);
+    setSelectedRegionID("");
     setFormColorHex(defaultEnvironmentColor(""));
     setColorTouched(false);
     setFormError(null);
@@ -196,14 +212,15 @@ export function ScopeSwitcher() {
     event.preventDefault();
     const name = formName().trim();
     const slug = formSlug().trim();
-    if (!name || !slug) {
-      setFormError("Name and slug are required.");
+    const regionID = selectedRegionID().trim();
+    if (!name || !slug || !regionID) {
+      setFormError("Name, slug, and region are required.");
       return;
     }
     setFormError(null);
     setSubmitting(true);
     try {
-      const project = await createProject({ name, slug });
+      const project = await createProject({ name, slug, default_region_id: regionID });
       const environment = project.environments?.find((candidate) => candidate.is_default) ?? project.environments?.[0];
       rememberProjectScope(project);
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -466,6 +483,23 @@ export function ScopeSwitcher() {
                 spellcheck={false}
               />
             </label>
+            <label class={ui.field}>
+              <span>Region</span>
+              <select
+                class={ui.input}
+                value={selectedRegionID()}
+                onChange={(event) => setSelectedRegionID(event.currentTarget.value)}
+                disabled={regions.isPending || availableRegions().length === 0}
+              >
+                <For each={availableRegions()}>
+                  {(region) => (
+                    <option value={region.id}>
+                      {region.display_name || region.id}
+                    </option>
+                  )}
+                </For>
+              </select>
+            </label>
             <Show when={formError()}>
               <p class={ui.fieldError} role="alert">{formError()}</p>
             </Show>
@@ -473,7 +507,7 @@ export function ScopeSwitcher() {
               <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={cancelForm}>
                 Cancel
               </button>
-              <button class={ui.button} type="submit" disabled={submitting() || !formName().trim() || !formSlug().trim()}>
+              <button class={ui.button} type="submit" disabled={submitting() || !formName().trim() || !formSlug().trim() || !selectedRegionID().trim()}>
                 {submitting() ? "Creating..." : "Create"}
               </button>
             </div>

@@ -7,8 +7,7 @@ created AS (
         id,
         public_id,
         org_id,
-        cell_id,
-        route_generation,
+        worker_group_id,
         project_id,
         environment_id,
         deployment_id,
@@ -43,8 +42,7 @@ created AS (
     SELECT sqlc.arg(id),
            sqlc.arg(public_id),
            sqlc.arg(org_id),
-           sqlc.arg(cell_id),
-           sqlc.arg(route_generation),
+           sqlc.arg(worker_group_id),
            sqlc.arg(project_id),
            sqlc.arg(environment_id),
            sqlc.arg(deployment_id),
@@ -84,37 +82,20 @@ created AS (
                AND deployments.project_id = deployment_tasks.project_id
                AND deployments.environment_id = deployment_tasks.environment_id
                AND deployments.id = deployment_tasks.deployment_id
-               AND deployments.build_cell_id = sqlc.arg(cell_id)
-               AND deployments.build_route_generation = sqlc.arg(route_generation)
+               AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
                AND deployments.status = 'deployed'
-              JOIN environment_cells
-                ON environment_cells.org_id = deployment_tasks.org_id
-               AND environment_cells.project_id = deployment_tasks.project_id
-               AND environment_cells.environment_id = deployment_tasks.environment_id
-               AND environment_cells.cell_id = deployments.build_cell_id
-               AND environment_cells.route_generation = deployments.build_route_generation
+              JOIN worker_groups
+                ON worker_groups.id = deployments.build_worker_group_id
+               AND worker_groups.id = sqlc.arg(worker_group_id)
                AND (
-                   environment_cells.route_state = 'active'
+                   worker_groups.state = 'active'
                    OR (
                        sqlc.arg(allow_draining_route)::boolean
-                       AND environment_cells.route_state = 'draining'
+                       AND worker_groups.state = 'draining'
                    )
                )
-              JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                            AND org_cells.cell_id = environment_cells.cell_id
-                            AND org_cells.state = 'active'
-              JOIN cells ON cells.id = environment_cells.cell_id
-                        AND cells.region_id = environment_cells.region_id
-                        AND (
-                            cells.state = 'active'
-                            OR (
-                                sqlc.arg(allow_draining_route)::boolean
-                                AND cells.state = 'draining'
-                            )
-                        )
-              JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                              AND cell_health.state IN ('healthy', 'degraded')
-                              AND cell_health.routing_fresh_until > now()
+               AND worker_groups.health_state IN ('healthy', 'degraded')
+               AND worker_groups.routing_fresh_until > now()
              WHERE deployment_tasks.org_id = sqlc.arg(org_id)
                AND deployment_tasks.project_id = sqlc.arg(project_id)
                AND deployment_tasks.environment_id = sqlc.arg(environment_id)
@@ -144,14 +125,14 @@ created AS (
                AND task_schedules.project_id = sqlc.arg(project_id)
                AND task_schedules.enabled
         )
-       )
-    RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
+	       )
+	    RETURNING *
 ),
 created_attempt AS (
-    INSERT INTO run_attempts (id, org_id, cell_id, run_id, attempt_number, status)
+    INSERT INTO run_attempts (id, org_id, worker_group_id, run_id, attempt_number, status)
     SELECT created.current_attempt_id,
            created.org_id,
-           created.cell_id,
+           created.worker_group_id,
            created.id,
            created.current_attempt_number,
            'queued'
@@ -159,9 +140,9 @@ created_attempt AS (
     RETURNING id, org_id, run_id, attempt_number
 ),
 created_snapshot AS (
-    INSERT INTO run_snapshots (org_id, cell_id, run_id, version, status, execution_status, attempt_id, operation_id, transition, reason)
+    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_id, operation_id, transition, reason)
     SELECT created.org_id,
-           created.cell_id,
+           created.worker_group_id,
            created.id,
            created.state_version,
            created.status,
@@ -175,19 +156,19 @@ created_snapshot AS (
     RETURNING run_snapshots.run_id
 ),
 created_event_seq AS (
-    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
-    SELECT created.org_id, created.cell_id, 'run', created.id, 1
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
+    SELECT created.org_id, created.worker_group_id, 'run', created.id, 1
       FROM created
       JOIN created_snapshot ON true
-    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
     RETURNING org_id, subject_kind, subject_id, seq
 ),
 created_event AS (
-    INSERT INTO event_hot_payloads (org_id, cell_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT created.org_id,
-           created.cell_id,
+           created.worker_group_id,
            created.project_id,
            created.environment_id,
            created.id,
@@ -212,9 +193,9 @@ created_event AS (
     RETURNING *
 ),
 created_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT created_event.org_id,
-                  created_event.cell_id,
+                  created_event.worker_group_id,
                   'event',
                   created_event.subject_type,
                   created_event.subject_id,
@@ -223,7 +204,7 @@ created_telemetry_outbox AS (
       FROM created_event
     RETURNING id
 )
-SELECT created.id, created.org_id, created.cell_id, created.route_generation, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.workspace_id, created.session_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.execution_status, created.terminal_outcome, created.metadata, created.tags, created.locked_retry_policy, created.current_attempt_number, created.exit_code, created.output, created.created_at, created.updated_at
+SELECT created.*
   FROM created
   JOIN created_snapshot ON true
   JOIN created_telemetry_outbox ON true;
@@ -242,7 +223,7 @@ WITH locked_sessions AS MATERIALIZED (
        AND sessions.environment_id = runs.environment_id
        AND sessions.id = runs.session_id
      WHERE runs.org_id = sqlc.arg(org_id)
-       AND runs.cell_id = sqlc.arg(cell_id)
+       AND runs.worker_group_id = sqlc.arg(worker_group_id)
        AND runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
        AND runs.queued_expires_at IS NOT NULL
@@ -255,7 +236,7 @@ eligible AS (
       LEFT JOIN locked_sessions
         ON locked_sessions.id = runs.session_id
      WHERE runs.org_id = sqlc.arg(org_id)
-       AND runs.cell_id = sqlc.arg(cell_id)
+       AND runs.worker_group_id = sqlc.arg(worker_group_id)
        AND runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
        AND runs.queued_expires_at IS NOT NULL
@@ -276,7 +257,7 @@ expired_runs AS (
      WHERE runs.org_id = eligible.org_id
        AND runs.id = eligible.id
        AND runs.status = 'queued'
-    RETURNING runs.id, runs.org_id, runs.cell_id, runs.project_id, runs.environment_id, runs.session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version, runs.ttl
+    RETURNING runs.id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version, runs.ttl
 ),
 expired_session_runs AS (
     UPDATE session_runs
@@ -318,9 +299,9 @@ completed_queue_entries AS (
     RETURNING run_queue_items.run_id
 ),
 expired_snapshots AS (
-    INSERT INTO run_snapshots (org_id, cell_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
+    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
     SELECT expired_runs.org_id,
-           expired_runs.cell_id,
+           expired_runs.worker_group_id,
            expired_runs.id,
            expired_runs.state_version,
            'expired',
@@ -334,19 +315,19 @@ expired_snapshots AS (
     RETURNING run_snapshots.run_id
 ),
 expired_event_seq AS (
-    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
-    SELECT expired_runs.org_id, expired_runs.cell_id, 'run', expired_runs.id, 1
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
+    SELECT expired_runs.org_id, expired_runs.worker_group_id, 'run', expired_runs.id, 1
       FROM expired_runs
       JOIN expired_snapshots ON expired_snapshots.run_id = expired_runs.id
-    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
     RETURNING org_id, subject_kind, subject_id, seq
 ),
 expired_event AS (
-    INSERT INTO event_hot_payloads (org_id, cell_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT expired_runs.org_id,
-           expired_runs.cell_id,
+           expired_runs.worker_group_id,
            expired_runs.project_id,
            expired_runs.environment_id,
            expired_runs.id,
@@ -372,9 +353,9 @@ expired_event AS (
     RETURNING *
 ),
 expired_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT expired_event.org_id,
-                  expired_event.cell_id,
+                  expired_event.worker_group_id,
                   'event',
                   expired_event.subject_type,
                   expired_event.subject_id,
@@ -446,7 +427,7 @@ failed_run AS (
        AND runs.id = target.id
        AND runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
-    RETURNING runs.id, runs.org_id, runs.cell_id, runs.project_id, runs.environment_id, runs.session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version, runs.error_message
+    RETURNING runs.id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version, runs.error_message
 ),
 failed_session_run AS (
     UPDATE session_runs
@@ -488,9 +469,9 @@ completed_queue_entry AS (
     RETURNING run_queue_items.run_id
 ),
 failed_snapshot AS (
-    INSERT INTO run_snapshots (org_id, cell_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
+    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
     SELECT failed_run.org_id,
-           failed_run.cell_id,
+           failed_run.worker_group_id,
            failed_run.id,
            failed_run.state_version,
            'failed',
@@ -504,19 +485,19 @@ failed_snapshot AS (
     RETURNING run_snapshots.run_id
 ),
 failed_event_seq AS (
-    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
-    SELECT failed_run.org_id, failed_run.cell_id, 'run', failed_run.id, 1
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
+    SELECT failed_run.org_id, failed_run.worker_group_id, 'run', failed_run.id, 1
       FROM failed_run
       JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
-    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
     RETURNING org_id, subject_kind, subject_id, seq
 ),
 failed_event AS (
-    INSERT INTO event_hot_payloads (org_id, cell_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT failed_run.org_id,
-           failed_run.cell_id,
+           failed_run.worker_group_id,
            failed_run.project_id,
            failed_run.environment_id,
            failed_run.id,
@@ -542,9 +523,9 @@ failed_event AS (
     RETURNING *
 ),
 failed_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT failed_event.org_id,
-                  failed_event.cell_id,
+                  failed_event.worker_group_id,
                   'event',
                   failed_event.subject_type,
                   failed_event.subject_id,
@@ -558,8 +539,7 @@ SELECT failed_event.*
   JOIN failed_telemetry_outbox ON true;
 
 -- name: GetRunSummary :one
-SELECT id, org_id, cell_id, route_generation, project_id, environment_id, deployment_id, deployment_task_id, session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, current_attempt_number, exit_code, output, created_at, updated_at
-FROM runs
+SELECT * FROM runs
 WHERE org_id = $1 AND id = $2;
 
 -- name: CountScopedRunsByStatus :one
@@ -571,40 +551,57 @@ SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'cancelled') AS cancelled,
        count(*) FILTER (WHERE status = 'expired') AS expired
 FROM runs
-JOIN environment_cells
-  ON environment_cells.org_id = runs.org_id
- AND environment_cells.project_id = runs.project_id
- AND environment_cells.environment_id = runs.environment_id
- AND environment_cells.cell_id = runs.cell_id
- AND environment_cells.route_generation = runs.route_generation
- AND environment_cells.route_state IN ('active', 'draining')
-JOIN cells ON cells.id = environment_cells.cell_id
-          AND cells.region_id = environment_cells.region_id
-          AND cells.state IN ('active', 'draining')
+JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement
+  ON project_worker_group_placement.org_id = runs.org_id
+ AND project_worker_group_placement.project_id = runs.project_id
+ AND project_worker_group_placement.environment_id = runs.environment_id
+ AND project_worker_group_placement.worker_group_id = runs.worker_group_id
+ AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
+JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+          AND worker_groups.region_id = project_worker_group_placement.region_id
+          AND worker_groups.state IN ('active', 'draining')
 WHERE runs.org_id = sqlc.arg(org_id)
   AND runs.project_id = sqlc.arg(project_id)
-  AND runs.environment_id = sqlc.arg(environment_id)
-  AND EXISTS (
-      SELECT 1
-        FROM org_cells
-       WHERE org_cells.org_id = environment_cells.org_id
-         AND org_cells.cell_id = environment_cells.cell_id
-         AND org_cells.state = 'active'
-  );
+  AND runs.environment_id = sqlc.arg(environment_id);
 
 -- name: ListScopedRunSummaries :many
-SELECT runs.id, runs.org_id, runs.cell_id, runs.route_generation, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.session_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.metadata, runs.tags, runs.locked_retry_policy, runs.current_attempt_number, runs.exit_code, runs.output, runs.created_at, runs.updated_at
+SELECT runs.*
 FROM runs
-JOIN environment_cells
-  ON environment_cells.org_id = runs.org_id
- AND environment_cells.project_id = runs.project_id
- AND environment_cells.environment_id = runs.environment_id
- AND environment_cells.cell_id = runs.cell_id
- AND environment_cells.route_generation = runs.route_generation
- AND environment_cells.route_state IN ('active', 'draining')
-JOIN cells ON cells.id = environment_cells.cell_id
-          AND cells.region_id = environment_cells.region_id
-          AND cells.state IN ('active', 'draining')
+JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement
+  ON project_worker_group_placement.org_id = runs.org_id
+ AND project_worker_group_placement.project_id = runs.project_id
+ AND project_worker_group_placement.environment_id = runs.environment_id
+ AND project_worker_group_placement.worker_group_id = runs.worker_group_id
+ AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
+JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+          AND worker_groups.region_id = project_worker_group_placement.region_id
+          AND worker_groups.state IN ('active', 'draining')
 WHERE runs.org_id = sqlc.arg(org_id)
   AND runs.project_id = sqlc.arg(project_id)
   AND runs.environment_id = sqlc.arg(environment_id)
@@ -618,13 +615,6 @@ WHERE runs.org_id = sqlc.arg(org_id)
     sqlc.narg(session_id)::uuid IS NULL
     OR runs.session_id = sqlc.narg(session_id)::uuid
   )
-  AND EXISTS (
-      SELECT 1
-        FROM org_cells
-       WHERE org_cells.org_id = environment_cells.org_id
-         AND org_cells.cell_id = environment_cells.cell_id
-         AND org_cells.state = 'active'
-  )
 ORDER BY runs.created_at DESC, runs.id DESC
 LIMIT sqlc.arg(row_limit);
 
@@ -633,7 +623,7 @@ INSERT INTO run_operations (
     id,
     public_id,
     org_id,
-    cell_id,
+    worker_group_id,
     project_id,
     environment_id,
     run_id,
@@ -648,7 +638,7 @@ INSERT INTO run_operations (
     sqlc.arg(id),
     sqlc.arg(public_id),
     sqlc.arg(org_id),
-    sqlc.arg(cell_id),
+    sqlc.arg(worker_group_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(run_id),
@@ -714,7 +704,7 @@ locked_session AS MATERIALIZED (
        AND sessions.environment_id = runs.environment_id
        AND sessions.id = runs.session_id
      WHERE runs.org_id = sqlc.arg(org_id)
-       AND runs.cell_id = sqlc.arg(cell_id)
+       AND runs.worker_group_id = sqlc.arg(worker_group_id)
        AND runs.id = sqlc.arg(run_id)
      FOR UPDATE OF sessions
 ),
@@ -726,7 +716,7 @@ target AS (
       LEFT JOIN locked_session
         ON locked_session.id = runs.session_id
      WHERE runs.org_id = sqlc.arg(org_id)
-       AND runs.cell_id = sqlc.arg(cell_id)
+       AND runs.worker_group_id = sqlc.arg(worker_group_id)
        AND runs.id = sqlc.arg(run_id)
        AND locked_session.id = runs.session_id
      FOR UPDATE
@@ -842,9 +832,9 @@ released_concurrency AS (
     RETURNING run_queue_concurrency_leases.id
 ),
 snapshot AS (
-    INSERT INTO run_snapshots (org_id, cell_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, run_lease_id, operation_id, previous_version, transition, reason)
+    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, run_lease_id, operation_id, previous_version, transition, reason)
     SELECT updated.org_id,
-           updated.cell_id,
+           updated.worker_group_id,
            updated.id,
            updated.state_version,
            updated.status,
@@ -864,19 +854,19 @@ snapshot AS (
     RETURNING run_snapshots.run_id
 ),
 event_seq AS (
-    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
-    SELECT updated.org_id, updated.cell_id, 'run', updated.id, 1
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
+    SELECT updated.org_id, updated.worker_group_id, 'run', updated.id, 1
       FROM updated
       JOIN snapshot ON true
-    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
     RETURNING org_id, subject_kind, subject_id, seq
 ),
 event AS (
-    INSERT INTO event_hot_payloads (org_id, cell_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT updated.org_id,
-           updated.cell_id,
+           updated.worker_group_id,
            updated.project_id,
            updated.environment_id,
            updated.id,
@@ -906,9 +896,9 @@ event AS (
     RETURNING *
 ),
 telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT event.org_id,
-                  event.cell_id,
+                  event.worker_group_id,
                   'event',
                   event.subject_type,
                   event.subject_id,
@@ -933,7 +923,7 @@ operation_applied AS (
        AND run_operations.status = 'requested'
     RETURNING run_operations.id
 )
-SELECT updated.id, updated.org_id, updated.cell_id, updated.route_generation, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.session_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at
+SELECT updated.*
   FROM updated
   JOIN operation_applied ON true
   JOIN telemetry_outbox ON true
@@ -941,7 +931,7 @@ SELECT updated.id, updated.org_id, updated.cell_id, updated.route_generation, up
 	   AND (SELECT count(*) FROM terminal_session_runs) >= 0
 	   AND (SELECT count(*) FROM terminal_sessions) >= 0
 UNION ALL
-SELECT target.id, target.org_id, target.cell_id, target.route_generation, target.project_id, target.environment_id, target.deployment_id, target.deployment_task_id, target.session_id, target.deployment_version, target.api_version, target.sdk_version, target.cli_version, target.task_id, target.status, target.execution_status, target.terminal_outcome, target.metadata, target.tags, target.locked_retry_policy, target.current_attempt_number, target.exit_code, target.output, target.created_at, target.updated_at
+SELECT target.*
   FROM target
   JOIN operation_applied ON true
  WHERE NOT EXISTS (SELECT 1 FROM updated);
@@ -1016,7 +1006,7 @@ updated AS (
              ELSE runs.metadata
            END
        )::text) <= sqlc.arg(max_metadata_bytes)::integer
-    RETURNING runs.id, runs.org_id, runs.cell_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.metadata, runs.tags, runs.locked_retry_policy, runs.current_attempt_number, runs.exit_code, runs.output, runs.created_at, runs.updated_at
+    RETURNING runs.id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.metadata, runs.tags, runs.locked_retry_policy, runs.current_attempt_number, runs.exit_code, runs.output, runs.created_at, runs.updated_at
 ),
 updated_with_context AS (
     SELECT updated.*,
@@ -1033,22 +1023,22 @@ updated_with_context AS (
                            AND current_run_lease.id = updated.id
 ),
 event_seq AS (
-    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
     SELECT updated_with_context.org_id,
-           updated_with_context.cell_id,
+           updated_with_context.worker_group_id,
            'run',
            updated_with_context.id,
            1
       FROM updated_with_context
-    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
     RETURNING org_id, subject_kind, subject_id, seq
 ),
 inserted_event AS (
-    INSERT INTO event_hot_payloads (org_id, cell_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT updated_with_context.org_id,
-           updated_with_context.cell_id,
+           updated_with_context.worker_group_id,
            updated_with_context.project_id,
            updated_with_context.environment_id,
            updated_with_context.id,
@@ -1078,9 +1068,9 @@ inserted_event AS (
     RETURNING id
 ),
 telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT inserted_event.org_id,
-                  inserted_event.cell_id,
+                  inserted_event.worker_group_id,
                   'event',
                   inserted_event.subject_type,
                   inserted_event.subject_id,
@@ -1090,11 +1080,11 @@ telemetry_outbox AS (
       JOIN updated_with_context ON true
     RETURNING *
 )
-SELECT updated.id, updated.org_id, updated.cell_id, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at, false AS metadata_too_large
+SELECT updated.id, updated.org_id, updated.worker_group_id, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at, false AS metadata_too_large
   FROM updated
   JOIN telemetry_outbox ON true
 UNION ALL
-SELECT runs.id, runs.org_id, runs.cell_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.metadata, runs.tags, runs.locked_retry_policy, runs.current_attempt_number, runs.exit_code, runs.output, runs.created_at, runs.updated_at, true AS metadata_too_large
+SELECT runs.id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.metadata, runs.tags, runs.locked_retry_policy, runs.current_attempt_number, runs.exit_code, runs.output, runs.created_at, runs.updated_at, true AS metadata_too_large
   FROM current_run_lease
   JOIN runs ON runs.org_id = current_run_lease.org_id
            AND runs.id = current_run_lease.id

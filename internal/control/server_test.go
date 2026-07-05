@@ -27,7 +27,7 @@ import (
 type testServerConfig struct {
 	Log                 *slog.Logger
 	DeploymentMode      string
-	CellID              string
+	WorkerGroupID       string
 	RegionID            string
 	DefaultRegionID     string
 	DB                  db.Querier
@@ -76,11 +76,11 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	if testCfg.DeploymentMode != "" {
 		cfg.DeploymentMode = testCfg.DeploymentMode
 	}
-	cfg.CellID = "us-east-1-cell-1"
+	cfg.WorkerGroupID = "us-east-1-worker-group-1"
 	cfg.RegionID = "us-east-1"
 	cfg.DefaultRegionID = "us-east-1"
-	if testCfg.CellID != "" {
-		cfg.CellID = testCfg.CellID
+	if testCfg.WorkerGroupID != "" {
+		cfg.WorkerGroupID = testCfg.WorkerGroupID
 	}
 	if testCfg.RegionID != "" {
 		cfg.RegionID = testCfg.RegionID
@@ -123,8 +123,8 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	}
 	if testCfg.EventStream != nil {
 		cfg.EventStream = testCfg.EventStream
-		if cfg.EventStream.cellID == "" {
-			cfg.EventStream.cellID = cfg.CellID
+		if cfg.EventStream.workerGroupID == "" {
+			cfg.EventStream.workerGroupID = cfg.WorkerGroupID
 		}
 		if cfg.EventStream.telemetryReader == nil {
 			cfg.EventStream.telemetryReader = cfg.TelemetryReader
@@ -333,11 +333,11 @@ func mustParseTestURL(raw string) *url.URL {
 	return parsed
 }
 
-func TestNewServerRejectsMismatchedEventStreamCellID(t *testing.T) {
+func TestNewServerRejectsMismatchedEventStreamWorkerGroupID(t *testing.T) {
 	store := &fakeStore{}
 	_, err := NewServer(ServerConfig{
 		Log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-		CellID:          dbtest.DefaultCellID,
+		WorkerGroupID:   dbtest.DefaultWorkerGroupID,
 		RegionID:        "us-east-1",
 		DefaultRegionID: "us-east-1",
 		DB:              testTransactionalStore{Querier: store},
@@ -346,12 +346,12 @@ func TestNewServerRejectsMismatchedEventStreamCellID(t *testing.T) {
 		TelemetryReader: fakeTelemetryReader{store: store},
 		EventStream: &EventStream{
 			log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-			cellID:          "us-east-1-cell-2",
+			workerGroupID:   "us-east-1-worker-group-2",
 			telemetryReader: fakeTelemetryReader{store: store},
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), "event stream cell id must match control cell id") {
-		t.Fatalf("NewServer err = %v, want event stream cell mismatch", err)
+	if err == nil || !strings.Contains(err.Error(), "event stream worker group id must match control worker group id") {
+		t.Fatalf("NewServer err = %v, want event stream worker group mismatch", err)
 	}
 }
 

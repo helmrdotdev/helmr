@@ -140,16 +140,16 @@ func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	if oldUsageEnums != 0 {
 		t.Fatalf("legacy usage enum types = %d, want 0", oldUsageEnums)
 	}
-	var cellPropagationFunctions int
+	var workerGroupPropagationFunctions int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		  FROM pg_proc
-		 WHERE proname LIKE 'set\_%\_cell\_id' ESCAPE '\'
-	`).Scan(&cellPropagationFunctions); err != nil {
+		 WHERE proname LIKE 'set\_%\_worker\_group\_id' ESCAPE '\'
+	`).Scan(&workerGroupPropagationFunctions); err != nil {
 		t.Fatal(err)
 	}
-	if cellPropagationFunctions != 0 {
-		t.Fatalf("cell propagation functions = %d, want 0", cellPropagationFunctions)
+	if workerGroupPropagationFunctions != 0 {
+		t.Fatalf("worker group propagation functions = %d, want 0", workerGroupPropagationFunctions)
 	}
 }
 

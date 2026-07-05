@@ -23,7 +23,7 @@ func TestQueueEnqueueDequeueAck(t *testing.T) {
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -44,7 +44,7 @@ func TestQueueEnqueueDequeueAck(t *testing.T) {
 	}
 	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -132,7 +132,7 @@ func TestQueueReadyMessageExistsInvalidatesMessageWithoutRuntimeMetadata(t *test
 	} else if count != 0 {
 		t.Fatal("message without runtime metadata was not deleted")
 	}
-	keys := queue.keys("org-1", "cell-1", "project-1", "env-1", "default", "queue-a")
+	keys := queue.keys("org-1", "worker-group-1", "project-1", "env-1", "default", "queue-a")
 	if score, err := queue.client.ZScore(ctx, keys.ready, result.MessageID).Result(); err == nil {
 		t.Fatalf("message without runtime metadata remained ready with score %f", score)
 	} else if !errors.Is(err, redis.Nil) {
@@ -160,7 +160,7 @@ func TestQueueDequeueInvalidatesMessageWithoutRuntimeMetadata(t *testing.T) {
 
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -233,7 +233,7 @@ func TestQueueReadyMessageExistsHandlesQueueNamedRun(t *testing.T) {
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -275,7 +275,7 @@ func TestQueueLeaseConflictNackBacksOff(t *testing.T) {
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -321,7 +321,7 @@ func TestQueueHonorsQueueConcurrencyLimit(t *testing.T) {
 
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -345,7 +345,7 @@ func TestQueueHonorsQueueConcurrencyLimit(t *testing.T) {
 	}
 	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -385,7 +385,7 @@ func TestQueueConcurrencyLimitSpansRuntimeQueues(t *testing.T) {
 
 	firstLease, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -403,7 +403,7 @@ func TestQueueConcurrencyLimitSpansRuntimeQueues(t *testing.T) {
 	}
 	blocked, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -424,7 +424,7 @@ func TestQueueConcurrencyLimitSpansRuntimeQueues(t *testing.T) {
 	}
 	secondLease, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -480,7 +480,7 @@ func TestQueueDequeueInvalidatesLimitedMessageMissingQueueConcurrencyActiveKey(t
 
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -529,7 +529,7 @@ func TestQueuePriorityAndCapacity(t *testing.T) {
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -560,7 +560,7 @@ func TestQueueSkipsOversizedHeadForCurrentHost(t *testing.T) {
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -650,7 +650,7 @@ func TestQueueFiltersByRuntimeIdentity(t *testing.T) {
 
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -672,7 +672,7 @@ func TestQueueFiltersByRuntimeIdentity(t *testing.T) {
 
 	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -714,7 +714,7 @@ func TestQueueFiltersByPlacementCompatibility(t *testing.T) {
 
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -738,7 +738,7 @@ func TestQueueFiltersByPlacementCompatibility(t *testing.T) {
 
 	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -768,7 +768,7 @@ func TestQueueNamespacesByScopeAndQueue(t *testing.T) {
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-2",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -786,7 +786,7 @@ func TestQueueNamespacesByScopeAndQueue(t *testing.T) {
 	}
 	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-2",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -804,7 +804,7 @@ func TestQueueNamespacesByScopeAndQueue(t *testing.T) {
 	}
 	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-2",
 		QueueClass:       "default",
@@ -822,7 +822,7 @@ func TestQueueNamespacesByScopeAndQueue(t *testing.T) {
 	}
 	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -951,7 +951,7 @@ func TestQueueReenqueueFencesOldLeaseAcrossQueues(t *testing.T) {
 	now = now.Add(2 * time.Second)
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -969,7 +969,7 @@ func TestQueueReenqueueFencesOldLeaseAcrossQueues(t *testing.T) {
 	}
 	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",
@@ -1066,17 +1066,16 @@ func testMessage(runID string, priority int32, resources compute.ResourceVector)
 		resources.DiskMiB = 1024
 	}
 	return dispatch.Message{
-		RunID:           runID,
-		OrgID:           "org-1",
-		CellID:          "cell-1",
-		RouteGeneration: 1,
-		ProjectID:       "project-1",
-		EnvironmentID:   "env-1",
-		QueueClass:      "default",
-		QueueName:       "queue-a",
-		Requirements:    dispatchRequirements(resources),
-		Priority:        priority,
-		EnqueuedAt:      time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC),
+		RunID:         runID,
+		OrgID:         "org-1",
+		WorkerGroupID: "worker-group-1",
+		ProjectID:     "project-1",
+		EnvironmentID: "env-1",
+		QueueClass:    "default",
+		QueueName:     "queue-a",
+		Requirements:  dispatchRequirements(resources),
+		Priority:      priority,
+		EnqueuedAt:    time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC),
 	}
 }
 
@@ -1108,7 +1107,7 @@ func mustDequeueOne(t *testing.T, ctx context.Context, queue *Queue, workerInsta
 	t.Helper()
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
-		CellID:           "cell-1",
+		WorkerGroupID:    "worker-group-1",
 		ProjectID:        "project-1",
 		EnvironmentID:    "env-1",
 		QueueClass:       "default",

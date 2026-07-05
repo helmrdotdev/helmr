@@ -21,13 +21,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	cellpkg "github.com/helmrdotdev/helmr/internal/cell"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	workergrouppkg "github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -50,7 +50,7 @@ type SecretManager interface {
 type Server struct {
 	log                   *slog.Logger
 	deploymentMode        string
-	cellID                string
+	workerGroupID         string
 	regionID              string
 	defaultRegionID       string
 	readinessComponent    string
@@ -124,7 +124,7 @@ type dbTXBeginner interface {
 type ServerConfig struct {
 	Log                *slog.Logger
 	DeploymentMode     string
-	CellID             string
+	WorkerGroupID      string
 	RegionID           string
 	DefaultRegionID    string
 	ReadinessComponent string
@@ -181,9 +181,9 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if deploymentMode == "" {
 		deploymentMode = deploymentModeSelfHosted
 	}
-	cellID := strings.TrimSpace(cfg.CellID)
-	if cellID == "" {
-		return nil, errors.New("control cell id is required")
+	workerGroupID := strings.TrimSpace(cfg.WorkerGroupID)
+	if workerGroupID == "" {
+		return nil, errors.New("control worker group id is required")
 	}
 	regionID := strings.TrimSpace(cfg.RegionID)
 	if regionID == "" {
@@ -195,18 +195,18 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	readinessComponent := strings.TrimSpace(cfg.ReadinessComponent)
 	if readinessComponent == "" {
-		readinessComponent = cellpkg.ComponentControl
+		readinessComponent = workergrouppkg.ComponentControl
 	}
 	telemetryReader := cfg.TelemetryReader
 	if telemetryReader == nil {
 		return nil, errors.New("control telemetry reader is required")
 	}
 	if cfg.EventStream != nil {
-		if cfg.EventStream.cellID == "" {
-			return nil, errors.New("event stream cell id is required")
+		if cfg.EventStream.workerGroupID == "" {
+			return nil, errors.New("event stream worker group id is required")
 		}
-		if cfg.EventStream.cellID != cellID {
-			return nil, errors.New("event stream cell id must match control cell id")
+		if cfg.EventStream.workerGroupID != workerGroupID {
+			return nil, errors.New("event stream worker group id must match control worker group id")
 		}
 		if cfg.EventStream.telemetryReader == nil {
 			return nil, errors.New("event stream telemetry reader is required")
@@ -227,7 +227,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	server := &Server{
 		log:                   log,
 		deploymentMode:        deploymentMode,
-		cellID:                cellID,
+		workerGroupID:         workerGroupID,
 		regionID:              regionID,
 		defaultRegionID:       defaultRegionID,
 		readinessComponent:    readinessComponent,
@@ -388,6 +388,7 @@ func (s *Server) mountAuthRoutes(r chi.Router) {
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireSession)
 		r.Get("/me", s.me)
+		r.Get("/regions", s.listRegions)
 		r.Post("/organizations", s.createOrganization)
 		r.Get("/auth/device/status", s.deviceStatus)
 		r.Post("/auth/device/approve", s.approveDeviceCode)
@@ -679,16 +680,13 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		s.writeReadinessUnavailable(w, fmt.Errorf("database schema version is %d, required %d", version, currentVersion))
 		return
 	}
-	readiness, err := db.New(s.readinessDB).GetCellComponentReadiness(ctx, db.GetCellComponentReadinessParams{
-		CellID:    s.cellID,
-		Component: s.readinessComponent,
-	})
+	readiness, err := db.New(s.readinessDB).GetControlWorkerGroupReadiness(ctx, s.workerGroupID)
 	if err != nil {
-		s.writeReadinessUnavailable(w, fmt.Errorf("control cell readiness is not available: %w", err))
+		s.writeReadinessUnavailable(w, fmt.Errorf("worker group readiness is not available: %w", err))
 		return
 	}
-	if !readiness.Ready {
-		s.writeReadinessUnavailable(w, errors.New("control component is not ready"))
+	if !readiness.Routable.Bool {
+		s.writeReadinessUnavailable(w, errors.New("worker group is not routable"))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})

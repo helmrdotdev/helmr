@@ -14,24 +14,33 @@ WITH source_mount AS MATERIALIZED (
        AND deployment_sandboxes.id = workspace_mounts.deployment_sandbox_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = workspace_mounts.org_id
-       AND image_artifact.cell_id = workspace_mounts.cell_id
+       AND image_artifact.worker_group_id = workspace_mounts.worker_group_id
        AND image_artifact.project_id = workspace_mounts.project_id
        AND image_artifact.environment_id = workspace_mounts.environment_id
        AND image_artifact.id = workspace_mounts.image_artifact_id
        AND image_artifact.kind = 'sandbox_image'
        AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
-      JOIN environment_cells
-        ON environment_cells.org_id = workspace_mounts.org_id
-       AND environment_cells.project_id = workspace_mounts.project_id
-       AND environment_cells.environment_id = workspace_mounts.environment_id
-       AND environment_cells.cell_id = workspace_mounts.cell_id
-       AND environment_cells.route_generation = workspace_mounts.route_generation
-       AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state = 'active'
+      JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement
+        ON project_worker_group_placement.org_id = workspace_mounts.org_id
+       AND project_worker_group_placement.project_id = workspace_mounts.project_id
+       AND project_worker_group_placement.environment_id = workspace_mounts.environment_id
+       AND project_worker_group_placement.worker_group_id = workspace_mounts.worker_group_id
+       AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
+      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+                AND worker_groups.state = 'active'
      WHERE workspace_mounts.id = sqlc.arg(workspace_mount_id)
        AND workspace_mounts.state IN ('mounting', 'mounted')
        AND workspace_mounts.runtime_instance_id IS NULL
@@ -76,7 +85,7 @@ active_runtime_instance_usage AS MATERIALIZED (
 candidate AS MATERIALIZED (
     SELECT source_mount.*
       FROM source_mount, worker_scope, active_run_usage, active_runtime_instance_usage
-     WHERE source_mount.cell_id = worker_scope.cell_id
+     WHERE source_mount.worker_group_id = worker_scope.worker_group_id
        AND source_mount.sandbox_floor_cpu_millis <= GREATEST(worker_scope.available_milli_cpu - active_run_usage.used_milli_cpu - active_runtime_instance_usage.used_milli_cpu, 0)
        AND source_mount.sandbox_floor_memory_mib <= GREATEST(worker_scope.available_memory_mib - active_run_usage.used_memory_mib - active_runtime_instance_usage.used_memory_mib, 0)
        AND source_mount.sandbox_floor_disk_mib <= GREATEST(worker_scope.available_disk_mib - active_run_usage.used_disk_mib - active_runtime_instance_usage.used_disk_mib, 0)
@@ -85,8 +94,7 @@ candidate AS MATERIALIZED (
 INSERT INTO runtime_instances (
     id,
     org_id,
-    cell_id,
-    route_generation,
+    worker_group_id,
     project_id,
     environment_id,
     worker_instance_id,
@@ -116,8 +124,7 @@ INSERT INTO runtime_instances (
 )
 SELECT sqlc.arg(id),
        candidate.org_id,
-       candidate.cell_id,
-       candidate.route_generation,
+       candidate.worker_group_id,
        candidate.project_id,
        candidate.environment_id,
        sqlc.arg(worker_instance_id),
@@ -161,8 +168,7 @@ WITH worker_scope AS MATERIALIZED (
 source_sandbox AS MATERIALIZED (
     SELECT deployment_sandboxes.*,
            deployments.worker_group_id,
-           environment_cells.cell_id,
-           environment_cells.route_generation,
+           project_worker_group_placement.worker_group_id,
            image_artifact.digest AS image_artifact_digest,
            image_artifact.media_type AS image_artifact_media_type,
            image_artifact.size_bytes AS image_artifact_size_bytes,
@@ -183,7 +189,7 @@ source_sandbox AS MATERIALIZED (
        AND environments.current_deployment_id = deployment_sandboxes.deployment_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
-       AND image_artifact.cell_id = deployments.build_cell_id
+       AND image_artifact.worker_group_id = deployments.build_worker_group_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -192,22 +198,30 @@ source_sandbox AS MATERIALIZED (
        AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
       JOIN worker_scope
         ON worker_scope.worker_group_id = deployments.worker_group_id
-       AND worker_scope.cell_id = deployments.build_cell_id
-      JOIN environment_cells
-        ON environment_cells.org_id = deployment_sandboxes.org_id
-       AND environment_cells.project_id = deployment_sandboxes.project_id
-       AND environment_cells.environment_id = deployment_sandboxes.environment_id
-       AND environment_cells.cell_id = deployments.build_cell_id
-       AND environment_cells.route_generation = deployments.build_route_generation
-       AND environment_cells.route_state = 'active'
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state = 'active'
-      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                      AND cell_health.state IN ('healthy', 'degraded')
-                      AND cell_health.routing_fresh_until > now()
+       AND worker_scope.worker_group_id = deployments.build_worker_group_id
+      JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement
+        ON project_worker_group_placement.org_id = deployment_sandboxes.org_id
+       AND project_worker_group_placement.project_id = deployment_sandboxes.project_id
+       AND project_worker_group_placement.environment_id = deployment_sandboxes.environment_id
+       AND project_worker_group_placement.worker_group_id = deployments.build_worker_group_id
+       AND project_worker_group_placement.worker_group_state = 'active'
+      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+                AND worker_groups.state = 'active'
+                AND worker_groups.health_state IN ('healthy', 'degraded')
+                AND worker_groups.routing_fresh_until > now()
      WHERE deployment_sandboxes.id = sqlc.arg(deployment_sandbox_id)
        AND deployment_sandboxes.rootfs_digest = sqlc.arg(rootfs_digest)
        AND deployment_sandboxes.runtime_abi = sqlc.arg(runtime_abi)
@@ -252,8 +266,7 @@ inserted AS (
     INSERT INTO runtime_instances (
         id,
         org_id,
-        cell_id,
-        route_generation,
+        worker_group_id,
         project_id,
         environment_id,
         worker_instance_id,
@@ -283,8 +296,7 @@ inserted AS (
     )
     SELECT sqlc.arg(id),
            candidate.org_id,
-           candidate.cell_id,
-           candidate.route_generation,
+           candidate.worker_group_id,
            candidate.project_id,
            candidate.environment_id,
            sqlc.arg(worker_instance_id),
@@ -320,7 +332,7 @@ SELECT inserted.*,
   FROM inserted
   JOIN artifacts
     ON artifacts.org_id = inserted.org_id
-   AND artifacts.cell_id = inserted.cell_id
+   AND artifacts.worker_group_id = inserted.worker_group_id
    AND artifacts.project_id = inserted.project_id
    AND artifacts.environment_id = inserted.environment_id
    AND artifacts.id = inserted.sandbox_image_artifact_id
@@ -332,22 +344,31 @@ UPDATE runtime_instances
        expires_at = sqlc.arg(expires_at),
        updated_at = now()
   FROM worker_instances
-  JOIN environment_cells ON true
-  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                AND org_cells.cell_id = environment_cells.cell_id
-                AND org_cells.state = 'active'
-  JOIN cells ON cells.id = environment_cells.cell_id
-            AND cells.state = 'active'
+  JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement ON true
+  JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+            AND worker_groups.state = 'active'
  WHERE runtime_instances.id = sqlc.arg(id)
    AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_instances.id = runtime_instances.worker_instance_id
-   AND worker_instances.cell_id = runtime_instances.cell_id
-   AND environment_cells.org_id = runtime_instances.org_id
-   AND environment_cells.project_id = runtime_instances.project_id
-   AND environment_cells.environment_id = runtime_instances.environment_id
-   AND environment_cells.cell_id = runtime_instances.cell_id
-   AND environment_cells.route_generation = runtime_instances.route_generation
-   AND environment_cells.route_state IN ('active', 'draining')
+   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+   AND project_worker_group_placement.org_id = runtime_instances.org_id
+   AND project_worker_group_placement.project_id = runtime_instances.project_id
+   AND project_worker_group_placement.environment_id = runtime_instances.environment_id
+   AND project_worker_group_placement.worker_group_id = runtime_instances.worker_group_id
+   AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
    AND runtime_instances.instance_token = sqlc.arg(instance_token)
    AND runtime_instances.state IN ('preparing', 'ready')
    AND (
@@ -361,7 +382,7 @@ UPDATE runtime_instances
              FROM runtime_substrate_artifacts
              JOIN artifacts
                ON artifacts.org_id = runtime_substrate_artifacts.org_id
-              AND artifacts.cell_id = runtime_substrate_artifacts.cell_id
+              AND artifacts.worker_group_id = runtime_substrate_artifacts.worker_group_id
               AND artifacts.project_id = runtime_substrate_artifacts.project_id
               AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
               AND artifacts.id = runtime_substrate_artifacts.artifact_id
@@ -371,7 +392,7 @@ UPDATE runtime_instances
               AND deployment_sandboxes.environment_id = runtime_substrate_artifacts.environment_id
               AND deployment_sandboxes.id = runtime_substrate_artifacts.deployment_sandbox_id
             WHERE runtime_substrate_artifacts.org_id = runtime_instances.org_id
-              AND runtime_substrate_artifacts.cell_id = runtime_instances.cell_id
+              AND runtime_substrate_artifacts.worker_group_id = runtime_instances.worker_group_id
               AND runtime_substrate_artifacts.project_id = runtime_instances.project_id
               AND runtime_substrate_artifacts.environment_id = runtime_instances.environment_id
               AND runtime_substrate_artifacts.deployment_sandbox_id = runtime_instances.deployment_sandbox_id
@@ -389,22 +410,31 @@ UPDATE runtime_instances
        expires_at = sqlc.arg(expires_at),
        updated_at = now()
   FROM worker_instances
-  JOIN environment_cells ON true
-  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                AND org_cells.cell_id = environment_cells.cell_id
-                AND org_cells.state = 'active'
-  JOIN cells ON cells.id = environment_cells.cell_id
-            AND cells.state = 'active'
+  JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement ON true
+  JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+            AND worker_groups.state = 'active'
  WHERE runtime_instances.id = sqlc.arg(id)
    AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_instances.id = runtime_instances.worker_instance_id
-   AND worker_instances.cell_id = runtime_instances.cell_id
-   AND environment_cells.org_id = runtime_instances.org_id
-   AND environment_cells.project_id = runtime_instances.project_id
-   AND environment_cells.environment_id = runtime_instances.environment_id
-   AND environment_cells.cell_id = runtime_instances.cell_id
-   AND environment_cells.route_generation = runtime_instances.route_generation
-   AND environment_cells.route_state IN ('active', 'draining')
+   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+   AND project_worker_group_placement.org_id = runtime_instances.org_id
+   AND project_worker_group_placement.project_id = runtime_instances.project_id
+   AND project_worker_group_placement.environment_id = runtime_instances.environment_id
+   AND project_worker_group_placement.worker_group_id = runtime_instances.worker_group_id
+   AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
    AND runtime_instances.instance_token = sqlc.arg(instance_token)
    AND runtime_instances.state = 'preparing'
    AND (
@@ -418,7 +448,7 @@ UPDATE runtime_instances
              FROM runtime_substrate_artifacts
              JOIN artifacts
                ON artifacts.org_id = runtime_substrate_artifacts.org_id
-              AND artifacts.cell_id = runtime_substrate_artifacts.cell_id
+              AND artifacts.worker_group_id = runtime_substrate_artifacts.worker_group_id
               AND artifacts.project_id = runtime_substrate_artifacts.project_id
               AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
               AND artifacts.id = runtime_substrate_artifacts.artifact_id
@@ -428,7 +458,7 @@ UPDATE runtime_instances
               AND deployment_sandboxes.environment_id = runtime_substrate_artifacts.environment_id
               AND deployment_sandboxes.id = runtime_substrate_artifacts.deployment_sandbox_id
             WHERE runtime_substrate_artifacts.org_id = runtime_instances.org_id
-              AND runtime_substrate_artifacts.cell_id = runtime_instances.cell_id
+              AND runtime_substrate_artifacts.worker_group_id = runtime_instances.worker_group_id
               AND runtime_substrate_artifacts.project_id = runtime_instances.project_id
               AND runtime_substrate_artifacts.environment_id = runtime_instances.environment_id
               AND runtime_substrate_artifacts.deployment_sandbox_id = runtime_instances.deployment_sandbox_id
@@ -442,18 +472,27 @@ WITH target AS MATERIALIZED (
     SELECT runtime_instances.*
       FROM runtime_instances
       JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
-                           AND worker_instances.cell_id = runtime_instances.cell_id
-      JOIN environment_cells ON environment_cells.org_id = runtime_instances.org_id
-                            AND environment_cells.project_id = runtime_instances.project_id
-                            AND environment_cells.environment_id = runtime_instances.environment_id
-                            AND environment_cells.cell_id = runtime_instances.cell_id
-                            AND environment_cells.route_generation = runtime_instances.route_generation
-                            AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state = 'active'
+                           AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+      JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement ON project_worker_group_placement.org_id = runtime_instances.org_id
+                            AND project_worker_group_placement.project_id = runtime_instances.project_id
+                            AND project_worker_group_placement.environment_id = runtime_instances.environment_id
+                            AND project_worker_group_placement.worker_group_id = runtime_instances.worker_group_id
+                            AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
+      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+                AND worker_groups.state = 'active'
      WHERE runtime_instances.id = sqlc.arg(id)
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND runtime_instances.instance_token = sqlc.arg(instance_token)
@@ -485,18 +524,27 @@ WITH target AS MATERIALIZED (
     SELECT runtime_instances.*
       FROM runtime_instances
       JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
-                           AND worker_instances.cell_id = runtime_instances.cell_id
-      JOIN environment_cells ON environment_cells.org_id = runtime_instances.org_id
-                            AND environment_cells.project_id = runtime_instances.project_id
-                            AND environment_cells.environment_id = runtime_instances.environment_id
-                            AND environment_cells.cell_id = runtime_instances.cell_id
-                            AND environment_cells.route_generation = runtime_instances.route_generation
-                            AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state = 'active'
+                           AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+      JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement ON project_worker_group_placement.org_id = runtime_instances.org_id
+                            AND project_worker_group_placement.project_id = runtime_instances.project_id
+                            AND project_worker_group_placement.environment_id = runtime_instances.environment_id
+                            AND project_worker_group_placement.worker_group_id = runtime_instances.worker_group_id
+                            AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
+      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+                AND worker_groups.state = 'active'
      WHERE runtime_instances.id = sqlc.arg(id)
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND runtime_instances.instance_token = sqlc.arg(instance_token)
@@ -530,7 +578,7 @@ WITH target AS MATERIALIZED (
     SELECT runtime_instances.*
       FROM runtime_instances
 	     WHERE runtime_instances.state IN ('preparing', 'ready')
-	       AND runtime_instances.cell_id = sqlc.arg(cell_id)
+	       AND runtime_instances.worker_group_id = sqlc.arg(worker_group_id)
 	       AND runtime_instances.expires_at IS NOT NULL
        AND runtime_instances.expires_at <= sqlc.arg(expired_before)
        AND runtime_instances.workspace_mount_id IS NULL
@@ -559,8 +607,7 @@ stopping_runtime_instances AS (
 )
 INSERT INTO worker_commands (
     org_id,
-    cell_id,
-    route_generation,
+    worker_group_id,
     project_id,
     environment_id,
     worker_instance_id,
@@ -570,8 +617,7 @@ INSERT INTO worker_commands (
     payload
 )
 SELECT stopping_runtime_instances.org_id,
-       stopping_runtime_instances.cell_id,
-       stopping_runtime_instances.route_generation,
+       stopping_runtime_instances.worker_group_id,
        stopping_runtime_instances.project_id,
        stopping_runtime_instances.environment_id,
        stopping_runtime_instances.worker_instance_id,
@@ -587,7 +633,7 @@ WITH target AS MATERIALIZED (
     SELECT runtime_instances.*
       FROM runtime_instances
 	     WHERE runtime_instances.expires_at IS NOT NULL
-	       AND runtime_instances.cell_id = sqlc.arg(cell_id)
+	       AND runtime_instances.worker_group_id = sqlc.arg(worker_group_id)
 	       AND runtime_instances.expires_at <= sqlc.arg(expired_before)
        AND (
            runtime_instances.state = 'stopping'
@@ -659,8 +705,7 @@ stopping_runtime_instances AS (
 )
 INSERT INTO worker_commands (
     org_id,
-    cell_id,
-    route_generation,
+    worker_group_id,
     project_id,
     environment_id,
     worker_instance_id,
@@ -670,8 +715,7 @@ INSERT INTO worker_commands (
     payload
 )
 SELECT stopping_runtime_instances.org_id,
-       stopping_runtime_instances.cell_id,
-       stopping_runtime_instances.route_generation,
+       stopping_runtime_instances.worker_group_id,
        stopping_runtime_instances.project_id,
        stopping_runtime_instances.environment_id,
        stopping_runtime_instances.worker_instance_id,
@@ -686,8 +730,7 @@ RETURNING *;
 WITH current_sandboxes AS MATERIALIZED (
     SELECT deployment_sandboxes.*,
            deployments.worker_group_id,
-           environment_cells.cell_id,
-           environment_cells.route_generation,
+           project_worker_group_placement.worker_group_id,
            image_artifact.digest AS image_artifact_digest,
            image_artifact.media_type AS image_artifact_media_type,
            image_artifact.size_bytes AS image_artifact_size_bytes,
@@ -708,28 +751,36 @@ WITH current_sandboxes AS MATERIALIZED (
        AND environments.current_deployment_id = deployment_sandboxes.deployment_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
-       AND image_artifact.cell_id = deployments.build_cell_id
+       AND image_artifact.worker_group_id = deployments.build_worker_group_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
        AND image_artifact.digest = deployment_sandboxes.image_digest
        AND image_artifact.kind = 'sandbox_image'
        AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
-      JOIN environment_cells
-        ON environment_cells.org_id = deployment_sandboxes.org_id
-       AND environment_cells.project_id = deployment_sandboxes.project_id
-       AND environment_cells.environment_id = deployment_sandboxes.environment_id
-       AND environment_cells.cell_id = deployments.build_cell_id
-       AND environment_cells.route_generation = deployments.build_route_generation
-       AND environment_cells.route_state = 'active'
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state = 'active'
-      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                      AND cell_health.state IN ('healthy', 'degraded')
-                      AND cell_health.routing_fresh_until > now()
+      JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement
+        ON project_worker_group_placement.org_id = deployment_sandboxes.org_id
+       AND project_worker_group_placement.project_id = deployment_sandboxes.project_id
+       AND project_worker_group_placement.environment_id = deployment_sandboxes.environment_id
+       AND project_worker_group_placement.worker_group_id = deployments.build_worker_group_id
+       AND project_worker_group_placement.worker_group_state = 'active'
+      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+                AND worker_groups.state = 'active'
+                AND worker_groups.health_state IN ('healthy', 'degraded')
+                AND worker_groups.routing_fresh_until > now()
      WHERE (
            sqlc.narg(deployment_sandbox_id)::uuid IS NULL
            OR deployment_sandboxes.id = sqlc.narg(deployment_sandbox_id)::uuid
@@ -747,8 +798,6 @@ worker_sandbox_scope AS MATERIALIZED (
            worker_instances.runtime_abi,
            current_sandboxes.id AS deployment_sandbox_id,
            current_sandboxes.org_id,
-           current_sandboxes.cell_id,
-           current_sandboxes.route_generation,
            current_sandboxes.project_id,
            current_sandboxes.environment_id,
            current_sandboxes.requested_cpu_millis,
@@ -901,8 +950,7 @@ sandbox_demand AS MATERIALIZED (
 ),
 eligible_warm_targets AS MATERIALIZED (
     SELECT worker_sandbox_scope.org_id,
-           worker_sandbox_scope.cell_id,
-           worker_sandbox_scope.route_generation,
+           worker_sandbox_scope.worker_group_id,
            worker_sandbox_scope.project_id,
            worker_sandbox_scope.environment_id,
            worker_sandbox_scope.worker_instance_id,
@@ -959,8 +1007,7 @@ eligible_warm_targets AS MATERIALIZED (
        AND worker_sandbox_scope.requested_execution_slots <= GREATEST(worker_sandbox_scope.available_execution_slots - active_run_usage.used_slots - active_runtime_instance_usage.used_slots - 1, 0)
 )
 SELECT org_id,
-       cell_id,
-       route_generation,
+       worker_group_id,
        project_id,
        environment_id,
        worker_instance_id,
@@ -996,8 +1043,7 @@ SELECT org_id,
 WITH current_sandboxes AS MATERIALIZED (
     SELECT deployment_sandboxes.*,
            deployments.worker_group_id,
-           environment_cells.cell_id,
-           environment_cells.route_generation,
+           project_worker_group_placement.worker_group_id,
            image_artifact.digest AS image_artifact_digest,
            image_artifact.media_type AS image_artifact_media_type,
            image_artifact.size_bytes AS image_artifact_size_bytes
@@ -1014,38 +1060,45 @@ WITH current_sandboxes AS MATERIALIZED (
        AND environments.current_deployment_id = deployment_sandboxes.deployment_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
-       AND image_artifact.cell_id = deployments.build_cell_id
+       AND image_artifact.worker_group_id = deployments.build_worker_group_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
        AND image_artifact.digest = deployment_sandboxes.image_digest
        AND image_artifact.kind = 'sandbox_image'
        AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
-      JOIN environment_cells
-        ON environment_cells.org_id = deployment_sandboxes.org_id
-       AND environment_cells.project_id = deployment_sandboxes.project_id
-       AND environment_cells.environment_id = deployment_sandboxes.environment_id
-       AND environment_cells.cell_id = deployments.build_cell_id
-       AND environment_cells.route_generation = deployments.build_route_generation
-       AND environment_cells.route_state = 'active'
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state = 'active'
-      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                      AND cell_health.state IN ('healthy', 'degraded')
-                      AND cell_health.routing_fresh_until > now()
+      JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement
+        ON project_worker_group_placement.org_id = deployment_sandboxes.org_id
+       AND project_worker_group_placement.project_id = deployment_sandboxes.project_id
+       AND project_worker_group_placement.environment_id = deployment_sandboxes.environment_id
+       AND project_worker_group_placement.worker_group_id = deployments.build_worker_group_id
+       AND project_worker_group_placement.worker_group_state = 'active'
+      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+                AND worker_groups.state = 'active'
+                AND worker_groups.health_state IN ('healthy', 'degraded')
+                AND worker_groups.routing_fresh_until > now()
 ),
 worker_sandbox_scope AS MATERIALIZED (
     SELECT worker_instances.id AS worker_instance_id,
+           worker_instances.worker_group_id,
            worker_instances.runtime_id AS runtime_release_id,
            worker_instances.rootfs_digest,
            worker_instances.runtime_abi,
            current_sandboxes.id AS deployment_sandbox_id,
            current_sandboxes.org_id,
-           current_sandboxes.cell_id,
-           current_sandboxes.route_generation,
            current_sandboxes.project_id,
            current_sandboxes.environment_id,
            current_sandboxes.image_artifact_format,
@@ -1078,8 +1131,7 @@ sandbox_demand AS MATERIALIZED (
      GROUP BY worker_sandbox_scope.worker_instance_id, worker_sandbox_scope.deployment_sandbox_id
 )
 SELECT worker_sandbox_scope.org_id,
-       worker_sandbox_scope.cell_id,
-       worker_sandbox_scope.route_generation,
+       worker_sandbox_scope.worker_group_id,
        worker_sandbox_scope.project_id,
        worker_sandbox_scope.environment_id,
        worker_sandbox_scope.worker_instance_id,

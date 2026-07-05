@@ -2,7 +2,7 @@
 INSERT INTO timer_waits (
     id,
     org_id,
-    cell_id,
+    worker_group_id,
     project_id,
     environment_id,
     run_wait_id,
@@ -10,7 +10,7 @@ INSERT INTO timer_waits (
 )
 SELECT sqlc.arg(id),
        run_waits.org_id,
-       run_waits.cell_id,
+       run_waits.worker_group_id,
        run_waits.project_id,
        run_waits.environment_id,
        run_waits.id,
@@ -32,7 +32,7 @@ WITH due_waits AS (
       JOIN run_waits ON run_waits.org_id = timer_waits.org_id
                     AND run_waits.id = timer_waits.run_wait_id
      WHERE timer_waits.org_id = sqlc.arg(org_id)
-       AND timer_waits.cell_id = sqlc.arg(cell_id)
+       AND timer_waits.worker_group_id = sqlc.arg(worker_group_id)
        AND timer_waits.fire_at <= now()
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
      ORDER BY timer_waits.fire_at ASC, timer_waits.id ASC

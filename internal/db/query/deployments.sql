@@ -3,8 +3,7 @@ INSERT INTO deployments (
     id,
     public_id,
     org_id,
-    build_cell_id,
-    build_route_generation,
+    build_worker_group_id,
     project_id,
     environment_id,
     version,
@@ -21,8 +20,7 @@ INSERT INTO deployments (
 SELECT sqlc.arg(id),
        sqlc.arg(public_id),
        sqlc.arg(org_id),
-       sqlc.arg(build_cell_id),
-       sqlc.arg(build_route_generation),
+       sqlc.arg(build_worker_group_id),
        sqlc.arg(project_id),
        sqlc.arg(environment_id),
        sqlc.arg(version),
@@ -37,23 +35,21 @@ SELECT sqlc.arg(id),
        sqlc.arg(status)::deployment_status
  WHERE EXISTS (
        SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state = 'active'
-         JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                         AND cell_health.state IN ('healthy', 'degraded')
-                         AND cell_health.routing_fresh_until > now()
-        WHERE environment_cells.org_id = sqlc.arg(org_id)
-          AND environment_cells.project_id = sqlc.arg(project_id)
-          AND environment_cells.environment_id = sqlc.arg(environment_id)
-          AND environment_cells.cell_id = sqlc.arg(build_cell_id)
-          AND environment_cells.route_generation = sqlc.arg(build_route_generation)
-          AND environment_cells.route_state = 'active'
- )
+         FROM projects
+         JOIN environments
+           ON environments.org_id = projects.org_id
+          AND environments.project_id = projects.id
+         JOIN worker_groups
+           ON worker_groups.id = sqlc.arg(build_worker_group_id)
+          AND worker_groups.region_id = projects.default_region_id
+          AND worker_groups.state = 'active'
+          AND worker_groups.health_state IN ('healthy', 'degraded')
+          AND worker_groups.routing_fresh_until > now()
+        WHERE projects.org_id = sqlc.arg(org_id)
+          AND projects.id = sqlc.arg(project_id)
+          AND environments.id = sqlc.arg(environment_id)
+          AND sqlc.arg(worker_group_id) = sqlc.arg(build_worker_group_id)
+	 )
 RETURNING *;
 
 -- name: LockDeploymentReusableBuildKey :exec
@@ -62,11 +58,10 @@ SELECT pg_advisory_xact_lock(
         concat_ws(
             ':',
             sqlc.arg(org_id)::uuid::text,
-            sqlc.arg(build_cell_id)::text,
-            sqlc.arg(build_route_generation)::bigint::text,
+            sqlc.arg(build_worker_group_id)::text,
             sqlc.arg(project_id)::uuid::text,
             sqlc.arg(environment_id)::uuid::text,
-            sqlc.arg(worker_group_id)::uuid::text,
+            sqlc.arg(worker_group_id)::text,
             sqlc.arg(content_hash)::text
         ),
         0
@@ -77,8 +72,7 @@ SELECT pg_advisory_xact_lock(
 SELECT *
   FROM deployments
  WHERE org_id = sqlc.arg(org_id)
-   AND build_cell_id = sqlc.arg(build_cell_id)
-   AND build_route_generation = sqlc.arg(build_route_generation)
+   AND build_worker_group_id = sqlc.arg(build_worker_group_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND content_hash = sqlc.arg(content_hash)
@@ -125,21 +119,11 @@ RETURNING *;
 WITH candidate AS (
     SELECT deployments.id
       FROM deployments
-      JOIN environment_cells
-        ON environment_cells.org_id = deployments.org_id
-       AND environment_cells.project_id = deployments.project_id
-       AND environment_cells.environment_id = deployments.environment_id
-       AND environment_cells.cell_id = deployments.build_cell_id
-       AND environment_cells.route_generation = deployments.build_route_generation
-       AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state IN ('active', 'draining')
-      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                      AND cell_health.state IN ('healthy', 'degraded')
-                      AND cell_health.routing_fresh_until > now()
+      JOIN worker_groups
+        ON worker_groups.id = deployments.build_worker_group_id
+       AND worker_groups.state IN ('active', 'draining')
+       AND worker_groups.health_state IN ('healthy', 'degraded')
+       AND worker_groups.routing_fresh_until > now()
      WHERE (
             deployments.status = 'queued'
             OR (
@@ -147,7 +131,7 @@ WITH candidate AS (
                 AND deployments.build_lease_expires_at < now()
             )
      )
-       AND deployments.build_cell_id = sqlc.arg(cell_id)
+       AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
        AND deployments.worker_group_id = sqlc.arg(worker_group_id)
      ORDER BY deployments.created_at ASC
      LIMIT 1
@@ -167,7 +151,7 @@ updated AS (
 )
 SELECT updated.id,
        updated.org_id,
-       updated.build_cell_id,
+       updated.build_worker_group_id,
        updated.project_id,
        updated.environment_id,
        updated.version,
@@ -196,19 +180,19 @@ SELECT updated.id,
   FROM updated
   JOIN artifacts AS source_artifacts
     ON source_artifacts.org_id = updated.org_id
-   AND source_artifacts.cell_id = updated.build_cell_id
+   AND source_artifacts.worker_group_id = updated.build_worker_group_id
    AND source_artifacts.project_id = updated.project_id
    AND source_artifacts.environment_id = updated.environment_id
    AND source_artifacts.id = updated.deployment_source_artifact_id
   LEFT JOIN artifacts AS build_manifest_artifacts
     ON build_manifest_artifacts.org_id = updated.org_id
-   AND build_manifest_artifacts.cell_id = updated.build_cell_id
+   AND build_manifest_artifacts.worker_group_id = updated.build_worker_group_id
    AND build_manifest_artifacts.project_id = updated.project_id
    AND build_manifest_artifacts.environment_id = updated.environment_id
    AND build_manifest_artifacts.id = updated.build_manifest_artifact_id
   LEFT JOIN artifacts AS deployment_manifest_artifacts
     ON deployment_manifest_artifacts.org_id = updated.org_id
-   AND deployment_manifest_artifacts.cell_id = updated.build_cell_id
+   AND deployment_manifest_artifacts.worker_group_id = updated.build_worker_group_id
    AND deployment_manifest_artifacts.project_id = updated.project_id
    AND deployment_manifest_artifacts.environment_id = updated.environment_id
    AND deployment_manifest_artifacts.id = updated.deployment_manifest_artifact_id;
@@ -224,7 +208,7 @@ UPDATE deployments
        built_at = COALESCE(built_at, now()),
        deployed_at = now()
 WHERE deployments.org_id = sqlc.arg(org_id)
-   AND deployments.build_cell_id = sqlc.arg(cell_id)
+   AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
    AND deployments.project_id = sqlc.arg(project_id)
    AND deployments.environment_id = sqlc.arg(environment_id)
    AND deployments.id = sqlc.arg(id)
@@ -233,27 +217,18 @@ WHERE deployments.org_id = sqlc.arg(org_id)
    AND deployments.build_worker_instance_id = sqlc.arg(build_worker_instance_id)
    AND deployments.build_lease_expires_at > now()
    AND EXISTS (
-	       SELECT 1
-	         FROM environment_cells
-		         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-		                       AND org_cells.cell_id = environment_cells.cell_id
-		                       AND org_cells.state = 'active'
-		         JOIN cells ON cells.id = environment_cells.cell_id
-		                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = deployments.org_id
-          AND environment_cells.project_id = deployments.project_id
-          AND environment_cells.environment_id = deployments.environment_id
-          AND environment_cells.cell_id = deployments.build_cell_id
-          AND environment_cells.route_generation = deployments.build_route_generation
-          AND environment_cells.route_state IN ('active', 'draining')
-   )
+       SELECT 1
+         FROM worker_groups
+        WHERE worker_groups.id = deployments.build_worker_group_id
+          AND worker_groups.state IN ('active', 'draining')
+	   )
 RETURNING *;
 
 -- name: GetDeploymentBuildLease :one
 SELECT *
  FROM deployments
  WHERE deployments.org_id = sqlc.arg(org_id)
-   AND deployments.build_cell_id = sqlc.arg(cell_id)
+   AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
    AND deployments.project_id = sqlc.arg(project_id)
    AND deployments.environment_id = sqlc.arg(environment_id)
    AND deployments.id = sqlc.arg(id)
@@ -262,20 +237,11 @@ SELECT *
    AND deployments.build_worker_instance_id = sqlc.arg(build_worker_instance_id)
    AND deployments.build_lease_expires_at > now()
    AND EXISTS (
-	       SELECT 1
-	         FROM environment_cells
-		         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-		                       AND org_cells.cell_id = environment_cells.cell_id
-		                       AND org_cells.state = 'active'
-		         JOIN cells ON cells.id = environment_cells.cell_id
-		                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = deployments.org_id
-          AND environment_cells.project_id = deployments.project_id
-          AND environment_cells.environment_id = deployments.environment_id
-          AND environment_cells.cell_id = deployments.build_cell_id
-          AND environment_cells.route_generation = deployments.build_route_generation
-          AND environment_cells.route_state IN ('active', 'draining')
-   )
+       SELECT 1
+         FROM worker_groups
+        WHERE worker_groups.id = deployments.build_worker_group_id
+          AND worker_groups.state IN ('active', 'draining')
+	   )
  FOR UPDATE;
 
 -- name: FailDeploymentBuild :one
@@ -287,7 +253,7 @@ UPDATE deployments
        build_lease_expires_at = NULL,
        failed_at = now()
  WHERE deployments.org_id = sqlc.arg(org_id)
-   AND deployments.build_cell_id = sqlc.arg(cell_id)
+   AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
    AND deployments.project_id = sqlc.arg(project_id)
    AND deployments.environment_id = sqlc.arg(environment_id)
    AND deployments.id = sqlc.arg(id)
@@ -296,53 +262,31 @@ UPDATE deployments
    AND deployments.build_worker_instance_id = sqlc.arg(build_worker_instance_id)
    AND deployments.build_lease_expires_at > now()
    AND EXISTS (
-	       SELECT 1
-	         FROM environment_cells
-		         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-		                       AND org_cells.cell_id = environment_cells.cell_id
-		                       AND org_cells.state = 'active'
-		         JOIN cells ON cells.id = environment_cells.cell_id
-		                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = deployments.org_id
-          AND environment_cells.project_id = deployments.project_id
-          AND environment_cells.environment_id = deployments.environment_id
-          AND environment_cells.cell_id = deployments.build_cell_id
-          AND environment_cells.route_generation = deployments.build_route_generation
-          AND environment_cells.route_state IN ('active', 'draining')
-   )
+       SELECT 1
+         FROM worker_groups
+        WHERE worker_groups.id = deployments.build_worker_group_id
+          AND worker_groups.state IN ('active', 'draining')
+	   )
 RETURNING *;
 
 -- name: PromoteDeployment :one
 WITH target AS (
     SELECT deployments.id,
            deployments.org_id,
-           deployments.build_cell_id,
-           deployments.build_route_generation,
+           deployments.build_worker_group_id,
            deployments.project_id,
            deployments.environment_id
       FROM deployments
-      JOIN environment_cells
-        ON environment_cells.org_id = deployments.org_id
-       AND environment_cells.project_id = deployments.project_id
-       AND environment_cells.environment_id = deployments.environment_id
-       AND environment_cells.cell_id = deployments.build_cell_id
-       AND environment_cells.route_generation = deployments.build_route_generation
-       AND environment_cells.route_state = 'active'
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.region_id = environment_cells.region_id
-                AND cells.state = 'active'
-      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                      AND cell_health.state IN ('healthy', 'degraded')
-                      AND cell_health.routing_fresh_until > now()
+      JOIN worker_groups
+        ON worker_groups.id = deployments.build_worker_group_id
+       AND worker_groups.state = 'active'
+       AND worker_groups.health_state IN ('healthy', 'degraded')
+       AND worker_groups.routing_fresh_until > now()
      WHERE deployments.org_id = sqlc.arg(org_id)
        AND deployments.project_id = sqlc.arg(project_id)
        AND deployments.environment_id = sqlc.arg(environment_id)
        AND deployments.id = sqlc.arg(deployment_id)
-       AND deployments.build_cell_id = sqlc.arg(cell_id)
-       AND deployments.build_route_generation = sqlc.arg(route_generation)
+       AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
        AND deployments.status = 'deployed'
 ),
 previous AS (
@@ -367,8 +311,7 @@ promotion AS (
     INSERT INTO deployment_promotions (
         id,
         org_id,
-        promotion_cell_id,
-        promotion_route_generation,
+        promotion_worker_group_id,
         project_id,
         environment_id,
         deployment_id,
@@ -378,8 +321,7 @@ promotion AS (
     )
     SELECT sqlc.arg(id),
            target.org_id,
-           target.build_cell_id,
-           target.build_route_generation,
+           target.build_worker_group_id,
            target.project_id,
            target.environment_id,
            target.id,
@@ -441,7 +383,7 @@ INSERT INTO deployment_sandboxes (
     deployment_id,
     sandbox_id,
     image_artifact_id,
-    image_artifact_cell_id,
+    image_artifact_worker_group_id,
     image_artifact_format,
     rootfs_digest,
     image_digest,
@@ -468,7 +410,7 @@ INSERT INTO deployment_sandboxes (
     sqlc.arg(deployment_id),
     sqlc.arg(sandbox_id),
     sqlc.arg(image_artifact_id),
-    sqlc.arg(image_artifact_cell_id),
+    sqlc.arg(image_artifact_worker_group_id),
     sqlc.arg(image_artifact_format),
     sqlc.arg(rootfs_digest),
     sqlc.arg(image_digest),
@@ -546,7 +488,7 @@ INSERT INTO deployment_tasks (
     export_name,
     handler_entrypoint,
     bundle_artifact_id,
-    bundle_artifact_cell_id,
+    bundle_artifact_worker_group_id,
     bundle_format_version,
     requested_milli_cpu,
     requested_memory_mib,
@@ -573,7 +515,7 @@ INSERT INTO deployment_tasks (
     sqlc.arg(export_name),
     sqlc.arg(handler_entrypoint),
     sqlc.arg(bundle_artifact_id),
-    sqlc.arg(bundle_artifact_cell_id),
+    sqlc.arg(bundle_artifact_worker_group_id),
     sqlc.arg(bundle_format_version),
     sqlc.arg(requested_milli_cpu),
     sqlc.arg(requested_memory_mib),
@@ -614,24 +556,14 @@ SELECT deployments.*
    AND deployments.project_id = sqlc.arg(project_id)
    AND deployments.environment_id = sqlc.arg(environment_id)
    AND deployments.status = 'deployed'
-   AND deployments.build_cell_id = sqlc.arg(cell_id)
-   AND deployments.build_route_generation = sqlc.arg(route_generation)
+   AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
    AND EXISTS (
        SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state = 'active'
-        WHERE environment_cells.org_id = deployments.org_id
-          AND environment_cells.project_id = deployments.project_id
-          AND environment_cells.environment_id = deployments.environment_id
-          AND environment_cells.cell_id = sqlc.arg(cell_id)
-          AND environment_cells.route_generation = sqlc.arg(route_generation)
-          AND environment_cells.route_state = 'active'
-   )
+         FROM worker_groups
+        WHERE worker_groups.id = deployments.build_worker_group_id
+          AND worker_groups.id = sqlc.arg(worker_group_id)
+          AND worker_groups.state = 'active'
+	   )
  LIMIT 1;
 
 -- name: ListDeploymentTasks :many
@@ -702,30 +634,18 @@ SELECT *
  LIMIT 1;
 
 -- name: GetDeploymentSandboxForWorkerGroup :one
-SELECT deployment_sandboxes.*,
-       deployments.build_route_generation
+SELECT deployment_sandboxes.*
   FROM deployment_sandboxes
-  JOIN worker_groups ON worker_groups.id = sqlc.arg(worker_group_id)
+  JOIN worker_groups
+    ON worker_groups.id = sqlc.arg(worker_group_id)
+   AND worker_groups.state IN ('active', 'draining')
   JOIN deployments
     ON deployments.org_id = deployment_sandboxes.org_id
    AND deployments.project_id = deployment_sandboxes.project_id
    AND deployments.environment_id = deployment_sandboxes.environment_id
    AND deployments.id = deployment_sandboxes.deployment_id
    AND deployments.worker_group_id = worker_groups.id
-   AND deployments.build_cell_id = worker_groups.cell_id
-  JOIN environment_cells
-    ON environment_cells.org_id = deployment_sandboxes.org_id
-   AND environment_cells.project_id = deployment_sandboxes.project_id
-   AND environment_cells.environment_id = deployment_sandboxes.environment_id
-   AND environment_cells.cell_id = worker_groups.cell_id
-   AND environment_cells.route_generation = deployments.build_route_generation
-   AND environment_cells.route_state IN ('active', 'draining')
-  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                AND org_cells.cell_id = environment_cells.cell_id
-                AND org_cells.state = 'active'
-  JOIN cells ON cells.id = environment_cells.cell_id
-            AND cells.region_id = environment_cells.region_id
-            AND cells.state IN ('active', 'draining')
+   AND deployments.build_worker_group_id = worker_groups.id
  WHERE deployment_sandboxes.id = sqlc.arg(id)
  LIMIT 1;
 
@@ -833,28 +753,16 @@ SELECT deployment_tasks.*,
    AND source_artifacts.project_id = deployments.project_id
    AND source_artifacts.environment_id = deployments.environment_id
    AND source_artifacts.id = deployments.deployment_source_artifact_id
-  JOIN environment_cells
-    ON environment_cells.org_id = deployment_tasks.org_id
-   AND environment_cells.project_id = deployment_tasks.project_id
-   AND environment_cells.environment_id = deployment_tasks.environment_id
-   AND environment_cells.cell_id = sqlc.arg(cell_id)
-   AND environment_cells.route_generation = sqlc.arg(route_generation)
-   AND environment_cells.route_state IN ('active', 'draining')
-  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                AND org_cells.cell_id = environment_cells.cell_id
-                AND org_cells.state = 'active'
-  JOIN cells ON cells.id = environment_cells.cell_id
-            AND cells.region_id = environment_cells.region_id
-            AND cells.state IN ('active', 'draining')
-  JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                  AND cell_health.state IN ('healthy', 'degraded')
-                  AND cell_health.routing_fresh_until > now()
+  JOIN worker_groups
+    ON worker_groups.id = sqlc.arg(worker_group_id)
+   AND worker_groups.state IN ('active', 'draining')
+   AND worker_groups.health_state IN ('healthy', 'degraded')
+   AND worker_groups.routing_fresh_until > now()
 WHERE deployment_tasks.org_id = sqlc.arg(org_id)
    AND deployment_tasks.project_id = sqlc.arg(project_id)
    AND deployment_tasks.environment_id = sqlc.arg(environment_id)
    AND deployment_tasks.deployment_id = sqlc.arg(deployment_id)
    AND deployment_tasks.task_id = sqlc.arg(task_id)
    AND deployments.status = 'deployed'
-   AND deployments.build_cell_id = sqlc.arg(cell_id)
-   AND deployments.build_route_generation = sqlc.arg(route_generation)
+   AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
  LIMIT 1;

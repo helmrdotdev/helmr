@@ -23,7 +23,7 @@ func TestEnsureWorkspaceMountRequestedBumpsExistingPriority(t *testing.T) {
 	first, err := queries.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          dbtest.DefaultCellID,
+		WorkerGroupID:   dbtest.DefaultWorkerGroupID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
@@ -40,7 +40,7 @@ func TestEnsureWorkspaceMountRequestedBumpsExistingPriority(t *testing.T) {
 	raised, err := queries.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          dbtest.DefaultCellID,
+		WorkerGroupID:   dbtest.DefaultWorkerGroupID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
@@ -57,7 +57,7 @@ func TestEnsureWorkspaceMountRequestedBumpsExistingPriority(t *testing.T) {
 	lowered, err := queries.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          dbtest.DefaultCellID,
+		WorkerGroupID:   dbtest.DefaultWorkerGroupID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
@@ -106,7 +106,7 @@ func TestClaimWorkspaceMountAllowsColdClaimWithoutReadyRuntime(t *testing.T) {
 	requested, err := queries.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          dbtest.DefaultCellID,
+		WorkerGroupID:   dbtest.DefaultWorkerGroupID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
@@ -135,7 +135,7 @@ func TestClaimWorkspaceMountAllowsColdClaimWithoutReadyRuntime(t *testing.T) {
 		NetworkPolicy:               []byte(`{"internet":true}`),
 		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RuntimeInstanceToken:        "cold-runtime-instance-token",
-		CellID:                      dbtest.DefaultCellID,
+		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
 		GuestdChannelTokenHash:      "guestd-token-hash",
 		GuestdChannelTokenExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	})

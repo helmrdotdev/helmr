@@ -48,7 +48,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerInstanceHeartbeatParams(worker, capabilities)); err != nil {
 		s.log.Error("worker heartbeat failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
 		if isNoRows(err) {
-			writeError(w, forbidden(errors.New("worker instance conflicts with this cell or runtime")))
+			writeError(w, forbidden(errors.New("worker instance conflicts with this worker group or runtime")))
 			return
 		}
 		writeError(w, errors.New("record worker heartbeat"))
@@ -80,8 +80,8 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 	}
 	if !foundLease {
 		capacity, err := s.db.GetWorkerInstanceRunDispatchCapacity(r.Context(), db.GetWorkerInstanceRunDispatchCapacityParams{
-			ID:     pgvalue.UUID(worker.WorkerInstanceID),
-			CellID: worker.CellID,
+			ID:            pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerGroupID: worker.WorkerGroupID,
 		})
 		if isNoRows(err) {
 			s.requestCapacityPressureIdleWorkspaceStops(r.Context(), worker.WorkerInstanceID, "run_dispatch_capacity_missing")
@@ -116,7 +116,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		dequeueRequest := dispatch.DequeueRequest{
-			CellID:           worker.CellID,
+			WorkerGroupID:    worker.WorkerGroupID,
 			WorkerInstanceID: worker.WorkerInstanceID.String(),
 			Region:           capabilities.Region,
 			Available: compute.ResourceVector{
@@ -142,7 +142,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		scopeSelector := dispatch.RoundRobinQueueScopeSelector{}
 		for rowOffset := int32(0); !foundLease; rowOffset += scopePageSize {
 			scopeRows, err := s.db.ListQueueScopes(r.Context(), db.ListQueueScopesParams{
-				WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
+				WorkerGroupID: s.workerGroupID,
 				ScanSeed:      fmt.Sprint(scanSeed),
 				RowOffset:     rowOffset,
 				RowLimit:      scopePageSize,
@@ -159,7 +159,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 			for _, row := range scopeRows {
 				scopes = append(scopes, dispatch.QueueScope{
 					OrgID:         row.OrgID,
-					CellID:        row.CellID,
+					WorkerGroupID: row.WorkerGroupID,
 					ProjectID:     row.ProjectID,
 					EnvironmentID: row.EnvironmentID,
 					QueueClass:    row.QueueClass,
@@ -170,11 +170,11 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 			scopes = scopeSelector.Order(scopes)
 			for _, scope := range scopes {
 				orgID := pgvalue.MustUUIDValue(scope.OrgID)
-				if err := dispatch.SweepExpiredForOrg(r.Context(), s.db, scope.CellID, scope.OrgID); err != nil {
+				if err := dispatch.SweepExpiredForOrg(r.Context(), s.db, scope.WorkerGroupID, scope.OrgID); err != nil {
 					s.log.Warn("sweep expired run leases failed", "org_id", orgID.String(), "error", err)
 				}
 				dequeueRequest.OrgID = orgID.String()
-				dequeueRequest.CellID = scope.CellID
+				dequeueRequest.WorkerGroupID = scope.WorkerGroupID
 				dequeueRequest.ProjectID = pgvalue.MustUUIDValue(scope.ProjectID).String()
 				dequeueRequest.EnvironmentID = pgvalue.MustUUIDValue(scope.EnvironmentID).String()
 				dequeueRequest.QueueClass = scope.QueueClass
@@ -302,8 +302,7 @@ func (s *Server) tryLeaseResidentRun(ctx context.Context, worker workerActor) (d
 		Message: dispatch.Message{
 			RunID:           pgvalue.UUIDString(entry.RunID),
 			OrgID:           pgvalue.UUIDString(entry.OrgID),
-			CellID:          entry.CellID,
-			RouteGeneration: entry.RouteGeneration,
+			WorkerGroupID:   entry.WorkerGroupID,
 			QueueClass:      entry.QueueClass,
 			QueueName:       entry.QueueName,
 			Priority:        entry.Priority,
@@ -360,8 +359,7 @@ func (s *Server) requeueResidentRunQueueItem(ctx context.Context, worker workerA
 func (s *Server) requeueRunQueueItem(ctx context.Context, worker workerActor, entry db.RunQueueItem, messageID string, lastError string) error {
 	_, err := s.db.RequeueRunQueueItem(ctx, db.RequeueRunQueueItemParams{
 		OrgID:             entry.OrgID,
-		CellID:            entry.CellID,
-		RouteGeneration:   entry.RouteGeneration,
+		WorkerGroupID:     entry.WorkerGroupID,
 		QueueClass:        entry.QueueClass,
 		RunID:             entry.RunID,
 		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
@@ -399,8 +397,7 @@ func (s *Server) requeueWorkerQueueItem(ctx context.Context, worker workerActor,
 	}
 	if _, err := s.db.RequeueRunQueueItem(ctx, db.RequeueRunQueueItemParams{
 		OrgID:             pgvalue.UUID(orgID),
-		CellID:            lease.Message.CellID,
-		RouteGeneration:   lease.Message.RouteGeneration,
+		WorkerGroupID:     lease.Message.WorkerGroupID,
 		QueueClass:        lease.Message.QueueClass,
 		RunID:             runID,
 		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
@@ -499,7 +496,7 @@ func parseWorkerRunLease(lease api.WorkerRunLease) (workerRunLeaseIDs, error) {
 func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, leaseIDs workerRunLeaseIDs) (db.GetRunLeaseQueueLeaseRow, dispatch.Lease, error) {
 	row, err := s.db.GetRunLeaseQueueLease(ctx, db.GetRunLeaseQueueLeaseParams{
 		OrgID:            pgvalue.UUID(leaseIDs.orgID),
-		CellID:           worker.CellID,
+		WorkerGroupID:    worker.WorkerGroupID,
 		RunID:            pgvalue.UUID(leaseIDs.runID),
 		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -517,12 +514,11 @@ func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, l
 		AttemptNumber:    row.DispatchAttempt,
 		ExpiresAt:        pgvalue.Time(row.LeaseExpiresAt),
 		Message: dispatch.Message{
-			OrgID:           leaseIDs.orgID.String(),
-			RunID:           pgvalue.MustUUIDValue(row.RunID).String(),
-			CellID:          row.CellID,
-			RouteGeneration: row.RouteGeneration,
-			QueueClass:      row.QueueClass,
-			QueueName:       row.QueueName,
+			OrgID:         leaseIDs.orgID.String(),
+			RunID:         pgvalue.MustUUIDValue(row.RunID).String(),
+			WorkerGroupID: row.WorkerGroupID,
+			QueueClass:    row.QueueClass,
+			QueueName:     row.QueueName,
 		},
 	}
 	return row, lease, nil
@@ -531,7 +527,7 @@ func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, l
 func (s *Server) workerCurrentRunningLease(ctx context.Context, worker workerActor, leaseIDs workerRunLeaseIDs) (db.GetCurrentRunningRunLeaseRow, error) {
 	row, err := s.db.GetCurrentRunningRunLease(ctx, db.GetCurrentRunningRunLeaseParams{
 		OrgID:            pgvalue.UUID(leaseIDs.orgID),
-		CellID:           worker.CellID,
+		WorkerGroupID:    worker.WorkerGroupID,
 		RunID:            pgvalue.UUID(leaseIDs.runID),
 		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -565,7 +561,7 @@ func workerRunLeaseResponse(row db.LeaseRunLeaseRow) api.WorkerRunLease {
 }
 
 func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunLeaseRow) (api.WorkerRun, error) {
-	if err := s.requireRoutableRecordCellGeneration(ctx, s.db, pgvalue.MustUUIDValue(row.OrgID), row.ProjectID, row.EnvironmentID, row.CellID, row.RunLeaseRouteGeneration); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, pgvalue.MustUUIDValue(row.OrgID), row.ProjectID, row.EnvironmentID, row.WorkerGroupID); err != nil {
 		return api.WorkerRun{}, err
 	}
 	restore, err := s.workerRestorePayload(ctx, row)

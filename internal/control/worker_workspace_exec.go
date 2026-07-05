@@ -192,7 +192,7 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 		deliveredDigest := streamDataSHA256(deliveredChunk.Data)
 		if _, err := work.q.InsertWorkspaceExecStreamChunkReceipt(r.Context(), db.InsertWorkspaceExecStreamChunkReceiptParams{
 			OrgID:         mount.OrgID,
-			CellID:        mount.CellID,
+			WorkerGroupID: mount.WorkerGroupID,
 			ProjectID:     mount.ProjectID,
 			EnvironmentID: mount.EnvironmentID,
 			WorkspaceID:   mount.WorkspaceID,
@@ -430,7 +430,7 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 		}
 		inserted, insertErr := work.q.InsertWorkspaceExecOutputStreamChunk(ctx, db.InsertWorkspaceExecOutputStreamChunkParams{
 			OrgID:         exec.OrgID,
-			CellID:        exec.CellID,
+			WorkerGroupID: exec.WorkerGroupID,
 			ProjectID:     exec.ProjectID,
 			EnvironmentID: exec.EnvironmentID,
 			WorkspaceID:   exec.WorkspaceID,

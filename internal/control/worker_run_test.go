@@ -547,14 +547,14 @@ func TestWorkerRoutesRejectUserAPIKey(t *testing.T) {
 	}
 }
 
-func TestWorkerRoutesRejectWrongCellCredential(t *testing.T) {
-	store := &fakeStore{workerCredentialCellID: "us-east-1-cell-2"}
+func TestWorkerRoutesRejectWrongWorkerGroupCredential(t *testing.T) {
+	store := &fakeStore{workerCredentialWorkerGroupID: "us-east-1-worker-group-2"}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour})
 	workerID := uuid.Must(uuid.NewV7()).String()
 	token, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
 		WorkerInstanceID: workerID,
 		CredentialID:     testWorkerInstanceCredentialID,
-		CellID:           "us-east-1-cell-1",
+		WorkerGroupID:    "us-east-1-worker-group-1",
 		ClaimVersion:     1,
 		IssuedAt:         time.Now(),
 		ExpiresAt:        time.Now().Add(time.Hour),
@@ -576,13 +576,13 @@ func TestWorkerRoutesRejectWrongCellCredential(t *testing.T) {
 func TestWorkerBootstrapIssuesCredentialForTokenExchange(t *testing.T) {
 	authSecret := []byte(testWorkerTokenSecret)
 	bootstrapToken := auth.WorkerBootstrapTokenPrefix + "bootstrap-token"
-	const cellID = "us-east-1-cell-2"
+	const workerGroupID = "us-east-1-worker-group-2"
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{
 		Log:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
 		DB:                  store,
 		DispatchQueue:       store,
-		CellID:              cellID,
+		WorkerGroupID:       workerGroupID,
 		WorkerTokenSecret:   []byte(testWorkerTokenSecret),
 		WorkerTokenTTL:      time.Hour,
 		WorkerRegisterToken: bootstrapToken,
@@ -631,15 +631,15 @@ func TestWorkerBootstrapIssuesCredentialForTokenExchange(t *testing.T) {
 	if token.Token == "" || token.ExpiresInSeconds <= 0 {
 		t.Fatalf("token response = %+v", token)
 	}
-	if store.upsertWorkerBootstrapToken.CellID != cellID {
-		t.Fatalf("bootstrap cell_id = %q, want %q", store.upsertWorkerBootstrapToken.CellID, cellID)
+	if store.upsertWorkerBootstrapToken.WorkerGroupID != workerGroupID {
+		t.Fatalf("bootstrap worker_group_id = %q, want %q", store.upsertWorkerBootstrapToken.WorkerGroupID, workerGroupID)
 	}
 	claims, err := auth.VerifyWorkerToken([]byte(testWorkerTokenSecret), token.Token, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claims.CellID != cellID {
-		t.Fatalf("token cell_id = %q, want %q", claims.CellID, cellID)
+	if claims.WorkerGroupID != workerGroupID {
+		t.Fatalf("token worker_group_id = %q, want %q", claims.WorkerGroupID, workerGroupID)
 	}
 }
 
@@ -1027,7 +1027,7 @@ func mintTestWorkerToken(t *testing.T, server http.Handler, workerID string) str
 	token, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
 		WorkerInstanceID: workerID,
 		CredentialID:     testWorkerInstanceCredentialID,
-		CellID:           "us-east-1-cell-1",
+		WorkerGroupID:    "us-east-1-worker-group-1",
 		ClaimVersion:     1,
 		IssuedAt:         time.Now(),
 		ExpiresAt:        time.Now().Add(time.Hour),
@@ -1042,7 +1042,7 @@ func (f *fakeStore) ListQueueScopes(_ context.Context, arg db.ListQueueScopesPar
 	f.listQueueScopes = arg
 	return []db.ListQueueScopesRow{{
 		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     fakeRunProjectID(f.run),
 		EnvironmentID: fakeRunEnvironmentID(f.run),
 		QueueName:     "queue-a",
@@ -1091,7 +1091,7 @@ func (f *fakeStore) MarkStaleWorkspaceMountsLost(context.Context, pgtype.Timesta
 func (f *fakeStore) GetWorkerInstanceState(_ context.Context, arg db.GetWorkerInstanceStateParams) (db.GetWorkerInstanceStateRow, error) {
 	return db.GetWorkerInstanceStateRow{
 		ID:               arg.ID,
-		CellID:           arg.CellID,
+		WorkerGroupID:    arg.WorkerGroupID,
 		ResourceID:       pgvalue.MustUUIDValue(arg.ID).String(),
 		Status:           db.WorkerInstanceStatusActive,
 		ActiveExecutions: 0,
@@ -1192,12 +1192,11 @@ func (f *fakeStore) Dequeue(_ context.Context, request dispatch.DequeueRequest) 
 		MessageID:        "message-1",
 		WorkerInstanceID: request.WorkerInstanceID,
 		Message: dispatch.Message{
-			OrgID:           dbtest.DefaultOrgID.String(),
-			CellID:          dbtest.DefaultCellID,
-			RouteGeneration: 1,
-			RunID:           pgvalue.MustUUIDValue(f.run.ID).String(),
-			QueueClass:      "default",
-			QueueName:       "queue-a",
+			OrgID:         dbtest.DefaultOrgID.String(),
+			WorkerGroupID: dbtest.DefaultWorkerGroupID,
+			RunID:         pgvalue.MustUUIDValue(f.run.ID).String(),
+			QueueClass:    "default",
+			QueueName:     "queue-a",
 		},
 		AttemptNumber: 1,
 		ExpiresAt:     testTime().Time.Add(time.Minute),
@@ -1281,13 +1280,13 @@ func (f *fakeStore) GetRunLeaseQueueLease(_ context.Context, arg db.GetRunLeaseQ
 	if f.activeQueueLeaseMissing {
 		return db.GetRunLeaseQueueLeaseRow{}, pgx.ErrNoRows
 	}
-	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.CellID != dbtest.DefaultCellID {
+	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.WorkerGroupID != dbtest.DefaultWorkerGroupID {
 		return db.GetRunLeaseQueueLeaseRow{}, pgx.ErrNoRows
 	}
 	return db.GetRunLeaseQueueLeaseRow{
 		ID:                    f.sessionID,
 		RunID:                 f.run.ID,
-		CellID:                arg.CellID,
+		WorkerGroupID:         arg.WorkerGroupID,
 		ProjectID:             fakeRunProjectID(f.run),
 		EnvironmentID:         fakeRunEnvironmentID(f.run),
 		WorkerInstanceID:      f.executionWorkerInstanceID,
@@ -1302,14 +1301,13 @@ func (f *fakeStore) GetRunLeaseQueueLease(_ context.Context, arg db.GetRunLeaseQ
 }
 
 func (f *fakeStore) ReserveRunQueueItem(_ context.Context, arg db.ReserveRunQueueItemParams) (db.RunQueueItem, error) {
-	if f.run.ID != arg.RunID || f.run.Status != db.RunStatusQueued || arg.CellID != dbtest.DefaultCellID || arg.RouteGeneration != 1 {
+	if f.run.ID != arg.RunID || f.run.Status != db.RunStatusQueued || arg.WorkerGroupID != dbtest.DefaultWorkerGroupID {
 		return db.RunQueueItem{}, pgx.ErrNoRows
 	}
 	return db.RunQueueItem{
 		RunID:                      arg.RunID,
 		OrgID:                      arg.OrgID,
-		CellID:                     arg.CellID,
-		RouteGeneration:            arg.RouteGeneration,
+		WorkerGroupID:              arg.WorkerGroupID,
 		Status:                     db.RunQueueStatusReserved,
 		QueueName:                  "queue-a",
 		DispatchMessageID:          arg.DispatchMessageID,
@@ -1341,8 +1339,8 @@ func (f *fakeStore) AuthenticateWorkerInstanceCredential(_ context.Context, arg 
 	if len(f.workerCredentialSecretHash) == 0 || !bytes.Equal(arg.SecretHash, f.workerCredentialSecretHash) {
 		return db.AuthenticateWorkerInstanceCredentialRow{}, pgx.ErrNoRows
 	}
-	cellID := firstNonEmptyString(f.workerCredentialCellID, "us-east-1-cell-1")
-	if arg.CellID != cellID {
+	workerGroupID := firstNonEmptyString(f.workerCredentialWorkerGroupID, "us-east-1-worker-group-1")
+	if arg.WorkerGroupID != workerGroupID {
 		return db.AuthenticateWorkerInstanceCredentialRow{}, pgx.ErrNoRows
 	}
 	claimVersion := f.workerCredentialClaimVersion
@@ -1351,7 +1349,7 @@ func (f *fakeStore) AuthenticateWorkerInstanceCredential(_ context.Context, arg 
 	}
 	return db.AuthenticateWorkerInstanceCredentialRow{
 		ID:               f.workerCredentialID,
-		CellID:           cellID,
+		WorkerGroupID:    workerGroupID,
 		WorkerInstanceID: arg.WorkerInstanceID,
 		ClaimVersion:     claimVersion,
 	}, nil
@@ -1366,8 +1364,8 @@ func (f *fakeStore) AuthorizeWorkerInstanceCredential(_ context.Context, arg db.
 	if arg.CredentialID != allowed {
 		return db.AuthorizeWorkerInstanceCredentialRow{}, pgx.ErrNoRows
 	}
-	cellID := firstNonEmptyString(f.workerCredentialCellID, "us-east-1-cell-1")
-	if arg.CellID != cellID {
+	workerGroupID := firstNonEmptyString(f.workerCredentialWorkerGroupID, "us-east-1-worker-group-1")
+	if arg.WorkerGroupID != workerGroupID {
 		return db.AuthorizeWorkerInstanceCredentialRow{}, pgx.ErrNoRows
 	}
 	claimVersion := f.workerCredentialClaimVersion
@@ -1376,10 +1374,9 @@ func (f *fakeStore) AuthorizeWorkerInstanceCredential(_ context.Context, arg db.
 	}
 	return db.AuthorizeWorkerInstanceCredentialRow{
 		ID:               arg.CredentialID,
-		CellID:           cellID,
+		WorkerGroupID:    workerGroupID,
 		WorkerInstanceID: arg.WorkerInstanceID,
 		ClaimVersion:     claimVersion,
-		WorkerGroupID:    testWorkerGroupID(),
 		ResourceID:       pgvalue.MustUUIDValue(arg.WorkerInstanceID).String(),
 	}, nil
 }
@@ -1390,29 +1387,40 @@ func (f *fakeStore) CreateWorkerInstanceCredentialFromBootstrap(_ context.Contex
 	}
 	f.workerCredentialID = arg.CredentialID
 	f.workerCredentialSecretHash = append([]byte(nil), arg.SecretHash...)
-	cellID := firstNonEmptyString(f.workerCredentialCellID, "us-east-1-cell-1")
+	workerGroupID := firstNonEmptyString(f.workerCredentialWorkerGroupID, "us-east-1-worker-group-1")
 	return db.CreateWorkerInstanceCredentialFromBootstrapRow{
 		ID:               arg.CredentialID,
-		CellID:           cellID,
+		WorkerGroupID:    workerGroupID,
 		WorkerInstanceID: arg.WorkerInstanceID,
-		WorkerGroupID:    testWorkerGroupID(),
 		KeyPrefix:        arg.KeyPrefix,
 		ClaimVersion:     1,
 		CreatedAt:        testTime(),
 	}, nil
 }
 
+func (f *fakeStore) EnsureDefaultWorkerGroup(_ context.Context, arg db.EnsureDefaultWorkerGroupParams) (db.WorkerGroup, error) {
+	return db.WorkerGroup{
+		ID:                arg.ID,
+		RegionID:          arg.RegionID,
+		Name:              "default",
+		State:             db.WorkerGroupStateActive,
+		HealthState:       db.WorkerGroupHealthStateHealthy,
+		RoutingFreshUntil: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+		CreatedAt:         testTime(),
+		UpdatedAt:         testTime(),
+	}, nil
+}
+
 func (f *fakeStore) UpsertWorkerBootstrapToken(_ context.Context, arg db.UpsertWorkerBootstrapTokenParams) (db.WorkerBootstrapToken, error) {
 	f.upsertWorkerBootstrapToken = arg
 	f.workerBootstrapTokenHash = append([]byte(nil), arg.TokenHash...)
-	if f.workerCredentialCellID == "" {
-		f.workerCredentialCellID = arg.CellID
+	if f.workerCredentialWorkerGroupID == "" {
+		f.workerCredentialWorkerGroupID = arg.WorkerGroupID
 	}
 	return db.WorkerBootstrapToken{
 		ID:            arg.ID,
-		CellID:        arg.CellID,
-		TokenHash:     arg.TokenHash,
 		WorkerGroupID: arg.WorkerGroupID,
+		TokenHash:     arg.TokenHash,
 		CreatedAt:     testTime(),
 	}, nil
 }
@@ -1448,7 +1456,7 @@ func (f *fakeStore) LeaseRunLease(_ context.Context, arg db.LeaseRunLeaseParams)
 	return db.LeaseRunLeaseRow{
 		ID:                                 f.run.ID,
 		OrgID:                              f.run.OrgID,
-		CellID:                             dbtest.DefaultCellID,
+		WorkerGroupID:                      dbtest.DefaultWorkerGroupID,
 		ProjectID:                          projectID,
 		EnvironmentID:                      environmentID,
 		SessionID:                          fakeRunSessionID(f.run),
@@ -1483,7 +1491,6 @@ func (f *fakeStore) LeaseRunLease(_ context.Context, arg db.LeaseRunLeaseParams)
 		RequirementsCniProfile:             requirements.Runtime.CNIProfile,
 		RequirementsNetworkPolicy:          networkPolicy,
 		RunLeaseID:                         f.sessionID,
-		RunLeaseRouteGeneration:            1,
 		RunLeaseWorkerInstanceID:           f.executionWorkerInstanceID,
 		RunLeaseDispatchMessageID:          arg.DispatchMessageID.String,
 		RunLeaseDispatchLeaseID:            arg.DispatchLeaseID,

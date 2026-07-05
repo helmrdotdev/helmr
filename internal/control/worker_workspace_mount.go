@@ -56,8 +56,8 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), db.GetWorkerInstanceQueueCapacityParams{
-		ID:     pgvalue.UUID(worker.WorkerInstanceID),
-		CellID: worker.CellID,
+		ID:            pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID: worker.WorkerGroupID,
 	})
 	if isNoRows(err) {
 		s.requestCapacityPressureIdleWorkspaceStops(r.Context(), worker.WorkerInstanceID, "worker_capacity_missing")
@@ -114,7 +114,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RuntimeInstanceToken:        runtimeInstanceToken,
 		WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
-		CellID:                      worker.CellID,
+		WorkerGroupID:               worker.WorkerGroupID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(workspaceMountReservationDuration), Valid: true},
 		GuestdChannelTokenHash:      guestdChannelTokenHash(guestdChannelToken),
 		RuntimeID:                   capabilities.RuntimeID,
@@ -126,7 +126,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 			GuestdAbi:                   currentGuestdABI,
 			AdapterAbi:                  currentAdapterABI,
 			WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
-			CellID:                      worker.CellID,
+			WorkerGroupID:               worker.WorkerGroupID,
 			RuntimeID:                   capabilities.RuntimeID,
 			GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(preparedRuntimeReservationDuration), Valid: true},
 		})
@@ -155,7 +155,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 			GuestdAbi:        currentGuestdABI,
 			AdapterAbi:       currentAdapterABI,
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			CellID:           worker.CellID,
+			WorkerGroupID:    worker.WorkerGroupID,
 			RuntimeID:        capabilities.RuntimeID,
 		})
 		if awaitingErr == nil {
@@ -288,9 +288,9 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 	}
 	var response api.WorkerWorkspaceMountCaptureResponse
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		scope, err := work.q.GetWorkspaceMountForWorkerPrimitiveScope(r.Context(), db.GetWorkspaceMountForWorkerPrimitiveScopeParams{
+		_, err := work.q.GetWorkspaceMountForWorkerPrimitiveScope(r.Context(), db.GetWorkspaceMountForWorkerPrimitiveScopeParams{
 			OrgID:                params.OrgID,
-			CellID:               params.CellID,
+			WorkerGroupID:        params.WorkerGroupID,
 			ProjectID:            pgvalue.UUID(projectID),
 			EnvironmentID:        pgvalue.UUID(environmentID),
 			WorkspaceID:          pgvalue.UUID(workspaceID),
@@ -305,19 +305,18 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 			return errors.New("authorize workspace mount capture")
 		}
 		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
-			OrgID:     params.OrgID,
-			CellID:    params.CellID,
-			Digest:    digest,
-			SizeBytes: request.ArtifactSizeBytes,
-			MediaType: strings.TrimSpace(request.ArtifactMediaType),
+			OrgID:         params.OrgID,
+			WorkerGroupID: params.WorkerGroupID,
+			Digest:        digest,
+			SizeBytes:     request.ArtifactSizeBytes,
+			MediaType:     strings.TrimSpace(request.ArtifactMediaType),
 		}); err != nil {
 			return errors.New("record workspace capture CAS object")
 		}
 		artifact, err := work.q.CreateArtifact(r.Context(), db.CreateArtifactParams{
 			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                     params.OrgID,
-			CellID:                    params.CellID,
-			RouteGeneration:           scope.RouteGeneration,
+			WorkerGroupID:             params.WorkerGroupID,
 			ProjectID:                 pgvalue.UUID(projectID),
 			EnvironmentID:             pgvalue.UUID(environmentID),
 			Digest:                    digest,

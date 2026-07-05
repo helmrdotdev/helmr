@@ -27,7 +27,7 @@ func (s *Server) matchImmediateWorkerTokenWait(ctx context.Context, scope db.Get
 	}
 	token, err := s.db.GetToken(ctx, db.GetTokenParams{
 		OrgID:         scope.OrgID,
-		CellID:        scope.CellID,
+		WorkerGroupID: scope.WorkerGroupID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		ID:            pgvalue.UUID(tokenID),
@@ -49,7 +49,7 @@ func (s *Server) createWorkerTokenWait(ctx context.Context, store db.Querier, sc
 	tokenWait, err := store.CreateTokenWait(ctx, db.CreateTokenWaitParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         scope.OrgID,
-		CellID:        scope.CellID,
+		WorkerGroupID: scope.WorkerGroupID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		RunWaitID:     runWait.ID,
@@ -58,14 +58,14 @@ func (s *Server) createWorkerTokenWait(ctx context.Context, store db.Querier, sc
 	if err != nil {
 		return "", nil, false, err
 	}
-	if _, err := store.ResolveImmediateTokenWait(ctx, db.ResolveImmediateTokenWaitParams{OrgID: scope.OrgID, CellID: scope.CellID, ID: tokenWait.ID}); isNoRows(err) {
+	if _, err := store.ResolveImmediateTokenWait(ctx, db.ResolveImmediateTokenWaitParams{OrgID: scope.OrgID, WorkerGroupID: scope.WorkerGroupID, ID: tokenWait.ID}); isNoRows(err) {
 		return "", nil, false, nil
 	} else if err != nil {
 		return "", nil, false, err
 	}
 	token, err := store.GetToken(ctx, db.GetTokenParams{
 		OrgID:         scope.OrgID,
-		CellID:        scope.CellID,
+		WorkerGroupID: scope.WorkerGroupID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		ID:            pgvalue.UUID(tokenID),
@@ -126,7 +126,7 @@ func (s *Server) workerCreateToken(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(map[string]int32{"seconds": *request.TimeoutInSeconds})
 		timeout = b
 	}
-	token, publicToken, err := s.createTokenRecord(r.Context(), s.db, auth.Actor{OrgID: orgID}, scope.CellID, scope.ProjectID, scope.EnvironmentID, api.CreateTokenRequest{
+	token, publicToken, err := s.createTokenRecord(r.Context(), s.db, auth.Actor{OrgID: orgID}, scope.WorkerGroupID, scope.ProjectID, scope.EnvironmentID, api.CreateTokenRequest{
 		Timeout:  timeout,
 		Tags:     request.Tags,
 		Metadata: request.Metadata,

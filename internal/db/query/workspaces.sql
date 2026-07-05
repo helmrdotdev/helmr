@@ -4,8 +4,7 @@ WITH created_workspace AS (
         id,
         public_id,
         org_id,
-        cell_id,
-        route_generation,
+        worker_group_id,
         project_id,
         environment_id,
         deployment_sandbox_id,
@@ -20,8 +19,7 @@ WITH created_workspace AS (
     SELECT sqlc.arg(id),
            sqlc.arg(public_id),
            deployment_sandboxes.org_id,
-           sqlc.arg(cell_id),
-           sqlc.arg(route_generation),
+           sqlc.arg(worker_group_id),
            deployment_sandboxes.project_id,
            deployment_sandboxes.environment_id,
            deployment_sandboxes.id,
@@ -38,25 +36,32 @@ WITH created_workspace AS (
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
-       AND deployments.build_cell_id = sqlc.arg(cell_id)
-       AND deployments.build_route_generation = sqlc.arg(route_generation)
+       AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
        AND deployments.status = 'deployed'
-      JOIN environment_cells
-        ON environment_cells.org_id = deployment_sandboxes.org_id
-       AND environment_cells.project_id = deployment_sandboxes.project_id
-       AND environment_cells.environment_id = deployment_sandboxes.environment_id
-       AND environment_cells.cell_id = sqlc.arg(cell_id)
-       AND environment_cells.route_generation = sqlc.arg(route_generation)
-       AND environment_cells.route_state = 'active'
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.region_id = environment_cells.region_id
-                AND cells.state = 'active'
-      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                      AND cell_health.state IN ('healthy', 'degraded')
-                      AND cell_health.routing_fresh_until > now()
+      JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_project.default_region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON placement_worker_group.region_id = placement_project.default_region_id
+) AS project_worker_group_placement
+        ON project_worker_group_placement.org_id = deployment_sandboxes.org_id
+       AND project_worker_group_placement.project_id = deployment_sandboxes.project_id
+       AND project_worker_group_placement.environment_id = deployment_sandboxes.environment_id
+       AND project_worker_group_placement.worker_group_id = sqlc.arg(worker_group_id)
+       AND project_worker_group_placement.worker_group_state = 'active'
+      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+                AND worker_groups.region_id = project_worker_group_placement.region_id
+                AND worker_groups.state = 'active'
+                AND worker_groups.health_state IN ('healthy', 'degraded')
+                AND worker_groups.routing_fresh_until > now()
      WHERE deployment_sandboxes.org_id = sqlc.arg(org_id)
        AND deployment_sandboxes.project_id = sqlc.arg(project_id)
        AND deployment_sandboxes.environment_id = sqlc.arg(environment_id)
@@ -68,7 +73,7 @@ created_version AS (
         id,
         public_id,
         org_id,
-        cell_id,
+        worker_group_id,
         project_id,
         environment_id,
         workspace_id,
@@ -86,7 +91,7 @@ created_version AS (
     SELECT sqlc.arg(initial_version_id),
            sqlc.arg(initial_version_public_id),
            created_workspace.org_id,
-           created_workspace.cell_id,
+           created_workspace.worker_group_id,
            created_workspace.project_id,
            created_workspace.environment_id,
            created_workspace.id,
@@ -119,24 +124,31 @@ SELECT deployment_sandboxes.*
    AND deployments.project_id = deployment_sandboxes.project_id
    AND deployments.environment_id = deployment_sandboxes.environment_id
    AND deployments.id = deployment_sandboxes.deployment_id
-   AND deployments.build_cell_id = sqlc.arg(cell_id)
-   AND deployments.build_route_generation = sqlc.arg(route_generation)
-  JOIN environment_cells
-    ON environment_cells.org_id = deployment_sandboxes.org_id
-   AND environment_cells.project_id = deployment_sandboxes.project_id
-   AND environment_cells.environment_id = deployment_sandboxes.environment_id
-   AND environment_cells.cell_id = sqlc.arg(cell_id)
-   AND environment_cells.route_generation = sqlc.arg(route_generation)
-   AND environment_cells.route_state = 'active'
-  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                AND org_cells.cell_id = environment_cells.cell_id
-                AND org_cells.state = 'active'
-  JOIN cells ON cells.id = environment_cells.cell_id
-            AND cells.region_id = environment_cells.region_id
-            AND cells.state = 'active'
-  JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                  AND cell_health.state IN ('healthy', 'degraded')
-                  AND cell_health.routing_fresh_until > now()
+   AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
+  JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_project.default_region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON placement_worker_group.region_id = placement_project.default_region_id
+) AS project_worker_group_placement
+    ON project_worker_group_placement.org_id = deployment_sandboxes.org_id
+   AND project_worker_group_placement.project_id = deployment_sandboxes.project_id
+   AND project_worker_group_placement.environment_id = deployment_sandboxes.environment_id
+   AND project_worker_group_placement.worker_group_id = sqlc.arg(worker_group_id)
+   AND project_worker_group_placement.worker_group_state = 'active'
+  JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+            AND worker_groups.region_id = project_worker_group_placement.region_id
+            AND worker_groups.state = 'active'
+            AND worker_groups.health_state IN ('healthy', 'degraded')
+            AND worker_groups.routing_fresh_until > now()
   JOIN environments
     ON environments.org_id = deployment_sandboxes.org_id
    AND environments.project_id = deployment_sandboxes.project_id
@@ -170,19 +182,28 @@ WHERE workspaces.org_id = sqlc.arg(org_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND EXISTS (
        SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = workspaces.org_id
-          AND environment_cells.project_id = workspaces.project_id
-          AND environment_cells.environment_id = workspaces.environment_id
-          AND environment_cells.cell_id = workspaces.cell_id
-          AND environment_cells.route_generation = workspaces.route_generation
-          AND environment_cells.route_state IN ('active', 'draining')
+         FROM (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement
+         JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+                   AND worker_groups.region_id = project_worker_group_placement.region_id
+                   AND worker_groups.state IN ('active', 'draining')
+        WHERE project_worker_group_placement.org_id = workspaces.org_id
+          AND project_worker_group_placement.project_id = workspaces.project_id
+          AND project_worker_group_placement.environment_id = workspaces.environment_id
+          AND project_worker_group_placement.worker_group_id = workspaces.worker_group_id
+          AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
    )
    AND workspaces.deleted_at IS NULL
    AND (sqlc.narg(state)::workspace_state IS NULL OR workspaces.state = sqlc.narg(state)::workspace_state)
@@ -197,7 +218,7 @@ UPDATE workspaces
        tags = coalesce(sqlc.narg(tags)::text[], workspaces.tags),
        updated_at = now()
  WHERE workspaces.org_id = sqlc.arg(org_id)
-   AND workspaces.cell_id = sqlc.arg(cell_id)
+   AND workspaces.worker_group_id = sqlc.arg(worker_group_id)
    AND workspaces.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.id = sqlc.arg(id)
@@ -209,7 +230,7 @@ UPDATE workspaces
    SET desired_state = 'stopped',
        updated_at = now()
  WHERE workspaces.org_id = sqlc.arg(org_id)
-   AND workspaces.cell_id = sqlc.arg(cell_id)
+   AND workspaces.worker_group_id = sqlc.arg(worker_group_id)
    AND workspaces.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.id = sqlc.arg(id)
@@ -225,7 +246,7 @@ UPDATE workspaces
        archived_at = coalesce(workspaces.archived_at, now()),
        updated_at = now()
  WHERE workspaces.org_id = sqlc.arg(org_id)
-   AND workspaces.cell_id = sqlc.arg(cell_id)
+   AND workspaces.worker_group_id = sqlc.arg(worker_group_id)
    AND workspaces.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.id = sqlc.arg(id)
@@ -234,7 +255,7 @@ UPDATE workspaces
        SELECT 1
          FROM workspace_mounts
         WHERE workspace_mounts.org_id = workspaces.org_id
-          AND workspace_mounts.cell_id = workspaces.cell_id
+          AND workspace_mounts.worker_group_id = workspaces.worker_group_id
           AND workspace_mounts.project_id = workspaces.project_id
           AND workspace_mounts.environment_id = workspaces.environment_id
           AND workspace_mounts.workspace_id = workspaces.id

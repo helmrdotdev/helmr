@@ -76,7 +76,7 @@ func (s *Server) requestWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
-	routeCellID, err := s.requireRoutableEnvironmentCell(r.Context(), s.db, actor.OrgID, projectID, environmentID)
+	placementWorkerGroupID, err := s.requireEnvironmentPlacementWorkerGroup(r.Context(), s.db, actor.OrgID, projectID, environmentID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -89,7 +89,7 @@ func (s *Server) requestWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 	row, err := s.db.EnsureWorkspaceMountRequested(r.Context(), db.EnsureWorkspaceMountRequestedParams{
 		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           pgvalue.UUID(actor.OrgID),
-		CellID:          routeCellID,
+		WorkerGroupID:   placementWorkerGroupID,
 		ProjectID:       projectID,
 		EnvironmentID:   environmentID,
 		WorkspaceID:     pgvalue.UUID(workspaceID),

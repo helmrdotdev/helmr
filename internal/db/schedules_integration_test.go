@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/cell"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -28,15 +27,6 @@ func TestDeleteScheduleKeepsParentUntilLastInstance(t *testing.T) {
 		INSERT INTO environments (id, public_id, org_id, project_id, default_region_id, slug, name, color_hex)
 		VALUES ($1, $6, $2, $3, $4, $5, 'Env 2', '#3366ff')
 	`, secondEnvironmentID, ids.orgID, ids.projectID, dbtest.DefaultRegionID, secondEnvironmentSlug, testEnvironmentPublicID(t)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cell.EnsureEnvironmentRoute(ctx, queries, cell.EnsureEnvironmentRouteParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		ProjectID:     pgvalue.UUID(ids.projectID),
-		EnvironmentID: pgvalue.UUID(secondEnvironmentID),
-		RegionID:      dbtest.DefaultRegionID,
-		LocalCellID:   dbtest.DefaultCellID,
-	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -132,16 +122,6 @@ func TestUpdateScheduleRetimesSiblingInstancesWithoutChangingEnabled(t *testing.
 	`, secondEnvironmentID, ids.orgID, ids.projectID, dbtest.DefaultRegionID, "env-"+shortUUID(secondEnvironmentID), testEnvironmentPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cell.EnsureEnvironmentRoute(ctx, queries, cell.EnsureEnvironmentRouteParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		ProjectID:     pgvalue.UUID(ids.projectID),
-		EnvironmentID: pgvalue.UUID(secondEnvironmentID),
-		RegionID:      dbtest.DefaultRegionID,
-		LocalCellID:   dbtest.DefaultCellID,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
 	scheduleID := uuid.Must(uuid.NewV7())
 	firstInstanceID := uuid.Must(uuid.NewV7())
 	secondInstanceID := uuid.Must(uuid.NewV7())
@@ -280,12 +260,12 @@ func TestScheduleTriggerFollowsCurrentActiveRoute(t *testing.T) {
 	}
 
 	nonDefaultRegionID := dbtest.DefaultRegionID + "-alt"
-	nonDefaultCellID := dbtest.DefaultCellID + "-alt-region"
-	ensureAdditionalRegionCellRoute(t, ctx, pool, ids, nonDefaultRegionID, nonDefaultCellID)
+	nonDefaultWorkerGroupID := dbtest.DefaultWorkerGroupID + "-alt-region"
+	ensureAdditionalRegionWorkerGroup(t, ctx, pool, ids, nonDefaultRegionID, nonDefaultWorkerGroupID)
 	nonDefaultRows, err := queries.ListScheduleRepairEntries(ctx, db.ListScheduleRepairEntriesParams{
-		CellID:          nonDefaultCellID,
 		AvailableBefore: pgvalue.Timestamptz(time.Now().UTC()),
 		RowLimit:        10,
+		WorkerGroupID:   nonDefaultWorkerGroupID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -294,53 +274,53 @@ func TestScheduleTriggerFollowsCurrentActiveRoute(t *testing.T) {
 		t.Fatalf("non-default region repair rows = %+v, want none", nonDefaultRows)
 	}
 	if _, err := queries.GetScheduleTriggerCandidate(ctx, db.GetScheduleTriggerCandidateParams{
-		CellID:      nonDefaultCellID,
-		InstanceID:  pgvalue.UUID(instanceID),
-		Generation:  1,
-		ScheduledAt: pgvalue.Timestamptz(scheduledAt),
+		WorkerGroupID: nonDefaultWorkerGroupID,
+		InstanceID:    pgvalue.UUID(instanceID),
+		Generation:    1,
+		ScheduledAt:   pgvalue.Timestamptz(scheduledAt),
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("non-default region candidate err = %v, want no rows", err)
 	}
 
-	secondCellID := dbtest.DefaultCellID + "-schedule-route"
-	ensureCellRoute(t, ctx, pool, ids, secondCellID, 2)
+	secondWorkerGroupID := dbtest.DefaultWorkerGroupID + "-schedule-route"
+	ensureWorkerGroupPlacement(t, ctx, pool, ids, secondWorkerGroupID)
 
 	if _, err := queries.GetScheduleTriggerCandidate(ctx, db.GetScheduleTriggerCandidateParams{
-		CellID:      dbtest.DefaultCellID,
-		InstanceID:  pgvalue.UUID(instanceID),
-		Generation:  1,
-		ScheduledAt: pgvalue.Timestamptz(scheduledAt),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		InstanceID:    pgvalue.UUID(instanceID),
+		Generation:    1,
+		ScheduledAt:   pgvalue.Timestamptz(scheduledAt),
 	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("old-cell candidate err = %v, want no rows", err)
+		t.Fatalf("old worker group candidate err = %v, want no rows", err)
 	}
 
 	rows, err := queries.ListScheduleRepairEntries(ctx, db.ListScheduleRepairEntriesParams{
-		CellID:          secondCellID,
 		AvailableBefore: pgvalue.Timestamptz(time.Now().UTC()),
 		RowLimit:        10,
+		WorkerGroupID:   secondWorkerGroupID,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].CellID != secondCellID || rows[0].InstanceID != pgvalue.UUID(instanceID) {
-		t.Fatalf("repair rows = %+v, want one row for %s", rows, secondCellID)
+	if len(rows) != 1 || rows[0].WorkerGroupID != secondWorkerGroupID || rows[0].InstanceID != pgvalue.UUID(instanceID) {
+		t.Fatalf("repair rows = %+v, want one row for %s", rows, secondWorkerGroupID)
 	}
 
 	candidate, err := queries.GetScheduleTriggerCandidate(ctx, db.GetScheduleTriggerCandidateParams{
-		CellID:      secondCellID,
-		InstanceID:  pgvalue.UUID(instanceID),
-		Generation:  1,
-		ScheduledAt: pgvalue.Timestamptz(scheduledAt),
+		WorkerGroupID: secondWorkerGroupID,
+		InstanceID:    pgvalue.UUID(instanceID),
+		Generation:    1,
+		ScheduledAt:   pgvalue.Timestamptz(scheduledAt),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if candidate.CellID != secondCellID {
-		t.Fatalf("candidate cell = %q, want %q", candidate.CellID, secondCellID)
+	if candidate.WorkerGroupID != secondWorkerGroupID {
+		t.Fatalf("candidate worker group = %q, want %q", candidate.WorkerGroupID, secondWorkerGroupID)
 	}
 }
 
-func ensureAdditionalRegionCellRoute(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, regionID string, cellID string) {
+func ensureAdditionalRegionWorkerGroup(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, regionID string, workerGroupID string) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO regions (id, provider, provider_region, display_name)
@@ -349,29 +329,9 @@ func ensureAdditionalRegionCellRoute(t *testing.T, ctx context.Context, pool *pg
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cells (id, region_id, environment_class)
-		VALUES ($1, $2, $3)
-	`, cellID, regionID, dbtest.DefaultEnvironmentClass); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO org_cells (org_id, cell_id, role, state)
-		VALUES ($1, $2, 'home', 'active')
-	`, ids.orgID, cellID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO cell_health (cell_id, state, routing_fresh_until)
-		VALUES ($1, 'healthy', now() + interval '5 minutes')
-	`, cellID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO environment_cells (
-			org_id, project_id, environment_id, region_id, cell_id, route_state, route_generation
-		)
-		VALUES ($1, $2, $3, $4, $5, 'active', 1)
-	`, ids.orgID, ids.projectID, ids.environmentID, regionID, cellID); err != nil {
+		INSERT INTO worker_groups (id, region_id, name, state, health_state, routing_fresh_until)
+		VALUES ($1, $2, $1, 'active', 'healthy', now() + interval '5 minutes')
+	`, workerGroupID, regionID); err != nil {
 		t.Fatal(err)
 	}
 }

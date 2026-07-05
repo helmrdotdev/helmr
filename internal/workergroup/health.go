@@ -1,4 +1,4 @@
-package cell
+package workergroup
 
 import (
 	"context"
@@ -23,8 +23,7 @@ const (
 )
 
 type HealthStore interface {
-	UpsertCellComponentHealth(context.Context, db.UpsertCellComponentHealthParams) (db.CellComponentHealth, error)
-	RefreshCellHealthFromComponents(context.Context, db.RefreshCellHealthFromComponentsParams) (db.CellHealth, error)
+	ReportWorkerGroupHealth(context.Context, db.ReportWorkerGroupHealthParams) (db.WorkerGroup, error)
 }
 
 func RoutingRequiredComponents() []string {
@@ -36,33 +35,33 @@ func DevRoutingRequiredComponents() []string {
 }
 
 type HealthConfig struct {
-	CellID             string
+	WorkerGroupID      string
 	Component          string
 	RequiredComponents []string
-	State              db.CellHealthState
+	State              db.WorkerGroupHealthState
 	FreshFor           time.Duration
 	Details            []byte
 }
 
 func ReportHealth(ctx context.Context, store HealthStore, cfg HealthConfig) error {
 	if store == nil {
-		return errors.New("cell health store is required")
+		return errors.New("worker group health store is required")
 	}
-	cellID := strings.TrimSpace(cfg.CellID)
-	if cellID == "" {
-		return errors.New("cell id is required")
+	workerGroupID := strings.TrimSpace(cfg.WorkerGroupID)
+	if workerGroupID == "" {
+		return errors.New("worker group id is required")
 	}
 	component := strings.TrimSpace(cfg.Component)
 	if component == "" {
-		return errors.New("cell health component is required")
+		return errors.New("worker group health component is required")
 	}
 	requiredComponents := normalizeRequiredComponents(cfg.RequiredComponents)
 	if len(requiredComponents) == 0 {
-		return errors.New("cell health required components are required")
+		return errors.New("worker group health required components are required")
 	}
 	state := cfg.State
 	if state == "" {
-		state = db.CellHealthStateHealthy
+		state = db.WorkerGroupHealthStateHealthy
 	}
 	freshFor := cfg.FreshFor
 	if freshFor <= 0 {
@@ -72,32 +71,25 @@ func ReportHealth(ctx context.Context, store HealthStore, cfg HealthConfig) erro
 	if len(details) == 0 {
 		details = []byte(`{}`)
 	}
-	if _, err := store.UpsertCellComponentHealth(ctx, db.UpsertCellComponentHealthParams{
-		CellID:    cellID,
-		Component: component,
-		State:     state,
-		FreshFor:  pgtype.Interval{Microseconds: freshFor.Microseconds(), Valid: true},
-		Details:   details,
+	if _, err := store.ReportWorkerGroupHealth(ctx, db.ReportWorkerGroupHealthParams{
+		WorkerGroupID: workerGroupID,
+		HealthState:   state,
+		FreshFor:      pgtype.Interval{Microseconds: freshFor.Microseconds(), Valid: true},
+		HealthDetails: details,
 	}); err != nil {
-		return fmt.Errorf("report cell component health: %w", err)
-	}
-	if _, err := store.RefreshCellHealthFromComponents(ctx, db.RefreshCellHealthFromComponentsParams{
-		CellID:             cellID,
-		RequiredComponents: requiredComponents,
-	}); err != nil {
-		return fmt.Errorf("refresh cell health: %w", err)
+		return fmt.Errorf("report worker group health: %w", err)
 	}
 	return nil
 }
 
 type HealthReporterConfig struct {
-	CellID             string
+	WorkerGroupID      string
 	Component          string
 	RequiredComponents []string
 	Interval           time.Duration
 	ReportTimeout      time.Duration
 	FreshFor           time.Duration
-	Probe              func(context.Context) (db.CellHealthState, []byte, error)
+	Probe              func(context.Context) (db.WorkerGroupHealthState, []byte, error)
 	Log                *slog.Logger
 }
 
@@ -116,7 +108,7 @@ func RunHealthReporter(ctx context.Context, store HealthStore, cfg HealthReporte
 	}
 	report := func() error {
 		probeCtx, cancelProbe := context.WithTimeout(ctx, reportTimeout)
-		state := db.CellHealthStateHealthy
+		state := db.WorkerGroupHealthStateHealthy
 		details := []byte(`{}`)
 		if cfg.Probe != nil {
 			probeState, probeDetails, err := cfg.Probe(probeCtx)
@@ -127,7 +119,7 @@ func RunHealthReporter(ctx context.Context, store HealthStore, cfg HealthReporte
 				details = probeDetails
 			}
 			if err != nil {
-				state = db.CellHealthStateUnavailable
+				state = db.WorkerGroupHealthStateUnavailable
 				details = healthErrorDetails(err)
 			}
 		}
@@ -135,7 +127,7 @@ func RunHealthReporter(ctx context.Context, store HealthStore, cfg HealthReporte
 		reportCtx, cancelReport := context.WithTimeout(ctx, reportTimeout)
 		defer cancelReport()
 		return ReportHealth(reportCtx, store, HealthConfig{
-			CellID:             cfg.CellID,
+			WorkerGroupID:      cfg.WorkerGroupID,
 			Component:          cfg.Component,
 			RequiredComponents: cfg.RequiredComponents,
 			State:              state,
@@ -144,7 +136,7 @@ func RunHealthReporter(ctx context.Context, store HealthStore, cfg HealthReporte
 		})
 	}
 	if err := report(); err != nil {
-		log.Warn("cell health report failed", "cell_id", cfg.CellID, "error", err)
+		log.Warn("worker group health report failed", "worker_group_id", cfg.WorkerGroupID, "error", err)
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -154,7 +146,7 @@ func RunHealthReporter(ctx context.Context, store HealthStore, cfg HealthReporte
 			return ctx.Err()
 		case <-ticker.C:
 			if err := report(); err != nil {
-				log.Warn("cell health report failed", "cell_id", cfg.CellID, "error", err)
+				log.Warn("worker group health report failed", "worker_group_id", cfg.WorkerGroupID, "error", err)
 			}
 		}
 	}

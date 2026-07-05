@@ -23,26 +23,26 @@ for migration in "${migration_dir}"/*.sql; do
   curl "${curl_args[@]}" --data-binary @"${migration}" "${url}/"
 done
 
-cell_id="${HELMR_CELL_ID:-}"
-if [[ -z "${cell_id}" ]]; then
-  echo "HELMR_CELL_ID is required" >&2
+worker_group_id="${HELMR_WORKER_GROUP_ID:-}"
+if [[ -z "${worker_group_id}" ]]; then
+  echo "HELMR_WORKER_GROUP_ID is required" >&2
   exit 1
 fi
 org_id="${HELMR_CLICKHOUSE_CANARY_ORG_ID:-00000000-0000-0000-0000-000000000001}"
 project_id="${HELMR_CLICKHOUSE_CANARY_PROJECT_ID:-00000000-0000-0000-0000-000000000002}"
 environment_id="${HELMR_CLICKHOUSE_CANARY_ENVIRONMENT_ID:-00000000-0000-0000-0000-000000000003}"
 run_id="${HELMR_CLICKHOUSE_CANARY_RUN_ID:-$(new_uuid)}"
-idem="canary:${cell_id}:${run_id}"
+idem="canary:${worker_group_id}:${run_id}"
 
 curl "${curl_args[@]}" "${url}/" --data-binary @- <<SQL
 INSERT INTO helmr_telemetry.run_logs
-    (cell_id, org_id, project_id, environment_id, run_id, attempt_number, stream_name, seq, observed_seq, content, size_bytes, idempotency_key, retention_class, redaction_class, source, observed_at)
+    (worker_group_id, org_id, project_id, environment_id, run_id, attempt_number, stream_name, seq, observed_seq, content, size_bytes, idempotency_key, retention_class, redaction_class, source, observed_at)
 VALUES
-    ('${cell_id}', '${org_id}', '${project_id}', '${environment_id}', '${run_id}', 1, 'stdout', 1, 1, 'ok', 2, '${idem}', 'hot', 'internal', 'canary', now64(3));
+    ('${worker_group_id}', '${org_id}', '${project_id}', '${environment_id}', '${run_id}', 1, 'stdout', 1, 1, 'ok', 2, '${idem}', 'hot', 'internal', 'canary', now64(3));
 SQL
 
 count="$(
-  curl "${curl_args[@]}" "${url}/" --data-binary "SELECT count() FROM helmr_telemetry.run_logs FINAL WHERE cell_id = '${cell_id}' AND run_id = '${run_id}' AND idempotency_key = '${idem}' FORMAT TabSeparatedRaw"
+  curl "${curl_args[@]}" "${url}/" --data-binary "SELECT count() FROM helmr_telemetry.run_logs FINAL WHERE worker_group_id = '${worker_group_id}' AND run_id = '${run_id}' AND idempotency_key = '${idem}' FORMAT TabSeparatedRaw"
 )"
 
 if [[ "${count}" != "1" ]]; then
@@ -50,4 +50,4 @@ if [[ "${count}" != "1" ]]; then
   exit 1
 fi
 
-printf 'clickhouse canary ok cell_id=%s run_id=%s\n' "${cell_id}" "${run_id}"
+printf 'clickhouse canary ok worker_group_id=%s run_id=%s\n' "${worker_group_id}" "${run_id}"

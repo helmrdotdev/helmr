@@ -1,6 +1,6 @@
 -- name: ListQueueScopes :many
 SELECT run_queue_items.org_id,
-       run_queue_items.cell_id,
+       run_queue_items.worker_group_id,
        runs.project_id,
        runs.environment_id,
        run_queue_items.queue_class,
@@ -8,42 +8,33 @@ SELECT run_queue_items.org_id,
   FROM run_queue_items
   JOIN runs ON runs.org_id = run_queue_items.org_id
            AND runs.id = run_queue_items.run_id
-           AND runs.cell_id = run_queue_items.cell_id
-           AND runs.route_generation = run_queue_items.route_generation
-  JOIN environment_cells
-    ON environment_cells.org_id = runs.org_id
-   AND environment_cells.project_id = runs.project_id
-   AND environment_cells.environment_id = runs.environment_id
-   AND environment_cells.cell_id = runs.cell_id
-   AND environment_cells.route_generation = runs.route_generation
-   AND environment_cells.route_state IN ('active', 'draining')
-  JOIN cells ON cells.id = environment_cells.cell_id
-            AND cells.region_id = environment_cells.region_id
-            AND cells.state IN ('active', 'draining')
-  JOIN regions ON regions.id = environment_cells.region_id
-              AND regions.state = 'available'
-  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                AND org_cells.cell_id = environment_cells.cell_id
-                AND org_cells.state = 'active'
-  JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                  AND cell_health.state IN ('healthy', 'degraded')
-                  AND cell_health.routing_fresh_until > now()
+           AND runs.worker_group_id = run_queue_items.worker_group_id
+  JOIN worker_groups AS placement_worker_group
+    ON placement_worker_group.id = runs.worker_group_id
+   AND placement_worker_group.id = run_queue_items.worker_group_id
+   AND placement_worker_group.state IN ('active', 'draining')
+   AND placement_worker_group.health_state IN ('healthy', 'degraded')
+   AND placement_worker_group.routing_fresh_until > now()
+  JOIN regions AS placement_region
+    ON placement_region.id = placement_worker_group.region_id
+   AND placement_region.state = 'available'
   JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_queue_items.org_id
                                AND run_runtime_requirements.run_id = run_queue_items.run_id
-  JOIN worker_groups ON worker_groups.id = sqlc.arg(worker_group_id)
-                    AND worker_groups.cell_id = run_queue_items.cell_id
-                    AND worker_groups.state = 'active'
+  JOIN worker_groups AS dispatch_worker_group
+    ON dispatch_worker_group.id = sqlc.arg(worker_group_id)
+   AND dispatch_worker_group.id = run_queue_items.worker_group_id
+   AND dispatch_worker_group.state = 'active'
  WHERE run_queue_items.status IN ('queued', 'published', 'reserved')
    AND run_runtime_requirements.worker_group_id = sqlc.arg(worker_group_id)
  GROUP BY run_queue_items.org_id,
-          run_queue_items.cell_id,
+          run_queue_items.worker_group_id,
           runs.project_id,
           runs.environment_id,
           run_queue_items.queue_class,
           run_queue_items.queue_name
- ORDER BY md5(run_queue_items.org_id::text || ':' || run_queue_items.cell_id || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':' || run_queue_items.queue_class || ':' || run_queue_items.queue_name || ':' || sqlc.arg(scan_seed)::text),
+ ORDER BY md5(run_queue_items.org_id::text || ':' || run_queue_items.worker_group_id || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':' || run_queue_items.queue_class || ':' || run_queue_items.queue_name || ':' || sqlc.arg(scan_seed)::text),
           run_queue_items.org_id ASC,
-          run_queue_items.cell_id ASC,
+          run_queue_items.worker_group_id ASC,
           runs.project_id ASC,
           runs.environment_id ASC,
           run_queue_items.queue_class ASC,
@@ -83,11 +74,10 @@ WITH observed_runtime AS (
     RETURNING *
 ),
 upserted_worker AS (
-    INSERT INTO worker_instances (
-        id,
-        cell_id,
-        worker_group_id,
-        resource_id,
+	    INSERT INTO worker_instances (
+	        id,
+	        worker_group_id,
+	        resource_id,
         status,
         region,
         total_milli_cpu,
@@ -111,10 +101,9 @@ upserted_worker AS (
         cni_profile,
         last_seen_at
     )
-    SELECT sqlc.arg(id),
-           sqlc.arg(cell_id),
-           sqlc.arg(worker_group_id),
-           sqlc.arg(resource_id),
+	    SELECT sqlc.arg(id),
+	           sqlc.arg(worker_group_id),
+	           sqlc.arg(resource_id),
            'active',
            sqlc.arg(region),
            sqlc.arg(total_milli_cpu),
@@ -164,7 +153,7 @@ upserted_worker AS (
            rootfs_digest = excluded.rootfs_digest,
            cni_profile = excluded.cni_profile,
            last_seen_at = now()
-     WHERE worker_instances.cell_id = excluded.cell_id
+     WHERE worker_instances.worker_group_id = excluded.worker_group_id
     RETURNING *
 )
 SELECT upserted_worker.*
@@ -196,7 +185,7 @@ UPDATE worker_instances
            ELSE drained_at
        END
  WHERE worker_instances.id = sqlc.arg(id)
-   AND worker_instances.cell_id = sqlc.arg(cell_id)
+   AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
 RETURNING *;
 
 -- name: ListWorkerInstances :many
@@ -219,7 +208,7 @@ SELECT worker_instances.*,
        ) AS active_executions
   FROM worker_instances
  WHERE worker_instances.id = sqlc.arg(id)
-   AND worker_instances.cell_id = sqlc.arg(cell_id);
+   AND worker_instances.worker_group_id = sqlc.arg(worker_group_id);
 
 -- name: GetWorkerInstanceQueueCapacity :one
 SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu - active_runtime_instances.used_milli_cpu, 0)::bigint AS available_milli_cpu,
@@ -255,7 +244,7 @@ SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu - a
          )
   ) active_runtime_instances ON true
  WHERE worker_instances.id = sqlc.arg(id)
-   AND worker_instances.cell_id = sqlc.arg(cell_id)
+   AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instances.status = 'active';
 
 -- name: GetWorkerInstanceRunDispatchCapacity :one
@@ -292,14 +281,14 @@ SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu - a
          )
   ) active_runtime_instances ON true
  WHERE worker_instances.id = sqlc.arg(id)
-   AND worker_instances.cell_id = sqlc.arg(cell_id)
+   AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instances.status = 'active';
 
 -- name: UpsertRunRuntimeRequirements :one
 INSERT INTO run_runtime_requirements (
     run_id,
     org_id,
-    cell_id,
+    worker_group_id,
     requested_milli_cpu,
     requested_memory_mib,
     requested_disk_mib,
@@ -317,7 +306,7 @@ INSERT INTO run_runtime_requirements (
 )
 SELECT sqlc.arg(run_id),
        sqlc.arg(org_id),
-       runs.cell_id,
+       runs.worker_group_id,
        sqlc.arg(requested_milli_cpu),
        sqlc.arg(requested_memory_mib),
        sqlc.arg(requested_disk_mib),
@@ -358,8 +347,7 @@ WITH upserted AS (
     INSERT INTO run_queue_items (
         run_id,
         org_id,
-        cell_id,
-        route_generation,
+        worker_group_id,
         queue_class,
         status,
         priority,
@@ -376,8 +364,7 @@ WITH upserted AS (
     )
     SELECT sqlc.arg(run_id),
         sqlc.arg(org_id),
-        runs.cell_id,
-        sqlc.arg(route_generation),
+        runs.worker_group_id,
         'default',
         'queued',
         sqlc.arg(priority),
@@ -396,8 +383,7 @@ WITH upserted AS (
        AND runs.id = sqlc.arg(run_id)
     ON CONFLICT (run_id) DO UPDATE
        SET status = 'queued',
-           cell_id = excluded.cell_id,
-           route_generation = excluded.route_generation,
+           worker_group_id = excluded.worker_group_id,
            priority = excluded.priority,
            queue_name = excluded.queue_name,
            concurrency_key = excluded.concurrency_key,
@@ -420,8 +406,7 @@ SELECT *
 WITH target_run AS (
     SELECT id,
            org_id,
-           cell_id,
-           route_generation,
+           worker_group_id,
            project_id,
            environment_id,
            deployment_id,
@@ -451,34 +436,19 @@ WITH target_run AS (
        )
 ),
 record_route AS (
-    SELECT environment_cells.org_id,
-           environment_cells.project_id,
-           environment_cells.environment_id,
-           environment_cells.cell_id,
-           environment_cells.route_generation
-      FROM environment_cells
-      JOIN target_run ON target_run.org_id = environment_cells.org_id
-                     AND target_run.project_id = environment_cells.project_id
-                     AND target_run.environment_id = environment_cells.environment_id
-                     AND target_run.cell_id = environment_cells.cell_id
-                     AND target_run.route_generation = environment_cells.route_generation
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.region_id = environment_cells.region_id
-      JOIN regions ON regions.id = environment_cells.region_id
-      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-     WHERE environment_cells.route_state IN ('active', 'draining')
-       AND cells.state IN ('active', 'draining')
-       AND regions.state = 'available'
-       AND cell_health.state IN ('healthy', 'degraded')
-       AND cell_health.routing_fresh_until > now()
-       AND EXISTS (
-           SELECT 1
-             FROM org_cells
-            WHERE org_cells.org_id = environment_cells.org_id
-              AND org_cells.cell_id = environment_cells.cell_id
-              AND org_cells.state = 'active'
-       )
-     ORDER BY environment_cells.route_generation DESC
+    SELECT target_run.org_id,
+           target_run.project_id,
+           target_run.environment_id,
+           target_run.worker_group_id
+      FROM target_run
+      JOIN worker_groups AS placement_worker_group
+        ON placement_worker_group.id = target_run.worker_group_id
+       AND placement_worker_group.state IN ('active', 'draining')
+       AND placement_worker_group.health_state IN ('healthy', 'degraded')
+       AND placement_worker_group.routing_fresh_until > now()
+      JOIN regions AS placement_region
+        ON placement_region.id = placement_worker_group.region_id
+       AND placement_region.state = 'available'
      LIMIT 1
 ),
 existing_requirements AS (
@@ -504,7 +474,7 @@ inserted_requirements AS (
     INSERT INTO run_runtime_requirements (
         run_id,
         org_id,
-        cell_id,
+        worker_group_id,
         requested_milli_cpu,
         requested_memory_mib,
         requested_disk_mib,
@@ -517,12 +487,11 @@ inserted_requirements AS (
         rootfs_digest,
         cni_profile,
         network_policy,
-        placement,
-        worker_group_id
+        placement
     )
     SELECT target_run.id,
            target_run.org_id,
-           target_run.cell_id,
+           target_run.worker_group_id,
            deployment_tasks.requested_milli_cpu,
            deployment_tasks.requested_memory_mib,
            deployment_tasks.requested_disk_mib,
@@ -535,8 +504,7 @@ inserted_requirements AS (
            selected_runtime.rootfs_digest,
            selected_runtime.cni_profile,
            deployment_tasks.network_policy,
-           deployment_tasks.placement,
-           deployments.worker_group_id
+           deployment_tasks.placement
       FROM target_run
       JOIN deployment_tasks ON deployment_tasks.org_id = target_run.org_id
                            AND deployment_tasks.project_id = target_run.project_id
@@ -547,8 +515,7 @@ inserted_requirements AS (
                       AND deployments.project_id = target_run.project_id
                       AND deployments.environment_id = target_run.environment_id
                       AND deployments.id = target_run.deployment_id
-                      AND deployments.build_cell_id = target_run.cell_id
-                      AND deployments.build_route_generation = target_run.route_generation
+                      AND deployments.build_worker_group_id = target_run.worker_group_id
       JOIN selected_runtime ON true
      WHERE NOT EXISTS (SELECT 1 FROM existing_requirements)
     ON CONFLICT (run_id) DO NOTHING
@@ -588,8 +555,7 @@ dispatch AS (
     INSERT INTO run_queue_items (
         run_id,
         org_id,
-        cell_id,
-        route_generation,
+        worker_group_id,
         queue_class,
         status,
         priority,
@@ -606,8 +572,7 @@ dispatch AS (
     )
     SELECT target_run.id,
            target_run.org_id,
-           target_run.cell_id,
-           target_run.route_generation,
+           target_run.worker_group_id,
            'default',
            'queued',
            target_run.priority,
@@ -625,14 +590,13 @@ dispatch AS (
       JOIN record_route ON record_route.org_id = target_run.org_id
                        AND record_route.project_id = target_run.project_id
                        AND record_route.environment_id = target_run.environment_id
-                       AND record_route.cell_id = target_run.cell_id
+                       AND record_route.worker_group_id = target_run.worker_group_id
       JOIN requirements ON requirements.org_id = target_run.org_id
                        AND requirements.run_id = target_run.id
      WHERE NOT EXISTS (SELECT 1 FROM source_worker_restore_scope)
     ON CONFLICT (run_id) DO UPDATE
        SET status = 'queued',
-           cell_id = excluded.cell_id,
-           route_generation = excluded.route_generation,
+           worker_group_id = excluded.worker_group_id,
            priority = excluded.priority,
            queue_name = excluded.queue_name,
            concurrency_key = excluded.concurrency_key,
@@ -660,8 +624,7 @@ dispatch AS (
 SELECT
     target_run.id AS run_id,
     target_run.org_id,
-    dispatch.cell_id,
-    dispatch.route_generation,
+    dispatch.worker_group_id,
     dispatch.queue_class,
     target_run.project_id,
     target_run.environment_id,
@@ -695,37 +658,26 @@ SELECT
 -- name: ListQueuedRunCandidateScopes :many
 WITH candidate_scopes AS (
     SELECT runs.org_id,
-           runs.cell_id,
+           runs.worker_group_id,
            runs.project_id,
            runs.environment_id,
            COALESCE(run_queue_items.queue_class, 'default') AS queue_class,
            COALESCE(run_queue_items.queue_name, runs.queue_name) AS queue_name,
-           md5(runs.org_id::text || ':' || runs.cell_id || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':' || COALESCE(run_queue_items.queue_class, 'default') || ':' || COALESCE(run_queue_items.queue_name, runs.queue_name) || ':' || sqlc.arg(scan_seed)::text) AS sort_key
+           md5(runs.org_id::text || ':' || runs.worker_group_id || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':' || COALESCE(run_queue_items.queue_class, 'default') || ':' || COALESCE(run_queue_items.queue_name, runs.queue_name) || ':' || sqlc.arg(scan_seed)::text) AS sort_key
       FROM runs
       LEFT JOIN run_queue_items ON run_queue_items.org_id = runs.org_id
                                AND run_queue_items.run_id = runs.id
-                               AND run_queue_items.cell_id = runs.cell_id
-                               AND run_queue_items.route_generation = runs.route_generation
-      JOIN environment_cells
-        ON environment_cells.org_id = runs.org_id
-       AND environment_cells.project_id = runs.project_id
-       AND environment_cells.environment_id = runs.environment_id
-       AND environment_cells.cell_id = runs.cell_id
-       AND environment_cells.route_generation = runs.route_generation
-       AND environment_cells.route_state IN ('active', 'draining')
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.region_id = environment_cells.region_id
-                AND cells.state IN ('active', 'draining')
-      JOIN regions ON regions.id = environment_cells.region_id
-                  AND regions.state = 'available'
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                      AND cell_health.state IN ('healthy', 'degraded')
-                      AND cell_health.routing_fresh_until > now()
+                               AND run_queue_items.worker_group_id = runs.worker_group_id
+      JOIN worker_groups AS placement_worker_group
+        ON placement_worker_group.id = runs.worker_group_id
+       AND placement_worker_group.state IN ('active', 'draining')
+       AND placement_worker_group.health_state IN ('healthy', 'degraded')
+       AND placement_worker_group.routing_fresh_until > now()
+      JOIN regions AS placement_region
+        ON placement_region.id = placement_worker_group.region_id
+       AND placement_region.state = 'available'
      WHERE runs.status = 'queued'
-       AND runs.cell_id = sqlc.arg(cell_id)
+       AND runs.worker_group_id = sqlc.arg(worker_group_id)
        AND runs.current_run_lease_id IS NULL
        AND runs.queue_timestamp <= now()
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
@@ -759,14 +711,14 @@ WITH candidate_scopes AS (
            )
        )
      GROUP BY runs.org_id,
-              runs.cell_id,
+              runs.worker_group_id,
               runs.project_id,
               runs.environment_id,
               COALESCE(run_queue_items.queue_class, 'default'),
               COALESCE(run_queue_items.queue_name, runs.queue_name)
 )
 SELECT candidate_scopes.org_id,
-       candidate_scopes.cell_id,
+       candidate_scopes.worker_group_id,
        candidate_scopes.project_id,
        candidate_scopes.environment_id,
        candidate_scopes.queue_class,
@@ -774,10 +726,10 @@ SELECT candidate_scopes.org_id,
        candidate_scopes.sort_key
   FROM candidate_scopes
  WHERE sqlc.arg(after_sort_key)::text = ''
-    OR (candidate_scopes.sort_key, candidate_scopes.org_id, candidate_scopes.cell_id, candidate_scopes.project_id, candidate_scopes.environment_id, candidate_scopes.queue_class, candidate_scopes.queue_name) > (sqlc.arg(after_sort_key)::text, sqlc.arg(after_org_id)::uuid, sqlc.arg(after_cell_id)::text, sqlc.arg(after_project_id)::uuid, sqlc.arg(after_environment_id)::uuid, sqlc.arg(after_queue_class)::text, sqlc.arg(after_queue_name)::text)
+    OR (candidate_scopes.sort_key, candidate_scopes.org_id, candidate_scopes.worker_group_id, candidate_scopes.project_id, candidate_scopes.environment_id, candidate_scopes.queue_class, candidate_scopes.queue_name) > (sqlc.arg(after_sort_key)::text, sqlc.arg(after_org_id)::uuid, sqlc.arg(after_worker_group_id)::text, sqlc.arg(after_project_id)::uuid, sqlc.arg(after_environment_id)::uuid, sqlc.arg(after_queue_class)::text, sqlc.arg(after_queue_name)::text)
  ORDER BY candidate_scopes.sort_key ASC,
           candidate_scopes.org_id ASC,
-          candidate_scopes.cell_id ASC,
+          candidate_scopes.worker_group_id ASC,
           candidate_scopes.project_id ASC,
           candidate_scopes.environment_id ASC,
           candidate_scopes.queue_class ASC,
@@ -786,34 +738,23 @@ SELECT candidate_scopes.org_id,
 
 -- name: ListQueuedRunQueueItemCandidatesForScope :many
 SELECT runs.org_id,
-       runs.cell_id,
+       runs.worker_group_id,
        runs.id AS run_id,
        COALESCE(run_queue_items.dispatch_message_id, '') AS dispatch_message_id
   FROM runs
   LEFT JOIN run_queue_items ON run_queue_items.org_id = runs.org_id
                            AND run_queue_items.run_id = runs.id
-                           AND run_queue_items.cell_id = runs.cell_id
-                           AND run_queue_items.route_generation = runs.route_generation
-  JOIN environment_cells
-    ON environment_cells.org_id = runs.org_id
-   AND environment_cells.project_id = runs.project_id
-   AND environment_cells.environment_id = runs.environment_id
-   AND environment_cells.cell_id = runs.cell_id
-   AND environment_cells.route_generation = runs.route_generation
-   AND environment_cells.route_state IN ('active', 'draining')
-  JOIN cells ON cells.id = environment_cells.cell_id
-            AND cells.region_id = environment_cells.region_id
-            AND cells.state IN ('active', 'draining')
-  JOIN regions ON regions.id = environment_cells.region_id
-              AND regions.state = 'available'
-  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                AND org_cells.cell_id = environment_cells.cell_id
-                AND org_cells.state = 'active'
-  JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-                  AND cell_health.state IN ('healthy', 'degraded')
-                  AND cell_health.routing_fresh_until > now()
+                           AND run_queue_items.worker_group_id = runs.worker_group_id
+  JOIN worker_groups AS placement_worker_group
+    ON placement_worker_group.id = runs.worker_group_id
+   AND placement_worker_group.state IN ('active', 'draining')
+   AND placement_worker_group.health_state IN ('healthy', 'degraded')
+   AND placement_worker_group.routing_fresh_until > now()
+  JOIN regions AS placement_region
+    ON placement_region.id = placement_worker_group.region_id
+   AND placement_region.state = 'available'
  WHERE runs.org_id = sqlc.arg(org_id)
-   AND runs.cell_id = sqlc.arg(cell_id)
+   AND runs.worker_group_id = sqlc.arg(worker_group_id)
    AND runs.project_id = sqlc.arg(project_id)
    AND runs.environment_id = sqlc.arg(environment_id)
    AND COALESCE(run_queue_items.queue_class, 'default') = sqlc.arg(queue_class)
@@ -859,8 +800,7 @@ UPDATE run_queue_items
    SET last_error = sqlc.arg(last_error),
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
-   AND cell_id = sqlc.arg(cell_id)
-   AND route_generation = sqlc.arg(route_generation)
+   AND worker_group_id = sqlc.arg(worker_group_id)
    AND queue_class = sqlc.arg(queue_class)
    AND run_id = sqlc.arg(run_id)
    AND status = 'queued'
@@ -875,8 +815,7 @@ UPDATE run_queue_items
        enqueued_at = now(),
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
-   AND cell_id = sqlc.arg(cell_id)
-   AND route_generation = sqlc.arg(route_generation)
+   AND worker_group_id = sqlc.arg(worker_group_id)
    AND queue_class = sqlc.arg(queue_class)
    AND run_id = sqlc.arg(run_id)
    AND status = 'queued'
@@ -894,8 +833,7 @@ UPDATE run_queue_items
        updated_at = now(),
        finished_at = NULL
  WHERE run_queue_items.org_id = sqlc.arg(org_id)
-   AND run_queue_items.cell_id = sqlc.arg(cell_id)
-   AND run_queue_items.route_generation = sqlc.arg(route_generation)
+   AND run_queue_items.worker_group_id = sqlc.arg(worker_group_id)
    AND run_queue_items.queue_class = sqlc.arg(queue_class)
    AND run_queue_items.run_id = sqlc.arg(run_id)
    AND (
@@ -912,7 +850,7 @@ UPDATE run_queue_items
          FROM runs
         WHERE runs.org_id = run_queue_items.org_id
           AND runs.id = run_queue_items.run_id
-          AND runs.cell_id = run_queue_items.cell_id
+          AND runs.worker_group_id = run_queue_items.worker_group_id
           AND runs.status = 'queued'
           AND runs.current_run_lease_id IS NULL
        AND EXISTS (
@@ -930,30 +868,20 @@ UPDATE run_queue_items
        SELECT 1
          FROM worker_instances
         WHERE worker_instances.id = sqlc.arg(worker_instance_id)
-          AND worker_instances.cell_id = run_queue_items.cell_id
+          AND worker_instances.worker_group_id = run_queue_items.worker_group_id
           AND worker_instances.status = 'active'
    )
    AND EXISTS (
        SELECT 1
          FROM runs
-         JOIN environment_cells
-           ON environment_cells.org_id = runs.org_id
-          AND environment_cells.project_id = runs.project_id
-          AND environment_cells.environment_id = runs.environment_id
-          AND environment_cells.cell_id = runs.cell_id
-          AND environment_cells.route_generation = run_queue_items.route_generation
-          AND environment_cells.route_state IN ('active', 'draining')
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.state IN ('active', 'draining')
-         JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
+         JOIN worker_groups AS placement_worker_group
+           ON placement_worker_group.id = runs.worker_group_id
         WHERE runs.org_id = run_queue_items.org_id
           AND runs.id = run_queue_items.run_id
-          AND runs.cell_id = run_queue_items.cell_id
-          AND cell_health.state IN ('healthy', 'degraded')
-          AND cell_health.routing_fresh_until > now()
+          AND runs.worker_group_id = run_queue_items.worker_group_id
+          AND placement_worker_group.state IN ('active', 'draining')
+          AND placement_worker_group.health_state IN ('healthy', 'degraded')
+          AND placement_worker_group.routing_fresh_until > now()
    )
 RETURNING *;
 
@@ -964,7 +892,7 @@ WITH candidate AS MATERIALIZED (
       JOIN runs
         ON runs.org_id = run_queue_items.org_id
        AND runs.id = run_queue_items.run_id
-       AND runs.cell_id = run_queue_items.cell_id
+       AND runs.worker_group_id = run_queue_items.worker_group_id
       JOIN sessions
         ON sessions.org_id = runs.org_id
        AND sessions.project_id = runs.project_id
@@ -985,27 +913,17 @@ WITH candidate AS MATERIALIZED (
        AND runtime_instances.state IN ('running', 'waiting_hot')
       JOIN worker_instances
         ON worker_instances.id = runtime_instances.worker_instance_id
-       AND worker_instances.cell_id = run_queue_items.cell_id
+       AND worker_instances.worker_group_id = run_queue_items.worker_group_id
        AND worker_instances.status = 'active'
-      JOIN environment_cells
-        ON environment_cells.org_id = runs.org_id
-       AND environment_cells.project_id = runs.project_id
-       AND environment_cells.environment_id = runs.environment_id
-       AND environment_cells.cell_id = runs.cell_id
-       AND environment_cells.route_generation = run_queue_items.route_generation
-       AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state IN ('active', 'draining')
-      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
+      JOIN worker_groups AS placement_worker_group
+        ON placement_worker_group.id = runs.worker_group_id
      WHERE runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
        AND runs.queue_timestamp <= now()
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
-       AND cell_health.state IN ('healthy', 'degraded')
-       AND cell_health.routing_fresh_until > now()
+       AND placement_worker_group.state IN ('active', 'draining')
+       AND placement_worker_group.health_state IN ('healthy', 'degraded')
+       AND placement_worker_group.routing_fresh_until > now()
        AND (
            run_queue_items.status = 'queued'
            OR (
@@ -1036,9 +954,8 @@ reserved AS (
            finished_at = NULL
       FROM candidate
      WHERE run_queue_items.org_id = candidate.org_id
-       AND run_queue_items.cell_id = candidate.cell_id
+       AND run_queue_items.worker_group_id = candidate.worker_group_id
        AND run_queue_items.run_id = candidate.run_id
-       AND run_queue_items.route_generation = candidate.route_generation
     RETURNING run_queue_items.*
 )
 SELECT *
@@ -1059,21 +976,11 @@ candidate AS MATERIALIZED (
       JOIN runs
         ON runs.org_id = run_queue_items.org_id
        AND runs.id = run_queue_items.run_id
-       AND runs.cell_id = run_queue_items.cell_id
-       AND runs.cell_id = worker_scope.cell_id
-      JOIN environment_cells
-        ON environment_cells.org_id = runs.org_id
-       AND environment_cells.project_id = runs.project_id
-       AND environment_cells.environment_id = runs.environment_id
-       AND environment_cells.cell_id = runs.cell_id
-       AND environment_cells.route_generation = run_queue_items.route_generation
-       AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state IN ('active', 'draining')
-      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
+       AND runs.worker_group_id = run_queue_items.worker_group_id
+       AND runs.worker_group_id = worker_scope.worker_group_id
+      JOIN worker_groups AS placement_worker_group
+        ON placement_worker_group.id = runs.worker_group_id
+       AND placement_worker_group.id = worker_scope.worker_group_id
       JOIN sessions
         ON sessions.org_id = runs.org_id
        AND sessions.project_id = runs.project_id
@@ -1087,7 +994,7 @@ candidate AS MATERIALIZED (
        AND deployments.worker_protocol_version = worker_scope.protocol_version
       JOIN run_runtime_requirements
         ON run_runtime_requirements.org_id = runs.org_id
-       AND run_runtime_requirements.cell_id = runs.cell_id
+       AND run_runtime_requirements.worker_group_id = runs.worker_group_id
        AND run_runtime_requirements.run_id = runs.id
        AND run_runtime_requirements.worker_group_id = worker_scope.worker_group_id
        AND run_runtime_requirements.runtime_id = worker_scope.runtime_id
@@ -1137,12 +1044,13 @@ candidate AS MATERIALIZED (
        )
        AND runtime_checkpoints.cni_profile = worker_scope.cni_profile
      WHERE runs.status = 'queued'
-       AND run_queue_items.cell_id = worker_scope.cell_id
+       AND run_queue_items.worker_group_id = worker_scope.worker_group_id
        AND runs.current_run_lease_id IS NULL
        AND runs.queue_timestamp <= now()
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
-       AND cell_health.state IN ('healthy', 'degraded')
-       AND cell_health.routing_fresh_until > now()
+       AND placement_worker_group.state IN ('active', 'draining')
+       AND placement_worker_group.health_state IN ('healthy', 'degraded')
+       AND placement_worker_group.routing_fresh_until > now()
        AND (
            placement.placement_tags IS NULL
            OR placement.placement_tags = 'null'::jsonb
@@ -1183,9 +1091,8 @@ reserved AS (
            finished_at = NULL
       FROM candidate
      WHERE run_queue_items.org_id = candidate.org_id
-       AND run_queue_items.cell_id = candidate.cell_id
+       AND run_queue_items.worker_group_id = candidate.worker_group_id
        AND run_queue_items.run_id = candidate.run_id
-       AND run_queue_items.route_generation = candidate.route_generation
     RETURNING run_queue_items.*
 )
 SELECT *
@@ -1196,8 +1103,7 @@ SELECT EXISTS (
     SELECT 1
       FROM run_queue_items
      WHERE org_id = sqlc.arg(org_id)
-       AND cell_id = sqlc.arg(cell_id)
-       AND route_generation = sqlc.arg(route_generation)
+       AND worker_group_id = sqlc.arg(worker_group_id)
        AND queue_class = sqlc.arg(queue_class)
        AND run_id = sqlc.arg(run_id)
        AND dispatch_message_id = sqlc.arg(dispatch_message_id)
@@ -1209,8 +1115,7 @@ SELECT EXISTS (
 SELECT count(*) >= sqlc.arg(max_dispatch_attempts)::int AS exhausted
   FROM run_leases
  WHERE org_id = sqlc.arg(org_id)
-   AND cell_id = sqlc.arg(cell_id)
-   AND route_generation = sqlc.arg(route_generation)
+   AND worker_group_id = sqlc.arg(worker_group_id)
    AND queue_class = sqlc.arg(queue_class)
    AND run_id = sqlc.arg(run_id)
    AND status = 'lost';
@@ -1220,8 +1125,7 @@ UPDATE run_queue_items
    SET reservation_expires_at = sqlc.arg(reservation_expires_at),
        updated_at = now()
  WHERE run_queue_items.org_id = sqlc.arg(org_id)
-   AND run_queue_items.cell_id = sqlc.arg(cell_id)
-   AND run_queue_items.route_generation = sqlc.arg(route_generation)
+   AND run_queue_items.worker_group_id = sqlc.arg(worker_group_id)
    AND run_queue_items.queue_class = sqlc.arg(queue_class)
    AND run_queue_items.run_id = sqlc.arg(run_id)
    AND run_queue_items.reserved_by_worker_instance_id = sqlc.arg(worker_instance_id)
@@ -1232,14 +1136,14 @@ UPDATE run_queue_items
        SELECT 1
          FROM worker_instances
         WHERE worker_instances.id = sqlc.arg(worker_instance_id)
-          AND worker_instances.cell_id = run_queue_items.cell_id
+          AND worker_instances.worker_group_id = run_queue_items.worker_group_id
           AND worker_instances.status IN ('active', 'draining')
    )
    AND EXISTS (
        SELECT 1
          FROM runs
         WHERE runs.org_id = run_queue_items.org_id
-          AND runs.cell_id = run_queue_items.cell_id
+          AND runs.worker_group_id = run_queue_items.worker_group_id
           AND runs.id = run_queue_items.run_id
    )
 RETURNING *;
@@ -1251,8 +1155,7 @@ UPDATE run_queue_items
        updated_at = now(),
        finished_at = now()
  WHERE run_queue_items.org_id = sqlc.arg(org_id)
-   AND run_queue_items.cell_id = sqlc.arg(cell_id)
-   AND run_queue_items.route_generation = sqlc.arg(route_generation)
+   AND run_queue_items.worker_group_id = sqlc.arg(worker_group_id)
    AND run_queue_items.queue_class = sqlc.arg(queue_class)
    AND run_queue_items.run_id = sqlc.arg(run_id)
    AND run_queue_items.reserved_by_worker_instance_id = sqlc.arg(worker_instance_id)
@@ -1263,14 +1166,14 @@ UPDATE run_queue_items
        SELECT 1
          FROM worker_instances
         WHERE worker_instances.id = sqlc.arg(worker_instance_id)
-          AND worker_instances.cell_id = run_queue_items.cell_id
+          AND worker_instances.worker_group_id = run_queue_items.worker_group_id
           AND worker_instances.status IN ('active', 'draining')
    )
    AND EXISTS (
        SELECT 1
          FROM runs
         WHERE runs.org_id = run_queue_items.org_id
-          AND runs.cell_id = run_queue_items.cell_id
+          AND runs.worker_group_id = run_queue_items.worker_group_id
           AND runs.id = run_queue_items.run_id
    )
 RETURNING *;
@@ -1287,8 +1190,7 @@ UPDATE run_queue_items
        updated_at = now(),
        finished_at = NULL
  WHERE run_queue_items.org_id = sqlc.arg(org_id)
-   AND run_queue_items.cell_id = sqlc.arg(cell_id)
-   AND run_queue_items.route_generation = sqlc.arg(route_generation)
+   AND run_queue_items.worker_group_id = sqlc.arg(worker_group_id)
    AND run_queue_items.queue_class = sqlc.arg(queue_class)
    AND run_queue_items.run_id = sqlc.arg(run_id)
    AND run_queue_items.reserved_by_worker_instance_id = sqlc.arg(worker_instance_id)
@@ -1299,14 +1201,14 @@ UPDATE run_queue_items
        SELECT 1
          FROM worker_instances
         WHERE worker_instances.id = sqlc.arg(worker_instance_id)
-          AND worker_instances.cell_id = run_queue_items.cell_id
+          AND worker_instances.worker_group_id = run_queue_items.worker_group_id
           AND worker_instances.status IN ('active', 'draining')
    )
    AND EXISTS (
        SELECT 1
          FROM runs
         WHERE runs.org_id = run_queue_items.org_id
-          AND runs.cell_id = run_queue_items.cell_id
+          AND runs.worker_group_id = run_queue_items.worker_group_id
           AND runs.id = run_queue_items.run_id
    )
 RETURNING *;
@@ -1334,8 +1236,7 @@ queue_entry AS (
            updated_at = now(),
            finished_at = now()
      WHERE run_queue_items.org_id = sqlc.arg(org_id)
-       AND run_queue_items.cell_id = sqlc.arg(cell_id)
-       AND run_queue_items.route_generation = sqlc.arg(route_generation)
+       AND run_queue_items.worker_group_id = sqlc.arg(worker_group_id)
        AND run_queue_items.queue_class = sqlc.arg(queue_class)
        AND run_queue_items.run_id = sqlc.arg(run_id)
        AND run_queue_items.dispatch_message_id = sqlc.arg(dispatch_message_id)
@@ -1366,7 +1267,7 @@ failed_run AS (
        AND runs.id = queue_entry.run_id
        AND runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
-    RETURNING runs.org_id, runs.cell_id, runs.project_id, runs.environment_id, runs.id, runs.session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version
+    RETURNING runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.id, runs.session_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version
 ),
 failed_attempt AS (
     UPDATE run_attempts
@@ -1381,9 +1282,9 @@ failed_attempt AS (
     RETURNING run_attempts.id, run_attempts.run_id
 ),
 failed_snapshot AS (
-    INSERT INTO run_snapshots (org_id, cell_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
+    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
     SELECT failed_run.org_id,
-           failed_run.cell_id,
+           failed_run.worker_group_id,
            failed_run.id,
            failed_run.state_version,
            'failed',
@@ -1412,19 +1313,19 @@ failed_sessions AS (
       FROM failed_run
 ),
 run_event_seq AS (
-    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
-    SELECT failed_run.org_id, failed_run.cell_id, 'run', failed_run.id, 1
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
+    SELECT failed_run.org_id, failed_run.worker_group_id, 'run', failed_run.id, 1
       FROM failed_run
       JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
-    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
     RETURNING org_id, subject_kind, subject_id, seq
 ),
 	run_event AS (
-	    INSERT INTO event_hot_payloads (org_id, cell_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+	    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
 	    SELECT failed_run.org_id,
-	           failed_run.cell_id,
+	           failed_run.worker_group_id,
 	           failed_run.project_id,
 	           failed_run.environment_id,
 	           failed_run.id,
@@ -1449,9 +1350,9 @@ run_event_seq AS (
 	    RETURNING *
 	),
 	run_telemetry_outbox AS (
-	    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+	    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
 	    SELECT run_event.org_id,
-	                  run_event.cell_id,
+	                  run_event.worker_group_id,
 	                  'event',
 	                  run_event.subject_type,
 	                  run_event.subject_id,

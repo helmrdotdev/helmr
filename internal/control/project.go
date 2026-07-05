@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/cell"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
@@ -127,9 +126,24 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
+	defaultRegionID := strings.TrimSpace(request.DefaultRegionID)
+	if defaultRegionID == "" {
+		writeError(w, badRequest(errors.New("default_region_id is required")))
+		return
+	}
 	var project db.CreateProjectWithDefaultEnvironmentRow
 	var environments []db.Environment
 	err = s.inTx(r.Context(), func(work *txWork) error {
+		region, err := work.q.GetRegion(r.Context(), defaultRegionID)
+		if isNoRows(err) {
+			return badRequest(errors.New("default region not found"))
+		}
+		if err != nil {
+			return errors.New("load default region")
+		}
+		if region.State != db.RegionStateAvailable {
+			return badRequest(errors.New("default region is not available"))
+		}
 		var projectPublicID, productionPublicID, stagingPublicID string
 		project, err = createWithPublicID(r.Context(), []publicIDSlot{
 			{prefix: publicid.Project, value: &projectPublicID},
@@ -140,7 +154,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 				ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				PublicID:                   projectPublicID,
 				OrgID:                      pgvalue.UUID(actor.OrgID),
-				DefaultRegionID:            s.defaultRegionID,
+				DefaultRegionID:            region.ID,
 				Slug:                       slug,
 				Name:                       name,
 				IsDefault:                  false,
@@ -162,20 +176,6 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			return errors.New("list environments")
-		}
-		for _, environment := range environments {
-			if _, err := cell.EnsureEnvironmentRoute(r.Context(), work.q, cell.EnsureEnvironmentRouteParams{
-				OrgID:         project.OrgID,
-				ProjectID:     project.ID,
-				EnvironmentID: environment.ID,
-				RegionID:      environment.DefaultRegionID,
-				LocalCellID:   s.cellID,
-			}); err != nil {
-				if errors.Is(err, cell.ErrRouteUnavailable) || errors.Is(err, cell.ErrPlacementOutsideLocalCell) {
-					return unavailable(errors.New("environment route is unavailable"))
-				}
-				return errors.New("create environment route")
-			}
 		}
 		return nil
 	})
@@ -373,10 +373,11 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
 	var environment db.Environment
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		if _, err := work.q.GetProject(r.Context(), db.GetProjectParams{
+		_, err := work.q.GetProject(r.Context(), db.GetProjectParams{
 			OrgID: pgvalue.UUID(actor.OrgID),
 			ID:    pgvalue.UUID(projectID),
-		}); isNoRows(err) {
+		})
+		if isNoRows(err) {
 			return notFound(errors.New("project not found"))
 		} else if err != nil {
 			return errors.New("load project")
@@ -384,15 +385,14 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		var publicID string
 		environment, err = createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.Environment, value: &publicID}}, func() (db.Environment, error) {
 			return work.q.CreateEnvironment(r.Context(), db.CreateEnvironmentParams{
-				ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				PublicID:        publicID,
-				OrgID:           pgvalue.UUID(actor.OrgID),
-				ProjectID:       pgvalue.UUID(projectID),
-				DefaultRegionID: s.defaultRegionID,
-				Slug:            slug,
-				Name:            name,
-				ColorHex:        colorHex,
-				IsDefault:       false,
+				ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				PublicID:  publicID,
+				OrgID:     pgvalue.UUID(actor.OrgID),
+				ProjectID: pgvalue.UUID(projectID),
+				Slug:      slug,
+				Name:      name,
+				ColorHex:  colorHex,
+				IsDefault: false,
 			})
 		})
 		if err != nil {
@@ -400,18 +400,6 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 				return badRequest(errors.New("environment slug is already in use"))
 			}
 			return errors.New("create environment")
-		}
-		if _, err := cell.EnsureEnvironmentRoute(r.Context(), work.q, cell.EnsureEnvironmentRouteParams{
-			OrgID:         environment.OrgID,
-			ProjectID:     environment.ProjectID,
-			EnvironmentID: environment.ID,
-			RegionID:      environment.DefaultRegionID,
-			LocalCellID:   s.cellID,
-		}); err != nil {
-			if errors.Is(err, cell.ErrRouteUnavailable) || errors.Is(err, cell.ErrPlacementOutsideLocalCell) {
-				return unavailable(errors.New("environment route is unavailable"))
-			}
-			return errors.New("create environment route")
 		}
 		return nil
 	})
@@ -639,13 +627,14 @@ func normalizeEnvironmentColorHex(colorHex string) (string, error) {
 }
 
 type projectRecord struct {
-	id        pgtype.UUID
-	orgID     pgtype.UUID
-	slug      string
-	name      string
-	isDefault bool
-	createdAt pgtype.Timestamptz
-	updatedAt pgtype.Timestamptz
+	id              pgtype.UUID
+	orgID           pgtype.UUID
+	defaultRegionID string
+	slug            string
+	name            string
+	isDefault       bool
+	createdAt       pgtype.Timestamptz
+	updatedAt       pgtype.Timestamptz
 }
 
 type environmentRecord struct {
@@ -661,12 +650,13 @@ type environmentRecord struct {
 
 func projectResponse(project projectRecord) api.ProjectSummary {
 	return api.ProjectSummary{
-		ID:        pgvalue.MustUUIDValue(project.id).String(),
-		Slug:      project.slug,
-		Name:      project.name,
-		IsDefault: project.isDefault,
-		CreatedAt: pgvalue.Time(project.createdAt),
-		UpdatedAt: pgvalue.Time(project.updatedAt),
+		ID:              pgvalue.MustUUIDValue(project.id).String(),
+		Slug:            project.slug,
+		Name:            project.name,
+		DefaultRegionID: project.defaultRegionID,
+		IsDefault:       project.isDefault,
+		CreatedAt:       pgvalue.Time(project.createdAt),
+		UpdatedAt:       pgvalue.Time(project.updatedAt),
 	}
 }
 
@@ -701,25 +691,27 @@ func environmentResponse(environment environmentRecord) api.EnvironmentSummary {
 
 func projectRecordFromDB(project db.Project) projectRecord {
 	return projectRecord{
-		id:        project.ID,
-		orgID:     project.OrgID,
-		slug:      project.Slug,
-		name:      project.Name,
-		isDefault: project.IsDefault,
-		createdAt: project.CreatedAt,
-		updatedAt: project.UpdatedAt,
+		id:              project.ID,
+		orgID:           project.OrgID,
+		defaultRegionID: project.DefaultRegionID,
+		slug:            project.Slug,
+		name:            project.Name,
+		isDefault:       project.IsDefault,
+		createdAt:       project.CreatedAt,
+		updatedAt:       project.UpdatedAt,
 	}
 }
 
 func projectRecordFromCreated(project db.CreateProjectWithDefaultEnvironmentRow) projectRecord {
 	return projectRecord{
-		id:        project.ID,
-		orgID:     project.OrgID,
-		slug:      project.Slug,
-		name:      project.Name,
-		isDefault: project.IsDefault,
-		createdAt: project.CreatedAt,
-		updatedAt: project.UpdatedAt,
+		id:              project.ID,
+		orgID:           project.OrgID,
+		defaultRegionID: project.DefaultRegionID,
+		slug:            project.Slug,
+		name:            project.Name,
+		isDefault:       project.IsDefault,
+		createdAt:       project.CreatedAt,
+		updatedAt:       project.UpdatedAt,
 	}
 }
 

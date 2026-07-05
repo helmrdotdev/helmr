@@ -2,7 +2,7 @@
 INSERT INTO workspace_pty_sessions (
     id,
     org_id,
-    cell_id,
+    worker_group_id,
     project_id,
     environment_id,
     workspace_id,
@@ -16,7 +16,7 @@ INSERT INTO workspace_pty_sessions (
 )
 SELECT sqlc.arg(id),
        workspaces.org_id,
-       workspaces.cell_id,
+       workspaces.worker_group_id,
        workspaces.project_id,
        workspaces.environment_id,
        workspaces.id,
@@ -375,7 +375,7 @@ SELECT id,
 -- name: InsertWorkspacePtyStreamChunk :one
 INSERT INTO workspace_pty_stream_chunks (
     org_id,
-    cell_id,
+    worker_group_id,
     project_id,
     environment_id,
     workspace_id,
@@ -387,7 +387,7 @@ INSERT INTO workspace_pty_stream_chunks (
     observed_at
 ) VALUES (
     sqlc.arg(org_id),
-    sqlc.arg(cell_id),
+    sqlc.arg(worker_group_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),
@@ -404,7 +404,7 @@ RETURNING *;
 WITH inserted AS (
     INSERT INTO workspace_pty_stream_chunks (
         org_id,
-        cell_id,
+        worker_group_id,
         project_id,
         environment_id,
         workspace_id,
@@ -416,7 +416,7 @@ WITH inserted AS (
         observed_at
     ) VALUES (
         sqlc.arg(org_id),
-        sqlc.arg(cell_id),
+        sqlc.arg(worker_group_id),
         sqlc.arg(project_id),
         sqlc.arg(environment_id),
         sqlc.arg(workspace_id),
@@ -431,9 +431,9 @@ WITH inserted AS (
     RETURNING *
 ),
 terminal_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key)
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key)
     SELECT inserted.org_id,
-           inserted.cell_id,
+           inserted.worker_group_id,
            'terminal_output',
            'workspace_pty',
            inserted.pty_session_id,
@@ -441,7 +441,7 @@ terminal_telemetry_outbox AS (
            inserted.offset_start,
            'terminal_output:workspace_pty:' || inserted.pty_session_id::text || ':' || inserted.stream::text || ':' || inserted.offset_start::text || ':' || inserted.offset_end::text
       FROM inserted
-    ON CONFLICT (cell_id, stream_kind, idempotency_key) DO NOTHING
+    ON CONFLICT (worker_group_id, stream_kind, idempotency_key) DO NOTHING
     RETURNING id
 )
 SELECT *
@@ -521,7 +521,7 @@ DELETE FROM workspace_pty_stream_chunks
              SELECT 1
                FROM telemetry_outbox
               WHERE telemetry_outbox.org_id = workspace_pty_stream_chunks.org_id
-                AND telemetry_outbox.cell_id = workspace_pty_stream_chunks.cell_id
+                AND telemetry_outbox.worker_group_id = workspace_pty_stream_chunks.worker_group_id
                 AND telemetry_outbox.stream_kind = 'terminal_output'
                 AND telemetry_outbox.source_kind = 'workspace_pty'
                 AND telemetry_outbox.source_id = workspace_pty_stream_chunks.pty_session_id
@@ -532,7 +532,7 @@ DELETE FROM workspace_pty_stream_chunks
              SELECT 1
                FROM terminal_output_watermarks
               WHERE terminal_output_watermarks.org_id = workspace_pty_stream_chunks.org_id
-                AND terminal_output_watermarks.cell_id = workspace_pty_stream_chunks.cell_id
+                AND terminal_output_watermarks.worker_group_id = workspace_pty_stream_chunks.worker_group_id
                 AND terminal_output_watermarks.workspace_id = workspace_pty_stream_chunks.workspace_id
                 AND terminal_output_watermarks.resource_kind = 'workspace_pty'
                 AND terminal_output_watermarks.resource_id = workspace_pty_stream_chunks.pty_session_id
@@ -544,7 +544,7 @@ DELETE FROM workspace_pty_stream_chunks
          SELECT 1
            FROM telemetry_outbox
           WHERE telemetry_outbox.org_id = workspace_pty_stream_chunks.org_id
-            AND telemetry_outbox.cell_id = workspace_pty_stream_chunks.cell_id
+            AND telemetry_outbox.worker_group_id = workspace_pty_stream_chunks.worker_group_id
             AND telemetry_outbox.stream_kind = 'terminal_output'
             AND telemetry_outbox.source_kind = 'workspace_pty'
             AND telemetry_outbox.source_id = workspace_pty_stream_chunks.pty_session_id
@@ -568,7 +568,7 @@ SELECT *
 -- name: InsertWorkspacePtyStreamChunkReceipt :one
 INSERT INTO workspace_pty_stream_chunk_receipts (
     org_id,
-    cell_id,
+    worker_group_id,
     project_id,
     environment_id,
     workspace_id,
@@ -581,7 +581,7 @@ INSERT INTO workspace_pty_stream_chunk_receipts (
     observed_at
 ) VALUES (
     sqlc.arg(org_id),
-    sqlc.arg(cell_id),
+    sqlc.arg(worker_group_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),

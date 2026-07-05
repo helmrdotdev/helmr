@@ -6,7 +6,12 @@ SELECT count(*) FROM organizations;
 
 -- name: CreateOrganization :one
 INSERT INTO organizations (id, public_id, name, slug)
-VALUES (sqlc.arg(id), sqlc.arg(public_id), sqlc.arg(name), sqlc.arg(slug))
+VALUES (
+    sqlc.arg(id),
+    sqlc.arg(public_id),
+    sqlc.arg(name),
+    sqlc.arg(slug)
+)
 RETURNING *;
 
 -- name: GetOrganization :one

@@ -50,9 +50,7 @@ func TestEnqueueRunPublishesPreparedMessageAndMarksEnqueued(t *testing.T) {
 		t.Fatalf("message requirements = %+v", message.Requirements)
 	}
 	if store.markEnqueued.DispatchMessageID.String != "message-1" ||
-		store.markEnqueued.CellID != store.prepare.CellID ||
-		store.markEnqueued.RouteGeneration != store.prepare.RouteGeneration ||
-		store.markEnqueued.QueueClass != store.prepare.QueueClass ||
+		store.markEnqueued.WorkerGroupID != store.prepare.WorkerGroupID || store.markEnqueued.QueueClass != store.prepare.QueueClass ||
 		store.markEnqueued.ExpectedDispatchGeneration != store.prepare.DispatchGeneration ||
 		store.markError.RunID.Valid {
 		t.Fatalf("mark enqueued = %+v mark error = %+v", store.markEnqueued, store.markError)
@@ -76,9 +74,7 @@ func TestEnqueueRunMarksQueueErrors(t *testing.T) {
 		t.Fatal("enqueue error = nil")
 	}
 	if store.markError.LastError != "redis unavailable" ||
-		store.markError.CellID != store.prepare.CellID ||
-		store.markError.RouteGeneration != store.prepare.RouteGeneration ||
-		store.markError.QueueClass != store.prepare.QueueClass ||
+		store.markError.WorkerGroupID != store.prepare.WorkerGroupID || store.markError.QueueClass != store.prepare.QueueClass ||
 		store.markError.ExpectedDispatchGeneration != store.prepare.DispatchGeneration ||
 		store.markEnqueued.RunID.Valid {
 		t.Fatalf("mark error = %+v mark enqueued = %+v", store.markError, store.markEnqueued)
@@ -340,8 +336,7 @@ func testPreparedRunQueueItemWithScope(orgID pgtype.UUID, projectID pgtype.UUID,
 	return db.PrepareQueuedRunQueueItemRow{
 		RunID:                   runID,
 		OrgID:                   orgID,
-		CellID:                  "cell-1",
-		RouteGeneration:         1,
+		WorkerGroupID:           "worker-group-1",
 		QueueClass:              "default",
 		ProjectID:               projectID,
 		EnvironmentID:           environmentID,

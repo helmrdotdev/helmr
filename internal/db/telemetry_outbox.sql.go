@@ -32,15 +32,15 @@ updated AS (
            last_error = ''
       FROM claimed
      WHERE telemetry_outbox.id = claimed.id
-    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.cell_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.seq, telemetry_outbox.idempotency_key, telemetry_outbox.object_key, telemetry_outbox.cas_digest, telemetry_outbox.state, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.last_error, telemetry_outbox.created_at, telemetry_outbox.updated_at
+    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.worker_group_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.seq, telemetry_outbox.idempotency_key, telemetry_outbox.object_key, telemetry_outbox.cas_digest, telemetry_outbox.state, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.last_error, telemetry_outbox.created_at, telemetry_outbox.updated_at
 )
 SELECT updated.id AS outbox_id,
        updated.retry_count,
        updated.idempotency_key,
-       events.id, events.subject_type, events.subject_id, events.seq, events.org_id, events.cell_id, events.project_id, events.environment_id, events.run_id, events.deployment_id, events.attempt_id, events.run_lease_id, events.attempt_number, events.trace_id, events.span_id, events.parent_span_id, events.traceparent, events.category, events.severity, events.source, events.kind, events.message, events.payload, events.redaction_class, events.snapshot_version, events.expires_at, events.occurred_at, events.created_at
+       events.id, events.subject_type, events.subject_id, events.seq, events.org_id, events.worker_group_id, events.project_id, events.environment_id, events.run_id, events.deployment_id, events.attempt_id, events.run_lease_id, events.attempt_number, events.trace_id, events.span_id, events.parent_span_id, events.traceparent, events.category, events.severity, events.source, events.kind, events.message, events.payload, events.redaction_class, events.snapshot_version, events.expires_at, events.occurred_at, events.created_at
   FROM updated
   JOIN event_hot_payloads AS events ON events.org_id = updated.org_id
-                                   AND events.cell_id = updated.cell_id
+                                   AND events.worker_group_id = updated.worker_group_id
                                    AND events.subject_type = updated.source_kind::event_subject_type
                                    AND events.subject_id = updated.source_id
                                    AND events.seq = updated.seq
@@ -61,7 +61,7 @@ type ClaimEventIngestBatchRow struct {
 	SubjectID       pgtype.UUID        `json:"subject_id"`
 	Seq             int64              `json:"seq"`
 	OrgID           pgtype.UUID        `json:"org_id"`
-	CellID          string             `json:"cell_id"`
+	WorkerGroupID   string             `json:"worker_group_id"`
 	ProjectID       pgtype.UUID        `json:"project_id"`
 	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	RunID           pgtype.UUID        `json:"run_id"`
@@ -104,7 +104,7 @@ func (q *Queries) ClaimEventIngestBatch(ctx context.Context, arg ClaimEventInges
 			&i.SubjectID,
 			&i.Seq,
 			&i.OrgID,
-			&i.CellID,
+			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
@@ -159,13 +159,13 @@ updated AS (
            last_error = ''
       FROM claimed
      WHERE telemetry_outbox.id = claimed.id
-    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.cell_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.seq, telemetry_outbox.idempotency_key, telemetry_outbox.object_key, telemetry_outbox.cas_digest, telemetry_outbox.state, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.last_error, telemetry_outbox.created_at, telemetry_outbox.updated_at
+    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.worker_group_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.seq, telemetry_outbox.idempotency_key, telemetry_outbox.object_key, telemetry_outbox.cas_digest, telemetry_outbox.state, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.last_error, telemetry_outbox.created_at, telemetry_outbox.updated_at
 )
 SELECT updated.id AS outbox_id,
        updated.retry_count,
        updated.idempotency_key,
        chunks.org_id,
-       chunks.cell_id,
+       chunks.worker_group_id,
        runs.project_id,
        runs.environment_id,
        chunks.run_id,
@@ -180,7 +180,7 @@ SELECT updated.id AS outbox_id,
        chunks.created_at
   FROM updated
   JOIN run_log_hot_chunks AS chunks ON chunks.org_id = updated.org_id
-                                   AND chunks.cell_id = updated.cell_id
+                                   AND chunks.worker_group_id = updated.worker_group_id
                                    AND chunks.run_id = updated.source_id
                                    AND chunks.stream::text = updated.stream_name
                                    AND chunks.seq = updated.seq
@@ -202,7 +202,7 @@ type ClaimRunLogIngestBatchRow struct {
 	RetryCount     int32              `json:"retry_count"`
 	IdempotencyKey string             `json:"idempotency_key"`
 	OrgID          pgtype.UUID        `json:"org_id"`
-	CellID         string             `json:"cell_id"`
+	WorkerGroupID  string             `json:"worker_group_id"`
 	ProjectID      pgtype.UUID        `json:"project_id"`
 	EnvironmentID  pgtype.UUID        `json:"environment_id"`
 	RunID          pgtype.UUID        `json:"run_id"`
@@ -231,7 +231,7 @@ func (q *Queries) ClaimRunLogIngestBatch(ctx context.Context, arg ClaimRunLogIng
 			&i.RetryCount,
 			&i.IdempotencyKey,
 			&i.OrgID,
-			&i.CellID,
+			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
@@ -268,7 +268,7 @@ WITH claimed AS (
              SELECT 1
                FROM workspace_exec_stream_chunks AS chunks
               WHERE chunks.org_id = telemetry_outbox.org_id
-                AND chunks.cell_id = telemetry_outbox.cell_id
+                AND chunks.worker_group_id = telemetry_outbox.worker_group_id
                 AND chunks.exec_id = telemetry_outbox.source_id
                 AND chunks.stream::text = telemetry_outbox.stream_name
                 AND chunks.offset_start = telemetry_outbox.seq
@@ -286,13 +286,13 @@ updated AS (
            last_error = ''
       FROM claimed
      WHERE telemetry_outbox.id = claimed.id
-    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.cell_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.seq, telemetry_outbox.idempotency_key, telemetry_outbox.object_key, telemetry_outbox.cas_digest, telemetry_outbox.state, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.last_error, telemetry_outbox.created_at, telemetry_outbox.updated_at
+    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.worker_group_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.seq, telemetry_outbox.idempotency_key, telemetry_outbox.object_key, telemetry_outbox.cas_digest, telemetry_outbox.state, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.last_error, telemetry_outbox.created_at, telemetry_outbox.updated_at
 )
 SELECT updated.id AS outbox_id,
        updated.retry_count,
        updated.idempotency_key,
        chunks.org_id,
-       chunks.cell_id,
+       chunks.worker_group_id,
        chunks.project_id,
        chunks.environment_id,
        chunks.workspace_id,
@@ -305,7 +305,7 @@ SELECT updated.id AS outbox_id,
        chunks.observed_at
   FROM updated
   JOIN workspace_exec_stream_chunks AS chunks ON chunks.org_id = updated.org_id
-                                             AND chunks.cell_id = updated.cell_id
+                                             AND chunks.worker_group_id = updated.worker_group_id
                                              AND chunks.exec_id = updated.source_id
                                              AND chunks.stream::text = updated.stream_name
                                              AND chunks.offset_start = updated.seq
@@ -322,7 +322,7 @@ type ClaimWorkspaceExecTerminalOutputIngestBatchRow struct {
 	RetryCount     int32              `json:"retry_count"`
 	IdempotencyKey string             `json:"idempotency_key"`
 	OrgID          pgtype.UUID        `json:"org_id"`
-	CellID         string             `json:"cell_id"`
+	WorkerGroupID  string             `json:"worker_group_id"`
 	ProjectID      pgtype.UUID        `json:"project_id"`
 	EnvironmentID  pgtype.UUID        `json:"environment_id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
@@ -349,7 +349,7 @@ func (q *Queries) ClaimWorkspaceExecTerminalOutputIngestBatch(ctx context.Contex
 			&i.RetryCount,
 			&i.IdempotencyKey,
 			&i.OrgID,
-			&i.CellID,
+			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkspaceID,
@@ -384,7 +384,7 @@ WITH claimed AS (
              SELECT 1
                FROM workspace_pty_stream_chunks AS chunks
               WHERE chunks.org_id = telemetry_outbox.org_id
-                AND chunks.cell_id = telemetry_outbox.cell_id
+                AND chunks.worker_group_id = telemetry_outbox.worker_group_id
                 AND chunks.pty_session_id = telemetry_outbox.source_id
                 AND chunks.stream::text = telemetry_outbox.stream_name
                 AND chunks.offset_start = telemetry_outbox.seq
@@ -402,13 +402,13 @@ updated AS (
            last_error = ''
       FROM claimed
      WHERE telemetry_outbox.id = claimed.id
-    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.cell_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.seq, telemetry_outbox.idempotency_key, telemetry_outbox.object_key, telemetry_outbox.cas_digest, telemetry_outbox.state, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.last_error, telemetry_outbox.created_at, telemetry_outbox.updated_at
+    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.worker_group_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.seq, telemetry_outbox.idempotency_key, telemetry_outbox.object_key, telemetry_outbox.cas_digest, telemetry_outbox.state, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.last_error, telemetry_outbox.created_at, telemetry_outbox.updated_at
 )
 SELECT updated.id AS outbox_id,
        updated.retry_count,
        updated.idempotency_key,
        chunks.org_id,
-       chunks.cell_id,
+       chunks.worker_group_id,
        chunks.project_id,
        chunks.environment_id,
        chunks.workspace_id,
@@ -421,7 +421,7 @@ SELECT updated.id AS outbox_id,
        chunks.observed_at
   FROM updated
   JOIN workspace_pty_stream_chunks AS chunks ON chunks.org_id = updated.org_id
-                                            AND chunks.cell_id = updated.cell_id
+                                            AND chunks.worker_group_id = updated.worker_group_id
                                             AND chunks.pty_session_id = updated.source_id
                                             AND chunks.stream::text = updated.stream_name
                                             AND chunks.offset_start = updated.seq
@@ -438,7 +438,7 @@ type ClaimWorkspacePtyTerminalOutputIngestBatchRow struct {
 	RetryCount     int32              `json:"retry_count"`
 	IdempotencyKey string             `json:"idempotency_key"`
 	OrgID          pgtype.UUID        `json:"org_id"`
-	CellID         string             `json:"cell_id"`
+	WorkerGroupID  string             `json:"worker_group_id"`
 	ProjectID      pgtype.UUID        `json:"project_id"`
 	EnvironmentID  pgtype.UUID        `json:"environment_id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
@@ -465,7 +465,7 @@ func (q *Queries) ClaimWorkspacePtyTerminalOutputIngestBatch(ctx context.Context
 			&i.RetryCount,
 			&i.IdempotencyKey,
 			&i.OrgID,
-			&i.CellID,
+			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkspaceID,
@@ -501,7 +501,7 @@ WITH candidates AS (
                     SELECT 1
                       FROM event_hot_payloads AS events
                      WHERE events.org_id = telemetry_outbox.org_id
-                       AND events.cell_id = telemetry_outbox.cell_id
+                       AND events.worker_group_id = telemetry_outbox.worker_group_id
                        AND events.subject_type = telemetry_outbox.source_kind::event_subject_type
                        AND events.subject_id = telemetry_outbox.source_id
                        AND events.seq = telemetry_outbox.seq
@@ -513,7 +513,7 @@ WITH candidates AS (
                     SELECT 1
                       FROM run_log_hot_chunks AS chunks
                      WHERE chunks.org_id = telemetry_outbox.org_id
-                       AND chunks.cell_id = telemetry_outbox.cell_id
+                       AND chunks.worker_group_id = telemetry_outbox.worker_group_id
                        AND chunks.run_id = telemetry_outbox.source_id
                        AND chunks.stream::text = telemetry_outbox.stream_name
                        AND chunks.seq = telemetry_outbox.seq
@@ -526,7 +526,7 @@ WITH candidates AS (
                     SELECT 1
                       FROM workspace_exec_stream_chunks AS chunks
                      WHERE chunks.org_id = telemetry_outbox.org_id
-                       AND chunks.cell_id = telemetry_outbox.cell_id
+                       AND chunks.worker_group_id = telemetry_outbox.worker_group_id
                        AND chunks.exec_id = telemetry_outbox.source_id
                        AND chunks.stream::text = telemetry_outbox.stream_name
                        AND chunks.offset_start = telemetry_outbox.seq
@@ -539,7 +539,7 @@ WITH candidates AS (
                     SELECT 1
                       FROM workspace_pty_stream_chunks AS chunks
                      WHERE chunks.org_id = telemetry_outbox.org_id
-                       AND chunks.cell_id = telemetry_outbox.cell_id
+                       AND chunks.worker_group_id = telemetry_outbox.worker_group_id
                        AND chunks.pty_session_id = telemetry_outbox.source_id
                        AND chunks.stream::text = telemetry_outbox.stream_name
                        AND chunks.offset_start = telemetry_outbox.seq
@@ -559,12 +559,12 @@ dead_lettered AS (
       FROM candidates
      WHERE telemetry_outbox.id = candidates.id
        AND telemetry_outbox.written_at IS NULL
-    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.cell_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.seq, telemetry_outbox.idempotency_key, telemetry_outbox.object_key, telemetry_outbox.cas_digest, telemetry_outbox.state, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.last_error, telemetry_outbox.created_at, telemetry_outbox.updated_at
+    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.worker_group_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.seq, telemetry_outbox.idempotency_key, telemetry_outbox.object_key, telemetry_outbox.cas_digest, telemetry_outbox.state, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.last_error, telemetry_outbox.created_at, telemetry_outbox.updated_at
 ),
 replay_errors AS (
-    INSERT INTO telemetry_replay_errors (org_id, cell_id, stream_kind, source_kind, source_id, stream_name, seq, state, retry_count, last_error, next_retry_at)
+    INSERT INTO telemetry_replay_errors (org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name, seq, state, retry_count, last_error, next_retry_at)
     SELECT org_id,
-           cell_id,
+           worker_group_id,
            stream_kind,
            source_kind,
            source_id,
@@ -611,11 +611,11 @@ WITH dead_lettered AS (
            last_error = $1
      WHERE telemetry_outbox.id = $2
        AND telemetry_outbox.written_at IS NULL
-    RETURNING id, org_id, cell_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key, object_key, cas_digest, state, retry_count, next_retry_at, written_at, published_at, publish_attempts, publish_locked_until, last_error, created_at, updated_at
+    RETURNING id, org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key, object_key, cas_digest, state, retry_count, next_retry_at, written_at, published_at, publish_attempts, publish_locked_until, last_error, created_at, updated_at
 )
-INSERT INTO telemetry_replay_errors (org_id, cell_id, stream_kind, source_kind, source_id, stream_name, seq, state, retry_count, last_error, next_retry_at)
+INSERT INTO telemetry_replay_errors (org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name, seq, state, retry_count, last_error, next_retry_at)
 SELECT org_id,
-       cell_id,
+       worker_group_id,
        stream_kind,
        source_kind,
        source_id,
@@ -644,7 +644,7 @@ SELECT COALESCE(
         SELECT MIN(seq) - 1
           FROM telemetry_outbox
          WHERE org_id = $1
-           AND cell_id = $2
+           AND worker_group_id = $2
            AND stream_kind = 'run_log'
            AND source_kind = 'run'
            AND source_id = $3
@@ -657,7 +657,7 @@ SELECT COALESCE(
 
 type GetRunLogIngestFrontierParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
 	RunID         pgtype.UUID `json:"run_id"`
 	MaxWrittenSeq int64       `json:"max_written_seq"`
 }
@@ -665,7 +665,7 @@ type GetRunLogIngestFrontierParams struct {
 func (q *Queries) GetRunLogIngestFrontier(ctx context.Context, arg GetRunLogIngestFrontierParams) (int64, error) {
 	row := q.db.QueryRow(ctx, getRunLogIngestFrontier,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.RunID,
 		arg.MaxWrittenSeq,
 	)
@@ -680,7 +680,7 @@ SELECT COALESCE(
         SELECT MIN(seq) - 1
                  FROM telemetry_outbox
                 WHERE org_id = $1
-                  AND cell_id = $2
+                  AND worker_group_id = $2
                   AND stream_kind = $3::telemetry_stream_kind
                   AND source_kind = $4
                   AND source_id = $5
@@ -694,7 +694,7 @@ SELECT COALESCE(
 
 type GetTelemetryIngestFrontierParams struct {
 	OrgID         pgtype.UUID         `json:"org_id"`
-	CellID        string              `json:"cell_id"`
+	WorkerGroupID string              `json:"worker_group_id"`
 	StreamKind    TelemetryStreamKind `json:"stream_kind"`
 	SourceKind    string              `json:"source_kind"`
 	SourceID      pgtype.UUID         `json:"source_id"`
@@ -705,7 +705,7 @@ type GetTelemetryIngestFrontierParams struct {
 func (q *Queries) GetTelemetryIngestFrontier(ctx context.Context, arg GetTelemetryIngestFrontierParams) (int64, error) {
 	row := q.db.QueryRow(ctx, getTelemetryIngestFrontier,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.StreamKind,
 		arg.SourceKind,
 		arg.SourceID,
@@ -723,7 +723,7 @@ SELECT COALESCE(
         SELECT MIN(seq)
           FROM telemetry_outbox
          WHERE org_id = $1
-           AND cell_id = $2
+           AND worker_group_id = $2
            AND stream_kind = 'terminal_output'
            AND source_kind = $3
            AND source_id = $4
@@ -737,7 +737,7 @@ SELECT COALESCE(
 
 type GetTerminalOutputIngestFrontierParams struct {
 	OrgID            pgtype.UUID `json:"org_id"`
-	CellID           string      `json:"cell_id"`
+	WorkerGroupID    string      `json:"worker_group_id"`
 	SourceKind       string      `json:"source_kind"`
 	SourceID         pgtype.UUID `json:"source_id"`
 	StreamName       string      `json:"stream_name"`
@@ -747,7 +747,7 @@ type GetTerminalOutputIngestFrontierParams struct {
 func (q *Queries) GetTerminalOutputIngestFrontier(ctx context.Context, arg GetTerminalOutputIngestFrontierParams) (int64, error) {
 	row := q.db.QueryRow(ctx, getTerminalOutputIngestFrontier,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.SourceKind,
 		arg.SourceID,
 		arg.StreamName,
@@ -762,7 +762,7 @@ const listDeadLetteredTelemetrySeqs = `-- name: ListDeadLetteredTelemetrySeqs :m
 SELECT telemetry_outbox.seq
   FROM telemetry_outbox
  WHERE telemetry_outbox.org_id = $1
-   AND telemetry_outbox.cell_id = $2
+   AND telemetry_outbox.worker_group_id = $2
    AND telemetry_outbox.stream_kind = $3::telemetry_stream_kind
    AND telemetry_outbox.source_kind = $4
    AND telemetry_outbox.source_id = $5
@@ -777,7 +777,7 @@ UNION
 SELECT telemetry_replay_errors.seq
   FROM telemetry_replay_errors
  WHERE telemetry_replay_errors.org_id = $1
-   AND telemetry_replay_errors.cell_id = $2
+   AND telemetry_replay_errors.worker_group_id = $2
    AND telemetry_replay_errors.stream_kind = $3::telemetry_stream_kind
    AND telemetry_replay_errors.source_kind = $4
    AND telemetry_replay_errors.source_id = $5
@@ -792,20 +792,20 @@ ORDER BY seq
 `
 
 type ListDeadLetteredTelemetrySeqsParams struct {
-	OrgID        pgtype.UUID         `json:"org_id"`
-	CellID       string              `json:"cell_id"`
-	StreamKind   TelemetryStreamKind `json:"stream_kind"`
-	SourceKind   string              `json:"source_kind"`
-	SourceID     pgtype.UUID         `json:"source_id"`
-	StreamName   string              `json:"stream_name"`
-	AfterSeq     int64               `json:"after_seq"`
-	WatermarkSeq int64               `json:"watermark_seq"`
+	OrgID         pgtype.UUID         `json:"org_id"`
+	WorkerGroupID string              `json:"worker_group_id"`
+	StreamKind    TelemetryStreamKind `json:"stream_kind"`
+	SourceKind    string              `json:"source_kind"`
+	SourceID      pgtype.UUID         `json:"source_id"`
+	StreamName    string              `json:"stream_name"`
+	AfterSeq      int64               `json:"after_seq"`
+	WatermarkSeq  int64               `json:"watermark_seq"`
 }
 
 func (q *Queries) ListDeadLetteredTelemetrySeqs(ctx context.Context, arg ListDeadLetteredTelemetrySeqsParams) ([]int64, error) {
 	rows, err := q.db.Query(ctx, listDeadLetteredTelemetrySeqs,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.StreamKind,
 		arg.SourceKind,
 		arg.SourceID,

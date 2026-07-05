@@ -130,7 +130,7 @@ func (s *Server) createPublicAccessToken(w http.ResponseWriter, r *http.Request)
 				ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				PublicID:      publicTokenPublicID,
 				OrgID:         session.OrgID,
-				CellID:        session.CellID,
+				WorkerGroupID: session.WorkerGroupID,
 				ProjectID:     session.ProjectID,
 				EnvironmentID: session.EnvironmentID,
 				TokenHash:     tokenHash,
@@ -146,7 +146,7 @@ func (s *Server) createPublicAccessToken(w http.ResponseWriter, r *http.Request)
 		scope, err = work.q.CreatePublicAccessTokenScope(r.Context(), db.CreatePublicAccessTokenScopeParams{
 			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:               session.OrgID,
-			CellID:              session.CellID,
+			WorkerGroupID:       session.WorkerGroupID,
 			ProjectID:           session.ProjectID,
 			EnvironmentID:       session.EnvironmentID,
 			PublicAccessTokenID: publicToken.ID,
@@ -224,7 +224,7 @@ func (s *Server) resolvePublicAccessTokenScopeRequest(ctx context.Context, actor
 	if !actor.HasPermission(permission, scope) {
 		return db.Session{}, db.Stream{}, "", pgtype.Text{}, forbidden(errPermissionRequired)
 	}
-	if err := s.requireRoutableRecordCellGeneration(ctx, s.db, actor.OrgID, session.ProjectID, session.EnvironmentID, session.CellID, session.RouteGeneration); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, actor.OrgID, session.ProjectID, session.EnvironmentID, session.WorkerGroupID); err != nil {
 		return db.Session{}, db.Stream{}, "", pgtype.Text{}, err
 	}
 	stream, err := s.ensureSessionStream(ctx, s.db, session, session.ActiveDeploymentID, streamName, direction)
@@ -256,7 +256,7 @@ func (s *Server) completeTokenWithPublicAccessToken(w http.ResponseWriter, r *ht
 		writeError(w, errors.New("load token"))
 		return
 	}
-	if err := s.requireRoutableRecordCell(r.Context(), s.db, pgvalue.MustUUIDValue(token.OrgID), token.ProjectID, token.EnvironmentID, token.CellID); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, pgvalue.MustUUIDValue(token.OrgID), token.ProjectID, token.EnvironmentID, token.WorkerGroupID); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -306,7 +306,7 @@ func (s *Server) authorizePublicAccessTokenScope(ctx context.Context, store db.Q
 	}
 	if _, err := store.GetPublicAccessTokenTokenScope(ctx, db.GetPublicAccessTokenTokenScopeParams{
 		OrgID:               token.OrgID,
-		CellID:              token.CellID,
+		WorkerGroupID:       token.WorkerGroupID,
 		ProjectID:           token.ProjectID,
 		EnvironmentID:       token.EnvironmentID,
 		PublicAccessTokenID: publicToken.ID,
@@ -321,9 +321,9 @@ func (s *Server) authorizePublicAccessTokenScope(ctx context.Context, store db.Q
 
 func (s *Server) consumePublicAccessToken(ctx context.Context, store db.Querier, publicToken db.PublicAccessToken) (db.PublicAccessToken, error) {
 	consumed, err := store.ConsumePublicAccessToken(ctx, db.ConsumePublicAccessTokenParams{
-		OrgID:  publicToken.OrgID,
-		CellID: publicToken.CellID,
-		ID:     publicToken.ID,
+		OrgID:         publicToken.OrgID,
+		WorkerGroupID: publicToken.WorkerGroupID,
+		ID:            publicToken.ID,
 	})
 	if isNoRows(err) {
 		return db.PublicAccessToken{}, forbidden(errTokenScopeDenied)
@@ -347,22 +347,22 @@ func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, r *http.R
 	if err != nil {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
-	if err := s.requireRoutableRecordCell(ctx, store, pgvalue.MustUUIDValue(publicToken.OrgID), publicToken.ProjectID, publicToken.EnvironmentID, publicToken.CellID); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(ctx, store, pgvalue.MustUUIDValue(publicToken.OrgID), publicToken.ProjectID, publicToken.EnvironmentID, publicToken.WorkerGroupID); err != nil {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
-	session, err := loadSessionAddressInScopeCell(ctx, store, publicToken.CellID, pgvalue.MustUUIDValue(publicToken.OrgID), publicToken.ProjectID, publicToken.EnvironmentID, address)
+	session, err := loadSessionAddressInWorkerGroup(ctx, store, publicToken.WorkerGroupID, pgvalue.MustUUIDValue(publicToken.OrgID), publicToken.ProjectID, publicToken.EnvironmentID, address)
 	if isNoRows(err) {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, notFound(errStreamNotFound)
 	}
 	if err != nil {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
-	if err := s.requireRoutableRecordCellGeneration(ctx, store, pgvalue.MustUUIDValue(session.OrgID), session.ProjectID, session.EnvironmentID, session.CellID, session.RouteGeneration); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(ctx, store, pgvalue.MustUUIDValue(session.OrgID), session.ProjectID, session.EnvironmentID, session.WorkerGroupID); err != nil {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
 	stream, err := store.GetSessionStreamByName(ctx, db.GetSessionStreamByNameParams{
 		OrgID:         publicToken.OrgID,
-		CellID:        publicToken.CellID,
+		WorkerGroupID: publicToken.WorkerGroupID,
 		ProjectID:     publicToken.ProjectID,
 		EnvironmentID: publicToken.EnvironmentID,
 		SessionID:     session.ID,
@@ -377,7 +377,7 @@ func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, r *http.R
 	}
 	if _, err := store.GetPublicAccessTokenStreamScope(ctx, db.GetPublicAccessTokenStreamScopeParams{
 		OrgID:               publicToken.OrgID,
-		CellID:              publicToken.CellID,
+		WorkerGroupID:       publicToken.WorkerGroupID,
 		ProjectID:           publicToken.ProjectID,
 		EnvironmentID:       publicToken.EnvironmentID,
 		PublicAccessTokenID: publicToken.ID,
@@ -390,9 +390,9 @@ func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, r *http.R
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
 	consumed, err := store.ConsumePublicAccessToken(ctx, db.ConsumePublicAccessTokenParams{
-		OrgID:  publicToken.OrgID,
-		CellID: publicToken.CellID,
-		ID:     publicToken.ID,
+		OrgID:         publicToken.OrgID,
+		WorkerGroupID: publicToken.WorkerGroupID,
+		ID:            publicToken.ID,
 	})
 	if isNoRows(err) {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, forbidden(errTokenScopeDenied)

@@ -30,8 +30,8 @@ WITH project AS (
     RETURNING *
 ),
 environment AS (
-    INSERT INTO environments (id, public_id, org_id, project_id, default_region_id, slug, name, color_hex, is_default)
-    SELECT initial_environment.id, initial_environment.public_id, project.org_id, project.id, project.default_region_id, initial_environment.slug, initial_environment.name, initial_environment.color_hex, initial_environment.is_default
+    INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex, is_default)
+    SELECT initial_environment.id, initial_environment.public_id, project.org_id, project.id, initial_environment.slug, initial_environment.name, initial_environment.color_hex, initial_environment.is_default
       FROM project
       CROSS JOIN (
           VALUES
@@ -96,13 +96,12 @@ SELECT *
  FOR UPDATE;
 
 -- name: CreateEnvironment :one
-INSERT INTO environments (id, public_id, org_id, project_id, default_region_id, slug, name, color_hex, is_default)
+INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex, is_default)
 VALUES (
     sqlc.arg(id),
     sqlc.arg(public_id),
     sqlc.arg(org_id),
     sqlc.arg(project_id),
-    sqlc.arg(default_region_id),
     sqlc.arg(slug),
     sqlc.arg(name),
     sqlc.arg(color_hex),

@@ -24,12 +24,12 @@ func TestCancelRunTerminalizesQueuedRunAndLeavesSessionOpen(t *testing.T) {
 	operation := seedCancelOperation(t, ctx, queries, ids, "user requested")
 
 	if _, err := queries.CancelRun(ctx, db.CancelRunParams{
-		OrgID:       pgvalue.UUID(ids.orgID),
-		CellID:      dbtest.DefaultCellID,
-		RunID:       pgvalue.UUID(ids.runID),
-		Reason:      "user requested",
-		Force:       false,
-		OperationID: operation.ID,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		RunID:         pgvalue.UUID(ids.runID),
+		Reason:        "user requested",
+		Force:         false,
+		OperationID:   operation.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -67,12 +67,12 @@ func TestCancelRunLeavesExecutingSessionForRelease(t *testing.T) {
 	operation := seedCancelOperation(t, ctx, queries, ids, "interrupt")
 
 	if _, err := queries.CancelRun(ctx, db.CancelRunParams{
-		OrgID:       pgvalue.UUID(ids.orgID),
-		CellID:      dbtest.DefaultCellID,
-		RunID:       pgvalue.UUID(ids.runID),
-		Reason:      "interrupt",
-		Force:       false,
-		OperationID: operation.ID,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		RunID:         pgvalue.UUID(ids.runID),
+		Reason:        "interrupt",
+		Force:         false,
+		OperationID:   operation.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -116,18 +116,18 @@ func TestCancelSessionLeavesPendingCancelRunForRelease(t *testing.T) {
 	operation := seedCancelOperation(t, ctx, queries, ids, "interrupt")
 
 	if _, err := queries.CancelRun(ctx, db.CancelRunParams{
-		OrgID:       pgvalue.UUID(ids.orgID),
-		CellID:      dbtest.DefaultCellID,
-		RunID:       pgvalue.UUID(ids.runID),
-		Reason:      "interrupt",
-		Force:       false,
-		OperationID: operation.ID,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		RunID:         pgvalue.UUID(ids.runID),
+		Reason:        "interrupt",
+		Force:         false,
+		OperationID:   operation.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.CancelSession(ctx, db.CancelSessionParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            pgvalue.UUID(sessionID),
@@ -168,15 +168,15 @@ func TestCancelRunAllowsDisabledSourceRouteForControlCancellation(t *testing.T) 
 	seedSessionRun(t, ctx, pool, ids, sessionID)
 	seedCurrentAttempt(t, ctx, pool, ids, db.RunAttemptStatusQueued)
 	operation := seedCancelOperation(t, ctx, queries, ids, "wrong route")
-	disableDefaultEnvironmentRoute(t, ctx, pool, ids)
+	disableDefaultWorkerGroupPlacement(t, ctx, pool, ids)
 
 	_, err := queries.CancelRun(ctx, db.CancelRunParams{
-		OrgID:       pgvalue.UUID(ids.orgID),
-		CellID:      dbtest.DefaultCellID,
-		RunID:       pgvalue.UUID(ids.runID),
-		Reason:      "wrong route",
-		Force:       false,
-		OperationID: operation.ID,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		RunID:         pgvalue.UUID(ids.runID),
+		Reason:        "wrong route",
+		Force:         false,
+		OperationID:   operation.ID,
 	})
 	if err != nil {
 		t.Fatalf("CancelRun disabled route error = %v, want nil", err)
@@ -216,7 +216,7 @@ func TestDeadLetterRunQueueItemTerminalizesSession(t *testing.T) {
 	}
 	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	var workerGroupID uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE cell_id = $1 AND name = 'default'`, dbtest.DefaultCellID).Scan(&workerGroupID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE id = $1 AND name = 'default'`, dbtest.DefaultWorkerGroupID).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -227,27 +227,26 @@ func TestDeadLetterRunQueueItemTerminalizesSession(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_runtime_requirements (
-			run_id, org_id, cell_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
+			run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
 			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
 		)
 		VALUES ($1, $2, $3, 1000, 1024, 4096, 1, $4, 'arm64', 'test', 'sha256:kernel',
 			'sha256:initramfs', 'sha256:rootfs', 'default', $5)
-	`, ids.runID, ids.orgID, dbtest.DefaultCellID, runtimeID, workerGroupID); err != nil {
+	`, ids.runID, ids.orgID, dbtest.DefaultWorkerGroupID, runtimeID, workerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_queue_items (run_id, org_id, cell_id, status, queue_name, dispatch_message_id)
+		INSERT INTO run_queue_items (run_id, org_id, worker_group_id, status, queue_name, dispatch_message_id)
 		VALUES ($1, $2, $3, 'queued', 'default', 'dispatch-1')
-	`, ids.runID, ids.orgID, dbtest.DefaultCellID); err != nil {
+	`, ids.runID, ids.orgID, dbtest.DefaultWorkerGroupID); err != nil {
 		t.Fatal(err)
 	}
 
 	if _, err := queries.DeadLetterRunQueueItem(ctx, db.DeadLetterRunQueueItemParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
-		CellID:            dbtest.DefaultCellID,
+		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 		RunID:             pgvalue.UUID(ids.runID),
-		RouteGeneration:   1,
 		QueueClass:        "default",
 		DispatchMessageID: pgtype.Text{String: "dispatch-1", Valid: true},
 		LastError:         "dispatch retries exhausted",
@@ -291,9 +290,9 @@ func seedCurrentAttempt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, i
 	t.Helper()
 	attemptID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_attempts (id, org_id, cell_id, run_id, attempt_number, status)
+		INSERT INTO run_attempts (id, org_id, worker_group_id, run_id, attempt_number, status)
 		VALUES ($1, $2, $3, $4, 1, $5)
-	`, attemptID, ids.orgID, dbtest.DefaultCellID, ids.runID, status); err != nil {
+	`, attemptID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.runID, status); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -311,10 +310,10 @@ func seedSessionRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids i
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO session_runs (
-			id, public_id, org_id, cell_id, project_id, environment_id, session_id, run_id, deployment_id, turn_index, reason
+			id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, run_id, deployment_id, turn_index, reason
 		)
 		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, $8, 1, 'initial')
-	`, uuid.Must(uuid.NewV7()), ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, sessionID, ids.runID, ids.deploymentID, testSessionRunPublicID(t)); err != nil {
+	`, uuid.Must(uuid.NewV7()), ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, sessionID, ids.runID, ids.deploymentID, testSessionRunPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -325,7 +324,7 @@ func seedCancelOperation(t *testing.T, ctx context.Context, queries *db.Queries,
 		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		PublicID:       testRunOperationPublicID(t),
 		OrgID:          pgvalue.UUID(ids.orgID),
-		CellID:         dbtest.DefaultCellID,
+		WorkerGroupID:  dbtest.DefaultWorkerGroupID,
 		ProjectID:      pgvalue.UUID(ids.projectID),
 		EnvironmentID:  pgvalue.UUID(ids.environmentID),
 		RunID:          pgvalue.UUID(ids.runID),

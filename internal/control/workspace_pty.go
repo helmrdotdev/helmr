@@ -345,7 +345,7 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 		mount, err := work.q.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:           pgvalue.UUID(actor.OrgID),
-			CellID:          ws.CellID,
+			WorkerGroupID:   ws.WorkerGroupID,
 			ProjectID:       ws.ProjectID,
 			EnvironmentID:   ws.EnvironmentID,
 			WorkspaceID:     ws.ID,
@@ -468,7 +468,7 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 		}
 		chunk, err = work.q.InsertWorkspacePtyStreamChunk(ctx, db.InsertWorkspacePtyStreamChunkParams{
 			OrgID:         pty.OrgID,
-			CellID:        pty.CellID,
+			WorkerGroupID: pty.WorkerGroupID,
 			ProjectID:     pty.ProjectID,
 			EnvironmentID: pty.EnvironmentID,
 			WorkspaceID:   pty.WorkspaceID,

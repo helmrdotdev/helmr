@@ -28,12 +28,12 @@ type Reader interface {
 }
 
 type EventQuery struct {
-	OrgID       uuid.UUID
-	CellID      string
-	SubjectType string
-	SubjectID   uuid.UUID
-	AfterSeq    int64
-	Limit       int32
+	OrgID         uuid.UUID
+	WorkerGroupID string
+	SubjectType   string
+	SubjectID     uuid.UUID
+	AfterSeq      int64
+	Limit         int32
 }
 
 type EventPage struct {
@@ -45,11 +45,11 @@ type EventPage struct {
 }
 
 type RunLogChunkQuery struct {
-	OrgID    uuid.UUID
-	CellID   string
-	RunID    uuid.UUID
-	AfterSeq int64
-	Limit    int32
+	OrgID         uuid.UUID
+	WorkerGroupID string
+	RunID         uuid.UUID
+	AfterSeq      int64
+	Limit         int32
 }
 
 type RunLogChunkPage struct {
@@ -61,11 +61,11 @@ type RunLogChunkPage struct {
 }
 
 type RunLogSnapshotQuery struct {
-	OrgID       uuid.UUID
-	CellID      string
-	RunID       uuid.UUID
-	StdoutLimit int64
-	StderrLimit int64
+	OrgID         uuid.UUID
+	WorkerGroupID string
+	RunID         uuid.UUID
+	StdoutLimit   int64
+	StderrLimit   int64
 }
 
 type RunLogSnapshot struct {
@@ -79,18 +79,18 @@ type RunLogSnapshot struct {
 }
 
 type DeadLetteredTelemetryQuery struct {
-	OrgID      uuid.UUID
-	CellID     string
-	StreamKind string
-	SourceKind string
-	SourceID   uuid.UUID
-	AfterSeq   int64
-	Watermark  int64
+	OrgID         uuid.UUID
+	WorkerGroupID string
+	StreamKind    string
+	SourceKind    string
+	SourceID      uuid.UUID
+	AfterSeq      int64
+	Watermark     int64
 }
 
 type TerminalOutputQuery struct {
 	OrgID         uuid.UUID
-	CellID        string
+	WorkerGroupID string
 	ProjectID     uuid.UUID
 	EnvironmentID uuid.UUID
 	WorkspaceID   uuid.UUID

@@ -20,8 +20,7 @@ type workerContextKey struct{}
 
 type workerActor struct {
 	WorkerInstanceID uuid.UUID
-	WorkerGroupID    uuid.UUID
-	CellID           string
+	WorkerGroupID    string
 	ClaimVersion     int64
 	ResourceID       string
 }
@@ -247,7 +246,7 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 		row, err := s.db.AuthorizeWorkerInstanceCredential(r.Context(), db.AuthorizeWorkerInstanceCredentialParams{
 			CredentialID:     pgvalue.UUID(credentialID),
 			WorkerInstanceID: pgvalue.UUID(workerInstanceID),
-			CellID:           s.cellID,
+			WorkerGroupID:    s.workerGroupID,
 		})
 		if isNoRows(err) {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
@@ -260,8 +259,7 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 		}
 		worker := workerActor{
 			WorkerInstanceID: workerInstanceID,
-			WorkerGroupID:    pgvalue.MustUUIDValue(row.WorkerGroupID),
-			CellID:           strings.TrimSpace(row.CellID),
+			WorkerGroupID:    strings.TrimSpace(row.WorkerGroupID),
 			ClaimVersion:     row.ClaimVersion,
 			ResourceID:       strings.TrimSpace(row.ResourceID),
 		}
@@ -269,7 +267,7 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		if worker.CellID != s.cellID || payload.CellID != worker.CellID || payload.ClaimVersion != worker.ClaimVersion {
+		if worker.WorkerGroupID != s.workerGroupID || payload.WorkerGroupID != worker.WorkerGroupID || payload.ClaimVersion != worker.ClaimVersion {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}

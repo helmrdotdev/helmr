@@ -29,7 +29,6 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"builder":            {"proto/bundle/v0", "secret"},
 		"buildkit":           {"builder", "proto/bundle/v0", "safepath", "secret"},
 		"cas":                {},
-		"cell":               {"db"},
 		"checkpoint":         {},
 		"cli/browser":        {},
 		"cli/format":         {},
@@ -41,7 +40,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"compute":            {"sha256sum"},
 		"config":             {"auth"},
 		"console":            {},
-		"control":            {"api", "archive", "auth", "cas", "cell", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "pgvalue", "publicid", "runtime", "schedule", "secret", "sha256sum", "stablejson", "telemetry", "token", "tracing", "wire", "workspace"},
+		"control":            {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "pgvalue", "publicid", "runtime", "schedule", "secret", "sha256sum", "stablejson", "telemetry", "token", "tracing", "wire", "workergroup", "workspace"},
 		"db":                 {},
 		"db/dbtest":          {},
 		"db/schema":          {},
@@ -75,6 +74,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"vm":                 {"compute"},
 		"wire":               {"frameio", "proto/run/v0", "stablejson"},
 		"worker":             {"api", "client", "compute"},
+		"workergroup":        {"db"},
 		"workspace":          {"archive", "safepath"},
 	}
 	normalizeGraph(expected)

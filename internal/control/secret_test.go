@@ -105,7 +105,7 @@ func TestCreateScheduleRunUsesDeclaredTaskSecrets(t *testing.T) {
 		secrets:         fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}},
 		runEnqueuer:     runEnqueuer,
 		eventStream:     newTestEventStream(t),
-		cellID:          "us-east-1-cell-1",
+		workerGroupID:   "us-east-1-worker-group-1",
 		defaultRegionID: "us-east-1",
 	}
 	runID, err := server.CreateScheduleRun(context.Background(), db.GetScheduleTriggerCandidateRow{

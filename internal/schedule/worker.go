@@ -139,11 +139,11 @@ func (w *Worker) tick(ctx context.Context) error {
 
 func (w *Worker) runDue(ctx context.Context) error {
 	leases, err := w.engine.index.Dequeue(ctx, DequeueRequest{
-		CellID:   w.engine.cellID,
-		WorkerID: w.workerID,
-		Limit:    w.limit,
-		Now:      w.now(),
-		Lease:    w.lease,
+		WorkerGroupID: w.engine.workerGroupID,
+		WorkerID:      w.workerID,
+		Limit:         w.limit,
+		Now:           w.now(),
+		Lease:         w.lease,
 	})
 	if err != nil {
 		return err

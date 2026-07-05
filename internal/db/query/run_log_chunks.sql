@@ -5,7 +5,7 @@ WITH event_args AS (
 ),
 current_run_lease AS (
     SELECT runs.org_id,
-           runs.cell_id,
+           runs.worker_group_id,
            runs.project_id,
            runs.environment_id,
            runs.trace_id,
@@ -21,57 +21,66 @@ current_run_lease AS (
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
                           AND run_leases.org_id = runs.org_id
                           AND run_leases.run_id = runs.id
-      JOIN environment_cells
-        ON environment_cells.org_id = runs.org_id
-       AND environment_cells.project_id = runs.project_id
-       AND environment_cells.environment_id = runs.environment_id
-       AND environment_cells.cell_id = runs.cell_id
-       AND environment_cells.route_generation = run_leases.route_generation
-       AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state IN ('active', 'draining')
+      JOIN (
+    SELECT placement_project.org_id,
+           placement_project.id AS project_id,
+           target_environment.id AS environment_id,
+           placement_worker_group.region_id AS region_id,
+           placement_worker_group.id AS worker_group_id,
+           placement_worker_group.state AS worker_group_state
+      FROM projects AS placement_project
+      JOIN environments AS target_environment
+        ON target_environment.org_id = placement_project.org_id
+       AND target_environment.project_id = placement_project.id
+      JOIN worker_groups AS placement_worker_group
+        ON true
+) AS project_worker_group_placement
+        ON project_worker_group_placement.org_id = runs.org_id
+       AND project_worker_group_placement.project_id = runs.project_id
+       AND project_worker_group_placement.environment_id = runs.environment_id
+       AND project_worker_group_placement.worker_group_id = runs.worker_group_id
+       AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
+      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
+                AND worker_groups.state IN ('active', 'draining')
       JOIN run_attempts ON run_attempts.org_id = run_leases.org_id
                        AND run_attempts.run_id = run_leases.run_id
                        AND run_attempts.id = run_leases.attempt_id
 	     WHERE runs.org_id = sqlc.arg(org_id)
-	       AND runs.cell_id = sqlc.arg(cell_id)
+	       AND runs.worker_group_id = sqlc.arg(worker_group_id)
 	       AND runs.id = sqlc.arg(run_id)
 	       AND runs.status = 'running'
-	       AND run_leases.cell_id = sqlc.arg(cell_id)
+	       AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
 	       AND run_leases.id = sqlc.arg(run_lease_id)
        AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
        AND run_leases.status IN ('leased', 'running')
        AND run_leases.lease_expires_at > now()
 ),
 inserted_run_log_cursor AS (
-    INSERT INTO run_log_cursors (org_id, cell_id, run_id, stream_name, seq, cursor, idempotency_key)
+    INSERT INTO run_log_cursors (org_id, worker_group_id, run_id, stream_name, seq, cursor, idempotency_key)
     SELECT current_run_lease.org_id,
-           current_run_lease.cell_id,
+           current_run_lease.worker_group_id,
            current_run_lease.id,
            '__run__',
            1,
            'rlc1.' || current_run_lease.org_id::text || '.' || current_run_lease.id::text || '.__run__.1',
            '__head__'
       FROM current_run_lease
-    ON CONFLICT (org_id, cell_id, run_id, stream_name, idempotency_key) DO NOTHING
+    ON CONFLICT (org_id, worker_group_id, run_id, stream_name, idempotency_key) DO NOTHING
     RETURNING run_log_cursors.org_id,
-              run_log_cursors.cell_id,
+              run_log_cursors.worker_group_id,
               run_log_cursors.run_id,
               run_log_cursors.seq,
               true AS inserted
 ),
 existing_run_log_cursor AS (
     SELECT run_log_cursors.org_id,
-           run_log_cursors.cell_id,
+           run_log_cursors.worker_group_id,
            run_log_cursors.run_id,
            run_log_cursors.seq,
            false AS inserted
       FROM run_log_cursors
       JOIN current_run_lease ON current_run_lease.org_id = run_log_cursors.org_id
-                            AND current_run_lease.cell_id = run_log_cursors.cell_id
+                            AND current_run_lease.worker_group_id = run_log_cursors.worker_group_id
                             AND current_run_lease.id = run_log_cursors.run_id
      WHERE run_log_cursors.stream_name = '__run__'
        AND run_log_cursors.idempotency_key = '__head__'
@@ -84,9 +93,9 @@ locked_run_log_cursor AS (
     SELECT * FROM existing_run_log_cursor
 ),
 selected_cursor AS (
-    INSERT INTO run_log_cursors (org_id, cell_id, run_id, attempt_id, run_lease_id, stream_name, seq, cursor, idempotency_key)
+    INSERT INTO run_log_cursors (org_id, worker_group_id, run_id, attempt_id, run_lease_id, stream_name, seq, cursor, idempotency_key)
     SELECT locked_run_log_cursor.org_id,
-           locked_run_log_cursor.cell_id,
+           locked_run_log_cursor.worker_group_id,
            locked_run_log_cursor.run_id,
            current_run_lease.attempt_id,
            current_run_lease.run_lease_id,
@@ -96,12 +105,12 @@ selected_cursor AS (
            'log:' || current_run_lease.run_lease_id::text || ':' || (sqlc.arg(stream)::run_log_stream)::text || ':' || (sqlc.arg(observed_seq)::bigint)::text
       FROM locked_run_log_cursor
       JOIN current_run_lease ON current_run_lease.org_id = locked_run_log_cursor.org_id
-                            AND current_run_lease.cell_id = locked_run_log_cursor.cell_id
+                            AND current_run_lease.worker_group_id = locked_run_log_cursor.worker_group_id
                             AND current_run_lease.id = locked_run_log_cursor.run_id
-    ON CONFLICT (org_id, cell_id, run_id, stream_name, idempotency_key)
+    ON CONFLICT (org_id, worker_group_id, run_id, stream_name, idempotency_key)
     DO UPDATE SET observed_at = run_log_cursors.observed_at
     RETURNING run_log_cursors.org_id,
-              run_log_cursors.cell_id,
+              run_log_cursors.worker_group_id,
               run_log_cursors.run_id,
               run_log_cursors.stream_name,
               run_log_cursors.seq
@@ -113,10 +122,10 @@ advanced_run_log_cursor AS (
            observed_at = now()
       FROM selected_cursor
       JOIN locked_run_log_cursor ON locked_run_log_cursor.org_id = selected_cursor.org_id
-                                AND locked_run_log_cursor.cell_id = selected_cursor.cell_id
+                                AND locked_run_log_cursor.worker_group_id = selected_cursor.worker_group_id
                                 AND locked_run_log_cursor.run_id = selected_cursor.run_id
      WHERE run_log_cursors.org_id = selected_cursor.org_id
-       AND run_log_cursors.cell_id = selected_cursor.cell_id
+       AND run_log_cursors.worker_group_id = selected_cursor.worker_group_id
        AND run_log_cursors.run_id = selected_cursor.run_id
        AND run_log_cursors.stream_name = '__run__'
        AND run_log_cursors.idempotency_key = '__head__'
@@ -125,9 +134,9 @@ advanced_run_log_cursor AS (
     RETURNING run_log_cursors.id
 ),
 selected_chunk AS (
-    INSERT INTO run_log_hot_chunks (org_id, cell_id, run_id, run_lease_id, attempt_number, stream, seq, observed_seq, content, size_bytes, created_at)
+    INSERT INTO run_log_hot_chunks (org_id, worker_group_id, run_id, run_lease_id, attempt_number, stream, seq, observed_seq, content, size_bytes, created_at)
     SELECT current_run_lease.org_id,
-           current_run_lease.cell_id,
+           current_run_lease.worker_group_id,
            current_run_lease.id,
            current_run_lease.run_lease_id,
            current_run_lease.attempt_number,
@@ -139,12 +148,12 @@ selected_chunk AS (
            now()
       FROM current_run_lease
       JOIN selected_cursor ON selected_cursor.org_id = current_run_lease.org_id
-                          AND selected_cursor.cell_id = current_run_lease.cell_id
+                          AND selected_cursor.worker_group_id = current_run_lease.worker_group_id
                           AND selected_cursor.run_id = current_run_lease.id
     ON CONFLICT (org_id, run_id, run_lease_id, stream, observed_seq)
     DO UPDATE SET size_bytes = run_log_hot_chunks.size_bytes
     RETURNING run_log_hot_chunks.org_id,
-              run_log_hot_chunks.cell_id,
+              run_log_hot_chunks.worker_group_id,
               run_log_hot_chunks.run_id,
               run_log_hot_chunks.run_lease_id,
               run_log_hot_chunks.attempt_number,
@@ -161,7 +170,7 @@ selected_chunk AS (
 ),
 event_input AS (
     SELECT current_run_lease.org_id,
-           current_run_lease.cell_id,
+           current_run_lease.worker_group_id,
            current_run_lease.project_id,
            current_run_lease.environment_id,
            selected_chunk.run_id,
@@ -182,28 +191,28 @@ event_input AS (
            current_run_lease.state_version AS snapshot_version
       FROM selected_chunk
       JOIN current_run_lease ON current_run_lease.org_id = selected_chunk.org_id
-                            AND current_run_lease.cell_id = selected_chunk.cell_id
+                            AND current_run_lease.worker_group_id = selected_chunk.worker_group_id
                             AND current_run_lease.id = selected_chunk.run_id
       CROSS JOIN event_args
      WHERE selected_chunk.is_new
 ),
 event_seq AS (
-    INSERT INTO event_cursors (org_id, cell_id, subject_kind, subject_id, seq)
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
     SELECT event_input.org_id,
-           event_input.cell_id,
+           event_input.worker_group_id,
            'run',
            event_input.run_id,
            1
       FROM event_input
-    ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + 1,
                   observed_at = now()
-    RETURNING event_cursors.org_id, event_cursors.cell_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
+    RETURNING event_cursors.org_id, event_cursors.worker_group_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
 ),
 event AS (
-    INSERT INTO event_hot_payloads (org_id, cell_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT event_input.org_id,
-           event_input.cell_id,
+           event_input.worker_group_id,
            event_input.project_id,
            event_input.environment_id,
            event_input.run_id,
@@ -225,15 +234,15 @@ event AS (
            event_input.snapshot_version
       FROM event_input
       JOIN event_seq ON event_seq.org_id = event_input.org_id
-                    AND event_seq.cell_id = event_input.cell_id
+                    AND event_seq.worker_group_id = event_input.worker_group_id
                     AND event_seq.subject_kind = 'run'
                     AND event_seq.subject_id = event_input.run_id
     RETURNING *
 ),
 event_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
     SELECT event.org_id,
-                  event.cell_id,
+                  event.worker_group_id,
                   'event',
                   event.subject_type,
                   event.subject_id,
@@ -243,9 +252,9 @@ event_telemetry_outbox AS (
     RETURNING id
 ),
 run_log_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key)
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key)
     SELECT selected_chunk.org_id,
-           selected_chunk.cell_id,
+           selected_chunk.worker_group_id,
            'run_log',
            'run',
            selected_chunk.run_id,
@@ -274,7 +283,7 @@ usage_event AS (
            'log:' || selected_chunk.run_lease_id::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text
       FROM selected_chunk
       JOIN current_run_lease ON current_run_lease.org_id = selected_chunk.org_id
-                            AND current_run_lease.cell_id = selected_chunk.cell_id
+                            AND current_run_lease.worker_group_id = selected_chunk.worker_group_id
                             AND current_run_lease.id = selected_chunk.run_id
      WHERE selected_chunk.is_new
        AND selected_chunk.size_bytes > 0

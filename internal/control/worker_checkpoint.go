@@ -212,19 +212,18 @@ func (s *Server) workerCaptureRunWaitWorkspace(w http.ResponseWriter, r *http.Re
 		}
 		capture := request.WorkspaceCapture
 		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
-			OrgID:     scope.OrgID,
-			CellID:    scope.CellID,
-			Digest:    strings.TrimSpace(capture.Digest),
-			SizeBytes: capture.SizeBytes,
-			MediaType: strings.TrimSpace(capture.MediaType),
+			OrgID:         scope.OrgID,
+			WorkerGroupID: scope.WorkerGroupID,
+			Digest:        strings.TrimSpace(capture.Digest),
+			SizeBytes:     capture.SizeBytes,
+			MediaType:     strings.TrimSpace(capture.MediaType),
 		}); err != nil {
 			return errors.New("record run wait workspace capture CAS object")
 		}
 		artifact, err := work.q.CreateArtifact(r.Context(), db.CreateArtifactParams{
 			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                     scope.OrgID,
-			CellID:                    scope.CellID,
-			RouteGeneration:           scope.RouteGeneration,
+			WorkerGroupID:             scope.WorkerGroupID,
 			ProjectID:                 scope.ProjectID,
 			EnvironmentID:             scope.EnvironmentID,
 			Digest:                    strings.TrimSpace(capture.Digest),
@@ -492,7 +491,7 @@ func acknowledgeCheckpointWorkerCommand(ctx context.Context, store db.Querier, s
 		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
 		ID:               commandID,
 		OrgID:            scope.OrgID,
-		CellID:           scope.CellID,
+		WorkerGroupID:    scope.WorkerGroupID,
 		RunID:            pgvalue.UUID(runID),
 		RunWaitID:        pgvalue.UUID(runWaitID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
