@@ -107,6 +107,7 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 		scheduleInstanceID:    row.InstanceID,
 		scheduleGeneration:    row.Generation,
 		scheduleOrgID:         row.OrgID,
+		scheduleCellID:        row.CellID,
 		scheduleProjectID:     row.ProjectID,
 		scheduleEnvironmentID: row.EnvironmentID,
 		scheduledAt:           row.NextFireAt,
@@ -141,11 +142,12 @@ func runDeploymentSelectionErrorf(format string, args ...any) error {
 	return runDeploymentSelectionError{err: fmt.Errorf(format, args...)}
 }
 
-func (s *Server) deploymentTaskForRunRequest(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, selection runDeploymentSelection) (db.GetDeploymentTaskRow, error) {
+func (s *Server) deploymentTaskForRunRequest(ctx context.Context, cellID string, routeGeneration int64, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, selection runDeploymentSelection) (db.GetDeploymentTaskRow, error) {
 	deploymentID := selection.deploymentID
 	if deploymentID.Valid {
 		deployment, err := s.db.GetDeployment(ctx, db.GetDeploymentParams{
 			OrgID:         pgvalue.UUID(orgID),
+			CellID:        cellID,
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			ID:            deploymentID,
@@ -159,11 +161,12 @@ func (s *Server) deploymentTaskForRunRequest(ctx context.Context, orgID uuid.UUI
 		if deployment.Status != db.DeploymentStatusDeployed {
 			return db.GetDeploymentTaskRow{}, runDeploymentSelectionErrorf("deployment_id %s is not deployed", pgvalue.MustUUIDValue(deploymentID).String())
 		}
-		return s.deploymentTask(ctx, orgID, projectID, environmentID, deployment.ID, taskID)
+		return s.deploymentTask(ctx, cellID, routeGeneration, orgID, projectID, environmentID, deployment.ID, taskID)
 	}
 	if selection.version != "" {
 		deployment, err := s.db.GetDeploymentByVersion(ctx, db.GetDeploymentByVersionParams{
 			OrgID:         pgvalue.UUID(orgID),
+			CellID:        cellID,
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			Version:       selection.version,
@@ -177,73 +180,30 @@ func (s *Server) deploymentTaskForRunRequest(ctx context.Context, orgID uuid.UUI
 		if deployment.Status != db.DeploymentStatusDeployed {
 			return db.GetDeploymentTaskRow{}, runDeploymentSelectionErrorf("deployment version %q is not deployed", selection.version)
 		}
-		return s.deploymentTask(ctx, orgID, projectID, environmentID, deployment.ID, taskID)
+		return s.deploymentTask(ctx, cellID, routeGeneration, orgID, projectID, environmentID, deployment.ID, taskID)
 	}
-	task, err := s.db.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
-		OrgID:         pgvalue.UUID(orgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		TaskID:        taskID,
+	deployment, err := s.db.GetCurrentDeploymentForRoute(ctx, db.GetCurrentDeploymentForRouteParams{
+		OrgID:           pgvalue.UUID(orgID),
+		CellID:          cellID,
+		RouteGeneration: routeGeneration,
+		ProjectID:       projectID,
+		EnvironmentID:   environmentID,
 	})
 	if err != nil {
 		return db.GetDeploymentTaskRow{}, err
 	}
-	return deploymentTaskRowFromCurrent(task), nil
+	return s.deploymentTask(ctx, deployment.CellID, deployment.RouteGeneration, orgID, projectID, environmentID, deployment.ID, taskID)
 }
 
-func deploymentTaskRowFromCurrent(task db.GetCurrentDeploymentTaskRow) db.GetDeploymentTaskRow {
-	return db.GetDeploymentTaskRow{
-		ID:                                task.ID,
-		OrgID:                             task.OrgID,
-		ProjectID:                         task.ProjectID,
-		EnvironmentID:                     task.EnvironmentID,
-		DeploymentID:                      task.DeploymentID,
-		DeploymentSandboxID:               task.DeploymentSandboxID,
-		SandboxID:                         task.SandboxID,
-		SandboxFingerprint:                task.SandboxFingerprint,
-		WorkspaceMountPath:                task.WorkspaceMountPath,
-		DeploymentSandboxResourceFloor:    task.DeploymentSandboxResourceFloor,
-		DeploymentSandboxDiskFloorMib:     task.DeploymentSandboxDiskFloorMib,
-		DeploymentSandboxNetworkPolicy:    task.DeploymentSandboxNetworkPolicy,
-		DeploymentVersion:                 task.DeploymentVersion,
-		ApiVersion:                        task.ApiVersion,
-		SdkVersion:                        task.SdkVersion,
-		CliVersion:                        task.CliVersion,
-		TaskID:                            task.TaskID,
-		FilePath:                          task.FilePath,
-		ExportName:                        task.ExportName,
-		HandlerEntrypoint:                 task.HandlerEntrypoint,
-		BundleDigest:                      task.BundleDigest,
-		BundleFormatVersion:               task.BundleFormatVersion,
-		RequestedMilliCpu:                 task.RequestedMilliCpu,
-		RequestedMemoryMib:                task.RequestedMemoryMib,
-		RequestedDiskMib:                  task.RequestedDiskMib,
-		SecretDeclarations:                task.SecretDeclarations,
-		ResourceRequirements:              task.ResourceRequirements,
-		NetworkPolicy:                     task.NetworkPolicy,
-		QueueName:                         task.QueueName,
-		QueueConcurrencyLimit:             task.QueueConcurrencyLimit,
-		Ttl:                               task.Ttl,
-		MaxActiveDurationMs:               task.MaxActiveDurationMs,
-		RetryPolicy:                       task.RetryPolicy,
-		CreatedAt:                         task.CreatedAt,
-		DeploymentSourceDigest:            task.DeploymentSourceDigest,
-		DeploymentSandboxRootfsDigest:     task.DeploymentSandboxRootfsDigest,
-		DeploymentSandboxRuntimeAbi:       task.DeploymentSandboxRuntimeAbi,
-		DeploymentSandboxGuestdAbi:        task.DeploymentSandboxGuestdAbi,
-		DeploymentSandboxAdapterAbi:       task.DeploymentSandboxAdapterAbi,
-		DeploymentSandboxFilesystemFormat: task.DeploymentSandboxFilesystemFormat,
-		DeploymentSandboxContractVersion:  task.DeploymentSandboxContractVersion,
-	}
-}
-
-func (s *Server) deploymentTask(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, taskID string) (db.GetDeploymentTaskRow, error) {
+func (s *Server) deploymentTask(ctx context.Context, cellID string, routeGeneration int64, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, taskID string) (db.GetDeploymentTaskRow, error) {
 	return s.db.GetDeploymentTask(ctx, db.GetDeploymentTaskParams{
-		OrgID:         pgvalue.UUID(orgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		DeploymentID:  deploymentID,
-		TaskID:        taskID,
+		OrgID:           pgvalue.UUID(orgID),
+		CellID:          cellID,
+		RouteGeneration: routeGeneration,
+		ProjectID:       projectID,
+		EnvironmentID:   environmentID,
+		DeploymentID:    deploymentID,
+		TaskID:          taskID,
 	})
 }
 
@@ -344,6 +304,10 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
+		return
+	}
+	if err := s.requireRoutableRecordCellGeneration(r.Context(), s.db, actor.OrgID, summary.ProjectID, summary.EnvironmentID, summary.CellID, summary.RouteGeneration); err != nil {
+		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, runResponse(summary))
@@ -643,6 +607,7 @@ func (s *Server) validateRunQueueOverride(ctx context.Context, orgID uuid.UUID, 
 	}
 	queueConfig, err := s.db.GetDeploymentQueueConfig(ctx, db.GetDeploymentQueueConfigParams{
 		OrgID:         pgvalue.UUID(orgID),
+		CellID:        task.CellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		DeploymentID:  task.DeploymentID,

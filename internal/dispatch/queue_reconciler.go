@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -40,6 +41,7 @@ type QueueReconciler struct {
 	enqueuer     QueueEnqueuer
 	lock         QueueReconcileLock
 	selector     QueueScopeSelector
+	cellID       string
 	every        time.Duration
 	scopeLimit   int32
 	runLimit     int32
@@ -86,6 +88,12 @@ func WithQueueReconcileScopeSelector(selector QueueScopeSelector) QueueReconcile
 	}
 }
 
+func WithQueueReconcileCellID(cellID string) QueueReconcilerOption {
+	return func(reconciler *QueueReconciler) {
+		reconciler.cellID = strings.TrimSpace(cellID)
+	}
+}
+
 func NewQueueReconciler(store QueueReconcilerStore, enqueuer QueueEnqueuer, opts ...QueueReconcilerOption) (*QueueReconciler, error) {
 	if store == nil {
 		return nil, errors.New("queue reconciler store is required")
@@ -117,6 +125,9 @@ func NewQueueReconciler(store QueueReconcilerStore, enqueuer QueueEnqueuer, opts
 	}
 	if reconciler.failureLimit <= 0 {
 		return nil, errors.New("queue reconcile consecutive failure limit must be positive")
+	}
+	if reconciler.cellID == "" {
+		return nil, errors.New("queue reconcile cell id is required")
 	}
 	if reconciler.log == nil {
 		reconciler.log = slog.Default()
@@ -182,10 +193,13 @@ func (r *QueueReconciler) ReconcileOnce(ctx context.Context) error {
 	var afterRow db.ListQueuedRunCandidateScopesRow
 	for {
 		rows, err := store.ListQueuedRunCandidateScopes(ctx, db.ListQueuedRunCandidateScopesParams{
+			CellID:             r.cellID,
 			AfterSortKey:       afterSortKey,
 			AfterOrgID:         afterRow.OrgID,
+			AfterCellID:        afterRow.CellID,
 			AfterProjectID:     afterRow.ProjectID,
 			AfterEnvironmentID: afterRow.EnvironmentID,
+			AfterQueueClass:    afterRow.QueueClass,
 			AfterQueueName:     afterRow.QueueName,
 			RowLimit:           r.scopeLimit,
 			ScanSeed:           scanSeed,
@@ -197,8 +211,10 @@ func (r *QueueReconciler) ReconcileOnce(ctx context.Context) error {
 		for _, row := range rows {
 			scopes = append(scopes, QueueScope{
 				OrgID:         row.OrgID,
+				CellID:        row.CellID,
 				ProjectID:     row.ProjectID,
 				EnvironmentID: row.EnvironmentID,
+				QueueClass:    row.QueueClass,
 				QueueName:     row.QueueName,
 			})
 		}
@@ -208,7 +224,7 @@ func (r *QueueReconciler) ReconcileOnce(ctx context.Context) error {
 				problems = append(problems, err)
 			}
 			if stats.Scanned > 0 || stats.Failed > 0 {
-				r.log.Info("queue reconcile scope", "org_id", scope.OrgID, "project_id", scope.ProjectID, "environment_id", scope.EnvironmentID, "queue_name", scope.QueueName, "scanned", stats.Scanned, "enqueued", stats.Enqueued, "skipped", stats.Skipped, "failed", stats.Failed)
+				r.log.Info("queue reconcile scope", "org_id", scope.OrgID, "cell_id", scope.CellID, "project_id", scope.ProjectID, "environment_id", scope.EnvironmentID, "queue_name", scope.QueueName, "scanned", stats.Scanned, "enqueued", stats.Enqueued, "skipped", stats.Skipped, "failed", stats.Failed)
 			}
 		}
 		if len(rows) < int(r.scopeLimit) {

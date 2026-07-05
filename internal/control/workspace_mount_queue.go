@@ -20,6 +20,7 @@ type queuedRunWorkspaceMountStore interface {
 type queuedRunWorkspaceMountTarget struct {
 	ID            pgtype.UUID
 	OrgID         pgtype.UUID
+	CellID        string
 	ProjectID     pgtype.UUID
 	EnvironmentID pgtype.UUID
 	WorkspaceID   pgtype.UUID
@@ -40,6 +41,7 @@ func ensureWorkspaceMountForQueuedRun(ctx context.Context, store interface {
 	return store.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 		ID:              target.ID,
 		OrgID:           target.OrgID,
+		CellID:          target.CellID,
 		ProjectID:       target.ProjectID,
 		EnvironmentID:   target.EnvironmentID,
 		WorkspaceID:     target.WorkspaceID,
@@ -77,6 +79,7 @@ func ensureQueuedRunWorkspaceMount(ctx context.Context, store queuedRunWorkspace
 	mount, err := ensureWorkspaceMountForQueuedRun(ctx, store, queuedRunWorkspaceMountTarget{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         run.OrgID,
+		CellID:        run.CellID,
 		ProjectID:     run.ProjectID,
 		EnvironmentID: run.EnvironmentID,
 		WorkspaceID:   run.WorkspaceID,

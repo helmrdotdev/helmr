@@ -18,9 +18,10 @@ WITH cancelled AS (
            cancelled_at = now(),
            updated_at = now()
      WHERE tokens.org_id = $1
-       AND tokens.project_id = $2
-       AND tokens.environment_id = $3
-       AND tokens.id = $4
+       AND tokens.cell_id = $2
+       AND tokens.project_id = $3
+       AND tokens.environment_id = $4
+       AND tokens.id = $5
        AND tokens.state = 'pending'
        AND tokens.timeout_at > now()
     RETURNING tokens.id, tokens.org_id, tokens.cell_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
@@ -28,13 +29,14 @@ WITH cancelled AS (
 matched_token_wait AS (
     UPDATE token_waits
        SET matched_completion_at = now()
-      FROM cancelled
+     FROM cancelled
      WHERE token_waits.org_id = cancelled.org_id
+       AND token_waits.cell_id = cancelled.cell_id
        AND token_waits.project_id = cancelled.project_id
        AND token_waits.environment_id = cancelled.environment_id
        AND token_waits.token_id = cancelled.id
        AND token_waits.matched_completion_at IS NULL
-    RETURNING token_waits.run_wait_id, token_waits.org_id
+    RETURNING token_waits.run_wait_id, token_waits.org_id, token_waits.cell_id
 ),
 resolved_cancelled_wait AS (
     UPDATE run_waits
@@ -45,8 +47,9 @@ resolved_cancelled_wait AS (
            END,
            resolved_at = now(),
            updated_at = now()
-      FROM matched_token_wait
+     FROM matched_token_wait
      WHERE run_waits.org_id = matched_token_wait.org_id
+       AND run_waits.cell_id = matched_token_wait.cell_id
        AND run_waits.id = matched_token_wait.run_wait_id
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
@@ -57,6 +60,7 @@ SELECT cancelled.id, cancelled.org_id, cancelled.cell_id, cancelled.project_id, 
 
 type CancelTokenParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
+	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -92,6 +96,7 @@ type CancelTokenRow struct {
 func (q *Queries) CancelToken(ctx context.Context, arg CancelTokenParams) (CancelTokenRow, error) {
 	row := q.db.QueryRow(ctx, cancelToken,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -131,22 +136,24 @@ WITH target AS (
     SELECT tokens.id, tokens.org_id, tokens.cell_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
       FROM tokens
      WHERE tokens.org_id = $2
-       AND tokens.project_id = $3
-       AND tokens.environment_id = $4
-       AND tokens.id = $5
+       AND tokens.cell_id = $3
+       AND tokens.project_id = $4
+       AND tokens.environment_id = $5
+       AND tokens.id = $6
        AND tokens.state IN ('pending', 'completed')
      FOR UPDATE
 ),
 completed AS (
     UPDATE tokens
        SET state = 'completed',
-           completion_data = COALESCE($6::jsonb, 'null'::jsonb),
-           completion_content_type = COALESCE(NULLIF($7::text, ''), 'application/json'),
+           completion_data = COALESCE($7::jsonb, 'null'::jsonb),
+           completion_content_type = COALESCE(NULLIF($8::text, ''), 'application/json'),
            completion_fingerprint = COALESCE($1::text, ''),
            completed_at = now(),
            updated_at = now()
       FROM target
      WHERE tokens.org_id = target.org_id
+       AND tokens.cell_id = target.cell_id
        AND tokens.id = target.id
        AND target.state = 'pending'
        AND target.timeout_at > now()
@@ -167,12 +174,13 @@ matched_token_wait AS (
        SET matched_completion_at = COALESCE(selected_token.completed_at, now())
       FROM selected_token
      WHERE token_waits.org_id = selected_token.org_id
+       AND token_waits.cell_id = selected_token.cell_id
        AND token_waits.project_id = selected_token.project_id
        AND token_waits.environment_id = selected_token.environment_id
        AND token_waits.token_id = selected_token.id
        AND token_waits.matched_completion_at IS NULL
        AND selected_token.state = 'completed'
-    RETURNING token_waits.run_wait_id, token_waits.org_id
+    RETURNING token_waits.run_wait_id, token_waits.org_id, token_waits.cell_id
 ),
 resolved_wait AS (
     UPDATE run_waits
@@ -183,8 +191,9 @@ resolved_wait AS (
            END,
            resolved_at = now(),
            updated_at = now()
-      FROM matched_token_wait
+     FROM matched_token_wait
      WHERE run_waits.org_id = matched_token_wait.org_id
+       AND run_waits.cell_id = matched_token_wait.cell_id
        AND run_waits.id = matched_token_wait.run_wait_id
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
@@ -206,6 +215,7 @@ SELECT selected_token.id, selected_token.org_id, selected_token.cell_id, selecte
 type CompleteTokenParams struct {
 	CompletionFingerprint string      `json:"completion_fingerprint"`
 	OrgID                 pgtype.UUID `json:"org_id"`
+	CellID                string      `json:"cell_id"`
 	ProjectID             pgtype.UUID `json:"project_id"`
 	EnvironmentID         pgtype.UUID `json:"environment_id"`
 	ID                    pgtype.UUID `json:"id"`
@@ -249,6 +259,7 @@ func (q *Queries) CompleteToken(ctx context.Context, arg CompleteTokenParams) (C
 	row := q.db.QueryRow(ctx, completeToken,
 		arg.CompletionFingerprint,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -295,10 +306,11 @@ WITH existing_token AS MATERIALIZED (
     SELECT tokens.id, tokens.org_id, tokens.cell_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
       FROM tokens
      WHERE tokens.org_id = $2
-       AND tokens.project_id = $3
-       AND tokens.environment_id = $4
-       AND tokens.idempotency_key = $5
-       AND $5::text <> ''
+       AND tokens.cell_id = $3
+       AND tokens.project_id = $4
+       AND tokens.environment_id = $5
+       AND tokens.idempotency_key = $6
+       AND $6::text <> ''
      FOR UPDATE
 ),
 inserted_token AS (
@@ -318,13 +330,13 @@ inserted_token AS (
         metadata,
         tags
     )
-    SELECT $6,
+    SELECT $7,
            $2,
-           $7,
            $3,
            $4,
+           $5,
            $8,
-           COALESCE($5::text, ''),
+           COALESCE($6::text, ''),
            $9::timestamptz,
            COALESCE($1::text, ''),
            COALESCE($10::text, ''),
@@ -353,11 +365,11 @@ SELECT selected_token.id, selected_token.org_id, selected_token.cell_id, selecte
 type CreateTokenParams struct {
 	CreateRequestFingerprint  string             `json:"create_request_fingerprint"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
+	CellID                    string             `json:"cell_id"`
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	IdempotencyKey            string             `json:"idempotency_key"`
 	ID                        pgtype.UUID        `json:"id"`
-	CellID                    string             `json:"cell_id"`
 	TimeoutAt                 pgtype.Timestamptz `json:"timeout_at"`
 	IdempotencyKeyExpiresAt   pgtype.Timestamptz `json:"idempotency_key_expires_at"`
 	CallbackKeyID             string             `json:"callback_key_id"`
@@ -399,11 +411,11 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Creat
 	row := q.db.QueryRow(ctx, createToken,
 		arg.CreateRequestFingerprint,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.IdempotencyKey,
 		arg.ID,
-		arg.CellID,
 		arg.TimeoutAt,
 		arg.IdempotencyKeyExpiresAt,
 		arg.CallbackKeyID,
@@ -450,6 +462,7 @@ WITH expired AS (
            expired_at = now(),
            updated_at = now()
      WHERE tokens.org_id = $1
+       AND tokens.cell_id = $2
        AND tokens.state = 'pending'
        AND tokens.timeout_at <= now()
     RETURNING tokens.id, tokens.org_id, tokens.cell_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
@@ -459,11 +472,12 @@ matched_token_wait AS (
        SET matched_completion_at = now()
       FROM expired
      WHERE token_waits.org_id = expired.org_id
+       AND token_waits.cell_id = expired.cell_id
        AND token_waits.project_id = expired.project_id
        AND token_waits.environment_id = expired.environment_id
        AND token_waits.token_id = expired.id
        AND token_waits.matched_completion_at IS NULL
-    RETURNING token_waits.run_wait_id, token_waits.org_id
+    RETURNING token_waits.run_wait_id, token_waits.org_id, token_waits.cell_id
 ),
 expired_wait AS (
     UPDATE run_waits
@@ -472,6 +486,7 @@ expired_wait AS (
            updated_at = now()
       FROM matched_token_wait
      WHERE run_waits.org_id = matched_token_wait.org_id
+       AND run_waits.cell_id = matched_token_wait.cell_id
        AND run_waits.id = matched_token_wait.run_wait_id
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
@@ -480,6 +495,11 @@ SELECT id, org_id, cell_id, project_id, environment_id, state, timeout_at, idemp
   FROM expired
  ORDER BY expired.timeout_at ASC, expired.id ASC
 `
+
+type ExpireDueTokensParams struct {
+	OrgID  pgtype.UUID `json:"org_id"`
+	CellID string      `json:"cell_id"`
+}
 
 type ExpireDueTokensRow struct {
 	ID                        pgtype.UUID        `json:"id"`
@@ -507,8 +527,8 @@ type ExpireDueTokensRow struct {
 	CancelledAt               pgtype.Timestamptz `json:"cancelled_at"`
 }
 
-func (q *Queries) ExpireDueTokens(ctx context.Context, orgID pgtype.UUID) ([]ExpireDueTokensRow, error) {
-	rows, err := q.db.Query(ctx, expireDueTokens, orgID)
+func (q *Queries) ExpireDueTokens(ctx context.Context, arg ExpireDueTokensParams) ([]ExpireDueTokensRow, error) {
+	rows, err := q.db.Query(ctx, expireDueTokens, arg.OrgID, arg.CellID)
 	if err != nil {
 		return nil, err
 	}
@@ -553,15 +573,17 @@ func (q *Queries) ExpireDueTokens(ctx context.Context, orgID pgtype.UUID) ([]Exp
 
 const getToken = `-- name: GetToken :one
 SELECT id, org_id, cell_id, project_id, environment_id, state, timeout_at, idempotency_key, idempotency_key_expires_at, create_request_fingerprint, callback_key_id, callback_secret_fingerprint, callback_secret_created_at, completion_fingerprint, completion_data, completion_content_type, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
-  FROM tokens
+ FROM tokens
  WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND id = $4
+   AND cell_id = $2
+   AND project_id = $3
+   AND environment_id = $4
+   AND id = $5
 `
 
 type GetTokenParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
+	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -570,6 +592,7 @@ type GetTokenParams struct {
 func (q *Queries) GetToken(ctx context.Context, arg GetTokenParams) (Token, error) {
 	row := q.db.QueryRow(ctx, getToken,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -690,31 +713,34 @@ func (q *Queries) GetTokenForCallbackCompletion(ctx context.Context, arg GetToke
 const listTokens = `-- name: ListTokens :many
 WITH cursor_token AS (
     SELECT created_at, id
-      FROM tokens
+     FROM tokens
      WHERE org_id = $1
-       AND project_id = $2
-       AND environment_id = $3
-       AND id = $5::uuid
+       AND cell_id = $2
+       AND project_id = $3
+       AND environment_id = $4
+       AND id = $6::uuid
 )
 SELECT id, org_id, cell_id, project_id, environment_id, state, timeout_at, idempotency_key, idempotency_key_expires_at, create_request_fingerprint, callback_key_id, callback_secret_fingerprint, callback_secret_created_at, completion_fingerprint, completion_data, completion_content_type, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
   FROM tokens
  WHERE tokens.org_id = $1
-   AND tokens.project_id = $2
-   AND tokens.environment_id = $3
+   AND tokens.cell_id = $2
+   AND tokens.project_id = $3
+   AND tokens.environment_id = $4
    AND (
-       $4::text IS NULL
-       OR tokens.state = $4::token_state
+       $5::text IS NULL
+       OR tokens.state = $5::token_state
    )
    AND (
-       $5::uuid IS NULL
+       $6::uuid IS NULL
        OR (tokens.created_at, tokens.id) > (SELECT cursor_token.created_at, cursor_token.id FROM cursor_token)
    )
  ORDER BY tokens.created_at ASC, tokens.id ASC
- LIMIT $6
+ LIMIT $7
 `
 
 type ListTokensParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
+	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	State         pgtype.Text `json:"state"`
@@ -725,6 +751,7 @@ type ListTokensParams struct {
 func (q *Queries) ListTokens(ctx context.Context, arg ListTokensParams) ([]Token, error) {
 	rows, err := q.db.Query(ctx, listTokens,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.State,

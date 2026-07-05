@@ -13,6 +13,7 @@ type runSummary struct {
 	ID                   pgtype.UUID
 	OrgID                pgtype.UUID
 	CellID               string
+	RouteGeneration      int64
 	ProjectID            pgtype.UUID
 	EnvironmentID        pgtype.UUID
 	DeploymentID         pgtype.UUID
@@ -41,6 +42,7 @@ func createScopedRunSummary(run db.CreateScopedRunRow) runSummary {
 		ID:                   run.ID,
 		OrgID:                run.OrgID,
 		CellID:               run.CellID,
+		RouteGeneration:      run.RouteGeneration,
 		ProjectID:            run.ProjectID,
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
@@ -70,6 +72,7 @@ func getRunSummary(run db.GetRunSummaryRow) runSummary {
 		ID:                   run.ID,
 		OrgID:                run.OrgID,
 		CellID:               run.CellID,
+		RouteGeneration:      run.RouteGeneration,
 		ProjectID:            run.ProjectID,
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
@@ -99,6 +102,7 @@ func listScopedRunSummary(run db.ListScopedRunSummariesRow) runSummary {
 		ID:                   run.ID,
 		OrgID:                run.OrgID,
 		CellID:               run.CellID,
+		RouteGeneration:      run.RouteGeneration,
 		ProjectID:            run.ProjectID,
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
@@ -128,6 +132,7 @@ func cancelRunSummary(run db.CancelRunRow) runSummary {
 		ID:                   run.ID,
 		OrgID:                run.OrgID,
 		CellID:               run.CellID,
+		RouteGeneration:      run.RouteGeneration,
 		ProjectID:            run.ProjectID,
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,

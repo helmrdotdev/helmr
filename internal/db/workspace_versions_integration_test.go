@@ -94,6 +94,8 @@ func TestCreateWorkspaceFromSandboxCreatesInitialCurrentVersion(t *testing.T) {
 	created, err := queries.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
 		ID:                        pgvalue.UUID(workspaceID),
 		OrgID:                     pgvalue.UUID(ids.orgID),
+		CellID:                    dbtest.DefaultCellID,
+		RouteGeneration:           1,
 		ProjectID:                 pgvalue.UUID(ids.projectID),
 		EnvironmentID:             pgvalue.UUID(ids.environmentID),
 		DeploymentSandboxID:       pgvalue.UUID(ids.deploymentSandboxID),

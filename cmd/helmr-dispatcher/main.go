@@ -10,6 +10,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/helmrdotdev/helmr/internal/cell"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/control"
@@ -108,6 +109,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	sweeper, err := dispatch.NewExpirySweeper(
 		queries,
+		dispatch.WithExpirySweepCellID(cfg.CellID),
 		dispatch.WithExpirySweepLogger(log),
 		dispatch.WithExpirySweepLock(sweeperLock),
 	)
@@ -121,6 +123,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	queueReconciler, err := dispatch.NewQueueReconciler(
 		queries,
 		enqueuer,
+		dispatch.WithQueueReconcileCellID(cfg.CellID),
 		dispatch.WithQueueReconcileLogger(log),
 		dispatch.WithQueueReconcileLock(queueReconcileLock),
 	)
@@ -156,6 +159,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		scheduleIndex,
 		scheduleRunCreator,
 		schedule.EngineConfig{
+			CellID:          cfg.CellID,
 			RepairLimit:     int32(cfg.ScheduleRepairLimit),
 			RepairLookahead: cfg.ScheduleRepairLookahead,
 			MaxAttempts:     int32(cfg.ScheduleMaxAttempts),
@@ -180,9 +184,24 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errc := make(chan error, 5)
+	errc := make(chan error, 6)
 	var wg sync.WaitGroup
-	wg.Add(5)
+	wg.Add(6)
+	go func() {
+		defer wg.Done()
+		errc <- cell.RunHealthReporter(runCtx, queries, cell.HealthReporterConfig{
+			CellID:             cfg.CellID,
+			Component:          cell.ComponentDispatcher,
+			RequiredComponents: cell.RoutingRequiredComponents(),
+			Probe: func(ctx context.Context) (db.CellHealthState, []byte, error) {
+				if err := redisClient.Ping(ctx).Err(); err != nil {
+					return db.CellHealthStateUnavailable, nil, fmt.Errorf("ping redis: %w", err)
+				}
+				return db.CellHealthStateHealthy, []byte(`{"redis":"ok"}`), nil
+			},
+			Log: log,
+		})
+	}()
 	go func() {
 		defer wg.Done()
 		errc <- sweeper.Run(runCtx)

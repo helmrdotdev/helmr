@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/cell"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -125,29 +126,51 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	project, err := s.db.CreateProjectWithDefaultEnvironment(r.Context(), db.CreateProjectWithDefaultEnvironmentParams{
-		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:                pgvalue.UUID(actor.OrgID),
-		Slug:                 slug,
-		Name:                 name,
-		IsDefault:            false,
-		EnvironmentID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		StagingEnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-	})
-	if err != nil {
-		if isUniqueViolation(err) {
-			writeError(w, badRequest(errors.New("project slug is already in use")))
-			return
+	var project db.CreateProjectWithDefaultEnvironmentRow
+	var environments []db.Environment
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		var err error
+		project, err = work.q.CreateProjectWithDefaultEnvironment(r.Context(), db.CreateProjectWithDefaultEnvironmentParams{
+			ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:                pgvalue.UUID(actor.OrgID),
+			DefaultRegionID:      s.defaultRegionID,
+			Slug:                 slug,
+			Name:                 name,
+			IsDefault:            false,
+			EnvironmentID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			StagingEnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		})
+		if err != nil {
+			if isUniqueViolation(err) {
+				return badRequest(errors.New("project slug is already in use"))
+			}
+			return errors.New("create project")
 		}
-		writeError(w, errors.New("create project"))
-		return
-	}
-	environments, err := s.db.ListEnvironments(r.Context(), db.ListEnvironmentsParams{
-		OrgID:     project.OrgID,
-		ProjectID: project.ID,
+		environments, err = work.q.ListEnvironments(r.Context(), db.ListEnvironmentsParams{
+			OrgID:     project.OrgID,
+			ProjectID: project.ID,
+		})
+		if err != nil {
+			return errors.New("list environments")
+		}
+		for _, environment := range environments {
+			if _, err := cell.EnsureEnvironmentRoute(r.Context(), work.q, cell.EnsureEnvironmentRouteParams{
+				OrgID:         project.OrgID,
+				ProjectID:     project.ID,
+				EnvironmentID: environment.ID,
+				RegionID:      environment.DefaultRegionID,
+				LocalCellID:   s.cellID,
+			}); err != nil {
+				if errors.Is(err, cell.ErrRouteUnavailable) || errors.Is(err, cell.ErrPlacementOutsideLocalCell) {
+					return unavailable(errors.New("environment route is unavailable"))
+				}
+				return errors.New("create environment route")
+			}
+		}
+		return nil
 	})
 	if err != nil {
-		writeError(w, errors.New("list environments"))
+		writeError(w, err)
 		return
 	}
 	response := projectResponse(projectRecordFromCreated(project))
@@ -338,31 +361,49 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	if _, err := s.db.GetProject(r.Context(), db.GetProjectParams{
-		OrgID: pgvalue.UUID(actor.OrgID),
-		ID:    pgvalue.UUID(projectID),
-	}); isNoRows(err) {
-		writeError(w, notFound(errors.New("project not found")))
-		return
-	} else if err != nil {
-		writeError(w, errors.New("load project"))
-		return
-	}
-	environment, err := s.db.CreateEnvironment(r.Context(), db.CreateEnvironmentParams{
-		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:     pgvalue.UUID(actor.OrgID),
-		ProjectID: pgvalue.UUID(projectID),
-		Slug:      slug,
-		Name:      name,
-		ColorHex:  colorHex,
-		IsDefault: false,
+	var environment db.Environment
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		if _, err := work.q.GetProject(r.Context(), db.GetProjectParams{
+			OrgID: pgvalue.UUID(actor.OrgID),
+			ID:    pgvalue.UUID(projectID),
+		}); isNoRows(err) {
+			return notFound(errors.New("project not found"))
+		} else if err != nil {
+			return errors.New("load project")
+		}
+		var err error
+		environment, err = work.q.CreateEnvironment(r.Context(), db.CreateEnvironmentParams{
+			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:           pgvalue.UUID(actor.OrgID),
+			ProjectID:       pgvalue.UUID(projectID),
+			DefaultRegionID: s.defaultRegionID,
+			Slug:            slug,
+			Name:            name,
+			ColorHex:        colorHex,
+			IsDefault:       false,
+		})
+		if err != nil {
+			if isUniqueViolation(err) {
+				return badRequest(errors.New("environment slug is already in use"))
+			}
+			return errors.New("create environment")
+		}
+		if _, err := cell.EnsureEnvironmentRoute(r.Context(), work.q, cell.EnsureEnvironmentRouteParams{
+			OrgID:         environment.OrgID,
+			ProjectID:     environment.ProjectID,
+			EnvironmentID: environment.ID,
+			RegionID:      environment.DefaultRegionID,
+			LocalCellID:   s.cellID,
+		}); err != nil {
+			if errors.Is(err, cell.ErrRouteUnavailable) || errors.Is(err, cell.ErrPlacementOutsideLocalCell) {
+				return unavailable(errors.New("environment route is unavailable"))
+			}
+			return errors.New("create environment route")
+		}
+		return nil
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
-			writeError(w, badRequest(errors.New("environment slug is already in use")))
-			return
-		}
-		writeError(w, errors.New("create environment"))
+		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, environmentResponse(environmentRecordFromDB(environment)))

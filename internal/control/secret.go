@@ -32,8 +32,14 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
+	cellID := s.cellID
+	if err := s.requireRoutableRecordCell(r.Context(), s.db, actor.OrgID, projectID, environmentID, cellID); err != nil {
+		writeError(w, err)
+		return
+	}
 	rows, err := s.db.ListScopedSecrets(r.Context(), db.ListScopedSecretsParams{
 		OrgID:         pgvalue.UUID(actor.OrgID),
+		CellID:        cellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		RowLimit:      secretListLimit,
@@ -69,8 +75,14 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
+	cellID := s.cellID
+	if err := s.requireRoutableRecordCell(r.Context(), s.db, actor.OrgID, projectID, environmentID, cellID); err != nil {
+		writeError(w, err)
+		return
+	}
 	record, err := s.db.GetScopedSecretMetadataByName(r.Context(), db.GetScopedSecretMetadataByNameParams{
 		OrgID:         pgvalue.UUID(actor.OrgID),
+		CellID:        cellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Name:          name,
@@ -113,7 +125,12 @@ func (s *Server) setSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	record, err := s.secrets.PutScoped(r.Context(), actor.OrgID, pgvalue.MustUUIDValue(projectID), pgvalue.MustUUIDValue(environmentID), name, []byte(request.Value))
+	placement, err := s.resolveEnvironmentPlacement(r.Context(), s.db, actor.OrgID, projectID, environmentID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	record, err := s.secrets.PutScoped(r.Context(), placement.CellID, actor.OrgID, pgvalue.MustUUIDValue(projectID), pgvalue.MustUUIDValue(environmentID), name, []byte(request.Value))
 	if err != nil {
 		s.log.Error("set secret failed", "name", name, "error", err)
 		writeError(w, errors.New("set secret"))
@@ -142,8 +159,14 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
+	cellID := s.cellID
+	if err := s.requireRoutableRecordCell(r.Context(), s.db, actor.OrgID, projectID, environmentID, cellID); err != nil {
+		writeError(w, err)
+		return
+	}
 	rows, err := s.db.DeleteScopedSecret(r.Context(), db.DeleteScopedSecretParams{
 		OrgID:         pgvalue.UUID(actor.OrgID),
+		CellID:        cellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Name:          name,

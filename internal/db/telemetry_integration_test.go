@@ -3,6 +3,7 @@ package db_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 )
 
 const testCellID = "us-east-1-cell-1"
@@ -249,6 +251,91 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 	}
 	if len(prunedEvents) != 1 || prunedEvents[0] != first.Seq {
 		t.Fatalf("pruned events = %v, want [%d]", prunedEvents, first.Seq)
+	}
+}
+
+func TestWorkerTelemetryAppendRejectsDisabledSourceRoute(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
+	disableDefaultEnvironmentRoute(t, ctx, pool, ids)
+
+	_, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+		Kind:             "run.log",
+		Payload:          []byte(`{"stream":"stdout"}`),
+		OrgID:            pgvalue.UUID(ids.orgID),
+		CellID:           testCellID,
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		Stream:           db.RunLogStreamStdout,
+		ObservedSeq:      1,
+		Content:          []byte("wrong-cell"),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("AppendRunLogChunk disabled route error = %v, want pgx.ErrNoRows", err)
+	}
+	_, err = queries.AppendRunEventForExecution(ctx, db.AppendRunEventForExecutionParams{
+		Kind:             "run.event",
+		Payload:          []byte(`{"ok":true}`),
+		OrgID:            pgvalue.UUID(ids.orgID),
+		CellID:           testCellID,
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("AppendRunEventForExecution route mismatch error = %v, want pgx.ErrNoRows", err)
+	}
+
+	var chunkCount, eventCount, outboxCount, usageCount int64
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM run_log_hot_chunks WHERE org_id = $1 AND run_id = $2),
+			(SELECT count(*) FROM event_hot_payloads WHERE org_id = $1 AND run_id = $2),
+			(SELECT count(*) FROM telemetry_outbox WHERE org_id = $1 AND source_id = $2),
+			(SELECT count(*) FROM usage_facts WHERE org_id = $1 AND run_id = $2)
+	`, ids.orgID, ids.runID).Scan(&chunkCount, &eventCount, &outboxCount, &usageCount); err != nil {
+		t.Fatal(err)
+	}
+	if chunkCount != 0 || eventCount != 0 || outboxCount != 0 || usageCount != 0 {
+		t.Fatalf("wrong-cell append mutated chunks=%d events=%d outbox=%d usage=%d", chunkCount, eventCount, outboxCount, usageCount)
+	}
+}
+
+func TestWorkerTelemetryAppendAllowsStaleCellHealthForInFlightLease(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
+	if _, err := pool.Exec(ctx, `
+		UPDATE cell_health
+		   SET routing_fresh_until = now() - interval '1 minute'
+		 WHERE cell_id = $1
+	`, testCellID); err != nil {
+		t.Fatal(err)
+	}
+
+	chunk, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+		Kind:             "run.log",
+		Payload:          []byte(`{"stream":"stdout"}`),
+		OrgID:            pgvalue.UUID(ids.orgID),
+		CellID:           testCellID,
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		Stream:           db.RunLogStreamStdout,
+		ObservedSeq:      1,
+		Content:          []byte("still-running"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chunk.Seq != 1 {
+		t.Fatalf("chunk seq = %d, want 1", chunk.Seq)
 	}
 }
 

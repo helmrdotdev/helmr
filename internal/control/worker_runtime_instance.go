@@ -270,7 +270,10 @@ func normalizedJSONRawMessage(raw json.RawMessage) []byte {
 }
 
 func (s *Server) workerRuntimeReleaseID(w http.ResponseWriter, r *http.Request, worker workerActor) (string, bool) {
-	state, err := s.db.GetWorkerInstanceState(r.Context(), pgvalue.UUID(worker.WorkerInstanceID))
+	state, err := s.db.GetWorkerInstanceState(r.Context(), db.GetWorkerInstanceStateParams{
+		ID:     pgvalue.UUID(worker.WorkerInstanceID),
+		CellID: worker.CellID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("worker instance not found")))
 		return "", false

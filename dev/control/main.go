@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/cell"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
 	"github.com/helmrdotdev/helmr/internal/control"
@@ -64,8 +65,31 @@ func main() {
 		log.Error("migrate database", "error", err)
 		os.Exit(1)
 	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		log.Error("begin cell bootstrap", "error", err)
+		os.Exit(1)
+	}
+	if err := cell.Bootstrap(ctx, db.New(tx), cell.BootstrapConfig{
+		RegionID:           cfg.regionID,
+		DefaultRegionID:    cfg.defaultRegionID,
+		Provider:           cfg.provider,
+		ProviderRegion:     cfg.providerRegion,
+		RegionDisplayName:  cfg.regionDisplayName,
+		CellID:             cfg.cellID,
+		EnvironmentClass:   cfg.cellEnvironmentClass,
+		RequiredComponents: cell.DevRoutingRequiredComponents(),
+	}); err != nil {
+		_ = tx.Rollback(ctx)
+		log.Error("bootstrap cell", "error", err)
+		os.Exit(1)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		log.Error("commit cell bootstrap", "error", err)
+		os.Exit(1)
+	}
 	if cfg.seedData {
-		if err := seedDevData(ctx, pool); err != nil {
+		if err := seedDevData(ctx, pool, cfg); err != nil {
 			log.Error("seed dev data", "error", err)
 			os.Exit(1)
 		}
@@ -131,7 +155,7 @@ func main() {
 		log.Error("configure workspace stream notifier", "error", err)
 		os.Exit(1)
 	}
-	workerCommands, err := control.NewWorkerCommandStream(log, queries, redisClient)
+	workerCommands, err := control.NewWorkerCommandStream(log, queries, redisClient, cfg.cellID)
 	if err != nil {
 		log.Error("configure worker command stream", "error", err)
 		os.Exit(1)
@@ -152,6 +176,15 @@ func main() {
 		}
 	}()
 	go func() {
+		if err := cell.RunHealthReporter(ctx, queries, cell.HealthReporterConfig{
+			CellID:             cfg.cellID,
+			Component:          cell.ComponentDevControl,
+			RequiredComponents: cell.DevRoutingRequiredComponents(),
+		}); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("cell health reporter stopped", "error", err)
+		}
+	}()
+	go func() {
 		if err := telemetryIngestor.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("telemetry ingester stopped", "error", err)
 		}
@@ -166,7 +199,7 @@ func main() {
 		log.Error("configure secret store", "error", err)
 		os.Exit(1)
 	}
-	sweeper, err := dispatch.NewExpirySweeper(queries, dispatch.WithExpirySweepLogger(log))
+	sweeper, err := dispatch.NewExpirySweeper(queries, dispatch.WithExpirySweepCellID(cfg.cellID), dispatch.WithExpirySweepLogger(log))
 	if err != nil {
 		log.Error("configure sweeper", "error", err)
 		os.Exit(1)
@@ -197,6 +230,9 @@ func main() {
 		AuthSecret:          []byte(cfg.authSecret),
 		PublicURL:           publicURL,
 		CellID:              cfg.cellID,
+		RegionID:            cfg.regionID,
+		DefaultRegionID:     cfg.defaultRegionID,
+		ReadinessComponent:  cell.ComponentDevControl,
 		EventStream:         eventStream,
 		TelemetryReader:     telemetryReader,
 		WorkspaceStreams:    workspaceStreams,
@@ -238,7 +274,13 @@ type devConfig struct {
 	addr                   string
 	deploymentMode         string
 	databaseURL            string
+	regionID               string
+	defaultRegionID        string
+	provider               string
+	providerRegion         string
+	regionDisplayName      string
 	cellID                 string
+	cellEnvironmentClass   string
 	clickHouseURL          string
 	clickHouseUser         string
 	clickHousePassword     string
@@ -260,7 +302,13 @@ func loadConfig() (devConfig, error) {
 		addr:                   env("HELMR_CONTROL_ADDR", defaultAddr),
 		deploymentMode:         env("HELMR_DEPLOYMENT_MODE", "self-hosted"),
 		databaseURL:            os.Getenv("HELMR_DATABASE_URL"),
-		cellID:                 env("HELMR_CELL_ID", "us-east-1-cell-1"),
+		regionID:               strings.TrimSpace(os.Getenv("HELMR_REGION_ID")),
+		defaultRegionID:        strings.TrimSpace(os.Getenv("HELMR_DEFAULT_REGION_ID")),
+		provider:               strings.TrimSpace(os.Getenv("HELMR_PROVIDER")),
+		providerRegion:         strings.TrimSpace(os.Getenv("HELMR_PROVIDER_REGION")),
+		regionDisplayName:      strings.TrimSpace(os.Getenv("HELMR_REGION_DISPLAY_NAME")),
+		cellID:                 strings.TrimSpace(os.Getenv("HELMR_CELL_ID")),
+		cellEnvironmentClass:   strings.TrimSpace(os.Getenv("HELMR_CELL_ENVIRONMENT_CLASS")),
 		clickHouseURL:          strings.TrimSpace(os.Getenv("HELMR_CLICKHOUSE_URL")),
 		clickHouseUser:         strings.TrimSpace(os.Getenv("HELMR_CLICKHOUSE_USER")),
 		clickHousePassword:     os.Getenv("HELMR_CLICKHOUSE_PASSWORD"),
@@ -278,6 +326,27 @@ func loadConfig() (devConfig, error) {
 	}
 	if cfg.databaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
+	}
+	if cfg.regionID == "" {
+		return cfg, errors.New("HELMR_REGION_ID is required")
+	}
+	if cfg.defaultRegionID == "" {
+		return cfg, errors.New("HELMR_DEFAULT_REGION_ID is required")
+	}
+	if cfg.provider == "" {
+		return cfg, errors.New("HELMR_PROVIDER is required")
+	}
+	if cfg.providerRegion == "" {
+		return cfg, errors.New("HELMR_PROVIDER_REGION is required")
+	}
+	if cfg.regionDisplayName == "" {
+		cfg.regionDisplayName = cfg.regionID
+	}
+	if cfg.cellID == "" {
+		return cfg, errors.New("HELMR_CELL_ID is required")
+	}
+	if cfg.cellEnvironmentClass == "" {
+		return cfg, errors.New("HELMR_CELL_ENVIRONMENT_CLASS is required")
 	}
 	if cfg.clickHouseURL == "" {
 		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")

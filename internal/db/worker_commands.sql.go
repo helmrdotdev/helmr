@@ -17,22 +17,44 @@ UPDATE worker_commands
        updated_at = now()
  WHERE worker_commands.worker_instance_id = $1
    AND worker_commands.id = $2
+   AND worker_commands.cell_id = $3
+   AND EXISTS (
+       SELECT 1
+         FROM worker_instances
+         JOIN environment_cells
+           ON environment_cells.org_id = worker_commands.org_id
+          AND environment_cells.project_id = worker_commands.project_id
+          AND environment_cells.environment_id = worker_commands.environment_id
+          AND environment_cells.cell_id = worker_commands.cell_id
+          AND environment_cells.route_generation = worker_commands.route_generation
+          AND environment_cells.route_state IN ('active', 'draining')
+         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                       AND org_cells.cell_id = environment_cells.cell_id
+                       AND org_cells.state = 'active'
+         JOIN cells ON cells.id = environment_cells.cell_id
+                   AND cells.state IN ('active', 'draining')
+        WHERE worker_instances.id = worker_commands.worker_instance_id
+          AND worker_instances.cell_id = worker_commands.cell_id
+          AND worker_instances.cell_id = $3
+   )
    AND worker_commands.acknowledged_at IS NULL
-RETURNING id, org_id, cell_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
+RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
 `
 
 type AcceptWorkerCommandParams struct {
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	ID               int64       `json:"id"`
+	CellID           string      `json:"cell_id"`
 }
 
 func (q *Queries) AcceptWorkerCommand(ctx context.Context, arg AcceptWorkerCommandParams) (WorkerCommand, error) {
-	row := q.db.QueryRow(ctx, acceptWorkerCommand, arg.WorkerInstanceID, arg.ID)
+	row := q.db.QueryRow(ctx, acceptWorkerCommand, arg.WorkerInstanceID, arg.ID, arg.CellID)
 	var i WorkerCommand
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
@@ -60,22 +82,43 @@ func (q *Queries) AcceptWorkerCommand(ctx context.Context, arg AcceptWorkerComma
 
 const acknowledgeWorkerCommand = `-- name: AcknowledgeWorkerCommand :one
 WITH target AS MATERIALIZED (
-    SELECT worker_commands.id, worker_commands.org_id, worker_commands.cell_id, worker_commands.project_id, worker_commands.environment_id, worker_commands.run_id, worker_commands.run_wait_id, worker_commands.run_lease_id, worker_commands.worker_instance_id, worker_commands.deployment_sandbox_id, worker_commands.runtime_instance_id, worker_commands.runtime_epoch, worker_commands.run_state_version, worker_commands.kind, worker_commands.payload, worker_commands.delivered_at, worker_commands.accepted_at, worker_commands.completed_at, worker_commands.acknowledged_at, worker_commands.delivery_attempts, worker_commands.delivery_locked_until, worker_commands.last_delivery_error, worker_commands.created_at, worker_commands.updated_at
+    SELECT worker_commands.id, worker_commands.org_id, worker_commands.cell_id, worker_commands.route_generation, worker_commands.project_id, worker_commands.environment_id, worker_commands.run_id, worker_commands.run_wait_id, worker_commands.run_lease_id, worker_commands.worker_instance_id, worker_commands.deployment_sandbox_id, worker_commands.runtime_instance_id, worker_commands.runtime_epoch, worker_commands.run_state_version, worker_commands.kind, worker_commands.payload, worker_commands.delivered_at, worker_commands.accepted_at, worker_commands.completed_at, worker_commands.acknowledged_at, worker_commands.delivery_attempts, worker_commands.delivery_locked_until, worker_commands.last_delivery_error, worker_commands.created_at, worker_commands.updated_at
       FROM worker_commands
      WHERE worker_commands.worker_instance_id = $1
        AND worker_commands.id = $2
+       AND worker_commands.cell_id = $3
+       AND EXISTS (
+           SELECT 1
+             FROM worker_instances
+             JOIN environment_cells
+               ON environment_cells.org_id = worker_commands.org_id
+              AND environment_cells.project_id = worker_commands.project_id
+              AND environment_cells.environment_id = worker_commands.environment_id
+              AND environment_cells.cell_id = worker_commands.cell_id
+              AND environment_cells.route_generation = worker_commands.route_generation
+              AND environment_cells.route_state IN ('active', 'draining')
+             JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                           AND org_cells.cell_id = environment_cells.cell_id
+                           AND org_cells.state = 'active'
+             JOIN cells ON cells.id = environment_cells.cell_id
+                       AND cells.state IN ('active', 'draining')
+            WHERE worker_instances.id = worker_commands.worker_instance_id
+              AND worker_instances.cell_id = worker_commands.cell_id
+              AND worker_instances.cell_id = $3
+       )
      FOR UPDATE OF worker_commands
 ),
 already_acknowledged AS MATERIALIZED (
-    SELECT id, org_id, cell_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
+    SELECT id, org_id, cell_id, route_generation, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
       FROM target
      WHERE target.acknowledged_at IS NOT NULL
 ),
 eligible_resume AS MATERIALIZED (
-    SELECT target.id, target.org_id, target.cell_id, target.project_id, target.environment_id, target.run_id, target.run_wait_id, target.run_lease_id, target.worker_instance_id, target.deployment_sandbox_id, target.runtime_instance_id, target.runtime_epoch, target.run_state_version, target.kind, target.payload, target.delivered_at, target.accepted_at, target.completed_at, target.acknowledged_at, target.delivery_attempts, target.delivery_locked_until, target.last_delivery_error, target.created_at, target.updated_at
+    SELECT target.id, target.org_id, target.cell_id, target.route_generation, target.project_id, target.environment_id, target.run_id, target.run_wait_id, target.run_lease_id, target.worker_instance_id, target.deployment_sandbox_id, target.runtime_instance_id, target.runtime_epoch, target.run_state_version, target.kind, target.payload, target.delivered_at, target.accepted_at, target.completed_at, target.acknowledged_at, target.delivery_attempts, target.delivery_locked_until, target.last_delivery_error, target.created_at, target.updated_at
       FROM target
       JOIN run_waits
         ON run_waits.org_id = target.org_id
+       AND run_waits.cell_id = target.cell_id
        AND run_waits.run_id = target.run_id
        AND run_waits.id = target.run_wait_id
        AND run_waits.owner_run_lease_id = target.run_lease_id
@@ -84,8 +127,9 @@ eligible_resume AS MATERIALIZED (
        AND run_waits.owner_runtime_epoch = target.runtime_epoch
        AND run_waits.owner_run_state_version = target.run_state_version
        AND run_waits.state = 'resolved_live'
-      JOIN runtime_instances
+     JOIN runtime_instances
         ON runtime_instances.org_id = target.org_id
+       AND runtime_instances.cell_id = target.cell_id
        AND runtime_instances.id = target.runtime_instance_id
        AND runtime_instances.worker_instance_id = target.worker_instance_id
        AND runtime_instances.runtime_epoch = target.runtime_epoch
@@ -103,8 +147,9 @@ resumed_live_wait AS (
        SET resumed_at = COALESCE(run_waits.resumed_at, now()),
            state = 'resumed',
            updated_at = now()
-      FROM eligible_resume
+     FROM eligible_resume
      WHERE run_waits.org_id = eligible_resume.org_id
+       AND run_waits.cell_id = eligible_resume.cell_id
        AND run_waits.run_id = eligible_resume.run_id
        AND run_waits.id = eligible_resume.run_wait_id
        AND run_waits.owner_run_lease_id = eligible_resume.run_lease_id
@@ -127,8 +172,10 @@ resumed_runtime_instance AS (
       FROM eligible_resume
       JOIN resumed_live_wait
         ON resumed_live_wait.org_id = eligible_resume.org_id
+       AND resumed_live_wait.cell_id = eligible_resume.cell_id
        AND resumed_live_wait.id = eligible_resume.run_wait_id
      WHERE runtime_instances.org_id = eligible_resume.org_id
+       AND runtime_instances.cell_id = eligible_resume.cell_id
        AND runtime_instances.id = eligible_resume.runtime_instance_id
        AND runtime_instances.worker_instance_id = eligible_resume.worker_instance_id
        AND runtime_instances.runtime_epoch = eligible_resume.runtime_epoch
@@ -139,7 +186,7 @@ resumed_runtime_instance AS (
     RETURNING runtime_instances.id
 ),
 stale_resume AS MATERIALIZED (
-    SELECT target.id, target.org_id, target.cell_id, target.project_id, target.environment_id, target.run_id, target.run_wait_id, target.run_lease_id, target.worker_instance_id, target.deployment_sandbox_id, target.runtime_instance_id, target.runtime_epoch, target.run_state_version, target.kind, target.payload, target.delivered_at, target.accepted_at, target.completed_at, target.acknowledged_at, target.delivery_attempts, target.delivery_locked_until, target.last_delivery_error, target.created_at, target.updated_at
+    SELECT target.id, target.org_id, target.cell_id, target.route_generation, target.project_id, target.environment_id, target.run_id, target.run_wait_id, target.run_lease_id, target.worker_instance_id, target.deployment_sandbox_id, target.runtime_instance_id, target.runtime_epoch, target.run_state_version, target.kind, target.payload, target.delivered_at, target.accepted_at, target.completed_at, target.acknowledged_at, target.delivery_attempts, target.delivery_locked_until, target.last_delivery_error, target.created_at, target.updated_at
       FROM target
      WHERE target.kind = 'runtime_resume_wait'
        AND target.acknowledged_at IS NULL
@@ -163,12 +210,12 @@ acknowledged AS (
            )
            OR EXISTS (SELECT 1 FROM stale_resume)
        )
-    RETURNING worker_commands.id, worker_commands.org_id, worker_commands.cell_id, worker_commands.project_id, worker_commands.environment_id, worker_commands.run_id, worker_commands.run_wait_id, worker_commands.run_lease_id, worker_commands.worker_instance_id, worker_commands.deployment_sandbox_id, worker_commands.runtime_instance_id, worker_commands.runtime_epoch, worker_commands.run_state_version, worker_commands.kind, worker_commands.payload, worker_commands.delivered_at, worker_commands.accepted_at, worker_commands.completed_at, worker_commands.acknowledged_at, worker_commands.delivery_attempts, worker_commands.delivery_locked_until, worker_commands.last_delivery_error, worker_commands.created_at, worker_commands.updated_at
+    RETURNING worker_commands.id, worker_commands.org_id, worker_commands.cell_id, worker_commands.route_generation, worker_commands.project_id, worker_commands.environment_id, worker_commands.run_id, worker_commands.run_wait_id, worker_commands.run_lease_id, worker_commands.worker_instance_id, worker_commands.deployment_sandbox_id, worker_commands.runtime_instance_id, worker_commands.runtime_epoch, worker_commands.run_state_version, worker_commands.kind, worker_commands.payload, worker_commands.delivered_at, worker_commands.accepted_at, worker_commands.completed_at, worker_commands.acknowledged_at, worker_commands.delivery_attempts, worker_commands.delivery_locked_until, worker_commands.last_delivery_error, worker_commands.created_at, worker_commands.updated_at
 )
-SELECT id, org_id, cell_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
   FROM acknowledged
 UNION ALL
-SELECT id, org_id, cell_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
   FROM already_acknowledged
 LIMIT 1
 `
@@ -176,12 +223,14 @@ LIMIT 1
 type AcknowledgeWorkerCommandParams struct {
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	ID               int64       `json:"id"`
+	CellID           string      `json:"cell_id"`
 }
 
 type AcknowledgeWorkerCommandRow struct {
 	ID                  int64              `json:"id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
 	CellID              string             `json:"cell_id"`
+	RouteGeneration     int64              `json:"route_generation"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	RunID               pgtype.UUID        `json:"run_id"`
@@ -206,12 +255,13 @@ type AcknowledgeWorkerCommandRow struct {
 }
 
 func (q *Queries) AcknowledgeWorkerCommand(ctx context.Context, arg AcknowledgeWorkerCommandParams) (AcknowledgeWorkerCommandRow, error) {
-	row := q.db.QueryRow(ctx, acknowledgeWorkerCommand, arg.WorkerInstanceID, arg.ID)
+	row := q.db.QueryRow(ctx, acknowledgeWorkerCommand, arg.WorkerInstanceID, arg.ID, arg.CellID)
 	var i AcknowledgeWorkerCommandRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
@@ -247,17 +297,38 @@ UPDATE worker_commands
  WHERE worker_commands.worker_instance_id = $1
    AND worker_commands.id = $2
    AND worker_commands.org_id = $3
-   AND worker_commands.run_id = $4
-   AND worker_commands.run_wait_id = $5
-   AND worker_commands.run_lease_id = $6
-   AND worker_commands.kind = $7::worker_command_kind
-RETURNING id, org_id, cell_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
+   AND worker_commands.cell_id = $4
+   AND worker_commands.run_id = $5
+   AND worker_commands.run_wait_id = $6
+   AND worker_commands.run_lease_id = $7
+   AND worker_commands.kind = $8::worker_command_kind
+   AND EXISTS (
+       SELECT 1
+         FROM worker_instances
+         JOIN environment_cells
+           ON environment_cells.org_id = worker_commands.org_id
+          AND environment_cells.project_id = worker_commands.project_id
+          AND environment_cells.environment_id = worker_commands.environment_id
+          AND environment_cells.cell_id = worker_commands.cell_id
+          AND environment_cells.route_generation = worker_commands.route_generation
+          AND environment_cells.route_state IN ('active', 'draining')
+         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                       AND org_cells.cell_id = environment_cells.cell_id
+                       AND org_cells.state = 'active'
+         JOIN cells ON cells.id = environment_cells.cell_id
+                   AND cells.state IN ('active', 'draining')
+        WHERE worker_instances.id = worker_commands.worker_instance_id
+          AND worker_instances.cell_id = worker_commands.cell_id
+          AND worker_instances.cell_id = $4
+   )
+RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
 `
 
 type AcknowledgeWorkerCommandForRunWaitParams struct {
 	WorkerInstanceID pgtype.UUID       `json:"worker_instance_id"`
 	ID               int64             `json:"id"`
 	OrgID            pgtype.UUID       `json:"org_id"`
+	CellID           string            `json:"cell_id"`
 	RunID            pgtype.UUID       `json:"run_id"`
 	RunWaitID        pgtype.UUID       `json:"run_wait_id"`
 	RunLeaseID       pgtype.UUID       `json:"run_lease_id"`
@@ -269,6 +340,7 @@ func (q *Queries) AcknowledgeWorkerCommandForRunWait(ctx context.Context, arg Ac
 		arg.WorkerInstanceID,
 		arg.ID,
 		arg.OrgID,
+		arg.CellID,
 		arg.RunID,
 		arg.RunWaitID,
 		arg.RunLeaseID,
@@ -279,6 +351,7 @@ func (q *Queries) AcknowledgeWorkerCommandForRunWait(ctx context.Context, arg Ac
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
@@ -306,30 +379,47 @@ func (q *Queries) AcknowledgeWorkerCommandForRunWait(ctx context.Context, arg Ac
 
 const claimWorkerCommands = `-- name: ClaimWorkerCommands :many
 WITH claimable AS (
-    SELECT id
+    SELECT worker_commands.id
       FROM worker_commands
-     WHERE delivered_at IS NULL
+      JOIN environment_cells
+        ON environment_cells.org_id = worker_commands.org_id
+       AND environment_cells.project_id = worker_commands.project_id
+       AND environment_cells.environment_id = worker_commands.environment_id
+       AND environment_cells.cell_id = worker_commands.cell_id
+       AND environment_cells.route_generation = worker_commands.route_generation
+       AND environment_cells.route_state IN ('active', 'draining')
+      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                    AND org_cells.cell_id = environment_cells.cell_id
+                    AND org_cells.state = 'active'
+      JOIN cells ON cells.id = environment_cells.cell_id
+                AND cells.state IN ('active', 'draining')
+      JOIN worker_instances
+        ON worker_instances.id = worker_commands.worker_instance_id
+       AND worker_instances.cell_id = worker_commands.cell_id
+     WHERE worker_commands.cell_id = $1
+       AND delivered_at IS NULL
        AND acknowledged_at IS NULL
        AND (delivery_locked_until IS NULL OR delivery_locked_until < now())
-     ORDER BY id ASC
-     LIMIT $1
+     ORDER BY worker_commands.id ASC
+     LIMIT $2
      FOR UPDATE SKIP LOCKED
 ),
 updated AS (
     UPDATE worker_commands
-       SET delivery_locked_until = now() + $2::interval,
+       SET delivery_locked_until = now() + $3::interval,
            delivery_attempts = worker_commands.delivery_attempts + 1,
            updated_at = now()
       FROM claimable
      WHERE worker_commands.id = claimable.id
-    RETURNING worker_commands.id, worker_commands.org_id, worker_commands.cell_id, worker_commands.project_id, worker_commands.environment_id, worker_commands.run_id, worker_commands.run_wait_id, worker_commands.run_lease_id, worker_commands.worker_instance_id, worker_commands.deployment_sandbox_id, worker_commands.runtime_instance_id, worker_commands.runtime_epoch, worker_commands.run_state_version, worker_commands.kind, worker_commands.payload, worker_commands.delivered_at, worker_commands.accepted_at, worker_commands.completed_at, worker_commands.acknowledged_at, worker_commands.delivery_attempts, worker_commands.delivery_locked_until, worker_commands.last_delivery_error, worker_commands.created_at, worker_commands.updated_at
+    RETURNING worker_commands.id, worker_commands.org_id, worker_commands.cell_id, worker_commands.route_generation, worker_commands.project_id, worker_commands.environment_id, worker_commands.run_id, worker_commands.run_wait_id, worker_commands.run_lease_id, worker_commands.worker_instance_id, worker_commands.deployment_sandbox_id, worker_commands.runtime_instance_id, worker_commands.runtime_epoch, worker_commands.run_state_version, worker_commands.kind, worker_commands.payload, worker_commands.delivered_at, worker_commands.accepted_at, worker_commands.completed_at, worker_commands.acknowledged_at, worker_commands.delivery_attempts, worker_commands.delivery_locked_until, worker_commands.last_delivery_error, worker_commands.created_at, worker_commands.updated_at
 )
-SELECT id, org_id, cell_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
   FROM updated
  ORDER BY id ASC
 `
 
 type ClaimWorkerCommandsParams struct {
+	CellID        string          `json:"cell_id"`
 	RowLimit      int32           `json:"row_limit"`
 	LeaseDuration pgtype.Interval `json:"lease_duration"`
 }
@@ -338,6 +428,7 @@ type ClaimWorkerCommandsRow struct {
 	ID                  int64              `json:"id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
 	CellID              string             `json:"cell_id"`
+	RouteGeneration     int64              `json:"route_generation"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	RunID               pgtype.UUID        `json:"run_id"`
@@ -362,7 +453,7 @@ type ClaimWorkerCommandsRow struct {
 }
 
 func (q *Queries) ClaimWorkerCommands(ctx context.Context, arg ClaimWorkerCommandsParams) ([]ClaimWorkerCommandsRow, error) {
-	rows, err := q.db.Query(ctx, claimWorkerCommands, arg.RowLimit, arg.LeaseDuration)
+	rows, err := q.db.Query(ctx, claimWorkerCommands, arg.CellID, arg.RowLimit, arg.LeaseDuration)
 	if err != nil {
 		return nil, err
 	}
@@ -374,6 +465,7 @@ func (q *Queries) ClaimWorkerCommands(ctx context.Context, arg ClaimWorkerComman
 			&i.ID,
 			&i.OrgID,
 			&i.CellID,
+			&i.RouteGeneration,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
@@ -448,7 +540,8 @@ blocked_mount AS MATERIALIZED (
      LIMIT 1
 ),
 victim AS (
-    SELECT run_waits.id, run_waits.org_id, run_waits.cell_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+    SELECT run_waits.id, run_waits.org_id, run_waits.cell_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at,
+           run_leases.route_generation
       FROM run_waits
       JOIN run_leases ON run_leases.org_id = run_waits.org_id
                      AND run_leases.run_id = run_waits.run_id
@@ -487,6 +580,7 @@ victim AS (
 INSERT INTO worker_commands (
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     run_id,
@@ -501,6 +595,7 @@ INSERT INTO worker_commands (
 )
 SELECT victim.org_id,
        victim.cell_id,
+       victim.route_generation,
        victim.project_id,
        victim.environment_id,
        victim.run_id,
@@ -514,7 +609,7 @@ SELECT victim.org_id,
        '{}'::jsonb
   FROM victim
 ON CONFLICT (org_id, run_wait_id, kind, run_lease_id, runtime_instance_id, runtime_epoch, run_state_version) WHERE kind = 'runtime_checkpoint_wait' AND acknowledged_at IS NULL DO NOTHING
-RETURNING id, org_id, cell_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
+RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
 `
 
 type CreateCapacityPressureLiveRuntimeCheckpointWaitCommandsForWorkerParams struct {
@@ -542,6 +637,7 @@ func (q *Queries) CreateCapacityPressureLiveRuntimeCheckpointWaitCommandsForWork
 			&i.ID,
 			&i.OrgID,
 			&i.CellID,
+			&i.RouteGeneration,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
@@ -576,7 +672,8 @@ func (q *Queries) CreateCapacityPressureLiveRuntimeCheckpointWaitCommandsForWork
 
 const createDueLiveRuntimeCheckpointWaitCommandsForOrg = `-- name: CreateDueLiveRuntimeCheckpointWaitCommandsForOrg :many
 WITH due AS (
-    SELECT run_waits.id, run_waits.org_id, run_waits.cell_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+    SELECT run_waits.id, run_waits.org_id, run_waits.cell_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at,
+           run_leases.route_generation
       FROM run_waits
       JOIN worker_instances ON worker_instances.id = run_waits.owner_worker_instance_id
       JOIN run_leases ON run_leases.org_id = run_waits.org_id
@@ -599,6 +696,7 @@ WITH due AS (
            OR runtime_instances.expires_at > now()
        )
      WHERE run_waits.org_id = $1
+       AND run_waits.cell_id = $2
        AND run_waits.state = 'live_waiting'
        AND run_waits.runtime_checkpoint_due_at IS NOT NULL
        AND (
@@ -629,11 +727,12 @@ WITH due AS (
               AND worker_commands.acknowledged_at IS NULL
        )
      ORDER BY run_waits.runtime_checkpoint_due_at ASC, run_waits.id ASC
-     LIMIT $2
+     LIMIT $3
 )
 INSERT INTO worker_commands (
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     run_id,
@@ -648,6 +747,7 @@ INSERT INTO worker_commands (
 )
 SELECT due.org_id,
        due.cell_id,
+       due.route_generation,
        due.project_id,
        due.environment_id,
        due.run_id,
@@ -661,16 +761,17 @@ SELECT due.org_id,
        '{}'::jsonb
   FROM due
 ON CONFLICT (org_id, run_wait_id, kind, run_lease_id, runtime_instance_id, runtime_epoch, run_state_version) WHERE kind = 'runtime_checkpoint_wait' AND acknowledged_at IS NULL DO NOTHING
-RETURNING id, org_id, cell_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
+RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
 `
 
 type CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams struct {
 	OrgID      pgtype.UUID `json:"org_id"`
+	CellID     string      `json:"cell_id"`
 	LimitCount int32       `json:"limit_count"`
 }
 
 func (q *Queries) CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx context.Context, arg CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams) ([]WorkerCommand, error) {
-	rows, err := q.db.Query(ctx, createDueLiveRuntimeCheckpointWaitCommandsForOrg, arg.OrgID, arg.LimitCount)
+	rows, err := q.db.Query(ctx, createDueLiveRuntimeCheckpointWaitCommandsForOrg, arg.OrgID, arg.CellID, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}
@@ -682,6 +783,7 @@ func (q *Queries) CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx context.C
 			&i.ID,
 			&i.OrgID,
 			&i.CellID,
+			&i.RouteGeneration,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
@@ -716,7 +818,8 @@ func (q *Queries) CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx context.C
 
 const createDueLiveRuntimeCheckpointWaitCommandsForWorker = `-- name: CreateDueLiveRuntimeCheckpointWaitCommandsForWorker :many
 WITH due AS (
-    SELECT run_waits.id, run_waits.org_id, run_waits.cell_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+    SELECT run_waits.id, run_waits.org_id, run_waits.cell_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at,
+           run_leases.route_generation
       FROM run_waits
       JOIN worker_instances ON worker_instances.id = run_waits.owner_worker_instance_id
       JOIN run_leases ON run_leases.org_id = run_waits.org_id
@@ -774,6 +877,7 @@ WITH due AS (
 INSERT INTO worker_commands (
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     run_id,
@@ -788,6 +892,7 @@ INSERT INTO worker_commands (
 )
 SELECT due.org_id,
        due.cell_id,
+       due.route_generation,
        due.project_id,
        due.environment_id,
        due.run_id,
@@ -801,7 +906,7 @@ SELECT due.org_id,
        '{}'::jsonb
   FROM due
 ON CONFLICT (org_id, run_wait_id, kind, run_lease_id, runtime_instance_id, runtime_epoch, run_state_version) WHERE kind = 'runtime_checkpoint_wait' AND acknowledged_at IS NULL DO NOTHING
-RETURNING id, org_id, cell_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
+RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
 `
 
 type CreateDueLiveRuntimeCheckpointWaitCommandsForWorkerParams struct {
@@ -822,6 +927,7 @@ func (q *Queries) CreateDueLiveRuntimeCheckpointWaitCommandsForWorker(ctx contex
 			&i.ID,
 			&i.OrgID,
 			&i.CellID,
+			&i.RouteGeneration,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
@@ -857,6 +963,7 @@ func (q *Queries) CreateDueLiveRuntimeCheckpointWaitCommandsForWorker(ctx contex
 const createResolvedLiveRuntimeResumeWaitCommandsForOrg = `-- name: CreateResolvedLiveRuntimeResumeWaitCommandsForOrg :many
 WITH resolved AS (
     SELECT run_waits.id, run_waits.org_id, run_waits.cell_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at,
+           run_leases.route_generation,
            CASE
              WHEN run_waits.kind = 'timer' THEN 'completed'
              WHEN run_waits.timeout_at IS NOT NULL
@@ -920,6 +1027,7 @@ WITH resolved AS (
 	           OR runtime_instances.expires_at > now()
 	       )
 	     WHERE run_waits.org_id = $1
+	       AND run_waits.cell_id = $2
 	       AND run_waits.state = 'resolved_live'
        AND run_waits.owner_run_lease_id IS NOT NULL
        AND run_waits.owner_worker_instance_id IS NOT NULL
@@ -934,11 +1042,12 @@ WITH resolved AS (
               AND worker_commands.kind = 'runtime_resume_wait'
        )
      ORDER BY run_waits.resolved_at ASC, run_waits.id ASC
-     LIMIT $2
+     LIMIT $3
 )
 INSERT INTO worker_commands (
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     run_id,
@@ -953,6 +1062,7 @@ INSERT INTO worker_commands (
 )
 SELECT resolved.org_id,
        resolved.cell_id,
+       resolved.route_generation,
        resolved.project_id,
        resolved.environment_id,
        resolved.run_id,
@@ -969,16 +1079,17 @@ SELECT resolved.org_id,
        )
   FROM resolved
 ON CONFLICT (org_id, run_wait_id, kind, run_lease_id, runtime_instance_id, runtime_epoch, run_state_version) WHERE kind = 'runtime_resume_wait' DO NOTHING
-RETURNING id, org_id, cell_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
+RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
 `
 
 type CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams struct {
 	OrgID      pgtype.UUID `json:"org_id"`
+	CellID     string      `json:"cell_id"`
 	LimitCount int32       `json:"limit_count"`
 }
 
 func (q *Queries) CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx context.Context, arg CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams) ([]WorkerCommand, error) {
-	rows, err := q.db.Query(ctx, createResolvedLiveRuntimeResumeWaitCommandsForOrg, arg.OrgID, arg.LimitCount)
+	rows, err := q.db.Query(ctx, createResolvedLiveRuntimeResumeWaitCommandsForOrg, arg.OrgID, arg.CellID, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}
@@ -990,6 +1101,7 @@ func (q *Queries) CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx context.
 			&i.ID,
 			&i.OrgID,
 			&i.CellID,
+			&i.RouteGeneration,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
@@ -1026,6 +1138,7 @@ const createWorkerCommand = `-- name: CreateWorkerCommand :one
 INSERT INTO worker_commands (
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     run_id,
@@ -1047,19 +1160,21 @@ INSERT INTO worker_commands (
     $6,
     $7,
     $8,
-    $9::uuid,
+    $9,
     $10::uuid,
-    $11::bigint,
-    $12,
-    $13::worker_command_kind,
-    COALESCE($14::jsonb, '{}'::jsonb)
+    $11::uuid,
+    $12::bigint,
+    $13,
+    $14::worker_command_kind,
+    COALESCE($15::jsonb, '{}'::jsonb)
 )
-RETURNING id, org_id, cell_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
+RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
 `
 
 type CreateWorkerCommandParams struct {
 	OrgID               pgtype.UUID       `json:"org_id"`
 	CellID              string            `json:"cell_id"`
+	RouteGeneration     int64             `json:"route_generation"`
 	ProjectID           pgtype.UUID       `json:"project_id"`
 	EnvironmentID       pgtype.UUID       `json:"environment_id"`
 	RunID               pgtype.UUID       `json:"run_id"`
@@ -1078,6 +1193,7 @@ func (q *Queries) CreateWorkerCommand(ctx context.Context, arg CreateWorkerComma
 	row := q.db.QueryRow(ctx, createWorkerCommand,
 		arg.OrgID,
 		arg.CellID,
+		arg.RouteGeneration,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.RunID,
@@ -1096,6 +1212,7 @@ func (q *Queries) CreateWorkerCommand(ctx context.Context, arg CreateWorkerComma
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
@@ -1122,23 +1239,49 @@ func (q *Queries) CreateWorkerCommand(ctx context.Context, arg CreateWorkerComma
 }
 
 const listWorkerCommandsAfter = `-- name: ListWorkerCommandsAfter :many
-SELECT id, org_id, cell_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
   FROM worker_commands
  WHERE worker_commands.worker_instance_id = $1
-   AND worker_commands.id > $2
+   AND worker_commands.cell_id = $2
+   AND EXISTS (
+       SELECT 1
+         FROM worker_instances
+         JOIN environment_cells
+           ON environment_cells.org_id = worker_commands.org_id
+          AND environment_cells.project_id = worker_commands.project_id
+          AND environment_cells.environment_id = worker_commands.environment_id
+          AND environment_cells.cell_id = worker_commands.cell_id
+          AND environment_cells.route_generation = worker_commands.route_generation
+          AND environment_cells.route_state IN ('active', 'draining')
+         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                       AND org_cells.cell_id = environment_cells.cell_id
+                       AND org_cells.state = 'active'
+         JOIN cells ON cells.id = environment_cells.cell_id
+                   AND cells.state IN ('active', 'draining')
+        WHERE worker_instances.id = worker_commands.worker_instance_id
+          AND worker_instances.cell_id = worker_commands.cell_id
+          AND worker_instances.cell_id = $2
+   )
+   AND worker_commands.id > $3
    AND worker_commands.acknowledged_at IS NULL
  ORDER BY worker_commands.id ASC
- LIMIT $3
+ LIMIT $4
 `
 
 type ListWorkerCommandsAfterParams struct {
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	CellID           string      `json:"cell_id"`
 	AfterID          int64       `json:"after_id"`
 	LimitCount       int32       `json:"limit_count"`
 }
 
 func (q *Queries) ListWorkerCommandsAfter(ctx context.Context, arg ListWorkerCommandsAfterParams) ([]WorkerCommand, error) {
-	rows, err := q.db.Query(ctx, listWorkerCommandsAfter, arg.WorkerInstanceID, arg.AfterID, arg.LimitCount)
+	rows, err := q.db.Query(ctx, listWorkerCommandsAfter,
+		arg.WorkerInstanceID,
+		arg.CellID,
+		arg.AfterID,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1150,6 +1293,7 @@ func (q *Queries) ListWorkerCommandsAfter(ctx context.Context, arg ListWorkerCom
 			&i.ID,
 			&i.OrgID,
 			&i.CellID,
+			&i.RouteGeneration,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
@@ -1191,7 +1335,7 @@ UPDATE worker_commands
    AND worker_commands.org_id = $2
    AND worker_commands.worker_instance_id = $3
    AND worker_commands.delivered_at IS NULL
-RETURNING id, org_id, cell_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
+RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
 `
 
 type MarkWorkerCommandDeliveredParams struct {
@@ -1207,6 +1351,7 @@ func (q *Queries) MarkWorkerCommandDelivered(ctx context.Context, arg MarkWorker
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,

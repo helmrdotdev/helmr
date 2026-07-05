@@ -19,6 +19,7 @@ const (
 )
 
 type IndexEntry struct {
+	CellID      string
 	InstanceID  uuid.UUID
 	Generation  int64
 	ScheduledAt time.Time
@@ -26,6 +27,7 @@ type IndexEntry struct {
 }
 
 type DequeueRequest struct {
+	CellID   string
 	WorkerID uuid.UUID
 	Limit    int32
 	Now      time.Time
@@ -79,6 +81,10 @@ func WithRedisIndexClock(now func() time.Time) RedisIndexOption {
 }
 
 func (i *RedisIndex) Enqueue(ctx context.Context, entry IndexEntry) error {
+	cellID := normalizedCellID(entry.CellID)
+	if cellID == "" {
+		return errors.New("schedule cell id is required")
+	}
 	if entry.InstanceID == uuid.Nil {
 		return errors.New("schedule instance id is required")
 	}
@@ -92,6 +98,7 @@ func (i *RedisIndex) Enqueue(ctx context.Context, entry IndexEntry) error {
 		entry.AvailableAt = entry.ScheduledAt
 	}
 	payload, err := json.Marshal(entryPayload{
+		CellID:      cellID,
 		InstanceID:  entry.InstanceID.String(),
 		Generation:  entry.Generation,
 		ScheduledAt: entry.ScheduledAt.UTC().Format(time.RFC3339Nano),
@@ -101,8 +108,9 @@ func (i *RedisIndex) Enqueue(ctx context.Context, entry IndexEntry) error {
 		return err
 	}
 	messageID := indexMessageID(entry)
-	_, err = i.client.Eval(ctx, scheduleEnqueueScript, []string{i.readyKey()},
-		i.prefix,
+	prefix := i.cellPrefix(cellID)
+	_, err = i.client.Eval(ctx, scheduleEnqueueScript, []string{i.readyKey(prefix)},
+		prefix,
 		messageID,
 		string(payload),
 		entry.AvailableAt.UTC().UnixMilli(),
@@ -113,13 +121,18 @@ func (i *RedisIndex) Enqueue(ctx context.Context, entry IndexEntry) error {
 	return nil
 }
 
-func (i *RedisIndex) Delete(ctx context.Context, instanceID uuid.UUID) error {
+func (i *RedisIndex) Delete(ctx context.Context, cellID string, instanceID uuid.UUID) error {
+	cellID = normalizedCellID(cellID)
+	if cellID == "" {
+		return errors.New("schedule cell id is required")
+	}
 	if instanceID == uuid.Nil {
 		return errors.New("schedule instance id is required")
 	}
-	messageID := indexMessageID(IndexEntry{InstanceID: instanceID})
-	if err := i.client.Eval(ctx, scheduleDeleteScript, []string{i.readyKey(), i.activeKey()},
-		i.prefix,
+	prefix := i.cellPrefix(cellID)
+	messageID := indexMessageID(IndexEntry{CellID: cellID, InstanceID: instanceID})
+	if err := i.client.Eval(ctx, scheduleDeleteScript, []string{i.readyKey(prefix), i.activeKey(prefix)},
+		prefix,
 		messageID,
 	).Err(); err != nil {
 		return fmt.Errorf("delete schedule index entry: %w", err)
@@ -128,6 +141,10 @@ func (i *RedisIndex) Delete(ctx context.Context, instanceID uuid.UUID) error {
 }
 
 func (i *RedisIndex) Dequeue(ctx context.Context, request DequeueRequest) ([]IndexLease, error) {
+	cellID := normalizedCellID(request.CellID)
+	if cellID == "" {
+		return nil, errors.New("schedule cell id is required")
+	}
 	if request.WorkerID == uuid.Nil {
 		return nil, errors.New("worker id is required")
 	}
@@ -142,8 +159,9 @@ func (i *RedisIndex) Dequeue(ctx context.Context, request DequeueRequest) ([]Ind
 		now = i.now()
 	}
 	expiresAt := now.Add(request.Lease)
-	result, err := i.client.Eval(ctx, scheduleDequeueScript, []string{i.readyKey(), i.activeKey()},
-		i.prefix,
+	prefix := i.cellPrefix(cellID)
+	result, err := i.client.Eval(ctx, scheduleDequeueScript, []string{i.readyKey(prefix), i.activeKey(prefix)},
+		prefix,
 		now.UnixMilli(),
 		request.Lease.Milliseconds(),
 		request.Limit,
@@ -205,6 +223,10 @@ func (i *RedisIndex) Nack(ctx context.Context, lease IndexLease, retryAt time.Ti
 }
 
 func (i *RedisIndex) finish(ctx context.Context, lease IndexLease, action string, retryAt time.Time) error {
+	cellID := normalizedCellID(lease.Entry.CellID)
+	if cellID == "" {
+		return errors.New("schedule cell id is required")
+	}
 	if strings.TrimSpace(lease.ID) == "" {
 		return errors.New("lease id is required")
 	}
@@ -215,8 +237,9 @@ func (i *RedisIndex) finish(ctx context.Context, lease IndexLease, action string
 	if !retryAt.IsZero() {
 		retryAtMs = retryAt.UTC().UnixMilli()
 	}
+	prefix := i.cellPrefix(cellID)
 	result, err := i.client.Eval(ctx, scheduleFinishScript, []string{},
-		i.prefix,
+		prefix,
 		lease.ID,
 		lease.WorkerID.String(),
 		i.now().UTC().UnixMilli(),
@@ -241,12 +264,16 @@ func (i *RedisIndex) finish(ctx context.Context, lease IndexLease, action string
 	}
 }
 
-func (i *RedisIndex) readyKey() string {
-	return i.prefix + ":ready"
+func (i *RedisIndex) cellPrefix(cellID string) string {
+	return i.prefix + ":cell:" + normalizedCellID(cellID)
 }
 
-func (i *RedisIndex) activeKey() string {
-	return i.prefix + ":active"
+func (i *RedisIndex) readyKey(prefix string) string {
+	return prefix + ":ready"
+}
+
+func (i *RedisIndex) activeKey(prefix string) string {
+	return prefix + ":active"
 }
 
 func indexMessageID(entry IndexEntry) string {
@@ -254,6 +281,7 @@ func indexMessageID(entry IndexEntry) string {
 }
 
 type entryPayload struct {
+	CellID      string `json:"cell_id"`
 	InstanceID  string `json:"instance_id"`
 	Generation  int64  `json:"generation"`
 	ScheduledAt string `json:"scheduled_at"`
@@ -277,12 +305,21 @@ func decodeEntry(payload string) (IndexEntry, error) {
 	if err != nil {
 		return IndexEntry{}, err
 	}
+	cellID := normalizedCellID(decoded.CellID)
+	if cellID == "" {
+		return IndexEntry{}, errors.New("schedule cell id is required")
+	}
 	return IndexEntry{
+		CellID:      cellID,
 		InstanceID:  instanceID,
 		Generation:  decoded.Generation,
 		ScheduledAt: scheduledAt.UTC(),
 		AvailableAt: availableAt.UTC(),
 	}, nil
+}
+
+func normalizedCellID(cellID string) string {
+	return strings.TrimSpace(cellID)
 }
 
 func redisString(value any) (string, error) {

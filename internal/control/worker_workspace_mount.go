@@ -34,9 +34,9 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerInstanceHeartbeatParams(worker, capabilities)); err != nil {
+	if err := s.recordWorkerInstanceHeartbeat(r.Context(), worker, capabilities); err != nil {
 		s.log.Error("worker heartbeat failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, errors.New("record worker heartbeat"))
+		writeError(w, err)
 		return
 	}
 	if err := s.db.EnsureRuntimeReleaseSelection(r.Context(), capabilities.RuntimeID); err != nil {
@@ -54,7 +54,10 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		writeError(w, errors.New("release expired prepared runtime reservations"))
 		return
 	}
-	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), pgvalue.UUID(worker.WorkerInstanceID))
+	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), db.GetWorkerInstanceQueueCapacityParams{
+		ID:     pgvalue.UUID(worker.WorkerInstanceID),
+		CellID: worker.CellID,
+	})
 	if isNoRows(err) {
 		s.requestCapacityPressureIdleWorkspaceStops(r.Context(), worker.WorkerInstanceID, "worker_capacity_missing")
 		s.createCapacityPressureLiveRuntimeCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "worker_capacity_missing")
@@ -110,6 +113,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RuntimeInstanceToken:        runtimeInstanceToken,
 		WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
+		CellID:                      worker.CellID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(workspaceMountReservationDuration), Valid: true},
 		GuestdChannelTokenHash:      guestdChannelTokenHash(guestdChannelToken),
 		RuntimeID:                   capabilities.RuntimeID,
@@ -121,6 +125,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 			GuestdAbi:                   currentGuestdABI,
 			AdapterAbi:                  currentAdapterABI,
 			WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
+			CellID:                      worker.CellID,
 			RuntimeID:                   capabilities.RuntimeID,
 			GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(preparedRuntimeReservationDuration), Valid: true},
 		})
@@ -149,6 +154,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 			GuestdAbi:        currentGuestdABI,
 			AdapterAbi:       currentAdapterABI,
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			CellID:           worker.CellID,
 			RuntimeID:        capabilities.RuntimeID,
 		})
 		if awaitingErr == nil {
@@ -281,6 +287,22 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 	}
 	var response api.WorkerWorkspaceMountCaptureResponse
 	err = s.inTx(r.Context(), func(work *txWork) error {
+		scope, err := work.q.GetWorkspaceMountForWorkerPrimitiveScope(r.Context(), db.GetWorkspaceMountForWorkerPrimitiveScopeParams{
+			OrgID:                params.OrgID,
+			CellID:               params.CellID,
+			ProjectID:            pgvalue.UUID(projectID),
+			EnvironmentID:        pgvalue.UUID(environmentID),
+			WorkspaceID:          pgvalue.UUID(workspaceID),
+			ID:                   params.ID,
+			WorkerInstanceID:     params.WorkerInstanceID,
+			RuntimeInstanceToken: params.RuntimeInstanceToken,
+		})
+		if isNoRows(err) {
+			return conflict(codedError{code: "workspace_mount_capture_rejected", message: "workspace mount capture is stale"})
+		}
+		if err != nil {
+			return errors.New("authorize workspace mount capture")
+		}
 		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
 			OrgID:     params.OrgID,
 			CellID:    params.CellID,
@@ -294,6 +316,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                     params.OrgID,
 			CellID:                    params.CellID,
+			RouteGeneration:           scope.RouteGeneration,
 			ProjectID:                 pgvalue.UUID(projectID),
 			EnvironmentID:             pgvalue.UUID(environmentID),
 			Digest:                    digest,

@@ -11,8 +11,11 @@ import (
 type Message struct {
 	RunID                 string
 	OrgID                 string
+	CellID                string
+	RouteGeneration       int64
 	ProjectID             string
 	EnvironmentID         string
+	QueueClass            string
 	QueueName             string
 	QueueConcurrencyScope string
 	QueueConcurrencyLimit int32
@@ -75,11 +78,20 @@ func (m Message) Validate() error {
 	if strings.TrimSpace(m.OrgID) == "" {
 		problems = append(problems, errors.New("org id is required"))
 	}
+	if strings.TrimSpace(m.CellID) == "" {
+		problems = append(problems, errors.New("cell id is required"))
+	}
+	if m.RouteGeneration <= 0 {
+		problems = append(problems, errors.New("route generation must be positive"))
+	}
 	if strings.TrimSpace(m.ProjectID) == "" {
 		problems = append(problems, errors.New("project id is required"))
 	}
 	if strings.TrimSpace(m.EnvironmentID) == "" {
 		problems = append(problems, errors.New("environment id is required"))
+	}
+	if strings.TrimSpace(m.QueueClass) == "" {
+		problems = append(problems, errors.New("queue class is required"))
 	}
 	if strings.TrimSpace(m.QueueName) == "" {
 		problems = append(problems, errors.New("queue name is required"))

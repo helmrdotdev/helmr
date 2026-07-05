@@ -16,7 +16,7 @@ func LoadWorker() (Worker, error) {
 		WorkerInstanceCredentialPath: envString("HELMR_WORKER_INSTANCE_CREDENTIAL_PATH"),
 		CheckpointKey:                envString("HELMR_CHECKPOINT_ENCRYPTION_KEY"),
 		WorkerResourceID:             env("HELMR_WORKER_RESOURCE_ID", hostname()),
-		WorkerRegion:                 envString("HELMR_WORKER_REGION"),
+		WorkerProviderRegion:         envString("HELMR_WORKER_PROVIDER_REGION"),
 		WorkDir:                      envString("HELMR_WORKER_WORK_DIR"),
 		ImagesDir:                    envString("HELMR_WORKER_IMAGES_DIR"),
 		GitPath:                      env("HELMR_GIT_PATH", "git"),
@@ -166,6 +166,9 @@ func LoadWorker() (Worker, error) {
 	}
 	if cfg.CASURI == "" {
 		return cfg, errors.New("HELMR_CAS_URI is required")
+	}
+	if cfg.WorkerProviderRegion == "" {
+		return cfg, errors.New("HELMR_WORKER_PROVIDER_REGION is required")
 	}
 	if cfg.CheckpointKey == "" {
 		return cfg, errors.New("HELMR_CHECKPOINT_ENCRYPTION_KEY is required")

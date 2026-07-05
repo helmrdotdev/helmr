@@ -12,7 +12,6 @@ import (
 )
 
 const DefaultPublicURL = "https://helmr.dev"
-const DefaultCellID = "us-east-1-cell-1"
 
 const (
 	DeploymentModeSelfHosted   = "self-hosted"
@@ -30,6 +29,8 @@ type Control struct {
 	Addr                    string
 	DeploymentMode          string
 	CellID                  string
+	RegionID                string
+	DefaultRegionID         string
 	DatabaseURL             string
 	RedisURL                string
 	ClickHouseURL           string
@@ -96,6 +97,16 @@ type ClickHouse struct {
 	Password string
 }
 
+type CellBootstrap struct {
+	RegionID          string
+	DefaultRegionID   string
+	Provider          string
+	ProviderRegion    string
+	RegionDisplayName string
+	CellID            string
+	EnvironmentClass  string
+}
+
 type Worker struct {
 	ControlURL                   string
 	CASURI                       string
@@ -104,7 +115,7 @@ type Worker struct {
 	WorkerInstanceCredentialPath string
 	CheckpointKey                string
 	WorkerResourceID             string
-	WorkerRegion                 string
+	WorkerProviderRegion         string
 	WorkerLabels                 map[string]string
 	WorkDir                      string
 	ImagesDir                    string
@@ -167,6 +178,42 @@ func LoadClickHouse() (ClickHouse, error) {
 	}
 	if cfg.URL == "" {
 		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
+	}
+	return cfg, nil
+}
+
+func LoadCellBootstrap() (CellBootstrap, error) {
+	regionID := envString("HELMR_REGION_ID")
+	defaultRegionID := envString("HELMR_DEFAULT_REGION_ID")
+	cfg := CellBootstrap{
+		RegionID:          regionID,
+		DefaultRegionID:   defaultRegionID,
+		Provider:          envString("HELMR_PROVIDER"),
+		ProviderRegion:    envString("HELMR_PROVIDER_REGION"),
+		RegionDisplayName: envString("HELMR_REGION_DISPLAY_NAME"),
+		CellID:            envString("HELMR_CELL_ID"),
+		EnvironmentClass:  envString("HELMR_CELL_ENVIRONMENT_CLASS"),
+	}
+	if cfg.RegionID == "" {
+		return cfg, errors.New("HELMR_REGION_ID is required")
+	}
+	if cfg.DefaultRegionID == "" {
+		return cfg, errors.New("HELMR_DEFAULT_REGION_ID is required")
+	}
+	if cfg.Provider == "" {
+		return cfg, errors.New("HELMR_PROVIDER is required")
+	}
+	if cfg.ProviderRegion == "" {
+		return cfg, errors.New("HELMR_PROVIDER_REGION is required")
+	}
+	if cfg.RegionDisplayName == "" {
+		cfg.RegionDisplayName = cfg.RegionID
+	}
+	if cfg.CellID == "" {
+		return cfg, errors.New("HELMR_CELL_ID is required")
+	}
+	if cfg.EnvironmentClass == "" {
+		return cfg, errors.New("HELMR_CELL_ENVIRONMENT_CLASS is required")
 	}
 	return cfg, nil
 }

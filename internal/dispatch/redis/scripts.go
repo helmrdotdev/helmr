@@ -134,7 +134,6 @@ local function compatible(fields)
      and fields[12] == worker_initramfs_digest
      and fields[13] == worker_rootfs_digest
      and fields[14] == worker_cni_profile
-     and optional_match(fields[15], worker_region)
      and labels_match(fields[16], worker_labels)
      and optional_match(fields[17], label_value(worker_labels, "dedicated_key"))
      and optional_match(fields[18], label_value(worker_labels, "snapshot_key"))

@@ -20,9 +20,27 @@ variable "deployment_mode" {
 }
 
 variable "cell_id" {
-  description = "Managed-cloud cell ID for this stack."
+  description = "Opaque cell ID for this stack."
   type        = string
-  default     = "us-east-1-cell-1"
+
+  validation {
+    condition     = trimspace(var.cell_id) != ""
+    error_message = "cell_id must be non-empty."
+  }
+}
+
+variable "region_id" {
+  description = "Helmr region primitive for this stack. Defaults to aws_region."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "default_region_id" {
+  description = "Default execution region for newly created projects and environments. Defaults to region_id."
+  type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "clickhouse_url" {

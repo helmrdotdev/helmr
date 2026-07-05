@@ -14,23 +14,25 @@ import (
 const appendStreamRecord = `-- name: AppendStreamRecord :one
 WITH existing_record AS MATERIALIZED (
     SELECT stream_records.id, stream_records.org_id, stream_records.cell_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
-      FROM stream_records
+     FROM stream_records
      WHERE stream_records.org_id = $2
-       AND stream_records.project_id = $3
-       AND stream_records.environment_id = $4
-       AND stream_records.stream_id = $5
-       AND stream_records.idempotency_key = $6
-       AND $6::text <> ''
+       AND stream_records.cell_id = $3
+       AND stream_records.project_id = $4
+       AND stream_records.environment_id = $5
+       AND stream_records.stream_id = $6
+       AND stream_records.idempotency_key = $7
+       AND $7::text <> ''
      FOR UPDATE
 ),
 locked_stream AS (
     SELECT streams.id, streams.org_id, streams.cell_id, streams.project_id, streams.environment_id, streams.session_id, streams.deployment_stream_id, streams.name, streams.direction, streams.schema_fingerprint, streams.metadata, streams.next_sequence, streams.created_at
-      FROM streams
+     FROM streams
      WHERE streams.org_id = $2
-       AND streams.project_id = $3
-       AND streams.environment_id = $4
-       AND streams.id = $5
-       AND streams.direction = $7::stream_direction
+       AND streams.cell_id = $3
+       AND streams.project_id = $4
+       AND streams.environment_id = $5
+       AND streams.id = $6
+       AND streams.direction = $8::stream_direction
        AND NOT EXISTS (SELECT 1 FROM existing_record)
      FOR UPDATE
 ),
@@ -39,6 +41,7 @@ allocated_stream AS (
        SET next_sequence = streams.next_sequence + 1
       FROM locked_stream
      WHERE streams.org_id = locked_stream.org_id
+       AND streams.cell_id = locked_stream.cell_id
        AND streams.id = locked_stream.id
     RETURNING streams.id, streams.org_id, streams.cell_id, streams.project_id, streams.environment_id, streams.session_id, streams.deployment_stream_id, streams.name, streams.direction, streams.schema_fingerprint, streams.metadata, streams.next_sequence, streams.created_at, streams.next_sequence - 1 AS allocated_sequence
 ),
@@ -62,7 +65,7 @@ inserted_record AS (
         source_id,
         public_access_token_id
     )
-    SELECT $8,
+    SELECT $9,
            allocated_stream.org_id,
            allocated_stream.cell_id,
            allocated_stream.project_id,
@@ -71,14 +74,14 @@ inserted_record AS (
            allocated_stream.id,
            allocated_stream.direction,
            allocated_stream.allocated_sequence,
-           COALESCE($9::jsonb, 'null'::jsonb),
-           COALESCE($10::text, ''),
-           COALESCE(NULLIF($11::text, ''), 'application/json'),
-           COALESCE($6::text, ''),
+           COALESCE($10::jsonb, 'null'::jsonb),
+           COALESCE($11::text, ''),
+           COALESCE(NULLIF($12::text, ''), 'application/json'),
+           COALESCE($7::text, ''),
            COALESCE($1::text, ''),
-           $12::stream_record_source_type,
-           COALESCE($13::text, ''),
-           $14::uuid
+           $13::stream_record_source_type,
+           COALESCE($14::text, ''),
+           $15::uuid
       FROM allocated_stream
     RETURNING stream_records.id, stream_records.org_id, stream_records.cell_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
 ),
@@ -100,6 +103,7 @@ SELECT selected_record.id, selected_record.org_id, selected_record.cell_id, sele
 type AppendStreamRecordParams struct {
 	IdempotencyFingerprint string                 `json:"idempotency_fingerprint"`
 	OrgID                  pgtype.UUID            `json:"org_id"`
+	CellID                 string                 `json:"cell_id"`
 	ProjectID              pgtype.UUID            `json:"project_id"`
 	EnvironmentID          pgtype.UUID            `json:"environment_id"`
 	StreamID               pgtype.UUID            `json:"stream_id"`
@@ -141,6 +145,7 @@ func (q *Queries) AppendStreamRecord(ctx context.Context, arg AppendStreamRecord
 	row := q.db.QueryRow(ctx, appendStreamRecord,
 		arg.IdempotencyFingerprint,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.StreamID,
@@ -182,15 +187,17 @@ func (q *Queries) AppendStreamRecord(ctx context.Context, arg AppendStreamRecord
 
 const getStreamRecord = `-- name: GetStreamRecord :one
 SELECT id, org_id, cell_id, project_id, environment_id, session_id, stream_id, direction, sequence, data, correlation_id, content_type, idempotency_key, idempotency_fingerprint, source_type, source_id, public_access_token_id, created_at
-  FROM stream_records
+ FROM stream_records
  WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND id = $4
+   AND cell_id = $2
+   AND project_id = $3
+   AND environment_id = $4
+   AND id = $5
 `
 
 type GetStreamRecordParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
+	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -199,6 +206,7 @@ type GetStreamRecordParams struct {
 func (q *Queries) GetStreamRecord(ctx context.Context, arg GetStreamRecordParams) (StreamRecord, error) {
 	row := q.db.QueryRow(ctx, getStreamRecord,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -229,21 +237,28 @@ func (q *Queries) GetStreamRecord(ctx context.Context, arg GetStreamRecordParams
 
 const getStreamRecordByIdempotencyKey = `-- name: GetStreamRecordByIdempotencyKey :one
 SELECT id, org_id, cell_id, project_id, environment_id, session_id, stream_id, direction, sequence, data, correlation_id, content_type, idempotency_key, idempotency_fingerprint, source_type, source_id, public_access_token_id, created_at
-  FROM stream_records
+ FROM stream_records
  WHERE org_id = $1
-   AND stream_id = $2
-   AND idempotency_key = $3
-   AND $3::text <> ''
+   AND cell_id = $2
+   AND stream_id = $3
+   AND idempotency_key = $4
+   AND $4::text <> ''
 `
 
 type GetStreamRecordByIdempotencyKeyParams struct {
 	OrgID          pgtype.UUID `json:"org_id"`
+	CellID         string      `json:"cell_id"`
 	StreamID       pgtype.UUID `json:"stream_id"`
 	IdempotencyKey string      `json:"idempotency_key"`
 }
 
 func (q *Queries) GetStreamRecordByIdempotencyKey(ctx context.Context, arg GetStreamRecordByIdempotencyKeyParams) (StreamRecord, error) {
-	row := q.db.QueryRow(ctx, getStreamRecordByIdempotencyKey, arg.OrgID, arg.StreamID, arg.IdempotencyKey)
+	row := q.db.QueryRow(ctx, getStreamRecordByIdempotencyKey,
+		arg.OrgID,
+		arg.CellID,
+		arg.StreamID,
+		arg.IdempotencyKey,
+	)
 	var i StreamRecord
 	err := row.Scan(
 		&i.ID,
@@ -272,23 +287,26 @@ const listStreamRecords = `-- name: ListStreamRecords :many
 SELECT stream_records.id, stream_records.org_id, stream_records.cell_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
   FROM stream_records
   JOIN streams ON streams.org_id = stream_records.org_id
+              AND streams.cell_id = stream_records.cell_id
               AND streams.id = stream_records.stream_id
  WHERE stream_records.org_id = $1
-   AND stream_records.project_id = $2
-   AND stream_records.environment_id = $3
-   AND stream_records.stream_id = $4
-   AND streams.direction = $5::stream_direction
-   AND stream_records.sequence > $6::bigint
+   AND stream_records.cell_id = $2
+   AND stream_records.project_id = $3
+   AND stream_records.environment_id = $4
+   AND stream_records.stream_id = $5
+   AND streams.direction = $6::stream_direction
+   AND stream_records.sequence > $7::bigint
    AND (
-       COALESCE($7::text, '') = ''
-       OR stream_records.correlation_id = COALESCE($7::text, '')
+       COALESCE($8::text, '') = ''
+       OR stream_records.correlation_id = COALESCE($8::text, '')
    )
  ORDER BY stream_records.sequence ASC, stream_records.id ASC
- LIMIT $8
+ LIMIT $9
 `
 
 type ListStreamRecordsParams struct {
 	OrgID         pgtype.UUID     `json:"org_id"`
+	CellID        string          `json:"cell_id"`
 	ProjectID     pgtype.UUID     `json:"project_id"`
 	EnvironmentID pgtype.UUID     `json:"environment_id"`
 	StreamID      pgtype.UUID     `json:"stream_id"`
@@ -301,6 +319,7 @@ type ListStreamRecordsParams struct {
 func (q *Queries) ListStreamRecords(ctx context.Context, arg ListStreamRecordsParams) ([]StreamRecord, error) {
 	rows, err := q.db.Query(ctx, listStreamRecords,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.StreamID,
@@ -350,6 +369,7 @@ const resolveStreamWaitForRunWait = `-- name: ResolveStreamWaitForRunWait :one
 WITH candidate_raw AS (
     SELECT stream_waits.id AS stream_wait_id,
            stream_waits.org_id,
+           stream_waits.cell_id,
            stream_waits.project_id,
            stream_waits.environment_id,
            stream_waits.run_wait_id,
@@ -359,11 +379,13 @@ WITH candidate_raw AS (
            next_record.data
       FROM stream_waits
       JOIN run_waits ON run_waits.org_id = stream_waits.org_id
+                    AND run_waits.cell_id = stream_waits.cell_id
                     AND run_waits.id = stream_waits.run_wait_id
       JOIN LATERAL (
           SELECT stream_records.id, stream_records.org_id, stream_records.cell_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
-            FROM stream_records
+           FROM stream_records
            WHERE stream_records.org_id = stream_waits.org_id
+             AND stream_records.cell_id = stream_waits.cell_id
              AND stream_records.stream_id = stream_waits.stream_id
              AND stream_records.sequence > stream_waits.after_sequence
              AND (
@@ -374,9 +396,10 @@ WITH candidate_raw AS (
            LIMIT 1
       ) next_record ON true
      WHERE stream_waits.org_id = $1
-       AND stream_waits.project_id = $2
-       AND stream_waits.environment_id = $3
-       AND stream_waits.run_wait_id = $4
+       AND stream_waits.cell_id = $2
+       AND stream_waits.project_id = $3
+       AND stream_waits.environment_id = $4
+       AND stream_waits.run_wait_id = $5
        AND stream_waits.matched_record_id IS NULL
        AND run_waits.kind = 'stream'
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
@@ -388,10 +411,12 @@ matched_wait AS (
            cursor_advanced_at = now()
       FROM candidate_raw
      WHERE stream_waits.org_id = candidate_raw.org_id
+       AND stream_waits.cell_id = candidate_raw.cell_id
        AND stream_waits.id = candidate_raw.stream_wait_id
        AND stream_waits.matched_record_id IS NULL
     RETURNING stream_waits.id,
               stream_waits.org_id,
+              stream_waits.cell_id,
               stream_waits.project_id,
               stream_waits.environment_id,
               stream_waits.run_wait_id,
@@ -411,12 +436,14 @@ resolved_wait AS (
            updated_at = now()
       FROM matched_wait
      WHERE run_waits.org_id = matched_wait.org_id
+       AND run_waits.cell_id = matched_wait.cell_id
        AND run_waits.id = matched_wait.run_wait_id
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id, run_waits.org_id, run_waits.cell_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
 )
 SELECT resolved_wait.id AS run_wait_id,
        resolved_wait.org_id,
+       resolved_wait.cell_id,
        resolved_wait.project_id,
        resolved_wait.environment_id,
        resolved_wait.run_id,
@@ -426,11 +453,13 @@ SELECT resolved_wait.id AS run_wait_id,
        matched_wait.data
   FROM resolved_wait
   JOIN matched_wait ON matched_wait.org_id = resolved_wait.org_id
+                   AND matched_wait.cell_id = resolved_wait.cell_id
                    AND matched_wait.run_wait_id = resolved_wait.id
 `
 
 type ResolveStreamWaitForRunWaitParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
+	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	RunWaitID     pgtype.UUID `json:"run_wait_id"`
@@ -439,6 +468,7 @@ type ResolveStreamWaitForRunWaitParams struct {
 type ResolveStreamWaitForRunWaitRow struct {
 	RunWaitID     pgtype.UUID `json:"run_wait_id"`
 	OrgID         pgtype.UUID `json:"org_id"`
+	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	RunID         pgtype.UUID `json:"run_id"`
@@ -451,6 +481,7 @@ type ResolveStreamWaitForRunWaitRow struct {
 func (q *Queries) ResolveStreamWaitForRunWait(ctx context.Context, arg ResolveStreamWaitForRunWaitParams) (ResolveStreamWaitForRunWaitRow, error) {
 	row := q.db.QueryRow(ctx, resolveStreamWaitForRunWait,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.RunWaitID,
@@ -459,6 +490,7 @@ func (q *Queries) ResolveStreamWaitForRunWait(ctx context.Context, arg ResolveSt
 	err := row.Scan(
 		&i.RunWaitID,
 		&i.OrgID,
+		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
@@ -474,6 +506,7 @@ const resolveStreamWaitsForStream = `-- name: ResolveStreamWaitsForStream :many
 WITH candidate_raw AS (
     SELECT stream_waits.id AS stream_wait_id,
            stream_waits.org_id,
+           stream_waits.cell_id,
            stream_waits.project_id,
            stream_waits.environment_id,
            stream_waits.run_wait_id,
@@ -484,11 +517,13 @@ WITH candidate_raw AS (
            next_record.data
       FROM stream_waits
       JOIN run_waits ON run_waits.org_id = stream_waits.org_id
+                    AND run_waits.cell_id = stream_waits.cell_id
                     AND run_waits.id = stream_waits.run_wait_id
       JOIN LATERAL (
           SELECT stream_records.id, stream_records.org_id, stream_records.cell_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
-            FROM stream_records
+           FROM stream_records
            WHERE stream_records.org_id = stream_waits.org_id
+             AND stream_records.cell_id = stream_waits.cell_id
              AND stream_records.stream_id = stream_waits.stream_id
              AND stream_records.sequence > stream_waits.after_sequence
              AND (
@@ -499,9 +534,10 @@ WITH candidate_raw AS (
            LIMIT 1
       ) next_record ON true
      WHERE stream_waits.org_id = $1
-       AND stream_waits.project_id = $2
-       AND stream_waits.environment_id = $3
-       AND stream_waits.stream_id = $4
+       AND stream_waits.cell_id = $2
+       AND stream_waits.project_id = $3
+       AND stream_waits.environment_id = $4
+       AND stream_waits.stream_id = $5
        AND stream_waits.matched_record_id IS NULL
        AND run_waits.kind = 'stream'
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
@@ -514,10 +550,12 @@ matched_wait AS (
            cursor_advanced_at = now()
       FROM candidate_raw
      WHERE stream_waits.org_id = candidate_raw.org_id
+       AND stream_waits.cell_id = candidate_raw.cell_id
        AND stream_waits.id = candidate_raw.stream_wait_id
        AND stream_waits.matched_record_id IS NULL
     RETURNING stream_waits.id,
               stream_waits.org_id,
+              stream_waits.cell_id,
               stream_waits.project_id,
               stream_waits.environment_id,
               stream_waits.run_wait_id,
@@ -537,12 +575,14 @@ resolved_wait AS (
            updated_at = now()
       FROM matched_wait
      WHERE run_waits.org_id = matched_wait.org_id
+       AND run_waits.cell_id = matched_wait.cell_id
        AND run_waits.id = matched_wait.run_wait_id
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id, run_waits.org_id, run_waits.cell_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
 )
 SELECT resolved_wait.id AS run_wait_id,
        resolved_wait.org_id,
+       resolved_wait.cell_id,
        resolved_wait.project_id,
        resolved_wait.environment_id,
        resolved_wait.run_id,
@@ -552,11 +592,13 @@ SELECT resolved_wait.id AS run_wait_id,
        matched_wait.data
   FROM resolved_wait
   JOIN matched_wait ON matched_wait.org_id = resolved_wait.org_id
+                   AND matched_wait.cell_id = resolved_wait.cell_id
                    AND matched_wait.run_wait_id = resolved_wait.id
 `
 
 type ResolveStreamWaitsForStreamParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
+	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	StreamID      pgtype.UUID `json:"stream_id"`
@@ -565,6 +607,7 @@ type ResolveStreamWaitsForStreamParams struct {
 type ResolveStreamWaitsForStreamRow struct {
 	RunWaitID     pgtype.UUID `json:"run_wait_id"`
 	OrgID         pgtype.UUID `json:"org_id"`
+	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	RunID         pgtype.UUID `json:"run_id"`
@@ -577,6 +620,7 @@ type ResolveStreamWaitsForStreamRow struct {
 func (q *Queries) ResolveStreamWaitsForStream(ctx context.Context, arg ResolveStreamWaitsForStreamParams) ([]ResolveStreamWaitsForStreamRow, error) {
 	rows, err := q.db.Query(ctx, resolveStreamWaitsForStream,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.StreamID,
@@ -591,6 +635,7 @@ func (q *Queries) ResolveStreamWaitsForStream(ctx context.Context, arg ResolveSt
 		if err := rows.Scan(
 			&i.RunWaitID,
 			&i.OrgID,
+			&i.CellID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,

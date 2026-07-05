@@ -170,21 +170,21 @@ func ValidateName(name string) error {
 	return nil
 }
 
-func (s *Store) Put(ctx context.Context, orgID uuid.UUID, name string, value []byte) (db.Secret, error) {
+func (s *Store) Put(ctx context.Context, cellID string, orgID uuid.UUID, name string, value []byte) (db.Secret, error) {
 	projectID, environmentID, err := s.defaultScope(ctx, orgID)
 	if err != nil {
 		return db.Secret{}, err
 	}
-	return s.PutScoped(ctx, orgID, projectID, environmentID, name, value)
+	return s.PutScoped(ctx, cellID, orgID, projectID, environmentID, name, value)
 }
 
-func (s *Store) PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
+func (s *Store) PutScoped(ctx context.Context, cellID string, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
 	if err := ValidateName(name); err != nil {
 		return db.Secret{}, err
 	}
 	var lastErr error
 	for range maxWriteAttempts {
-		record, err := s.scopedSecret(ctx, orgID, projectID, environmentID, name)
+		record, err := s.scopedSecret(ctx, cellID, orgID, projectID, environmentID, name)
 		previousVersion := int32(0)
 		version := int32(1)
 		if err == nil {
@@ -200,6 +200,7 @@ func (s *Store) PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.U
 		updated, err := s.db.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
 			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:           pgvalue.UUID(orgID),
+			CellID:          cellID,
 			ProjectID:       pgvalue.UUID(projectID),
 			EnvironmentID:   pgvalue.UUID(environmentID),
 			Name:            name,
@@ -221,23 +222,23 @@ func (s *Store) PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.U
 	return db.Secret{}, fmt.Errorf("write secret %q after concurrent updates: %w", name, lastErr)
 }
 
-func (s *Store) CheckNames(ctx context.Context, orgID uuid.UUID, names []string) error {
+func (s *Store) CheckNames(ctx context.Context, cellID string, orgID uuid.UUID, names []string) error {
 	projectID, environmentID, err := s.defaultScope(ctx, orgID)
 	if err != nil {
 		return err
 	}
-	return s.CheckScopedNames(ctx, orgID, projectID, environmentID, names)
+	return s.CheckScopedNames(ctx, cellID, orgID, projectID, environmentID, names)
 }
 
-func (s *Store) ResolveNames(ctx context.Context, orgID uuid.UUID, names []string) (api.ResolvedSecrets, error) {
+func (s *Store) ResolveNames(ctx context.Context, cellID string, orgID uuid.UUID, names []string) (api.ResolvedSecrets, error) {
 	projectID, environmentID, err := s.defaultScope(ctx, orgID)
 	if err != nil {
 		return nil, err
 	}
-	return s.ResolveScopedNames(ctx, orgID, projectID, environmentID, names)
+	return s.ResolveScopedNames(ctx, cellID, orgID, projectID, environmentID, names)
 }
 
-func (s *Store) CheckScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) error {
+func (s *Store) CheckScopedNames(ctx context.Context, cellID string, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) error {
 	if len(names) == 0 {
 		return nil
 	}
@@ -245,7 +246,7 @@ func (s *Store) CheckScopedNames(ctx context.Context, orgID uuid.UUID, projectID
 		if err := ValidateName(name); err != nil {
 			return fmt.Errorf("invalid secret name: %w", err)
 		}
-		record, err := s.scopedSecret(ctx, orgID, projectID, environmentID, name)
+		record, err := s.scopedSecret(ctx, cellID, orgID, projectID, environmentID, name)
 		if err != nil {
 			return fmt.Errorf("secret %q is unavailable: %w", name, err)
 		}
@@ -256,7 +257,7 @@ func (s *Store) CheckScopedNames(ctx context.Context, orgID uuid.UUID, projectID
 	return nil
 }
 
-func (s *Store) ResolveScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error) {
+func (s *Store) ResolveScopedNames(ctx context.Context, cellID string, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error) {
 	if len(names) == 0 {
 		return api.ResolvedSecrets{}, nil
 	}
@@ -265,7 +266,7 @@ func (s *Store) ResolveScopedNames(ctx context.Context, orgID uuid.UUID, project
 		if err := ValidateName(name); err != nil {
 			return nil, UnavailableError{Err: fmt.Errorf("invalid secret name: %w", err)}
 		}
-		record, err := s.scopedSecret(ctx, orgID, projectID, environmentID, name)
+		record, err := s.scopedSecret(ctx, cellID, orgID, projectID, environmentID, name)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, UnavailableError{Err: fmt.Errorf("resolve secret %q: %w", name, err)}
@@ -285,9 +286,10 @@ func (s *Store) ResolveScopedNames(ctx context.Context, orgID uuid.UUID, project
 	return resolved, nil
 }
 
-func (s *Store) scopedSecret(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string) (db.Secret, error) {
+func (s *Store) scopedSecret(ctx context.Context, cellID string, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string) (db.Secret, error) {
 	record, err := s.db.GetScopedSecretByName(ctx, db.GetScopedSecretByNameParams{
 		OrgID:         pgvalue.UUID(orgID),
+		CellID:        cellID,
 		ProjectID:     pgvalue.UUID(projectID),
 		EnvironmentID: pgvalue.UUID(environmentID),
 		Name:          name,

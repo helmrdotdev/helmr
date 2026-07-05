@@ -17,6 +17,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/cell"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
 	"github.com/helmrdotdev/helmr/internal/config"
@@ -77,6 +78,21 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer pool.Close()
 	queries := db.New(pool)
+	bootstrapCfg, err := config.LoadCellBootstrap()
+	if err != nil {
+		return fmt.Errorf("load cell bootstrap config: %w", err)
+	}
+	if err := cell.Bootstrap(ctx, queries, cell.BootstrapConfig{
+		RegionID:          bootstrapCfg.RegionID,
+		DefaultRegionID:   bootstrapCfg.DefaultRegionID,
+		Provider:          bootstrapCfg.Provider,
+		ProviderRegion:    bootstrapCfg.ProviderRegion,
+		RegionDisplayName: bootstrapCfg.RegionDisplayName,
+		CellID:            bootstrapCfg.CellID,
+		EnvironmentClass:  bootstrapCfg.EnvironmentClass,
+	}); err != nil {
+		return fmt.Errorf("bootstrap cell: %w", err)
+	}
 	clickHouseClient, err := clickhouse.New(clickhouse.Config{
 		URL:      cfg.ClickHouseURL,
 		User:     cfg.ClickHouseUser,
@@ -138,7 +154,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure workspace stream notifier: %w", err)
 	}
-	workerCommands, err := control.NewWorkerCommandStream(log, queries, redisClient)
+	workerCommands, err := control.NewWorkerCommandStream(log, queries, redisClient, cfg.CellID)
 	if err != nil {
 		return fmt.Errorf("configure worker command stream: %w", err)
 	}
@@ -160,6 +176,17 @@ func run(ctx context.Context, log *slog.Logger) error {
 			cancelServer()
 		}
 	}()
+	go func() {
+		if err := cell.RunHealthReporter(backgroundCtx, queries, cell.HealthReporterConfig{
+			CellID:             cfg.CellID,
+			Component:          cell.ComponentControl,
+			RequiredComponents: cell.RoutingRequiredComponents(),
+			Log:                log,
+		}); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("cell health reporter stopped", "error", err)
+			cancelServer()
+		}
+	}()
 	keyring, err := secret.KeyringFromBase64(cfg.SecretEncryptionKey, cfg.SecretEncryptionKeyOld)
 	if err != nil {
 		return fmt.Errorf("load secret encryption key: %w", err)
@@ -173,6 +200,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure schedule run creator: %w", err)
 	}
 	scheduleEngine, err := schedule.NewEngine(log, pool, scheduleIndex, scheduleRunCreator, schedule.EngineConfig{
+		CellID: cfg.CellID,
 		Jitter: cfg.ScheduleJitter,
 	})
 	if err != nil {
@@ -190,6 +218,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Log:                   log,
 		DeploymentMode:        cfg.DeploymentMode,
 		CellID:                cfg.CellID,
+		RegionID:              cfg.RegionID,
+		DefaultRegionID:       cfg.DefaultRegionID,
 		DB:                    queries,
 		TX:                    pool,
 		ReadinessDB:           pool,
@@ -275,6 +305,10 @@ func runMigrate(log *slog.Logger, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load clickhouse config: %w", err)
 	}
+	bootstrapCfg, err := config.LoadCellBootstrap()
+	if err != nil {
+		return fmt.Errorf("load cell bootstrap config: %w", err)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	if err := clickhouseschema.Up(ctx, clickhouse.Config{
@@ -286,6 +320,30 @@ func runMigrate(log *slog.Logger, args []string) error {
 	}
 	if err := dbschema.Up(ctx, cfg.URL); err != nil {
 		return err
+	}
+	pool, err := pgxpool.New(ctx, cfg.URL)
+	if err != nil {
+		return fmt.Errorf("connect database: %w", err)
+	}
+	defer pool.Close()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin cell bootstrap: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if err := cell.Bootstrap(ctx, db.New(tx), cell.BootstrapConfig{
+		RegionID:          bootstrapCfg.RegionID,
+		DefaultRegionID:   bootstrapCfg.DefaultRegionID,
+		Provider:          bootstrapCfg.Provider,
+		ProviderRegion:    bootstrapCfg.ProviderRegion,
+		RegionDisplayName: bootstrapCfg.RegionDisplayName,
+		CellID:            bootstrapCfg.CellID,
+		EnvironmentClass:  bootstrapCfg.EnvironmentClass,
+	}); err != nil {
+		return fmt.Errorf("bootstrap cell: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit cell bootstrap: %w", err)
 	}
 	log.Info("database migrations are up to date")
 	return nil

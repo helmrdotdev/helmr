@@ -56,7 +56,7 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	if s.rejectRunFromWrongCell(w, summary.CellID) {
+	if s.rejectRunFromWrongCell(r.Context(), w, actor, summary) {
 		return
 	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {

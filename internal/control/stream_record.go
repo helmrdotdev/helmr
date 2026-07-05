@@ -49,6 +49,7 @@ func (s *Server) readOutputStreamRecord(ctx context.Context, store db.Querier, s
 	}
 	records, err := store.ListStreamRecords(ctx, db.ListStreamRecordsParams{
 		OrgID:         session.OrgID,
+		CellID:        session.CellID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		StreamID:      stream.ID,
@@ -130,6 +131,7 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 	if direction == db.StreamDirectionInput {
 		locked, err := store.LockSession(ctx, db.LockSessionParams{
 			OrgID:         session.OrgID,
+			CellID:        session.CellID,
 			ProjectID:     session.ProjectID,
 			EnvironmentID: session.EnvironmentID,
 			ID:            session.ID,
@@ -172,6 +174,7 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 	row, err := store.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  session.OrgID,
+		CellID:                 session.CellID,
 		ProjectID:              session.ProjectID,
 		EnvironmentID:          session.EnvironmentID,
 		StreamID:               stream.ID,
@@ -198,6 +201,7 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 	if direction == db.StreamDirectionInput {
 		resolved, err := store.ResolveStreamWaitsForStream(ctx, db.ResolveStreamWaitsForStreamParams{
 			OrgID:         session.OrgID,
+			CellID:        session.CellID,
 			ProjectID:     session.ProjectID,
 			EnvironmentID: session.EnvironmentID,
 			StreamID:      stream.ID,
@@ -209,6 +213,7 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 		if appended.resolvedWaitCount > 0 {
 			if _, err := store.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
 				OrgID:      session.OrgID,
+				CellID:     session.CellID,
 				LimitCount: int32(appended.resolvedWaitCount),
 			}); err != nil {
 				return appendedStreamRecord{}, err
@@ -252,6 +257,7 @@ func (s *Server) listSessionStreamRecords(w http.ResponseWriter, r *http.Request
 	}
 	records, err := s.db.ListStreamRecords(r.Context(), db.ListStreamRecordsParams{
 		OrgID:         session.OrgID,
+		CellID:        session.CellID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		StreamID:      stream.ID,

@@ -77,7 +77,6 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 		store.dequeueRequest.Runtime.InitramfsDigest != capabilities.InitramfsDigest ||
 		store.dequeueRequest.Runtime.RootfsDigest != capabilities.RootfsDigest ||
 		store.dequeueRequest.Runtime.CNIProfile != capabilities.CNIProfile ||
-		store.dequeueRequest.Region != capabilities.Region ||
 		store.dequeueRequest.Labels["pool"] != "snapshot" ||
 		store.dequeueRequest.Labels["dedicated_key"] != "tenant-a" {
 		t.Fatalf("dequeue request = %+v", store.dequeueRequest)
@@ -1043,6 +1042,7 @@ func (f *fakeStore) ListQueueScopes(_ context.Context, arg db.ListQueueScopesPar
 	f.listQueueScopes = arg
 	return []db.ListQueueScopesRow{{
 		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     fakeRunProjectID(f.run),
 		EnvironmentID: fakeRunEnvironmentID(f.run),
 		QueueName:     "queue-a",
@@ -1088,16 +1088,17 @@ func (f *fakeStore) MarkStaleWorkspaceMountsLost(context.Context, pgtype.Timesta
 	return nil, nil
 }
 
-func (f *fakeStore) GetWorkerInstanceState(_ context.Context, id pgtype.UUID) (db.GetWorkerInstanceStateRow, error) {
+func (f *fakeStore) GetWorkerInstanceState(_ context.Context, arg db.GetWorkerInstanceStateParams) (db.GetWorkerInstanceStateRow, error) {
 	return db.GetWorkerInstanceStateRow{
-		ID:               id,
-		ResourceID:       pgvalue.MustUUIDValue(id).String(),
+		ID:               arg.ID,
+		CellID:           arg.CellID,
+		ResourceID:       pgvalue.MustUUIDValue(arg.ID).String(),
 		Status:           db.WorkerInstanceStatusActive,
 		ActiveExecutions: 0,
 	}, nil
 }
 
-func (f *fakeStore) GetWorkerInstanceQueueCapacity(context.Context, pgtype.UUID) (db.GetWorkerInstanceQueueCapacityRow, error) {
+func (f *fakeStore) GetWorkerInstanceQueueCapacity(context.Context, db.GetWorkerInstanceQueueCapacityParams) (db.GetWorkerInstanceQueueCapacityRow, error) {
 	if f.workerQueueCapacitySet {
 		return f.workerQueueCapacity, nil
 	}
@@ -1109,7 +1110,7 @@ func (f *fakeStore) GetWorkerInstanceQueueCapacity(context.Context, pgtype.UUID)
 	}, nil
 }
 
-func (f *fakeStore) GetWorkerInstanceRunDispatchCapacity(context.Context, pgtype.UUID) (db.GetWorkerInstanceRunDispatchCapacityRow, error) {
+func (f *fakeStore) GetWorkerInstanceRunDispatchCapacity(context.Context, db.GetWorkerInstanceRunDispatchCapacityParams) (db.GetWorkerInstanceRunDispatchCapacityRow, error) {
 	if f.workerQueueCapacitySet {
 		return db.GetWorkerInstanceRunDispatchCapacityRow{
 			AvailableMilliCpu:       f.workerQueueCapacity.AvailableMilliCpu,
@@ -1191,9 +1192,12 @@ func (f *fakeStore) Dequeue(_ context.Context, request dispatch.DequeueRequest) 
 		MessageID:        "message-1",
 		WorkerInstanceID: request.WorkerInstanceID,
 		Message: dispatch.Message{
-			OrgID:     dbtest.DefaultOrgID.String(),
-			RunID:     pgvalue.MustUUIDValue(f.run.ID).String(),
-			QueueName: "queue-a",
+			OrgID:           dbtest.DefaultOrgID.String(),
+			CellID:          dbtest.DefaultCellID,
+			RouteGeneration: 1,
+			RunID:           pgvalue.MustUUIDValue(f.run.ID).String(),
+			QueueClass:      "default",
+			QueueName:       "queue-a",
 		},
 		AttemptNumber: 1,
 		ExpiresAt:     testTime().Time.Add(time.Minute),
@@ -1298,12 +1302,14 @@ func (f *fakeStore) GetRunLeaseQueueLease(_ context.Context, arg db.GetRunLeaseQ
 }
 
 func (f *fakeStore) ReserveRunQueueItem(_ context.Context, arg db.ReserveRunQueueItemParams) (db.RunQueueItem, error) {
-	if f.run.ID != arg.RunID || f.run.Status != db.RunStatusQueued {
+	if f.run.ID != arg.RunID || f.run.Status != db.RunStatusQueued || arg.CellID != dbtest.DefaultCellID || arg.RouteGeneration != 1 {
 		return db.RunQueueItem{}, pgx.ErrNoRows
 	}
 	return db.RunQueueItem{
 		RunID:                      arg.RunID,
 		OrgID:                      arg.OrgID,
+		CellID:                     arg.CellID,
+		RouteGeneration:            arg.RouteGeneration,
 		Status:                     db.RunQueueStatusReserved,
 		QueueName:                  "queue-a",
 		DispatchMessageID:          arg.DispatchMessageID,
@@ -1442,6 +1448,7 @@ func (f *fakeStore) LeaseRunLease(_ context.Context, arg db.LeaseRunLeaseParams)
 	return db.LeaseRunLeaseRow{
 		ID:                                 f.run.ID,
 		OrgID:                              f.run.OrgID,
+		CellID:                             dbtest.DefaultCellID,
 		ProjectID:                          projectID,
 		EnvironmentID:                      environmentID,
 		SessionID:                          fakeRunSessionID(f.run),
@@ -1476,6 +1483,7 @@ func (f *fakeStore) LeaseRunLease(_ context.Context, arg db.LeaseRunLeaseParams)
 		RequirementsCniProfile:             requirements.Runtime.CNIProfile,
 		RequirementsNetworkPolicy:          networkPolicy,
 		RunLeaseID:                         f.sessionID,
+		RunLeaseRouteGeneration:            1,
 		RunLeaseWorkerInstanceID:           f.executionWorkerInstanceID,
 		RunLeaseDispatchMessageID:          arg.DispatchMessageID.String,
 		RunLeaseDispatchLeaseID:            arg.DispatchLeaseID,
@@ -1488,15 +1496,15 @@ func (f *fakeStore) LeaseRunLease(_ context.Context, arg db.LeaseRunLeaseParams)
 	}, nil
 }
 
-func (f *fakeStore) RequeueExpiredLeasedRunLeases(context.Context, pgtype.UUID) error {
+func (f *fakeStore) RequeueExpiredLeasedRunLeases(context.Context, db.RequeueExpiredLeasedRunLeasesParams) error {
 	return nil
 }
 
-func (f *fakeStore) ExpireDueTokens(context.Context, pgtype.UUID) ([]db.ExpireDueTokensRow, error) {
+func (f *fakeStore) ExpireDueTokens(context.Context, db.ExpireDueTokensParams) ([]db.ExpireDueTokensRow, error) {
 	return nil, nil
 }
 
-func (f *fakeStore) ExpireDueSessions(context.Context, pgtype.UUID) ([]db.Session, error) {
+func (f *fakeStore) ExpireDueSessions(context.Context, db.ExpireDueSessionsParams) ([]db.Session, error) {
 	return nil, nil
 }
 
@@ -1504,7 +1512,7 @@ func (f *fakeStore) ResolveDueTimerWaits(context.Context, db.ResolveDueTimerWait
 	return nil, nil
 }
 
-func (f *fakeStore) ExpireDueRunWaits(context.Context, pgtype.UUID) ([]db.RunWait, error) {
+func (f *fakeStore) ExpireDueRunWaits(context.Context, db.ExpireDueRunWaitsParams) ([]db.RunWait, error) {
 	return nil, nil
 }
 
@@ -1516,11 +1524,11 @@ func (f *fakeStore) RequeueResolvedRunWaits(context.Context, db.RequeueResolvedR
 	return nil, nil
 }
 
-func (f *fakeStore) CreateExpiredRuntimeStopCommands(context.Context, pgtype.Timestamptz) ([]db.WorkerCommand, error) {
+func (f *fakeStore) CreateExpiredRuntimeStopCommands(context.Context, db.CreateExpiredRuntimeStopCommandsParams) ([]db.WorkerCommand, error) {
 	return nil, nil
 }
 
-func (f *fakeStore) MarkExpiredRuntimeInstancesLost(context.Context, pgtype.Timestamptz) ([]db.RuntimeInstance, error) {
+func (f *fakeStore) MarkExpiredRuntimeInstancesLost(context.Context, db.MarkExpiredRuntimeInstancesLostParams) ([]db.RuntimeInstance, error) {
 	return nil, nil
 }
 
@@ -1547,7 +1555,7 @@ func (f *fakeStore) GetRunRestorePayload(_ context.Context, arg db.GetRunRestore
 	}, nil
 }
 
-func (f *fakeStore) ExpireQueuedRuns(context.Context, pgtype.UUID) error {
+func (f *fakeStore) ExpireQueuedRuns(context.Context, db.ExpireQueuedRunsParams) error {
 	return nil
 }
 

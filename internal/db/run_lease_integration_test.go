@@ -66,7 +66,7 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	dispatchMessageID := "dispatch-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	winnerDispatchMessageID := "dispatch-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	var workerGroupID uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE cell_id = $1 AND name = 'default'`, dbtest.DefaultCellID).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -177,8 +177,10 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	visible, err := queries.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		QueueClass:    "default",
 		QueueName:     "default",
 		RowLimit:      100,
 	})
@@ -233,7 +235,10 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	_, err = queries.ReserveRunQueueItem(ctx, db.ReserveRunQueueItemParams{
 		OrgID:                pgvalue.UUID(ids.orgID),
+		CellID:               dbtest.DefaultCellID,
 		RunID:                pgvalue.UUID(loserRunID),
+		RouteGeneration:      1,
+		QueueClass:           "default",
 		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		WorkerInstanceID:     pgvalue.UUID(workerID),
 		DispatchMessageID:    pgtype.Text{String: dispatchMessageID, Valid: true},
@@ -253,6 +258,9 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	if _, err := queries.MarkRunQueueItemEnqueued(ctx, db.MarkRunQueueItemEnqueuedParams{
 		OrgID:                      pgvalue.UUID(ids.orgID),
+		CellID:                     preparedWinner.CellID,
+		RouteGeneration:            preparedWinner.RouteGeneration,
+		QueueClass:                 preparedWinner.QueueClass,
 		RunID:                      pgvalue.UUID(ids.runID),
 		DispatchMessageID:          pgtype.Text{String: winnerDispatchMessageID, Valid: true},
 		ExpectedDispatchGeneration: preparedWinner.DispatchGeneration,
@@ -261,7 +269,10 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	reservedWinner, err := queries.ReserveRunQueueItem(ctx, db.ReserveRunQueueItemParams{
 		OrgID:                pgvalue.UUID(ids.orgID),
+		CellID:               preparedWinner.CellID,
 		RunID:                pgvalue.UUID(ids.runID),
+		RouteGeneration:      preparedWinner.RouteGeneration,
+		QueueClass:           preparedWinner.QueueClass,
 		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		WorkerInstanceID:     pgvalue.UUID(workerID),
 		DispatchMessageID:    pgtype.Text{String: winnerDispatchMessageID, Valid: true},
@@ -323,6 +334,7 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -340,6 +352,7 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RuntimeInstanceToken:        "runtime-instance-token",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
+		CellID:                      dbtest.DefaultCellID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "workspace-mount-channel-token-hash",
 		RuntimeID:                   runtimeID,
@@ -618,7 +631,7 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 	dispatchMessageID := "dispatch-" + shortUUID(runLeaseID)
 	workerResourceID := "worker-" + shortUUID(workerID)
 	var workerGroupID uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE cell_id = $1 AND name = 'default'`, dbtest.DefaultCellID).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -895,6 +908,85 @@ func TestLeaseRunLeaseCreditsResidentRuntimeOnOneSlotWorker(t *testing.T) {
 	}
 }
 
+func TestLeaseRunLeaseDoesNotReturnWrongCellRuntimeSubstrate(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	workerID := seedRuntimePressureWorker(t, ctx, pool, ids, 1000, 1024, 4096, 1)
+	dispatchMessageID := "dispatch-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	attemptID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_attempts (id, org_id, cell_id, run_id, attempt_number, status)
+		VALUES ($1, $2, $3, $4, 1, 'queued')
+	`, attemptID, ids.orgID, dbtest.DefaultCellID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET status = 'queued',
+		       execution_status = 'queued',
+		       queue_timestamp = now(),
+		       current_attempt_id = $3,
+		       current_attempt_number = 1
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID, attemptID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_runtime_requirements (
+			run_id, org_id, cell_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
+			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
+			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
+		)
+		SELECT $1, $2, worker_instances.cell_id, 1000, 1024, 4096, 1, worker_instances.runtime_id, worker_instances.runtime_arch,
+		       worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest,
+		       worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.worker_group_id
+		  FROM worker_instances
+		 WHERE worker_instances.id = $3
+	`, ids.runID, ids.orgID, workerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_queue_items (
+			run_id, org_id, cell_id, status, queue_name, dispatch_message_id,
+			reserved_by_worker_instance_id, reservation_expires_at
+		)
+		VALUES ($1, $2, $3, 'reserved', 'default', $4, $5, now() + interval '1 hour')
+	`, ids.runID, ids.orgID, dbtest.DefaultCellID, dispatchMessageID, workerID); err != nil {
+		t.Fatal(err)
+	}
+
+	workspaceMountID := uuid.Must(uuid.NewV7())
+	seedResidentRuntimeWorkspaceMount(t, ctx, pool, ids, ids.workspaceID, workspaceMountID, workerID, 1000, 1024, 4096, 1)
+	seedWrongCellRuntimeSubstrateArtifact(t, ctx, pool, queries, ids)
+
+	leased, err := queries.LeaseRunLease(ctx, db.LeaseRunLeaseParams{
+		OrgID:             pgvalue.UUID(ids.orgID),
+		RunID:             pgvalue.UUID(ids.runID),
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		RunLeaseID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		DispatchMessageID: pgtype.Text{String: dispatchMessageID, Valid: true},
+		DispatchLeaseID:   "lease-with-wrong-cell-substrate",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+		RunLeaseSpanID:    "6666666666666666",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leased.WorkspaceMountID != pgvalue.UUID(workspaceMountID) {
+		t.Fatalf("workspace mount id = %v, want resident %s", leased.WorkspaceMountID, workspaceMountID)
+	}
+	if leased.WorkspaceRuntimeSubstrateArtifactID.Valid {
+		t.Fatalf("workspace runtime substrate artifact id = %+v, want absent wrong-cell substrate", leased.WorkspaceRuntimeSubstrateArtifactID)
+	}
+	if leased.WorkspaceRuntimeSubstrateDigest != "" || leased.WorkspaceRuntimeSubstrateArtifactDigest != "" {
+		t.Fatalf("workspace runtime substrate metadata = %q/%q, want empty wrong-cell substrate metadata", leased.WorkspaceRuntimeSubstrateDigest, leased.WorkspaceRuntimeSubstrateArtifactDigest)
+	}
+}
+
 func TestLeaseRunLeaseDoesNotReclaimCheckpointingResidentRuntime(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
@@ -984,13 +1076,60 @@ func TestLeaseRunLeaseDoesNotReclaimCheckpointingResidentRuntime(t *testing.T) {
 	}
 }
 
+func seedWrongCellRuntimeSubstrateArtifact(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, ids integrationIDs) {
+	t.Helper()
+	otherCellID, otherRouteGeneration, otherSandboxID := seedRuntimeSubstrateSourceInOtherCell(t, ctx, pool, ids, "run-lease-wrong-cell-runtime-substrate")
+	digest := testDigest("run-lease-wrong-cell-runtime-substrate")
+	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
+		OrgID:     pgvalue.UUID(ids.orgID),
+		CellID:    otherCellID,
+		Digest:    digest,
+		SizeBytes: 1024,
+		MediaType: "application/vnd.helmr.runtime-substrate.v0.ext4",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(ids.orgID),
+		CellID:          otherCellID,
+		RouteGeneration: otherRouteGeneration,
+		ProjectID:       pgvalue.UUID(ids.projectID),
+		EnvironmentID:   pgvalue.UUID(ids.environmentID),
+		Digest:          digest,
+		SizeBytes:       1024,
+		MediaType:       "application/vnd.helmr.runtime-substrate.v0.ext4",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
+		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                     pgvalue.UUID(ids.orgID),
+		CellID:                    otherCellID,
+		ProjectID:                 pgvalue.UUID(ids.projectID),
+		EnvironmentID:             pgvalue.UUID(ids.environmentID),
+		DeploymentSandboxID:       pgvalue.UUID(otherSandboxID),
+		ArtifactID:                artifact.ID,
+		SubstrateDigest:           "sha256:run-lease-wrong-cell-runtime-substrate",
+		SubstrateFormat:           "ext4",
+		BuilderAbi:                "builder-v0",
+		LayoutAbi:                 "layout-v0",
+		SubstrateSizeBytes:        1024,
+		Source:                    []byte(`{"test":"run-lease-wrong-cell-runtime-substrate"}`),
+		CreatedByWorkerInstanceID: pgtype.UUID{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func seedRuntimePressureWorker(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, cpu int, memory int, disk int64, slots int) uuid.UUID {
 	t.Helper()
 	workerID := uuid.Must(uuid.NewV7())
 	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	workerResourceID := "worker-" + shortUUID(workerID)
 	var workerGroupID uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE cell_id = $1 AND name = 'default'`, dbtest.DefaultCellID).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1162,6 +1301,57 @@ func TestReleaseLeasedRunLeaseDoesNotAccrueActiveTimeBeforeStart(t *testing.T) {
 	}
 	if released.ActiveStartedAt.Valid {
 		t.Fatalf("active_started_at = %+v, want closed nil interval", released.ActiveStartedAt)
+	}
+}
+
+func TestGetRunLeaseQueueLeaseRejectsDisabledSourceRoute(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
+	disableDefaultEnvironmentRoute(t, ctx, pool, ids)
+
+	_, err := queries.GetRunLeaseQueueLease(ctx, db.GetRunLeaseQueueLeaseParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		RunID:            pgvalue.UUID(ids.runID),
+		CellID:           dbtest.DefaultCellID,
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("GetRunLeaseQueueLease disabled route error = %v, want pgx.ErrNoRows", err)
+	}
+}
+
+func TestRenewRunLeaseAllowsStaleCellHealthForInFlightLease(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
+	if _, err := pool.Exec(ctx, `
+		UPDATE cell_health
+		   SET routing_fresh_until = now() - interval '1 minute'
+		 WHERE cell_id = $1
+	`, dbtest.DefaultCellID); err != nil {
+		t.Fatal(err)
+	}
+
+	renewed, err := queries.RenewRunLease(ctx, db.RenewRunLeaseParams{
+		OrgID:             pgvalue.UUID(ids.orgID),
+		RunID:             pgvalue.UUID(ids.runID),
+		RunLeaseID:        pgvalue.UUID(runLeaseID),
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		DispatchMessageID: "dispatch-" + runLeaseID.String()[:8],
+		DispatchLeaseID:   "lease-" + runLeaseID.String()[:8],
+		LeaseExpiresAt:    pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pgvalue.MustUUIDValue(renewed.ID); got != runLeaseID {
+		t.Fatalf("renewed lease id = %s, want %s", got, runLeaseID)
 	}
 }
 

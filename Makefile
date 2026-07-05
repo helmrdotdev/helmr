@@ -92,7 +92,7 @@ migration:
 	$(GO) run github.com/golang-migrate/migrate/v4/cmd/migrate@$(MIGRATE_VERSION) create -seq -digits 6 -ext sql -dir internal/db/schema/migrations "$(name)"
 
 migrate-up:
-	$(GO) run github.com/golang-migrate/migrate/v4/cmd/migrate@$(MIGRATE_VERSION) -path internal/db/schema/migrations -database "$$HELMR_DATABASE_URL" up
+	$(GO) run ./cmd/helmr-control migrate up
 
 migrate-down:
 	$(GO) run github.com/golang-migrate/migrate/v4/cmd/migrate@$(MIGRATE_VERSION) -path internal/db/schema/migrations -database "$$HELMR_DATABASE_URL" down 1

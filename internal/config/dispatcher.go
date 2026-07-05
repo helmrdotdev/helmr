@@ -13,7 +13,7 @@ func LoadDispatcher() (Dispatcher, error) {
 	cfg := Dispatcher{
 		DatabaseURL:                envString("HELMR_DATABASE_URL"),
 		RedisURL:                   env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
-		CellID:                     env("HELMR_CELL_ID", DefaultCellID),
+		CellID:                     envString("HELMR_CELL_ID"),
 		ClickHouseURL:              envString("HELMR_CLICKHOUSE_URL"),
 		ClickHouseUser:             envString("HELMR_CLICKHOUSE_USER"),
 		ClickHousePassword:         envString("HELMR_CLICKHOUSE_PASSWORD"),

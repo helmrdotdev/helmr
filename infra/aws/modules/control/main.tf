@@ -1,15 +1,20 @@
 locals {
-  name                = lower(var.name)
-  control_port        = 8080
-  bucket_prefix       = lower(coalesce(var.bucket_name_prefix, "${local.name}-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}"))
-  control_url         = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.control[0].domain_name}" : var.public_url
-  private_control_url = var.private_control_dns_name == null ? null : "https://${var.private_control_dns_name}"
-  control_subnet_ids  = var.control_assign_public_ip ? var.public_subnet_ids : var.private_subnet_ids
-  email_from          = var.email_from == null ? "" : var.email_from
-  smtp_addr           = var.smtp_addr == null ? "" : var.smtp_addr
-  smtp_username       = var.smtp_username == null ? "" : var.smtp_username
-  clickhouse_url      = trimspace(var.clickhouse_url)
-  clickhouse_user     = var.clickhouse_user == null ? "" : var.clickhouse_user
+  name                   = lower(var.name)
+  control_port           = 8080
+  bucket_prefix          = lower(coalesce(var.bucket_name_prefix, "${local.name}-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}"))
+  control_url            = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.control[0].domain_name}" : var.public_url
+  private_control_url    = var.private_control_dns_name == null ? null : "https://${var.private_control_dns_name}"
+  control_subnet_ids     = var.control_assign_public_ip ? var.public_subnet_ids : var.private_subnet_ids
+  email_from             = var.email_from == null ? "" : var.email_from
+  smtp_addr              = var.smtp_addr == null ? "" : var.smtp_addr
+  smtp_username          = var.smtp_username == null ? "" : var.smtp_username
+  clickhouse_url         = trimspace(var.clickhouse_url)
+  clickhouse_user        = var.clickhouse_user == null ? "" : var.clickhouse_user
+  region_id              = trimspace(coalesce(var.region_id, data.aws_region.current.region))
+  default_region_id      = trimspace(coalesce(var.default_region_id, local.region_id))
+  region_display_name    = trimspace(coalesce(var.region_display_name, local.region_id))
+  cell_id                = trimspace(var.cell_id)
+  cell_environment_class = trimspace(coalesce(var.cell_environment_class, var.deployment_mode))
   secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
     var.secret_encryption_key_old_kms_key_arns,
@@ -22,7 +27,13 @@ locals {
 
   telemetry_environment = merge(
     {
-      HELMR_CELL_ID = trimspace(var.cell_id)
+      HELMR_CELL_ID                = local.cell_id
+      HELMR_REGION_ID              = local.region_id
+      HELMR_DEFAULT_REGION_ID      = local.default_region_id
+      HELMR_PROVIDER               = "aws"
+      HELMR_PROVIDER_REGION        = data.aws_region.current.region
+      HELMR_REGION_DISPLAY_NAME    = local.region_display_name
+      HELMR_CELL_ENVIRONMENT_CLASS = local.cell_environment_class
     },
     {
       HELMR_CLICKHOUSE_URL = local.clickhouse_url
@@ -98,6 +109,12 @@ locals {
     "HELMR_SMTP_USERNAME",
     "HELMR_SMTP_PASSWORD",
     "HELMR_CELL_ID",
+    "HELMR_REGION_ID",
+    "HELMR_DEFAULT_REGION_ID",
+    "HELMR_PROVIDER",
+    "HELMR_PROVIDER_REGION",
+    "HELMR_REGION_DISPLAY_NAME",
+    "HELMR_CELL_ENVIRONMENT_CLASS",
     "HELMR_CLICKHOUSE_URL",
     "HELMR_CLICKHOUSE_USER",
     "HELMR_CLICKHOUSE_PASSWORD",

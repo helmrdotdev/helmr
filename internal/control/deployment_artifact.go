@@ -106,8 +106,12 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return unavailable(errors.New("deployment storage is not configured"))
 		}
+		placement, err := s.resolveEnvironmentPlacement(r.Context(), work.q, actor.OrgID, projectID, environmentID)
+		if err != nil {
+			return err
+		}
 		var createErr error
-		response, createErr = createDeploymentRecords(r.Context(), store, s.cellID, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
+		response, createErr = createDeploymentRecords(r.Context(), store, placement.CellID, placement.RouteGeneration, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
 		return createErr
 	})
 	if err != nil {

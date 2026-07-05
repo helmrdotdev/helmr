@@ -10,9 +10,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestHealthzDoesNotRequireReadinessDB(t *testing.T) {
@@ -46,7 +48,7 @@ func TestReadyzChecksSchemaVersion(t *testing.T) {
 		want int
 	}{
 		"ready": {
-			row:  fakeReadinessRow{version: currentVersion},
+			row:  fakeReadinessRow{version: currentVersion, ready: true},
 			want: http.StatusOK,
 		},
 		"dirty": {
@@ -58,11 +60,15 @@ func TestReadyzChecksSchemaVersion(t *testing.T) {
 			want: http.StatusServiceUnavailable,
 		},
 		"future version": {
-			row:  fakeReadinessRow{version: currentVersion + 1},
+			row:  fakeReadinessRow{version: currentVersion + 1, ready: true},
 			want: http.StatusOK,
 		},
 		"query error": {
 			row:  fakeReadinessRow{err: errors.New("relation does not exist")},
+			want: http.StatusServiceUnavailable,
+		},
+		"component not ready": {
+			row:  fakeReadinessRow{version: currentVersion, ready: false},
 			want: http.StatusServiceUnavailable,
 		},
 	}
@@ -137,12 +143,56 @@ func (db fakeReadinessDB) Begin(context.Context) (pgx.Tx, error) {
 type fakeReadinessRow struct {
 	version int
 	dirty   bool
+	ready   bool
 	err     error
 }
 
 func (row fakeReadinessRow) Scan(dest ...any) error {
 	if row.err != nil {
 		return row.err
+	}
+	if len(dest) == 8 {
+		if cellID, ok := dest[0].(*string); ok {
+			*cellID = "us-east-1-cell-1"
+		} else {
+			return errors.New("cell id destination is not *string")
+		}
+		if cellState, ok := dest[1].(*db.CellState); ok {
+			*cellState = db.CellStateActive
+		} else {
+			return errors.New("cell state destination is not *db.CellState")
+		}
+		if component, ok := dest[2].(*string); ok {
+			*component = "control"
+		} else {
+			return errors.New("component destination is not *string")
+		}
+		if healthState, ok := dest[3].(*db.CellHealthState); ok {
+			*healthState = db.CellHealthStateHealthy
+		} else {
+			return errors.New("health state destination is not *db.CellHealthState")
+		}
+		if checkedAt, ok := dest[4].(*pgtype.Timestamptz); ok {
+			*checkedAt = pgtype.Timestamptz{Valid: true}
+		} else {
+			return errors.New("checked at destination is not *pgtype.Timestamptz")
+		}
+		if freshUntil, ok := dest[5].(*pgtype.Timestamptz); ok {
+			*freshUntil = pgtype.Timestamptz{Valid: true}
+		} else {
+			return errors.New("fresh until destination is not *pgtype.Timestamptz")
+		}
+		if details, ok := dest[6].(*[]byte); ok {
+			*details = []byte(`{}`)
+		} else {
+			return errors.New("details destination is not *[]byte")
+		}
+		if ready, ok := dest[7].(*bool); ok {
+			*ready = row.ready
+		} else {
+			return errors.New("ready destination is not *bool")
+		}
+		return nil
 	}
 	if len(dest) != 2 {
 		return errors.New("expected version and dirty destinations")

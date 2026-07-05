@@ -47,6 +47,10 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerInstanceHeartbeatParams(worker, capabilities)); err != nil {
 		s.log.Error("worker heartbeat failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
+		if isNoRows(err) {
+			writeError(w, forbidden(errors.New("worker instance conflicts with this cell or runtime")))
+			return
+		}
 		writeError(w, errors.New("record worker heartbeat"))
 		return
 	}
@@ -75,7 +79,10 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !foundLease {
-		capacity, err := s.db.GetWorkerInstanceRunDispatchCapacity(r.Context(), pgvalue.UUID(worker.WorkerInstanceID))
+		capacity, err := s.db.GetWorkerInstanceRunDispatchCapacity(r.Context(), db.GetWorkerInstanceRunDispatchCapacityParams{
+			ID:     pgvalue.UUID(worker.WorkerInstanceID),
+			CellID: worker.CellID,
+		})
 		if isNoRows(err) {
 			s.requestCapacityPressureIdleWorkspaceStops(r.Context(), worker.WorkerInstanceID, "run_dispatch_capacity_missing")
 			s.createCapacityPressureLiveRuntimeCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "run_dispatch_capacity_missing")
@@ -109,7 +116,9 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		dequeueRequest := dispatch.DequeueRequest{
+			CellID:           worker.CellID,
 			WorkerInstanceID: worker.WorkerInstanceID.String(),
+			Region:           capabilities.Region,
 			Available: compute.ResourceVector{
 				MilliCPU:  capacity.AvailableMilliCpu,
 				MemoryMiB: capacity.AvailableMemoryMib,
@@ -125,7 +134,6 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 				RootfsDigest:    capabilities.RootfsDigest,
 				CNIProfile:      capabilities.CNIProfile,
 			},
-			Region:      capabilities.Region,
 			Labels:      capabilities.Labels,
 			MaxMessages: 1,
 		}
@@ -151,8 +159,10 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 			for _, row := range scopeRows {
 				scopes = append(scopes, dispatch.QueueScope{
 					OrgID:         row.OrgID,
+					CellID:        row.CellID,
 					ProjectID:     row.ProjectID,
 					EnvironmentID: row.EnvironmentID,
+					QueueClass:    row.QueueClass,
 					QueueName:     row.QueueName,
 				})
 			}
@@ -160,12 +170,14 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 			scopes = scopeSelector.Order(scopes)
 			for _, scope := range scopes {
 				orgID := pgvalue.MustUUIDValue(scope.OrgID)
-				if err := dispatch.SweepExpiredForOrg(r.Context(), s.db, scope.OrgID); err != nil {
+				if err := dispatch.SweepExpiredForOrg(r.Context(), s.db, scope.CellID, scope.OrgID); err != nil {
 					s.log.Warn("sweep expired run leases failed", "org_id", orgID.String(), "error", err)
 				}
 				dequeueRequest.OrgID = orgID.String()
+				dequeueRequest.CellID = scope.CellID
 				dequeueRequest.ProjectID = pgvalue.MustUUIDValue(scope.ProjectID).String()
 				dequeueRequest.EnvironmentID = pgvalue.MustUUIDValue(scope.EnvironmentID).String()
+				dequeueRequest.QueueClass = scope.QueueClass
 				for _, queueName := range dispatch.QueueNamesForRuntime(scope.QueueName, dequeueRequest.Runtime) {
 					dequeueRequest.QueueName = queueName
 					candidateLease, err := runClaimer.Claim(r.Context(), dispatch.ClaimRequest{DequeueRequest: dequeueRequest})
@@ -290,6 +302,9 @@ func (s *Server) tryLeaseResidentRun(ctx context.Context, worker workerActor) (d
 		Message: dispatch.Message{
 			RunID:           pgvalue.UUIDString(entry.RunID),
 			OrgID:           pgvalue.UUIDString(entry.OrgID),
+			CellID:          entry.CellID,
+			RouteGeneration: entry.RouteGeneration,
+			QueueClass:      entry.QueueClass,
 			QueueName:       entry.QueueName,
 			Priority:        entry.Priority,
 			QueueTimestamp:  pgvalue.Time(entry.QueueTimestamp),
@@ -345,6 +360,9 @@ func (s *Server) requeueResidentRunQueueItem(ctx context.Context, worker workerA
 func (s *Server) requeueRunQueueItem(ctx context.Context, worker workerActor, entry db.RunQueueItem, messageID string, lastError string) error {
 	_, err := s.db.RequeueRunQueueItem(ctx, db.RequeueRunQueueItemParams{
 		OrgID:             entry.OrgID,
+		CellID:            entry.CellID,
+		RouteGeneration:   entry.RouteGeneration,
+		QueueClass:        entry.QueueClass,
 		RunID:             entry.RunID,
 		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
 		DispatchMessageID: pgtype.Text{String: strings.TrimSpace(messageID), Valid: true},
@@ -381,6 +399,9 @@ func (s *Server) requeueWorkerQueueItem(ctx context.Context, worker workerActor,
 	}
 	if _, err := s.db.RequeueRunQueueItem(ctx, db.RequeueRunQueueItemParams{
 		OrgID:             pgvalue.UUID(orgID),
+		CellID:            lease.Message.CellID,
+		RouteGeneration:   lease.Message.RouteGeneration,
+		QueueClass:        lease.Message.QueueClass,
 		RunID:             runID,
 		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
 		DispatchMessageID: pgtype.Text{String: lease.MessageID, Valid: true},
@@ -496,9 +517,12 @@ func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, l
 		AttemptNumber:    row.DispatchAttempt,
 		ExpiresAt:        pgvalue.Time(row.LeaseExpiresAt),
 		Message: dispatch.Message{
-			OrgID:     leaseIDs.orgID.String(),
-			RunID:     pgvalue.MustUUIDValue(row.RunID).String(),
-			QueueName: row.QueueName,
+			OrgID:           leaseIDs.orgID.String(),
+			RunID:           pgvalue.MustUUIDValue(row.RunID).String(),
+			CellID:          row.CellID,
+			RouteGeneration: row.RouteGeneration,
+			QueueClass:      row.QueueClass,
+			QueueName:       row.QueueName,
 		},
 	}
 	return row, lease, nil
@@ -541,6 +565,9 @@ func workerRunLeaseResponse(row db.LeaseRunLeaseRow) api.WorkerRunLease {
 }
 
 func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunLeaseRow) (api.WorkerRun, error) {
+	if err := s.requireRoutableRecordCellGeneration(ctx, s.db, pgvalue.MustUUIDValue(row.OrgID), row.ProjectID, row.EnvironmentID, row.CellID, row.RunLeaseRouteGeneration); err != nil {
+		return api.WorkerRun{}, err
+	}
 	restore, err := s.workerRestorePayload(ctx, row)
 	if err != nil {
 		return api.WorkerRun{}, err
@@ -554,7 +581,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunLeaseRow
 		if s.secrets == nil {
 			return api.WorkerRun{}, errors.New("secret store is not configured")
 		}
-		resolvedSecrets, err = s.secrets.ResolveScopedNames(ctx, pgvalue.MustUUIDValue(row.OrgID), pgvalue.MustUUIDValue(row.ProjectID), pgvalue.MustUUIDValue(row.EnvironmentID), secretNames)
+		resolvedSecrets, err = s.secrets.ResolveScopedNames(ctx, row.CellID, pgvalue.MustUUIDValue(row.OrgID), pgvalue.MustUUIDValue(row.ProjectID), pgvalue.MustUUIDValue(row.EnvironmentID), secretNames)
 		if err != nil {
 			if secret.IsUnavailable(err) || isNoRows(err) {
 				return api.WorkerRun{}, terminalPayload("secret_unavailable", err)

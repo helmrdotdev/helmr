@@ -388,6 +388,18 @@ current_run_lease AS (
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
                           AND run_leases.org_id = runs.org_id
                           AND run_leases.run_id = runs.id
+      JOIN environment_cells
+        ON environment_cells.org_id = runs.org_id
+       AND environment_cells.project_id = runs.project_id
+       AND environment_cells.environment_id = runs.environment_id
+       AND environment_cells.cell_id = runs.cell_id
+       AND environment_cells.route_generation = run_leases.route_generation
+       AND environment_cells.route_state IN ('active', 'draining')
+      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                    AND org_cells.cell_id = environment_cells.cell_id
+                    AND org_cells.state = 'active'
+      JOIN cells ON cells.id = environment_cells.cell_id
+                AND cells.state IN ('active', 'draining')
       JOIN run_attempts ON run_attempts.org_id = run_leases.org_id
                        AND run_attempts.run_id = run_leases.run_id
                        AND run_attempts.id = run_leases.attempt_id

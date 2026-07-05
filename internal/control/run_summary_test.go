@@ -52,11 +52,11 @@ func TestCreateGetAndListRun(t *testing.T) {
 	if store.createRun.MaxActiveDurationMs != 300_000 {
 		t.Fatalf("max duration = %d", store.createRun.MaxActiveDurationMs)
 	}
-	if store.currentDeploymentTaskCalls != 1 {
-		t.Fatalf("current deployment task calls = %d, want 1", store.currentDeploymentTaskCalls)
+	if store.currentDeploymentTaskCalls != 0 {
+		t.Fatalf("current deployment task calls = %d, want 0 for run placement", store.currentDeploymentTaskCalls)
 	}
-	if store.getDeploymentTaskCalls != 0 {
-		t.Fatalf("deployment task calls = %d, want 0 for unpinned run", store.getDeploymentTaskCalls)
+	if store.getDeploymentTaskCalls != 1 {
+		t.Fatalf("deployment task calls = %d, want 1 for generation-scoped run placement", store.getDeploymentTaskCalls)
 	}
 	if store.runEvent.Kind != "run.created" {
 		t.Fatalf("run event kind = %s", store.runEvent.Kind)
@@ -132,6 +132,36 @@ func TestCreateGetAndListRun(t *testing.T) {
 
 	if store.countScopedRuns.ProjectID != testProjectID() || store.countScopedRuns.EnvironmentID != testEnvironmentID() {
 		t.Fatalf("scoped count params = %+v", store.countScopedRuns)
+	}
+}
+
+func TestGetRunRejectsWrongCellRoute(t *testing.T) {
+	runID := uuid.Must(uuid.NewV7())
+	store := &fakeStore{
+		run: db.Run{
+			ID:               pgvalue.UUID(runID),
+			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
+			CellID:           "us-east-1-cell-2",
+			ProjectID:        testProjectID(),
+			EnvironmentID:    testEnvironmentID(),
+			DeploymentID:     testDeploymentID(),
+			DeploymentTaskID: testDeploymentTaskID(),
+			SessionID:        pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000602")),
+			TaskID:           "deploy",
+			Status:           db.RunStatusRunning,
+			CreatedAt:        testTime(),
+			UpdatedAt:        testTime(),
+		},
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String(), nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -331,6 +361,7 @@ func (f *fakeStore) GetRunSummary(_ context.Context, arg db.GetRunSummaryParams)
 		ID:               f.run.ID,
 		OrgID:            f.run.OrgID,
 		CellID:           fakeRunCellID(f.run),
+		RouteGeneration:  1,
 		ProjectID:        fakeRunProjectID(f.run),
 		EnvironmentID:    fakeRunEnvironmentID(f.run),
 		DeploymentID:     fakeRunDeploymentID(f.run),
@@ -357,6 +388,8 @@ func (f *fakeStore) ListScopedRunSummaries(_ context.Context, arg db.ListScopedR
 	return []db.ListScopedRunSummariesRow{{
 		ID:               f.run.ID,
 		OrgID:            f.run.OrgID,
+		CellID:           fakeRunCellID(f.run),
+		RouteGeneration:  1,
 		ProjectID:        f.run.ProjectID,
 		EnvironmentID:    f.run.EnvironmentID,
 		DeploymentID:     fakeRunDeploymentID(f.run),

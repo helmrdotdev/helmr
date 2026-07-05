@@ -99,12 +99,14 @@ func TestCreateScheduleRunUsesDeclaredTaskSecrets(t *testing.T) {
 	}
 	runEnqueuer := &fakeRunEnqueuer{}
 	server := &Server{
-		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		db:          store,
-		cas:         &fakeCAS{},
-		secrets:     fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}},
-		runEnqueuer: runEnqueuer,
-		eventStream: newTestEventStream(t),
+		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db:              store,
+		cas:             &fakeCAS{},
+		secrets:         fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}},
+		runEnqueuer:     runEnqueuer,
+		eventStream:     newTestEventStream(t),
+		cellID:          "us-east-1-cell-1",
+		defaultRegionID: "us-east-1",
 	}
 	runID, err := server.CreateScheduleRun(context.Background(), db.GetScheduleTriggerCandidateRow{
 		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
@@ -375,11 +377,7 @@ func TestWorkerTokenRejectsWrongSecret(t *testing.T) {
 	}
 }
 
-func (f fakeSecrets) Put(_ context.Context, orgID uuid.UUID, name string, value []byte) (db.Secret, error) {
-	return f.PutScoped(context.Background(), orgID, uuid.Nil, uuid.Nil, name, value)
-}
-
-func (f fakeSecrets) PutScoped(_ context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
+func (f fakeSecrets) PutScoped(_ context.Context, _ string, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
 	return db.Secret{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(orgID),
@@ -392,11 +390,7 @@ func (f fakeSecrets) PutScoped(_ context.Context, orgID uuid.UUID, projectID uui
 	}, nil
 }
 
-func (f fakeSecrets) CheckNames(_ context.Context, _ uuid.UUID, names []string) error {
-	return f.CheckScopedNames(context.Background(), uuid.Nil, uuid.Nil, uuid.Nil, names)
-}
-
-func (f fakeSecrets) CheckScopedNames(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, names []string) error {
+func (f fakeSecrets) CheckScopedNames(_ context.Context, _ string, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, names []string) error {
 	for _, name := range names {
 		if len(f.values) == 0 {
 			continue
@@ -408,11 +402,7 @@ func (f fakeSecrets) CheckScopedNames(_ context.Context, _ uuid.UUID, _ uuid.UUI
 	return nil
 }
 
-func (f fakeSecrets) ResolveNames(_ context.Context, _ uuid.UUID, names []string) (api.ResolvedSecrets, error) {
-	return f.ResolveScopedNames(context.Background(), uuid.Nil, uuid.Nil, uuid.Nil, names)
-}
-
-func (f fakeSecrets) ResolveScopedNames(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, names []string) (api.ResolvedSecrets, error) {
+func (f fakeSecrets) ResolveScopedNames(_ context.Context, _ string, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, names []string) (api.ResolvedSecrets, error) {
 	resolved := api.ResolvedSecrets{}
 	for _, name := range names {
 		value, ok := f.values[name]

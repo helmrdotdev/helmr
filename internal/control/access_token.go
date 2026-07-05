@@ -55,7 +55,11 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 	var publicToken string
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		var err error
-		token, publicToken, err = s.createTokenRecord(r.Context(), work.q, actor, projectID, environmentID, request)
+		cellID, err := s.requireRoutableEnvironmentCell(r.Context(), work.q, actor.OrgID, projectID, environmentID)
+		if err != nil {
+			return err
+		}
+		token, publicToken, err = s.createTokenRecord(r.Context(), work.q, actor, cellID, projectID, environmentID, request)
 		return err
 	})
 	if err != nil {
@@ -69,7 +73,7 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, tokenResponse(tokenFromCreateRow(token), publicToken, s.tokenCallbackURL(pgvalue.MustUUIDValue(token.ID))))
 }
 
-func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor auth.Actor, projectID pgtype.UUID, environmentID pgtype.UUID, request api.CreateTokenRequest) (db.CreateTokenRow, string, error) {
+func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor auth.Actor, cellID string, projectID pgtype.UUID, environmentID pgtype.UUID, request api.CreateTokenRequest) (db.CreateTokenRow, string, error) {
 	timeoutAt, err := tokenTimeoutAt(request.Timeout)
 	if err != nil {
 		return db.CreateTokenRow{}, "", badRequest(err)
@@ -102,7 +106,7 @@ func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor 
 	row, err := store.CreateToken(ctx, db.CreateTokenParams{
 		ID:                        pgvalue.UUID(tokenID),
 		OrgID:                     pgvalue.UUID(actor.OrgID),
-		CellID:                    s.cellID,
+		CellID:                    cellID,
 		ProjectID:                 projectID,
 		EnvironmentID:             environmentID,
 		TimeoutAt:                 pgvalue.Timestamptz(timeoutAt),
@@ -131,7 +135,7 @@ func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor 
 	publicAccessToken, err := store.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(actor.OrgID),
-		CellID:        s.cellID,
+		CellID:        cellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		TokenHash:     publicTokenHash,
@@ -146,7 +150,7 @@ func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor 
 	if _, err := store.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(actor.OrgID),
-		CellID:              s.cellID,
+		CellID:              cellID,
 		ProjectID:           projectID,
 		EnvironmentID:       environmentID,
 		PublicAccessTokenID: publicAccessToken.ID,
@@ -198,8 +202,14 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	cellID, err := s.requireRoutableEnvironmentCell(r.Context(), s.db, actor.OrgID, projectID, environmentID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	rows, err := s.db.ListTokens(r.Context(), db.ListTokensParams{
 		OrgID:         pgvalue.UUID(actor.OrgID),
+		CellID:        cellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		State:         state,
@@ -260,6 +270,7 @@ func (s *Server) cancelToken(w http.ResponseWriter, r *http.Request) {
 	}
 	cancelled, err := s.db.CancelToken(r.Context(), db.CancelTokenParams{
 		OrgID:         token.OrgID,
+		CellID:        token.CellID,
 		ProjectID:     token.ProjectID,
 		EnvironmentID: token.EnvironmentID,
 		ID:            token.ID,
@@ -283,6 +294,7 @@ func (s *Server) cancelToken(w http.ResponseWriter, r *http.Request) {
 	if cancelled.ResolvedWaitCount > 0 {
 		if _, err := s.db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(r.Context(), db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
 			OrgID:      token.OrgID,
+			CellID:     token.CellID,
 			LimitCount: int32(cancelled.ResolvedWaitCount),
 		}); err != nil {
 			writeError(w, errors.New("publish hot token cancellation"))
@@ -327,6 +339,10 @@ func (s *Server) completeTokenWithCallbackSecret(w http.ResponseWriter, r *http.
 		writeError(w, errors.New("authorize token callback"))
 		return
 	}
+	if err := s.requireRoutableRecordCell(r.Context(), s.db, pgvalue.MustUUIDValue(token.OrgID), token.ProjectID, token.EnvironmentID, token.CellID); err != nil {
+		writeError(w, err)
+		return
+	}
 	completed, err := s.completeTokenRecord(r.Context(), s.db, token, request.Data)
 	if err != nil {
 		s.writeStreamTokenError(w, err)
@@ -349,6 +365,10 @@ func (s *Server) authorizeTokenRecord(w http.ResponseWriter, r *http.Request, ac
 	}
 	if err != nil {
 		writeError(w, errors.New("load token"))
+		return db.Token{}, false
+	}
+	if err := s.requireRoutableRecordCell(r.Context(), s.db, actor.OrgID, token.ProjectID, token.EnvironmentID, token.CellID); err != nil {
+		writeError(w, err)
 		return db.Token{}, false
 	}
 	if err := s.requireActorScopeForRecord(r, actor, token.ProjectID, token.EnvironmentID); err != nil {
@@ -386,6 +406,7 @@ func (s *Server) completeTokenRecord(ctx context.Context, store db.Querier, toke
 	}
 	completed, err := store.CompleteToken(ctx, db.CompleteTokenParams{
 		OrgID:                 token.OrgID,
+		CellID:                token.CellID,
 		ProjectID:             token.ProjectID,
 		EnvironmentID:         token.EnvironmentID,
 		ID:                    token.ID,
@@ -408,6 +429,7 @@ func (s *Server) completeTokenRecord(ctx context.Context, store db.Querier, toke
 	if completed.ResolvedWaitCount > 0 {
 		if _, err := store.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
 			OrgID:      token.OrgID,
+			CellID:     token.CellID,
 			LimitCount: int32(completed.ResolvedWaitCount),
 		}); err != nil {
 			return db.CompleteTokenRow{}, err
@@ -454,6 +476,7 @@ func tokenFromCreateRow(row db.CreateTokenRow) db.Token {
 	return db.Token{
 		ID:                        row.ID,
 		OrgID:                     row.OrgID,
+		CellID:                    row.CellID,
 		ProjectID:                 row.ProjectID,
 		EnvironmentID:             row.EnvironmentID,
 		State:                     row.State,
@@ -481,6 +504,7 @@ func tokenFromCompleteRow(row db.CompleteTokenRow) db.Token {
 	return db.Token{
 		ID:                        row.ID,
 		OrgID:                     row.OrgID,
+		CellID:                    row.CellID,
 		ProjectID:                 row.ProjectID,
 		EnvironmentID:             row.EnvironmentID,
 		State:                     row.State,
@@ -508,6 +532,7 @@ func tokenFromCancelRow(row db.CancelTokenRow) db.Token {
 	return db.Token{
 		ID:                        row.ID,
 		OrgID:                     row.OrgID,
+		CellID:                    row.CellID,
 		ProjectID:                 row.ProjectID,
 		EnvironmentID:             row.EnvironmentID,
 		State:                     row.State,

@@ -26,14 +26,16 @@ SELECT sqlc.arg(id),
   FROM sessions
   JOIN deployment_streams
     ON deployment_streams.org_id = sessions.org_id
+   AND deployment_streams.cell_id = sessions.cell_id
    AND deployment_streams.project_id = sessions.project_id
    AND deployment_streams.environment_id = sessions.environment_id
    AND deployment_streams.id = sqlc.arg(deployment_stream_id)
  WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.cell_id = sqlc.arg(cell_id)
    AND sessions.project_id = sqlc.arg(project_id)
    AND sessions.environment_id = sqlc.arg(environment_id)
    AND sessions.id = sqlc.arg(session_id)
-ON CONFLICT (org_id, session_id, name, direction)
+ON CONFLICT (org_id, cell_id, session_id, name, direction)
 DO UPDATE SET
     deployment_stream_id = streams.deployment_stream_id,
     schema_fingerprint = streams.schema_fingerprint,
@@ -42,8 +44,9 @@ RETURNING *;
 
 -- name: GetSessionStreamByName :one
 SELECT *
-  FROM streams
+ FROM streams
  WHERE org_id = sqlc.arg(org_id)
+   AND cell_id = sqlc.arg(cell_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND session_id = sqlc.arg(session_id)
@@ -52,16 +55,18 @@ SELECT *
 
 -- name: GetStream :one
 SELECT *
-  FROM streams
+ FROM streams
  WHERE org_id = sqlc.arg(org_id)
+   AND cell_id = sqlc.arg(cell_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
 
 -- name: ListSessionStreams :many
 SELECT *
-  FROM streams
+ FROM streams
  WHERE org_id = sqlc.arg(org_id)
+   AND cell_id = sqlc.arg(cell_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND session_id = sqlc.arg(session_id)

@@ -146,7 +146,12 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
 		return db.UpdateScheduleRow{}, errPermissionRequired
 	}
-	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, current.ProjectID, current.EnvironmentID, request.Task, runDeploymentSelection{})
+	placement, err := s.resolveEnvironmentPlacement(ctx, s.db, actor.OrgID, current.ProjectID, current.EnvironmentID)
+	if err != nil {
+		return db.UpdateScheduleRow{}, err
+	}
+	routeCellID := placement.CellID
+	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, routeCellID, placement.RouteGeneration, actor.OrgID, current.ProjectID, current.EnvironmentID, request.Task, runDeploymentSelection{})
 	if isNoRows(err) {
 		return db.UpdateScheduleRow{}, fmt.Errorf("task %q is not deployed in the selected deployment", request.Task)
 	}
@@ -178,17 +183,17 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 		return db.UpdateScheduleRow{}, err
 	}
 	return s.db.UpdateSchedule(ctx, db.UpdateScheduleParams{
-		TaskID:        request.Task,
-		ExternalID:    pgvalue.Text(strings.TrimSpace(request.ExternalID)),
-		Cron:          cronExpression,
-		Timezone:      timezone,
-		RunOptions:    runOptionsJSON,
-		Active:        active,
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     current.ProjectID,
-		EnvironmentID: current.EnvironmentID,
-		ScheduleID:    current.ScheduleID,
-		NextFireAt:    nextFireAt,
+		TaskID:         request.Task,
+		ExternalID:     pgvalue.Text(strings.TrimSpace(request.ExternalID)),
+		Cron:           cronExpression,
+		Timezone:       timezone,
+		RunOptions:     runOptionsJSON,
+		InstanceActive: active,
+		OrgID:          pgvalue.UUID(actor.OrgID),
+		ProjectID:      current.ProjectID,
+		EnvironmentID:  current.EnvironmentID,
+		ScheduleID:     current.ScheduleID,
+		NextFireAt:     nextFireAt,
 	})
 }
 
@@ -214,7 +219,12 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
 		return db.CreateScheduleRow{}, errPermissionRequired
 	}
-	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, projectID, environmentID, request.Task, runDeploymentSelection{})
+	placement, err := s.resolveEnvironmentPlacement(ctx, s.db, actor.OrgID, projectID, environmentID)
+	if err != nil {
+		return db.CreateScheduleRow{}, err
+	}
+	routeCellID := placement.CellID
+	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, routeCellID, placement.RouteGeneration, actor.OrgID, projectID, environmentID, request.Task, runDeploymentSelection{})
 	if isNoRows(err) {
 		return db.CreateScheduleRow{}, fmt.Errorf("task %q is not deployed in the selected deployment", request.Task)
 	}
@@ -248,21 +258,21 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		return db.CreateScheduleRow{}, err
 	}
 	return s.db.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:    pgvalue.UUID(scheduleID),
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     projectID,
-		ScheduleType:  db.TaskScheduleTypeImperative,
-		TaskID:        request.Task,
-		DedupKey:      userDedupKey,
-		UserDedupKey:  userDedupKeyParam,
-		ExternalID:    pgvalue.Text(strings.TrimSpace(request.ExternalID)),
-		Cron:          cronExpression,
-		Timezone:      timezone,
-		RunOptions:    runOptionsJSON,
-		Active:        active,
-		InstanceID:    pgvalue.UUID(instanceID),
-		EnvironmentID: environmentID,
-		NextFireAt:    nextFireAt,
+		ScheduleID:     pgvalue.UUID(scheduleID),
+		OrgID:          pgvalue.UUID(actor.OrgID),
+		ProjectID:      projectID,
+		ScheduleType:   db.TaskScheduleTypeImperative,
+		TaskID:         request.Task,
+		DedupKey:       userDedupKey,
+		UserDedupKey:   userDedupKeyParam,
+		ExternalID:     pgvalue.Text(strings.TrimSpace(request.ExternalID)),
+		Cron:           cronExpression,
+		Timezone:       timezone,
+		RunOptions:     runOptionsJSON,
+		InstanceActive: active,
+		InstanceID:     pgvalue.UUID(instanceID),
+		EnvironmentID:  environmentID,
+		NextFireAt:     nextFireAt,
 	})
 }
 
@@ -319,6 +329,15 @@ func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("declarative schedules are managed by task definitions")))
 		return
 	}
+	indexCells, err := s.db.ListEnvironmentCellRoutes(r.Context(), db.ListEnvironmentCellRoutesParams{
+		OrgID:         row.OrgID,
+		ProjectID:     row.ProjectID,
+		EnvironmentID: row.EnvironmentID,
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	affected, err := s.db.DeleteSchedule(r.Context(), db.DeleteScheduleParams{
 		OrgID:         row.OrgID,
 		ProjectID:     row.ProjectID,
@@ -333,7 +352,14 @@ func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound(errors.New("schedule not found")))
 		return
 	}
-	s.deleteScheduleIndexEntry(r.Context(), row.ScheduleID, row.InstanceID)
+	deletedIndexCells := map[string]struct{}{}
+	for _, route := range indexCells {
+		if _, seen := deletedIndexCells[route.CellID]; seen {
+			continue
+		}
+		deletedIndexCells[route.CellID] = struct{}{}
+		s.deleteScheduleIndexEntry(r.Context(), route.CellID, row.ScheduleID, row.InstanceID)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -356,12 +382,12 @@ func (s *Server) setScheduleState(w http.ResponseWriter, r *http.Request, active
 		nextFireAt = pgvalue.Timestamptz(next)
 	}
 	updated, err := s.db.UpdateScheduleState(r.Context(), db.UpdateScheduleStateParams{
-		Active:        active,
-		OrgID:         row.OrgID,
-		ProjectID:     row.ProjectID,
-		ScheduleID:    row.ScheduleID,
-		NextFireAt:    nextFireAt,
-		EnvironmentID: row.EnvironmentID,
+		InstanceActive: active,
+		OrgID:          row.OrgID,
+		ProjectID:      row.ProjectID,
+		ScheduleID:     row.ScheduleID,
+		NextFireAt:     nextFireAt,
+		EnvironmentID:  row.EnvironmentID,
 	})
 	if err != nil {
 		if isNoRows(err) {
@@ -382,6 +408,7 @@ func (s *Server) registerScheduleInstances(ctx context.Context, orgID pgtype.UUI
 	}
 	rows, err := s.db.ListScheduleInstancesForRegistration(ctx, db.ListScheduleInstancesForRegistrationParams{
 		OrgID:      orgID,
+		CellID:     s.cellID,
 		ProjectID:  projectID,
 		ScheduleID: scheduleID,
 	})
@@ -391,6 +418,7 @@ func (s *Server) registerScheduleInstances(ctx context.Context, orgID pgtype.UUI
 	}
 	for _, row := range rows {
 		if err := s.scheduleEngine.RegisterNext(ctx, schedule.Instance{
+			CellID:     row.CellID,
 			InstanceID: row.InstanceID,
 			Generation: row.Generation,
 			Active:     row.ScheduleActive && row.InstanceActive,
@@ -402,11 +430,15 @@ func (s *Server) registerScheduleInstances(ctx context.Context, orgID pgtype.UUI
 	}
 }
 
-func (s *Server) deleteScheduleIndexEntry(ctx context.Context, scheduleID pgtype.UUID, instanceID pgtype.UUID) {
+func (s *Server) deleteScheduleIndexEntry(ctx context.Context, cellID string, scheduleID pgtype.UUID, instanceID pgtype.UUID) {
 	if s.scheduleEngine == nil {
 		return
 	}
-	if err := s.scheduleEngine.DeleteInstance(ctx, instanceID); err != nil {
+	cellID = strings.TrimSpace(cellID)
+	if cellID == "" {
+		return
+	}
+	if err := s.scheduleEngine.DeleteInstance(ctx, cellID, instanceID); err != nil {
 		s.log.Warn("delete schedule index entry failed", "schedule_id", pgvalue.MustUUIDValue(scheduleID).String(), "instance_id", pgvalue.MustUUIDValue(instanceID).String(), "error", err)
 	}
 }

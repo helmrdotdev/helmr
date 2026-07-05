@@ -2,6 +2,7 @@
 INSERT INTO workspace_pty_sessions (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     workspace_id,
@@ -15,6 +16,7 @@ INSERT INTO workspace_pty_sessions (
 )
 SELECT sqlc.arg(id),
        workspaces.org_id,
+       workspaces.cell_id,
        workspaces.project_id,
        workspaces.environment_id,
        workspaces.id,

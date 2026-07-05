@@ -2,6 +2,7 @@
 INSERT INTO worker_commands (
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     run_id,
@@ -17,6 +18,7 @@ INSERT INTO worker_commands (
 ) VALUES (
     sqlc.arg(org_id),
     sqlc.arg(cell_id),
+    sqlc.arg(route_generation),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(run_id),
@@ -34,12 +36,28 @@ RETURNING *;
 
 -- name: ClaimWorkerCommands :many
 WITH claimable AS (
-    SELECT id
+    SELECT worker_commands.id
       FROM worker_commands
-     WHERE delivered_at IS NULL
+      JOIN environment_cells
+        ON environment_cells.org_id = worker_commands.org_id
+       AND environment_cells.project_id = worker_commands.project_id
+       AND environment_cells.environment_id = worker_commands.environment_id
+       AND environment_cells.cell_id = worker_commands.cell_id
+       AND environment_cells.route_generation = worker_commands.route_generation
+       AND environment_cells.route_state IN ('active', 'draining')
+      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                    AND org_cells.cell_id = environment_cells.cell_id
+                    AND org_cells.state = 'active'
+      JOIN cells ON cells.id = environment_cells.cell_id
+                AND cells.state IN ('active', 'draining')
+      JOIN worker_instances
+        ON worker_instances.id = worker_commands.worker_instance_id
+       AND worker_instances.cell_id = worker_commands.cell_id
+     WHERE worker_commands.cell_id = sqlc.arg(cell_id)
+       AND delivered_at IS NULL
        AND acknowledged_at IS NULL
        AND (delivery_locked_until IS NULL OR delivery_locked_until < now())
-     ORDER BY id ASC
+     ORDER BY worker_commands.id ASC
      LIMIT sqlc.arg(row_limit)
      FOR UPDATE SKIP LOCKED
 ),
@@ -84,6 +102,26 @@ UPDATE worker_commands
        updated_at = now()
  WHERE worker_commands.worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_commands.id = sqlc.arg(id)
+   AND worker_commands.cell_id = sqlc.arg(cell_id)
+   AND EXISTS (
+       SELECT 1
+         FROM worker_instances
+         JOIN environment_cells
+           ON environment_cells.org_id = worker_commands.org_id
+          AND environment_cells.project_id = worker_commands.project_id
+          AND environment_cells.environment_id = worker_commands.environment_id
+          AND environment_cells.cell_id = worker_commands.cell_id
+          AND environment_cells.route_generation = worker_commands.route_generation
+          AND environment_cells.route_state IN ('active', 'draining')
+         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                       AND org_cells.cell_id = environment_cells.cell_id
+                       AND org_cells.state = 'active'
+         JOIN cells ON cells.id = environment_cells.cell_id
+                   AND cells.state IN ('active', 'draining')
+        WHERE worker_instances.id = worker_commands.worker_instance_id
+          AND worker_instances.cell_id = worker_commands.cell_id
+          AND worker_instances.cell_id = sqlc.arg(cell_id)
+   )
    AND worker_commands.acknowledged_at IS NULL
 RETURNING *;
 
@@ -91,6 +129,26 @@ RETURNING *;
 SELECT *
   FROM worker_commands
  WHERE worker_commands.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND worker_commands.cell_id = sqlc.arg(cell_id)
+   AND EXISTS (
+       SELECT 1
+         FROM worker_instances
+         JOIN environment_cells
+           ON environment_cells.org_id = worker_commands.org_id
+          AND environment_cells.project_id = worker_commands.project_id
+          AND environment_cells.environment_id = worker_commands.environment_id
+          AND environment_cells.cell_id = worker_commands.cell_id
+          AND environment_cells.route_generation = worker_commands.route_generation
+          AND environment_cells.route_state IN ('active', 'draining')
+         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                       AND org_cells.cell_id = environment_cells.cell_id
+                       AND org_cells.state = 'active'
+         JOIN cells ON cells.id = environment_cells.cell_id
+                   AND cells.state IN ('active', 'draining')
+        WHERE worker_instances.id = worker_commands.worker_instance_id
+          AND worker_instances.cell_id = worker_commands.cell_id
+          AND worker_instances.cell_id = sqlc.arg(cell_id)
+   )
    AND worker_commands.id > sqlc.arg(after_id)
    AND worker_commands.acknowledged_at IS NULL
  ORDER BY worker_commands.id ASC
@@ -102,6 +160,26 @@ WITH target AS MATERIALIZED (
       FROM worker_commands
      WHERE worker_commands.worker_instance_id = sqlc.arg(worker_instance_id)
        AND worker_commands.id = sqlc.arg(id)
+       AND worker_commands.cell_id = sqlc.arg(cell_id)
+       AND EXISTS (
+           SELECT 1
+             FROM worker_instances
+             JOIN environment_cells
+               ON environment_cells.org_id = worker_commands.org_id
+              AND environment_cells.project_id = worker_commands.project_id
+              AND environment_cells.environment_id = worker_commands.environment_id
+              AND environment_cells.cell_id = worker_commands.cell_id
+              AND environment_cells.route_generation = worker_commands.route_generation
+              AND environment_cells.route_state IN ('active', 'draining')
+             JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                           AND org_cells.cell_id = environment_cells.cell_id
+                           AND org_cells.state = 'active'
+             JOIN cells ON cells.id = environment_cells.cell_id
+                       AND cells.state IN ('active', 'draining')
+            WHERE worker_instances.id = worker_commands.worker_instance_id
+              AND worker_instances.cell_id = worker_commands.cell_id
+              AND worker_instances.cell_id = sqlc.arg(cell_id)
+       )
      FOR UPDATE OF worker_commands
 ),
 already_acknowledged AS MATERIALIZED (
@@ -114,6 +192,7 @@ eligible_resume AS MATERIALIZED (
       FROM target
       JOIN run_waits
         ON run_waits.org_id = target.org_id
+       AND run_waits.cell_id = target.cell_id
        AND run_waits.run_id = target.run_id
        AND run_waits.id = target.run_wait_id
        AND run_waits.owner_run_lease_id = target.run_lease_id
@@ -122,8 +201,9 @@ eligible_resume AS MATERIALIZED (
        AND run_waits.owner_runtime_epoch = target.runtime_epoch
        AND run_waits.owner_run_state_version = target.run_state_version
        AND run_waits.state = 'resolved_live'
-      JOIN runtime_instances
+     JOIN runtime_instances
         ON runtime_instances.org_id = target.org_id
+       AND runtime_instances.cell_id = target.cell_id
        AND runtime_instances.id = target.runtime_instance_id
        AND runtime_instances.worker_instance_id = target.worker_instance_id
        AND runtime_instances.runtime_epoch = target.runtime_epoch
@@ -141,8 +221,9 @@ resumed_live_wait AS (
        SET resumed_at = COALESCE(run_waits.resumed_at, now()),
            state = 'resumed',
            updated_at = now()
-      FROM eligible_resume
+     FROM eligible_resume
      WHERE run_waits.org_id = eligible_resume.org_id
+       AND run_waits.cell_id = eligible_resume.cell_id
        AND run_waits.run_id = eligible_resume.run_id
        AND run_waits.id = eligible_resume.run_wait_id
        AND run_waits.owner_run_lease_id = eligible_resume.run_lease_id
@@ -165,8 +246,10 @@ resumed_runtime_instance AS (
       FROM eligible_resume
       JOIN resumed_live_wait
         ON resumed_live_wait.org_id = eligible_resume.org_id
+       AND resumed_live_wait.cell_id = eligible_resume.cell_id
        AND resumed_live_wait.id = eligible_resume.run_wait_id
      WHERE runtime_instances.org_id = eligible_resume.org_id
+       AND runtime_instances.cell_id = eligible_resume.cell_id
        AND runtime_instances.id = eligible_resume.runtime_instance_id
        AND runtime_instances.worker_instance_id = eligible_resume.worker_instance_id
        AND runtime_instances.runtime_epoch = eligible_resume.runtime_epoch
@@ -220,15 +303,36 @@ UPDATE worker_commands
  WHERE worker_commands.worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_commands.id = sqlc.arg(id)
    AND worker_commands.org_id = sqlc.arg(org_id)
+   AND worker_commands.cell_id = sqlc.arg(cell_id)
    AND worker_commands.run_id = sqlc.arg(run_id)
    AND worker_commands.run_wait_id = sqlc.arg(run_wait_id)
    AND worker_commands.run_lease_id = sqlc.arg(run_lease_id)
    AND worker_commands.kind = sqlc.arg(kind)::worker_command_kind
+   AND EXISTS (
+       SELECT 1
+         FROM worker_instances
+         JOIN environment_cells
+           ON environment_cells.org_id = worker_commands.org_id
+          AND environment_cells.project_id = worker_commands.project_id
+          AND environment_cells.environment_id = worker_commands.environment_id
+          AND environment_cells.cell_id = worker_commands.cell_id
+          AND environment_cells.route_generation = worker_commands.route_generation
+          AND environment_cells.route_state IN ('active', 'draining')
+         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                       AND org_cells.cell_id = environment_cells.cell_id
+                       AND org_cells.state = 'active'
+         JOIN cells ON cells.id = environment_cells.cell_id
+                   AND cells.state IN ('active', 'draining')
+        WHERE worker_instances.id = worker_commands.worker_instance_id
+          AND worker_instances.cell_id = worker_commands.cell_id
+          AND worker_instances.cell_id = sqlc.arg(cell_id)
+   )
 RETURNING *;
 
 -- name: CreateDueLiveRuntimeCheckpointWaitCommandsForOrg :many
 WITH due AS (
-    SELECT run_waits.*
+    SELECT run_waits.*,
+           run_leases.route_generation
       FROM run_waits
       JOIN worker_instances ON worker_instances.id = run_waits.owner_worker_instance_id
       JOIN run_leases ON run_leases.org_id = run_waits.org_id
@@ -251,6 +355,7 @@ WITH due AS (
            OR runtime_instances.expires_at > now()
        )
      WHERE run_waits.org_id = sqlc.arg(org_id)
+       AND run_waits.cell_id = sqlc.arg(cell_id)
        AND run_waits.state = 'live_waiting'
        AND run_waits.runtime_checkpoint_due_at IS NOT NULL
        AND (
@@ -286,6 +391,7 @@ WITH due AS (
 INSERT INTO worker_commands (
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     run_id,
@@ -300,6 +406,7 @@ INSERT INTO worker_commands (
 )
 SELECT due.org_id,
        due.cell_id,
+       due.route_generation,
        due.project_id,
        due.environment_id,
        due.run_id,
@@ -317,7 +424,8 @@ RETURNING *;
 
 -- name: CreateDueLiveRuntimeCheckpointWaitCommandsForWorker :many
 WITH due AS (
-    SELECT run_waits.*
+    SELECT run_waits.*,
+           run_leases.route_generation
       FROM run_waits
       JOIN worker_instances ON worker_instances.id = run_waits.owner_worker_instance_id
       JOIN run_leases ON run_leases.org_id = run_waits.org_id
@@ -375,6 +483,7 @@ WITH due AS (
 INSERT INTO worker_commands (
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     run_id,
@@ -389,6 +498,7 @@ INSERT INTO worker_commands (
 )
 SELECT due.org_id,
        due.cell_id,
+       due.route_generation,
        due.project_id,
        due.environment_id,
        due.run_id,
@@ -446,7 +556,8 @@ blocked_mount AS MATERIALIZED (
      LIMIT 1
 ),
 victim AS (
-    SELECT run_waits.*
+    SELECT run_waits.*,
+           run_leases.route_generation
       FROM run_waits
       JOIN run_leases ON run_leases.org_id = run_waits.org_id
                      AND run_leases.run_id = run_waits.run_id
@@ -485,6 +596,7 @@ victim AS (
 INSERT INTO worker_commands (
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     run_id,
@@ -499,6 +611,7 @@ INSERT INTO worker_commands (
 )
 SELECT victim.org_id,
        victim.cell_id,
+       victim.route_generation,
        victim.project_id,
        victim.environment_id,
        victim.run_id,
@@ -517,6 +630,7 @@ RETURNING *;
 -- name: CreateResolvedLiveRuntimeResumeWaitCommandsForOrg :many
 WITH resolved AS (
     SELECT run_waits.*,
+           run_leases.route_generation,
            CASE
              WHEN run_waits.kind = 'timer' THEN 'completed'
              WHEN run_waits.timeout_at IS NOT NULL
@@ -580,6 +694,7 @@ WITH resolved AS (
 	           OR runtime_instances.expires_at > now()
 	       )
 	     WHERE run_waits.org_id = sqlc.arg(org_id)
+	       AND run_waits.cell_id = sqlc.arg(cell_id)
 	       AND run_waits.state = 'resolved_live'
        AND run_waits.owner_run_lease_id IS NOT NULL
        AND run_waits.owner_worker_instance_id IS NOT NULL
@@ -599,6 +714,7 @@ WITH resolved AS (
 INSERT INTO worker_commands (
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     run_id,
@@ -613,6 +729,7 @@ INSERT INTO worker_commands (
 )
 SELECT resolved.org_id,
        resolved.cell_id,
+       resolved.route_generation,
        resolved.project_id,
        resolved.environment_id,
        resolved.run_id,

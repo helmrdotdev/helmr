@@ -62,6 +62,14 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 			}
 			return errors.New("create organization")
 		}
+		if _, err := work.q.EnsureOrgCell(r.Context(), db.EnsureOrgCellParams{
+			OrgID:  org.ID,
+			CellID: s.cellID,
+			Role:   db.OrgCellRoleHome,
+			State:  db.OrgCellStateActive,
+		}); err != nil {
+			return errors.New("create organization cell")
+		}
 		if _, err := work.q.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
 			OrgID:       org.ID,
 			UserID:      pgvalue.UUID(actor.UserID),
