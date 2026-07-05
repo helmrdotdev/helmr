@@ -3857,7 +3857,6 @@ type RuntimeSubstrateArtifact struct {
 type Secret struct {
 	ID            pgtype.UUID        `json:"id"`
 	OrgID         pgtype.UUID        `json:"org_id"`
-	CellID        string             `json:"cell_id"`
 	ProjectID     pgtype.UUID        `json:"project_id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	Name          string             `json:"name"`

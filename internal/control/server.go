@@ -42,9 +42,9 @@ const (
 )
 
 type SecretManager interface {
-	PutScoped(ctx context.Context, cellID string, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error)
-	CheckScopedNames(ctx context.Context, cellID string, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) error
-	ResolveScopedNames(ctx context.Context, cellID string, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error)
+	PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error)
+	CheckScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) error
+	ResolveScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error)
 }
 
 type Server struct {

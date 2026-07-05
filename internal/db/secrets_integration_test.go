@@ -21,7 +21,6 @@ func TestScopedSecretQueriesRemainEnvironmentOwnedAcrossRouteMove(t *testing.T) 
 	if _, err := queries.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
 		ID:              pgvalue.UUID(secretID),
 		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          dbtest.DefaultCellID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		Name:            "API_KEY",
@@ -38,7 +37,6 @@ func TestScopedSecretQueriesRemainEnvironmentOwnedAcrossRouteMove(t *testing.T) 
 
 	record, err := queries.GetScopedSecretByName(ctx, db.GetScopedSecretByNameParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		Name:          "API_KEY",
@@ -51,7 +49,6 @@ func TestScopedSecretQueriesRemainEnvironmentOwnedAcrossRouteMove(t *testing.T) 
 	}
 	rows, err := queries.ListScopedSecrets(ctx, db.ListScopedSecretsParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		RowLimit:      100,
@@ -85,7 +82,6 @@ func TestScopedSecretQueriesDoNotDuplicateWhenCellHasActiveAndDrainingRoutes(t *
 	if _, err := queries.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
 		ID:              pgvalue.UUID(secretID),
 		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          dbtest.DefaultCellID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		Name:            "DUPLICATE_GUARD",
@@ -100,7 +96,6 @@ func TestScopedSecretQueriesDoNotDuplicateWhenCellHasActiveAndDrainingRoutes(t *
 
 	rows, err := queries.ListScopedSecrets(ctx, db.ListScopedSecretsParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		RowLimit:      100,
@@ -122,7 +117,6 @@ func TestScopedSecretListAndDeleteContinueOnStaleCellHealth(t *testing.T) {
 	if _, err := queries.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
 		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          dbtest.DefaultCellID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		Name:            "STALE_HEALTH",
@@ -145,7 +139,6 @@ func TestScopedSecretListAndDeleteContinueOnStaleCellHealth(t *testing.T) {
 
 	rows, err := queries.ListScopedSecrets(ctx, db.ListScopedSecretsParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		RowLimit:      100,
@@ -158,7 +151,6 @@ func TestScopedSecretListAndDeleteContinueOnStaleCellHealth(t *testing.T) {
 	}
 	if affected, err := queries.DeleteScopedSecret(ctx, db.DeleteScopedSecretParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		Name:          "STALE_HEALTH",

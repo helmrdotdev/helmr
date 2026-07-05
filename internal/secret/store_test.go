@@ -29,10 +29,10 @@ func TestStoreEncryptsAndResolvesNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	orgID := uuid.Must(uuid.NewV7())
-	if _, err := store.Put(context.Background(), dbtest.DefaultCellID, orgID, "github-token", []byte("secret-value")); err != nil {
+	if _, err := store.Put(context.Background(), orgID, "github-token", []byte("secret-value")); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CheckNames(context.Background(), dbtest.DefaultCellID, orgID, []string{"github-token"}); err != nil {
+	if err := store.CheckNames(context.Background(), orgID, []string{"github-token"}); err != nil {
 		t.Fatal(err)
 	}
 	if string(database.record.Ciphertext) == "secret-value" {
@@ -44,7 +44,7 @@ func TestStoreEncryptsAndResolvesNames(t *testing.T) {
 	if database.record.KeyID != keyring.CurrentKeyID() {
 		t.Fatalf("key id = %q, want %q", database.record.KeyID, keyring.CurrentKeyID())
 	}
-	resolved, err := store.ResolveNames(context.Background(), dbtest.DefaultCellID, orgID, []string{"github-token"})
+	resolved, err := store.ResolveNames(context.Background(), orgID, []string{"github-token"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,16 +61,16 @@ func TestStoreIncrementsVersionOnUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	orgID := uuid.Must(uuid.NewV7())
-	if _, err := store.Put(context.Background(), dbtest.DefaultCellID, orgID, "API_TOKEN", []byte("first")); err != nil {
+	if _, err := store.Put(context.Background(), orgID, "API_TOKEN", []byte("first")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Put(context.Background(), dbtest.DefaultCellID, orgID, "API_TOKEN", []byte("second")); err != nil {
+	if _, err := store.Put(context.Background(), orgID, "API_TOKEN", []byte("second")); err != nil {
 		t.Fatal(err)
 	}
 	if database.record.Version != 2 {
 		t.Fatalf("version = %d, want 2", database.record.Version)
 	}
-	resolved, err := store.ResolveNames(context.Background(), dbtest.DefaultCellID, orgID, []string{"API_TOKEN"})
+	resolved, err := store.ResolveNames(context.Background(), orgID, []string{"API_TOKEN"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestStoreResolvesOldKeyDuringRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	orgID := uuid.Must(uuid.NewV7())
-	if _, err := oldStore.Put(context.Background(), dbtest.DefaultCellID, orgID, "API_TOKEN", []byte("secret-value")); err != nil {
+	if _, err := oldStore.Put(context.Background(), orgID, "API_TOKEN", []byte("secret-value")); err != nil {
 		t.Fatal(err)
 	}
 	rotatingKeyring := newTestKeyring(t, currentKey, oldKey)
@@ -97,7 +97,7 @@ func TestStoreResolvesOldKeyDuringRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := rotatingStore.ResolveNames(context.Background(), dbtest.DefaultCellID, orgID, []string{"API_TOKEN"})
+	resolved, err := rotatingStore.ResolveNames(context.Background(), orgID, []string{"API_TOKEN"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestStoreReencryptBatchMovesOldKeyToCurrentKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	orgID := uuid.Must(uuid.NewV7())
-	if _, err := oldStore.Put(context.Background(), dbtest.DefaultCellID, orgID, "API_TOKEN", []byte("secret-value")); err != nil {
+	if _, err := oldStore.Put(context.Background(), orgID, "API_TOKEN", []byte("secret-value")); err != nil {
 		t.Fatal(err)
 	}
 	previousVersion := database.record.Version
@@ -142,7 +142,7 @@ func TestStoreReencryptBatchMovesOldKeyToCurrentKey(t *testing.T) {
 	if database.record.Version != previousVersion+1 {
 		t.Fatalf("version = %d, want %d", database.record.Version, previousVersion+1)
 	}
-	resolved, err := rotatingStore.ResolveNames(context.Background(), dbtest.DefaultCellID, orgID, []string{"API_TOKEN"})
+	resolved, err := rotatingStore.ResolveNames(context.Background(), orgID, []string{"API_TOKEN"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,14 +159,14 @@ func TestStoreRejectsUnsupportedKeyID(t *testing.T) {
 		t.Fatal(err)
 	}
 	orgID := uuid.Must(uuid.NewV7())
-	if _, err := oldStore.Put(context.Background(), dbtest.DefaultCellID, orgID, "API_TOKEN", []byte("secret-value")); err != nil {
+	if _, err := oldStore.Put(context.Background(), orgID, "API_TOKEN", []byte("secret-value")); err != nil {
 		t.Fatal(err)
 	}
 	currentStore, err := New(database, newTestKeyring(t, makeKey(2), nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = currentStore.ResolveNames(context.Background(), dbtest.DefaultCellID, orgID, []string{"API_TOKEN"})
+	_, err = currentStore.ResolveNames(context.Background(), orgID, []string{"API_TOKEN"})
 	if !IsUnavailable(err) {
 		t.Fatalf("err = %v, want unavailable", err)
 	}
@@ -180,14 +180,14 @@ func TestStoreCheckNamesRejectsUnsupportedKeyID(t *testing.T) {
 		t.Fatal(err)
 	}
 	orgID := uuid.Must(uuid.NewV7())
-	if _, err := oldStore.Put(context.Background(), dbtest.DefaultCellID, orgID, "API_TOKEN", []byte("secret-value")); err != nil {
+	if _, err := oldStore.Put(context.Background(), orgID, "API_TOKEN", []byte("secret-value")); err != nil {
 		t.Fatal(err)
 	}
 	currentStore, err := New(database, newTestKeyring(t, makeKey(2), nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = currentStore.CheckNames(context.Background(), dbtest.DefaultCellID, orgID, []string{"API_TOKEN"})
+	err = currentStore.CheckNames(context.Background(), orgID, []string{"API_TOKEN"})
 	if !IsUnavailable(err) {
 		t.Fatalf("err = %v, want unavailable", err)
 	}
@@ -234,7 +234,6 @@ func (f *fakeSecretDB) UpsertScopedSecret(_ context.Context, arg db.UpsertScoped
 	f.record = db.Secret{
 		ID:            arg.ID,
 		OrgID:         arg.OrgID,
-		CellID:        arg.CellID,
 		ProjectID:     arg.ProjectID,
 		EnvironmentID: arg.EnvironmentID,
 		Name:          arg.Name,
@@ -247,7 +246,7 @@ func (f *fakeSecretDB) UpsertScopedSecret(_ context.Context, arg db.UpsertScoped
 }
 
 func (f *fakeSecretDB) GetScopedSecretByName(_ context.Context, arg db.GetScopedSecretByNameParams) (db.Secret, error) {
-	if f.record.OrgID != arg.OrgID || f.record.CellID != arg.CellID || f.record.ProjectID != arg.ProjectID || f.record.EnvironmentID != arg.EnvironmentID || f.record.Name != arg.Name {
+	if f.record.OrgID != arg.OrgID || f.record.ProjectID != arg.ProjectID || f.record.EnvironmentID != arg.EnvironmentID || f.record.Name != arg.Name {
 		return db.Secret{}, pgx.ErrNoRows
 	}
 	return f.record, nil

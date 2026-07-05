@@ -412,7 +412,6 @@ CREATE TABLE device_codes (
 CREATE TABLE secrets (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
@@ -423,7 +422,7 @@ CREATE TABLE secrets (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     rotated_at TIMESTAMPTZ,
-    UNIQUE (org_id, cell_id, project_id, environment_id, name),
+    UNIQUE (org_id, project_id, environment_id, name),
     UNIQUE (key_id, nonce),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)

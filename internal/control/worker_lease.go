@@ -581,7 +581,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunLeaseRow
 		if s.secrets == nil {
 			return api.WorkerRun{}, errors.New("secret store is not configured")
 		}
-		resolvedSecrets, err = s.secrets.ResolveScopedNames(ctx, row.CellID, pgvalue.MustUUIDValue(row.OrgID), pgvalue.MustUUIDValue(row.ProjectID), pgvalue.MustUUIDValue(row.EnvironmentID), secretNames)
+		resolvedSecrets, err = s.secrets.ResolveScopedNames(ctx, pgvalue.MustUUIDValue(row.OrgID), pgvalue.MustUUIDValue(row.ProjectID), pgvalue.MustUUIDValue(row.EnvironmentID), secretNames)
 		if err != nil {
 			if secret.IsUnavailable(err) || isNoRows(err) {
 				return api.WorkerRun{}, terminalPayload("secret_unavailable", err)

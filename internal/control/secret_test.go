@@ -268,6 +268,46 @@ func TestDeleteSecretNotFound(t *testing.T) {
 	}
 }
 
+func TestSecretRoutesRejectUnavailableEnvironmentRoute(t *testing.T) {
+	store := &fakeStore{
+		secret: db.GetScopedSecretMetadataByNameRow{
+			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			Name:          "github-token",
+			CreatedAt:     testTime(),
+			UpdatedAt:     testTime(),
+		},
+		deleteSecretRows:            1,
+		environmentRouteUnavailable: true,
+	}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
+
+	for _, tt := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "list", method: http.MethodGet, path: "/api/secrets"},
+		{name: "get", method: http.MethodGet, path: "/api/secrets/github-token"},
+		{name: "set", method: http.MethodPut, path: "/api/secrets/github-token", body: `{"value":"secret-value"}`},
+		{name: "delete", method: http.MethodDelete, path: "/api/secrets/github-token"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("authorization", "Bearer test-key")
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
 	store := &fakeStore{
 		secret: db.GetScopedSecretMetadataByNameRow{
@@ -377,7 +417,7 @@ func TestWorkerTokenRejectsWrongSecret(t *testing.T) {
 	}
 }
 
-func (f fakeSecrets) PutScoped(_ context.Context, _ string, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
+func (f fakeSecrets) PutScoped(_ context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
 	return db.Secret{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(orgID),
@@ -390,7 +430,7 @@ func (f fakeSecrets) PutScoped(_ context.Context, _ string, orgID uuid.UUID, pro
 	}, nil
 }
 
-func (f fakeSecrets) CheckScopedNames(_ context.Context, _ string, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, names []string) error {
+func (f fakeSecrets) CheckScopedNames(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, names []string) error {
 	for _, name := range names {
 		if len(f.values) == 0 {
 			continue
@@ -402,7 +442,7 @@ func (f fakeSecrets) CheckScopedNames(_ context.Context, _ string, _ uuid.UUID, 
 	return nil
 }
 
-func (f fakeSecrets) ResolveScopedNames(_ context.Context, _ string, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, names []string) (api.ResolvedSecrets, error) {
+func (f fakeSecrets) ResolveScopedNames(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, names []string) (api.ResolvedSecrets, error) {
 	resolved := api.ResolvedSecrets{}
 	for _, name := range names {
 		value, ok := f.values[name]

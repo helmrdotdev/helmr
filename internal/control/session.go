@@ -335,7 +335,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if err != nil {
 			return sessionStartResult{}, fmt.Errorf("environment id is invalid: %v", err)
 		}
-		if err := s.secrets.CheckScopedNames(ctx, routeCellID, actor.OrgID, projectUUID, environmentUUID, secretNames); err != nil {
+		if err := s.secrets.CheckScopedNames(ctx, actor.OrgID, projectUUID, environmentUUID, secretNames); err != nil {
 			return sessionStartResult{}, err
 		}
 	}
