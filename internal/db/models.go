@@ -1826,7 +1826,6 @@ const (
 	TelemetryStreamKindRunLog         TelemetryStreamKind = "run_log"
 	TelemetryStreamKindEvent          TelemetryStreamKind = "event"
 	TelemetryStreamKindTerminalOutput TelemetryStreamKind = "terminal_output"
-	TelemetryStreamKindUsageFact      TelemetryStreamKind = "usage_fact"
 )
 
 func (e *TelemetryStreamKind) Scan(src interface{}) error {
@@ -4147,30 +4146,25 @@ type TokenWait struct {
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
-type UsageFact struct {
-	ID                  int64              `json:"id"`
-	OrgID               pgtype.UUID        `json:"org_id"`
-	CellID              string             `json:"cell_id"`
-	ProjectID           pgtype.UUID        `json:"project_id"`
-	EnvironmentID       pgtype.UUID        `json:"environment_id"`
-	SourceKind          string             `json:"source_kind"`
-	SourceID            pgtype.UUID        `json:"source_id"`
-	RunID               pgtype.UUID        `json:"run_id"`
-	AttemptID           pgtype.UUID        `json:"attempt_id"`
-	RunLeaseID          pgtype.UUID        `json:"run_lease_id"`
-	WorkerGroupID       pgtype.UUID        `json:"worker_group_id"`
-	RuntimeCheckpointID pgtype.UUID        `json:"runtime_checkpoint_id"`
-	TraceID             string             `json:"trace_id"`
-	SpanID              pgtype.Text        `json:"span_id"`
-	SnapshotVersion     int64              `json:"snapshot_version"`
-	Meter               string             `json:"meter"`
-	Quantity            pgtype.Numeric     `json:"quantity"`
-	Unit                string             `json:"unit"`
-	MeasuredTo          pgtype.Timestamptz `json:"measured_to"`
-	MeasuredAt          pgtype.Timestamptz `json:"measured_at"`
-	Details             []byte             `json:"details"`
-	IdempotencyKey      string             `json:"idempotency_key"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+type UsageLedgerEntry struct {
+	ID             int64              `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	SourceType     string             `json:"source_type"`
+	SourceID       pgtype.UUID        `json:"source_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	AttemptNumber  pgtype.Int4        `json:"attempt_number"`
+	TraceID        pgtype.Text        `json:"trace_id"`
+	SpanID         pgtype.Text        `json:"span_id"`
+	Meter          string             `json:"meter"`
+	Quantity       pgtype.Numeric     `json:"quantity"`
+	Unit           string             `json:"unit"`
+	MeasuredTo     pgtype.Timestamptz `json:"measured_to"`
+	OccurredAt     pgtype.Timestamptz `json:"occurred_at"`
+	Details        []byte             `json:"details"`
+	IdempotencyKey string             `json:"idempotency_key"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 type User struct {

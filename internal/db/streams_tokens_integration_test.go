@@ -1786,7 +1786,7 @@ func TestExpiredRunningLeaseCancelsParkingRunWait(t *testing.T) {
 	var activeTimeUsageMs int64
 	if err := pool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(quantity), 0)
-		  FROM usage_facts
+		  FROM usage_ledger_entries
 		 WHERE org_id = $1
 		   AND run_id = $2
 		   AND meter = 'active_time'
