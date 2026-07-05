@@ -40,6 +40,7 @@ WITH scope AS MATERIALIZED (
 inserted_wait AS (
     INSERT INTO run_waits (
         id,
+        public_id,
         org_id,
         cell_id,
         project_id,
@@ -59,6 +60,7 @@ inserted_wait AS (
         owner_run_state_version
     )
     SELECT sqlc.arg(id),
+           sqlc.arg(public_id),
            scope.org_id,
            scope.cell_id,
            scope.project_id,

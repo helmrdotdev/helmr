@@ -33,7 +33,7 @@ UPDATE workspaces
           AND workspace_mounts.workspace_id = workspaces.id
           AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
    )
-RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+RETURNING id, public_id, org_id, cell_id, route_generation, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
 `
 
 type ArchiveWorkspaceParams struct {
@@ -55,6 +55,7 @@ func (q *Queries) ArchiveWorkspace(ctx context.Context, arg ArchiveWorkspacePara
 	var i Workspace
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.RouteGeneration,
@@ -217,6 +218,7 @@ const createWorkspaceFromSandbox = `-- name: CreateWorkspaceFromSandbox :one
 WITH created_workspace AS (
     INSERT INTO workspaces (
         id,
+        public_id,
         org_id,
         cell_id,
         route_generation,
@@ -232,6 +234,7 @@ WITH created_workspace AS (
         retention_policy
     )
     SELECT $1,
+           $2,
            deployment_sandboxes.org_id,
            deployment_sandboxes.cell_id,
            deployments.route_generation,
@@ -240,11 +243,11 @@ WITH created_workspace AS (
            deployment_sandboxes.id,
            deployment_sandboxes.sandbox_id,
            deployment_sandboxes.fingerprint,
-           $2,
-           coalesce($3::text, ''),
-           coalesce($4::jsonb, '{}'::jsonb),
-           coalesce($5::text[], '{}'::text[]),
-           coalesce($6::jsonb, '{}'::jsonb)
+           $3,
+           coalesce($4::text, ''),
+           coalesce($5::jsonb, '{}'::jsonb),
+           coalesce($6::text[], '{}'::text[]),
+           coalesce($7::jsonb, '{}'::jsonb)
       FROM deployment_sandboxes
       JOIN deployments
         ON deployments.org_id = deployment_sandboxes.org_id
@@ -252,7 +255,7 @@ WITH created_workspace AS (
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
-       AND deployments.route_generation = $7
+       AND deployments.route_generation = $8
        AND deployments.status = 'deployed'
       JOIN environment_cells
         ON environment_cells.org_id = deployment_sandboxes.org_id
@@ -270,17 +273,18 @@ WITH created_workspace AS (
       JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
                       AND cell_health.state IN ('healthy', 'degraded')
                       AND cell_health.routing_fresh_until > now()
-     WHERE deployment_sandboxes.org_id = $8
-       AND deployment_sandboxes.cell_id = $9
-       AND deployments.route_generation = $7
-       AND deployment_sandboxes.project_id = $10
-       AND deployment_sandboxes.environment_id = $11
-       AND deployment_sandboxes.id = $12
-    RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+     WHERE deployment_sandboxes.org_id = $9
+       AND deployment_sandboxes.cell_id = $10
+       AND deployments.route_generation = $8
+       AND deployment_sandboxes.project_id = $11
+       AND deployment_sandboxes.environment_id = $12
+       AND deployment_sandboxes.id = $13
+    RETURNING id, public_id, org_id, cell_id, route_generation, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
 ),
 created_version AS (
     INSERT INTO workspace_versions (
         id,
+        public_id,
         org_id,
         cell_id,
         project_id,
@@ -297,7 +301,8 @@ created_version AS (
         promoted_at,
         created_by_subject_type
     )
-    SELECT $2,
+    SELECT $3,
+           $14,
            created_workspace.org_id,
            created_workspace.cell_id,
            created_workspace.project_id,
@@ -305,18 +310,18 @@ created_version AS (
            created_workspace.id,
            'system'::workspace_version_kind,
            'ready'::workspace_version_state,
-           $13,
-           $14,
            $15,
            $16,
            $17,
+           $18,
+           $19,
            'initial empty workspace',
            now(),
            'system'
       FROM created_workspace
-    RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
+    RETURNING id, public_id, org_id, cell_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
 )
-SELECT created_workspace.id, created_workspace.org_id, created_workspace.cell_id, created_workspace.route_generation, created_workspace.project_id, created_workspace.environment_id, created_workspace.deployment_sandbox_id, created_workspace.sandbox_id, created_workspace.sandbox_fingerprint, created_workspace.external_id, created_workspace.current_version_id, created_workspace.current_version_required_state, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.last_workspace_mount_id, created_workspace.metadata, created_workspace.tags, created_workspace.retention_policy, created_workspace.auto_stop_at, created_workspace.auto_archive_at, created_workspace.auto_delete_at, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.archived_at, created_workspace.deleted_at
+SELECT created_workspace.id, created_workspace.public_id, created_workspace.org_id, created_workspace.cell_id, created_workspace.route_generation, created_workspace.project_id, created_workspace.environment_id, created_workspace.deployment_sandbox_id, created_workspace.sandbox_id, created_workspace.sandbox_fingerprint, created_workspace.external_id, created_workspace.current_version_id, created_workspace.current_version_required_state, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.last_workspace_mount_id, created_workspace.metadata, created_workspace.tags, created_workspace.retention_policy, created_workspace.auto_stop_at, created_workspace.auto_archive_at, created_workspace.auto_delete_at, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.archived_at, created_workspace.deleted_at
   FROM created_workspace
   JOIN created_version
     ON created_version.org_id = created_workspace.org_id
@@ -327,6 +332,7 @@ SELECT created_workspace.id, created_workspace.org_id, created_workspace.cell_id
 
 type CreateWorkspaceFromSandboxParams struct {
 	ID                        pgtype.UUID `json:"id"`
+	PublicID                  string      `json:"public_id"`
 	InitialVersionID          pgtype.UUID `json:"initial_version_id"`
 	ExternalID                string      `json:"external_id"`
 	Metadata                  []byte      `json:"metadata"`
@@ -338,6 +344,7 @@ type CreateWorkspaceFromSandboxParams struct {
 	ProjectID                 pgtype.UUID `json:"project_id"`
 	EnvironmentID             pgtype.UUID `json:"environment_id"`
 	DeploymentSandboxID       pgtype.UUID `json:"deployment_sandbox_id"`
+	InitialVersionPublicID    string      `json:"initial_version_public_id"`
 	InitialArtifactID         pgtype.UUID `json:"initial_artifact_id"`
 	InitialArtifactEncoding   string      `json:"initial_artifact_encoding"`
 	InitialArtifactEntryCount int32       `json:"initial_artifact_entry_count"`
@@ -347,6 +354,7 @@ type CreateWorkspaceFromSandboxParams struct {
 
 type CreateWorkspaceFromSandboxRow struct {
 	ID                          pgtype.UUID               `json:"id"`
+	PublicID                    string                    `json:"public_id"`
 	OrgID                       pgtype.UUID               `json:"org_id"`
 	CellID                      string                    `json:"cell_id"`
 	RouteGeneration             int64                     `json:"route_generation"`
@@ -378,6 +386,7 @@ type CreateWorkspaceFromSandboxRow struct {
 func (q *Queries) CreateWorkspaceFromSandbox(ctx context.Context, arg CreateWorkspaceFromSandboxParams) (CreateWorkspaceFromSandboxRow, error) {
 	row := q.db.QueryRow(ctx, createWorkspaceFromSandbox,
 		arg.ID,
+		arg.PublicID,
 		arg.InitialVersionID,
 		arg.ExternalID,
 		arg.Metadata,
@@ -389,6 +398,7 @@ func (q *Queries) CreateWorkspaceFromSandbox(ctx context.Context, arg CreateWork
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentSandboxID,
+		arg.InitialVersionPublicID,
 		arg.InitialArtifactID,
 		arg.InitialArtifactEncoding,
 		arg.InitialArtifactEntryCount,
@@ -398,6 +408,7 @@ func (q *Queries) CreateWorkspaceFromSandbox(ctx context.Context, arg CreateWork
 	var i CreateWorkspaceFromSandboxRow
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.RouteGeneration,
@@ -579,7 +590,7 @@ func (q *Queries) EnsureWorkspaceOperationIdempotency(ctx context.Context, arg E
 }
 
 const getWorkspace = `-- name: GetWorkspace :one
-SELECT id, org_id, cell_id, route_generation, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+SELECT id, public_id, org_id, cell_id, route_generation, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
   FROM workspaces
  WHERE org_id = $1
    AND project_id = $2
@@ -605,6 +616,7 @@ func (q *Queries) GetWorkspace(ctx context.Context, arg GetWorkspaceParams) (Wor
 	var i Workspace
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.RouteGeneration,
@@ -738,7 +750,7 @@ func (q *Queries) GetWorkspaceScopedOperationIdempotency(ctx context.Context, ar
 }
 
 const listWorkspaces = `-- name: ListWorkspaces :many
-SELECT workspaces.id, workspaces.org_id, workspaces.cell_id, workspaces.route_generation, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_workspace_mount_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
+SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.cell_id, workspaces.route_generation, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_workspace_mount_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
   FROM workspaces
 WHERE workspaces.org_id = $1
    AND workspaces.project_id = $2
@@ -796,6 +808,7 @@ func (q *Queries) ListWorkspaces(ctx context.Context, arg ListWorkspacesParams) 
 		var i Workspace
 		if err := rows.Scan(
 			&i.ID,
+			&i.PublicID,
 			&i.OrgID,
 			&i.CellID,
 			&i.RouteGeneration,
@@ -844,7 +857,7 @@ UPDATE workspaces
    AND workspaces.environment_id = $6
    AND workspaces.id = $7
    AND workspaces.deleted_at IS NULL
-RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+RETURNING id, public_id, org_id, cell_id, route_generation, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
 `
 
 type PatchWorkspaceParams struct {
@@ -870,6 +883,7 @@ func (q *Queries) PatchWorkspace(ctx context.Context, arg PatchWorkspaceParams) 
 	var i Workspace
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.RouteGeneration,
@@ -901,7 +915,7 @@ func (q *Queries) PatchWorkspace(ctx context.Context, arg PatchWorkspaceParams) 
 }
 
 const resolveDeploymentSandboxForWorkspaceCreate = `-- name: ResolveDeploymentSandboxForWorkspaceCreate :one
-SELECT deployment_sandboxes.id, deployment_sandboxes.org_id, deployment_sandboxes.cell_id, deployment_sandboxes.route_generation, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
+SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.cell_id, deployment_sandboxes.route_generation, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
   FROM deployment_sandboxes
   JOIN deployments
     ON deployments.org_id = deployment_sandboxes.org_id
@@ -967,6 +981,7 @@ func (q *Queries) ResolveDeploymentSandboxForWorkspaceCreate(ctx context.Context
 	var i DeploymentSandbox
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.RouteGeneration,
@@ -1009,7 +1024,7 @@ UPDATE workspaces
    AND workspaces.state = 'active'
    AND workspaces.archived_at IS NULL
    AND workspaces.deleted_at IS NULL
-RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
+RETURNING id, public_id, org_id, cell_id, route_generation, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
 `
 
 type SetWorkspaceDesiredStoppedParams struct {
@@ -1031,6 +1046,7 @@ func (q *Queries) SetWorkspaceDesiredStopped(ctx context.Context, arg SetWorkspa
 	var i Workspace
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.RouteGeneration,

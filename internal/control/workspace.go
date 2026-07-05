@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -366,24 +367,32 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 		if err != nil {
 			return err
 		}
-		created, err := workspaceStore.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
-			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:                     pgvalue.UUID(actor.OrgID),
-			CellID:                    placement.CellID,
-			RouteGeneration:           placement.RouteGeneration,
-			ProjectID:                 projectID,
-			EnvironmentID:             environmentID,
-			DeploymentSandboxID:       deploymentSandbox.ID,
-			ExternalID:                strings.TrimSpace(request.ExternalID),
-			Metadata:                  metadata,
-			Tags:                      tags,
-			RetentionPolicy:           []byte(`{}`),
-			InitialVersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			InitialArtifactID:         workspaceArtifact.ID,
-			InitialArtifactEncoding:   emptyArtifact.Encoding,
-			InitialArtifactEntryCount: int32(emptyArtifact.EntryCount),
-			InitialContentDigest:      workspaceArtifact.Digest,
-			InitialSizeBytes:          workspaceArtifact.SizeBytes,
+		var workspacePublicID, initialVersionPublicID string
+		created, err := createWithPublicID(ctx, []publicIDSlot{
+			{prefix: publicid.Workspace, value: &workspacePublicID},
+			{prefix: publicid.WorkspaceVersion, value: &initialVersionPublicID},
+		}, func() (db.CreateWorkspaceFromSandboxRow, error) {
+			return workspaceStore.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
+				ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				PublicID:                  workspacePublicID,
+				OrgID:                     pgvalue.UUID(actor.OrgID),
+				CellID:                    placement.CellID,
+				RouteGeneration:           placement.RouteGeneration,
+				ProjectID:                 projectID,
+				EnvironmentID:             environmentID,
+				DeploymentSandboxID:       deploymentSandbox.ID,
+				ExternalID:                strings.TrimSpace(request.ExternalID),
+				Metadata:                  metadata,
+				Tags:                      tags,
+				RetentionPolicy:           []byte(`{}`),
+				InitialVersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				InitialVersionPublicID:    initialVersionPublicID,
+				InitialArtifactID:         workspaceArtifact.ID,
+				InitialArtifactEncoding:   emptyArtifact.Encoding,
+				InitialArtifactEntryCount: int32(emptyArtifact.EntryCount),
+				InitialContentDigest:      workspaceArtifact.Digest,
+				InitialSizeBytes:          workspaceArtifact.SizeBytes,
+			})
 		})
 		if err != nil {
 			return err

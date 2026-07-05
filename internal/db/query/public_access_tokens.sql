@@ -1,6 +1,7 @@
 -- name: CreatePublicAccessToken :one
 INSERT INTO public_access_tokens (
     id,
+    public_id,
     org_id,
     cell_id,
     project_id,
@@ -13,6 +14,7 @@ INSERT INTO public_access_tokens (
 )
 VALUES (
     sqlc.arg(id),
+    sqlc.arg(public_id),
     sqlc.arg(org_id),
     sqlc.arg(cell_id),
     sqlc.arg(project_id),

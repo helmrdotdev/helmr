@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -123,18 +124,21 @@ func (s *Server) createPublicAccessToken(w http.ResponseWriter, r *http.Request)
 	var publicToken db.PublicAccessToken
 	var scope db.PublicAccessTokenScope
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		var err error
-		publicToken, err = work.q.CreatePublicAccessToken(r.Context(), db.CreatePublicAccessTokenParams{
-			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:         session.OrgID,
-			CellID:        session.CellID,
-			ProjectID:     session.ProjectID,
-			EnvironmentID: session.EnvironmentID,
-			TokenHash:     tokenHash,
-			ExpiresAt:     pgvalue.Timestamptz(expiresAt),
-			MaxUses:       maxUses,
-			Metadata:      []byte(`{}`),
-			CreatedBy:     actorJSON(actor),
+		var publicTokenPublicID string
+		publicToken, err = createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.PublicAccessToken, value: &publicTokenPublicID}}, func() (db.PublicAccessToken, error) {
+			return work.q.CreatePublicAccessToken(r.Context(), db.CreatePublicAccessTokenParams{
+				ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				PublicID:      publicTokenPublicID,
+				OrgID:         session.OrgID,
+				CellID:        session.CellID,
+				ProjectID:     session.ProjectID,
+				EnvironmentID: session.EnvironmentID,
+				TokenHash:     tokenHash,
+				ExpiresAt:     pgvalue.Timestamptz(expiresAt),
+				MaxUses:       maxUses,
+				Metadata:      []byte(`{}`),
+				CreatedBy:     actorJSON(actor),
+			})
 		})
 		if err != nil {
 			return errors.New("create public access token")

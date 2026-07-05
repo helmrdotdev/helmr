@@ -10,6 +10,7 @@ SELECT *
 -- name: CreateSession :one
 INSERT INTO sessions (
     id,
+    public_id,
     org_id,
     cell_id,
     route_generation,
@@ -26,6 +27,7 @@ INSERT INTO sessions (
     expires_at
 ) VALUES (
     sqlc.arg(id),
+    sqlc.arg(public_id),
     sqlc.arg(org_id),
     sqlc.arg(cell_id),
     sqlc.arg(route_generation),
@@ -46,6 +48,7 @@ RETURNING *;
 -- name: CreateWorkspace :one
 INSERT INTO workspaces (
     id,
+    public_id,
     org_id,
     cell_id,
     project_id,
@@ -59,6 +62,7 @@ INSERT INTO workspaces (
     retention_policy
 ) VALUES (
     sqlc.arg(id),
+    sqlc.arg(public_id),
     sqlc.arg(org_id),
     sqlc.arg(cell_id),
     sqlc.arg(project_id),
@@ -176,6 +180,7 @@ RETURNING *;
 -- name: CreateSessionRun :one
 INSERT INTO session_runs (
     id,
+    public_id,
     org_id,
     cell_id,
     project_id,
@@ -188,6 +193,7 @@ INSERT INTO session_runs (
     reason
 ) VALUES (
     sqlc.arg(id),
+    sqlc.arg(public_id),
     sqlc.arg(org_id),
     sqlc.arg(cell_id),
     sqlc.arg(project_id),

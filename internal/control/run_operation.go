@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -167,20 +168,24 @@ func createRunOperationWithStore(ctx context.Context, store db.Querier, actor au
 	if actor.Kind == auth.ActorKindAPIKey {
 		apiKeyID = pgvalue.UUID(actor.APIKeyID)
 	}
-	return store.CreateRunOperation(ctx, db.CreateRunOperationParams{
-		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:          run.OrgID,
-		CellID:         run.CellID,
-		ProjectID:      run.ProjectID,
-		EnvironmentID:  run.EnvironmentID,
-		RunID:          run.ID,
-		Kind:           kind,
-		ActorKind:      string(actor.Kind),
-		ActorID:        actorID,
-		ApiKeyID:       apiKeyID,
-		Reason:         reason,
-		Request:        requestBody,
-		IdempotencyKey: idempotencyKey,
+	var publicID string
+	return createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.RunOperation, value: &publicID}}, func() (db.RunOperation, error) {
+		return store.CreateRunOperation(ctx, db.CreateRunOperationParams{
+			ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			PublicID:       publicID,
+			OrgID:          run.OrgID,
+			CellID:         run.CellID,
+			ProjectID:      run.ProjectID,
+			EnvironmentID:  run.EnvironmentID,
+			RunID:          run.ID,
+			Kind:           kind,
+			ActorKind:      string(actor.Kind),
+			ActorID:        actorID,
+			ApiKeyID:       apiKeyID,
+			Reason:         reason,
+			Request:        requestBody,
+			IdempotencyKey: idempotencyKey,
+		})
 	})
 }
 

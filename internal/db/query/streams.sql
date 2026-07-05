@@ -1,6 +1,7 @@
 -- name: EnsureSessionStream :one
 INSERT INTO streams (
     id,
+    public_id,
     org_id,
     cell_id,
     project_id,
@@ -13,6 +14,7 @@ INSERT INTO streams (
     metadata
 )
 SELECT sqlc.arg(id),
+       sqlc.arg(public_id),
        sessions.org_id,
        sessions.cell_id,
        sessions.project_id,

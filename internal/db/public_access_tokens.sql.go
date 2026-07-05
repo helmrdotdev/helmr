@@ -22,7 +22,7 @@ UPDATE public_access_tokens
    AND state = 'active'
    AND expires_at > now()
    AND (max_uses IS NULL OR used_count < max_uses)
-RETURNING id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+RETURNING id, public_id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
 `
 
 type ConsumePublicAccessTokenParams struct {
@@ -36,6 +36,7 @@ func (q *Queries) ConsumePublicAccessToken(ctx context.Context, arg ConsumePubli
 	var i PublicAccessToken
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.ProjectID,
@@ -59,6 +60,7 @@ func (q *Queries) ConsumePublicAccessToken(ctx context.Context, arg ConsumePubli
 const createPublicAccessToken = `-- name: CreatePublicAccessToken :one
 INSERT INTO public_access_tokens (
     id,
+    public_id,
     org_id,
     cell_id,
     project_id,
@@ -77,15 +79,17 @@ VALUES (
     $5,
     $6,
     $7,
-    $8::integer,
-    COALESCE($9::jsonb, '{}'::jsonb),
-    COALESCE($10::jsonb, '{}'::jsonb)
+    $8,
+    $9::integer,
+    COALESCE($10::jsonb, '{}'::jsonb),
+    COALESCE($11::jsonb, '{}'::jsonb)
 )
-RETURNING id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+RETURNING id, public_id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
 `
 
 type CreatePublicAccessTokenParams struct {
 	ID            pgtype.UUID        `json:"id"`
+	PublicID      string             `json:"public_id"`
 	OrgID         pgtype.UUID        `json:"org_id"`
 	CellID        string             `json:"cell_id"`
 	ProjectID     pgtype.UUID        `json:"project_id"`
@@ -100,6 +104,7 @@ type CreatePublicAccessTokenParams struct {
 func (q *Queries) CreatePublicAccessToken(ctx context.Context, arg CreatePublicAccessTokenParams) (PublicAccessToken, error) {
 	row := q.db.QueryRow(ctx, createPublicAccessToken,
 		arg.ID,
+		arg.PublicID,
 		arg.OrgID,
 		arg.CellID,
 		arg.ProjectID,
@@ -113,6 +118,7 @@ func (q *Queries) CreatePublicAccessToken(ctx context.Context, arg CreatePublicA
 	var i PublicAccessToken
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.ProjectID,
@@ -258,7 +264,7 @@ func (q *Queries) CreatePublicAccessTokenScope(ctx context.Context, arg CreatePu
 }
 
 const getPublicAccessToken = `-- name: GetPublicAccessToken :one
-SELECT id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+SELECT id, public_id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
  FROM public_access_tokens
  WHERE org_id = $1
    AND cell_id = $2
@@ -276,6 +282,7 @@ func (q *Queries) GetPublicAccessToken(ctx context.Context, arg GetPublicAccessT
 	var i PublicAccessToken
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.ProjectID,
@@ -472,7 +479,7 @@ func (q *Queries) ListPublicAccessTokenScopes(ctx context.Context, arg ListPubli
 }
 
 const lockPublicAccessTokenByHash = `-- name: LockPublicAccessTokenByHash :one
-SELECT id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+SELECT id, public_id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
   FROM public_access_tokens
  WHERE token_hash = $1
  FOR UPDATE
@@ -483,6 +490,7 @@ func (q *Queries) LockPublicAccessTokenByHash(ctx context.Context, tokenHash []b
 	var i PublicAccessToken
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.ProjectID,
@@ -512,7 +520,7 @@ UPDATE public_access_tokens
    AND cell_id = $2
    AND id = $3
    AND state = 'active'
-RETURNING id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+RETURNING id, public_id, org_id, cell_id, project_id, environment_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
 `
 
 type RevokePublicAccessTokenParams struct {
@@ -526,6 +534,7 @@ func (q *Queries) RevokePublicAccessToken(ctx context.Context, arg RevokePublicA
 	var i PublicAccessToken
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.ProjectID,

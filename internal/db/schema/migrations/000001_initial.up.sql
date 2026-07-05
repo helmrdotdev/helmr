@@ -2,6 +2,7 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 CREATE TABLE organizations (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^org_[a-z2-7]{26}$'),
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     slug TEXT NOT NULL UNIQUE CHECK (btrim(slug) <> ''),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -126,6 +127,7 @@ CREATE TABLE cells (
 
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^usr_[a-z2-7]{26}$'),
     display_name TEXT NOT NULL CHECK (btrim(display_name) <> ''),
     profile_image_url TEXT CHECK (profile_image_url IS NULL OR btrim(profile_image_url) <> ''),
     primary_email TEXT,
@@ -211,6 +213,7 @@ CREATE TABLE deletion_jobs (
 
 CREATE TABLE projects (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^prj_[a-z2-7]{26}$'),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     default_region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
     slug TEXT NOT NULL CHECK (btrim(slug) <> ''),
@@ -223,6 +226,7 @@ CREATE TABLE projects (
 
 CREATE TABLE environments (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^env_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     default_region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
@@ -293,6 +297,7 @@ CREATE TABLE auth_sessions (
 
 CREATE TABLE invitations (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^inv_[a-z2-7]{26}$'),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     invitee_email TEXT NOT NULL,
     role org_member_role NOT NULL,
@@ -340,6 +345,7 @@ CREATE TABLE magic_links (
 
 CREATE TABLE api_keys (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^apk_[a-z2-7]{26}$'),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
@@ -937,6 +943,7 @@ CREATE TYPE deployment_status AS ENUM (
 
 CREATE TABLE deployments (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^dep_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
     route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
@@ -1040,6 +1047,7 @@ ALTER TABLE environments
 
 CREATE TABLE tasks (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^task_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
@@ -1061,6 +1069,7 @@ CREATE TABLE tasks (
 
 CREATE TABLE deployment_sandboxes (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^sbx_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
     route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
@@ -1163,6 +1172,7 @@ CREATE TRIGGER runtime_substrate_artifacts_set_updated_at
 
 CREATE TABLE deployment_tasks (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^dtask_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
@@ -1222,6 +1232,7 @@ CREATE TYPE task_schedule_type AS ENUM (
 
 CREATE TABLE task_schedules (
     id UUID PRIMARY KEY,
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^sch_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     schedule_type task_schedule_type NOT NULL DEFAULT 'imperative',
@@ -1275,6 +1286,7 @@ CREATE TABLE task_schedule_instances (
 
 CREATE TABLE workspaces (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^wsp_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
     route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
@@ -1318,6 +1330,7 @@ CREATE TABLE workspaces (
 
 CREATE TABLE sessions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^ses_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
     route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
@@ -1364,6 +1377,7 @@ CREATE TABLE sessions (
 
 CREATE TABLE runs (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^run_[a-z2-7]{26}$'),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     cell_id TEXT NOT NULL,
     route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
@@ -1453,6 +1467,7 @@ ALTER TABLE sessions
 
 CREATE TABLE run_operations (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^rop_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
@@ -1485,6 +1500,7 @@ CREATE UNIQUE INDEX run_operations_idempotency_idx
 
 CREATE TABLE session_runs (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^srun_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
@@ -1789,6 +1805,7 @@ ALTER TABLE workspace_leases
 
 CREATE TABLE workspace_versions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^wsv_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
@@ -2079,6 +2096,7 @@ CREATE TABLE deployment_streams (
 
 CREATE TABLE streams (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^str_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
@@ -2107,6 +2125,7 @@ CREATE TABLE streams (
 
 CREATE TABLE tokens (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^tok_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
@@ -2140,6 +2159,7 @@ CREATE TABLE tokens (
 
 CREATE TABLE public_access_tokens (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^pat_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
@@ -2207,6 +2227,7 @@ CREATE TABLE public_access_token_scopes (
 
 CREATE TABLE stream_records (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^srec_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
@@ -2937,6 +2958,7 @@ CREATE INDEX usage_ledger_entries_run_meter_idx
 
 CREATE TABLE run_waits (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^wait_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,

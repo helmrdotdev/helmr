@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -492,23 +493,27 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, cellID s
 	if err != nil {
 		return db.Deployment{}, err
 	}
-	deployment, err := store.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:                      pgvalue.UUID(orgID),
-		CellID:                     cellID,
-		RouteGeneration:            routeGeneration,
-		ProjectID:                  projectID,
-		EnvironmentID:              environmentID,
-		Version:                    version,
-		ApiVersion:                 metadata.APIVersion,
-		SdkVersion:                 metadata.SDKVersion,
-		CliVersion:                 metadata.CLIVersion,
-		BundleFormatVersion:        metadata.BundleFormatVersion,
-		WorkerProtocolVersion:      metadata.WorkerProtocolVersion,
-		WorkerGroupID:              workerGroupID,
-		ContentHash:                contentHash,
-		DeploymentSourceArtifactID: sourceArtifact.ID,
-		Status:                     db.DeploymentStatusQueued,
+	var publicID string
+	deployment, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Deployment, value: &publicID}}, func() (db.Deployment, error) {
+		return store.CreateDeployment(ctx, db.CreateDeploymentParams{
+			ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			PublicID:                   publicID,
+			OrgID:                      pgvalue.UUID(orgID),
+			CellID:                     cellID,
+			RouteGeneration:            routeGeneration,
+			ProjectID:                  projectID,
+			EnvironmentID:              environmentID,
+			Version:                    version,
+			ApiVersion:                 metadata.APIVersion,
+			SdkVersion:                 metadata.SDKVersion,
+			CliVersion:                 metadata.CLIVersion,
+			BundleFormatVersion:        metadata.BundleFormatVersion,
+			WorkerProtocolVersion:      metadata.WorkerProtocolVersion,
+			WorkerGroupID:              workerGroupID,
+			ContentHash:                contentHash,
+			DeploymentSourceArtifactID: sourceArtifact.ID,
+			Status:                     db.DeploymentStatusQueued,
+		})
 	})
 	if err != nil {
 		return db.Deployment{}, err

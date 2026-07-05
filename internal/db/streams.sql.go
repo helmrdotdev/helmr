@@ -14,6 +14,7 @@ import (
 const ensureSessionStream = `-- name: EnsureSessionStream :one
 INSERT INTO streams (
     id,
+    public_id,
     org_id,
     cell_id,
     project_id,
@@ -26,6 +27,7 @@ INSERT INTO streams (
     metadata
 )
 SELECT $1,
+       $2,
        sessions.org_id,
        sessions.cell_id,
        sessions.project_id,
@@ -35,29 +37,30 @@ SELECT $1,
        deployment_streams.name,
        deployment_streams.direction,
        deployment_streams.schema_fingerprint,
-       COALESCE($2::jsonb, '{}'::jsonb)
+       COALESCE($3::jsonb, '{}'::jsonb)
   FROM sessions
   JOIN deployment_streams
     ON deployment_streams.org_id = sessions.org_id
    AND deployment_streams.cell_id = sessions.cell_id
    AND deployment_streams.project_id = sessions.project_id
    AND deployment_streams.environment_id = sessions.environment_id
-   AND deployment_streams.id = $3
- WHERE sessions.org_id = $4
-   AND sessions.cell_id = $5
-   AND sessions.project_id = $6
-   AND sessions.environment_id = $7
-   AND sessions.id = $8
+   AND deployment_streams.id = $4
+ WHERE sessions.org_id = $5
+   AND sessions.cell_id = $6
+   AND sessions.project_id = $7
+   AND sessions.environment_id = $8
+   AND sessions.id = $9
 ON CONFLICT (org_id, cell_id, session_id, name, direction)
 DO UPDATE SET
     deployment_stream_id = streams.deployment_stream_id,
     schema_fingerprint = streams.schema_fingerprint,
     metadata = streams.metadata
-RETURNING id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
+RETURNING id, public_id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
 `
 
 type EnsureSessionStreamParams struct {
 	ID                 pgtype.UUID `json:"id"`
+	PublicID           string      `json:"public_id"`
 	Metadata           []byte      `json:"metadata"`
 	DeploymentStreamID pgtype.UUID `json:"deployment_stream_id"`
 	OrgID              pgtype.UUID `json:"org_id"`
@@ -70,6 +73,7 @@ type EnsureSessionStreamParams struct {
 func (q *Queries) EnsureSessionStream(ctx context.Context, arg EnsureSessionStreamParams) (Stream, error) {
 	row := q.db.QueryRow(ctx, ensureSessionStream,
 		arg.ID,
+		arg.PublicID,
 		arg.Metadata,
 		arg.DeploymentStreamID,
 		arg.OrgID,
@@ -81,6 +85,7 @@ func (q *Queries) EnsureSessionStream(ctx context.Context, arg EnsureSessionStre
 	var i Stream
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.ProjectID,
@@ -98,7 +103,7 @@ func (q *Queries) EnsureSessionStream(ctx context.Context, arg EnsureSessionStre
 }
 
 const getSessionStreamByName = `-- name: GetSessionStreamByName :one
-SELECT id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
+SELECT id, public_id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
  FROM streams
  WHERE org_id = $1
    AND cell_id = $2
@@ -132,6 +137,7 @@ func (q *Queries) GetSessionStreamByName(ctx context.Context, arg GetSessionStre
 	var i Stream
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.ProjectID,
@@ -149,7 +155,7 @@ func (q *Queries) GetSessionStreamByName(ctx context.Context, arg GetSessionStre
 }
 
 const getStream = `-- name: GetStream :one
-SELECT id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
+SELECT id, public_id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
  FROM streams
  WHERE org_id = $1
    AND cell_id = $2
@@ -177,6 +183,7 @@ func (q *Queries) GetStream(ctx context.Context, arg GetStreamParams) (Stream, e
 	var i Stream
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.ProjectID,
@@ -194,7 +201,7 @@ func (q *Queries) GetStream(ctx context.Context, arg GetStreamParams) (Stream, e
 }
 
 const listSessionStreams = `-- name: ListSessionStreams :many
-SELECT id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
+SELECT id, public_id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
  FROM streams
  WHERE org_id = $1
    AND cell_id = $2
@@ -229,6 +236,7 @@ func (q *Queries) ListSessionStreams(ctx context.Context, arg ListSessionStreams
 		var i Stream
 		if err := rows.Scan(
 			&i.ID,
+			&i.PublicID,
 			&i.OrgID,
 			&i.CellID,
 			&i.ProjectID,

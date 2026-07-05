@@ -188,6 +188,7 @@ verified_artifact AS (
 created_version AS (
     INSERT INTO workspace_versions (
         id,
+        public_id,
         org_id,
         cell_id,
         project_id,
@@ -207,6 +208,7 @@ created_version AS (
         promoted_at
     )
     SELECT sqlc.arg(version_id),
+           sqlc.arg(version_public_id),
            active_writer.org_id,
            active_writer.cell_id,
            active_writer.project_id,

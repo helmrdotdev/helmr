@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -257,22 +258,26 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
-	return s.db.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:     pgvalue.UUID(scheduleID),
-		OrgID:          pgvalue.UUID(actor.OrgID),
-		ProjectID:      projectID,
-		ScheduleType:   db.TaskScheduleTypeImperative,
-		TaskID:         request.Task,
-		DedupKey:       userDedupKey,
-		UserDedupKey:   userDedupKeyParam,
-		ExternalID:     pgvalue.Text(strings.TrimSpace(request.ExternalID)),
-		Cron:           cronExpression,
-		Timezone:       timezone,
-		RunOptions:     runOptionsJSON,
-		InstanceActive: active,
-		InstanceID:     pgvalue.UUID(instanceID),
-		EnvironmentID:  environmentID,
-		NextFireAt:     nextFireAt,
+	var publicID string
+	return createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Schedule, value: &publicID}}, func() (db.CreateScheduleRow, error) {
+		return s.db.CreateSchedule(ctx, db.CreateScheduleParams{
+			ScheduleID:     pgvalue.UUID(scheduleID),
+			PublicID:       publicID,
+			OrgID:          pgvalue.UUID(actor.OrgID),
+			ProjectID:      projectID,
+			ScheduleType:   db.TaskScheduleTypeImperative,
+			TaskID:         request.Task,
+			DedupKey:       userDedupKey,
+			UserDedupKey:   userDedupKeyParam,
+			ExternalID:     pgvalue.Text(strings.TrimSpace(request.ExternalID)),
+			Cron:           cronExpression,
+			Timezone:       timezone,
+			RunOptions:     runOptionsJSON,
+			InstanceActive: active,
+			InstanceID:     pgvalue.UUID(instanceID),
+			EnvironmentID:  environmentID,
+			NextFireAt:     nextFireAt,
+		})
 	})
 }
 

@@ -218,6 +218,7 @@ func TestLeaseRunLeaseCreatesRuntimeCheckpointRestoreAttempt(t *testing.T) {
 	_, sourceRunLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	runWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindTimer,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -362,6 +363,7 @@ func TestClaimRuntimeCheckpointWaitRejectsStaleRuntimeEpoch(t *testing.T) {
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	runWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindTimer,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -418,6 +420,7 @@ func TestAcknowledgeWorkerCommandMarksHotWaitResumed(t *testing.T) {
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindTimer,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -504,6 +507,7 @@ func TestClaimRuntimeCheckpointWaitReplaysExistingCreatingCheckpoint(t *testing.
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	runWaitRow, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindTimer,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -571,6 +575,7 @@ func TestAcknowledgeWorkerCommandRetiresStaleHotResumeAfterRuntimeCheckpointing(
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindTimer,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -666,6 +671,7 @@ func TestCreateResolvedLiveRuntimeResumeWaitCommandsSkipsCheckpointingRuntime(t 
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindTimer,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -719,6 +725,7 @@ func TestResolvedTimerWorkerCommandCompletesEvenWhenLegacyTimeoutMatchesFireTime
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindTimer,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -767,6 +774,7 @@ func TestCheckpointWorkerCommandSkipsDueTimerWait(t *testing.T) {
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindTimer,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -811,6 +819,7 @@ func TestCheckpointWorkerCommandCanRetryAfterAcknowledgedFailure(t *testing.T) {
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindToken,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -863,6 +872,7 @@ func TestDueCheckpointWorkerCommandCanBeCreatedFromWorkerScope(t *testing.T) {
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindToken,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -896,6 +906,7 @@ func TestClaimWorkerCommandsKeepsRetryingNotifyAttempts(t *testing.T) {
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindTimer,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -1128,6 +1139,7 @@ func TestWorkerCommandTargetShapeRejectsPrepareRunTargets(t *testing.T) {
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindTimer,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -1277,6 +1289,7 @@ func TestMarkWorkerCommandDeliveryFailedRequiresCommandOwnerScope(t *testing.T) 
 func seedWorkerCommandForScopeTest(t *testing.T, ctx context.Context, queries *db.Queries, ids integrationIDs, runLeaseID uuid.UUID, workerID uuid.UUID) db.WorkerCommand {
 	t.Helper()
 	runWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindTimer,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -1322,6 +1335,7 @@ func TestWorkerCommandCreationSkipsExistingCommandsBeforeLimit(t *testing.T) {
 	createLiveWait := func() db.RunWait {
 		t.Helper()
 		runWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+			PublicID:         testWaitPublicID(t),
 			ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			Kind:             db.RunWaitKindTimer,
 			OrgID:            pgvalue.UUID(ids.orgID),
@@ -1442,10 +1456,10 @@ func TestFailStaleResolvedRunWaitsTerminalizesWorkspaceVersionMismatch(t *testin
 	nextVersionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		SELECT $1, $2, $3, $4, $5, $6, 'system', 'ready',
+		SELECT $1, $8, $2, $3, $4, $5, $6, 'system', 'ready',
 		       artifacts.id, 'tar', 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
@@ -1453,7 +1467,7 @@ func TestFailStaleResolvedRunWaitsTerminalizesWorkspaceVersionMismatch(t *testin
 		   AND artifacts.project_id = $4
 		   AND artifacts.environment_id = $5
 		   AND artifacts.id = $7
-	`, nextVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID); err != nil {
+	`, nextVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID, testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1805,6 +1819,7 @@ func TestExpiredRunningLeaseCancelsCheckpointingRunWait(t *testing.T) {
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindTimer,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -2441,6 +2456,7 @@ func TestDirtyRunWaitCapturePromotesSystemVersionBeforeCheckpointReady(t *testin
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	hotWait, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             db.RunWaitKindTimer,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -2492,6 +2508,7 @@ func TestDirtyRunWaitCapturePromotesSystemVersionBeforeCheckpointReady(t *testin
 		t.Fatal(err)
 	}
 	version, err := queries.PromoteWorkspaceCapture(ctx, db.PromoteWorkspaceCaptureParams{
+		VersionPublicID:    testWorkspaceVersionPublicID(t),
 		OrgID:              pgvalue.UUID(ids.orgID),
 		WriteLeaseID:       pgvalue.UUID(workspaceLeaseID),
 		FencingToken:       fencingToken,
@@ -2615,6 +2632,7 @@ func TestStreamRecordAppendUsesStreamSequenceAndIdempotency(t *testing.T) {
 
 	firstData := []byte(`{"approved":true}`)
 	first, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		CellID:                 dbtest.DefaultCellID,
@@ -2637,6 +2655,7 @@ func TestStreamRecordAppendUsesStreamSequenceAndIdempotency(t *testing.T) {
 		t.Fatalf("first append = seq %d cached %v mismatch %v", first.Sequence, first.IsCached, first.IdempotencyFingerprintMismatch)
 	}
 	replay, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		CellID:                 dbtest.DefaultCellID,
@@ -2658,6 +2677,7 @@ func TestStreamRecordAppendUsesStreamSequenceAndIdempotency(t *testing.T) {
 		t.Fatalf("replay = id %v cached %v mismatch %v, want cached original", replay.ID, replay.IsCached, replay.IdempotencyFingerprintMismatch)
 	}
 	conflict, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		CellID:                 dbtest.DefaultCellID,
@@ -2719,6 +2739,7 @@ func TestStreamRecordAppendUsesStreamSequenceAndIdempotency(t *testing.T) {
 		t.Fatalf("thread-2 records = %+v, want none", records)
 	}
 	_, err = queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		CellID:                 dbtest.DefaultCellID,
@@ -2755,6 +2776,7 @@ func TestConcurrentStreamRecordAppendAllocatesContiguousSequences(t *testing.T) 
 			defer wg.Done()
 			data := []byte(`{"index":` + string(rune('0'+i%10)) + `}`)
 			row, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+				PublicID:               testStreamRecordPublicID(t),
 				ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:                  pgvalue.UUID(ids.orgID),
 				CellID:                 dbtest.DefaultCellID,
@@ -2815,6 +2837,7 @@ func TestResolveStreamWaitsRequiresWaitingState(t *testing.T) {
 	queries := db.New(pool)
 	stream := seedSessionStream(t, ctx, queries, ids, db.StreamDirectionInput, "approval")
 	record, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		CellID:                 dbtest.DefaultCellID,
@@ -2907,12 +2930,12 @@ func TestResolveStreamWaitsBroadcastsRecordToMatchingWaiters(t *testing.T) {
 	secondRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, public_id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
+		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, secondRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
+	`, secondRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID, testRunPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	secondIDs := ids
@@ -2942,6 +2965,7 @@ func TestResolveStreamWaitsBroadcastsRecordToMatchingWaiters(t *testing.T) {
 		}
 	}
 	record, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		CellID:                 dbtest.DefaultCellID,
@@ -2994,12 +3018,12 @@ func TestResolveStreamWaitForRunWaitDoesNotFanOutToOtherWaiters(t *testing.T) {
 	secondRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, public_id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
+		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, secondRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
+	`, secondRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID, testRunPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	secondIDs := ids
@@ -3029,6 +3053,7 @@ func TestResolveStreamWaitForRunWaitDoesNotFanOutToOtherWaiters(t *testing.T) {
 		}
 	}
 	record, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		CellID:                 dbtest.DefaultCellID,
@@ -3094,6 +3119,7 @@ func TestResolveStreamWaitsDoesNotRematchResolvedWait(t *testing.T) {
 	queries := db.New(pool)
 	stream := seedSessionStream(t, ctx, queries, ids, db.StreamDirectionInput, "approval")
 	firstRecord, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		CellID:                 dbtest.DefaultCellID,
@@ -3138,6 +3164,7 @@ func TestResolveStreamWaitsDoesNotRematchResolvedWait(t *testing.T) {
 		t.Fatalf("first resolve = %+v, want record %v", resolved, firstRecord.ID)
 	}
 	if _, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		CellID:                 dbtest.DefaultCellID,
@@ -3188,6 +3215,7 @@ func TestResolveStreamWaitsMatchesCorrelationLane(t *testing.T) {
 	queries := db.New(pool)
 	stream := seedSessionStream(t, ctx, queries, ids, db.StreamDirectionInput, "replies")
 	first, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		CellID:                 dbtest.DefaultCellID,
@@ -3207,6 +3235,7 @@ func TestResolveStreamWaitsMatchesCorrelationLane(t *testing.T) {
 		t.Fatal(err)
 	}
 	second, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		CellID:                 dbtest.DefaultCellID,
@@ -3306,6 +3335,7 @@ func TestResolveStreamWaitsDoesNotBlockIndependentCorrelationLane(t *testing.T) 
 	markRunWaitWaiting(t, ctx, pool, ids, threadAWait)
 	markRunWaitWaiting(t, ctx, pool, ids, threadBWait)
 	record, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               testStreamRecordPublicID(t),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		CellID:                 dbtest.DefaultCellID,
@@ -3398,6 +3428,7 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 	createFingerprint := "create-" + canonicalFingerprint(t, []byte(`{"prompt":"approve"}`))
 	tokenID := uuid.Must(uuid.NewV7())
 	token, err := queries.CreateToken(ctx, db.CreateTokenParams{
+		PublicID:                  testTokenPublicID(t),
 		ID:                        pgvalue.UUID(tokenID),
 		OrgID:                     pgvalue.UUID(ids.orgID),
 		CellID:                    dbtest.DefaultCellID,
@@ -3415,6 +3446,7 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 		t.Fatal(err)
 	}
 	replay, err := queries.CreateToken(ctx, db.CreateTokenParams{
+		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
 		CellID:                   dbtest.DefaultCellID,
@@ -3432,6 +3464,7 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 		t.Fatalf("token replay = id %v cached %v mismatch %v", replay.ID, replay.IsCached, replay.IdempotencyFingerprintMismatch)
 	}
 	conflict, err := queries.CreateToken(ctx, db.CreateTokenParams{
+		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
 		CellID:                   dbtest.DefaultCellID,
@@ -3519,6 +3552,7 @@ func TestTokenQueriesRejectWrongCell(t *testing.T) {
 	queries := db.New(pool)
 	wrongCellID := "wrong-cell"
 	token, err := queries.CreateToken(ctx, db.CreateTokenParams{
+		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
 		CellID:                   dbtest.DefaultCellID,
@@ -3587,6 +3621,7 @@ func TestTokenQueriesRejectWrongCell(t *testing.T) {
 		t.Fatalf("CancelToken wrong cell err = %v, want no rows", err)
 	}
 	publicToken, err := queries.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
+		PublicID:      testPublicAccessTokenPublicID(t),
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
 		CellID:        dbtest.DefaultCellID,
@@ -3661,6 +3696,7 @@ func TestConcurrentTokenCompletionIsFirstResolveWins(t *testing.T) {
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 	token, err := queries.CreateToken(ctx, db.CreateTokenParams{
+		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
 		CellID:                   dbtest.DefaultCellID,
@@ -3726,6 +3762,7 @@ func TestTokenAndTimerWaitExpiryBoundaries(t *testing.T) {
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 	token, err := queries.CreateToken(ctx, db.CreateTokenParams{
+		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
 		CellID:                   dbtest.DefaultCellID,
@@ -3808,12 +3845,12 @@ func TestResolveDueTimerWaitForRunWaitDoesNotFanOutToOtherTimers(t *testing.T) {
 	secondRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, public_id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
+		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, secondRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
+	`, secondRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID, testRunPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	secondIDs := ids
@@ -3878,6 +3915,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	inputStream := seedSessionStream(t, ctx, queries, ids, db.StreamDirectionInput, "approval")
 	outputStream := seedSessionStream(t, ctx, queries, ids, db.StreamDirectionOutput, "updates")
 	token, err := queries.CreateToken(ctx, db.CreateTokenParams{
+		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
 		CellID:                   dbtest.DefaultCellID,
@@ -3891,6 +3929,7 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 		t.Fatal(err)
 	}
 	publicToken, err := queries.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
+		PublicID:      testPublicAccessTokenPublicID(t),
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
 		CellID:        dbtest.DefaultCellID,
@@ -4004,6 +4043,7 @@ func seedSessionStream(t *testing.T, ctx context.Context, queries *db.Queries, i
 		t.Fatal(err)
 	}
 	stream, err := queries.EnsureSessionStream(ctx, db.EnsureSessionStreamParams{
+		PublicID:           testStreamPublicID(t),
 		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:              pgvalue.UUID(ids.orgID),
 		CellID:             dbtest.DefaultCellID,
@@ -4057,13 +4097,13 @@ func seedRunWait(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids inte
 			   AND runs.environment_id = $4
 			   AND runs.id = $5
 		)
-		INSERT INTO run_waits (
-			id, org_id, cell_id, project_id, environment_id, run_id, kind, state,
-			live_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch,
-			owner_run_id, owner_run_lease_id, owner_worker_instance_id,
-			owner_run_state_version
-		)
-		SELECT $1, org_id, cell_id, project_id, environment_id, run_id, $6::run_wait_kind,
+			INSERT INTO run_waits (
+				id, public_id, org_id, cell_id, project_id, environment_id, run_id, kind, state,
+				live_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch,
+				owner_run_id, owner_run_lease_id, owner_worker_instance_id,
+				owner_run_state_version
+			)
+			SELECT $1, $7, org_id, cell_id, project_id, environment_id, run_id, $6::run_wait_kind,
 		       CASE WHEN runtime_instance_id IS NULL THEN 'cancelled'::run_wait_state ELSE 'live_waiting'::run_wait_state END,
 		       CASE WHEN runtime_instance_id IS NULL THEN NULL ELSE now() END,
 		       runtime_instance_id,
@@ -4073,7 +4113,7 @@ func seedRunWait(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids inte
 		       worker_instance_id,
 		       CASE WHEN runtime_instance_id IS NULL THEN NULL ELSE state_version END
 		  FROM run_scope
-	`, runWaitID, ids.orgID, ids.projectID, ids.environmentID, ids.runID, kind); err != nil {
+	`, runWaitID, ids.orgID, ids.projectID, ids.environmentID, ids.runID, kind, testWaitPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	queries := db.New(pool)
@@ -4092,6 +4132,7 @@ func seedRunWait(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids inte
 func seedCheckpointingRunWait(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, ids integrationIDs, runLeaseID uuid.UUID, workerID uuid.UUID, kind db.RunWaitKind) (db.RunWait, uuid.UUID) {
 	t.Helper()
 	row, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		PublicID:         testWaitPublicID(t),
 		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Kind:             kind,
 		OrgID:            pgvalue.UUID(ids.orgID),
@@ -4573,10 +4614,10 @@ func advanceWorkspaceCurrentVersion(t *testing.T, ctx context.Context, pool *pgx
 	nextVersionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		SELECT $1, $2, $3, $4, $5, $6, 'system', 'ready',
+		SELECT $1, $8, $2, $3, $4, $5, $6, 'system', 'ready',
 		       artifacts.id, 'tar', 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
@@ -4584,7 +4625,7 @@ func advanceWorkspaceCurrentVersion(t *testing.T, ctx context.Context, pool *pgx
 		   AND artifacts.project_id = $4
 		   AND artifacts.environment_id = $5
 		   AND artifacts.id = $7
-	`, nextVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID); err != nil {
+	`, nextVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID, testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

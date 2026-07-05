@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -50,11 +51,14 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 				return conflict(errors.New("organization already exists"))
 			}
 		}
-		var err error
-		org, err = work.q.CreateOrganization(r.Context(), db.CreateOrganizationParams{
-			ID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			Name: name,
-			Slug: slug,
+		var publicID string
+		org, err = createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.Organization, value: &publicID}}, func() (db.Organization, error) {
+			return work.q.CreateOrganization(r.Context(), db.CreateOrganizationParams{
+				ID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				PublicID: publicID,
+				Name:     name,
+				Slug:     slug,
+			})
 		})
 		if err != nil {
 			if isUniqueViolation(err) {

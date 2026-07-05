@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -263,29 +264,33 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("encode terminal run event"))
 		return
 	}
-	run, err := s.db.ReleaseRunLease(r.Context(), db.ReleaseRunLeaseParams{
-		OrgID:                       pgvalue.UUID(leaseIDs.orgID),
-		RunID:                       pgvalue.UUID(leaseIDs.runID),
-		RunLeaseID:                  pgvalue.UUID(leaseIDs.runLeaseID),
-		WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
-		DispatchMessageID:           leaseIDs.queueMessageID,
-		DispatchLeaseID:             leaseIDs.queueLeaseID,
-		RunStatus:                   status,
-		WorkspaceLeaseID:            workspaceFields.leaseID,
-		WorkspaceFencingToken:       workspaceFields.fencingToken,
-		WorkspaceArtifactDigest:     workspaceFields.artifactDigest,
-		WorkspaceArtifactSizeBytes:  workspaceFields.artifactSizeBytes,
-		WorkspaceArtifactMediaType:  workspaceFields.artifactMediaType,
-		WorkspaceArtifactEncoding:   workspaceFields.artifactEncoding,
-		WorkspaceArtifactEntryCount: workspaceFields.artifactEntryCount,
-		WorkspaceMountPath:          workspaceFields.mountPath,
-		WorkspaceBaseVersionID:      workspaceFields.baseVersionID,
-		AttemptStatus:               db.RunAttemptStatus(status),
-		ExitCode:                    exitCode,
-		Output:                      output,
-		ErrorMessage:                errorMessage,
-		TerminalEventKind:           terminalEventKind,
-		TerminalEventPayload:        terminalEventPayload,
+	var workspaceVersionPublicID string
+	run, err := createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.WorkspaceVersion, value: &workspaceVersionPublicID}}, func() (db.ReleaseRunLeaseRow, error) {
+		return s.db.ReleaseRunLease(r.Context(), db.ReleaseRunLeaseParams{
+			OrgID:                       pgvalue.UUID(leaseIDs.orgID),
+			RunID:                       pgvalue.UUID(leaseIDs.runID),
+			RunLeaseID:                  pgvalue.UUID(leaseIDs.runLeaseID),
+			WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
+			DispatchMessageID:           leaseIDs.queueMessageID,
+			DispatchLeaseID:             leaseIDs.queueLeaseID,
+			RunStatus:                   status,
+			WorkspaceLeaseID:            workspaceFields.leaseID,
+			WorkspaceFencingToken:       workspaceFields.fencingToken,
+			WorkspaceArtifactDigest:     workspaceFields.artifactDigest,
+			WorkspaceArtifactSizeBytes:  workspaceFields.artifactSizeBytes,
+			WorkspaceArtifactMediaType:  workspaceFields.artifactMediaType,
+			WorkspaceArtifactEncoding:   workspaceFields.artifactEncoding,
+			WorkspaceArtifactEntryCount: workspaceFields.artifactEntryCount,
+			WorkspaceMountPath:          workspaceFields.mountPath,
+			WorkspaceBaseVersionID:      workspaceFields.baseVersionID,
+			AttemptStatus:               db.RunAttemptStatus(status),
+			ExitCode:                    exitCode,
+			Output:                      output,
+			ErrorMessage:                errorMessage,
+			TerminalEventKind:           terminalEventKind,
+			TerminalEventPayload:        terminalEventPayload,
+			WorkspaceVersionPublicID:    workspaceVersionPublicID,
+		})
 	})
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("worker run lease is stale")))

@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -77,19 +78,24 @@ func (s *Server) failLeasedRunPayload(ctx context.Context, worker workerActor, r
 	if err != nil {
 		return err
 	}
+	workspaceVersionPublicID, err := newPublicID(publicid.WorkspaceVersion)
+	if err != nil {
+		return err
+	}
 	_, err = s.db.ReleaseRunLease(ctx, db.ReleaseRunLeaseParams{
-		OrgID:                row.OrgID,
-		RunID:                row.ID,
-		RunLeaseID:           row.RunLeaseID,
-		WorkerInstanceID:     row.RunLeaseWorkerInstanceID,
-		DispatchMessageID:    row.RunLeaseDispatchMessageID,
-		DispatchLeaseID:      row.RunLeaseDispatchLeaseID,
-		RunStatus:            db.RunStatusFailed,
-		AttemptStatus:        db.RunAttemptStatusFailed,
-		ExitCode:             pgtype.Int4{},
-		ErrorMessage:         pgtype.Text{String: failure.message, Valid: true},
-		TerminalEventKind:    kind,
-		TerminalEventPayload: payload,
+		OrgID:                    row.OrgID,
+		RunID:                    row.ID,
+		RunLeaseID:               row.RunLeaseID,
+		WorkerInstanceID:         row.RunLeaseWorkerInstanceID,
+		DispatchMessageID:        row.RunLeaseDispatchMessageID,
+		DispatchLeaseID:          row.RunLeaseDispatchLeaseID,
+		RunStatus:                db.RunStatusFailed,
+		AttemptStatus:            db.RunAttemptStatusFailed,
+		ExitCode:                 pgtype.Int4{},
+		ErrorMessage:             pgtype.Text{String: failure.message, Valid: true},
+		TerminalEventKind:        kind,
+		TerminalEventPayload:     payload,
+		WorkspaceVersionPublicID: workspaceVersionPublicID,
 	})
 	if err != nil {
 		s.requeueWorkerQueueItem(ctx, worker, row.ID, lease, dispatch.NackReasonRetry, err.Error())

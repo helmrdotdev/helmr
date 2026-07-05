@@ -2877,6 +2877,7 @@ func (ns NullWorkspaceVersionState) Value() (driver.Value, error) {
 
 type APIKey struct {
 	ID              pgtype.UUID        `json:"id"`
+	PublicID        string             `json:"public_id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
 	ProjectID       pgtype.UUID        `json:"project_id"`
 	EnvironmentID   pgtype.UUID        `json:"environment_id"`
@@ -3020,6 +3021,7 @@ type DeletionJob struct {
 
 type Deployment struct {
 	ID                           pgtype.UUID        `json:"id"`
+	PublicID                     string             `json:"public_id"`
 	OrgID                        pgtype.UUID        `json:"org_id"`
 	CellID                       string             `json:"cell_id"`
 	RouteGeneration              int64              `json:"route_generation"`
@@ -3078,6 +3080,7 @@ type DeploymentQueue struct {
 
 type DeploymentSandbox struct {
 	ID                  pgtype.UUID        `json:"id"`
+	PublicID            string             `json:"public_id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
 	CellID              string             `json:"cell_id"`
 	RouteGeneration     int64              `json:"route_generation"`
@@ -3123,6 +3126,7 @@ type DeploymentStream struct {
 
 type DeploymentTask struct {
 	ID                      pgtype.UUID        `json:"id"`
+	PublicID                string             `json:"public_id"`
 	OrgID                   pgtype.UUID        `json:"org_id"`
 	CellID                  string             `json:"cell_id"`
 	ProjectID               pgtype.UUID        `json:"project_id"`
@@ -3179,6 +3183,7 @@ type DeviceCode struct {
 
 type Environment struct {
 	ID                  pgtype.UUID        `json:"id"`
+	PublicID            string             `json:"public_id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	DefaultRegionID     string             `json:"default_region_id"`
@@ -3256,6 +3261,7 @@ type EventWatermark struct {
 
 type Invitation struct {
 	ID               pgtype.UUID        `json:"id"`
+	PublicID         string             `json:"public_id"`
 	OrgID            pgtype.UUID        `json:"org_id"`
 	InviteeEmail     string             `json:"invitee_email"`
 	Role             OrgMemberRole      `json:"role"`
@@ -3307,6 +3313,7 @@ type OrgMember struct {
 
 type Organization struct {
 	ID        pgtype.UUID        `json:"id"`
+	PublicID  string             `json:"public_id"`
 	Name      string             `json:"name"`
 	Slug      string             `json:"slug"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
@@ -3315,6 +3322,7 @@ type Organization struct {
 
 type Project struct {
 	ID              pgtype.UUID        `json:"id"`
+	PublicID        string             `json:"public_id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
 	DefaultRegionID string             `json:"default_region_id"`
 	Slug            string             `json:"slug"`
@@ -3326,6 +3334,7 @@ type Project struct {
 
 type PublicAccessToken struct {
 	ID            pgtype.UUID            `json:"id"`
+	PublicID      string                 `json:"public_id"`
 	OrgID         pgtype.UUID            `json:"org_id"`
 	CellID        string                 `json:"cell_id"`
 	ProjectID     pgtype.UUID            `json:"project_id"`
@@ -3373,6 +3382,7 @@ type Region struct {
 
 type Run struct {
 	ID                        pgtype.UUID            `json:"id"`
+	PublicID                  string                 `json:"public_id"`
 	OrgID                     pgtype.UUID            `json:"org_id"`
 	CellID                    string                 `json:"cell_id"`
 	RouteGeneration           int64                  `json:"route_generation"`
@@ -3512,6 +3522,7 @@ type RunLogWatermark struct {
 
 type RunOperation struct {
 	ID             pgtype.UUID        `json:"id"`
+	PublicID       string             `json:"public_id"`
 	OrgID          pgtype.UUID        `json:"org_id"`
 	CellID         string             `json:"cell_id"`
 	ProjectID      pgtype.UUID        `json:"project_id"`
@@ -3629,6 +3640,7 @@ type RunSnapshot struct {
 
 type RunWait struct {
 	ID                         pgtype.UUID        `json:"id"`
+	PublicID                   string             `json:"public_id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
 	CellID                     string             `json:"cell_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
@@ -3860,6 +3872,7 @@ type Secret struct {
 
 type Session struct {
 	ID                  pgtype.UUID        `json:"id"`
+	PublicID            string             `json:"public_id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
 	CellID              string             `json:"cell_id"`
 	RouteGeneration     int64              `json:"route_generation"`
@@ -3889,6 +3902,7 @@ type Session struct {
 
 type SessionRun struct {
 	ID            pgtype.UUID        `json:"id"`
+	PublicID      string             `json:"public_id"`
 	OrgID         pgtype.UUID        `json:"org_id"`
 	CellID        string             `json:"cell_id"`
 	ProjectID     pgtype.UUID        `json:"project_id"`
@@ -3944,6 +3958,7 @@ type SessionStartIdempotency struct {
 
 type Stream struct {
 	ID                 pgtype.UUID        `json:"id"`
+	PublicID           string             `json:"public_id"`
 	OrgID              pgtype.UUID        `json:"org_id"`
 	CellID             string             `json:"cell_id"`
 	ProjectID          pgtype.UUID        `json:"project_id"`
@@ -3960,6 +3975,7 @@ type Stream struct {
 
 type StreamRecord struct {
 	ID                     pgtype.UUID            `json:"id"`
+	PublicID               string                 `json:"public_id"`
 	OrgID                  pgtype.UUID            `json:"org_id"`
 	CellID                 string                 `json:"cell_id"`
 	ProjectID              pgtype.UUID            `json:"project_id"`
@@ -3996,6 +4012,7 @@ type StreamWait struct {
 
 type Task struct {
 	ID            pgtype.UUID        `json:"id"`
+	PublicID      string             `json:"public_id"`
 	OrgID         pgtype.UUID        `json:"org_id"`
 	CellID        string             `json:"cell_id"`
 	ProjectID     pgtype.UUID        `json:"project_id"`
@@ -4009,6 +4026,7 @@ type Task struct {
 
 type TaskSchedule struct {
 	ID           pgtype.UUID        `json:"id"`
+	PublicID     string             `json:"public_id"`
 	OrgID        pgtype.UUID        `json:"org_id"`
 	ProjectID    pgtype.UUID        `json:"project_id"`
 	ScheduleType TaskScheduleType   `json:"schedule_type"`
@@ -4110,6 +4128,7 @@ type TimerWait struct {
 
 type Token struct {
 	ID                        pgtype.UUID        `json:"id"`
+	PublicID                  string             `json:"public_id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
 	CellID                    string             `json:"cell_id"`
 	ProjectID                 pgtype.UUID        `json:"project_id"`
@@ -4169,6 +4188,7 @@ type UsageLedgerEntry struct {
 
 type User struct {
 	ID              pgtype.UUID        `json:"id"`
+	PublicID        string             `json:"public_id"`
 	DisplayName     string             `json:"display_name"`
 	ProfileImageUrl pgtype.Text        `json:"profile_image_url"`
 	PrimaryEmail    pgtype.Text        `json:"primary_email"`
@@ -4283,6 +4303,7 @@ type WorkerInstanceCredential struct {
 
 type Workspace struct {
 	ID                          pgtype.UUID               `json:"id"`
+	PublicID                    string                    `json:"public_id"`
 	OrgID                       pgtype.UUID               `json:"org_id"`
 	CellID                      string                    `json:"cell_id"`
 	RouteGeneration             int64                     `json:"route_generation"`
@@ -4591,6 +4612,7 @@ type WorkspaceStreamWakeup struct {
 
 type WorkspaceVersion struct {
 	ID                     pgtype.UUID           `json:"id"`
+	PublicID               string                `json:"public_id"`
 	OrgID                  pgtype.UUID           `json:"org_id"`
 	CellID                 string                `json:"cell_id"`
 	ProjectID              pgtype.UUID           `json:"project_id"`

@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
@@ -235,19 +236,23 @@ func (s *Server) workerCaptureRunWaitWorkspace(w http.ResponseWriter, r *http.Re
 		if err != nil {
 			return errors.New("record run wait workspace capture artifact")
 		}
-		version, err := work.q.PromoteWorkspaceCapture(r.Context(), db.PromoteWorkspaceCaptureParams{
-			OrgID:              scope.OrgID,
-			WriteLeaseID:       scope.WorkspaceLeaseID,
-			FencingToken:       scope.WorkspaceFencingToken,
-			DirtyGeneration:    scope.DirtyGeneration,
-			ArtifactID:         artifact.ID,
-			SizeBytes:          capture.SizeBytes,
-			ArtifactEncoding:   strings.TrimSpace(capture.Encoding),
-			ContentDigest:      strings.TrimSpace(capture.Digest),
-			VersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			Kind:               db.WorkspaceVersionKindSystem,
-			ArtifactEntryCount: capture.EntryCount,
-			Message:            "system capture before parked wait",
+		var versionPublicID string
+		version, err := createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.WorkspaceVersion, value: &versionPublicID}}, func() (db.PromoteWorkspaceCaptureRow, error) {
+			return work.q.PromoteWorkspaceCapture(r.Context(), db.PromoteWorkspaceCaptureParams{
+				OrgID:              scope.OrgID,
+				WriteLeaseID:       scope.WorkspaceLeaseID,
+				FencingToken:       scope.WorkspaceFencingToken,
+				DirtyGeneration:    scope.DirtyGeneration,
+				ArtifactID:         artifact.ID,
+				SizeBytes:          capture.SizeBytes,
+				ArtifactEncoding:   strings.TrimSpace(capture.Encoding),
+				ContentDigest:      strings.TrimSpace(capture.Digest),
+				VersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				VersionPublicID:    versionPublicID,
+				Kind:               db.WorkspaceVersionKindSystem,
+				ArtifactEntryCount: capture.EntryCount,
+				Message:            "system capture before parked wait",
+			})
 		})
 		if isNoRows(err) {
 			return conflict(codedError{code: "workspace_capture_rejected", message: "workspace capture is stale"})

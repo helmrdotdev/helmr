@@ -730,7 +730,7 @@ func (q *Queries) ClassifyRunWorkspaceReuse(ctx context.Context, arg ClassifyRun
 
 const ensureWorkspaceMountRequested = `-- name: EnsureWorkspaceMountRequested :one
 WITH locked_workspace AS MATERIALIZED (
-    SELECT workspaces.id, workspaces.org_id, workspaces.cell_id, workspaces.route_generation, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_workspace_mount_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
+    SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.cell_id, workspaces.route_generation, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_workspace_mount_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
       FROM workspaces
      WHERE workspaces.org_id = $1
        AND workspaces.cell_id = $2
@@ -809,7 +809,7 @@ inserted AS (
            deployment_sandboxes.runtime_abi,
            deployment_sandboxes.guestd_abi,
            deployment_sandboxes.adapter_abi,
-           $7,
+           $7::integer,
            'mounting',
            coalesce($8::jsonb, '{}'::jsonb)
       FROM locked_workspace AS workspaces
@@ -2201,6 +2201,7 @@ verified_artifact AS (
 created_version AS (
     INSERT INTO workspace_versions (
         id,
+        public_id,
         org_id,
         cell_id,
         project_id,
@@ -2220,6 +2221,7 @@ created_version AS (
         created_by_subject_type
     )
     SELECT $12,
+           $13::text,
            target.org_id,
            target.cell_id,
            target.project_id,
@@ -2231,15 +2233,15 @@ created_version AS (
            'ready',
            $8,
            $10,
-           $13,
+           $14,
            $11,
            $9,
-           $14,
+           $15,
            now(),
            'worker'
       FROM target
       JOIN verified_artifact ON verified_artifact.id = $8
-    RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
+    RETURNING id, public_id, org_id, cell_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
 ),
 promoted_workspace AS (
     UPDATE workspaces
@@ -2264,7 +2266,7 @@ promoted_mount AS (
        AND workspace_mounts.state = 'unmounting'
     RETURNING workspace_mounts.id
 )
-SELECT created_version.id, created_version.org_id, created_version.cell_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_exec_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
+SELECT created_version.id, created_version.public_id, created_version.org_id, created_version.cell_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_exec_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
   FROM created_version
   JOIN promoted_workspace ON promoted_workspace.id = created_version.workspace_id
   JOIN promoted_mount ON promoted_mount.id = created_version.source_workspace_mount_id
@@ -2283,12 +2285,14 @@ type PromoteWorkspaceMountStopCaptureParams struct {
 	ArtifactEncoding     string      `json:"artifact_encoding"`
 	ContentDigest        string      `json:"content_digest"`
 	VersionID            pgtype.UUID `json:"version_id"`
+	VersionPublicID      string      `json:"version_public_id"`
 	ArtifactEntryCount   int32       `json:"artifact_entry_count"`
 	Message              string      `json:"message"`
 }
 
 type PromoteWorkspaceMountStopCaptureRow struct {
 	ID                     pgtype.UUID           `json:"id"`
+	PublicID               string                `json:"public_id"`
 	OrgID                  pgtype.UUID           `json:"org_id"`
 	CellID                 string                `json:"cell_id"`
 	ProjectID              pgtype.UUID           `json:"project_id"`
@@ -2328,12 +2332,14 @@ func (q *Queries) PromoteWorkspaceMountStopCapture(ctx context.Context, arg Prom
 		arg.ArtifactEncoding,
 		arg.ContentDigest,
 		arg.VersionID,
+		arg.VersionPublicID,
 		arg.ArtifactEntryCount,
 		arg.Message,
 	)
 	var i PromoteWorkspaceMountStopCaptureRow
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.ProjectID,
@@ -2937,7 +2943,7 @@ func (q *Queries) RequestCapacityPressureIdleWorkspaceMountStopsForWorker(ctx co
 
 const requestWorkspaceMountStop = `-- name: RequestWorkspaceMountStop :one
 WITH locked_workspace AS MATERIALIZED (
-    SELECT workspaces.id, workspaces.org_id, workspaces.cell_id, workspaces.route_generation, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_workspace_mount_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
+    SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.cell_id, workspaces.route_generation, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_workspace_mount_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
       FROM workspaces
      WHERE workspaces.org_id = $1
        AND workspaces.cell_id = $2

@@ -2,6 +2,7 @@
 WITH created_workspace AS (
     INSERT INTO workspaces (
         id,
+        public_id,
         org_id,
         cell_id,
         route_generation,
@@ -17,6 +18,7 @@ WITH created_workspace AS (
         retention_policy
     )
     SELECT sqlc.arg(id),
+           sqlc.arg(public_id),
            deployment_sandboxes.org_id,
            deployment_sandboxes.cell_id,
            deployments.route_generation,
@@ -66,6 +68,7 @@ WITH created_workspace AS (
 created_version AS (
     INSERT INTO workspace_versions (
         id,
+        public_id,
         org_id,
         cell_id,
         project_id,
@@ -83,6 +86,7 @@ created_version AS (
         created_by_subject_type
     )
     SELECT sqlc.arg(initial_version_id),
+           sqlc.arg(initial_version_public_id),
            created_workspace.org_id,
            created_workspace.cell_id,
            created_workspace.project_id,

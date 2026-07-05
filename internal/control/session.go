@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -464,22 +465,26 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if deploymentTask.CellID != routeCellID || workspace.CellID != routeCellID || workspace.RouteGeneration != routeGeneration {
 			return unavailable(errors.New("execution source row cell does not match environment route"))
 		}
-		session, err := work.q.CreateSession(ctx, db.CreateSessionParams{
-			ID:                  pgvalue.UUID(sessionID),
-			OrgID:               pgvalue.UUID(actor.OrgID),
-			CellID:              routeCellID,
-			RouteGeneration:     routeGeneration,
-			ProjectID:           projectID,
-			EnvironmentID:       environmentID,
-			TaskID:              taskID,
-			InitialDeploymentID: deploymentTask.DeploymentID,
-			ActiveDeploymentID:  deploymentTask.DeploymentID,
-			WorkspaceID:         workspace.ID,
-			ExternalID:          externalID,
-			StartFingerprint:    startFingerprint.String,
-			Metadata:            metadata,
-			Tags:                tags,
-			ExpiresAt:           timePtrToTimestamptz(request.Options.ExpiresAt),
+		var sessionPublicID string
+		session, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Session, value: &sessionPublicID}}, func() (db.Session, error) {
+			return work.q.CreateSession(ctx, db.CreateSessionParams{
+				ID:                  pgvalue.UUID(sessionID),
+				PublicID:            sessionPublicID,
+				OrgID:               pgvalue.UUID(actor.OrgID),
+				CellID:              routeCellID,
+				RouteGeneration:     routeGeneration,
+				ProjectID:           projectID,
+				EnvironmentID:       environmentID,
+				TaskID:              taskID,
+				InitialDeploymentID: deploymentTask.DeploymentID,
+				ActiveDeploymentID:  deploymentTask.DeploymentID,
+				WorkspaceID:         workspace.ID,
+				ExternalID:          externalID,
+				StartFingerprint:    startFingerprint.String,
+				Metadata:            metadata,
+				Tags:                tags,
+				ExpiresAt:           timePtrToTimestamptz(request.Options.ExpiresAt),
+			})
 		})
 		if err != nil {
 			if isUniqueViolation(err) && externalID != "" {
@@ -487,42 +492,46 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 			}
 			return err
 		}
-		run, err := work.q.CreateScopedRun(ctx, db.CreateScopedRunParams{
-			ID:                    pgvalue.UUID(runID),
-			OrgID:                 pgvalue.UUID(actor.OrgID),
-			CellID:                routeCellID,
-			RouteGeneration:       routeGeneration,
-			ProjectID:             projectID,
-			EnvironmentID:         environmentID,
-			DeploymentID:          deploymentTask.DeploymentID,
-			DeploymentTaskID:      deploymentTask.ID,
-			WorkspaceID:           workspace.ID,
-			DeploymentVersion:     deploymentTask.DeploymentVersion,
-			ApiVersion:            versionMetadata.APIVersion,
-			SdkVersion:            firstNonEmptyString(versionMetadata.SDKVersion, deploymentTask.SdkVersion),
-			CliVersion:            firstNonEmptyString(versionMetadata.CLIVersion, deploymentTask.CliVersion),
-			TaskID:                taskID,
-			SessionID:             session.ID,
-			Payload:               payload,
-			Metadata:              metadata,
-			Tags:                  tags,
-			LockedRetryPolicy:     lockedRetryPolicy,
-			QueueName:             scheduling.queueName,
-			QueueConcurrencyLimit: scheduling.queueConcurrencyLimit,
-			ConcurrencyKey:        scheduling.concurrencyKey,
-			Priority:              scheduling.priority,
-			QueueTimestamp:        scheduling.queueTimestamp,
-			Ttl:                   scheduling.ttl,
-			QueuedExpiresAt:       scheduling.queuedExpiresAt,
-			MaxActiveDurationMs:   int64(maxDurationSeconds) * 1000,
-			TraceID:               pgtype.Text{String: traceID, Valid: true},
-			RootSpanID:            rootSpanID,
-			EventPayload:          createdPayload,
-			ScheduleID:            source.scheduleID,
-			ScheduleInstanceID:    source.scheduleInstanceID,
-			ScheduleGeneration:    pgtype.Int8{Int64: source.scheduleGeneration, Valid: source.scheduleInstanceID.Valid},
-			ScheduledAt:           source.scheduledAt,
-			AllowDrainingRoute:    requestedWorkspaceID.Valid,
+		var runPublicID string
+		run, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Run, value: &runPublicID}}, func() (db.CreateScopedRunRow, error) {
+			return work.q.CreateScopedRun(ctx, db.CreateScopedRunParams{
+				ID:                    pgvalue.UUID(runID),
+				PublicID:              runPublicID,
+				OrgID:                 pgvalue.UUID(actor.OrgID),
+				CellID:                routeCellID,
+				RouteGeneration:       routeGeneration,
+				ProjectID:             projectID,
+				EnvironmentID:         environmentID,
+				DeploymentID:          deploymentTask.DeploymentID,
+				DeploymentTaskID:      deploymentTask.ID,
+				WorkspaceID:           workspace.ID,
+				DeploymentVersion:     deploymentTask.DeploymentVersion,
+				ApiVersion:            versionMetadata.APIVersion,
+				SdkVersion:            firstNonEmptyString(versionMetadata.SDKVersion, deploymentTask.SdkVersion),
+				CliVersion:            firstNonEmptyString(versionMetadata.CLIVersion, deploymentTask.CliVersion),
+				TaskID:                taskID,
+				SessionID:             session.ID,
+				Payload:               payload,
+				Metadata:              metadata,
+				Tags:                  tags,
+				LockedRetryPolicy:     lockedRetryPolicy,
+				QueueName:             scheduling.queueName,
+				QueueConcurrencyLimit: scheduling.queueConcurrencyLimit,
+				ConcurrencyKey:        scheduling.concurrencyKey,
+				Priority:              scheduling.priority,
+				QueueTimestamp:        scheduling.queueTimestamp,
+				Ttl:                   scheduling.ttl,
+				QueuedExpiresAt:       scheduling.queuedExpiresAt,
+				MaxActiveDurationMs:   int64(maxDurationSeconds) * 1000,
+				TraceID:               pgtype.Text{String: traceID, Valid: true},
+				RootSpanID:            rootSpanID,
+				EventPayload:          createdPayload,
+				ScheduleID:            source.scheduleID,
+				ScheduleInstanceID:    source.scheduleInstanceID,
+				ScheduleGeneration:    pgtype.Int8{Int64: source.scheduleGeneration, Valid: source.scheduleInstanceID.Valid},
+				ScheduledAt:           source.scheduledAt,
+				AllowDrainingRoute:    requestedWorkspaceID.Valid,
+			})
 		})
 		if err != nil {
 			if isNoRows(err) && source.scheduleInstanceID.Valid {
@@ -564,17 +573,21 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		}); err != nil {
 			return err
 		}
-		if _, err := work.q.CreateSessionRun(ctx, db.CreateSessionRunParams{
-			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:         pgvalue.UUID(actor.OrgID),
-			CellID:        session.CellID,
-			ProjectID:     projectID,
-			EnvironmentID: environmentID,
-			SessionID:     session.ID,
-			RunID:         run.ID,
-			DeploymentID:  deploymentTask.DeploymentID,
-			TurnIndex:     0,
-			Reason:        "initial",
+		var sessionRunPublicID string
+		if _, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.SessionRun, value: &sessionRunPublicID}}, func() (db.SessionRun, error) {
+			return work.q.CreateSessionRun(ctx, db.CreateSessionRunParams{
+				ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				PublicID:      sessionRunPublicID,
+				OrgID:         pgvalue.UUID(actor.OrgID),
+				CellID:        session.CellID,
+				ProjectID:     projectID,
+				EnvironmentID: environmentID,
+				SessionID:     session.ID,
+				RunID:         run.ID,
+				DeploymentID:  deploymentTask.DeploymentID,
+				TurnIndex:     0,
+				Reason:        "initial",
+			})
 		}); err != nil {
 			return err
 		}
@@ -719,24 +732,32 @@ func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store 
 		if err != nil {
 			return db.Workspace{}, err
 		}
-		workspace, err := store.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
-			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:                     pgvalue.UUID(orgID),
-			CellID:                    task.CellID,
-			RouteGeneration:           routeGeneration,
-			ProjectID:                 projectID,
-			EnvironmentID:             environmentID,
-			DeploymentSandboxID:       task.DeploymentSandboxID,
-			ExternalID:                "",
-			Metadata:                  []byte(`{}`),
-			Tags:                      []string{},
-			RetentionPolicy:           []byte(`{}`),
-			InitialVersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			InitialArtifactID:         workspaceArtifact.ID,
-			InitialArtifactEncoding:   initialWorkspace.Encoding,
-			InitialArtifactEntryCount: int32(initialWorkspace.EntryCount),
-			InitialContentDigest:      workspaceArtifact.Digest,
-			InitialSizeBytes:          workspaceArtifact.SizeBytes,
+		var workspacePublicID, initialVersionPublicID string
+		workspace, err := createWithPublicID(ctx, []publicIDSlot{
+			{prefix: publicid.Workspace, value: &workspacePublicID},
+			{prefix: publicid.WorkspaceVersion, value: &initialVersionPublicID},
+		}, func() (db.CreateWorkspaceFromSandboxRow, error) {
+			return store.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
+				ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				PublicID:                  workspacePublicID,
+				OrgID:                     pgvalue.UUID(orgID),
+				CellID:                    task.CellID,
+				RouteGeneration:           routeGeneration,
+				ProjectID:                 projectID,
+				EnvironmentID:             environmentID,
+				DeploymentSandboxID:       task.DeploymentSandboxID,
+				ExternalID:                "",
+				Metadata:                  []byte(`{}`),
+				Tags:                      []string{},
+				RetentionPolicy:           []byte(`{}`),
+				InitialVersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				InitialVersionPublicID:    initialVersionPublicID,
+				InitialArtifactID:         workspaceArtifact.ID,
+				InitialArtifactEncoding:   initialWorkspace.Encoding,
+				InitialArtifactEntryCount: int32(initialWorkspace.EntryCount),
+				InitialContentDigest:      workspaceArtifact.Digest,
+				InitialSizeBytes:          workspaceArtifact.SizeBytes,
+			})
 		})
 		if isNoRows(err) {
 			return db.Workspace{}, errSandboxNotDeployed

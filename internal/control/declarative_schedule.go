@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -121,20 +122,24 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 		}
 		scheduleID := uuid.Must(uuid.NewV7())
 		instanceID := uuid.Must(uuid.NewV7())
-		created, err := store.CreateDeclarativeSchedule(ctx, db.CreateDeclarativeScheduleParams{
-			ScheduleID:     pgvalue.UUID(scheduleID),
-			OrgID:          orgID,
-			ProjectID:      projectID,
-			TaskID:         spec.TaskID,
-			DedupKey:       spec.DedupKey,
-			ExternalID:     pgtype.Text{String: spec.ScheduleKey, Valid: true},
-			Cron:           spec.Cron,
-			Timezone:       spec.Timezone,
-			RunOptions:     runOptionsJSON,
-			InstanceActive: spec.Active,
-			InstanceID:     pgvalue.UUID(instanceID),
-			EnvironmentID:  environmentID,
-			NextFireAt:     nextFireAt,
+		var publicID string
+		created, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Schedule, value: &publicID}}, func() (db.CreateDeclarativeScheduleRow, error) {
+			return store.CreateDeclarativeSchedule(ctx, db.CreateDeclarativeScheduleParams{
+				ScheduleID:     pgvalue.UUID(scheduleID),
+				PublicID:       publicID,
+				OrgID:          orgID,
+				ProjectID:      projectID,
+				TaskID:         spec.TaskID,
+				DedupKey:       spec.DedupKey,
+				ExternalID:     pgtype.Text{String: spec.ScheduleKey, Valid: true},
+				Cron:           spec.Cron,
+				Timezone:       spec.Timezone,
+				RunOptions:     runOptionsJSON,
+				InstanceActive: spec.Active,
+				InstanceID:     pgvalue.UUID(instanceID),
+				EnvironmentID:  environmentID,
+				NextFireAt:     nextFireAt,
+			})
 		})
 		if err != nil {
 			return nil, err

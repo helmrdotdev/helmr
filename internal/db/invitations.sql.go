@@ -41,8 +41,8 @@ WITH active_invitee AS (
     SELECT 1
       FROM org_members
       JOIN users ON users.id = org_members.user_id
-     WHERE org_members.org_id = $2
-       AND lower(users.primary_email) = $3
+     WHERE org_members.org_id = $3
+       AND lower(users.primary_email) = $4
        AND org_members.disabled_at IS NULL
        AND users.disabled_at IS NULL
     UNION
@@ -52,27 +52,29 @@ WITH active_invitee AS (
         ON org_members.org_id = accepted_invitation.org_id
        AND org_members.user_id = accepted_invitation.accepted_by_user_id
       JOIN users ON users.id = org_members.user_id
-     WHERE accepted_invitation.org_id = $2
-       AND accepted_invitation.invitee_email = $3
+     WHERE accepted_invitation.org_id = $3
+       AND accepted_invitation.invitee_email = $4
        AND accepted_invitation.accepted_at IS NOT NULL
        AND org_members.disabled_at IS NULL
        AND users.disabled_at IS NULL
 )
-INSERT INTO invitations (id, org_id, invitee_email, role, invited_by_user_id, token_hash, expires_at)
+INSERT INTO invitations (id, public_id, org_id, invitee_email, role, invited_by_user_id, token_hash, expires_at)
 SELECT
     $1,
     $2,
     $3,
-    $4::org_member_role,
-    $5,
+    $4,
+    $5::org_member_role,
     $6,
-    $7
+    $7,
+    $8
 WHERE NOT EXISTS (SELECT 1 FROM active_invitee)
-RETURNING id, org_id, invitee_email, role, invited_by_user_id, token_hash, created_at, expires_at, accepted_at, accepted_by_user_id, revoked_at, revoked_by_user_id
+RETURNING id, public_id, org_id, invitee_email, role, invited_by_user_id, token_hash, created_at, expires_at, accepted_at, accepted_by_user_id, revoked_at, revoked_by_user_id
 `
 
 type CreateInvitationParams struct {
 	ID              pgtype.UUID        `json:"id"`
+	PublicID        string             `json:"public_id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
 	InviteeEmail    string             `json:"invitee_email"`
 	Role            OrgMemberRole      `json:"role"`
@@ -84,6 +86,7 @@ type CreateInvitationParams struct {
 func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationParams) (Invitation, error) {
 	row := q.db.QueryRow(ctx, createInvitation,
 		arg.ID,
+		arg.PublicID,
 		arg.OrgID,
 		arg.InviteeEmail,
 		arg.Role,
@@ -94,6 +97,7 @@ func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationPara
 	var i Invitation
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.InviteeEmail,
 		&i.Role,

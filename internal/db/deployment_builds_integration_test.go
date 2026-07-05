@@ -67,11 +67,11 @@ func TestLeaseQueuedDeploymentBuildDoesNotMutateWrongCellDeployment(t *testing.T
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployments (
-			id, org_id, cell_id, project_id, environment_id, worker_group_id, version,
+			id, public_id, org_id, cell_id, project_id, environment_id, worker_group_id, version,
 			content_hash, deployment_source_artifact_id, status
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'wrong-cell-build', $7, $8, 'queued')
-	`, otherDeploymentID, ids.orgID, otherCellID, ids.projectID, ids.environmentID, workerGroupID, otherDigest, otherArtifactID); err != nil {
+		VALUES ($1, $9, $2, $3, $4, $5, $6, 'wrong-cell-build', $7, $8, 'queued')
+	`, otherDeploymentID, ids.orgID, otherCellID, ids.projectID, ids.environmentID, workerGroupID, otherDigest, otherArtifactID, testDeploymentPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	_, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{
@@ -151,11 +151,11 @@ func TestLeaseQueuedDeploymentBuildRejectsDisabledEnvironmentRoute(t *testing.T)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployments (
-			id, org_id, cell_id, project_id, environment_id, worker_group_id, version,
+			id, public_id, org_id, cell_id, project_id, environment_id, worker_group_id, version,
 			content_hash, deployment_source_artifact_id, status
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'stale-route-build', $7, $8, 'queued')
-	`, deploymentID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, workerGroupID, digest, artifactID); err != nil {
+		VALUES ($1, $9, $2, $3, $4, $5, $6, 'stale-route-build', $7, $8, 'queued')
+	`, deploymentID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, workerGroupID, digest, artifactID, testDeploymentPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	_, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{

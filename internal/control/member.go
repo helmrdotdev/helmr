@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -144,14 +145,18 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("hash invitation token"))
 		return
 	}
-	record, err := s.db.CreateInvitation(r.Context(), db.CreateInvitationParams{
-		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:           pgvalue.UUID(actor.OrgID),
-		InviteeEmail:    email,
-		Role:            role,
-		InvitedByUserID: pgvalue.UUID(actor.UserID),
-		TokenHash:       tokenHash,
-		ExpiresAt:       pgvalue.Timestamptz(time.Now().AddDate(0, 0, expiresInDays)),
+	var publicID string
+	record, err := createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.Invitation, value: &publicID}}, func() (db.Invitation, error) {
+		return s.db.CreateInvitation(r.Context(), db.CreateInvitationParams{
+			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			PublicID:        publicID,
+			OrgID:           pgvalue.UUID(actor.OrgID),
+			InviteeEmail:    email,
+			Role:            role,
+			InvitedByUserID: pgvalue.UUID(actor.UserID),
+			TokenHash:       tokenHash,
+			ExpiresAt:       pgvalue.Timestamptz(time.Now().AddDate(0, 0, expiresInDays)),
+		})
 	})
 	if err != nil {
 		if isNoRows(err) {

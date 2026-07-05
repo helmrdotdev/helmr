@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/redis/go-redis/v9"
 )
@@ -237,15 +238,19 @@ func (s *Server) ensureSessionStream(ctx context.Context, store db.Querier, sess
 	if err != nil {
 		return db.Stream{}, err
 	}
-	return store.EnsureSessionStream(ctx, db.EnsureSessionStreamParams{
-		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		Metadata:           []byte("{}"),
-		DeploymentStreamID: deploymentStream.ID,
-		OrgID:              session.OrgID,
-		CellID:             session.CellID,
-		ProjectID:          session.ProjectID,
-		EnvironmentID:      session.EnvironmentID,
-		SessionID:          session.ID,
+	var publicID string
+	return createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Stream, value: &publicID}}, func() (db.Stream, error) {
+		return store.EnsureSessionStream(ctx, db.EnsureSessionStreamParams{
+			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			PublicID:           publicID,
+			Metadata:           []byte("{}"),
+			DeploymentStreamID: deploymentStream.ID,
+			OrgID:              session.OrgID,
+			CellID:             session.CellID,
+			ProjectID:          session.ProjectID,
+			EnvironmentID:      session.EnvironmentID,
+			SessionID:          session.ID,
+		})
 	})
 }
 

@@ -46,6 +46,7 @@ updated_schedule AS (
 inserted_schedule AS (
     INSERT INTO task_schedules (
         id,
+        public_id,
         org_id,
         project_id,
         schedule_type,
@@ -58,6 +59,7 @@ inserted_schedule AS (
         enabled
     )
     SELECT sqlc.arg(schedule_id),
+           sqlc.arg(public_id),
            sqlc.arg(org_id),
            sqlc.arg(project_id),
            sqlc.arg(schedule_type)::task_schedule_type,
@@ -222,6 +224,7 @@ updated_schedule AS (
 inserted_schedule AS (
     INSERT INTO task_schedules (
         id,
+        public_id,
         org_id,
         project_id,
         schedule_type,
@@ -233,6 +236,7 @@ inserted_schedule AS (
         enabled
     )
     SELECT sqlc.arg(schedule_id),
+           sqlc.arg(public_id),
            sqlc.arg(org_id),
            sqlc.arg(project_id),
            'declarative',

@@ -433,11 +433,11 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 	otherWorkspaceID := uuid.Must(uuid.NewV7())
 	otherWorkspaceVersionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO workspaces (
-			id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'default', 'sandbox-fingerprint')
-	`, otherWorkspaceID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentSandboxID); err != nil {
+			INSERT INTO workspaces (
+				id, public_id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint
+			)
+			VALUES ($1, $7, $2, $3, $4, $5, $6, 'default', 'sandbox-fingerprint')
+		`, otherWorkspaceID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentSandboxID, testWorkspacePublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	var currentVersionID uuid.UUID
@@ -450,16 +450,16 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO workspace_versions (
-			id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
-			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
-		)
-		SELECT $1, org_id, cell_id, project_id, environment_id, $2, kind, state,
-		       artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, now()
-		  FROM workspace_versions
-		 WHERE org_id = $3
-		   AND id = $4
-	`, otherWorkspaceVersionID, otherWorkspaceID, ids.orgID, currentVersionID); err != nil {
+			INSERT INTO workspace_versions (
+				id, public_id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
+				artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
+			)
+			SELECT $1, $5, org_id, cell_id, project_id, environment_id, $2, kind, state,
+			       artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, now()
+			  FROM workspace_versions
+			 WHERE org_id = $3
+			   AND id = $4
+		`, otherWorkspaceVersionID, otherWorkspaceID, ids.orgID, currentVersionID, testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1774,11 +1774,12 @@ func seedSiblingDeploymentSandbox(t *testing.T, ctx context.Context, pool *pgxpo
 	t.Helper()
 	otherSandboxID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO deployment_sandboxes (
-				id,
-				org_id,
-				cell_id,
-				project_id,
+			INSERT INTO deployment_sandboxes (
+					id,
+					public_id,
+					org_id,
+					cell_id,
+					project_id,
 			environment_id,
 			deployment_id,
 			sandbox_id,
@@ -1794,10 +1795,11 @@ func seedSiblingDeploymentSandbox(t *testing.T, ctx context.Context, pool *pgxpo
 			filesystem_format,
 			contract_version,
 			fingerprint
-		)
-			SELECT $1,
-			       org_id,
-			       cell_id,
+			)
+				SELECT $1,
+				       $6,
+				       org_id,
+				       cell_id,
 			       project_id,
 		       environment_id,
 		       deployment_id,
@@ -1815,11 +1817,11 @@ func seedSiblingDeploymentSandbox(t *testing.T, ctx context.Context, pool *pgxpo
 		       contract_version,
 		       'other-sandbox-fingerprint'
 		  FROM deployment_sandboxes
-		 WHERE org_id = $2
-		   AND project_id = $3
-		   AND environment_id = $4
-		   AND id = $5
-	`, otherSandboxID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentSandboxID); err != nil {
+			 WHERE org_id = $2
+			   AND project_id = $3
+			   AND environment_id = $4
+			   AND id = $5
+		`, otherSandboxID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentSandboxID, testSandboxPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	return otherSandboxID

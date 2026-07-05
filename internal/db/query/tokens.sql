@@ -13,6 +13,7 @@ WITH existing_token AS MATERIALIZED (
 inserted_token AS (
     INSERT INTO tokens (
         id,
+        public_id,
         org_id,
         cell_id,
         project_id,
@@ -28,6 +29,7 @@ inserted_token AS (
         tags
     )
     SELECT sqlc.arg(id),
+           sqlc.arg(public_id),
            sqlc.arg(org_id),
            sqlc.arg(cell_id),
            sqlc.arg(project_id),

@@ -111,18 +111,20 @@ WITH revoked AS (
 input AS (
     SELECT
         $6::uuid AS id,
+        $7::text AS public_id,
         $1::uuid AS org_id,
         $2::uuid AS project_id,
         $3::uuid AS environment_id,
-        $7::uuid AS created_by_user_id,
-        $8::org_member_role AS role,
+        $8::uuid AS created_by_user_id,
+        $9::org_member_role AS role,
         $4::text AS name,
-        $9::text AS key_prefix,
+        $10::text AS key_prefix,
         $5::bytea AS token_hash,
-        $10::timestamptz AS expires_at
+        $11::timestamptz AS expires_at
 )
-INSERT INTO api_keys (id, org_id, project_id, environment_id, created_by_user_id, role, name, key_prefix, token_hash, expires_at)
+INSERT INTO api_keys (id, public_id, org_id, project_id, environment_id, created_by_user_id, role, name, key_prefix, token_hash, expires_at)
 SELECT input.id,
+       input.public_id,
        input.org_id,
        input.project_id,
        input.environment_id,
@@ -143,7 +145,7 @@ ON CONFLICT (token_hash) DO UPDATE SET
     environment_id = EXCLUDED.environment_id,
     expires_at = EXCLUDED.expires_at,
     revoked_at = NULL
-RETURNING id, org_id, project_id, environment_id, created_by_user_id, role, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
+RETURNING id, public_id, org_id, project_id, environment_id, created_by_user_id, role, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
 `
 
 type IssueAPIKeyParams struct {
@@ -153,6 +155,7 @@ type IssueAPIKeyParams struct {
 	Name            string             `json:"name"`
 	TokenHash       []byte             `json:"token_hash"`
 	ID              pgtype.UUID        `json:"id"`
+	PublicID        string             `json:"public_id"`
 	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
 	Role            OrgMemberRole      `json:"role"`
 	KeyPrefix       string             `json:"key_prefix"`
@@ -167,6 +170,7 @@ func (q *Queries) IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKe
 		arg.Name,
 		arg.TokenHash,
 		arg.ID,
+		arg.PublicID,
 		arg.CreatedByUserID,
 		arg.Role,
 		arg.KeyPrefix,
@@ -175,6 +179,7 @@ func (q *Queries) IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKe
 	var i APIKey
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
@@ -356,7 +361,7 @@ WITH matched AS (
      WHERE token_hash = $1
        AND revoked_at IS NULL
        AND (expires_at IS NULL OR expires_at > now())
-     RETURNING id, org_id, project_id, environment_id, created_by_user_id, role, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
+     RETURNING id, public_id, org_id, project_id, environment_id, created_by_user_id, role, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
 )
 SELECT
     matched.id,
