@@ -467,7 +467,6 @@ func TestWorkspaceMaterializeAllowsPrimitiveReadPermissions(t *testing.T) {
 	}{
 		{name: "exec read", permission: auth.PermissionExecRead},
 		{name: "pty read", permission: auth.PermissionPtyRead},
-		{name: "ports read", permission: auth.PermissionPortsRead},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			workspaceID := uuid.Must(uuid.NewV7())
@@ -503,7 +502,6 @@ func TestWorkspaceListAndGetAllowPrimitiveWorkspacePermissions(t *testing.T) {
 	}{
 		{name: "files read", permission: auth.PermissionFilesRead},
 		{name: "exec create", permission: auth.PermissionExecCreate},
-		{name: "ports close", permission: auth.PermissionPortsClose},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			workspaceID := uuid.Must(uuid.NewV7())
@@ -563,6 +561,34 @@ func TestWorkspaceListAndGetRejectUnrelatedPermission(t *testing.T) {
 	}
 }
 
+func TestGetWorkspaceRejectsStaleRouteGeneration(t *testing.T) {
+	workspaceID := uuid.Must(uuid.NewV7())
+	store := &fakeStore{
+		workspace:                        testWorkspaceRow(workspaceID),
+		recordRouteGenerationUnavailable: true,
+	}
+	server := newTestServer(testServerConfig{
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DB:          store,
+		Auth:        fakeAuth{permissions: []auth.Permission{auth.PermissionFilesRead}},
+		CAS:         &fakeCAS{},
+		Secrets:     fakeSecrets{},
+		EventStream: newTestEventStream(t),
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/workspaces/"+workspaceID.String(), nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "record route generation is not available") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 func TestWorkspacePrimitiveCreateFingerprintsUseCanonicalProtocol(t *testing.T) {
 	envShape := []byte(`{"B":"2","A":"1"}`)
 	execFingerprint, err := execCreateFingerprint([]string{"echo", "ok"}, "/workspace", envShape, false, db.WorkspaceFilesystemModeWrite)
@@ -594,6 +620,8 @@ func testWorkspaceRow(id uuid.UUID) db.Workspace {
 	return db.Workspace{
 		ID:                  pgvalue.UUID(id),
 		OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+		CellID:              "us-east-1-cell-1",
+		RouteGeneration:     1,
 		ProjectID:           testProjectID(),
 		EnvironmentID:       testEnvironmentID(),
 		DeploymentSandboxID: testDeploymentSandboxID(),
@@ -2767,6 +2795,7 @@ type fakeStore struct {
 	environmentRouteCellID                  string
 	environmentRouteRegionID                string
 	environmentRouteUnavailable             bool
+	recordRouteGenerationUnavailable        bool
 	scheduleTriggerNotCurrent               bool
 	closeSessionAttachesRun                 pgtype.UUID
 	closeSessionRetryRun                    db.Run
@@ -2784,6 +2813,9 @@ type fakeControlTransaction struct {
 func fakeSessionRecord(session db.Session) db.Session {
 	if session.CellID == "" {
 		session.CellID = "us-east-1-cell-1"
+	}
+	if session.RouteGeneration == 0 {
+		session.RouteGeneration = 1
 	}
 	return session
 }
@@ -2820,7 +2852,7 @@ func (f *fakeStore) GetEnvironmentCellRouteForRecord(_ context.Context, arg db.G
 }
 
 func (f *fakeStore) GetEnvironmentCellRouteForRecordGeneration(_ context.Context, arg db.GetEnvironmentCellRouteForRecordGenerationParams) (db.GetEnvironmentCellRouteForRecordGenerationRow, error) {
-	if f.environmentRouteUnavailable {
+	if f.environmentRouteUnavailable || f.recordRouteGenerationUnavailable {
 		return db.GetEnvironmentCellRouteForRecordGenerationRow{}, pgx.ErrNoRows
 	}
 	return db.GetEnvironmentCellRouteForRecordGenerationRow{
@@ -3155,6 +3187,9 @@ func (f *fakeStore) GetWorkspace(_ context.Context, arg db.GetWorkspaceParams) (
 		workspace := f.workspace
 		if workspace.CellID == "" {
 			workspace.CellID = "us-east-1-cell-1"
+		}
+		if workspace.RouteGeneration == 0 {
+			workspace.RouteGeneration = 1
 		}
 		return workspace, nil
 	}
@@ -3982,9 +4017,6 @@ func (f fakeAuth) Authenticate(context.Context, string) (auth.Actor, error) {
 			auth.PermissionPtyCreate,
 			auth.PermissionPtyRead,
 			auth.PermissionPtyManage,
-			auth.PermissionPortsExpose,
-			auth.PermissionPortsRead,
-			auth.PermissionPortsClose,
 			auth.PermissionSecretsWrite,
 			auth.PermissionTasksDeploy,
 		}

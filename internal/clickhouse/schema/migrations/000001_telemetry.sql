@@ -61,27 +61,6 @@ ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY (toYYYYMM(observed_at), cell_id)
 ORDER BY (org_id, project_id, environment_id, subject_kind, subject_id, seq);
 
-CREATE TABLE IF NOT EXISTS helmr_telemetry.trace_spans (
-    cell_id String,
-    org_id UUID,
-    project_id UUID,
-    environment_id UUID,
-    trace_id String,
-    span_id String,
-    parent_span_id String,
-    run_id Nullable(UUID),
-    attempt_id Nullable(UUID),
-    name String,
-    attributes String,
-    retention_class LowCardinality(String),
-    redaction_class LowCardinality(String),
-    observed_at DateTime64(3, 'UTC'),
-    ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
-)
-ENGINE = ReplacingMergeTree(ingested_at)
-PARTITION BY (toYYYYMM(observed_at), cell_id)
-ORDER BY (org_id, project_id, environment_id, trace_id, span_id, observed_at);
-
 CREATE TABLE IF NOT EXISTS helmr_telemetry.terminal_outputs (
     cell_id String,
     org_id UUID,
@@ -104,19 +83,3 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.terminal_outputs (
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY (toYYYYMM(observed_at), cell_id)
 ORDER BY (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream_name, offset_start);
-
-CREATE TABLE IF NOT EXISTS helmr_telemetry.ingest_errors (
-    cell_id String,
-    org_id UUID,
-    stream_kind LowCardinality(String),
-    source_kind String,
-    source_id String,
-    idempotency_key String,
-    error String,
-    retry_count UInt32,
-    observed_at DateTime64(3, 'UTC'),
-    ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
-)
-ENGINE = MergeTree
-PARTITION BY (toYYYYMM(observed_at), cell_id)
-ORDER BY (org_id, stream_kind, observed_at, idempotency_key);

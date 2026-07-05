@@ -279,12 +279,6 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeWorkspacePtyRead, true
 	case string(api.APIKeyScopeWorkspacePtyManage):
 		return api.APIKeyScopeWorkspacePtyManage, true
-	case string(api.APIKeyScopeWorkspacePortsExpose):
-		return api.APIKeyScopeWorkspacePortsExpose, true
-	case string(api.APIKeyScopeWorkspacePortsRead):
-		return api.APIKeyScopeWorkspacePortsRead, true
-	case string(api.APIKeyScopeWorkspacePortsClose):
-		return api.APIKeyScopeWorkspacePortsClose, true
 	case string(api.APIKeyScopeSecretsWrite):
 		return api.APIKeyScopeSecretsWrite, true
 	case string(api.APIKeyScopeTasksDeploy):
@@ -342,12 +336,6 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionPtyRead, true
 	case api.APIKeyScopeWorkspacePtyManage:
 		return auth.PermissionPtyManage, true
-	case api.APIKeyScopeWorkspacePortsExpose:
-		return auth.PermissionPortsExpose, true
-	case api.APIKeyScopeWorkspacePortsRead:
-		return auth.PermissionPortsRead, true
-	case api.APIKeyScopeWorkspacePortsClose:
-		return auth.PermissionPortsClose, true
 	case api.APIKeyScopeSecretsWrite:
 		return auth.PermissionSecretsWrite, true
 	case api.APIKeyScopeTasksDeploy:
@@ -405,12 +393,6 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeWorkspacePtyRead, true
 	case string(auth.PermissionPtyManage):
 		return api.APIKeyScopeWorkspacePtyManage, true
-	case string(auth.PermissionPortsExpose):
-		return api.APIKeyScopeWorkspacePortsExpose, true
-	case string(auth.PermissionPortsRead):
-		return api.APIKeyScopeWorkspacePortsRead, true
-	case string(auth.PermissionPortsClose):
-		return api.APIKeyScopeWorkspacePortsClose, true
 	case string(auth.PermissionSecretsWrite):
 		return api.APIKeyScopeSecretsWrite, true
 	case string(auth.PermissionTasksDeploy):

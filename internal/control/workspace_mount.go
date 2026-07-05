@@ -72,9 +72,6 @@ func (s *Server) requestWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 		auth.PermissionPtyRead,
 		auth.PermissionPtyCreate,
 		auth.PermissionPtyManage,
-		auth.PermissionPortsRead,
-		auth.PermissionPortsExpose,
-		auth.PermissionPortsClose,
 	) {
 		writeError(w, forbidden(errPermissionRequired))
 		return
@@ -163,9 +160,6 @@ func workspaceReadPermissions() []auth.Permission {
 		auth.PermissionPtyCreate,
 		auth.PermissionPtyRead,
 		auth.PermissionPtyManage,
-		auth.PermissionPortsExpose,
-		auth.PermissionPortsRead,
-		auth.PermissionPortsClose,
 	}
 }
 

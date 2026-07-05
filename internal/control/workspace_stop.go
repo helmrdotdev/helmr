@@ -43,7 +43,6 @@ func (s *Server) stopWorkspace(w http.ResponseWriter, r *http.Request) {
 		auth.PermissionVersionsRestore,
 		auth.PermissionExecManage,
 		auth.PermissionPtyManage,
-		auth.PermissionPortsClose,
 	) {
 		writeError(w, forbidden(errPermissionRequired))
 		return

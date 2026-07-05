@@ -288,7 +288,7 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 			if err != nil {
 				return db.Workspace{}, false, err
 			}
-			if err := s.requireRoutableRecordCell(ctx, s.db, actor.OrgID, row.ProjectID, row.EnvironmentID, row.CellID); err != nil {
+			if err := s.requireRoutableRecordCellGeneration(ctx, s.db, actor.OrgID, row.ProjectID, row.EnvironmentID, row.CellID, row.RouteGeneration); err != nil {
 				return db.Workspace{}, false, err
 			}
 			return row, true, nil
@@ -499,7 +499,7 @@ func (s *Server) loadWorkspaceForRequest(w http.ResponseWriter, r *http.Request,
 		writeError(w, errors.New("load workspace"))
 		return db.Workspace{}, false
 	}
-	if err := s.requireRoutableRecordCell(r.Context(), s.db, actor.OrgID, row.ProjectID, row.EnvironmentID, row.CellID); err != nil {
+	if err := s.requireRoutableRecordCellGeneration(r.Context(), s.db, actor.OrgID, row.ProjectID, row.EnvironmentID, row.CellID, row.RouteGeneration); err != nil {
 		writeError(w, err)
 		return db.Workspace{}, false
 	}

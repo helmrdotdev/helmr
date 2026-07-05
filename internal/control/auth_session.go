@@ -85,9 +85,6 @@ func sessionPermissions(role auth.Role) []string {
 		auth.PermissionPtyCreate,
 		auth.PermissionPtyRead,
 		auth.PermissionPtyManage,
-		auth.PermissionPortsExpose,
-		auth.PermissionPortsRead,
-		auth.PermissionPortsClose,
 		auth.PermissionSecretsWrite,
 		auth.PermissionTasksDeploy,
 	}

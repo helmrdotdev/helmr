@@ -78,7 +78,6 @@ func TestGranularWorkspacePermissionsDoNotEscalate(t *testing.T) {
 			PermissionVersionsRead,
 			PermissionExecRead,
 			PermissionPtyRead,
-			PermissionPortsRead,
 		},
 	}
 
@@ -92,8 +91,6 @@ func TestGranularWorkspacePermissionsDoNotEscalate(t *testing.T) {
 		PermissionExecManage,
 		PermissionPtyCreate,
 		PermissionPtyManage,
-		PermissionPortsExpose,
-		PermissionPortsClose,
 	} {
 		if actor.HasPermission(permission, scope) {
 			t.Fatalf("read-only workspace grants allowed %s", permission)

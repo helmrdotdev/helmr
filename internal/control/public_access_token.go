@@ -220,7 +220,7 @@ func (s *Server) resolvePublicAccessTokenScopeRequest(ctx context.Context, actor
 	if !actor.HasPermission(permission, scope) {
 		return db.Session{}, db.Stream{}, "", pgtype.Text{}, forbidden(errPermissionRequired)
 	}
-	if err := s.requireRoutableRecordCell(ctx, s.db, actor.OrgID, session.ProjectID, session.EnvironmentID, session.CellID); err != nil {
+	if err := s.requireRoutableRecordCellGeneration(ctx, s.db, actor.OrgID, session.ProjectID, session.EnvironmentID, session.CellID, session.RouteGeneration); err != nil {
 		return db.Session{}, db.Stream{}, "", pgtype.Text{}, err
 	}
 	stream, err := s.ensureSessionStream(ctx, s.db, session, session.ActiveDeploymentID, streamName, direction)
@@ -353,7 +353,7 @@ func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, r *http.R
 	if err != nil {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
-	if err := s.requireRoutableRecordCell(ctx, store, pgvalue.MustUUIDValue(session.OrgID), session.ProjectID, session.EnvironmentID, session.CellID); err != nil {
+	if err := s.requireRoutableRecordCellGeneration(ctx, store, pgvalue.MustUUIDValue(session.OrgID), session.ProjectID, session.EnvironmentID, session.CellID, session.RouteGeneration); err != nil {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
 	stream, err := store.GetSessionStreamByName(ctx, db.GetSessionStreamByNameParams{
