@@ -476,6 +476,7 @@ verified_artifact AS (
 created_version AS (
     INSERT INTO workspace_versions (
         id,
+        public_id,
         org_id,
         cell_id,
         project_id,
@@ -495,6 +496,7 @@ created_version AS (
         promoted_at
     )
     SELECT $9,
+           $10,
            active_writer.org_id,
            active_writer.cell_id,
            active_writer.project_id,
@@ -503,19 +505,19 @@ created_version AS (
            active_writer.acquired_version_id,
            active_writer.workspace_mount_id,
            active_writer.id,
-           $10,
+           $11,
            'ready',
            $5,
            $7,
-           $11,
+           $12,
            $8,
            $6,
-           $12,
+           $13,
            now()
       FROM active_writer
       JOIN active_mount ON active_mount.id = active_writer.workspace_mount_id
       JOIN verified_artifact ON verified_artifact.id = $5
-    RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
+    RETURNING id, public_id, org_id, cell_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
 ),
 promoted_workspace AS (
     UPDATE workspaces
@@ -543,7 +545,7 @@ cleaned_mount AS (
        AND workspace_mounts.dirty_generation = $4
     RETURNING workspace_mounts.id
 )
-SELECT created_version.id, created_version.org_id, created_version.cell_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_exec_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
+SELECT created_version.id, created_version.public_id, created_version.org_id, created_version.cell_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_exec_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
   FROM created_version
   JOIN promoted_workspace ON promoted_workspace.id = created_version.workspace_id
   JOIN cleaned_mount ON cleaned_mount.id = created_version.source_workspace_mount_id
@@ -559,6 +561,7 @@ type PromoteWorkspaceCaptureParams struct {
 	ArtifactEncoding   string               `json:"artifact_encoding"`
 	ContentDigest      string               `json:"content_digest"`
 	VersionID          pgtype.UUID          `json:"version_id"`
+	VersionPublicID    string               `json:"version_public_id"`
 	Kind               WorkspaceVersionKind `json:"kind"`
 	ArtifactEntryCount int32                `json:"artifact_entry_count"`
 	Message            string               `json:"message"`
@@ -566,6 +569,7 @@ type PromoteWorkspaceCaptureParams struct {
 
 type PromoteWorkspaceCaptureRow struct {
 	ID                     pgtype.UUID           `json:"id"`
+	PublicID               string                `json:"public_id"`
 	OrgID                  pgtype.UUID           `json:"org_id"`
 	CellID                 string                `json:"cell_id"`
 	ProjectID              pgtype.UUID           `json:"project_id"`
@@ -602,6 +606,7 @@ func (q *Queries) PromoteWorkspaceCapture(ctx context.Context, arg PromoteWorksp
 		arg.ArtifactEncoding,
 		arg.ContentDigest,
 		arg.VersionID,
+		arg.VersionPublicID,
 		arg.Kind,
 		arg.ArtifactEntryCount,
 		arg.Message,
@@ -609,6 +614,7 @@ func (q *Queries) PromoteWorkspaceCapture(ctx context.Context, arg PromoteWorksp
 	var i PromoteWorkspaceCaptureRow
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
 		&i.CellID,
 		&i.ProjectID,

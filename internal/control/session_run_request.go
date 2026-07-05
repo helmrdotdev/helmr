@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -355,38 +356,42 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 		return pgtype.UUID{}, "", fmt.Errorf("encode continuation run created event: %w", err)
 	}
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	run, err := store.CreateScopedRun(ctx, db.CreateScopedRunParams{
-		ID:                    runID,
-		OrgID:                 locked.OrgID,
-		CellID:                locked.CellID,
-		RouteGeneration:       locked.RouteGeneration,
-		ProjectID:             locked.ProjectID,
-		EnvironmentID:         locked.EnvironmentID,
-		DeploymentID:          deploymentTask.DeploymentID,
-		DeploymentTaskID:      deploymentTask.ID,
-		WorkspaceID:           locked.WorkspaceID,
-		DeploymentVersion:     deploymentTask.DeploymentVersion,
-		ApiVersion:            deploymentTask.ApiVersion,
-		SdkVersion:            deploymentTask.SdkVersion,
-		CliVersion:            deploymentTask.CliVersion,
-		TaskID:                locked.TaskID,
-		SessionID:             locked.ID,
-		Payload:               previousRun.Payload,
-		Metadata:              locked.Metadata,
-		Tags:                  locked.Tags,
-		LockedRetryPolicy:     lockedRetryPolicy,
-		QueueName:             scheduling.queueName,
-		QueueConcurrencyLimit: scheduling.queueConcurrencyLimit,
-		ConcurrencyKey:        scheduling.concurrencyKey,
-		Priority:              scheduling.priority,
-		QueueTimestamp:        scheduling.queueTimestamp,
-		Ttl:                   scheduling.ttl,
-		QueuedExpiresAt:       scheduling.queuedExpiresAt,
-		MaxActiveDurationMs:   int64(maxDurationSeconds) * 1000,
-		TraceID:               pgtype.Text{String: traceID, Valid: true},
-		RootSpanID:            rootSpanID,
-		EventPayload:          createdPayload,
-		AllowDrainingRoute:    true,
+	var runPublicID string
+	run, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Run, value: &runPublicID}}, func() (db.CreateScopedRunRow, error) {
+		return store.CreateScopedRun(ctx, db.CreateScopedRunParams{
+			ID:                    runID,
+			PublicID:              runPublicID,
+			OrgID:                 locked.OrgID,
+			CellID:                locked.CellID,
+			RouteGeneration:       locked.RouteGeneration,
+			ProjectID:             locked.ProjectID,
+			EnvironmentID:         locked.EnvironmentID,
+			DeploymentID:          deploymentTask.DeploymentID,
+			DeploymentTaskID:      deploymentTask.ID,
+			WorkspaceID:           locked.WorkspaceID,
+			DeploymentVersion:     deploymentTask.DeploymentVersion,
+			ApiVersion:            deploymentTask.ApiVersion,
+			SdkVersion:            deploymentTask.SdkVersion,
+			CliVersion:            deploymentTask.CliVersion,
+			TaskID:                locked.TaskID,
+			SessionID:             locked.ID,
+			Payload:               previousRun.Payload,
+			Metadata:              locked.Metadata,
+			Tags:                  locked.Tags,
+			LockedRetryPolicy:     lockedRetryPolicy,
+			QueueName:             scheduling.queueName,
+			QueueConcurrencyLimit: scheduling.queueConcurrencyLimit,
+			ConcurrencyKey:        scheduling.concurrencyKey,
+			Priority:              scheduling.priority,
+			QueueTimestamp:        scheduling.queueTimestamp,
+			Ttl:                   scheduling.ttl,
+			QueuedExpiresAt:       scheduling.queuedExpiresAt,
+			MaxActiveDurationMs:   int64(maxDurationSeconds) * 1000,
+			TraceID:               pgtype.Text{String: traceID, Valid: true},
+			RootSpanID:            rootSpanID,
+			EventPayload:          createdPayload,
+			AllowDrainingRoute:    true,
+		})
 	})
 	if err != nil {
 		return pgtype.UUID{}, "", err
@@ -422,18 +427,22 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	}); err != nil {
 		return pgtype.UUID{}, "", err
 	}
-	if _, err := store.CreateSessionRun(ctx, db.CreateSessionRunParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         locked.OrgID,
-		CellID:        locked.CellID,
-		ProjectID:     locked.ProjectID,
-		EnvironmentID: locked.EnvironmentID,
-		SessionID:     locked.ID,
-		RunID:         run.ID,
-		DeploymentID:  deploymentTask.DeploymentID,
-		PreviousRunID: locked.CurrentRunID,
-		TurnIndex:     previousSessionRun.TurnIndex + 1,
-		Reason:        "input",
+	var sessionRunPublicID string
+	if _, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.SessionRun, value: &sessionRunPublicID}}, func() (db.SessionRun, error) {
+		return store.CreateSessionRun(ctx, db.CreateSessionRunParams{
+			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			PublicID:      sessionRunPublicID,
+			OrgID:         locked.OrgID,
+			CellID:        locked.CellID,
+			ProjectID:     locked.ProjectID,
+			EnvironmentID: locked.EnvironmentID,
+			SessionID:     locked.ID,
+			RunID:         run.ID,
+			DeploymentID:  deploymentTask.DeploymentID,
+			PreviousRunID: locked.CurrentRunID,
+			TurnIndex:     previousSessionRun.TurnIndex + 1,
+			Reason:        "input",
+		})
 	}); err != nil {
 		return pgtype.UUID{}, "", err
 	}

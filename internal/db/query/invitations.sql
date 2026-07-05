@@ -83,9 +83,10 @@ WITH active_invitee AS (
        AND org_members.disabled_at IS NULL
        AND users.disabled_at IS NULL
 )
-INSERT INTO invitations (id, org_id, invitee_email, role, invited_by_user_id, token_hash, expires_at)
+INSERT INTO invitations (id, public_id, org_id, invitee_email, role, invited_by_user_id, token_hash, expires_at)
 SELECT
     sqlc.arg(id),
+    sqlc.arg(public_id),
     sqlc.arg(org_id),
     sqlc.arg(invitee_email),
     sqlc.arg(role)::org_member_role,

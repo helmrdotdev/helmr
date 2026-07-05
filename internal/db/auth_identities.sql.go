@@ -13,17 +13,18 @@ import (
 
 const upsertAuthIdentity = `-- name: UpsertAuthIdentity :one
 WITH upserted_user AS (
-    INSERT INTO users (id, display_name, profile_image_url, primary_email)
+    INSERT INTO users (id, public_id, display_name, profile_image_url, primary_email)
     SELECT
         $1 AS id,
-        $2 AS display_name,
-        $3 AS profile_image_url,
-        CASE WHEN $4::bool THEN $5 ELSE NULL END AS primary_email
+        $2 AS public_id,
+        $3 AS display_name,
+        $4 AS profile_image_url,
+        CASE WHEN $5::bool THEN $6 ELSE NULL END AS primary_email
      WHERE NOT EXISTS (
          SELECT 1
            FROM auth_identities AS auth_identity
-          WHERE auth_identity.provider = $6
-            AND auth_identity.subject = $7
+          WHERE auth_identity.provider = $7
+            AND auth_identity.subject = $8
      )
     ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL AND disabled_at IS NULL DO UPDATE
        SET primary_email = users.primary_email
@@ -33,8 +34,8 @@ WITH upserted_user AS (
 target_user AS (
     SELECT auth_identity.user_id AS id
       FROM auth_identities AS auth_identity
-     WHERE auth_identity.provider = $6
-       AND auth_identity.subject = $7
+     WHERE auth_identity.provider = $7
+       AND auth_identity.subject = $8
     UNION ALL
     SELECT id FROM upserted_user
 ),
@@ -49,12 +50,12 @@ upserted_identity AS (
         last_login_at
     )
     SELECT
-        $8 AS id,
+        $9 AS id,
         target_user.id AS user_id,
-        $6 AS provider,
-        $7 AS subject,
-        $5 AS email,
-        $9 AS claims,
+        $7 AS provider,
+        $8 AS subject,
+        $6 AS email,
+        $10 AS claims,
         now() AS last_login_at
       FROM target_user
     ON CONFLICT (provider, subject) DO UPDATE
@@ -66,9 +67,9 @@ upserted_identity AS (
 ),
 updated_existing_user AS (
     UPDATE users
-       SET display_name = $2,
-           profile_image_url = COALESCE($3, users.profile_image_url),
-           primary_email = CASE WHEN $4::bool THEN $5 ELSE users.primary_email END,
+       SET display_name = $3,
+           profile_image_url = COALESCE($4, users.profile_image_url),
+           primary_email = CASE WHEN $5::bool THEN $6 ELSE users.primary_email END,
            updated_at = now()
      WHERE id IN (SELECT user_id FROM upserted_identity)
     RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
@@ -85,6 +86,7 @@ SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_
 
 type UpsertAuthIdentityParams struct {
 	UserID           pgtype.UUID `json:"user_id"`
+	UserPublicID     string      `json:"user_public_id"`
 	DisplayName      string      `json:"display_name"`
 	ProfileImageUrl  pgtype.Text `json:"profile_image_url"`
 	EmailVerified    bool        `json:"email_verified"`
@@ -108,6 +110,7 @@ type UpsertAuthIdentityRow struct {
 func (q *Queries) UpsertAuthIdentity(ctx context.Context, arg UpsertAuthIdentityParams) (UpsertAuthIdentityRow, error) {
 	row := q.db.QueryRow(ctx, upsertAuthIdentity,
 		arg.UserID,
+		arg.UserPublicID,
 		arg.DisplayName,
 		arg.ProfileImageUrl,
 		arg.EmailVerified,

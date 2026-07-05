@@ -79,7 +79,7 @@ inserted AS (
            deployment_sandboxes.runtime_abi,
            deployment_sandboxes.guestd_abi,
            deployment_sandboxes.adapter_abi,
-           sqlc.arg(request_priority),
+           sqlc.arg(request_priority)::integer,
            'mounting',
            coalesce(sqlc.arg(request)::jsonb, '{}'::jsonb)
       FROM locked_workspace AS workspaces
@@ -1317,6 +1317,7 @@ verified_artifact AS (
 created_version AS (
     INSERT INTO workspace_versions (
         id,
+        public_id,
         org_id,
         cell_id,
         project_id,
@@ -1336,6 +1337,7 @@ created_version AS (
         created_by_subject_type
     )
     SELECT sqlc.arg(version_id),
+           sqlc.arg(version_public_id)::text,
            target.org_id,
            target.cell_id,
            target.project_id,

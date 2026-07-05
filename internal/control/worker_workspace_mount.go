@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/runtime"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/token"
@@ -328,21 +329,25 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		if err != nil {
 			return errors.New("record workspace capture artifact")
 		}
-		version, err := work.q.PromoteWorkspaceMountStopCapture(r.Context(), db.PromoteWorkspaceMountStopCaptureParams{
-			OrgID:                params.OrgID,
-			ID:                   params.ID,
-			WorkspaceID:          pgvalue.UUID(workspaceID),
-			WorkerInstanceID:     params.WorkerInstanceID,
-			RuntimeInstanceToken: params.RuntimeInstanceToken,
-			ProjectID:            pgvalue.UUID(projectID),
-			EnvironmentID:        pgvalue.UUID(environmentID),
-			ArtifactID:           artifact.ID,
-			SizeBytes:            request.ArtifactSizeBytes,
-			ArtifactEncoding:     strings.TrimSpace(request.ArtifactEncoding),
-			ContentDigest:        digest,
-			VersionID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			ArtifactEntryCount:   request.ArtifactEntryCount,
-			Message:              "system capture before workspace stop",
+		var versionPublicID string
+		version, err := createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.WorkspaceVersion, value: &versionPublicID}}, func() (db.PromoteWorkspaceMountStopCaptureRow, error) {
+			return work.q.PromoteWorkspaceMountStopCapture(r.Context(), db.PromoteWorkspaceMountStopCaptureParams{
+				OrgID:                params.OrgID,
+				ID:                   params.ID,
+				WorkspaceID:          pgvalue.UUID(workspaceID),
+				WorkerInstanceID:     params.WorkerInstanceID,
+				RuntimeInstanceToken: params.RuntimeInstanceToken,
+				ProjectID:            pgvalue.UUID(projectID),
+				EnvironmentID:        pgvalue.UUID(environmentID),
+				ArtifactID:           artifact.ID,
+				SizeBytes:            request.ArtifactSizeBytes,
+				ArtifactEncoding:     strings.TrimSpace(request.ArtifactEncoding),
+				ContentDigest:        digest,
+				VersionID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				VersionPublicID:      versionPublicID,
+				ArtifactEntryCount:   request.ArtifactEntryCount,
+				Message:              "system capture before workspace stop",
+			})
 		})
 		if isNoRows(err) {
 			return conflict(codedError{code: "workspace_mount_capture_rejected", message: "workspace mount capture is stale"})

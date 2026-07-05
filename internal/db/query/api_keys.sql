@@ -13,6 +13,7 @@ WITH revoked AS (
 input AS (
     SELECT
         sqlc.arg(id)::uuid AS id,
+        sqlc.arg(public_id)::text AS public_id,
         sqlc.arg(org_id)::uuid AS org_id,
         sqlc.arg(project_id)::uuid AS project_id,
         sqlc.arg(environment_id)::uuid AS environment_id,
@@ -23,8 +24,9 @@ input AS (
         sqlc.arg(token_hash)::bytea AS token_hash,
         sqlc.arg(expires_at)::timestamptz AS expires_at
 )
-INSERT INTO api_keys (id, org_id, project_id, environment_id, created_by_user_id, role, name, key_prefix, token_hash, expires_at)
+INSERT INTO api_keys (id, public_id, org_id, project_id, environment_id, created_by_user_id, role, name, key_prefix, token_hash, expires_at)
 SELECT input.id,
+       input.public_id,
        input.org_id,
        input.project_id,
        input.environment_id,

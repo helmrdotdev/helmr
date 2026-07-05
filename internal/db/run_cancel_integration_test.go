@@ -311,10 +311,10 @@ func seedSessionRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids i
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO session_runs (
-			id, org_id, cell_id, project_id, environment_id, session_id, run_id, deployment_id, turn_index, reason
+			id, public_id, org_id, cell_id, project_id, environment_id, session_id, run_id, deployment_id, turn_index, reason
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, 'initial')
-	`, uuid.Must(uuid.NewV7()), ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, sessionID, ids.runID, ids.deploymentID); err != nil {
+		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, $8, 1, 'initial')
+	`, uuid.Must(uuid.NewV7()), ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, sessionID, ids.runID, ids.deploymentID, testSessionRunPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -323,6 +323,7 @@ func seedCancelOperation(t *testing.T, ctx context.Context, queries *db.Queries,
 	t.Helper()
 	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
 		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		PublicID:       testRunOperationPublicID(t),
 		OrgID:          pgvalue.UUID(ids.orgID),
 		CellID:         dbtest.DefaultCellID,
 		ProjectID:      pgvalue.UUID(ids.projectID),

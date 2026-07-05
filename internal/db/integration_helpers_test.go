@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -38,6 +39,75 @@ func shortUUID(id uuid.UUID) string {
 	return compact[len(compact)-12:]
 }
 
+func testPublicID(t *testing.T, prefix publicid.Prefix) string {
+	t.Helper()
+	id, err := publicid.New(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func testDeploymentPublicID(t *testing.T) string {
+	return testPublicID(t, publicid.Deployment)
+}
+
+func testEnvironmentPublicID(t *testing.T) string {
+	return testPublicID(t, publicid.Environment)
+}
+
+func testTaskPublicID(t *testing.T) string {
+	return testPublicID(t, publicid.Task)
+}
+
+func testSandboxPublicID(t *testing.T) string {
+	return testPublicID(t, publicid.Sandbox)
+}
+
+func testSchedulePublicID(t *testing.T) string {
+	return testPublicID(t, publicid.Schedule)
+}
+
+func testWorkspacePublicID(t *testing.T) string {
+	return testPublicID(t, publicid.Workspace)
+}
+
+func testWorkspaceVersionPublicID(t *testing.T) string {
+	return testPublicID(t, publicid.WorkspaceVersion)
+}
+
+func testSessionRunPublicID(t *testing.T) string {
+	return testPublicID(t, publicid.SessionRun)
+}
+
+func testRunPublicID(t *testing.T) string {
+	return testPublicID(t, publicid.Run)
+}
+
+func testRunOperationPublicID(t *testing.T) string {
+	return testPublicID(t, publicid.RunOperation)
+}
+
+func testWaitPublicID(t *testing.T) string {
+	return testPublicID(t, publicid.Wait)
+}
+
+func testStreamPublicID(t *testing.T) string {
+	return testPublicID(t, publicid.Stream)
+}
+
+func testStreamRecordPublicID(t *testing.T) string {
+	return testPublicID(t, publicid.StreamRecord)
+}
+
+func testTokenPublicID(t *testing.T) string {
+	return testPublicID(t, publicid.Token)
+}
+
+func testPublicAccessTokenPublicID(t *testing.T) string {
+	return testPublicID(t, publicid.PublicAccessToken)
+}
+
 func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) integrationIDs {
 	t.Helper()
 	ids := integrationIDs{
@@ -56,20 +126,20 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 	environmentSlug := "env-" + shortUUID(ids.environmentID)
 	var workerGroupID uuid.UUID
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO organizations (id, name, slug) VALUES ($1, 'Default', 'default')
+		INSERT INTO organizations (id, public_id, name, slug) VALUES ($1, $2, 'Default', 'default')
 		ON CONFLICT (id) DO NOTHING
-	`, ids.orgID); err != nil {
+	`, ids.orgID, testPublicID(t, publicid.Organization)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO projects (id, org_id, default_region_id, slug, name) VALUES ($1, $2, $3, $4, 'Project')
-	`, ids.projectID, ids.orgID, dbtest.DefaultRegionID, projectSlug); err != nil {
+		INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name) VALUES ($1, $5, $2, $3, $4, 'Project')
+	`, ids.projectID, ids.orgID, dbtest.DefaultRegionID, projectSlug, testPublicID(t, publicid.Project)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO environments (id, org_id, project_id, default_region_id, slug, name, color_hex)
-		VALUES ($1, $2, $3, $4, $5, 'Env', '#3366ff')
-	`, ids.environmentID, ids.orgID, ids.projectID, dbtest.DefaultRegionID, environmentSlug); err != nil {
+		INSERT INTO environments (id, public_id, org_id, project_id, default_region_id, slug, name, color_hex)
+		VALUES ($1, $6, $2, $3, $4, $5, 'Env', '#3366ff')
+	`, ids.environmentID, ids.orgID, ids.projectID, dbtest.DefaultRegionID, environmentSlug, testPublicID(t, publicid.Environment)); err != nil {
 		t.Fatal(err)
 	}
 	queries := db.New(pool)
@@ -107,9 +177,9 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO deployments (id, org_id, cell_id, project_id, environment_id, worker_group_id, version, content_hash, deployment_source_artifact_id, status)
-		VALUES ($1, $2, $3, $4, $5, $6, 'v1', $7, $8, 'deployed')
-	`, ids.deploymentID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, workerGroupID, taskBundleDigest, taskBundleArtifactID); err != nil {
+		INSERT INTO deployments (id, public_id, org_id, cell_id, project_id, environment_id, worker_group_id, version, content_hash, deployment_source_artifact_id, status)
+		VALUES ($1, $9, $2, $3, $4, $5, $6, 'v1', $7, $8, 'deployed')
+	`, ids.deploymentID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, workerGroupID, taskBundleDigest, taskBundleArtifactID, testPublicID(t, publicid.Deployment)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -120,48 +190,48 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployment_sandboxes (
-			id, org_id, cell_id, project_id, environment_id, deployment_id, sandbox_id,
+			id, public_id, org_id, cell_id, project_id, environment_id, deployment_id, sandbox_id,
 			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
 			workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format,
 			disk_floor_mib, contract_version, fingerprint
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'default', $7, 'oci-tar', 'sha256:rootfs', $8, 'oci-tar', '/workspace',
+		VALUES ($1, $9, $2, $3, $4, $5, $6, 'default', $7, 'oci-tar', 'sha256:rootfs', $8, 'oci-tar', '/workspace',
 			'test', 'guestd-test', 'adapter-test', 'tar', 1024, 1, 'sandbox-fingerprint')
-	`, ids.deploymentSandboxID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, imageArtifactID, imageDigest); err != nil {
+	`, ids.deploymentSandboxID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, imageArtifactID, imageDigest, testPublicID(t, publicid.Sandbox)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO tasks (org_id, cell_id, project_id, environment_id, task_id)
-		VALUES ($1, $2, $3, $4, 'approval-task')
+		INSERT INTO tasks (public_id, org_id, cell_id, project_id, environment_id, task_id)
+		VALUES ($5, $1, $2, $3, $4, 'approval-task')
 		ON CONFLICT DO NOTHING
-	`, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID); err != nil {
+	`, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, testPublicID(t, publicid.Task)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployment_tasks (
-			id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, bundle_artifact_id,
+			id, public_id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, bundle_artifact_id,
 			queue_name, max_active_duration_ms
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'default', 300000)
-	`, ids.taskID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentSandboxID, taskBundleArtifactID); err != nil {
+		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'default', 300000)
+	`, ids.taskID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentSandboxID, taskBundleArtifactID, testPublicID(t, publicid.DeploymentTask)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspaces (
-			id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint
+			id, public_id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'default', 'sandbox-fingerprint')
-	`, ids.workspaceID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentSandboxID); err != nil {
+		VALUES ($1, $7, $2, $3, $4, $5, $6, 'default', 'sandbox-fingerprint')
+	`, ids.workspaceID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentSandboxID, testPublicID(t, publicid.Workspace)); err != nil {
 		t.Fatal(err)
 	}
 	initialWorkspaceArtifactID := seedWorkspaceVersionArtifact(t, ctx, pool, ids)
 	initialVersionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		SELECT $1, $2, $3, $4, $5, $6, 'system', 'ready',
+		SELECT $1, $9, $2, $3, $4, $5, $6, 'system', 'ready',
 		       artifacts.id, $7, 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
@@ -169,7 +239,7 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		   AND artifacts.project_id = $4
 		   AND artifacts.environment_id = $5
 		   AND artifacts.id = $8
-	`, initialVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, workspace.ArtifactEncoding, initialWorkspaceArtifactID); err != nil {
+	`, initialVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, workspace.ArtifactEncoding, initialWorkspaceArtifactID, testPublicID(t, publicid.WorkspaceVersion)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -183,21 +253,21 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 	sessionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO sessions (
-			id, org_id, cell_id, project_id, environment_id, task_id,
+			id, public_id, org_id, cell_id, project_id, environment_id, task_id,
 			initial_deployment_id, active_deployment_id, workspace_id
 		)
-		VALUES ($1, $2, $3, $4, $5, 'approval-task', $6, $6, $7)
-	`, sessionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID); err != nil {
+		VALUES ($1, $8, $2, $3, $4, $5, 'approval-task', $6, $6, $7)
+	`, sessionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID, testPublicID(t, publicid.Session)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, public_id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
+		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, ids.runID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
+	`, ids.runID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID, testPublicID(t, publicid.Run)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -467,23 +537,23 @@ func seedRuntimeSubstrateSourceInOtherCell(t *testing.T, ctx context.Context, po
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployments (
-			id, org_id, cell_id, route_generation, project_id, environment_id, worker_group_id,
+			id, public_id, org_id, cell_id, route_generation, project_id, environment_id, worker_group_id,
 			version, content_hash, deployment_source_artifact_id, status
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'deployed')
-	`, deploymentID, ids.orgID, cellID, routeGeneration, ids.projectID, ids.environmentID, workerGroupID, "wrong-cell-"+shortUUID(deploymentID), taskBundleDigest, taskBundleArtifactID); err != nil {
+		VALUES ($1, $11, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'deployed')
+	`, deploymentID, ids.orgID, cellID, routeGeneration, ids.projectID, ids.environmentID, workerGroupID, "wrong-cell-"+shortUUID(deploymentID), taskBundleDigest, taskBundleArtifactID, testPublicID(t, publicid.Deployment)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployment_sandboxes (
-			id, org_id, cell_id, route_generation, project_id, environment_id, deployment_id, sandbox_id,
+			id, public_id, org_id, cell_id, route_generation, project_id, environment_id, deployment_id, sandbox_id,
 			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
 			workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format,
 			disk_floor_mib, contract_version, fingerprint
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'wrong-cell', $8, 'oci-tar', 'sha256:rootfs', $9, 'oci-tar', '/workspace',
+		VALUES ($1, $11, $2, $3, $4, $5, $6, $7, 'wrong-cell', $8, 'oci-tar', 'sha256:rootfs', $9, 'oci-tar', '/workspace',
 			'test', 'guestd-test', 'adapter-test', 'tar', 1024, 1, $10)
-	`, deploymentSandboxID, ids.orgID, cellID, routeGeneration, ids.projectID, ids.environmentID, deploymentID, imageArtifactID, imageDigest, "wrong-cell-"+shortUUID(deploymentSandboxID)); err != nil {
+	`, deploymentSandboxID, ids.orgID, cellID, routeGeneration, ids.projectID, ids.environmentID, deploymentID, imageArtifactID, imageDigest, "wrong-cell-"+shortUUID(deploymentSandboxID), testPublicID(t, publicid.Sandbox)); err != nil {
 		t.Fatal(err)
 	}
 	return cellID, routeGeneration, deploymentSandboxID

@@ -42,11 +42,11 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, org_id, cell_id, project_id, environment_id, workspace_id, artifact_id,
+			id, public_id, org_id, cell_id, project_id, environment_id, workspace_id, artifact_id,
 			artifact_encoding, artifact_entry_count, content_digest, size_bytes, state, promoted_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'tar', 1, $8, 10, 'ready', now())
-	`, baseVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, workspaceID, baseArtifactID, baseDigest); err != nil {
+		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, 'tar', 1, $8, 10, 'ready', now())
+	`, baseVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, workspaceID, baseArtifactID, baseDigest, testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -130,14 +130,14 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, public_id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name, queue_timestamp,
 			max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'approval-task',
+		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task',
 			$9, 'queued', 'queued', '{}', 'default', now(), 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, loserRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID); err != nil {
+	`, loserRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID, testRunPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -489,6 +489,7 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		Output:                      []byte(`{"ok":true}`),
 		TerminalEventKind:           "run.completed",
 		TerminalEventPayload:        []byte(`{"status":"succeeded"}`),
+		WorkspaceVersionPublicID:    testWorkspaceVersionPublicID(t),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("ReleaseRunLease stale fencing token error = %v, want pgx.ErrNoRows", err)
@@ -515,6 +516,7 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		Output:                      []byte(`{"ok":true}`),
 		TerminalEventKind:           "run.completed",
 		TerminalEventPayload:        []byte(`{"status":"succeeded"}`),
+		WorkspaceVersionPublicID:    testWorkspaceVersionPublicID(t),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("ReleaseRunLease forged base version error = %v, want pgx.ErrNoRows", err)
@@ -541,6 +543,7 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		Output:                      []byte(`{"ok":true}`),
 		TerminalEventKind:           "run.completed",
 		TerminalEventPayload:        []byte(`{"status":"succeeded"}`),
+		WorkspaceVersionPublicID:    testWorkspaceVersionPublicID(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -663,10 +666,10 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, cell_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		SELECT $1, $2, $3, $4, $5, $6, 'system', 'ready',
+		SELECT $1, $8, $2, $3, $4, $5, $6, 'system', 'ready',
 		       artifacts.id, 'tar', 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
@@ -674,7 +677,7 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 		   AND artifacts.project_id = $4
 		   AND artifacts.environment_id = $5
 		   AND artifacts.id = $7
-	`, staleVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, staleArtifactID); err != nil {
+	`, staleVersionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workspaceID, staleArtifactID, testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1279,19 +1282,20 @@ func TestReleaseLeasedRunLeaseDoesNotAccrueActiveTimeBeforeStart(t *testing.T) {
 	}
 
 	released, err := queries.ReleaseRunLease(ctx, db.ReleaseRunLeaseParams{
-		OrgID:                 pgvalue.UUID(ids.orgID),
-		RunID:                 pgvalue.UUID(ids.runID),
-		RunLeaseID:            pgvalue.UUID(runLeaseID),
-		WorkerInstanceID:      pgvalue.UUID(workerID),
-		DispatchMessageID:     "dispatch-" + runLeaseID.String()[:8],
-		DispatchLeaseID:       "lease-" + runLeaseID.String()[:8],
-		RunStatus:             db.RunStatusFailed,
-		AttemptStatus:         db.RunAttemptStatusFailed,
-		ExitCode:              pgtype.Int4{},
-		ErrorMessage:          pgtype.Text{String: "payload build failed", Valid: true},
-		TerminalEventKind:     "run.failed",
-		TerminalEventPayload:  []byte(`{"status":"failed"}`),
-		WorkspaceFencingToken: pgtype.Text{},
+		OrgID:                    pgvalue.UUID(ids.orgID),
+		RunID:                    pgvalue.UUID(ids.runID),
+		RunLeaseID:               pgvalue.UUID(runLeaseID),
+		WorkerInstanceID:         pgvalue.UUID(workerID),
+		DispatchMessageID:        "dispatch-" + runLeaseID.String()[:8],
+		DispatchLeaseID:          "lease-" + runLeaseID.String()[:8],
+		RunStatus:                db.RunStatusFailed,
+		AttemptStatus:            db.RunAttemptStatusFailed,
+		ExitCode:                 pgtype.Int4{},
+		ErrorMessage:             pgtype.Text{String: "payload build failed", Valid: true},
+		TerminalEventKind:        "run.failed",
+		TerminalEventPayload:     []byte(`{"status":"failed"}`),
+		WorkspaceVersionPublicID: testWorkspaceVersionPublicID(t),
+		WorkspaceFencingToken:    pgtype.Text{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1372,19 +1376,20 @@ func TestReleaseRunLeaseDoesNotRegressActiveTimeWhenClockMovesBackward(t *testin
 	}
 
 	released, err := queries.ReleaseRunLease(ctx, db.ReleaseRunLeaseParams{
-		OrgID:                 pgvalue.UUID(ids.orgID),
-		RunID:                 pgvalue.UUID(ids.runID),
-		RunLeaseID:            pgvalue.UUID(runLeaseID),
-		WorkerInstanceID:      pgvalue.UUID(workerID),
-		DispatchMessageID:     "dispatch-" + runLeaseID.String()[:8],
-		DispatchLeaseID:       "lease-" + runLeaseID.String()[:8],
-		RunStatus:             db.RunStatusFailed,
-		AttemptStatus:         db.RunAttemptStatusFailed,
-		ExitCode:              pgtype.Int4{},
-		ErrorMessage:          pgtype.Text{String: "clock skew regression", Valid: true},
-		TerminalEventKind:     "run.failed",
-		TerminalEventPayload:  []byte(`{"status":"failed"}`),
-		WorkspaceFencingToken: pgtype.Text{},
+		OrgID:                    pgvalue.UUID(ids.orgID),
+		RunID:                    pgvalue.UUID(ids.runID),
+		RunLeaseID:               pgvalue.UUID(runLeaseID),
+		WorkerInstanceID:         pgvalue.UUID(workerID),
+		DispatchMessageID:        "dispatch-" + runLeaseID.String()[:8],
+		DispatchLeaseID:          "lease-" + runLeaseID.String()[:8],
+		RunStatus:                db.RunStatusFailed,
+		AttemptStatus:            db.RunAttemptStatusFailed,
+		ExitCode:                 pgtype.Int4{},
+		ErrorMessage:             pgtype.Text{String: "clock skew regression", Valid: true},
+		TerminalEventKind:        "run.failed",
+		TerminalEventPayload:     []byte(`{"status":"failed"}`),
+		WorkspaceVersionPublicID: testWorkspaceVersionPublicID(t),
+		WorkspaceFencingToken:    pgtype.Text{},
 	})
 	if err != nil {
 		t.Fatal(err)

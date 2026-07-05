@@ -53,6 +53,7 @@ allocated_stream AS (
 inserted_record AS (
     INSERT INTO stream_records (
         id,
+        public_id,
         org_id,
         cell_id,
         project_id,
@@ -71,6 +72,7 @@ inserted_record AS (
         public_access_token_id
     )
     SELECT sqlc.arg(id),
+           sqlc.arg(public_id),
            allocated_stream.org_id,
            allocated_stream.cell_id,
            allocated_stream.project_id,

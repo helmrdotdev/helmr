@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -171,22 +172,26 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 	if sourceID == "" {
 		sourceID = string(sourceType)
 	}
-	row, err := store.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
-		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:                  session.OrgID,
-		CellID:                 session.CellID,
-		ProjectID:              session.ProjectID,
-		EnvironmentID:          session.EnvironmentID,
-		StreamID:               stream.ID,
-		Direction:              direction,
-		Data:                   data,
-		CorrelationID:          correlationID,
-		ContentType:            contentType,
-		IdempotencyKey:         idempotencyKey,
-		IdempotencyFingerprint: fingerprint,
-		SourceType:             sourceType,
-		SourceID:               sourceID,
-		PublicAccessTokenID:    publicAccessTokenID,
+	var publicID string
+	row, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.StreamRecord, value: &publicID}}, func() (db.AppendStreamRecordRow, error) {
+		return store.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+			ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			PublicID:               publicID,
+			OrgID:                  session.OrgID,
+			CellID:                 session.CellID,
+			ProjectID:              session.ProjectID,
+			EnvironmentID:          session.EnvironmentID,
+			StreamID:               stream.ID,
+			Direction:              direction,
+			Data:                   data,
+			CorrelationID:          correlationID,
+			ContentType:            contentType,
+			IdempotencyKey:         idempotencyKey,
+			IdempotencyFingerprint: fingerprint,
+			SourceType:             sourceType,
+			SourceID:               sourceID,
+			PublicAccessTokenID:    publicAccessTokenID,
+		})
 	})
 	if isNoRows(err) {
 		return appendedStreamRecord{}, errStreamDirectionMismatch

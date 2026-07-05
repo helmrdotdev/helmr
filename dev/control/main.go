@@ -444,8 +444,8 @@ func migrationPaths() ([]string, error) {
 func devLogin(ctx context.Context, w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, queries *db.Queries, cfg devConfig) {
 	userID := mustUUID(defaultUserID)
 	if _, err := pool.Exec(ctx, `
-INSERT INTO users (id, display_name, primary_email)
-VALUES ($1, 'Local Developer', 'dev@helmr.local')
+INSERT INTO users (id, public_id, display_name, primary_email)
+VALUES ($1, 'usr_aaaaaaaaaaaaaaaaaaaaaaaaaa', 'Local Developer', 'dev@helmr.local')
 ON CONFLICT (id) DO UPDATE
    SET display_name = EXCLUDED.display_name,
        primary_email = EXCLUDED.primary_email,

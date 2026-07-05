@@ -1,6 +1,7 @@
 -- name: CreateDeployment :one
 INSERT INTO deployments (
     id,
+    public_id,
     org_id,
     cell_id,
     route_generation,
@@ -18,6 +19,7 @@ INSERT INTO deployments (
     status
 )
 SELECT sqlc.arg(id),
+       sqlc.arg(public_id),
        sqlc.arg(org_id),
        sqlc.arg(cell_id),
        sqlc.arg(route_generation),
@@ -452,6 +454,7 @@ SELECT deployments.*
 -- name: CreateDeploymentSandbox :one
 INSERT INTO deployment_sandboxes (
     id,
+    public_id,
     org_id,
     cell_id,
     route_generation,
@@ -479,6 +482,7 @@ INSERT INTO deployment_sandboxes (
     fingerprint
 ) VALUES (
     sqlc.arg(id),
+    sqlc.arg(public_id),
     sqlc.arg(org_id),
     sqlc.arg(cell_id),
     sqlc.arg(route_generation),
@@ -533,6 +537,7 @@ RETURNING *;
 WITH catalog_task AS (
     INSERT INTO tasks (
         org_id,
+        public_id,
         cell_id,
         project_id,
         environment_id,
@@ -541,6 +546,7 @@ WITH catalog_task AS (
         updated_at
     ) VALUES (
         sqlc.arg(org_id),
+        sqlc.arg(task_public_id),
         sqlc.arg(cell_id),
         sqlc.arg(project_id),
         sqlc.arg(environment_id),
@@ -555,6 +561,7 @@ WITH catalog_task AS (
 )
 INSERT INTO deployment_tasks (
     id,
+    public_id,
     org_id,
     cell_id,
     project_id,
@@ -581,6 +588,7 @@ INSERT INTO deployment_tasks (
     retry_policy
 ) SELECT
     sqlc.arg(id),
+    sqlc.arg(public_id),
     sqlc.arg(org_id),
     sqlc.arg(cell_id),
     sqlc.arg(project_id),

@@ -5,6 +5,7 @@ WITH attempt_seed AS (
 created AS (
     INSERT INTO runs (
         id,
+        public_id,
         org_id,
         cell_id,
         route_generation,
@@ -40,6 +41,7 @@ created AS (
         scheduled_at
     )
     SELECT sqlc.arg(id),
+           sqlc.arg(public_id),
            sqlc.arg(org_id),
            sqlc.arg(cell_id),
            sqlc.arg(route_generation),
@@ -630,6 +632,7 @@ LIMIT sqlc.arg(row_limit);
 -- name: CreateRunOperation :one
 INSERT INTO run_operations (
     id,
+    public_id,
     org_id,
     cell_id,
     project_id,
@@ -644,6 +647,7 @@ INSERT INTO run_operations (
     idempotency_key
 ) VALUES (
     sqlc.arg(id),
+    sqlc.arg(public_id),
     sqlc.arg(org_id),
     sqlc.arg(cell_id),
     sqlc.arg(project_id),

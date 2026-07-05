@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -252,16 +253,20 @@ func (s *Server) upsertAuthIdentity(r *http.Request, queries db.Querier, identit
 	if len(claims) == 0 || !json.Valid(claims) {
 		claims = []byte(`{}`)
 	}
-	return queries.UpsertAuthIdentity(r.Context(), db.UpsertAuthIdentityParams{
-		UserID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		IdentityID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		IdentityProvider: identity.Provider,
-		IdentitySubject:  identity.Subject,
-		DisplayName:      identity.DisplayName,
-		ProfileImageUrl:  pgtype.Text{String: identity.ProfileImageURL, Valid: identity.ProfileImageURL != ""},
-		Email:            email,
-		EmailVerified:    identity.EmailVerified,
-		Claims:           claims,
+	var userPublicID string
+	return createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.User, value: &userPublicID}}, func() (db.UpsertAuthIdentityRow, error) {
+		return queries.UpsertAuthIdentity(r.Context(), db.UpsertAuthIdentityParams{
+			UserID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			UserPublicID:     userPublicID,
+			IdentityID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			IdentityProvider: identity.Provider,
+			IdentitySubject:  identity.Subject,
+			DisplayName:      identity.DisplayName,
+			ProfileImageUrl:  pgtype.Text{String: identity.ProfileImageURL, Valid: identity.ProfileImageURL != ""},
+			Email:            email,
+			EmailVerified:    identity.EmailVerified,
+			Claims:           claims,
+		})
 	})
 }
 

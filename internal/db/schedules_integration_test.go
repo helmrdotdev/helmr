@@ -25,9 +25,9 @@ func TestDeleteScheduleKeepsParentUntilLastInstance(t *testing.T) {
 	secondEnvironmentID := uuid.Must(uuid.NewV7())
 	secondEnvironmentSlug := "env-" + shortUUID(secondEnvironmentID)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO environments (id, org_id, project_id, default_region_id, slug, name, color_hex)
-		VALUES ($1, $2, $3, $4, $5, 'Env 2', '#3366ff')
-	`, secondEnvironmentID, ids.orgID, ids.projectID, dbtest.DefaultRegionID, secondEnvironmentSlug); err != nil {
+		INSERT INTO environments (id, public_id, org_id, project_id, default_region_id, slug, name, color_hex)
+		VALUES ($1, $6, $2, $3, $4, $5, 'Env 2', '#3366ff')
+	`, secondEnvironmentID, ids.orgID, ids.projectID, dbtest.DefaultRegionID, secondEnvironmentSlug, testEnvironmentPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cell.EnsureEnvironmentRoute(ctx, queries, cell.EnsureEnvironmentRouteParams{
@@ -40,9 +40,9 @@ func TestDeleteScheduleKeepsParentUntilLastInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO tasks (org_id, cell_id, project_id, environment_id, task_id)
-		VALUES ($1, $2, $3, $4, 'approval-task')
-	`, ids.orgID, dbtest.DefaultCellID, ids.projectID, secondEnvironmentID); err != nil {
+		INSERT INTO tasks (public_id, org_id, cell_id, project_id, environment_id, task_id)
+		VALUES ($5, $1, $2, $3, $4, 'approval-task')
+	`, ids.orgID, dbtest.DefaultCellID, ids.projectID, secondEnvironmentID, testTaskPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -58,6 +58,7 @@ func TestDeleteScheduleKeepsParentUntilLastInstance(t *testing.T) {
 		Cron:           "0 9 * * *",
 		Timezone:       "UTC",
 		ScheduleID:     pgvalue.UUID(scheduleID),
+		PublicID:       testSchedulePublicID(t),
 		InstanceID:     pgvalue.UUID(firstInstanceID),
 		EnvironmentID:  pgvalue.UUID(ids.environmentID),
 		RunOptions:     []byte(`{}`),
@@ -79,6 +80,7 @@ func TestDeleteScheduleKeepsParentUntilLastInstance(t *testing.T) {
 		Cron:           "0 9 * * *",
 		Timezone:       "UTC",
 		ScheduleID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		PublicID:       testSchedulePublicID(t),
 		InstanceID:     pgvalue.UUID(secondInstanceID),
 		EnvironmentID:  pgvalue.UUID(secondEnvironmentID),
 		RunOptions:     []byte(`{}`),
@@ -125,9 +127,9 @@ func TestUpdateScheduleRetimesSiblingInstancesWithoutChangingEnabled(t *testing.
 
 	secondEnvironmentID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO environments (id, org_id, project_id, default_region_id, slug, name, color_hex)
-		VALUES ($1, $2, $3, $4, $5, 'Env 2', '#3366ff')
-	`, secondEnvironmentID, ids.orgID, ids.projectID, dbtest.DefaultRegionID, "env-"+shortUUID(secondEnvironmentID)); err != nil {
+		INSERT INTO environments (id, public_id, org_id, project_id, default_region_id, slug, name, color_hex)
+		VALUES ($1, $6, $2, $3, $4, $5, 'Env 2', '#3366ff')
+	`, secondEnvironmentID, ids.orgID, ids.projectID, dbtest.DefaultRegionID, "env-"+shortUUID(secondEnvironmentID), testEnvironmentPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cell.EnsureEnvironmentRoute(ctx, queries, cell.EnsureEnvironmentRouteParams{
@@ -153,6 +155,7 @@ func TestUpdateScheduleRetimesSiblingInstancesWithoutChangingEnabled(t *testing.
 		Cron:           "0 9 * * *",
 		Timezone:       "UTC",
 		ScheduleID:     pgvalue.UUID(scheduleID),
+		PublicID:       testSchedulePublicID(t),
 		InstanceID:     pgvalue.UUID(firstInstanceID),
 		EnvironmentID:  pgvalue.UUID(ids.environmentID),
 		RunOptions:     []byte(`{}`),
@@ -170,6 +173,7 @@ func TestUpdateScheduleRetimesSiblingInstancesWithoutChangingEnabled(t *testing.
 		Cron:           "0 9 * * *",
 		Timezone:       "UTC",
 		ScheduleID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		PublicID:       testSchedulePublicID(t),
 		InstanceID:     pgvalue.UUID(secondInstanceID),
 		EnvironmentID:  pgvalue.UUID(secondEnvironmentID),
 		RunOptions:     []byte(`{"env":2}`),
@@ -261,6 +265,7 @@ func TestScheduleTriggerFollowsCurrentActiveRoute(t *testing.T) {
 		Cron:           "0 9 * * *",
 		Timezone:       "UTC",
 		ScheduleID:     pgvalue.UUID(scheduleID),
+		PublicID:       testSchedulePublicID(t),
 		InstanceID:     pgvalue.UUID(instanceID),
 		EnvironmentID:  pgvalue.UUID(ids.environmentID),
 		RunOptions:     []byte(`{}`),

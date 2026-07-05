@@ -120,18 +120,18 @@ func seedPendingSessionRunRequest(t *testing.T, ctx context.Context, pool *pgxpo
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO streams (id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'user.input', 'input')
-	`, streamID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, sessionID, deploymentStreamID); err != nil {
+		INSERT INTO streams (id, public_id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction)
+		VALUES ($1, $8, $2, $3, $4, $5, $6, $7, 'user.input', 'input')
+	`, streamID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, sessionID, deploymentStreamID, testStreamPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 			INSERT INTO stream_records (
-				id, org_id, cell_id, project_id, environment_id, session_id, stream_id, direction,
+				id, public_id, org_id, cell_id, project_id, environment_id, session_id, stream_id, direction,
 				sequence, data, source_type, source_id, created_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, 'input', 1, '{"text":"continue"}', 'api_key', 'test', $8)
-		`, streamRecordID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, sessionID, streamID, time.Now().UTC()); err != nil {
+			VALUES ($1, $9, $2, $3, $4, $5, $6, $7, 'input', 1, '{"text":"continue"}', 'api_key', 'test', $8)
+		`, streamRecordID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, sessionID, streamID, time.Now().UTC(), testStreamRecordPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

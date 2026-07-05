@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -103,20 +104,24 @@ func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor 
 	if err != nil {
 		return db.CreateTokenRow{}, "", err
 	}
-	row, err := store.CreateToken(ctx, db.CreateTokenParams{
-		ID:                        pgvalue.UUID(tokenID),
-		OrgID:                     pgvalue.UUID(actor.OrgID),
-		CellID:                    cellID,
-		ProjectID:                 projectID,
-		EnvironmentID:             environmentID,
-		TimeoutAt:                 pgvalue.Timestamptz(timeoutAt),
-		IdempotencyKey:            idempotencyKey,
-		CreateRequestFingerprint:  fingerprint,
-		CallbackKeyID:             tokenCallbackKeyID,
-		CallbackSecretFingerprint: hex.EncodeToString(callbackFingerprint),
-		CallbackSecretCreatedAt:   pgvalue.Timestamptz(time.Now()),
-		Metadata:                  metadata,
-		Tags:                      tags,
+	var tokenPublicID string
+	row, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Token, value: &tokenPublicID}}, func() (db.CreateTokenRow, error) {
+		return store.CreateToken(ctx, db.CreateTokenParams{
+			ID:                        pgvalue.UUID(tokenID),
+			PublicID:                  tokenPublicID,
+			OrgID:                     pgvalue.UUID(actor.OrgID),
+			CellID:                    cellID,
+			ProjectID:                 projectID,
+			EnvironmentID:             environmentID,
+			TimeoutAt:                 pgvalue.Timestamptz(timeoutAt),
+			IdempotencyKey:            idempotencyKey,
+			CreateRequestFingerprint:  fingerprint,
+			CallbackKeyID:             tokenCallbackKeyID,
+			CallbackSecretFingerprint: hex.EncodeToString(callbackFingerprint),
+			CallbackSecretCreatedAt:   pgvalue.Timestamptz(time.Now()),
+			Metadata:                  metadata,
+			Tags:                      tags,
+		})
 	})
 	if err != nil {
 		return db.CreateTokenRow{}, "", err
@@ -132,17 +137,21 @@ func (s *Server) createTokenRecord(ctx context.Context, store db.Querier, actor 
 		}
 		return row, publicToken, nil
 	}
-	publicAccessToken, err := store.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		CellID:        cellID,
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		TokenHash:     publicTokenHash,
-		ExpiresAt:     pgvalue.Timestamptz(timeoutAt.Add(publicAccessTokenTTL)),
-		MaxUses:       pgtype.Int4{Int32: 1, Valid: true},
-		Metadata:      []byte(`{}`),
-		CreatedBy:     []byte(`{"kind":"token.create"}`),
+	var publicAccessTokenPublicID string
+	publicAccessToken, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.PublicAccessToken, value: &publicAccessTokenPublicID}}, func() (db.PublicAccessToken, error) {
+		return store.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
+			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			PublicID:      publicAccessTokenPublicID,
+			OrgID:         pgvalue.UUID(actor.OrgID),
+			CellID:        cellID,
+			ProjectID:     projectID,
+			EnvironmentID: environmentID,
+			TokenHash:     publicTokenHash,
+			ExpiresAt:     pgvalue.Timestamptz(timeoutAt.Add(publicAccessTokenTTL)),
+			MaxUses:       pgtype.Int4{Int32: 1, Valid: true},
+			Metadata:      []byte(`{}`),
+			CreatedBy:     []byte(`{"kind":"token.create"}`),
+		})
 	})
 	if err != nil {
 		return db.CreateTokenRow{}, "", err

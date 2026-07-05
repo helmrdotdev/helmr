@@ -2679,6 +2679,7 @@ inserted_workspace_artifact AS (
 published_workspace_version AS (
     INSERT INTO workspace_versions (
         id,
+        public_id,
         org_id,
         cell_id,
         project_id,
@@ -2697,6 +2698,7 @@ published_workspace_version AS (
         promoted_at
     )
     SELECT workspace_commit_input.workspace_version_id,
+           sqlc.arg(workspace_version_public_id)::text,
            workspace_commit_input.org_id,
            workspace_commit_input.cell_id,
            workspace_commit_input.project_id,

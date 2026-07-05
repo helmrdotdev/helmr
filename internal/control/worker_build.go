@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -316,33 +317,37 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				if err != nil {
 					return failBuild("fingerprint deployment sandbox contract: " + err.Error())
 				}
-				row, err := work.q.CreateDeploymentSandbox(r.Context(), db.CreateDeploymentSandboxParams{
-					ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-					OrgID:               orgID,
-					CellID:              cellID,
-					RouteGeneration:     buildDeployment.RouteGeneration,
-					ProjectID:           projectID,
-					EnvironmentID:       environmentID,
-					DeploymentID:        deploymentID,
-					SandboxID:           sandboxID,
-					ImageArtifactID:     imageArtifact.ID,
-					ImageArtifactFormat: strings.TrimSpace(task.SandboxImageArtifactFormat),
-					RootfsDigest:        workerState.RootfsDigest,
-					ImageDigest:         imageArtifact.Digest,
-					ImageFormat:         strings.TrimSpace(task.SandboxImageFormat),
-					WorkspaceMountPath:  strings.TrimSpace(task.WorkspaceMountPath),
-					ResourceFloor:       resourceFloor,
-					DiskFloorMib:        task.RequestedDiskMiB,
-					NetworkPolicy:       networkPolicy,
-					RuntimeABI:          workerState.RuntimeABI,
-					GuestdAbi:           currentGuestdABI,
-					AdapterAbi:          currentAdapterABI,
-					FilesystemFormat:    strings.TrimSpace(task.FilesystemFormat),
-					DefaultUid:          pgtype.Int8{},
-					DefaultGid:          pgtype.Int8{},
-					DefaultWorkdir:      "",
-					ContractVersion:     1,
-					Fingerprint:         fingerprint,
+				var sandboxPublicID string
+				row, err := createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.Sandbox, value: &sandboxPublicID}}, func() (db.DeploymentSandbox, error) {
+					return work.q.CreateDeploymentSandbox(r.Context(), db.CreateDeploymentSandboxParams{
+						ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+						PublicID:            sandboxPublicID,
+						OrgID:               orgID,
+						CellID:              cellID,
+						RouteGeneration:     buildDeployment.RouteGeneration,
+						ProjectID:           projectID,
+						EnvironmentID:       environmentID,
+						DeploymentID:        deploymentID,
+						SandboxID:           sandboxID,
+						ImageArtifactID:     imageArtifact.ID,
+						ImageArtifactFormat: strings.TrimSpace(task.SandboxImageArtifactFormat),
+						RootfsDigest:        workerState.RootfsDigest,
+						ImageDigest:         imageArtifact.Digest,
+						ImageFormat:         strings.TrimSpace(task.SandboxImageFormat),
+						WorkspaceMountPath:  strings.TrimSpace(task.WorkspaceMountPath),
+						ResourceFloor:       resourceFloor,
+						DiskFloorMib:        task.RequestedDiskMiB,
+						NetworkPolicy:       networkPolicy,
+						RuntimeABI:          workerState.RuntimeABI,
+						GuestdAbi:           currentGuestdABI,
+						AdapterAbi:          currentAdapterABI,
+						FilesystemFormat:    strings.TrimSpace(task.FilesystemFormat),
+						DefaultUid:          pgtype.Int8{},
+						DefaultGid:          pgtype.Int8{},
+						DefaultWorkdir:      "",
+						ContractVersion:     1,
+						Fingerprint:         fingerprint,
+					})
 				})
 				if err != nil {
 					return failBuild("record deployment sandbox: " + err.Error())
@@ -359,32 +364,40 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			if err != nil {
 				return failBuild("validate deployment task retry policy: " + err.Error())
 			}
-			if _, err := work.q.CreateDeploymentTask(r.Context(), db.CreateDeploymentTaskParams{
-				ID:                    pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				OrgID:                 orgID,
-				CellID:                cellID,
-				ProjectID:             projectID,
-				EnvironmentID:         environmentID,
-				DeploymentID:          deploymentID,
-				DeploymentSandboxID:   deploymentSandboxID,
-				TaskID:                strings.TrimSpace(task.TaskID),
-				FilePath:              strings.TrimSpace(task.FilePath),
-				ExportName:            strings.TrimSpace(task.ExportName),
-				HandlerEntrypoint:     strings.TrimSpace(task.HandlerEntrypoint),
-				BundleArtifactID:      bundleArtifact.ID,
-				BundleFormatVersion:   firstPositiveInt32(task.BundleFormatVersion, api.CurrentBundleFormatVersion),
-				RequestedMilliCpu:     task.RequestedMilliCPU,
-				RequestedMemoryMib:    task.RequestedMemoryMiB,
-				RequestedDiskMib:      task.RequestedDiskMiB,
-				SecretDeclarations:    secretDeclarations,
-				ResourceRequirements:  []byte("{}"),
-				NetworkPolicy:         networkPolicy,
-				ScheduleDeclarations:  scheduleDeclarations,
-				QueueName:             queueName,
-				QueueConcurrencyLimit: pgvalue.Int4Ptr(queueConcurrencyLimit),
-				Ttl:                   strings.TrimSpace(task.TTL),
-				MaxActiveDurationMs:   int64(task.MaxDurationSeconds) * 1000,
-				RetryPolicy:           retryPolicy,
+			var deploymentTaskPublicID, taskPublicID string
+			if _, err := createWithPublicID(r.Context(), []publicIDSlot{
+				{prefix: publicid.DeploymentTask, value: &deploymentTaskPublicID},
+				{prefix: publicid.Task, value: &taskPublicID},
+			}, func() (db.DeploymentTask, error) {
+				return work.q.CreateDeploymentTask(r.Context(), db.CreateDeploymentTaskParams{
+					ID:                    pgvalue.UUID(uuid.Must(uuid.NewV7())),
+					PublicID:              deploymentTaskPublicID,
+					OrgID:                 orgID,
+					CellID:                cellID,
+					ProjectID:             projectID,
+					EnvironmentID:         environmentID,
+					DeploymentID:          deploymentID,
+					DeploymentSandboxID:   deploymentSandboxID,
+					TaskID:                strings.TrimSpace(task.TaskID),
+					TaskPublicID:          taskPublicID,
+					FilePath:              strings.TrimSpace(task.FilePath),
+					ExportName:            strings.TrimSpace(task.ExportName),
+					HandlerEntrypoint:     strings.TrimSpace(task.HandlerEntrypoint),
+					BundleArtifactID:      bundleArtifact.ID,
+					BundleFormatVersion:   firstPositiveInt32(task.BundleFormatVersion, api.CurrentBundleFormatVersion),
+					RequestedMilliCpu:     task.RequestedMilliCPU,
+					RequestedMemoryMib:    task.RequestedMemoryMiB,
+					RequestedDiskMib:      task.RequestedDiskMiB,
+					SecretDeclarations:    secretDeclarations,
+					ResourceRequirements:  []byte("{}"),
+					NetworkPolicy:         networkPolicy,
+					ScheduleDeclarations:  scheduleDeclarations,
+					QueueName:             queueName,
+					QueueConcurrencyLimit: pgvalue.Int4Ptr(queueConcurrencyLimit),
+					Ttl:                   strings.TrimSpace(task.TTL),
+					MaxActiveDurationMs:   int64(task.MaxDurationSeconds) * 1000,
+					RetryPolicy:           retryPolicy,
+				})
 			}); err != nil {
 				return failBuild("record deployment task: " + err.Error())
 			}

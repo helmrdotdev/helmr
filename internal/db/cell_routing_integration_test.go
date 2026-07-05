@@ -336,6 +336,7 @@ func TestReusableDeploymentBuildKeyIsRouteGenerationScoped(t *testing.T) {
 	}
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		PublicID:                   testDeploymentPublicID(t),
 		OrgID:                      pgvalue.UUID(ids.orgID),
 		CellID:                     dbtest.DefaultCellID,
 		RouteGeneration:            1,
@@ -357,6 +358,7 @@ func TestReusableDeploymentBuildKeyIsRouteGenerationScoped(t *testing.T) {
 	ensureCellRoute(t, ctx, pool, ids, dbtest.DefaultCellID, 2)
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		PublicID:                   testDeploymentPublicID(t),
 		OrgID:                      pgvalue.UUID(ids.orgID),
 		CellID:                     dbtest.DefaultCellID,
 		RouteGeneration:            2,
@@ -386,9 +388,9 @@ func TestTasksAllowSameTaskIDPerCell(t *testing.T) {
 	secondCellID := "us-east-1-cell-2"
 	ensureCellRoute(t, ctx, pool, ids, secondCellID, 2)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO tasks (org_id, cell_id, project_id, environment_id, task_id)
-		VALUES ($1, $2, $3, $4, 'approval-task')
-	`, ids.orgID, secondCellID, ids.projectID, ids.environmentID); err != nil {
+		INSERT INTO tasks (public_id, org_id, cell_id, project_id, environment_id, task_id)
+		VALUES ($5, $1, $2, $3, $4, 'approval-task')
+	`, ids.orgID, secondCellID, ids.projectID, ids.environmentID, testTaskPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -480,11 +482,11 @@ func seedDeploymentInCell(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployments (
-			id, org_id, cell_id, route_generation, project_id, environment_id, worker_group_id,
+			id, public_id, org_id, cell_id, route_generation, project_id, environment_id, worker_group_id,
 			version, content_hash, deployment_source_artifact_id, status
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'v2', $8, $9, 'deployed')
-	`, deploymentID, ids.orgID, cellID, routeGeneration, ids.projectID, ids.environmentID, workerGroupID, digest, artifactID); err != nil {
+		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, 'v2', $8, $9, 'deployed')
+	`, deploymentID, ids.orgID, cellID, routeGeneration, ids.projectID, ids.environmentID, workerGroupID, digest, artifactID, testDeploymentPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	return deploymentID
