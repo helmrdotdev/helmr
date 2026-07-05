@@ -2,7 +2,6 @@
 SELECT *
   FROM tasks
  WHERE org_id = sqlc.arg(org_id)
-   AND cell_id = sqlc.arg(cell_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND task_id = sqlc.arg(task_id);
@@ -51,6 +50,7 @@ INSERT INTO workspaces (
     public_id,
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     deployment_sandbox_id,
@@ -65,6 +65,7 @@ INSERT INTO workspaces (
     sqlc.arg(public_id),
     sqlc.arg(org_id),
     sqlc.arg(cell_id),
+    sqlc.arg(route_generation),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(deployment_sandbox_id),
@@ -265,7 +266,6 @@ SELECT session_start_idempotencies.*,
            AND runs.environment_id = session_start_idempotencies.environment_id
            AND runs.id = session_start_idempotencies.first_run_id
  WHERE session_start_idempotencies.org_id = sqlc.arg(org_id)
-   AND session_start_idempotencies.cell_id = sqlc.arg(cell_id)
    AND session_start_idempotencies.project_id = sqlc.arg(project_id)
    AND session_start_idempotencies.environment_id = sqlc.arg(environment_id)
    AND session_start_idempotencies.task_id = sqlc.arg(task_id)
@@ -275,7 +275,6 @@ SELECT session_start_idempotencies.*,
 -- name: DeleteExpiredSessionStartIdempotency :exec
 DELETE FROM session_start_idempotencies
  WHERE org_id = sqlc.arg(org_id)
-   AND cell_id = sqlc.arg(cell_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND task_id = sqlc.arg(task_id)
@@ -287,6 +286,7 @@ INSERT INTO session_start_idempotencies (
     id,
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     task_id,
@@ -299,6 +299,7 @@ INSERT INTO session_start_idempotencies (
     sqlc.arg(id),
     sqlc.arg(org_id),
     sqlc.arg(cell_id),
+    sqlc.arg(route_generation),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(task_id),
@@ -308,7 +309,19 @@ INSERT INTO session_start_idempotencies (
     sqlc.arg(first_run_id),
     sqlc.arg(expires_at)
 )
-ON CONFLICT (org_id, cell_id, project_id, environment_id, task_id, idempotency_key) DO NOTHING
+ON CONFLICT (org_id, project_id, environment_id, task_id, idempotency_key) DO UPDATE
+   SET cell_id = EXCLUDED.cell_id,
+       route_generation = EXCLUDED.route_generation,
+       request_fingerprint = EXCLUDED.request_fingerprint,
+       session_id = EXCLUDED.session_id,
+       first_run_id = EXCLUDED.first_run_id,
+       expires_at = EXCLUDED.expires_at,
+       last_used_at = now()
+ WHERE session_start_idempotencies.request_fingerprint = EXCLUDED.request_fingerprint
+   AND (
+       session_start_idempotencies.cell_id <> EXCLUDED.cell_id
+       OR session_start_idempotencies.route_generation <> EXCLUDED.route_generation
+   )
 RETURNING *;
 
 -- name: TouchSessionStartIdempotency :exec

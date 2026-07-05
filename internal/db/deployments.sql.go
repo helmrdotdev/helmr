@@ -511,7 +511,6 @@ WITH catalog_task AS (
     INSERT INTO tasks (
         org_id,
         public_id,
-        cell_id,
         project_id,
         environment_id,
         task_id,
@@ -520,14 +519,13 @@ WITH catalog_task AS (
     ) VALUES (
         $3,
         $27,
-        $4,
         $5,
         $6,
         $9,
         NULL,
         now()
     )
-    ON CONFLICT (org_id, cell_id, project_id, environment_id, task_id)
+    ON CONFLICT (org_id, project_id, environment_id, task_id)
     DO UPDATE SET archived_at = NULL,
                   updated_at = now()
     RETURNING task_id

@@ -1049,7 +1049,6 @@ CREATE TABLE tasks (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^task_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
-    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
@@ -1058,10 +1057,8 @@ CREATE TABLE tasks (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     archived_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
-    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
-    UNIQUE (org_id, cell_id, project_id, environment_id, id),
-    UNIQUE (org_id, cell_id, project_id, environment_id, task_id),
+    UNIQUE (org_id, project_id, environment_id, task_id),
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE
@@ -1208,8 +1205,8 @@ CREATE TABLE deployment_tasks (
     UNIQUE (org_id, cell_id, deployment_id, id, task_id),
     UNIQUE (org_id, deployment_id, task_id),
     UNIQUE (org_id, cell_id, deployment_id, task_id),
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, task_id)
-        REFERENCES tasks(org_id, cell_id, project_id, environment_id, task_id)
+    FOREIGN KEY (org_id, project_id, environment_id, task_id)
+        REFERENCES tasks(org_id, project_id, environment_id, task_id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
         REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
@@ -1361,8 +1358,8 @@ CREATE TABLE sessions (
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, cell_id, project_id, environment_id, id),
     UNIQUE (org_id, cell_id, project_id, environment_id, id, task_id),
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, task_id)
-        REFERENCES tasks(org_id, cell_id, project_id, environment_id, task_id)
+    FOREIGN KEY (org_id, project_id, environment_id, task_id)
+        REFERENCES tasks(org_id, project_id, environment_id, task_id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, initial_deployment_id)
         REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
@@ -1533,6 +1530,7 @@ CREATE TABLE session_start_idempotencies (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
@@ -1543,9 +1541,9 @@ CREATE TABLE session_start_idempotencies (
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, cell_id, project_id, environment_id, task_id, idempotency_key),
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, task_id)
-        REFERENCES tasks(org_id, cell_id, project_id, environment_id, task_id)
+    UNIQUE (org_id, project_id, environment_id, task_id, idempotency_key),
+    FOREIGN KEY (org_id, project_id, environment_id, task_id)
+        REFERENCES tasks(org_id, project_id, environment_id, task_id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, session_id)
         REFERENCES sessions(org_id, cell_id, project_id, environment_id, id)

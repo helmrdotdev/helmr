@@ -538,7 +538,6 @@ WITH catalog_task AS (
     INSERT INTO tasks (
         org_id,
         public_id,
-        cell_id,
         project_id,
         environment_id,
         task_id,
@@ -547,14 +546,13 @@ WITH catalog_task AS (
     ) VALUES (
         sqlc.arg(org_id),
         sqlc.arg(task_public_id),
-        sqlc.arg(cell_id),
         sqlc.arg(project_id),
         sqlc.arg(environment_id),
         sqlc.arg(task_id),
         NULL,
         now()
     )
-    ON CONFLICT (org_id, cell_id, project_id, environment_id, task_id)
+    ON CONFLICT (org_id, project_id, environment_id, task_id)
     DO UPDATE SET archived_at = NULL,
                   updated_at = now()
     RETURNING task_id

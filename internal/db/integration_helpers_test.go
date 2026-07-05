@@ -201,10 +201,10 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO tasks (public_id, org_id, cell_id, project_id, environment_id, task_id)
-		VALUES ($5, $1, $2, $3, $4, 'approval-task')
+		INSERT INTO tasks (public_id, org_id, project_id, environment_id, task_id)
+		VALUES ($5, $1, $2, $3, 'approval-task')
 		ON CONFLICT DO NOTHING
-	`, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, testPublicID(t, publicid.Task)); err != nil {
+	`, ids.orgID, ids.projectID, ids.environmentID, testPublicID(t, publicid.Task)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

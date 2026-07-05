@@ -76,6 +76,7 @@ type sessionStartIdempotencyBinding struct {
 	ID                 pgtype.UUID
 	OrgID              pgtype.UUID
 	CellID             string
+	RouteGeneration    int64
 	ProjectID          pgtype.UUID
 	EnvironmentID      pgtype.UUID
 	TaskID             string
@@ -272,7 +273,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		routeGeneration = placement.RouteGeneration
 	}
 	if idempotency.key.Valid {
-		if existing, hit, err := s.existingSessionStartIdempotency(ctx, actor.OrgID, routeCellID, projectID, environmentID, taskID, idempotency.key.String, idempotencyFingerprint.String, externalID); err != nil {
+		if existing, hit, err := s.existingSessionStartIdempotency(ctx, actor.OrgID, routeCellID, routeGeneration, projectID, environmentID, taskID, idempotency.key.String, idempotencyFingerprint.String, externalID); err != nil {
 			return sessionStartResult{}, err
 		} else if hit {
 			if err := s.ensureSessionStartSourceCurrent(ctx, source); err != nil {
@@ -290,7 +291,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	}
 	task, err := s.db.GetTaskForStart(ctx, db.GetTaskForStartParams{
 		OrgID:         pgvalue.UUID(actor.OrgID),
-		CellID:        routeCellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		TaskID:        taskID,
@@ -367,7 +367,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	}()
 	resolvedClaimIsStale := false
 	if startClaim.resolved && idempotency.key.Valid {
-		if existing, hit, err := s.existingSessionStartIdempotency(ctx, actor.OrgID, routeCellID, projectID, environmentID, taskID, idempotency.key.String, idempotencyFingerprint.String, externalID); err != nil {
+		if existing, hit, err := s.existingSessionStartIdempotency(ctx, actor.OrgID, routeCellID, routeGeneration, projectID, environmentID, taskID, idempotency.key.String, idempotencyFingerprint.String, externalID); err != nil {
 			return sessionStartResult{}, err
 		} else if hit {
 			if err := s.ensureSessionStartSourceCurrent(ctx, source); err != nil {
@@ -424,6 +424,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 						ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 						OrgID:              pgvalue.UUID(actor.OrgID),
 						CellID:             existing.CellID,
+						RouteGeneration:    existing.RouteGeneration,
 						ProjectID:          projectID,
 						EnvironmentID:      environmentID,
 						TaskID:             taskID,
@@ -607,6 +608,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 				ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:              pgvalue.UUID(actor.OrgID),
 				CellID:             session.CellID,
+				RouteGeneration:    session.RouteGeneration,
 				ProjectID:          projectID,
 				EnvironmentID:      environmentID,
 				TaskID:             taskID,
@@ -871,7 +873,6 @@ func (s *Server) createSessionStartIdempotency(ctx context.Context, store db.Que
 	}
 	if err := store.DeleteExpiredSessionStartIdempotency(ctx, db.DeleteExpiredSessionStartIdempotencyParams{
 		OrgID:          binding.OrgID,
-		CellID:         binding.CellID,
 		ProjectID:      binding.ProjectID,
 		EnvironmentID:  binding.EnvironmentID,
 		TaskID:         binding.TaskID,
@@ -891,6 +892,7 @@ func (s *Server) tryCreateSessionStartIdempotency(ctx context.Context, store db.
 		ID:                 binding.ID,
 		OrgID:              binding.OrgID,
 		CellID:             binding.CellID,
+		RouteGeneration:    binding.RouteGeneration,
 		ProjectID:          binding.ProjectID,
 		EnvironmentID:      binding.EnvironmentID,
 		TaskID:             binding.TaskID,
@@ -906,7 +908,7 @@ func (s *Server) tryCreateSessionStartIdempotency(ctx context.Context, store db.
 	if !isNoRows(err) {
 		return db.SessionStartIdempotency{}, sessionStartResult{}, false, err
 	}
-	if existingResult, hit, hitErr := s.existingSessionStartIdempotency(ctx, pgvalue.MustUUIDValue(binding.OrgID), binding.CellID, binding.ProjectID, binding.EnvironmentID, binding.TaskID, binding.IdempotencyKey, binding.RequestFingerprint, externalID); hitErr != nil {
+	if existingResult, hit, hitErr := s.existingSessionStartIdempotency(ctx, pgvalue.MustUUIDValue(binding.OrgID), binding.CellID, binding.RouteGeneration, binding.ProjectID, binding.EnvironmentID, binding.TaskID, binding.IdempotencyKey, binding.RequestFingerprint, externalID); hitErr != nil {
 		return db.SessionStartIdempotency{}, sessionStartResult{}, false, hitErr
 	} else if hit {
 		if err := s.ensureSessionStartSourceCurrent(ctx, source); err != nil {
@@ -916,6 +918,7 @@ func (s *Server) tryCreateSessionStartIdempotency(ctx context.Context, store db.
 			ID:                 binding.ID,
 			OrgID:              binding.OrgID,
 			CellID:             binding.CellID,
+			RouteGeneration:    binding.RouteGeneration,
 			ProjectID:          binding.ProjectID,
 			EnvironmentID:      binding.EnvironmentID,
 			TaskID:             binding.TaskID,
@@ -954,6 +957,7 @@ func (s *Server) loadExistingSessionStart(ctx context.Context, store db.Querier,
 			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:              pgvalue.UUID(orgID),
 			CellID:             existing.CellID,
+			RouteGeneration:    existing.RouteGeneration,
 			ProjectID:          projectID,
 			EnvironmentID:      environmentID,
 			TaskID:             taskID,
@@ -1064,10 +1068,9 @@ func sessionStartRequestFingerprint(taskID string, payload json.RawMessage, opti
 	return pgtype.Text{String: hex.EncodeToString(digest[:]), Valid: true}, nil
 }
 
-func (s *Server) existingSessionStartIdempotency(ctx context.Context, orgID uuid.UUID, cellID string, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, fingerprint string, externalID string) (sessionStartResult, bool, error) {
+func (s *Server) existingSessionStartIdempotency(ctx context.Context, orgID uuid.UUID, routeCellID string, routeGeneration int64, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, fingerprint string, externalID string) (sessionStartResult, bool, error) {
 	existing, err := s.db.GetSessionStartIdempotency(ctx, db.GetSessionStartIdempotencyParams{
 		OrgID:          pgvalue.UUID(orgID),
-		CellID:         cellID,
 		ProjectID:      projectID,
 		EnvironmentID:  environmentID,
 		TaskID:         taskID,
@@ -1081,6 +1084,9 @@ func (s *Server) existingSessionStartIdempotency(ctx context.Context, orgID uuid
 	}
 	if existing.RequestFingerprint != fingerprint {
 		return sessionStartResult{}, false, errSessionStartIdempotencyFingerprint
+	}
+	if existing.CellID != routeCellID || existing.RouteGeneration != routeGeneration {
+		return sessionStartResult{}, false, nil
 	}
 	session := sessionFromIdempotency(existing)
 	if strings.TrimSpace(externalID) != "" && session.ExternalID != strings.TrimSpace(externalID) {

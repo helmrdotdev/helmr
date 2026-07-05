@@ -40,9 +40,9 @@ func TestDeleteScheduleKeepsParentUntilLastInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO tasks (public_id, org_id, cell_id, project_id, environment_id, task_id)
-		VALUES ($5, $1, $2, $3, $4, 'approval-task')
-	`, ids.orgID, dbtest.DefaultCellID, ids.projectID, secondEnvironmentID, testTaskPublicID(t)); err != nil {
+		INSERT INTO tasks (public_id, org_id, project_id, environment_id, task_id)
+		VALUES ($5, $1, $2, $3, 'approval-task')
+	`, ids.orgID, ids.projectID, secondEnvironmentID, testTaskPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 

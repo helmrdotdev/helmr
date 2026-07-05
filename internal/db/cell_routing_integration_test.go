@@ -379,7 +379,7 @@ func TestReusableDeploymentBuildKeyIsRouteGenerationScoped(t *testing.T) {
 	}
 }
 
-func TestTasksAllowSameTaskIDPerCell(t *testing.T) {
+func TestTaskIdentitySurvivesRouteMove(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -388,15 +388,14 @@ func TestTasksAllowSameTaskIDPerCell(t *testing.T) {
 	secondCellID := "us-east-1-cell-2"
 	ensureCellRoute(t, ctx, pool, ids, secondCellID, 2)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO tasks (public_id, org_id, cell_id, project_id, environment_id, task_id)
-		VALUES ($5, $1, $2, $3, $4, 'approval-task')
-	`, ids.orgID, secondCellID, ids.projectID, ids.environmentID, testTaskPublicID(t)); err != nil {
-		t.Fatal(err)
+		INSERT INTO tasks (public_id, org_id, project_id, environment_id, task_id)
+		VALUES ($5, $1, $2, $3, 'approval-task')
+	`, ids.orgID, ids.projectID, ids.environmentID, testTaskPublicID(t)); err == nil {
+		t.Fatal("duplicate task identity insert succeeded")
 	}
 
 	task, err := queries.GetTaskForStart(ctx, db.GetTaskForStartParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        secondCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		TaskID:        "approval-task",
@@ -404,8 +403,8 @@ func TestTasksAllowSameTaskIDPerCell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.CellID != secondCellID {
-		t.Fatalf("task cell = %q, want %q", task.CellID, secondCellID)
+	if task.TaskID != "approval-task" {
+		t.Fatalf("task id = %q", task.TaskID)
 	}
 }
 

@@ -3944,6 +3944,7 @@ type SessionStartIdempotency struct {
 	ID                 pgtype.UUID        `json:"id"`
 	OrgID              pgtype.UUID        `json:"org_id"`
 	CellID             string             `json:"cell_id"`
+	RouteGeneration    int64              `json:"route_generation"`
 	ProjectID          pgtype.UUID        `json:"project_id"`
 	EnvironmentID      pgtype.UUID        `json:"environment_id"`
 	TaskID             string             `json:"task_id"`
@@ -4014,7 +4015,6 @@ type Task struct {
 	ID            pgtype.UUID        `json:"id"`
 	PublicID      string             `json:"public_id"`
 	OrgID         pgtype.UUID        `json:"org_id"`
-	CellID        string             `json:"cell_id"`
 	ProjectID     pgtype.UUID        `json:"project_id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	TaskID        string             `json:"task_id"`

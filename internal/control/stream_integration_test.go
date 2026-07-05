@@ -1067,7 +1067,7 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	if _, err := pool.Exec(ctx, `INSERT INTO deployment_queues (org_id, cell_id, project_id, environment_id, deployment_id, name) VALUES ($1, $2, $3, $4, $5, 'default')`, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO tasks (public_id, org_id, cell_id, project_id, environment_id, task_id) VALUES ($6, $1, $2, $3, $4, $5)`, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, taskID, streamTestPublicID(t, publicid.Task)); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO tasks (public_id, org_id, project_id, environment_id, task_id) VALUES ($5, $1, $2, $3, $4)`, ids.orgID, ids.projectID, ids.environmentID, taskID, streamTestPublicID(t, publicid.Task)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO deployment_sandboxes (id, public_id, org_id, cell_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format, contract_version, fingerprint) VALUES ($1, $9, $2, $3, $4, $5, $6, 'default', $7, 'oci-tar', $8, $8, 'oci-tar', '/workspace', 'test', 'guestd-test', 'adapter-test', 'tar', 1, 'sandbox-fingerprint')`, sandboxID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, taskBundleID, rootfsDigest, streamTestPublicID(t, publicid.Sandbox)); err != nil {

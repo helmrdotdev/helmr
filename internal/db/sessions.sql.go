@@ -397,6 +397,7 @@ INSERT INTO session_start_idempotencies (
     id,
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     task_id,
@@ -416,16 +417,30 @@ INSERT INTO session_start_idempotencies (
     $8,
     $9,
     $10,
-    $11
+    $11,
+    $12
 )
-ON CONFLICT (org_id, cell_id, project_id, environment_id, task_id, idempotency_key) DO NOTHING
-RETURNING id, org_id, cell_id, project_id, environment_id, task_id, idempotency_key, request_fingerprint, session_id, first_run_id, expires_at, created_at, last_used_at
+ON CONFLICT (org_id, project_id, environment_id, task_id, idempotency_key) DO UPDATE
+   SET cell_id = EXCLUDED.cell_id,
+       route_generation = EXCLUDED.route_generation,
+       request_fingerprint = EXCLUDED.request_fingerprint,
+       session_id = EXCLUDED.session_id,
+       first_run_id = EXCLUDED.first_run_id,
+       expires_at = EXCLUDED.expires_at,
+       last_used_at = now()
+ WHERE session_start_idempotencies.request_fingerprint = EXCLUDED.request_fingerprint
+   AND (
+       session_start_idempotencies.cell_id <> EXCLUDED.cell_id
+       OR session_start_idempotencies.route_generation <> EXCLUDED.route_generation
+   )
+RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, task_id, idempotency_key, request_fingerprint, session_id, first_run_id, expires_at, created_at, last_used_at
 `
 
 type CreateSessionStartIdempotencyParams struct {
 	ID                 pgtype.UUID        `json:"id"`
 	OrgID              pgtype.UUID        `json:"org_id"`
 	CellID             string             `json:"cell_id"`
+	RouteGeneration    int64              `json:"route_generation"`
 	ProjectID          pgtype.UUID        `json:"project_id"`
 	EnvironmentID      pgtype.UUID        `json:"environment_id"`
 	TaskID             string             `json:"task_id"`
@@ -441,6 +456,7 @@ func (q *Queries) CreateSessionStartIdempotency(ctx context.Context, arg CreateS
 		arg.ID,
 		arg.OrgID,
 		arg.CellID,
+		arg.RouteGeneration,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.TaskID,
@@ -455,6 +471,7 @@ func (q *Queries) CreateSessionStartIdempotency(ctx context.Context, arg CreateS
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -475,6 +492,7 @@ INSERT INTO workspaces (
     public_id,
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     deployment_sandbox_id,
@@ -494,10 +512,11 @@ INSERT INTO workspaces (
     $7,
     $8,
     $9,
-    coalesce($10::text, ''),
-    coalesce($11::jsonb, '{}'::jsonb),
-    coalesce($12::text[], '{}'::text[]),
-    coalesce($13::jsonb, '{}'::jsonb)
+    $10,
+    coalesce($11::text, ''),
+    coalesce($12::jsonb, '{}'::jsonb),
+    coalesce($13::text[], '{}'::text[]),
+    coalesce($14::jsonb, '{}'::jsonb)
 )
 RETURNING id, public_id, org_id, cell_id, route_generation, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
 `
@@ -507,6 +526,7 @@ type CreateWorkspaceParams struct {
 	PublicID            string      `json:"public_id"`
 	OrgID               pgtype.UUID `json:"org_id"`
 	CellID              string      `json:"cell_id"`
+	RouteGeneration     int64       `json:"route_generation"`
 	ProjectID           pgtype.UUID `json:"project_id"`
 	EnvironmentID       pgtype.UUID `json:"environment_id"`
 	DeploymentSandboxID pgtype.UUID `json:"deployment_sandbox_id"`
@@ -524,6 +544,7 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		arg.PublicID,
 		arg.OrgID,
 		arg.CellID,
+		arg.RouteGeneration,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentSandboxID,
@@ -571,17 +592,15 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 const deleteExpiredSessionStartIdempotency = `-- name: DeleteExpiredSessionStartIdempotency :exec
 DELETE FROM session_start_idempotencies
  WHERE org_id = $1
-   AND cell_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND task_id = $5
-   AND idempotency_key = $6
+   AND project_id = $2
+   AND environment_id = $3
+   AND task_id = $4
+   AND idempotency_key = $5
    AND expires_at <= now()
 `
 
 type DeleteExpiredSessionStartIdempotencyParams struct {
 	OrgID          pgtype.UUID `json:"org_id"`
-	CellID         string      `json:"cell_id"`
 	ProjectID      pgtype.UUID `json:"project_id"`
 	EnvironmentID  pgtype.UUID `json:"environment_id"`
 	TaskID         string      `json:"task_id"`
@@ -591,7 +610,6 @@ type DeleteExpiredSessionStartIdempotencyParams struct {
 func (q *Queries) DeleteExpiredSessionStartIdempotency(ctx context.Context, arg DeleteExpiredSessionStartIdempotencyParams) error {
 	_, err := q.db.Exec(ctx, deleteExpiredSessionStartIdempotency,
 		arg.OrgID,
-		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.TaskID,
@@ -1205,7 +1223,7 @@ func (q *Queries) GetSessionRunByRunID(ctx context.Context, arg GetSessionRunByR
 }
 
 const getSessionStartIdempotency = `-- name: GetSessionStartIdempotency :one
-SELECT session_start_idempotencies.id, session_start_idempotencies.org_id, session_start_idempotencies.cell_id, session_start_idempotencies.project_id, session_start_idempotencies.environment_id, session_start_idempotencies.task_id, session_start_idempotencies.idempotency_key, session_start_idempotencies.request_fingerprint, session_start_idempotencies.session_id, session_start_idempotencies.first_run_id, session_start_idempotencies.expires_at, session_start_idempotencies.created_at, session_start_idempotencies.last_used_at,
+SELECT session_start_idempotencies.id, session_start_idempotencies.org_id, session_start_idempotencies.cell_id, session_start_idempotencies.route_generation, session_start_idempotencies.project_id, session_start_idempotencies.environment_id, session_start_idempotencies.task_id, session_start_idempotencies.idempotency_key, session_start_idempotencies.request_fingerprint, session_start_idempotencies.session_id, session_start_idempotencies.first_run_id, session_start_idempotencies.expires_at, session_start_idempotencies.created_at, session_start_idempotencies.last_used_at,
        sessions.id AS session_id,
        sessions.org_id AS session_org_id,
        sessions.project_id AS session_project_id,
@@ -1262,17 +1280,15 @@ SELECT session_start_idempotencies.id, session_start_idempotencies.org_id, sessi
            AND runs.environment_id = session_start_idempotencies.environment_id
            AND runs.id = session_start_idempotencies.first_run_id
  WHERE session_start_idempotencies.org_id = $1
-   AND session_start_idempotencies.cell_id = $2
-   AND session_start_idempotencies.project_id = $3
-   AND session_start_idempotencies.environment_id = $4
-   AND session_start_idempotencies.task_id = $5
-   AND session_start_idempotencies.idempotency_key = $6
+   AND session_start_idempotencies.project_id = $2
+   AND session_start_idempotencies.environment_id = $3
+   AND session_start_idempotencies.task_id = $4
+   AND session_start_idempotencies.idempotency_key = $5
    AND session_start_idempotencies.expires_at > now()
 `
 
 type GetSessionStartIdempotencyParams struct {
 	OrgID          pgtype.UUID `json:"org_id"`
-	CellID         string      `json:"cell_id"`
 	ProjectID      pgtype.UUID `json:"project_id"`
 	EnvironmentID  pgtype.UUID `json:"environment_id"`
 	TaskID         string      `json:"task_id"`
@@ -1283,6 +1299,7 @@ type GetSessionStartIdempotencyRow struct {
 	ID                         pgtype.UUID            `json:"id"`
 	OrgID                      pgtype.UUID            `json:"org_id"`
 	CellID                     string                 `json:"cell_id"`
+	RouteGeneration            int64                  `json:"route_generation"`
 	ProjectID                  pgtype.UUID            `json:"project_id"`
 	EnvironmentID              pgtype.UUID            `json:"environment_id"`
 	TaskID                     string                 `json:"task_id"`
@@ -1342,7 +1359,6 @@ type GetSessionStartIdempotencyRow struct {
 func (q *Queries) GetSessionStartIdempotency(ctx context.Context, arg GetSessionStartIdempotencyParams) (GetSessionStartIdempotencyRow, error) {
 	row := q.db.QueryRow(ctx, getSessionStartIdempotency,
 		arg.OrgID,
-		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.TaskID,
@@ -1353,6 +1369,7 @@ func (q *Queries) GetSessionStartIdempotency(ctx context.Context, arg GetSession
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -1412,18 +1429,16 @@ func (q *Queries) GetSessionStartIdempotency(ctx context.Context, arg GetSession
 }
 
 const getTaskForStart = `-- name: GetTaskForStart :one
-SELECT id, public_id, org_id, cell_id, project_id, environment_id, task_id, metadata, created_at, updated_at, archived_at
+SELECT id, public_id, org_id, project_id, environment_id, task_id, metadata, created_at, updated_at, archived_at
   FROM tasks
  WHERE org_id = $1
-   AND cell_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND task_id = $5
+   AND project_id = $2
+   AND environment_id = $3
+   AND task_id = $4
 `
 
 type GetTaskForStartParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	TaskID        string      `json:"task_id"`
@@ -1432,7 +1447,6 @@ type GetTaskForStartParams struct {
 func (q *Queries) GetTaskForStart(ctx context.Context, arg GetTaskForStartParams) (Task, error) {
 	row := q.db.QueryRow(ctx, getTaskForStart,
 		arg.OrgID,
-		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.TaskID,
@@ -1442,7 +1456,6 @@ func (q *Queries) GetTaskForStart(ctx context.Context, arg GetTaskForStartParams
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,

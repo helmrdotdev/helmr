@@ -176,15 +176,14 @@ ON CONFLICT (id) DO UPDATE
        workspace_mount_path = EXCLUDED.workspace_mount_path,
        fingerprint = EXCLUDED.fingerprint;
 
-INSERT INTO tasks (id, public_id, org_id, cell_id, project_id, environment_id, task_id, metadata)
+INSERT INTO tasks (id, public_id, org_id, project_id, environment_id, task_id, metadata)
 VALUES
-    ('00000000-0000-0000-0000-000000000801', 'task_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_cell_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'code-review', '{"title":"Review branch"}'),
-    ('00000000-0000-0000-0000-000000000802', 'task_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_cell_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'approval-message', '{"title":"Collect approval"}'),
-    ('00000000-0000-0000-0000-000000000803', 'task_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_cell_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'failure-boundary', '{"title":"Failure example"}'),
-    ('00000000-0000-0000-0000-000000000804', 'task_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_cell_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'release-summary', '{"title":"Release summary"}')
-ON CONFLICT (environment_id, task_id) DO UPDATE
-   SET cell_id = EXCLUDED.cell_id,
-       metadata = EXCLUDED.metadata,
+    ('00000000-0000-0000-0000-000000000801', 'task_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'code-review', '{"title":"Review branch"}'),
+    ('00000000-0000-0000-0000-000000000802', 'task_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'approval-message', '{"title":"Collect approval"}'),
+    ('00000000-0000-0000-0000-000000000803', 'task_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'failure-boundary', '{"title":"Failure example"}'),
+    ('00000000-0000-0000-0000-000000000804', 'task_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'release-summary', '{"title":"Release summary"}')
+ON CONFLICT (org_id, project_id, environment_id, task_id) DO UPDATE
+   SET metadata = EXCLUDED.metadata,
        archived_at = NULL,
        updated_at = now();
 

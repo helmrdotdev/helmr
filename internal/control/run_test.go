@@ -3013,11 +3013,10 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 
 func (f *fakeStore) GetTaskForStart(_ context.Context, arg db.GetTaskForStartParams) (db.Task, error) {
 	for _, task := range f.deploymentTasks {
-		if task.OrgID == arg.OrgID && firstNonEmptyString(task.CellID, f.environmentRouteCellID, "us-east-1-cell-1") == arg.CellID && task.ProjectID == arg.ProjectID && task.EnvironmentID == arg.EnvironmentID && task.TaskID == arg.TaskID {
+		if task.OrgID == arg.OrgID && task.ProjectID == arg.ProjectID && task.EnvironmentID == arg.EnvironmentID && task.TaskID == arg.TaskID {
 			return db.Task{
 				ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:         arg.OrgID,
-				CellID:        arg.CellID,
 				ProjectID:     arg.ProjectID,
 				EnvironmentID: arg.EnvironmentID,
 				TaskID:        arg.TaskID,
@@ -3031,7 +3030,6 @@ func (f *fakeStore) GetTaskForStart(_ context.Context, arg db.GetTaskForStartPar
 		task := db.Task{
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:         arg.OrgID,
-			CellID:        arg.CellID,
 			ProjectID:     arg.ProjectID,
 			EnvironmentID: arg.EnvironmentID,
 			TaskID:        arg.TaskID,
@@ -3548,7 +3546,6 @@ func (f *fakeStore) MarkSessionRunRequestFailed(_ context.Context, arg db.MarkSe
 func (f *fakeStore) GetSessionStartIdempotency(_ context.Context, arg db.GetSessionStartIdempotencyParams) (db.GetSessionStartIdempotencyRow, error) {
 	if f.startIdempotency.ID.Valid &&
 		f.startIdempotency.OrgID == arg.OrgID &&
-		f.startIdempotency.CellID == arg.CellID &&
 		f.startIdempotency.ProjectID == arg.ProjectID &&
 		f.startIdempotency.EnvironmentID == arg.EnvironmentID &&
 		f.startIdempotency.TaskID == arg.TaskID &&
@@ -3564,6 +3561,7 @@ func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.Crea
 		ID:                         arg.ID,
 		OrgID:                      arg.OrgID,
 		CellID:                     arg.CellID,
+		RouteGeneration:            arg.RouteGeneration,
 		ProjectID:                  arg.ProjectID,
 		EnvironmentID:              arg.EnvironmentID,
 		TaskID:                     arg.TaskID,
@@ -3620,6 +3618,7 @@ func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.Crea
 		ID:                 arg.ID,
 		OrgID:              arg.OrgID,
 		CellID:             arg.CellID,
+		RouteGeneration:    arg.RouteGeneration,
 		ProjectID:          arg.ProjectID,
 		EnvironmentID:      arg.EnvironmentID,
 		TaskID:             arg.TaskID,
@@ -3636,7 +3635,6 @@ func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.Crea
 func (f *fakeStore) DeleteExpiredSessionStartIdempotency(_ context.Context, arg db.DeleteExpiredSessionStartIdempotencyParams) error {
 	if f.startIdempotency.ID.Valid &&
 		f.startIdempotency.OrgID == arg.OrgID &&
-		f.startIdempotency.CellID == arg.CellID &&
 		f.startIdempotency.ProjectID == arg.ProjectID &&
 		f.startIdempotency.EnvironmentID == arg.EnvironmentID &&
 		f.startIdempotency.TaskID == arg.TaskID &&
